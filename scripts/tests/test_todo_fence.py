@@ -1789,38 +1789,127 @@ def test_one_heading_rule_section43():
     # --- no second grammar, checked at the AST ------------------------------
     # A grep control is evaded by a composed or dynamically-built pattern; the
     # AST sees the string wherever `re.compile` is actually called.
+    # DISCOVERED, NOT LISTED, and it catches THREE shapes rather than one. The
+    # first version enumerated nine files and looked only for numeric matchers,
+    # so it passed while `build.py` and `todo-reachability.py` still decided
+    # boundaries with `startswith("## ")` and cut titles with a fixed `[3:]`
+    # slice -- the very drift the section claims to have ended (Codex
+    # consistency, section 43 post-ship, [high]). A hand-maintained file list
+    # is the same failure mode as a hand-maintained inventory: it is only ever
+    # as current as the last person to remember it.
     import ast
     allowed = {"scripts/todo-graph/cache_schema.py"}
-    residual = {".claude/hooks/sequencer_triage.py"}
+    # NAMED RESIDUALS, each one a file an unattended run may not edit. Both
+    # `.claude/hooks/` and `scripts/overnight/` are control plane by CLAUDE.md,
+    # so section 43 consolidated everything it was ALLOWED to and listed the
+    # rest rather than pretending the closure was complete. Shrinking this set
+    # is an operator-authorised change; growing it is a regression, which is
+    # why it is spelled out here instead of being a silent skip.
+    residual = {".claude/hooks/sequencer_triage.py",
+                "scripts/overnight/section_slice.py",
+                "scripts/overnight/section-manifest.py"}
     heading_pat = re.compile(r"##\s*\\?\(?\\d")
     offenders = []
-    for rel in ("scripts/todo-reachability.py", "scripts/todo-section-order.py",
-                "scripts/todo-graph/build.py", "scripts/todo-graph/validate.py",
-                "scripts/todo_fence.py", "scripts/todo-reflow.py",
-                "scripts/todo-staged-check.py", "scripts/todo-orphan-check.py",
-                "scripts/lint/check_stub_behind_stamp.py"):
-        path = REPO / rel
-        if not path.exists() or rel in allowed:
+    candidates = sorted(
+        str(q.relative_to(REPO)) for q in (REPO / "scripts").rglob("*.py"))
+    for rel in candidates:
+        if rel in allowed or rel in residual:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # TEST FILES ARE EXEMPT, and the reason is not convenience: a fixture
+        # BUILDS markdown containing `## ` rather than parsing it, and this very
+        # function contains the literals it searches for. Exempting them keeps
+        # the check aimed at consumers that DECIDE what a heading is.
+        base = rel.rsplit("/", 1)[-1]
+        if base.startswith("test_") or "/tests/" in rel:
+            continue
+        path = REPO / rel
+        src = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        srclines = src.split("\n")
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            # Shape 1 + 2: a heading regex, or any `## `-anchored literal that
+            # carries a digit matcher.
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                v = node.value
+                if (v.lstrip("^").startswith("## ") and "\\d" in v) or heading_pat.search(v):
+                    offenders.append(f"{rel}:{node.lineno} (grammar)")
                 continue
-            if node.value.lstrip("^").startswith("## ") and "\\d" in node.value:
-                offenders.append(f"{rel}:{node.lineno}")
-            elif heading_pat.search(node.value):
-                offenders.append(f"{rel}:{node.lineno}")
-    check("s43: no consumer defines a second `## N.` grammar (AST); found "
-          + ", ".join(offenders), not offenders)
-    check("s43: the control-plane residual is still the only allowlisted copy",
-          residual == {".claude/hooks/sequencer_triage.py"})
-    triage = REPO / ".claude/hooks/sequencer_triage.py"
-    if triage.exists():
-        # The residual is REAL, not a stale note: if an operator has already
-        # retired it, this check fails and the allowlist above must shrink.
-        check("s43: the residual copy still exists (shrink the allowlist when "
-              "it is retired)",
-              "SECTION_HEADING_RE" in triage.read_text(encoding="utf-8"))
+            # Shape 3: `<expr>.startswith("## ")` -- a boundary decision made
+            # without the shared rule. The `## <Title>` prefix tests that name a
+            # SPECIFIC heading are the same defect: they miss the legal indent.
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "startswith"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                    and node.args[0].value.startswith("## ")):
+                offenders.append(f"{rel}:{node.lineno} (boundary)")
+                continue
+            # Shape 4: a fixed-offset title slice on a line known to be a
+            # heading -- `l[3:]` reads one character into an indented title.
+            if (isinstance(node, ast.Subscript)
+                    and isinstance(node.slice, ast.Slice)
+                    and isinstance(node.slice.lower, ast.Constant)
+                    and node.slice.lower.value == 3
+                    and node.slice.upper is None):
+                ctx = srclines[node.lineno - 1] if node.lineno <= len(srclines) else ""
+                if "##" in ctx or "h2" in ctx.lower() or "heading" in ctx.lower():
+                    offenders.append(f"{rel}:{node.lineno} (title slice)")
+    check("s43: no consumer decides headings without the shared rule (AST, "
+          + f"{len(candidates)} files); found " + ", ".join(offenders),
+          not offenders)
+    # EVERY RESIDUAL IS REAL, not a stale note: when an operator retires one,
+    # this fails and the set above must shrink. That is the only mechanism that
+    # stops the exemption list outliving the exemption.
+    for rel in sorted(residual):
+        q = REPO / rel
+        if not q.exists():
+            check(f"s43: residual {rel} no longer exists -- remove it from the "
+                  f"allowlist", False)
+            continue
+        body = q.read_text(encoding="utf-8", errors="replace")
+        still = ("SECTION_HEADING_RE" in body or "## (" in body
+                 or 'startswith("## ' in body)
+        check(f"s43: residual {rel} still hand-rolls a heading rule (shrink "
+              f"the allowlist when it is retired)", still)
+
+    # --- the TRACKED baseline's own data contract ---------------------------
+    # Section 43 post-ship. The helper validates a per-owner map when it is
+    # given one, but "the repo's baseline HAS one, and it sums" is a property of
+    # THIS FILE, not of any single run -- a commit deleting the key would
+    # otherwise pass ordinary lint and surface later as an rc 7 at someone
+    # else's scoped commit, which is the deferred blame the map was added to
+    # remove (Codex consistency, section 43 post-ship, [high]). Enforcing it in
+    # the helper instead was tried and reverted: fixtures legitimately hand it
+    # three-key baselines, and a synthetic tree uses the same default path, so
+    # the rule could be scoped neither by caller nor by path.
+    import json as _json
+    base_p = REPO / "scripts/lint/stub-lint-baseline.json"
+    base = _json.loads(base_p.read_text(encoding="utf-8"))
+    by = base.get("by_owner")
+    check("s43: the tracked baseline carries a per-owner map",
+          isinstance(by, dict) and bool(by))
+    if isinstance(by, dict) and by:
+        ok_shape = all(
+            isinstance(v, dict)
+            and isinstance(v.get("occurrences"), int)
+            and not isinstance(v.get("occurrences"), bool)
+            and isinstance(v.get("resolved"), int)
+            and not isinstance(v.get("resolved"), bool)
+            and 0 <= v["resolved"] <= v["occurrences"]
+            for v in by.values())
+        check("s43: every per-owner entry is a sane (occurrences, resolved) pair",
+              ok_shape)
+        check("s43: per-owner occurrences sum to the recorded total",
+              sum(v["occurrences"] for v in by.values()) == base.get("total"))
+        check("s43: per-owner resolved sum to the recorded resolved",
+              sum(v["resolved"] for v in by.values()) == base.get("resolved"))
+        check("s43: every per-owner key is a repo-relative todo path",
+              all(k.startswith("todo/") and ".." not in k for k in by))
 
     # --- one name for an unreadable document, two exit codes on purpose ------
     # ONE NAME ACROSS THREE TOOLS for an unreadable document. The producer and

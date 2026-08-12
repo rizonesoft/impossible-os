@@ -1450,10 +1450,17 @@ def _walk_implementation_order(lines, masked) -> list:
     for ln, fenced in zip(lines, masked):
         if fenced:
             continue
-        if ln.startswith("## Implementation Order"):
+        # THE SAME BOUNDARY RULE AS EVERY OTHER WALK (section 43 post-ship
+        # review). This hand-rolled `startswith("## ")` was invisible to the AST
+        # allowlist test, which only looked for numeric matchers -- so the "one
+        # rule" claim held for the heading walks and quietly did not here. An
+        # indented `## Implementation Order` was not a table start, and an
+        # indented heading did not end the table.
+        _io_title = _cs.h2_title(ln)
+        if _io_title is not None and _io_title.startswith("Implementation Order"):
             in_io = True
             continue
-        if in_io and ln.startswith("## "):
+        if in_io and _cs.is_h2(ln):
             break
         if not in_io:
             continue
@@ -1557,10 +1564,13 @@ def _walk_inputs_xrefs(lines, masked) -> list:
     for ln, fenced in zip(lines, masked):
         if fenced:
             continue
-        if ln.startswith("## Inputs"):
+        # Shared rule, same as the Implementation Order walk above (section 43
+        # post-ship review found both).
+        _in_title = _cs.h2_title(ln)
+        if _in_title is not None and _in_title.startswith("Inputs"):
             in_inputs = True
             continue
-        if in_inputs and ln.startswith("## "):
+        if in_inputs and _cs.is_h2(ln):
             break
         if not in_inputs:
             continue

@@ -87,7 +87,7 @@ if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
         # WHOLLY, and does so for the first time truthfully. This line has been
         # wrong in both directions before; it is accurate only because the code
         # under it changed, never because the wording did.
-        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/10/11/17/24${NC:-}"
+        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/10/11/17/24 (Check 7 additionally downgrades a STALE cache to a warning when every dirty todo file is excluded -- exclusion cannot answer staleness)${NC:-}"
     fi
 fi
 
@@ -614,8 +614,21 @@ else
     #       mid-run so returned coordinates no longer describe it -- NEVER a
     #       coverage finding, NEVER silently downgraded to "unresolved")
     CACHE="$REPO_ROOT/build/todo-cache.json"
-    STUB_ERR_FILE="$(mktemp -t lint-stub-stderr.XXXXXX)"
-    STUB_OUT_FILE="$(mktemp -t lint-stub-stdout.XXXXXX)"
+    # GUARDED, because line 17 sets `set -euo pipefail`: an unguarded
+    # command-substitution assignment that fails takes the ENTIRE linter down
+    # before Check 7 can report a controlled error or the summary can print,
+    # and if the first succeeds while the second fails the first file leaks
+    # (Codex adversarial, section 43 post-ship, [medium]).
+    STUB_ERR_FILE=""; STUB_OUT_FILE=""
+    STUB_ERR_FILE="$(mktemp -t lint-stub-stderr.XXXXXX)" || STUB_ERR_FILE=""
+    STUB_OUT_FILE="$(mktemp -t lint-stub-stdout.XXXXXX)" || STUB_OUT_FILE=""
+    if [ -z "$STUB_ERR_FILE" ] || [ -z "$STUB_OUT_FILE" ]; then
+        rm -f "$STUB_ERR_FILE" "$STUB_OUT_FILE"
+        echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) could not allocate a temporary file -- the stub walk did not run"
+        ERRORS=$((ERRORS + 1))
+        STUB_RC=""
+    fi
+    if [ -n "$STUB_ERR_FILE" ]; then
     # Run helper outside `set -e` failure boundary: nonzero rc on
     # missing/stale/corrupt cache is informational, not a fatal lint
     # error -- the case statement below routes each rc to error()/warn().
@@ -712,8 +725,18 @@ else
                 echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) COVERAGE REGRESSION -- $(grep -m1 'COVERAGE REGRESSION' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*REGRESSION: //' | cut -c1-140)"
             elif grep -q 'POPULATION ' "$STUB_ERR_FILE" 2>/dev/null; then
                 echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) $(grep -m1 'POPULATION ' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*\] //' | cut -c1-200)"
+            elif grep -q 'EXCLUSION SET INVALID' "$STUB_ERR_FILE" 2>/dev/null; then
+                # THIRD rc-7 contract, added with the scoped-exclusion work in
+                # section 43 and NOT routed by it -- the message fell through to
+                # the "see $STUB_ERR_FILE" arm below, which names a file this
+                # block DELETES two lines later, so the actionable diagnostic
+                # was destroyed on its way out (Codex consistency, post-ship,
+                # [medium]).
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) EXCLUSION SET INVALID -- $(grep -m1 'EXCLUSION SET INVALID' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*EXCLUSION SET INVALID: //' | cut -c1-200)"
             else
-                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) rc 7 with no recognized diagnostic; see $STUB_ERR_FILE"
+                # The unrecognised arm QUOTES the diagnostic rather than naming
+                # a path that is about to be removed. Same reason.
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) rc 7 with no recognized diagnostic: $(head -3 "$STUB_ERR_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-200)"
             fi
             ERRORS=$((ERRORS + 1))
             ;;
@@ -722,7 +745,18 @@ else
             # Treating it as absent-means-no-floor let a delete silently
             # disable the gate, so an invalid baseline is an ERROR with a
             # named, reported bypass rather than a quiet degrade to warn.
-            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) BASELINE INVALID -- $(grep -m1 'BASELINE INVALID' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*BASELINE INVALID: //' | cut -c1-140)"
+            # TWO rc-8 tokens since section 43: the original `BASELINE INVALID`
+            # and `BASELINE by_owner INVALID` for the per-owner contract. The
+            # first grep matches BOTH (the second contains the first as a
+            # substring only if the tokens are ordered carefully), so the
+            # by_owner form is matched FIRST and explicitly.
+            if grep -q 'BASELINE by_owner INVALID' "$STUB_ERR_FILE" 2>/dev/null; then
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) BASELINE by_owner INVALID -- $(grep -m1 'BASELINE by_owner INVALID' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*BASELINE by_owner INVALID: //' | cut -c1-200)"
+            elif grep -q 'BASELINE INVALID' "$STUB_ERR_FILE" 2>/dev/null; then
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) BASELINE INVALID -- $(grep -m1 'BASELINE INVALID' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*BASELINE INVALID: //' | cut -c1-140)"
+            else
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) rc 8 with no recognized diagnostic: $(head -3 "$STUB_ERR_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-200)"
+            fi
             ERRORS=$((ERRORS + 1))
             ;;
         9)
@@ -739,6 +773,7 @@ else
             ;;
     esac
     rm -f "$STUB_ERR_FILE" "$STUB_OUT_FILE"
+    fi
 fi
 
 # ============================================================================

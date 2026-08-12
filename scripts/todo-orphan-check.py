@@ -144,7 +144,10 @@ def scan_file(path: Path, tri, fence=None) -> list:
         # in 2026-07 (21 phantom items on TODO-10, 95 on TODO-25) and that this
         # scanner reproduced on its first run: 291 phantom items vs the real
         # 117, every extra one a file-level Verification checklist line.
-        if ln.startswith("## "):
+        # The SHARED boundary rule (section 43 post-ship review): a column-0
+        # test misses CommonMark's legal 0-3 indent, so an indented heading did
+        # not end the current section here while it did in the producer.
+        if _fence().is_h2(ln):
             cur = None
             continue
         if cur is None:

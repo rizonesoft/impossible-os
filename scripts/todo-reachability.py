@@ -208,8 +208,12 @@ def _io_rows(lines, mask):
     for i, l in enumerate(lines):
         if mask[i]:
             continue
-        if l.startswith("## "):
-            inside = l[3:].strip().lower().startswith("implementation order")
+        # Shared rule here too (section 43 post-ship review): a fixed `l[3:]`
+        # slice reads `# mplementation Order` off an indented heading, so the
+        # table would never be entered and every row in it would go unseen.
+        _h2 = _fence.h2_title(l)
+        if _h2 is not None:
+            inside = _h2.lower().startswith("implementation order")
             sec_col = None
             continue
         if not inside:

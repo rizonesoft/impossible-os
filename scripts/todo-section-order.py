@@ -362,12 +362,20 @@ def _check_placement(paths) -> int:
         # mask alone. Printed on stdout because lint Check 22b counts one error
         # per line it reads there.
         reason = sc.unclosed_reason()
+        if reason is not None:
+            # THE SHARED TOKEN, in this path too (Codex consistency, section 43
+            # post-ship, [medium]). build.py, todo-reachability.py and
+            # validate.py all file an unreadable document under
+            # `terminal_category(...)`; this tool named it in prose only, in two
+            # different wordings across its own modes, so a reader grepping the
+            # category found three of the five places it occurs.
+            reason = f"{_fence.terminal_category(sc.terminal)}: {reason}"
         if reason is None:
             ln = overlong_section(sc.lines, sc.mask)
             if ln is not None:
-                reason = (f"line {ln} carries a `## N.` heading whose number "
-                          f"cannot be a section number, so it is not a section "
-                          f"this tool can order")
+                reason = (f"unusable-heading: line {ln} carries a `## N.` "
+                          f"heading whose number cannot be a section number, "
+                          f"so it is not a section this tool can order")
         if reason:
             hits += 1
             print(f"{path}: cannot check placement -- {reason}")
@@ -417,12 +425,17 @@ def main(argv) -> int:
         # alike (Codex design review, section 41, [medium]). Same exit-2 contract
         # `todo-reflow.py` uses for the same condition.
         reason = sc.unclosed_reason()
+        if reason is not None:
+            # Same shared token as the placement path above, so both of this
+            # tool's modes classify one condition the same way (section 43
+            # post-ship review).
+            reason = f"{_fence.terminal_category(sc.terminal)}: {reason}"
         if reason is None:
             ln = overlong_section(sc.lines, sc.mask)
             if ln is not None:
-                reason = (f"line {ln} carries a `## N.` heading whose number "
-                          f"cannot be a section number, so it is not a section "
-                          f"this tool can order")
+                reason = (f"unusable-heading: line {ln} carries a `## N.` "
+                          f"heading whose number cannot be a section number, "
+                          f"so it is not a section this tool can order")
         if reason:
             print(f"{path}: REFUSED -- {reason}. Left untouched.",
                   file=sys.stderr)

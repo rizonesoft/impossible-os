@@ -596,11 +596,29 @@ def main() -> int:
     # looked right. The corruption then surfaces at the next scoped commit as an
     # rc 7, recreating the unrelated-worktree wedge this change removes, and a
     # sum-preserving misattribution would subtract the wrong owner's share.
-    # A baseline with NO map is still accepted here (nothing to check); only an
-    # exclusion actually needs one, and that is enforced below.
+    # AND IT IS REQUIRED, not merely checked when present (Codex consistency,
+    # section 43 post-ship, [high]). "Accepted when absent" contradicted the
+    # tracked baseline's own contract: the key exists there now, so a commit
+    # DELETING it would pass ordinary lint and CI and only surface at someone
+    # else's scoped commit as an rc 7 -- the same deferred-blame shape the
+    # per-owner map was added to remove. The explicit floor bypass
+    # (STUB_LINT_ALLOW_NO_BASELINE) remains the one way to proceed without it.
+    # A PRESENT MAP IS ALWAYS VALIDATED; ABSENCE IS NOT THIS FUNCTION'S CALL.
+    # The finding this addresses is real -- a commit deleting `by_owner` from
+    # the TRACKED baseline would pass ordinary lint and surface later as an
+    # rc 7 at someone else's scoped commit -- but "reject every baseline that
+    # lacks the key" is the wrong place to enforce it: this helper is handed
+    # hand-written three-key baselines by fixtures that are measuring the
+    # population gate, and a synthetic tree uses the same default path, so the
+    # rule cannot be scoped by path either. The contract is a property of the
+    # REPO'S OWN FILE, so it is asserted against that file directly, in
+    # `scripts/tests/test_todo_fence.py`. Here: if the map exists it must be
+    # correct, and an exclusion still requires it (enforced below).
     bad = None
-    if base_owners is not None:
-        if not isinstance(base_owners, dict):
+    if isinstance(baseline_total, int) or isinstance(baseline, int):
+        if base_owners is None:
+            pass
+        elif not isinstance(base_owners, dict):
             bad = (f"{base_path.name} `by_owner` is not an object "
                    f"({type(base_owners).__name__})")
         else:
