@@ -103,10 +103,123 @@ def _git_root():
     return "."
 
 
+# A line break `scan_text` normalises into `\n` but Git's patch format does
+# NOT count: lone CR, vertical tab, form feed, NEL, and the Unicode line/
+# paragraph separators. See `cache_schema.normalize_newlines`, which maps each
+# one-for-one so the SCAN's line numbering matches what an author would count.
+# Git counts LF only, so on such a document `_added_lines`' coordinates and the
+# post-image projection index different arrays -- see `_post_image_lines`.
+#
+# CRLF IS EXCLUDED, and the `(?!\n)` is why this is a regex rather than a
+# character-class scan. `normalize_newlines` collapses CRLF to `\n` FIRST and
+# git already counts CRLF as one line ending, so the two agree exactly;
+# refusing it would reject every CRLF-authored TODO over a disagreement that
+# does not exist. Only a CR NOT followed by LF adds a line the diff cannot
+# see.
+_ODD_BREAK_RE = re.compile("\r(?!\n)|[\v\f\x1c\x1d\x1e\x85  ]")
+
+
 def _post_image_lines(text):
-    """`(lines, mask, unclosed_reason)` for one staged document."""
+    """`(lines, mask, leaves, in_bq, unclosed_reason)` for one staged document.
+
+    PUBLISHES THE PRODUCER'S PROJECTION (section 47). Returning only physical
+    lines is why `_section_total`, `added_sections`, the `Spawned-by`
+    provenance check and the park-boundary check could not see
+    `- ## N. Nested`: a direct probe counted ONE section where `build.py`
+    counted two, so such a section entered the graph while bypassing the hard
+    cap and the mandatory provenance controls (Codex consistency, section 45
+    post-ship, [medium]).
+
+    `in_bq` SHIPS WITH IT, and callers must use it. `leaf_views` consumes the
+    marker a line opens, so `> ## 99. Example` projects to a real heading;
+    publishing the projection without the predicate would count quoted
+    examples against the section cap, demand provenance for them, and let one
+    sitting between a new stamp and a new park SPLIT their bounds and suppress
+    the park-into-shipping refusal -- stranding the work that refusal protects
+    (Codex design review, section 47, [high]).
+
+    REFUSES A DOCUMENT WHOSE COORDINATES CANNOT BE TRUSTED. `_added_lines`
+    derives line numbers from `git diff`, which delimits on LF alone, while
+    `scan_text` first maps lone CR / VT / FF / NEL / U+2028 / U+2029 to `\\n`
+    -- so one Git line can become several projection lines and every
+    lineno-indexed check below would address unrelated text. The end-of-run
+    tree-id re-bind proves both reads saw the same BLOB, never that their
+    coordinate systems agree, so nothing downstream could catch it. Measured
+    2026-08-12: 0 of 281 corpus files contain such a break, so this refuses a
+    shape that does not occur rather than changing a live verdict (Codex design
+    review, section 47, [medium]).
+    """
+    if _ODD_BREAK_RE.search(text):
+        return None, None, None, None, (
+            "contains a non-LF line break (lone CR, VT, FF, NEL or U+2028/9); "
+            "git's line numbers and this gate's projection would index "
+            "different lines. Normalise the file to LF newlines and re-stage")
     scan = _fence().scan_text(text)
-    return scan.lines, scan.mask, scan.unclosed_reason()
+    return (scan.lines, scan.mask, scan.leaf_views, scan.in_blockquote,
+            scan.unclosed_reason())
+
+
+def _head_section_numbers(path):
+    """Section numbers visible in the HEAD blob under the SAME projection the
+    staged post-image is read with, or None when there is no HEAD blob.
+
+    Projected deliberately. Comparing a projected staged scan against an
+    UNPROJECTED head scan would report every container-nested section already
+    in the file as newly added the first time this ran.
+    """
+    try:
+        r = subprocess.run(["git", "show", f"HEAD:{path}"],
+                           capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            return None
+    except (OSError, UnicodeDecodeError):
+        return None
+    scan = _fence().scan_text(r.stdout)
+    out = set()
+    for i, ln in enumerate(scan.leaf_views):
+        if scan.mask[i] or scan.in_blockquote(i):
+            continue
+        h = _fence().classify_heading(ln)
+        if h.kind == "ok":
+            out.add(h.n)
+    return out
+
+
+def _section_additions(path, lines, heads_view, added):
+    """`added` plus every heading line this commit CREATES WITHOUT TOUCHING.
+
+    A SECTION CAN BE ADDED BY CONTEXT ALONE, and adopting the projection did not
+    close that on its own (Codex adversarial, section 47, [high]).
+    `added_sections` intersects projected headings with Git's added-line set, so
+    a commit that adds only a LIST OPENER above an unchanged four-space-indented
+    `## 2.` slips past every new-section control: the opener turns that line into
+    list content, the projection cuts the two-space content offset, and the
+    producer gains section 2 -- while the heading's own line never appears in the
+    diff. Measured 2026-08-12: adding one `- opener` line took the producer from
+    0 sections to 1 with the heading unchanged, so the cap, the `Spawned-by`
+    provenance check and the review user-impact check were all skipped. That is
+    exactly the producer/enforcement disagreement this section exists to close.
+
+    Returns a SEPARATE list rather than widening `added` in place. The shared
+    `added` also feeds the line-length, wrap and OS-Comparison checks, and this
+    module's contract is that ONLY ADDED LINES ARE JUDGED -- handing an unchanged
+    line to those would refuse a commit over legacy content it did not write.
+    """
+    head_nos = _head_section_numbers(path)
+    if head_nos is None:
+        return added                   # new file: the whole thing is added
+    added_nos = {n for n, _ in added}
+    extra = []
+    for i, ln in enumerate(heads_view, 1):
+        if i in added_nos or not _is_section(ln):
+            continue
+        h = _fence().classify_heading(ln)
+        # An over-long heading carries no number to compare, so it cannot be
+        # shown new by this route and stays line-based. It still takes a cap
+        # slot when its own line is added, which `added_sections` handles.
+        if h.kind == "ok" and h.n not in head_nos:
+            extra.append((i, lines[i - 1] if i - 1 < len(lines) else ln))
+    return added + extra if extra else added
 
 
 def _added_lines(path):
@@ -299,15 +412,23 @@ def _section_total(lines):
     return sum(1 for line in lines if _is_section(line))
 
 
-def added_sections(added):
+def added_sections(added, heads_view):
     """New `## N.` headings this commit introduces.
 
     `_added_lines` yields (lineno, text) pairs -- NOT the (n, len, text) triples
     that `over_cap` produces. Getting that wrong is why the first version of
     this raised IndexError on every call.
+
+    CLASSIFIED FROM THE POST-IMAGE PROJECTION, NOT THE DIFF TEXT (section 47).
+    The diff hands back the raw added line, so `- ## 48. Nested` classified as
+    "not a section" and such a section entered the graph without ever counting
+    against the cap. The added line's number indexes `heads_view` instead --
+    which is sound only because `_post_image_lines` REFUSES any document whose
+    non-LF breaks would desynchronise git's coordinates from the scan's.
     """
     return [(lineno, text.strip()) for lineno, text in added
-            if _is_section(text)]
+            if 0 < lineno <= len(heads_view)
+            and _is_section(heads_view[lineno - 1])]
 
 
 # PARK-INTO-A-SHIPPING-SECTION (2026-08-09). A `- [/]` park is the sanctioned
@@ -329,18 +450,26 @@ _PARK_RE = re.compile(r"^\s*- \[/\]")
 _STAMP_RE = re.compile(r"^>\s*\*\*(Verified|Quality reviewed):\*\*")
 
 
-def _park_into_shipping_section(lines, added):
+def _park_into_shipping_section(lines, heads_view, added):
     """[(lineno, section_heading, text)] for `- [/]` items this commit ADDS to a
     section it is ALSO stamping in the same commit.
 
     `lines` is the staged post-image with fenced lines blanked, so a fenced
     `> **Verified:**` cannot make a section look stamped-now and a fenced
     `- [/]` cannot look like a park (section 38).
+
+    `heads_view` is the SECTION-HEADING view (section 47): the leaf projection
+    with fenced AND blockquoted lines blanked. Bounds come from it so a nested
+    `- ## N.` starts a section, while `_STAMP_RE`/`_PARK_RE` keep reading
+    `lines` -- both are anchored on `>`/`- [/]` markers that the projection
+    strips. A quoted heading must not split these bounds either: one landing
+    between a new stamp and a new park would separate them and silently
+    suppress this refusal (Codex design review, section 47, [high]).
     """
     added_nos = {n for n, _ in added}
     # section index -> (start, end) over the post-image
     bounds, cur, heads = [], None, {}
-    for i, ln in enumerate(lines, 1):
+    for i, ln in enumerate(heads_view, 1):
         if _is_section(ln.strip()):
             if cur is not None:
                 bounds.append((cur, i - 1))
@@ -407,13 +536,17 @@ _REVIEW_SPAWN_RE = re.compile(
     r"^>\s*\*\*Spawned-by:\*\*\s*(?:\u00a7|section\s*)\d+\s*\(review\)", re.I)
 
 
-def _review_sections_missing_user_impact(path, lines, added):
+def _review_sections_missing_user_impact(path, lines, heads_view, added):
     """[(lineno, heading)] for `(review)`-spawned sections this commit ADDS that
-    carry no `> **User impact:**` line."""
+    carry no `> **User impact:**` line.
+
+    Section starts come from `heads_view` (section 47), same as the provenance
+    check beside it; the `> **` body matches stay on `lines`.
+    """
     if _file_is_new(path):
         return []
     added_nos = {n for n, _ in added}
-    starts = [i for i, ln in enumerate(lines, 1) if _is_section(ln.strip())]
+    starts = [i for i, ln in enumerate(heads_view, 1) if _is_section(ln.strip())]
     out = []
     for idx, start in enumerate(starts):
         if start not in added_nos:
@@ -437,13 +570,18 @@ def _file_is_new(path):
         return False
 
 
-def _sections_missing_provenance(path, lines, added):
+def _sections_missing_provenance(path, lines, heads_view, added):
     """[(lineno, heading)] for `## N.` sections this commit ADDS that carry no
-    `> **Spawned-by:**` line."""
+    `> **Spawned-by:**` line.
+
+    Section starts come from `heads_view` (section 47) so a nested
+    `- ## N. Nested` must declare its provenance like any other; the
+    `> **Spawned-by:**` body match stays on `lines`, being blockquote-anchored.
+    """
     if _file_is_new(path):
         return []
     added_nos = {n for n, _ in added}
-    starts = [i for i, ln in enumerate(lines, 1) if _is_section(ln.strip())]
+    starts = [i for i, ln in enumerate(heads_view, 1) if _is_section(ln.strip())]
     out = []
     for idx, start in enumerate(starts):
         if start not in added_nos:
@@ -486,7 +624,7 @@ def main(argv) -> int:
         text = docs.get(f)
         if text is None:
             continue                   # staged deletion: nothing to judge
-        lines, mask, unclosed = _post_image_lines(text)
+        lines, mask, leaves, in_bq, unclosed = _post_image_lines(text)
         if unclosed:
             unscannable.append((f, unclosed))
             continue
@@ -496,6 +634,14 @@ def main(argv) -> int:
         # every walk below matches per line; the whole-text callers that cannot
         # do this are handled in lint.sh.
         vis = ["" if mask[i] else l for i, l in enumerate(lines)]
+        # THE SECTION-HEADING VIEW (section 47), index-parallel to `vis`: the
+        # leaf projection with fenced AND blockquoted lines blanked. Blanking
+        # rather than filtering keeps every line NUMBER addressing the same
+        # line, which is what lets the lineno-keyed checks below share one
+        # coordinate system with `vis`. A nested `- ## N.` becomes visible; a
+        # quoted `> ## 99.` example stays invisible, matching `build.py:1096`.
+        sec_vis = ["" if (mask[i] or in_bq(i)) else l
+                   for i, l in enumerate(leaves)]
         masked_nos = {i + 1 for i, m in enumerate(mask) if m}
         added = [(n, t) for n, t in _added_lines(f) if n not in masked_nos]
         for n, ln, text in over_cap(added):
@@ -505,15 +651,21 @@ def main(argv) -> int:
             wrapped.append((f, col))
         for n, w, cell in _oscomp_over_cap(vis, added):
             oscomp.append((f, n, w, cell))
-        for n, head, text in _park_into_shipping_section(vis, added):
+        for n, head, text in _park_into_shipping_section(vis, sec_vis, added):
             parked.append((f, n, head, text))
-        for n, head in _sections_missing_provenance(f, vis, added):
+        # THE SECTION-AWARE CHECKS GET THE LOGICAL ADDITIONS, the line-based
+        # ones keep the raw diff. A section can be created by a container edit
+        # that never touches the heading line; a line-length or wrap check run
+        # over that unchanged line would refuse the commit for legacy content.
+        sec_added = _section_additions(f, lines, sec_vis, added)
+        for n, head in _sections_missing_provenance(f, vis, sec_vis, sec_added):
             noprov.append((f, n, head))
-        for n, head in _review_sections_missing_user_impact(f, vis, added):
+        for n, head in _review_sections_missing_user_impact(f, vis, sec_vis,
+                                                            sec_added):
             noimpact.append((f, n, head))
-        new_secs = added_sections(added)
+        new_secs = added_sections(sec_added, sec_vis)
         if new_secs:
-            total = _section_total(vis)
+            total = _section_total(sec_vis)
             if total > SECTION_HARD_CAP:
                 capped_hard.append((f, total, new_secs))
             elif total >= SECTION_SOFT_CAP:

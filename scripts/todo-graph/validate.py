@@ -1805,13 +1805,35 @@ def _is_escaped(line: str, idx: int) -> bool:
     return n % 2 == 1
 
 
-def _scan_markdown(lines, mask):
+def _scan_markdown(scan):
     """One pass over a TODO file -> (heading titles, [(line, anchor)]).
 
-    Takes the SHARED scan's `(lines, mask)` rather than the raw text: the
-    caller runs `cache_schema.fence_scan` once, acts on its terminal flags, and
-    passes the result to both passes, so the two streaming walks pay for one
-    scan and neither can drift from the producer's view of the document.
+    Takes the SHARED `ScanResult` rather than the raw text: the caller runs
+    `cache_schema.scan_text` once, acts on its terminal flags, and passes the
+    result to both passes, so the two streaming walks pay for one scan and
+    neither can drift from the producer's view of the document.
+
+    HEADINGS COME FROM `leaf_views` (section 47). The producer records a
+    list-contained `- ## 2. Nested` as a real section; matching `_ATX_RE`
+    against the physical line missed it, so `[jump](#2-nested)` was reported as
+    a DEAD anchor on a link that actually resolves -- the producer/validator
+    agreement `build.py:1046` asserts, contradicted (Codex consistency, section
+    45 post-ship, [medium]).
+
+    BLOCKQUOTED HEADINGS ARE KEPT HERE, and this is the ONE place in the
+    closure that deliberately differs from `build.py:1096` and
+    `todo-reachability._sections`. Those two model GRAPH SECTION CONTEXT, where
+    a quoted `> ## 99.` is an EXAMPLE and must not become a section. This check
+    models what GitHub RENDERS, and GitHub renders a heading inside a
+    blockquote as a heading with a slug -- so for anchor resolution it is a
+    real target. Skipping it here would resurrect the false-dead-anchor report
+    this section exists to end, one shape over (Codex design review, section
+    47).
+
+    LINKS STILL COME FROM THE PHYSICAL LINE. A container prefix cannot hide a
+    link from `_ANCHOR_LINK_RE`, which scans anywhere in the line, and
+    `_is_escaped` indexes the same string it searched -- so projecting the link
+    side would change offsets for no gain.
 
     Excluded because GitHub does not RENDER them as headings or links:
     fenced code blocks, HTML comments (which may span lines), inline code
@@ -1834,6 +1856,7 @@ def _scan_markdown(lines, mask):
     corpus's dominant authoring style; CommonMark agrees, since an indented
     code block cannot interrupt a list continuation.
     """
+    lines, mask, leaves = scan.lines, scan.mask, scan.leaf_views
     for lineno, raw in enumerate(lines, 1):
         # ONE SCAN, SHARED, MASK AND ALL. This walk used to run
         # `cache_schema.fence_step` itself and re-implement comment state beside
@@ -1851,10 +1874,12 @@ def _scan_markdown(lines, mask):
         # `#ghost` anchor.
         if mask[lineno - 1]:
             continue
-        # Headings come from the RAW line. Stripping code spans first would
-        # erase the span CONTENTS, and GitHub keeps them: `resolve_symbol` is
-        # part of its heading's slug, which 13 live anchors depend on.
-        h = _ATX_RE.match(raw)
+        # Headings come from the CONTAINER-STRIPPED line, with its code spans
+        # intact. Stripping code spans first would erase the span CONTENTS, and
+        # GitHub keeps them: `resolve_symbol` is part of its heading's slug,
+        # which 13 live anchors depend on. `leaf_views` removes only the
+        # container prefix, never the span.
+        h = _ATX_RE.match(leaves[lineno - 1])
         if h:
             yield ("heading",
                    _rendered_inline_text(_ATX_CLOSE_RE.sub("", h.group(2) or "")))
@@ -1901,7 +1926,6 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
         # nothing and removes the second walk's chance to disagree with the
         # first.
         _scan = cache_schema.scan_text(text)
-        lines, mask = _scan.lines, _scan.mask
         # THE VALIDATOR NOW REFUSES WHAT THE PRODUCER REFUSES. An unclosed fence
         # or comment masks to EOF, so every heading and link past the opener
         # reads as absent -- which this check would otherwise report as a file
@@ -1933,9 +1957,9 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
             # the difference is the deliberate half.
             _refuse(f"{_cs.terminal_category(_scan.terminal)}: {rel}: {reason}")
         valid = _heading_slugs(
-            ev[1] for ev in _scan_markdown(lines, mask) if ev[0] == "heading")
+            ev[1] for ev in _scan_markdown(_scan) if ev[0] == "heading")
         dead: dict = {}
-        for ev in _scan_markdown(lines, mask):
+        for ev in _scan_markdown(_scan):
             if ev[0] != "link":
                 continue
             _, lineno, anchor = ev

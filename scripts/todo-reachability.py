@@ -149,8 +149,29 @@ OWNER_RE = re.compile(
 # the gate that holds `phase FIXPOINT` open.
 
 
-def _sections(lines, mask):
-    """(number, line, body) with the body ending at the next `## ` of ANY kind.
+def _sections(scan):
+    """(head, line, body_idx) with the body ending at the next `## ` of ANY kind.
+
+    THE SECTION SET COMES FROM THE PRODUCER'S PROJECTION (section 47), not from
+    physical lines. `build.py` moved its five section-context walks onto
+    `ScanResult.leaf_views` in section 45 and this walk stayed behind, so the
+    producer and the gate disagreed about what a section IS. For `## 1. Root` /
+    `- ## 2. Nested` / an indented open item the producer saw sections 1 and 2
+    while this saw only section 1 and filed the item under it -- and with
+    section 1 open and section 2 DONE the fixpoint gate then emitted no
+    `open-in-done` finding at all (Codex consistency, section 45 post-ship,
+    [high]).
+
+    BLOCKQUOTED HEADINGS ARE SKIPPED, matching `build.py:1096`, and that is not
+    bookkeeping: `leaf_views` consumes the marker the line opens, so
+    `> ## 99. Example` projects to `## 99. Example` and classifies as a real
+    heading where the physical line never could. Adopting the projection
+    WITHOUT the blockquote predicate would promote every quoted example in the
+    corpus into a section boundary -- a regression created by the fix (Codex
+    design review, section 47, [high]).
+
+    YIELDS BODY INDICES rather than lines, because the body's matchers do NOT
+    agree on a projection and must not be forced to. See `audit`.
 
     Ending only at the next NUMBERED section is wrong and was caught on
     2026-08-02 before it caused a bad edit: the LAST numbered section's body
@@ -170,20 +191,24 @@ def _sections(lines, mask):
     here, so a fenced `- [ ]` or a fenced `> **Verified:**` would otherwise
     still be counted.
     """
+    mask, leaves = scan.mask, scan.leaf_views
+    in_bq = scan.in_blockquote
     # Yields the CLASSIFICATION, not a number: an over-long heading has no
     # usable number and still delimits its section, so a caller has to be able
     # to tell those apart. Handing back an int would force this walk to either
     # invent one or drop the heading, and dropping it re-parents every item
     # after it -- the exact misattribution the shared rule exists to refuse.
-    starts = [(i, h) for i, l in enumerate(lines)
-              if not mask[i] and (h := _fence.classify_heading(l)).kind != "none"]
+    starts = [(i, h) for i, l in enumerate(leaves)
+              if not mask[i] and not in_bq(i)
+              and (h := _fence.classify_heading(l)).kind != "none"]
+    n = len(scan.lines)
     for ln, head in starts:
-        end = len(lines)
-        for j in range(ln + 1, len(lines)):
-            if not mask[j] and _fence.is_h2(lines[j]):
+        end = n
+        for j in range(ln + 1, n):
+            if not mask[j] and not in_bq(j) and _fence.is_h2(leaves[j]):
                 end = j
                 break
-        yield head, ln, [lines[j] for j in range(ln, end) if not mask[j]]
+        yield head, ln, [j for j in range(ln, end) if not mask[j]]
 
 
 def _io_rows(lines, mask):
@@ -587,7 +612,40 @@ def audit(path, root="."):
     rows = _io_rows(lines, mask)
     status_map = _io_status(path, root, rows)
     out = []
-    for head, ln, body in _sections(lines, mask):
+    # TWO PROJECTIONS, DELIBERATELY, because the body's matchers disagree about
+    # what a container prefix means and section 47 measured the disagreement
+    # rather than picking a winner:
+    #
+    #   ITEMS read `views` and SKIP blockquoted lines. `views` strips outer
+    #   containers, so an indented `  - [x]` under a nested heading matches and
+    #   is owned by that heading -- which is the whole point. But it also strips
+    #   the `> ` from a quoted item's CONTINUATION lines (the opener keeps its
+    #   marker, the rest do not), so `> - [ ] quoted example` on line 2 of a
+    #   blockquote would become a live open item. The predicate, not the
+    #   projection, is what keeps a quoted example out.
+    #
+    #   STAMPS read PHYSICAL lines. `VERIFIED_RE`/`DEFERRED_RE`/`QUALITY_RE` are
+    #   anchored `^> \*\*` and `views` keeps that marker only on the line that
+    #   OPENS the blockquote -- every CONTINUATION line loses it. Measured
+    #   2026-08-12 on the ordinary two-line stamp block: `> **Verified:**`
+    #   matches and the `> **Quality reviewed:**` under it does NOT, so a fully
+    #   stamped section would read verified-but-unreviewed and silently stop
+    #   being DONE. That is a partial, asymmetric corruption rather than a loud
+    #   one, which is what makes it dangerous in the gate holding `phase
+    #   FIXPOINT` open. Staying physical also keeps this in agreement with
+    #   `sequencer_triage.section_stamps()`
+    #   (`.claude/hooks/sequencer_triage.py:56`), the authority `_is_done`
+    #   mirrors, which reads physical lines at column zero (Codex design
+    #   review, section 47, [medium]).
+    #
+    # This is the same split `build.py` already makes by excluding
+    # `_walk_stamps_xrefs` from the projection closure (`build.py:1077`): a walk
+    # that matches ON the container marker cannot be given a projection that
+    # removes it.
+    views, in_bq = scan.views, scan.in_blockquote
+    for head, ln, body_idx in _sections(scan):
+        body = [views[j] for j in body_idx if not in_bq(j)]
+        stamp_body = [lines[j] for j in body_idx]
         # An unusable heading number is REPORTED, never dropped. Dropping it
         # would merge this section's items into the previous section's body and
         # then judge them against the wrong Implementation Order row, which is a
@@ -601,10 +659,11 @@ def audit(path, root="."):
         num = head.n
         opens = [b.strip()[:90] for b in body if OPEN_ITEM_RE.match(b)]
         parked = [b.strip() for b in body if PARKED_ITEM_RE.match(b)]
-        deferred = any(DEFERRED_RE.match(b) for b in body)
-        stamped = any(VERIFIED_RE.match(b) for b in body)
-        quality = any(QUALITY_RE.match(b) for b in body)
-        awaiting = any(DEFERRED_RE.match(b) and AWAITING_RE.search(b) for b in body)
+        deferred = any(DEFERRED_RE.match(b) for b in stamp_body)
+        stamped = any(VERIFIED_RE.match(b) for b in stamp_body)
+        quality = any(QUALITY_RE.match(b) for b in stamp_body)
+        awaiting = any(DEFERRED_RE.match(b) and AWAITING_RE.search(b)
+                       for b in stamp_body)
 
         # 1. body with no Implementation Order row -- invisible to the oracle
         if num not in rows and (opens or parked):

@@ -262,8 +262,19 @@ def test_reachability():
     lines, mask = _s.lines, _s.mask
     blind = [False] * len(lines)
 
-    aware_secs = {h.n for h, _, _ in reach._sections(lines, mask)}
-    blind_secs = {h.n for h, _, _ in reach._sections(lines, blind)}
+    # `_sections` takes the whole ScanResult since section 47 (it needs
+    # `leaf_views` and `in_blockquote`, not just the mask). The fence-blind
+    # CONTROL therefore shadows the mask on a wrapper rather than passing a
+    # second array, so it still isolates fence-blindness alone.
+    class _Blind:
+        def __init__(self, s):
+            self._s, self.mask = s, blind
+
+        def __getattr__(self, k):
+            return getattr(self._s, k)
+
+    aware_secs = {h.n for h, _, _ in reach._sections(_s)}
+    blind_secs = {h.n for h, _, _ in reach._sections(_Blind(_s))}
     check("reachability: fence-aware sees only the real section",
           aware_secs == {1})
     check("reachability CONTROL: the fence-blind walk invents section 99",
@@ -364,7 +375,14 @@ def test_reachability():
     # `_sections` yields the CLASSIFICATION since section 43, not a bare number:
     # an over-long heading has no usable number and still delimits its section,
     # and a caller has to be able to tell those apart.
-    body = next(b for h, _, b in reach._sections(lines, mask) if h.n == 1)
+    # `_sections` yields body INDICES since section 47, because the body's
+    # matchers do not share a projection: items read `views`, the `^> \*\*`
+    # stamps read physical lines. These assertions project the same way `audit`
+    # does.
+    def _body(scan, n):
+        return next((b for h, _, b in reach._sections(scan) if h.n == n), None)
+
+    body = [_s.views[j] for j in _body(_s, 1)]
     check("reachability: no fenced open item in the real section's body",
           not any("a fenced example item" in b for b in body))
     check("reachability: no fenced Deferred stamp in the real section's body",
@@ -372,8 +390,8 @@ def test_reachability():
     # Fence-blind, the fenced heading TERMINATES the real section and the
     # example item is attributed to the phantom section 99 instead -- which is
     # the `no-io-row` verdict this gate used to raise over a code sample.
-    blind_99 = next((b for h, _, b in reach._sections(lines, blind) if h.n == 99),
-                    None)
+    _b99 = _body(_Blind(_s), 99)
+    blind_99 = None if _b99 is None else [_s.views[j] for j in _b99]
     check("reachability CONTROL: fence-blind, the item lands under phantom 99",
           blind_99 is not None
           and any("a fenced example item" in b for b in blind_99))
@@ -469,22 +487,28 @@ def test_staged_check():
     _s = tf.scan_text(FIXTURE)
     lines, mask = _s.lines, _s.mask
     vis = ["" if mask[i] else l for i, l in enumerate(lines)]
+    # The SECTION-HEADING view the gate builds since section 47: the leaf
+    # projection with fenced AND blockquoted lines blanked. The fence-blind
+    # controls below pass the UNBLANKED projection, so each one still isolates
+    # exactly the blindness it is named for.
+    sec_vis = ["" if (mask[i] or _s.in_blockquote(i)) else l
+               for i, l in enumerate(_s.leaf_views)]
 
     check("staged-check: fenced headings do not count toward the section cap",
-          stg._section_total(vis) == 1)
+          stg._section_total(sec_vis) == 1)
     check("staged-check CONTROL: fence-blind, the fenced example counts too",
-          stg._section_total(lines) == 2)
+          stg._section_total(_s.leaf_views) == 2)
 
     added_all = [(i + 1, l) for i, l in enumerate(lines)]
     masked_nos = {i + 1 for i, m in enumerate(mask) if m}
     added_vis = [(n, t) for n, t in added_all if n not in masked_nos]
     check("staged-check: a fenced `## N.` is not an added section",
-          [t for _, t in stg.added_sections(added_vis)]
+          [t for _, t in stg.added_sections(added_vis, sec_vis)]
           == ["## 1. The Real Section"])
     check("staged-check CONTROL: fence-blind, the fenced heading is one too",
-          len(stg.added_sections(added_all)) == 2)
+          len(stg.added_sections(added_all, _s.leaf_views)) == 2)
     check("staged-check: no fenced park is reported",
-          stg._park_into_shipping_section(vis, added_vis) == [])
+          stg._park_into_shipping_section(vis, sec_vis, added_vis) == [])
 
     # THE SNAPSHOT. Stage one version, leave a DIFFERENT one in the worktree,
     # and confirm the gate judged the STAGED bytes. The worktree-only copy adds
@@ -1766,8 +1790,9 @@ def test_one_heading_rule_section43():
     adjacent = ("# T\n\n## 1. One\n\n- [ ] item one\n\n"
                 "   ## 2. Two\n\n- [ ] item two\n")
     asc = fence.scan_text(adjacent)
-    bodies = {h.n: [b for b in body if b.strip().startswith("- [")]
-              for h, _, body in reach._sections(asc.lines, asc.mask)}
+    bodies = {h.n: [asc.views[j] for j in body
+                    if asc.views[j].strip().startswith("- [")]
+              for h, _, body in reach._sections(asc)}
     check("s43: adjacent indented sections have DISJOINT bodies",
           bodies.get(1) == ["- [ ] item one"]
           and bodies.get(2) == ["- [ ] item two"])
@@ -1937,6 +1962,399 @@ def test_one_heading_rule_section43():
           cs._HEADING_DIGIT_LIMIT == len(str(cs._MAX_SECTION_N)))
 
 
+# --------------------------------------------------------------------------
+# 15. Section 47: the GATE CONSUMERS agree with the PRODUCER about what a
+#     section is. ONE fixture drives build.py, todo-reachability.py,
+#     todo-staged-check.py and validate.py; each claim is paired with a control
+#     proving the physical-line classifier disagreed.
+# --------------------------------------------------------------------------
+# `- ## 2. Nested` is a list item containing a real h2 to CommonMark, so the
+# producer records section 2 and files the indented items under it. Every gate
+# below used to classify headings from PHYSICAL lines, so each saw one section
+# and filed section 2's items under section 1.
+_S47 = "\n".join([
+    "# Fixture",
+    "",
+    "## Implementation Order",
+    "",
+    "| S | Order | Section | Deliverable | Dep | Status |",
+    "| - | :-: | :-: | - | - | :-: |",
+    "| x |  1   | " + S + "1 | Root section    | - |  [ ]   |",
+    "| x |  2   | " + S + "2 | Nested section  | - |  [x]   |",
+    "",
+    "## 1. Root",
+    "",
+    "- [ ] root open item",
+    "",
+    "- ## 2. Nested",
+    "  - [x] `nested_helper()` shipped under the nested heading",
+    "  - [ ] still open under the nested heading",
+    "",
+    "> **Verified:** 2026-08-12 nested section",
+    "> **Quality reviewed:** 2026-08-12",
+    "",
+    "[jump](#2-nested)",
+    ""])
+
+# The SAME document with a QUOTED heading added. A `> ## 99.` is an EXAMPLE:
+# `leaf_views` turns it into a real heading, so every consumer that adopts the
+# projection must also carry `in_blockquote` or it invents a section here.
+_S47_QUOTED = _S47.replace("- [ ] root open item",
+                           "- [ ] root open item\n\n> ## 99. Quoted example")
+
+
+def test_section_context_closure_section47():
+    reach = load("reach_s47", "scripts/todo-reachability.py")
+    stg = load("staged_s47", "scripts/todo-staged-check.py")
+    bld = load("build_s47", "scripts/todo-graph/build.py")
+    val = load("validate_s47", "scripts/todo-graph/validate.py")
+    fence = load("fence_s47", "scripts/todo_fence.py")
+
+    _s = fence.scan_text(_S47)
+
+    # -- 1. THE PRODUCER is the reference: sections {1, 2}.
+    prod = {n for n, _ in bld.extract_section_headings(_S47)}
+    check("s47: the producer sees both the root and the nested section",
+          prod == {1, 2})
+
+    # -- 2. REACHABILITY agrees, and files the item under the RIGHT section.
+    secs = {h.n for h, _, _ in reach._sections(_s)}
+    check("s47: reachability agrees with the producer on the section set",
+          secs == prod)
+    owned = {h.n: [_s.views[j] for j in body
+                   if _s.views[j].lstrip().startswith("- [")]
+             for h, _, body in reach._sections(_s)}
+    check("s47: the nested section owns its own items",
+          any("nested_helper" in b for b in owned.get(2, []))
+          and not any("nested_helper" in b for b in owned.get(1, [])))
+    # CONTROL: the physical-line classifier this section replaced saw ONE
+    # section and swept the nested items into it.
+
+    class _Physical:
+        """The same scan projected onto PHYSICAL lines -- the pre-section-47
+        classifier, which is what has to disagree for the fix to mean
+        anything."""
+
+        def __init__(self, s):
+            self._s = s
+            self.leaf_views = s.lines
+            self.views = s.lines
+
+        def __getattr__(self, k):
+            return getattr(self._s, k)
+
+    phys = _Physical(_s)
+    phys_secs = {h.n for h, _, _ in reach._sections(phys)}
+    check("s47 CONTROL: the physical-line classifier saw only section 1",
+          phys_secs == {1})
+    phys_owned = {h.n: [phys.views[j] for j in body
+                        if phys.views[j].lstrip().startswith("- [")]
+                  for h, _, body in reach._sections(phys)}
+    check("s47 CONTROL: ...and swept the nested item under section 1",
+          any("nested_helper" in b for b in phys_owned.get(1, [])))
+
+    # -- 3. THE MISATTRIBUTION IS THE DEFECT, and it is attribution rather than
+    # silence. With the stamps landing in the nested section's body, the fixed
+    # walk reports `open-in-done` against section 2 -- the section that is
+    # actually DONE -- while the physical-line walk reported it against section
+    # 1, whose Implementation Order row is still open. A gate naming the wrong
+    # section sends the repair to the wrong place.
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "TODO-99-s47.md"
+        p.write_text(_S47, encoding="utf-8")
+        found = reach.audit(str(p), root=d)
+    done_secs = {sec for kind, sec, _ in found if kind == "open-in-done"}
+    check("s47: `open-in-done` is attributed to the DONE nested section",
+          done_secs == {2})
+
+    # -- 4. STAGED-CHECK counts the nested section and demands its provenance.
+    def _views(text):
+        s = fence.scan_text(text)
+        vis = ["" if s.mask[i] else l for i, l in enumerate(s.lines)]
+        sec_vis = ["" if (s.mask[i] or s.in_blockquote(i)) else l
+                   for i, l in enumerate(s.leaf_views)]
+        return s, vis, sec_vis
+
+    s2, vis, sec_vis = _views(_S47)
+    check("s47: the staged section total counts the nested section",
+          stg._section_total(sec_vis) == 2)
+    check("s47 CONTROL: on physical lines the nested section was uncountable",
+          stg._section_total(vis) == 1)
+    added = [(i + 1, l) for i, l in enumerate(s2.lines)]
+    check("s47: a nested `- ## N.` is an ADDED section (so it hits the cap)",
+          2 in {stg._is_section(sec_vis[n - 1]) and n
+                for n, _ in stg.added_sections(added, sec_vis)} or
+          len(stg.added_sections(added, sec_vis)) == 2)
+    # The path is used ONLY by `_file_is_new` (a new file's sections are roots
+    # by construction and exempt), so it must name a blob that exists in HEAD
+    # for the provenance check to engage at all.
+    _tracked = "todo/00-infrastructure/TODO-06-todo-metadata-layer.md"
+    check("s47: the nested section must declare its provenance",
+          any("2. Nested" in head for _, head in
+              stg._sections_missing_provenance(_tracked, vis, sec_vis, added)))
+    check("s47 CONTROL: on physical lines it escaped the provenance check",
+          not any("2. Nested" in head for _, head in
+                  stg._sections_missing_provenance(_tracked, vis, vis, added)))
+
+    # -- 5. A QUOTED heading is NOT a section, in either consumer. This is the
+    # regression the fix would have introduced: `leaf_views` alone promotes
+    # `> ## 99.` into a heading, so the blockquote predicate is load-bearing.
+    qs = fence.scan_text(_S47_QUOTED)
+    check("s47: a quoted `> ## 99.` is not a section to the producer",
+          99 not in {n for n, _ in bld.extract_section_headings(_S47_QUOTED)})
+    check("s47: ...nor to reachability",
+          99 not in {h.n for h, _, _ in reach._sections(qs)})
+    _, qvis, qsec = _views(_S47_QUOTED)
+    check("s47: ...nor to the staged section count",
+          stg._section_total(qsec) == 2)
+    check("s47 CONTROL: without the blockquote predicate it would count 3",
+          stg._section_total(["" if qs.mask[i] else l
+                              for i, l in enumerate(qs.leaf_views)]) == 3)
+
+    # -- 6. VALIDATE resolves the nested heading's anchor -- through
+    # `check_in_file_anchor`, not just the slug helper. An earlier version of
+    # this test asserted `"3-missing" not in slugs` and called that the
+    # dead-anchor control; the fixture contained no such link and the checker
+    # was never invoked, so the assertion held even with dead-anchor reporting
+    # switched off entirely (Codex test-coverage, section 47, [medium]).
+    slugs = val._heading_slugs(ev[1] for ev in val._scan_markdown(_s)
+                               if ev[0] == "heading")
+    check("s47: the nested heading's anchor resolves",
+          "2-nested" in slugs)
+    check("s47 CONTROL: on physical lines that anchor was reported dead",
+          "2-nested" not in val._heading_slugs(
+              ev[1] for ev in val._scan_markdown(phys) if ev[0] == "heading"))
+
+    def _anchor_findings(text):
+        """`check_in_file_anchor` over a one-file snapshot: `{file_path: text}`."""
+        rel = "todo/00-x/TODO-99-s47.md"
+        return val.check_in_file_anchor([{"file_path": rel}], {rel: text})
+
+    check("s47: the live `#2-nested` link raises no dead-anchor finding",
+          not any("2-nested" in f.detail for f in _anchor_findings(_S47)))
+    _dead = _anchor_findings(_S47 + "\n[dead](#3-missing)\n")
+    check("s47 CONTROL: a genuinely dead anchor IS reported",
+          any("3-missing" in f.detail for f in _dead))
+    # A heading inside a blockquote IS a real anchor target: GitHub renders it
+    # and gives it a slug. This is the ONE place the closure deliberately
+    # differs from the graph-context walks above.
+    qslugs = val._heading_slugs(ev[1] for ev in val._scan_markdown(qs)
+                                if ev[0] == "heading")
+    check("s47: a quoted heading still anchors (GitHub renders it)",
+          "99-quoted-example" in qslugs)
+
+    # -- 7. STAMPS STAY ON PHYSICAL LINES, and this is the control that proves
+    # why. `views` keeps the blockquote marker only on the line that OPENS the
+    # quote, so in the ordinary two-line stamp block `> **Verified:**` still
+    # matches while the `> **Quality reviewed:**` CONTINUATION under it does
+    # not. A fully stamped section would read verified-but-unreviewed and
+    # silently stop being DONE -- a partial, asymmetric corruption in the gate
+    # that holds `phase FIXPOINT` open.
+    check("s47: both stamps match on physical lines",
+          any(reach.VERIFIED_RE.match(l) for l in _s.lines)
+          and any(reach.QUALITY_RE.match(l) for l in _s.lines))
+    check("s47 CONTROL: on `views` the continuation stamp silently stops "
+          "matching",
+          any(reach.VERIFIED_RE.match(v) for v in _s.views)
+          and not any(reach.QUALITY_RE.match(v) for v in _s.views))
+
+    # -- 8. AN OVER-LONG NESTED HEADING IS REFUSED, NOT DROPPED. The producer
+    # side of this was pinned in section 45; reachability's was not, and a walk
+    # that DROPS the heading re-parents its items under the previous section --
+    # a wrong answer rather than a missing one (Codex test-coverage, section 47,
+    # [medium]).
+    _long = "\n".join([
+        "## Implementation Order",
+        "",
+        "| S | Order | Section | Deliverable | Dep | Status |",
+        "| - | :-: | :-: | - | - | :-: |",
+        "| x |  1   | " + S + "1 | Root | - |  [ ]   |",
+        "",
+        "## 1. Root",
+        "",
+        "- [ ] root item",
+        "",
+        "- ## 12345678901. Too many digits to be a section number",
+        "  - [ ] item under the unusable heading",
+        ""])
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "TODO-99-long.md"
+        p.write_text(_long, encoding="utf-8")
+        long_found = reach.audit(str(p), root=d)
+    check("s47: an over-long NESTED heading is reported, not dropped",
+          any(k == "unusable-heading" for k, _, _ in long_found))
+    # ...and its child item is NOT re-parented onto section 1, which is the
+    # damage dropping the heading would do.
+    _ls = fence.scan_text(_long)
+    _lowned = {h.n: [_ls.views[j] for j in body
+                     if _ls.views[j].lstrip().startswith("- [")]
+               for h, _, body in reach._sections(_ls) if h.kind == "ok"}
+    check("s47: the unusable heading's item is not re-parented onto section 1",
+          not any("under the unusable heading" in b
+                  for b in _lowned.get(1, [])))
+    check("s47 CONTROL: the physical-line walk saw no unusable heading at all",
+          not any(h.kind == "over-long"
+                  for h, _, _ in reach._sections(_Physical(_ls))))
+
+    # -- 9. THE FENCE MASK STILL WINS OVER THE PROJECTION. `leaf_views`
+    # transforms a nested `- ## N.` whether or not it is fenced, so the mask has
+    # to suppress it independently -- the composite case the unfenced fixture
+    # above cannot reach (Codex test-coverage, section 47, [medium]).
+    _fenced_nested = "\n".join([
+        "## 1. Root",
+        "",
+        "```",
+        "- ## 99. Fenced nested example",
+        "```",
+        "",
+        "> - ## 98. Quoted nested example",
+        ""])
+    _fs = fence.scan_text(_fenced_nested)
+    _fsecs = {h.n for h, _, _ in reach._sections(_fs) if h.kind == "ok"}
+    check("s47: a FENCED nested heading is not a section",
+          _fsecs == {1})
+    check("s47: a QUOTED nested heading is not a section either",
+          98 not in _fsecs)
+    check("s47: the producer agrees on the same composite document",
+          {n for n, _ in bld.extract_section_headings(_fenced_nested)} == {1})
+    _, _fvis, _fsec = _views(_fenced_nested)
+    check("s47: neither counts toward the staged section total",
+          stg._section_total(_fsec) == 1)
+    # THE VALIDATOR SPLITS HERE, and that is the documented divergence rather
+    # than an inconsistency: the FENCED heading is not rendered by GitHub and
+    # must not anchor, while the QUOTED one IS rendered with a slug and must.
+    # This assertion is what proves the two rules are independent -- the mask
+    # suppresses, the blockquote predicate (deliberately absent here) does not.
+    _vslugs = val._heading_slugs(ev[1] for ev in val._scan_markdown(_fs)
+                                 if ev[0] == "heading")
+    check("s47: the FENCED nested heading is not a validator anchor",
+          "99-fenced-nested-example" not in _vslugs)
+    check("s47: the QUOTED nested heading IS an anchor (GitHub renders it)",
+          "98-quoted-nested-example" in _vslugs)
+    # CONTROLS: remove the fence and remove the quote INDEPENDENTLY, and each
+    # heading must become visible -- proving the suppression came from the mask
+    # and the predicate rather than from the projection failing to see them.
+    _unfenced = _fenced_nested.replace("```\n", "")
+    check("s47 CONTROL: unfenced, the same nested heading IS a section",
+          99 in {h.n for h, _, _ in reach._sections(fence.scan_text(_unfenced))
+                 if h.kind == "ok"})
+    _unquoted = _fenced_nested.replace("> - ## 98.", "- ## 98.")
+    check("s47 CONTROL: unquoted, the same nested heading IS a section",
+          98 in {h.n for h, _, _ in reach._sections(fence.scan_text(_unquoted))
+                 if h.kind == "ok"})
+
+
+# --------------------------------------------------------------------------
+# 16. Section 47: the staged gate REFUSES a document whose git coordinates and
+#     scan coordinates cannot agree.
+# --------------------------------------------------------------------------
+def test_staged_coordinate_refusal_section47():
+    stg = load("staged_coord_s47", "scripts/todo-staged-check.py")
+    # `git diff` delimits on LF alone; `cache_schema.normalize_newlines` also
+    # maps lone CR, VT, FF, NEL and U+2028/9 to `\n`. One git line then becomes
+    # several projection lines and every lineno-keyed check addresses unrelated
+    # text. 0 of 281 corpus files contain one, so this refuses a shape that does
+    # not occur rather than changing a live verdict.
+    for name, brk in (("lone CR", "\r"), ("vertical tab", "\v"),
+                      ("form feed", "\f"), ("NEL", "\x85"),
+                      ("line separator", "\u2028")):
+        text = "## 1. One\n\nbody" + brk + "more\n\n- ## 2. Two\n"
+        lines, mask, leaves, in_bq, reason = stg._post_image_lines(text)
+        check("s47: a %s makes the staged document unscannable" % name,
+              bool(reason) and lines is None)
+    ok = "## 1. One\n\nbody\n\n- ## 2. Two\n"
+    lines, mask, leaves, in_bq, reason = stg._post_image_lines(ok)
+    check("s47 CONTROL: a plain LF document is still scanned",
+          not reason and lines is not None and leaves is not None)
+    crlf = "## 1. One\r\n\r\nbody\r\n"
+    check("s47 CONTROL: CRLF is normalised, not refused (git counts it as one)",
+          not stg._post_image_lines(crlf)[4])
+
+    # EVERY break the production regex accepts is covered, and the WHOLE tuple
+    # is asserted -- a refusal that returned real `lines` with a reason set
+    # would let a caller walk the unprojected document anyway (Codex
+    # test-coverage, section 47, [medium]).
+    for name, brk in (("FS", "\x1c"), ("GS", "\x1d"), ("RS", "\x1e"),
+                      ("paragraph separator", "\u2029")):
+        got = stg._post_image_lines("## 1. One\n\nbody" + brk + "more\n")
+        check("s47: a %s is refused too" % name,
+              bool(got[4]) and got[:4] == (None, None, None, None))
+    check("s47: the refusal returns the FULL null tuple, not just null lines",
+          stg._post_image_lines("a\rb")[:4] == (None, None, None, None))
+
+    # `added_sections` indexes `heads_view` BY GIT LINE NUMBER, so its bounds
+    # are a real index path: line 0 and line > len must be dropped rather than
+    # wrap or raise, and a heading on the FIRST and LAST line must survive.
+    hv = ["## 1. One", "body", "  ## 2. Two"]
+    check("s47: an out-of-range added lineno is dropped, not wrapped",
+          stg.added_sections([(0, "x"), (99, "y")], hv) == [])
+    check("s47 CONTROL: line 1 and the LAST line are both still returned",
+          [n for n, _ in stg.added_sections(
+              [(1, "## 1. One"), (3, "- ## 2. Two")], hv)] == [1, 3])
+
+
+def test_logical_section_addition_section47():
+    """A section can be created by a CONTAINER edit that never touches the
+    heading line; the cap and provenance controls must still see it."""
+    stg = load("staged_logical_s47", "scripts/todo-staged-check.py")
+    fence = load("fence_logical_s47", "scripts/todo_fence.py")
+
+    # HEAD has an indented `## 2.` that is an indented CODE BLOCK -- not a
+    # section. The commit adds ONLY the list opener above it, which turns the
+    # unchanged line into list content whose projection is a real heading.
+    head = "# T\n\nprose\n\n    ## 2. Nested\n"
+    staged = "# T\n\nprose\n\n- opener\n    ## 2. Nested\n"
+    hs, ss = fence.scan_text(head), fence.scan_text(staged)
+    head_secs = {fence.classify_heading(l).n
+                 for i, l in enumerate(hs.leaf_views)
+                 if not hs.mask[i] and not hs.in_blockquote(i)
+                 and fence.classify_heading(l).kind == "ok"}
+    staged_secs = {fence.classify_heading(l).n
+                   for i, l in enumerate(ss.leaf_views)
+                   if not ss.mask[i] and not ss.in_blockquote(i)
+                   and fence.classify_heading(l).kind == "ok"}
+    check("s47: the container edit alone creates a producer-visible section",
+          head_secs == set() and staged_secs == {2})
+
+    sec_vis = ["" if (ss.mask[i] or ss.in_blockquote(i)) else l
+               for i, l in enumerate(ss.leaf_views)]
+    # Only the opener (line 5) is in the diff; the heading is line 6.
+    added = [(5, "- opener")]
+    check("s47 CONTROL: the line-based set does not contain the heading line",
+          6 not in {n for n, _ in added})
+
+    with tempfile.TemporaryDirectory() as d:
+        _git(d, "init", "-q", ".")
+        _git(d, "config", "user.email", "t@t")
+        _git(d, "config", "user.name", "t")
+        rel = "todo/00-x/TODO-99-logical.md"
+        fp = pathlib.Path(d) / rel
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(head, encoding="utf-8")
+        _git(d, "add", rel)
+        _git(d, "commit", "-q", "-m", "base")
+        fp.write_text(staged, encoding="utf-8")
+        _git(d, "add", rel)
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            head_nos = stg._head_section_numbers(rel)
+            widened = stg._section_additions(rel, ss.lines, sec_vis, added)
+        finally:
+            os.chdir(cwd)
+
+    check("s47: HEAD's projected section set is read for comparison",
+          head_nos == set())
+    check("s47: the untouched heading line joins the section additions",
+          6 in {n for n, _ in widened})
+    check("s47: ...so the nested section now counts as ADDED",
+          [n for n, _ in stg.added_sections(widened, sec_vis)] == [6])
+    check("s47 CONTROL: without the logical delta it counted as nothing",
+          stg.added_sections(added, sec_vis) == [])
+    check("s47: the line-based checks keep the UNWIDENED set",
+          len(added) == 1 and added[0][0] == 5)
+
+
 def main():
     test_shim()
     test_container_aware_fences()
@@ -1953,6 +2371,9 @@ def main():
     test_one_heading_rule_section43()
     test_container_phase_section45()
     test_html_block_type7_section46()
+    test_section_context_closure_section47()
+    test_staged_coordinate_refusal_section47()
+    test_logical_section_addition_section47()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))

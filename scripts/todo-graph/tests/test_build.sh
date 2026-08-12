@@ -1512,12 +1512,12 @@ def eq(got, want, label):
 # `_scan_markdown` yields ("heading", title) / ("link", lineno, anchor) events
 # rather than building whole-file lists, so an anchor-dense file cannot
 # amplify memory. These two adapters keep the assertions readable.
-# `_scan_markdown` takes the SHARED scan's (lines, mask) since section 39, so
-# the producer and the validator cannot drift about what is fenced. These
-# adapters do here what the production caller does once per file.
+# `_scan_markdown` takes the SHARED ScanResult since section 47 (it needs
+# `leaf_views` for headings, not just the mask), so the producer and the
+# validator cannot drift about what is fenced OR about what a container-nested
+# heading is. These adapters do here what the production caller does once/file.
 def sm(src):
-    _s = v.cache_schema.scan_text(src)
-    return v._scan_markdown(_s.lines, _s.mask)
+    return v._scan_markdown(v.cache_schema.scan_text(src))
 def links(src):
     return [(e[1], e[2]) for e in sm(src) if e[0] == "link"]
 def heads(src):
@@ -1662,8 +1662,7 @@ import validate as v
 
 fails = []
 def sm(src):
-    _s = v.cache_schema.scan_text(src)
-    return v._scan_markdown(_s.lines, _s.mask)
+    return v._scan_markdown(v.cache_schema.scan_text(src))
 # Linear comment scanning: 100k comments must not take seconds.
 line = "<!---->" * 100000 + "\n"
 t0 = time.perf_counter(); list(sm(line)); dt = time.perf_counter() - t0
