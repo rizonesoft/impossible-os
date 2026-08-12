@@ -103,19 +103,16 @@ class CacheUnusable(RuntimeError):
         super().__init__(message)
         self.reason = reason
 
-# THE DIGIT RUN IS BOUNDED, for the reason `todo-section-order.py:68` and
-# `cache_schema.SECTION_HEADING_RE` are: line 161 feeds group 1 straight to
-# `int()`, and CPython refuses a string->int conversion over 4,300 digits, so a
-# heading carrying a 5,000-digit number raised ValueError out of THIS gate --
-# the one that holds `phase FIXPOINT` open, where a crash is worse than a
-# finding (Codex adversarial + consistency, section 42, [medium]).
-#
-# THIS IS ONLY THE DIGIT WIDTH. This grammar still differs from the shared
-# `cache_schema.SECTION_HEADING_RE` in anchoring (that one allows CommonMark's
-# 0-3 leading spaces, this one demands column 0), so the two still disagree
-# about an indented heading. Unifying them is section 43's one-grammar work;
-# this bound closes the crash without pretending the drift is gone.
-SECTION_RE = re.compile(r"^## (\d{1,9})\.")
+# UNBOUNDED DIGIT RUN, deliberately -- section 42 bounded this to `\d{1,9}` and
+# reverted it with the matching bound in `cache_schema.SECTION_HEADING_RE`. The
+# bound stops the `int()` crash on line 161 (CPython refuses a conversion over
+# 4,300 digits) but makes an over-long heading stop delimiting a section, so
+# every item after it is silently re-attributed to the previous one -- a quiet
+# wrong answer in place of a loud failure, which is the wrong trade for a gate.
+# Reported as one finding across all four copies of this grammar; section 43's
+# one-grammar work owns matching-and-reporting it. Measured: 0 corpus headings
+# exceed 9 digits.
+SECTION_RE = re.compile(r"^## (\d+)\.")
 OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
 # AUTHOR-TIME marker for a recurring/standing task -- work that is

@@ -1116,6 +1116,25 @@ _LINK_REF_DEF_RE = re.compile(r"^ {0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*\S")
 # delimiter character anywhere -- into a C-level scan instead of a regex call.
 _FENCE_CHARS = ("`", "~")
 
+
+def _is_blank(s: str) -> bool:
+    """CommonMark's blank line: spaces and tabs ONLY.
+
+    ONE PREDICATE, because four spellings of it disagreed. Python's `str.strip()`
+    and `str.isspace()` are Unicode-aware and count U+00A0 as whitespace;
+    CommonMark does not. Section 42 fixed the HTML-block branch and left the
+    container phase on `.strip()`, so the bug simply moved: a list-contained
+    `<details>` followed by an indented NBSP line still ended early, publishing
+    the `## 99.` and `- [x]` after it as real structure -- and a `- ` + NBSP
+    marker still read as an empty item, refusing to open its container and
+    re-parenting a later section's work (Codex re-adversarial round 5, section
+    42, both [high]).
+
+    Fixing one caller of a rule that has four spellings is how the rule stays
+    broken, which is the lesson sections 36-39 are named after.
+    """
+    return not s.strip(" \t")
+
 # ---- CommonMark HTML BLOCKS, types 1-7 (TODO-06 section 42) ----
 #
 # THE RULES ARE COPIED FROM THE DIFFERENTIAL ORACLE, not paraphrased from the
@@ -1198,13 +1217,6 @@ HTML_BLOCK_RULES = (
         6, "tag-block",
         re.compile("^</?(" + _HTML_BLOCK_NAMES + r")(?=(\s|/?>|$))", re.I),
         None, END_ON_BLANK, True, "a blank line"),
-    # TYPE 7 IS THE ONLY ROW THAT CANNOT INTERRUPT A PARAGRAPH. Without that
-    # flag an ordinary prose line ending in a complete tag would start a block
-    # and hide everything to the next blank line.
-    HtmlBlockRule(
-        7, "tag-any",
-        re.compile(r"^(?:" + _OPEN_TAG + r"|" + _CLOSE_TAG + r")\s*$"),
-        None, END_ON_BLANK, False, "a blank line"),
 )
 
 # `kinds[i]` is None for an ordinary line, else one of these.
@@ -1232,7 +1244,7 @@ KIND_CODE_FENCE = _CODE_BY_KIND[KIND_FENCE]
 # text in there. `todo-reflow.py` is the one consumer that deliberately looks
 # inside, because the 30 live `<details>` prose lines are exactly what its
 # hard-wrap lint exists to check (Codex design review, section 42, [high]).
-PROSE_VISIBLE_KINDS = frozenset(("tag-block", "tag-any"))
+PROSE_VISIBLE_KINDS = frozenset(("tag-block",))
 PROSE_HIDDEN_KINDS = ALL_HIDDEN_KINDS - PROSE_VISIBLE_KINDS
 _PROSE_HIDDEN_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_HIDDEN_KINDS)
 
@@ -1456,7 +1468,7 @@ def _match_containers(containers, line: str):
                 rest = " " * (4 - (base % 4) - 1) + rest[1:]
                 base += 1
         else:
-            if not rest.strip():
+            if _is_blank(rest):
                 # A BLANK LINE CONTINUES A LIST ITEM -- unless the item has no
                 # content yet. `10.` followed by a blank closes the item, so an
                 # indented run after it is a ROOT indented code block, not the
@@ -1535,7 +1547,7 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
         if m.group(3) and not can_interrupt:
             marker = m.group(3)
             after_m = rest[m.end():]
-            if not after_m.strip():
+            if _is_blank(after_m):
                 return rest          # an empty item cannot interrupt
             # BY VALUE, NOT SPELLING. CommonMark reads `01.` as the number 1,
             # so it may interrupt a paragraph exactly as `1.` does; comparing
@@ -1565,7 +1577,7 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
         # INLINE SPACE-ONLY FAST PATH. `after` is the text following the
         # marker; in the corpus it is virtually always exactly one space then
         # content, so the helpers are entered only when a tab is in play.
-        if not after or after.isspace():
+        if _is_blank(after):
             # A marker alone on its line, whatever the trailing whitespace is.
             # Tested with `isspace` rather than `strip()` because this runs per
             # line and `strip()` allocates; it also keeps an all-TAB tail on
@@ -1720,7 +1732,16 @@ def fence_scan(lines):
                     # masked: it is the same blank that closes the enclosing
                     # list item, so swallowing it here would keep a container
                     # alive past its end. Fall THROUGH to the ordinary path.
-                    if rest.strip():
+                    #
+                    # `strip(" \t")`, NOT bare `strip()`. CommonMark's blank
+                    # line is spaces and tabs only, while Python's `str.strip()`
+                    # is Unicode-aware and treats NBSP as blank -- so a line
+                    # holding a single NBSP ENDED the block early and published
+                    # the `## N.` and `- [x]` after it as real structure, which
+                    # CommonMark hides (Codex re-adversarial round 4, section
+                    # 42, [high]). Live shape: `<details>` is the one HTML block
+                    # type this corpus actually uses.
+                    if not _is_blank(rest):
                         out.append(True)
                         codes.append(html.code)
                         continue
@@ -2030,18 +2051,26 @@ def scan_text(text: str):
 # means giving the walks the container phase's output rather than the raw line,
 # which is section 42's work, not a wider regex.
 #
-# THE DIGIT RUN IS BOUNDED, and an unbounded one was a live crash rather than a
-# style point. Every consumer feeds group 1 straight to `int()`, and CPython
-# REFUSES a string->int conversion over 4,300 digits -- so a heading carrying a
-# 5,000-digit number raised `ValueError` out of the producer instead of
-# producing a controlled refusal (Codex adversarial, section 42, [medium]).
-# `todo-section-order.py:68` already bounds its own copy of this grammar at nine
-# digits for exactly that reason, having paid for it once; the two disagreeing
-# about what a heading is was the drift this shared matcher exists to end. Nine
-# digits cannot be reached by any real roadmap and cannot overflow anything
-# downstream, and `_MAX_SECTION_N` still bounds the VALUE at cache-validation
-# time. A longer run simply does not match, exactly as it does not there.
-SECTION_HEADING_RE = re.compile(r"^ {0,3}## (\d{1,9})\.(?:\s+(.+?))?\s*$")
+# THE DIGIT RUN IS DELIBERATELY UNBOUNDED HERE, and section 42 bounded it to
+# `\d{1,9}` and then REVERTED that on review. Bounding the MATCH does stop the
+# `int()` crash below (CPython refuses a string->int conversion over 4,300
+# digits), but it makes an over-long heading stop being a heading at all -- so
+# it no longer delimits a section, and every `- [x]` after it is silently
+# attributed to the PREVIOUS section. Reproduced: `## 1.` / item / `##
+# 12345678901.` / item filed the second item under section 1 (Codex
+# adversarial, section 42, [high]).
+#
+# Trading a loud crash for silent structural misattribution is the wrong
+# direction for this file, whose whole premise is that a quiet wrong answer is
+# worse than a refusal. The correct repair is to MATCH the heading and REPORT
+# it as malformed, and it belongs with section 43's one-grammar work because
+# the identical defect sits in all FOUR copies of this grammar --
+# `todo-reachability.py`, `todo-section-order.py` (bounded, and it names
+# over-long headings rather than dropping them) and
+# `.claude/hooks/sequencer_triage.py` -- and fixing one in isolation is exactly
+# the walk-desynchronisation this section already paid for once.
+# Measured: 0 corpus headings exceed 9 digits, so nothing live crashes today.
+SECTION_HEADING_RE = re.compile(r"^ {0,3}## (\d+)\.(?:\s+(.+?))?\s*$")
 
 
 def unclosed_reason(terminal):

@@ -17333,6 +17333,68 @@ else
     t_fail "section 36: unclosed fence did not refuse (rc=$S36U_RC, cache_written=$([ -f "$S36U/build/todo-cache.json" ] && echo yes || echo no), err=$S36U_ERR)"
 fi
 
+# --- section 42: the OTHER EOF-consuming HTML blocks refuse at the PRODUCER ---
+#
+# The scan-level terminal is pinned in scripts/tests/test_todo_fence.py; this
+# proves the PRODUCER acts on it -- rc 1, no cache written, and a category that
+# NAMES the construct rather than calling a `<script>` block a comment. Types 6
+# and 7 end at a blank line and can never be unterminated, so the control at the
+# end asserts one of them BUILDS rather than refusing: a scan that started
+# reporting them terminal would refuse every legal document containing one.
+for _s42 in "script:<script>:unclosed-html" "pi:<?php:unclosed-html" \
+            "decl:<!DOCTYPE html:unclosed-html" "cdata:<![CDATA[:unclosed-html" \
+            "comment:<!--:unclosed-comment"; do
+    _s42_name="${_s42%%:*}"; _s42_rest="${_s42#*:}"
+    _s42_open="${_s42_rest%:*}"; _s42_cat="${_s42_rest##*:}"
+    S42U="$TMP_DIR/s42u-$_s42_name"
+    rm -rf "$S42U"; mkdir -p "$S42U/todo/d"
+    {
+        printf -- '---\nschema_version: 1\nid: s42-%s\ndomain: d\nstatus: active\ntitle: T\n---\n\n# T\n\n' "$_s42_name"
+        printf '## Implementation Order\n\n'
+        printf '| Order | Section | Deliverable | Depends On | Status |\n'
+        printf '| :---: | :-----: | ----------- | ---------- | :----: |\n'
+        printf '|   1   |   §1    | Real        | --         |  [x]   |\n\n'
+        printf '%s\n' "$_s42_open"
+        printf 'never closed, and real structure follows it\n\n'
+        printf '## 1. Real Section\n\n- [x] `real_sym()` shipped\n'
+    } > "$S42U/todo/d/TODO-01-a.md"
+    ( cd "$S42U" && git init -q . && git config user.email s42@test.invalid \
+        && git config user.name s42 && git add -A && git commit -qm s42 ) >/dev/null 2>&1
+    S42U_ERR="$(python3 "$BUILD_PY" --quiet --root "$S42U/todo" \
+        --output "$S42U/build/todo-cache.json" --repo-root "$S42U" 2>&1)"
+    S42U_RC=$?
+    if [ "$S42U_RC" = "1" ] && echo "$S42U_ERR" | grep -q "$_s42_cat" \
+       && [ ! -f "$S42U/build/todo-cache.json" ]; then
+        t_pass "section 42: an unterminated $_s42_name block REFUSES the build as $_s42_cat"
+    else
+        t_fail "section 42: unterminated $_s42_name did not refuse as $_s42_cat (rc=$S42U_RC, err=$S42U_ERR)"
+    fi
+done
+
+# CONTROL: a type-6 block running to EOF is well-formed CommonMark and must
+# BUILD. Without this the four assertions above would still pass against a scan
+# that called every open HTML block terminal.
+S42OK="$TMP_DIR/s42-type6-ok"
+rm -rf "$S42OK"; mkdir -p "$S42OK/todo/d"
+{
+    printf -- '---\nschema_version: 1\nid: s42-ok\ndomain: d\nstatus: active\ntitle: T\n---\n\n# T\n\n'
+    printf '## Implementation Order\n\n'
+    printf '| Order | Section | Deliverable | Depends On | Status |\n'
+    printf '| :---: | :-----: | ----------- | ---------- | :----: |\n'
+    printf '|   1   |   §1    | Real        | --         |  [x]   |\n\n'
+    printf '## 1. Real Section\n\n- [x] `real_sym()` shipped\n\n<details>\nstill open at EOF\n'
+} > "$S42OK/todo/d/TODO-01-a.md"
+( cd "$S42OK" && git init -q . && git config user.email s42@test.invalid \
+    && git config user.name s42 && git add -A && git commit -qm s42ok ) >/dev/null 2>&1
+S42OK_ERR="$(python3 "$BUILD_PY" --quiet --root "$S42OK/todo" \
+    --output "$S42OK/build/todo-cache.json" --repo-root "$S42OK" 2>&1)"
+S42OK_RC=$?
+if [ "$S42OK_RC" = "0" ] && [ -f "$S42OK/build/todo-cache.json" ]; then
+    t_pass "section 42: CONTROL -- a type-6 block open at EOF still BUILDS"
+else
+    t_fail "section 42: a legal type-6-at-EOF document was refused (rc=$S42OK_RC, err=$S42OK_ERR)"
+fi
+
 # The threaded context must not change any answer: every walk called with the
 # shared `doc=` must return exactly what it returns computing its own mask.
 # Without this, the perf fix could silently feed one walk a stale mask.

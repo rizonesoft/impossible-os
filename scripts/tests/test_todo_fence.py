@@ -1693,7 +1693,12 @@ def main():
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
         return 1
-    print("test_todo_fence OK (%d assertions)" % _ASSERTED[0])
+    if _SKIPS:
+        sys.stderr.write("test_todo_fence SKIPPED %d check(s):\n  - %s\n"
+                         % (len(_SKIPS), "\n  - ".join(_SKIPS)))
+    print("test_todo_fence OK (%d assertions%s)"
+          % (_ASSERTED[0],
+             ", %d SKIPPED" % len(_SKIPS) if _SKIPS else ""))
     return 0
 
 
@@ -1736,9 +1741,14 @@ def test_html_blocks_section42():
         check(f"type {num}: an unterminated block reports its own kind",
               ru.terminal is not None and ru.terminal.kind == kind
               and ru.terminal.number == num)
+        # NAMES THE CONSTRUCT, and this assertion used to be vacuous: it was
+        # `kind in msg OR "fenced" not in msg`, whose right half is true for
+        # every HTML message, so the left half was never actually required
+        # (Codex consistency, section 42, [low]).
+        _msg = ru.unclosed_reason()
         check(f"type {num}: the refusal message names the construct",
-              kind in ru.unclosed_reason()
-              or "fenced" not in ru.unclosed_reason())
+              kind in _msg and "fenced code block" not in _msg
+              and f"type {num}" in _msg)
         # CONTROL: the erasure this refusal exists to prevent is real -- every
         # line past the opener is masked, so without the terminal the document
         # would publish as an empty node rather than as a refusal.
@@ -1752,7 +1762,7 @@ def test_html_blocks_section42():
             check(f"type {num}: require_closed raises on an unterminated doc", True)
 
     # ---- Types 6 and 7: blank-line terminated, so NEVER a terminal. ----
-    for tag, num in (("details", 6), ("custom-widget", 7)):
+    for tag, num in (("details", 6),):
         doc = f"# T\n\n<{tag}>\n## 99. Fake\n- [x] Fake item\n\n## 1. Real\n"
         r = tf.scan_text(doc)
         check(f"type {num}: `<{tag}>` hides the heading inside it",
@@ -1770,17 +1780,34 @@ def test_html_blocks_section42():
         check(f"type {num}: the terminating blank line stays unmasked",
               all(not r.mask[i] for i in blank_idx))
 
-    # TYPE 7 CANNOT INTERRUPT A PARAGRAPH -- the one `False` row in the oracle's
-    # table. `<custom-widget>` is not a known block name, so only type 7 can
-    # match it, which makes this a clean probe of that flag.
-    para = "some prose\n<custom-widget>\nstill prose\n"
-    rp = tf.scan_text(para)
-    check("type 7: does NOT interrupt an open paragraph",
+    # TYPE 7 IS NOT SHIPPED (see the section body): a tag name outside the 62
+    # known block names is ordinary text here, exactly as it was before this
+    # section. `<custom-widget>` is the probe for that, and it doubles as the
+    # control proving type 6 really is name-driven.
+    rp = tf.scan_text("some prose\n<custom-widget>\nstill prose\n")
+    check("an unknown tag name opens NO block (type 7 is not shipped)",
           not any(rp.mask))
-    # ...while a type-6 name in the same position DOES interrupt.
     r6 = tf.scan_text("some prose\n<details>\nhidden\n")
-    check("type 6: DOES interrupt an open paragraph (control for the above)",
+    check("type 6: a KNOWN block name does interrupt a paragraph",
           r6.mask[1])
+    # NBSP IS NOT A BLANK LINE. `str.strip()` says it is, which ended a
+    # `<details>` block early and leaked the heading and item after it.
+    # ...at EVERY place the rule is asked. Fixing only the HTML branch MOVED
+    # the bug into the container phase rather than closing it: each shape below
+    # leaked real structure until `_is_blank` became the single predicate.
+    leak = tf.scan_text("<details>\n\u00a0\n## 99. Fake\n- [x] leaked\n\n")
+    check("a lone NBSP does NOT terminate a type-6 block (root)",
+          all(leak.mask[:4]))
+    nested = tf.scan_text("- item\n  <details>\n  \u00a0\n  ## 99. Fake\n"
+                          "  - [x] leaked\n")
+    check("...nor a list-CONTAINED one, where the container phase asks first",
+          all(nested.mask[1:5]))
+    # `- ` + NBSP is a list item with CONTENT, not an empty marker. Reading it
+    # as empty refused to open the container, so a nested block outlived a
+    # later outdented heading and that section's work was re-parented.
+    dash = tf.scan_text("para\n- \u00a0\n  <details>\n  hidden\n## 2. Real\n")
+    check("a `- ` + NBSP marker opens a real list container",
+          dash.mask[2] and dash.mask[3] and not dash.mask[4])
 
     # ---- The projection seam (design review [high]). ----
     doc = "# T\n\n<details>\nprose inside\n\n## 1. Real\n"
@@ -1824,17 +1851,22 @@ def test_html_blocks_section42():
           not hasattr(sc, "stripped")
           and "stripped" not in cs42.ScanResult.__slots__)
 
-    # ---- The section-number digit run is BOUNDED (adversarial [medium]). ----
-    # An unbounded run reached `int()`, which CPython refuses above 4,300
-    # digits, so the producer raised ValueError instead of refusing cleanly.
-    giant = "## " + "9" * 5000 + ". Huge\n"
-    gs = B.scan_body(giant)
-    check("a 5,000-digit section number does not crash the heading walk",
-          B._walk_section_headings(gs.lines, gs.mask) == [])
-    check("a 9-digit section number is still a heading",
-          [n for n, _ in B._walk_section_headings(
-              *(lambda s: (s.lines, s.mask))(B.scan_body("## 123456789. Ok\n")))]
-          == [123456789])
+    # ---- An OVER-LONG section number still DELIMITS a section. ----
+    # Section 42 bounded the digit run to `\d{1,9}` to stop the `int()` crash
+    # (CPython refuses a conversion over 4,300 digits) and REVERTED it: bounding
+    # the match makes the heading stop being a heading, so every item after it
+    # is silently attributed to the PREVIOUS section. This pins the property
+    # that was chosen instead -- the heading still delimits -- so a future
+    # re-bound has to fail here rather than land quietly. Matching AND reporting
+    # is section 43's work, across all four copies of the grammar.
+    over = "## 1. First\n\n- [x] `a()` one\n\n## 12345678901. Over\n\n- [x] `b()` two\n"
+    os_ = B.scan_body(over)
+    check("an over-long section number is still MATCHED as a heading",
+          all(cs42.SECTION_HEADING_RE.match(l)
+              for l in os_.lines if l.startswith("## ")))
+    check("...so the item after it is NOT re-parented to the previous section",
+          [i["section_n"] for i in
+           B._walk_stamped_items(os_.lines, os_.mask, "t.md")] == [1, 12345678901])
 
     _corpus_differential(tf, cs42)
 
@@ -1857,10 +1889,15 @@ def _corpus_differential(tf, cs42):
     try:
         from markdown_it import MarkdownIt
     except ImportError:
-        # NOT a silent pass: the assertion is recorded as skipped so a host
-        # without the oracle cannot look like a host where the check succeeded.
-        check("corpus differential SKIPPED -- markdown-it-py is not installed",
-              True)
+        # A MISSING ORACLE IS NOT A PASS. The first version of this called
+        # `check(..., True)`, which counted a green assertion on a host that
+        # never ran the comparison -- the gate then "passed" precisely because
+        # it could not run, which is the same fail-silent shape the scanner
+        # itself is built to refuse (Codex consistency, section 42, [medium]).
+        # Recorded as a SKIP that the summary prints and that no assertion
+        # count absorbs.
+        _SKIPS.append("corpus differential vs markdown-it-py "
+                      "(markdown-it-py not installed)")
         return
     md = MarkdownIt("commonmark")
     divergent = []
@@ -1881,6 +1918,7 @@ def _corpus_differential(tf, cs42):
 
 
 _ASSERTED = [0]
+_SKIPS = []
 _check = check
 
 
