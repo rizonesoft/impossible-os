@@ -53,6 +53,28 @@ MIN_RUN = 3
 BAND = 22
 LO, HI = 78, 138
 
+# THE SAME REFUSAL SECTION 47 GAVE `todo-staged-check.py`, against the same
+# character set and for the same reason: `reflow()` numbers lines with
+# `text.split("\n")` while its masks come from a scan that ALSO folds VT, FF,
+# FS, GS, RS, NEL and U+2028/9 to a newline -- so on such a document the two
+# coordinate systems disagree (MEASURED 2026-08-12: `split("\n")` counts 2
+# lines where the scan counts 3) and every mask index shifts, leaving a masked
+# region under-protected at its leading edge. `_norm()` cannot catch that,
+# because joining preserves content no matter WHICH lines were joined.
+#
+# THE `\r` HALF IS ALREADY INERT HERE, and that is a real difference from
+# section 47 rather than a rationale copied across. `process()` reads in TEXT
+# mode, so Python's universal newlines translate a lone CR to `\n` before
+# either coordinate system sees it -- measured: on-disk `a\rb`, read back as
+# `a\nb`, both counts 3, no disagreement to have. Section 47's gate reads
+# through git, which performs no such translation, which is why the CR case is
+# load-bearing there and unreachable here. It stays in the pattern because it
+# costs nothing and is correct for any caller that reads without translation.
+#
+# Measured: 0 of 281 files under `todo/` carry any such break, so this refuses
+# nothing that exists today.
+_ODD_BREAK_RE = re.compile("\r(?!\n)|[\v\f\x1c\x1d\x1e\x85  ]")
+
 _BULLET = re.compile(r"^(\s*)([-*+]\s+|\d+[.)]\s+)")
 
 # THE CONTAINER-FENCE FALLBACK IS RETIRED (section 39). This tool used to carry
@@ -160,9 +182,16 @@ def verbatim_mask(lines, mask=None):
     return mask
 
 
-def reflow(text: str, vmask=None) -> str:
+def reflow(text: str, vmask=None, hmask=None) -> str:
     lines = text.split("\n")
-    mask = verbatim_mask(lines) if vmask is None else vmask
+    # ONE scan feeds both projections. `verbatim_mask` says which lines are
+    # opaque; `prose_html_boundary_mask` says which of the lines it deliberately
+    # SHOWS are the author's literal tag bytes rather than prose. Both stay
+    # injectable for the reason the wrapper documents -- a fixture passes a
+    # deliberately wrong mask and proves the projection is what protects a line.
+    scan = _fence.fence_scan(lines) if (vmask is None or hmask is None) else None
+    mask = verbatim_mask(lines, vmask if vmask is not None else scan.prose_mask())
+    html = hmask if hmask is not None else scan.prose_html_boundary_mask()
     out, buf = [], []
 
     def flush():
@@ -184,6 +213,19 @@ def reflow(text: str, vmask=None) -> str:
             # A verbatim region: fenced code and its delimiters, an HTML block
             # comment, or a container-indented fence. Ending the prose buffer
             # here is what stops a paragraph being joined ACROSS the region.
+            flush()
+            out.append(line)
+            prev_blank, in_icode = False, False
+            continue
+        if html[i]:
+            # A raw-HTML MARKUP line inside a block this projection deliberately
+            # SHOWS. It is not opaque -- the prose BETWEEN such lines is exactly
+            # what this tool is here to reflow -- but the line itself is bytes
+            # the author wrote, and this tool's whole contract is that it moves
+            # line breaks and nothing else. Ending the run here is what stops an
+            # in-band `<details data-x="...">` opener being joined into the
+            # paragraph below it, and equally stops a trailing `</details>`
+            # being joined onto the paragraph above (section 48).
             flush()
             out.append(line)
             prev_blank, in_icode = False, False
@@ -256,6 +298,12 @@ def process(path: str, mode: str) -> int:
     # Refusing reuses this function's existing exit-2 contract, and `main` turns
     # any refusal into a process-level 2, so `--check`, `--diff` and `--write`
     # all say the same thing.
+    if _ODD_BREAK_RE.search(original):
+        print(f"{path}: REFUSED -- contains a non-LF line break (lone CR, VT, "
+              f"FF, NEL or U+2028/9); this tool's line numbers and its mask "
+              f"would index different lines. Normalise the file to LF newlines. "
+              f"Left untouched.", file=sys.stderr)
+        return 2
     _scan = _fence.scan_text(original)
     shared_mask = _scan.prose_mask()
     reason = _scan.unclosed_reason()
@@ -269,7 +317,8 @@ def process(path: str, mode: str) -> int:
     # no comparison, and no refusal to make -- and the ~54ms second reflow that
     # guarded it (about 19% of a command the pre-commit hook runs) is gone with
     # it.
-    new = reflow(original, vmask=shared_mask)
+    new = reflow(original, vmask=shared_mask,
+                 hmask=_scan.prose_html_boundary_mask())
     if new == original:
         return 0
     if _norm(new) != _norm(original):

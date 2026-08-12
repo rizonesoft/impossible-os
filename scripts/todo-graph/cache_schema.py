@@ -1881,6 +1881,104 @@ KIND_CODE_FENCE = _CODE_BY_KIND[KIND_FENCE]
 PROSE_VISIBLE_KINDS = frozenset(("tag-block",))
 PROSE_HIDDEN_KINDS = ALL_HIDDEN_KINDS - PROSE_VISIBLE_KINDS
 _PROSE_HIDDEN_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_HIDDEN_KINDS)
+_PROSE_VISIBLE_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_VISIBLE_KINDS)
+
+
+def _is_tag_start(c: str) -> bool:
+    """Does `c`, right after a `<`, begin a TAG rather than ordinary text?
+
+    Reuses the tag grammar's own character classification rather than
+    `str.isalpha()`, which accepts non-ASCII letters that can never start an
+    HTML tag name. `/!?` are the closing tag, the declaration and the
+    processing instruction.
+
+    THIS CHECK IS WHAT KEEPS `>=` AND `a < b` OUT OF IT. Measured 2026-08-12
+    over the 30 live type-6 lines under `todo/`: 24 are ordinary prose and
+    several carry `>=`, so a rule phrased over the CHARACTERS `<` and `>`
+    instead of over tag STARTS would freeze most of the prose that this
+    projection is deliberately visible in order to lint.
+    """
+    if c in "/!?":
+        return True
+    o = ord(c)
+    return o < 256 and _TAG_CLASS_TABLE[o] == _T_ALPHA
+
+
+# The CommonMark type-1 raw-text set. Their CONTENT is not markup and must
+# never be reflowed -- but NESTED inside an already-open type-6 block the
+# scanner does not re-open a block for them, so nothing else marks that content
+# and the reflow treats it as prose (Codex adversarial, section 48, [high]).
+_RAW_TEXT_ELEMENTS = ("script", "style", "textarea", "pre")
+_RAW_OPEN_RE = re.compile(r"<(script|style|textarea|pre)\b", re.IGNORECASE)
+_RAW_CLOSE_RE = re.compile(r"</(script|style|textarea|pre)\s*>", re.IGNORECASE)
+
+
+def _construct_at(line: str, i: int) -> str:
+    """The TERMINATOR of the construct opening at `line[i]`, or `""`.
+
+    EACH CONSTRUCT ENDS AT ITS OWN TERMINATOR, never at the first `>`. A
+    generic `>` closes a comment at `<!-- a > b -->`, a processing instruction
+    at `<?php $a > $b ?>` and a CDATA section at `<![CDATA[a > b]]>` while each
+    is still open, dropping the carry early and leaving the remainder of the
+    construct unprotected (Codex adversarial + test-coverage, section 48,
+    [medium]/[high]; reproduced -- a nested CDATA document was byte-identical
+    before this projection existed and collapsed to one line under a generic
+    terminator, which made it a REGRESSION rather than a gap).
+    """
+    rest = line[i:i + 9]
+    if rest.startswith("<!--"):
+        return "-->"
+    if rest.startswith("<![CDATA["):
+        return "]]>"
+    if rest.startswith("<?"):
+        return "?>"
+    if rest.startswith("<!"):
+        return ">"
+    c = line[i + 1:i + 2]
+    return ">" if c and (c == "/" or _is_tag_start(c)) and c not in "!?" else ""
+
+
+def _tag_carry(line: str, carry: str, quote: str):
+    """`(carry, quote)` after `line` -- which construct is still OPEN, if any.
+
+    `carry` is the TERMINATOR still being sought (`""` when outside one), so
+    the state says what would CLOSE the construct rather than merely that
+    something is open. Quoting applies to a normal tag only: a `>` inside an
+    attribute value does not end it, while a comment or CDATA has no quoting.
+
+    A deliberately small walk, and NOT the type-7 NFA above. That machine
+    answers "is this line a complete tag ALONE on the line", a different
+    question that keeps no state across a line ending. What the two share is
+    the character classification, so there is still exactly one answer to
+    "what starts a tag name".
+    """
+    i, n = 0, len(line)
+    while i < n:
+        if carry:
+            if carry == ">":
+                ch = line[i]
+                if quote:
+                    if ch == quote:
+                        quote = ""
+                elif ch in "\"'":
+                    quote = ch
+                elif ch == ">":
+                    carry = ""
+                i += 1
+                continue
+            j = line.find(carry, i)
+            if j < 0:
+                return carry, quote          # runs on past this line ending
+            i, carry = j + len(carry), ""
+            continue
+        if line[i] == "<":
+            term = _construct_at(line, i)
+            if term:
+                carry, quote = term, ""
+                i += 2
+                continue
+        i += 1
+    return carry, quote
 
 
 class Terminal(NamedTuple):
@@ -2159,6 +2257,65 @@ class ScanResult:
         """
         hidden = _PROSE_HIDDEN_CODES
         return [c in hidden for c in self.codes]
+
+    def prose_html_boundary_mask(self):
+        """True per line for raw-HTML MARKUP inside a block `prose_mask` SHOWS.
+
+        THE COMPANION TO `prose_mask`, and it only means anything beside it.
+        Showing type 6 to a REWRITER is what lets it lint the 30 live
+        `<details>` prose lines; this says which of those lines are the
+        author's literal TAG BYTES rather than prose, so the rewriter can leave
+        those alone and still reflow the paragraph between them.
+
+        A line is markup when a tag is already OPEN as the line begins (a tag
+        split across a line ending), or when the line STARTS with a tag. Both
+        halves are load-bearing and each was measured on 2026-08-12:
+
+        - Without the carry, `<details` on its own line -- which CommonMark
+          type 6 accepts, because its opener is name-anchored and needs no
+          `>` -- leaves an in-band `data-x="...">` continuation as the first
+          line of a fresh run, and the rewriter joins it into the paragraph.
+          That is a corruption path the always-join behaviour did NOT have
+          (Codex design review, section 48, [high]).
+        - Without the starts-with-a-tag half, protecting only the opener leaves
+          `</details>` as the LAST line of the run, and `_hard_wrapped` width-
+          checks `block[:-1]` only, so the closer is joined onto the prose.
+
+        Read through `leaf_views`, so a tag under a container prefix is still
+        seen as markup: 2 of the 30 live lines are `> <details>` inside a
+        blockquote, and against the physical line they do not start with `<`.
+        """
+        out = [False] * len(self.codes)
+        views = None
+        carry, quote, raw = "", "", ""
+        for i, code in enumerate(self.codes):
+            if code not in _PROSE_VISIBLE_CODES:
+                # Leaving the block resets the walk: no construct stays open
+                # across one this projection does not show.
+                carry, quote, raw = "", "", ""
+                continue
+            if views is None:
+                views = self.leaf_views
+            line = views[i]
+            if raw:
+                # Inside a nested raw-text element. Its CONTENT is not prose --
+                # joining three 90-column script lines puts a `//` comment in
+                # front of the statements after it.
+                out[i] = True
+                m = _RAW_CLOSE_RE.search(line)
+                if m and m.group(1).lower() == raw:
+                    raw = ""
+                continue
+            opened_before = carry
+            carry, quote = _tag_carry(line, carry, quote)
+            lead = line.lstrip()
+            out[i] = bool(opened_before or carry or (
+                lead[:1] == "<" and len(lead) > 1 and _is_tag_start(lead[1])))
+            if out[i] and not carry:
+                m = _RAW_OPEN_RE.search(line)
+                if m and not _RAW_CLOSE_RE.search(line[m.end():]):
+                    raw = m.group(1).lower()
+        return out
 
 
 class UnclosedDocument(RuntimeError):

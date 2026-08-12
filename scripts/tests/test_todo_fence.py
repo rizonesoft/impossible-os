@@ -2493,6 +2493,7 @@ def main():
     test_logical_section_addition_section47()
     test_section_identity_shapes_section47()
     test_baseline_fail_closed_section47()
+    test_raw_html_is_not_rewritten_section48()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
@@ -3839,6 +3840,170 @@ def test_container_phase_section45():
 
     if not _oracle_ran[0]:
         _SKIPS.append("section 45 oracle agreement (markdown-it-py not installed)")
+
+
+def test_raw_html_is_not_rewritten_section48():
+    """The REWRITER may not move the literal tag bytes it is deliberately shown.
+
+    Type 6 is prose-visible so `todo-reflow.py` can lint the 30 live `<details>`
+    prose lines under `todo/`; that same visibility let it JOIN an in-band
+    opening tag into the paragraph below. The fix is a BOUNDARY, not a hide, so
+    every fixture here asserts the EXACT expected output: the markup lines
+    byte-identical AND the prose between them joined into one. An assertion set
+    proving only the first would be satisfied by hiding type 6 entirely, which
+    is the option this section rejected.
+
+    THE EXPECTED OUTPUT IS WRITTEN OUT, NEVER DERIVED FROM THE MASK. An earlier
+    version of this test built its expectation by calling
+    `prose_html_boundary_mask()` -- the function under test -- so a line the
+    mask stopped classifying simply vanished from the expectation and the
+    assertion still passed (Codex test-coverage, section 48, [high]).
+    """
+    tf = load("todo_fence_s48", "scripts/todo_fence.py")
+    rf = load("todo_reflow_s48", "scripts/todo-reflow.py")
+
+    B = ["payload line one that is long enough to look like a wrapped prose line at about ninety co",
+         "payload line two that is long enough to look like a wrapped prose line at about ninety co",
+         "payload line three that is long enough to look like a wrapped prose line at ninety cols o"]
+    body, joined = "\n".join(B), " ".join(B)
+    # IN THE TOOL'S OWN 78-138 HARD-WRAP BAND, or the fixture proves nothing --
+    # the section-46 lesson, where a 15-character opener could never enter a run
+    # and the projection was therefore wrongly called inert.
+    opener = '<details data-x="' + "a" * 76 + '">'
+    cont = 'data-x="' + "a" * 70 + '">'
+    check("s48 the fixture opener and continuation are inside the hard-wrap band",
+          78 <= len(opener) <= 138 and 78 <= len(cont) <= 138
+          and all(78 <= len(x) <= 138 for x in B))
+
+    # Each case is (name, document, EXACT expected output).
+    cases = [
+        ("in-band opening tag",
+         opener + "\n" + body + "\n",
+         opener + "\n" + joined + "\n"),
+        ("trailing closing tag",
+         opener + "\n" + body + "\n</details>\n",
+         opener + "\n" + joined + "\n</details>\n"),
+        # A type-6 opener is NAME-anchored and needs no `>` on its own line, so
+        # a tag spans a line ending in both directions. Protecting only the
+        # opener would leave this continuation as the first line of a fresh run
+        # (Codex design review, section 48, [high]).
+        ("opening tag split across lines",
+         "<details\n" + cont + "\n" + body + "\n",
+         "<details\n" + cont + "\n" + joined + "\n"),
+        ("closing tag split across lines",
+         "<details>\n" + body + "\n</details\n>\n",
+         "<details>\n" + joined + "\n</details\n>\n"),
+        # A quoted attribute value spanning a newline, containing a `>` that is
+        # NOT the terminator. Without quote state the tag ends early and the
+        # rest of the value is reflowed as prose.
+        ('attribute value spanning a newline (double-quoted)',
+         '<details data-x="a > b' + "a" * 55 + '\nvalue continues here '
+         + "b" * 55 + '">\n' + body + "\n</details>\n",
+         '<details data-x="a > b' + "a" * 55 + '\nvalue continues here '
+         + "b" * 55 + '">\n' + joined + "\n</details>\n"),
+        ("attribute value spanning a newline (single-quoted)",
+         "<details data-x='a > b" + "a" * 55 + "\nvalue continues here "
+         + "b" * 55 + "'>\n" + body + "\n</details>\n",
+         "<details data-x='a > b" + "a" * 55 + "\nvalue continues here "
+         + "b" * 55 + "'>\n" + joined + "\n</details>\n"),
+    ]
+    # Constructs whose terminator is NOT `>`. Each carries an early `>` before
+    # its real terminator, which a generic tag carry ends on -- leaving the rest
+    # of the construct classified as prose and joined. The CDATA form was
+    # byte-identical BEFORE this projection existed, so shipping the generic
+    # terminator would have been a regression, not merely a gap (Codex
+    # adversarial [medium] + test-coverage [high], section 48).
+    for name, open_tag, close_tag in (
+        ("comment", "<!-- a > b", "-->"),
+        ("CDATA section", "<![CDATA[literal > continues", "]]>"),
+        ("processing instruction", "<?php $a > $b", "?>"),
+    ):
+        doc = "<details>\n" + open_tag + "\n" + body + "\n" + close_tag + "\n</details>\n"
+        cases.append(("nested " + name + " (terminator is not `>`)", doc, doc))
+    # Nested raw-text elements. Their CONTENT is never prose: joining three
+    # 90-column script lines puts the first line's `//` comment in front of
+    # every statement after it (Codex adversarial, section 48, [high]).
+    js = ["  var averylongidentifier = somefunction(a, b, c) + anotherfn(d, e); // note",
+          "  var bverylongidentifier = somefunction(a, b, c) + anotherfn(d, e); ok(1)",
+          "  var cverylongidentifier = somefunction(a, b, c) + anotherfn(d, e); ok(2)"]
+    for el, inner in (("script", "\n".join(js)), ("pre", body),
+                      ("style", body), ("textarea", body)):
+        doc = ("<div>\n<" + el + ">\n" + inner + "\n</" + el + ">\n</div>\n")
+        cases.append(("nested <" + el + "> content", doc, doc))
+
+    for name, doc, want in cases:
+        got = rf.reflow(doc)
+        check("s48 %s: exact expected output" % name, got == want)
+        # PAIRED CONTROL: the projection is what produced that output. A mask of
+        # all-False brings the corruption straight back, so no assertion above
+        # can be passing because the tool stopped reflowing.
+        if want != doc:
+            check("s48 %s: CONTROL a false mask corrupts it" % name,
+                  rf.reflow(doc, hmask=[False] * len(doc.split("\n"))) != got)
+
+    # ---- NEGATIVE SIDE: what must NOT be treated as markup. 24 of the 30 live
+    # type-6 lines are ordinary prose, so over-masking silently ends the lint
+    # this seam exists to provide. ----
+    for name, needle in (("a bare `a < b`", "a < b"),
+                         ("a non-ASCII letter after `<`", "<\u00e9lan"),
+                         ("a `>=` comparison", ">= 30 min")):
+        pr = [l[:-len(needle)] + needle for l in B]
+        doc = "<details>\n" + "\n".join(pr) + "\n</details>\n"
+        sc = tf.scan_text(doc)
+        hm = sc.prose_html_boundary_mask()
+        check("s48 %s is NOT classified as markup" % name, not any(hm[1:4]))
+        check("s48 %s still joins into one line" % name,
+              rf.reflow(doc) == "<details>\n" + " ".join(pr) + "\n</details>\n")
+
+    # A tag under a CONTAINER prefix is still markup: 2 of the 30 live lines are
+    # `> <details>` in a blockquote, which does not start with `<` physically.
+    bq = tf.scan_text("> <details>\n> body\n")
+    check("s48 a blockquoted opener is seen as markup through the leaf view",
+          bq.prose_html_boundary_mask()[0])
+
+    # ---- THE ODD-BREAK REFUSAL, section 47's remedy applied to this tool. ----
+    def run(argv, text):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                         encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            tmp = fh.name
+        try:
+            before = open(tmp, "rb").read()
+            rc = subprocess.run([sys.executable, "scripts/todo-reflow.py"]
+                                + argv + [tmp], capture_output=True, text=True)
+            return rc, before, open(tmp, "rb").read()
+        finally:
+            os.unlink(tmp)
+
+    # EVERY reachable separator, not a single sample: an omission from the
+    # pattern is exactly what this is here to catch (Codex test-coverage,
+    # section 48, [medium]).
+    for name, ch in (("VT", "\v"), ("FF", "\f"), ("FS", "\x1c"),
+                     ("GS", "\x1d"), ("RS", "\x1e"), ("NEL", "\x85"),
+                     ("U+2028", "\u2028"), ("U+2029", "\u2029")):
+        for mode in ("--check", "--write"):
+            rc, before, after = run([mode], "intro\n\na" + ch + "b\n")
+            check("s48 %s under %s is REFUSED rc 2" % (name, mode),
+                  rc.returncode == 2 and "non-LF line break" in rc.stderr)
+            check("s48 %s under %s leaves the bytes untouched" % (name, mode),
+                  before == after)
+
+    # A REAL lone-CR file, read back through `process()`. It must NOT be
+    # refused: text mode normalises it before either coordinate system sees it,
+    # so the CR half of the pattern is unreachable here. Asserting this on the
+    # literal `"a\nb\n"` (as an earlier version did) tests nothing at all --
+    # it would stay green if reading stopped normalising (Codex test-coverage,
+    # section 48, [medium]).
+    rc, before, after = run(["--check"], "intro\n\na\rb\n")
+    check("s48 a REAL lone-CR file is not refused as a non-LF break",
+          rc.returncode != 2 and "non-LF line break" not in rc.stderr)
+    check("s48 ...and that file really did carry a CR byte on disk",
+          b"\r" in before)
+
+    # CONTROL -- the two coordinate systems really do disagree on an odd break,
+    # which is what makes the refusal a fix rather than a ritual.
+    check("s48 CONTROL split('\\n') and the scan disagree on a VT break",
+          len("a\vb\n".split("\n")) != len(tf.scan_text("a\vb\n").lines))
 
 
 _ASSERTED = [0]
