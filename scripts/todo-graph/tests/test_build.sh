@@ -19549,6 +19549,93 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Test 41: TYPE 7'S MATCHER IS NON-BACKTRACKING, AND THE CONTROL PROVES IT.
+#
+# Section 42 WITHDREW HTML block type 7 because its opener regex backtracks:
+# `attribute*` keeps one stack frame per iteration, so a long almost-tag makes
+# CPython's engine allocate backtracking state proportional to the input at a
+# ~164x constant. MEASURED here on 2026-08-12: a 4 MB witness took 656 MB RSS,
+# which is what section 42's "1,225 MB RSS at 12 MB" reports from the other end
+# of the same line.
+#
+# So the assertion is a DIFFERENTIAL under one hard cap, not a wall-clock
+# budget: with `RLIMIT_AS` at 256 MB and a 2 MB witness, the withdrawn regex
+# MUST die and the shipped DFA MUST answer. A test that only measured the DFA
+# would pass against a backtracking implementation on small input and prove
+# nothing; this one fails loudly if type 7 ever regresses to a regex.
+#
+# BOTH legs run in SUBPROCESSES under that cap. Running the control in-process
+# would OOM or stall the whole tooling suite, which is exactly the hazard the
+# design review named (Codex design review, section 46, [medium]).
+#
+# NOT REPRODUCED, and recorded as such rather than asserted: section 42 also
+# reports the regex CPU-superlinear (0.53s/6 KB -> 6.19s/20 KB -> >19s/64 KB).
+# Six candidate witness shapes were measured on 2026-08-12 and every one was
+# LINEAR in CPU, so that witness is not in hand and this test does not claim
+# it. The memory differential below is the part that reproduces.
+# ----------------------------------------------------------------------
+T41_PY="$TMP_DIR/t41-backtrack.py"
+cat > "$T41_PY" <<'T41EOF'
+import importlib.util
+import resource
+import sys
+import time
+
+CAP = 256 * 1024 * 1024
+resource.setrlimit(resource.RLIMIT_AS, (CAP, CAP))
+mode, schema, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+# An almost-tag: a real open tag that never closes, so the attribute loop runs
+# to the end of the line and then has to unwind.
+witness = "<a" + " b" * n
+
+if mode == "regex":
+    import re
+    from markdown_it.common.html_re import HTML_OPEN_CLOSE_TAG_STR
+    rx = re.compile(HTML_OPEN_CLOSE_TAG_STR + r"\s*$")
+    print("regex-answered", bool(rx.search(witness)))
+else:
+    spec = importlib.util.spec_from_file_location("cs", schema)
+    cs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cs)
+    small = cs.is_complete_tag_line(witness[:len(witness) // 4])
+    t0 = time.monotonic()
+    big = cs.is_complete_tag_line(witness)
+    t1 = time.monotonic()
+    t2 = time.monotonic()
+    ok = cs.is_complete_tag_line("<a" + " b=c" * n + ">")
+    t3 = time.monotonic()
+    if big or small or not ok:
+        print("dfa-wrong-answer", small, big, ok)
+        sys.exit(1)
+    # A 4x input must not cost dramatically more than 4x. The bound is loose on
+    # purpose: this is a SHAPE check for superlinearity, and a tight ratio on a
+    # shared WSL2 box is a flake generator, not a stronger test.
+    print("dfa-answered %.4f %.4f" % (t1 - t0, t3 - t2))
+T41EOF
+T41_SCHEMA="$REPO_ROOT/scripts/todo-graph/cache_schema.py"
+# markdown-it-py is OPTIONAL in this repo -- it is in no setup script and no CI
+# install step -- so its absence skips the CONTROL leg exactly as sub-test 44f
+# does, rather than failing a clean supported checkout and taking the mandatory
+# test-tooling gate with it (Codex adversarial, section 46, [high]). The DFA leg
+# below needs no oracle and always runs, so the resource bound stays gated even
+# on a host without the package; what is lost is only the differential.
+if ! python3 -c "import markdown_it" >/dev/null 2>&1; then
+    t_pass "s46 perf: backtracking CONTROL skipped (markdown-it-py absent); the DFA bound below still gates"
+elif python3 "$T41_PY" regex "$T41_SCHEMA" 1000000 >"$TMP_DIR/t41-regex.log" 2>&1; then
+    t_fail "s46 perf: CONTROL DID NOT FIRE -- the withdrawn regex survived a 2 MB witness under a 256 MB cap, so this test proves nothing about the DFA"
+elif ! grep -qE "MemoryError|Killed|died" "$TMP_DIR/t41-regex.log"; then
+    t_fail "s46 perf: the control failed for the WRONG reason: $(tail -1 "$TMP_DIR/t41-regex.log")"
+else
+    t_pass "s46 perf: CONTROL -- the withdrawn backtracking regex dies on a 2 MB witness under a 256 MB cap"
+fi
+
+if python3 "$T41_PY" dfa "$T41_SCHEMA" 1000000 >"$TMP_DIR/t41-dfa.log" 2>&1; then
+    t_pass "s46 perf: the shipped DFA answers the SAME witness under the SAME cap ($(tail -1 "$TMP_DIR/t41-dfa.log"))"
+else
+    t_fail "s46 perf: the shipped DFA failed the 2 MB witness under a 256 MB cap: $(tail -2 "$TMP_DIR/t41-dfa.log" | tr '\n' ' ')"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))

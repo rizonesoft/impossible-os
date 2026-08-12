@@ -1501,11 +1501,250 @@ END_ON_BLANK = "blank"
 # terminal value, or the producer would refuse a legal document.
 _HTML_UNTERMINATABLE = (END_ON_SUBSTRING,)
 
-_ATTR_NAME = r"[a-zA-Z_:][a-zA-Z0-9:._-]*"
-_ATTR_VALUE = r"(?:[^\"'=<>`\x00-\x20]+|'[^']*'|\"[^\"]*\")"
-_ATTRIBUTE = r"(?:\s+" + _ATTR_NAME + r"(?:\s*=\s*" + _ATTR_VALUE + r")?)"
-_OPEN_TAG = r"<[A-Za-z][A-Za-z0-9\-]*" + _ATTRIBUTE + r"*\s*/?>"
-_CLOSE_TAG = r"</[A-Za-z][A-Za-z0-9\-]*\s*>"
+# --------------------------------------------------------------------------
+# TYPE 7'S OPENER IS A DFA, NOT A REGEX, AND THAT IS THE WHOLE POINT.
+#
+# The oracle's own rule is `HTML_OPEN_CLOSE_TAG_STR + r"\s*$"`, and that regex
+# is why section 42 WITHDREW type 7 instead of shipping it. `attribute*`
+# repeats a group that opens with `\s+` and ends with an OPTIONAL `\s*=\s*`
+# value, so one whitespace run can be split between "the space before a `=`
+# that never came" and "the space opening the next attribute" in exponentially
+# many ways, and CPython's engine explores those splits by backtracking:
+# 1,225 MB RSS on a 12 MB line, and 0.53s at 6 KB -> 6.19s at 20 KB -> >19s at
+# 64 KB on ambiguity-inducing input.
+#
+# THREE REPAIRS ARE ALREADY DISPROVEN, so do not reach for them again: a
+# LENGTH BOUND above which the rule is skipped (fail-open -- a 4,125-char tag
+# stopped being recognised and published the `## 99.` after it); a SINGLE-PATH
+# linear recogniser (three rounds of real divergences, because the reference
+# resolves the ambiguity by GLOBAL backtracking and a local scanner cannot);
+# and the real regex bounded to 64 KiB (the threshold is itself a fail-open
+# seam, and the bound was measured on benign input).
+#
+# The grammar is REGULAR, so the fix is to stop backtracking rather than to
+# bound it. `_build_tag_dfa` subset-constructs the hand-derived NFA below into
+# a real DFA at import, which makes recognition a table index per character
+# with no allocation and no input-dependent control flow. It is strictly
+# cheaper than the oracle it agrees with, and `test_todo_fence.py` proves the
+# agreement by product-automaton reachability rather than by sampling -- both
+# machines loop, so agreement to any finite length would not exclude a longer
+# distinguishing string (Codex design review, section 46, [high] x2).
+
+# Character classes. The partition is BY PREDICATE SIGNATURE: two characters
+# share a class only when every predicate either machine can ask returns the
+# same answer for both, which is what lets a finite alphabet stand in for all
+# of Unicode in the equivalence proof.
+_T_WS_ASCII = 0   # whitespace at or below \x20 -- NOT legal unquoted content
+_T_WS_WIDE = 1    # whitespace above \x20 (NBSP, U+2028, ...) -- ALSO unquoted
+_T_LT = 2
+_T_GT = 3
+_T_SLASH = 4      # legal unquoted content AND the open tag's tail `/`
+_T_EQ = 5
+_T_DQUOTE = 6
+_T_SQUOTE = 7
+_T_ALPHA = 8      # [A-Za-z]: tag-name start, attr-name start, unquoted
+_T_NAMEC = 9      # [0-9-]: tag-name and attr-name continuation, unquoted
+_T_USCORE = 10    # [_:]: attr-name START but NOT a tag-name character
+_T_DOT = 11       # [.]: attr-name continuation only
+_T_UNQ = 12       # any other legal unquoted char (incl. non-ASCII letters)
+_T_DEAD = 13      # backtick and the non-whitespace controls: no role at all
+_TAG_CLASSES = 14
+
+
+def _tag_class(c: str) -> int:
+    """`c`'s character class. ASCII goes through `_ASCII_TAG_CLASS` instead."""
+    if c == "<":
+        return _T_LT
+    if c == ">":
+        return _T_GT
+    if c == "/":
+        return _T_SLASH
+    if c == "=":
+        return _T_EQ
+    if c == '"':
+        return _T_DQUOTE
+    if c == "'":
+        return _T_SQUOTE
+    # `\s` in Python's `re` under str patterns IS `str.isspace()` -- verified
+    # over all 1,114,112 code points, zero disagreements -- so the oracle's
+    # `\s` is reproduced exactly here. This is NOT `_is_blank`'s question:
+    # that one asks what CommonMark calls a BLANK LINE (spaces and tabs only),
+    # and the two must never be conflated. A NBSP ends no block but is `\s`
+    # inside a tag, and 19 code points are simultaneously `\s` AND legal
+    # unquoted content, which is one of the two ambiguities below.
+    if c.isspace():
+        return _T_WS_ASCII if c <= "\x20" else _T_WS_WIDE
+    if c <= "\x20" or c == "`":
+        return _T_DEAD
+    if ("a" <= c <= "z") or ("A" <= c <= "Z"):
+        return _T_ALPHA
+    if ("0" <= c <= "9") or c == "-":
+        return _T_NAMEC
+    if c in "_:":
+        return _T_USCORE
+    if c == ".":
+        return _T_DOT
+    return _T_UNQ
+
+
+_ASCII_TAG_CLASS = bytes(_tag_class(chr(i)) for i in range(128))
+
+# NFA states. `_Q_CLOSE_START` is its own state because the character after
+# `</` must be an ASCII LETTER, not any name character: folding it into
+# `_Q_CNAME` accepts `</>` and `</9a>`, which the oracle rejects (Codex design
+# review, section 46, [high]).
+(_Q_START, _Q_LT, _Q_CLOSE_START, _Q_CNAME, _Q_CWS, _Q_NAME, _Q_TAIL,
+ _Q_WS, _Q_ATTR, _Q_ATTRWS, _Q_EQ, _Q_DQ, _Q_SQ, _Q_UNQ, _Q_SLASH,
+ _Q_ACC) = range(16)
+_Q_COUNT = 16
+_Q_ACC_BIT = 1 << _Q_ACC
+
+_CLS_WS = (_T_WS_ASCII, _T_WS_WIDE)
+_CLS_NAME_CHAR = (_T_ALPHA, _T_NAMEC)                     # [A-Za-z0-9-]
+_CLS_ATTR_START = (_T_ALPHA, _T_USCORE)                   # [a-zA-Z_:]
+_CLS_ATTR_CHAR = (_T_ALPHA, _T_NAMEC, _T_USCORE, _T_DOT)  # [a-zA-Z0-9:._-]
+# [^"'=<>`\x00-\x20] -- note that `/` and the WIDE whitespace are both in here,
+# which is exactly where the two genuine ambiguities live.
+_CLS_UNQUOTED = (_T_ALPHA, _T_NAMEC, _T_USCORE, _T_DOT, _T_UNQ, _T_SLASH,
+                 _T_WS_WIDE)
+_CLS_ALL = tuple(range(_TAG_CLASSES))
+
+# (from, classes, to). Where two rows share a (from, class) the machine takes
+# BOTH successors, which is the point: a `/` inside an unquoted value is
+# simultaneously more value and the tail slash, and a NBSP after `=` is
+# simultaneously the `\s*` run and the first character of an unquoted value.
+_TAG_EDGES = (
+    (_Q_START, (_T_LT,), _Q_LT),
+    (_Q_LT, (_T_SLASH,), _Q_CLOSE_START),
+    (_Q_LT, (_T_ALPHA,), _Q_NAME),
+    (_Q_CLOSE_START, (_T_ALPHA,), _Q_CNAME),
+    (_Q_CNAME, _CLS_NAME_CHAR, _Q_CNAME),
+    (_Q_CNAME, _CLS_WS, _Q_CWS),
+    (_Q_CNAME, (_T_GT,), _Q_ACC),
+    (_Q_CWS, _CLS_WS, _Q_CWS),
+    (_Q_CWS, (_T_GT,), _Q_ACC),
+    (_Q_NAME, _CLS_NAME_CHAR, _Q_NAME),
+    (_Q_NAME, _CLS_WS, _Q_WS),
+    (_Q_NAME, (_T_SLASH,), _Q_SLASH),
+    (_Q_NAME, (_T_GT,), _Q_ACC),
+    # `_Q_TAIL` is "an attribute just ended with a QUOTED value": the next
+    # attribute still needs its own `\s+`, so an attribute name may NOT follow
+    # directly -- `<a b="c"d>` is not a tag.
+    (_Q_TAIL, _CLS_WS, _Q_WS),
+    (_Q_TAIL, (_T_SLASH,), _Q_SLASH),
+    (_Q_TAIL, (_T_GT,), _Q_ACC),
+    (_Q_WS, _CLS_WS, _Q_WS),
+    (_Q_WS, _CLS_ATTR_START, _Q_ATTR),
+    (_Q_WS, (_T_SLASH,), _Q_SLASH),
+    (_Q_WS, (_T_GT,), _Q_ACC),
+    (_Q_ATTR, _CLS_ATTR_CHAR, _Q_ATTR),
+    (_Q_ATTR, _CLS_WS, _Q_ATTRWS),
+    (_Q_ATTR, (_T_EQ,), _Q_EQ),
+    (_Q_ATTR, (_T_SLASH,), _Q_SLASH),
+    (_Q_ATTR, (_T_GT,), _Q_ACC),
+    (_Q_ATTRWS, _CLS_WS, _Q_ATTRWS),
+    (_Q_ATTRWS, (_T_EQ,), _Q_EQ),
+    (_Q_ATTRWS, _CLS_ATTR_START, _Q_ATTR),
+    (_Q_ATTRWS, (_T_SLASH,), _Q_SLASH),
+    (_Q_ATTRWS, (_T_GT,), _Q_ACC),
+    (_Q_EQ, _CLS_WS, _Q_EQ),
+    (_Q_EQ, (_T_DQUOTE,), _Q_DQ),
+    (_Q_EQ, (_T_SQUOTE,), _Q_SQ),
+    (_Q_EQ, _CLS_UNQUOTED, _Q_UNQ),
+    (_Q_DQ, tuple(c for c in _CLS_ALL if c != _T_DQUOTE), _Q_DQ),
+    (_Q_DQ, (_T_DQUOTE,), _Q_TAIL),
+    (_Q_SQ, tuple(c for c in _CLS_ALL if c != _T_SQUOTE), _Q_SQ),
+    (_Q_SQ, (_T_SQUOTE,), _Q_TAIL),
+    (_Q_UNQ, _CLS_UNQUOTED, _Q_UNQ),
+    (_Q_UNQ, _CLS_WS, _Q_WS),
+    (_Q_UNQ, (_T_SLASH,), _Q_SLASH),
+    (_Q_UNQ, (_T_GT,), _Q_ACC),
+    (_Q_SLASH, (_T_GT,), _Q_ACC),
+    # The oracle's trailing `\s*$` folded into the machine, so "a complete tag"
+    # and "nothing but whitespace after it" are decided in one pass.
+    (_Q_ACC, _CLS_WS, _Q_ACC),
+)
+
+
+def _build_tag_dfa():
+    """Subset-construct the NFA above into a DFA. Runs once, at import.
+
+    Returns `(trans, accepting)`, where `trans[state][cls]` is the next state
+    or -1 for the dead state. Determinising EAGERLY rather than memoising a
+    state-set simulation is what keeps the per-character cost a table lookup
+    with no allocation, and it also BOUNDS the table: the reachable subset
+    count is a property of the grammar, never of any input.
+    """
+    nfa = [[0] * _TAG_CLASSES for _ in range(_Q_COUNT)]
+    for src, classes, dst in _TAG_EDGES:
+        for cls in classes:
+            nfa[src][cls] |= 1 << dst
+
+    start = 1 << _Q_START
+    index = {start: 0}
+    order = [start]
+    trans = []
+    i = 0
+    while i < len(order):
+        bits = order[i]
+        row = []
+        for cls in range(_TAG_CLASSES):
+            nxt = 0
+            rest, q = bits, 0
+            while rest:
+                if rest & 1:
+                    nxt |= nfa[q][cls]
+                rest >>= 1
+                q += 1
+            if not nxt:
+                row.append(-1)
+                continue
+            seen = index.get(nxt)
+            if seen is None:
+                seen = index[nxt] = len(order)
+                order.append(nxt)
+            row.append(seen)
+        trans.append(tuple(row))
+        i += 1
+    return tuple(trans), tuple(bool(b & _Q_ACC_BIT) for b in order)
+
+
+_TAG_DFA_TRANS, _TAG_DFA_ACCEPT = _build_tag_dfa()
+
+
+def is_complete_tag_line(lead: str) -> bool:
+    """Is `lead` one complete open or closing tag and then only whitespace?
+
+    CommonMark's HTML block type 7 opener, in one left-to-right pass with no
+    backtracking and no allocation. `lead` must already be container-stripped
+    and left-trimmed -- the coordinate system the oracle matches in.
+    """
+    if not lead.startswith("<"):
+        return False
+    trans = _TAG_DFA_TRANS
+    table = _ASCII_TAG_CLASS
+    state = 0
+    for ch in lead:
+        code = ord(ch)
+        state = trans[state][table[code] if code < 128 else _tag_class(ch)]
+        if state < 0:
+            return False
+    return _TAG_DFA_ACCEPT[state]
+
+
+class _CompleteTagOpener:
+    """`HtmlBlockRule.opener` for type 7 -- a regex's `.search` without a regex.
+
+    `HtmlBlockRule.opener` is declared `object` and `_html_block_opener` only
+    tests the result for truth, so the row carries this instead of a compiled
+    pattern. A consumer that wanted a match OBJECT would fail loudly here
+    rather than silently reading a bool as one.
+    """
+
+    __slots__ = ()
+
+    def search(self, lead: str):
+        return True if is_complete_tag_line(lead) else None
 
 # The 62 type-6 tag names, verbatim from `markdown_it.common.html_blocks`.
 _HTML_BLOCK_NAMES = (
@@ -1560,6 +1799,13 @@ HTML_BLOCK_RULES = (
         6, "tag-block",
         re.compile("^</?(" + _HTML_BLOCK_NAMES + r")(?=(\s|/?>|$))", re.I),
         None, END_ON_BLANK, True, "a blank line"),
+    # LAST, and `can_interrupt=False`: type 7 is the catch-all complete tag, so
+    # a row above it must win (`<pre>` is a complete open tag too, and matching
+    # it here would give it a blank-line end rule instead of `</pre>`), and an
+    # ordinary prose line that happens to end in a tag must stay prose.
+    HtmlBlockRule(
+        7, "complete-tag", _CompleteTagOpener(), None,
+        END_ON_BLANK, False, "a blank line"),
 )
 
 # `kinds[i]` is None for an ordinary line, else one of these.
@@ -1581,12 +1827,34 @@ KIND_CODE_NONE = 0
 _KIND_BY_CODE = (None, KIND_FENCE) + tuple(r.kind for r in HTML_BLOCK_RULES)
 _CODE_BY_KIND = {k: i for i, k in enumerate(_KIND_BY_CODE) if k is not None}
 KIND_CODE_FENCE = _CODE_BY_KIND[KIND_FENCE]
-# TYPE 6 AND 7 ARE THE PROJECTION SEAM. They are raw HTML to CommonMark, so no
+# TYPE 6 IS THE PROJECTION SEAM. Both 6 and 7 are raw HTML to CommonMark, so no
 # STRUCTURAL reader may see a `## N.` or a `- [x]` inside one -- and neither may
 # `format-md-tables.py`, which REWRITES pipe rows that CommonMark reads as raw
 # text in there. `todo-reflow.py` is the one consumer that deliberately looks
 # inside, because the 30 live `<details>` prose lines are exactly what its
 # hard-wrap lint exists to check (Codex design review, section 42, [high]).
+#
+# TYPE 7 IS DELIBERATELY *NOT* IN THIS SET, which section 42's comment here
+# predicted it would be. Showing a type-7 block to the REWRITER is a
+# structural-corruption path, and the difference from type 6 is exact rather
+# than a matter of degree: type 6's opener is NAME-anchored and needs no
+# complete tag, so joining prose onto it leaves `<details ...> prose` still
+# opening a type-6 block, while type 7 requires a COMPLETE TAG ALONE ON THE
+# LINE and the same join destroys it.
+#
+# REPRODUCED 2026-08-12 with a valid 95-character opener -- inside
+# `todo-reflow.py`'s own 78-138 hard-wrap band -- followed by three
+# ~90-character prose lines: the tool joined the opener into the paragraph, the
+# block stopped existing, and a `## 99.` heading and a `- [x]` item that
+# CommonMark hides went from masked to PUBLISHED as graph data. An earlier read
+# of this called the projection merely inert, on a fixture whose 15-character
+# opener could never enter the band; that conclusion was fixture-specific and
+# wrong (Codex re-adversarial, section 46, [high]).
+#
+# What visibility would buy is measured, and it is nothing: type 7 has 0 live
+# lines corpus-wide, so no prose is linted through it, while type 6's 30 live
+# lines are the entire reason the seam exists. A rewriter that cannot see a
+# construct cannot destroy it.
 PROSE_VISIBLE_KINDS = frozenset(("tag-block",))
 PROSE_HIDDEN_KINDS = ALL_HIDDEN_KINDS - PROSE_VISIBLE_KINDS
 _PROSE_HIDDEN_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_HIDDEN_KINDS)
@@ -1861,8 +2129,10 @@ class ScanResult:
     def prose_mask(self):
         """The mask a consumer takes when it lints PROSE rather than structure.
 
-        Type 6 and 7 blocks stay VISIBLE. Only `todo-reflow.py` wants this; see
-        `PROSE_VISIBLE_KINDS`.
+        Type 6 blocks stay VISIBLE; type 7 does NOT, because the rewriter can
+        destroy a complete-tag opener by joining prose onto it and republish
+        the structure the block hides. Only `todo-reflow.py` wants this; see
+        `PROSE_VISIBLE_KINDS` for the reproduction.
         """
         hidden = _PROSE_HIDDEN_CODES
         return [c in hidden for c in self.codes]
@@ -2601,7 +2871,20 @@ def fence_scan(lines):
             # closed the item at the blank and took the open fence with it.
             _fill(containers, fill_state)
             continue
-        _rule = _html_block_opener(rest, para_open)
+        # THE PARAGRAPH STATE MUST BE THE ONE INSIDE THE CONTAINER THIS LINE
+        # JUST OPENED, not the one outside it. A bullet, blockquote or ordered
+        # marker CLOSES the paragraph it interrupts, so a complete tag after
+        # that marker begins a fresh block -- but `para_open` still describes
+        # the OUTER paragraph. This path could not be wrong before type 7,
+        # because it is the only row `can_interrupt=False` ever suppresses.
+        # MEASURED against markdown-it-py: `para` / `- <x>` / `  ## 99. Fake`
+        # and its `>` and `1.` forms each diverged, the oracle masking lines
+        # 1-2 and the scan masking nothing (Codex adversarial, section 46,
+        # [high]). `_open_containers` hands back the SAME object when it opens
+        # nothing, which is what makes the identity test the exact signal --
+        # merely MATCHING an already-open container leaves `rest` untouched
+        # here, so a lazy continuation still sees the paragraph it belongs to.
+        _rule = _html_block_opener(rest, para_open and rest is _pre_open)
         if _rule is not None:
             # The whole opening line is hidden, including anything after a
             # terminator on it. A block whose terminator is already present on

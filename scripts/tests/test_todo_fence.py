@@ -24,6 +24,7 @@ finding the fence-aware walk suppresses.
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import os
 import pathlib
 import re
@@ -1951,6 +1952,7 @@ def main():
     test_html_blocks_section42()
     test_one_heading_rule_section43()
     test_container_phase_section45()
+    test_html_block_type7_section46()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
@@ -1962,6 +1964,570 @@ def main():
           % (_ASSERTED[0],
              ", %d SKIPPED" % len(_SKIPS) if _SKIPS else ""))
     return 0
+
+
+class _RxCharSet:
+    """One parsed atom of the oracle pattern: ranges, `\\s`, and negation."""
+
+    def __init__(self, ranges=(), negate=False, named=()):
+        self.ranges = tuple(ranges)
+        self.negate = negate
+        self.named = tuple(named)
+
+    def key(self):
+        return (self.ranges, self.negate, self.named)
+
+    def mask(self, ncp, ws):
+        """This atom's membership over every code point, as `bytes`."""
+        m = bytearray(ncp)
+        for lo, hi in self.ranges:
+            a, b = ord(lo), ord(hi)
+            m[a:b + 1] = b"\x01" * (b - a + 1)
+        for n in self.named:
+            # Only `\s` appears in the oracle pattern. Anything else would be
+            # silently mis-modelled, so refuse it rather than guess.
+            if n != "s":
+                raise AssertionError("unsupported named class \\%s" % n)
+            m = bytearray(x | y for x, y in zip(m, ws))
+        if self.negate:
+            m = bytearray(1 - x for x in m)
+        return bytes(m)
+
+
+class _RxParser:
+    """Recursive-descent parser for the subset the oracle pattern uses.
+
+    Deliberately STRICT: every construct it does not model raises rather than
+    being skipped, so a future markdown-it-py that widens the pattern breaks
+    this proof loudly instead of proving something weaker than it claims.
+    """
+
+    def __init__(self, pat):
+        self.p = pat
+        self.i = 0
+
+    def peek(self):
+        return self.p[self.i] if self.i < len(self.p) else None
+
+    def parse(self):
+        node = self.alt()
+        assert self.i == len(self.p), "unparsed tail %r" % (self.p[self.i:],)
+        return node
+
+    def alt(self):
+        branches = [self.concat()]
+        while self.peek() == "|":
+            self.i += 1
+            branches.append(self.concat())
+        return ("alt", branches) if len(branches) > 1 else branches[0]
+
+    def concat(self):
+        items = []
+        while True:
+            c = self.peek()
+            if c is None or c in "|)":
+                break
+            items.append(self.piece())
+        return ("cat", items)
+
+    def piece(self):
+        atom = self.atom()
+        while self.peek() in ("*", "+", "?"):
+            q = self.p[self.i]
+            self.i += 1
+            atom = ({"*": "star", "+": "plus", "?": "opt"}[q], atom)
+        return atom
+
+    def atom(self):
+        c = self.p[self.i]
+        if c == "(":
+            assert self.p[self.i:self.i + 3] == "(?:", "only (?: groups"
+            self.i += 3
+            node = self.alt()
+            assert self.p[self.i] == ")"
+            self.i += 1
+            return node
+        if c == "[":
+            return ("set", self.charclass())
+        if c in "^$":
+            # `^` is start-of-input and `$` is end-of-input: both are structural
+            # here because the pattern is matched against ONE line, which never
+            # contains a newline. The exhaustive cross-check against Python's
+            # own `re` below is what pins that reading.
+            self.i += 1
+            return ("anchor", None)
+        if c == "\\":
+            self.i += 1
+            e = self.p[self.i]
+            self.i += 1
+            if e == "s":
+                return ("set", _RxCharSet(named=("s",)))
+            assert e not in "SdDwWbBAZ", "unsupported escape \\%s" % e
+            return ("set", _RxCharSet(ranges=((e, e),)))
+        self.i += 1
+        return ("set", _RxCharSet(ranges=((c, c),)))
+
+    def _classchar(self):
+        c = self.p[self.i]
+        if c != "\\":
+            self.i += 1
+            return c, None
+        self.i += 1
+        e = self.p[self.i]
+        self.i += 1
+        if e == "s":
+            return None, "s"
+        if e == "x":
+            v = chr(int(self.p[self.i:self.i + 2], 16))
+            self.i += 2
+            return v, None
+        assert e not in "SdDwW", "unsupported class escape \\%s" % e
+        return e, None
+
+    def charclass(self):
+        assert self.p[self.i] == "["
+        self.i += 1
+        negate = self.peek() == "^"
+        if negate:
+            self.i += 1
+        ranges, named, first = [], [], True
+        while True:
+            if self.p[self.i] == "]" and not first:
+                self.i += 1
+                break
+            first = False
+            lo, name = self._classchar()
+            if name is not None:
+                named.append(name)
+                continue
+            if self.peek() == "-" and self.p[self.i + 1] != "]":
+                self.i += 1
+                hi, hname = self._classchar()
+                assert hname is None, "range endpoint cannot be a class"
+                ranges.append((lo, hi))
+            else:
+                ranges.append((lo, lo))
+        return _RxCharSet(ranges, negate, named)
+
+
+def _rx_build(node, eps, trans, start):
+    """Thompson construction; returns the state reached after `node`."""
+    kind = node[0]
+    if kind == "cat":
+        s = start
+        for item in node[1]:
+            s = _rx_build(item, eps, trans, s)
+        return s
+    if kind == "alt":
+        eps.append([])
+        trans.append([])
+        end = len(eps) - 1
+        for br in node[1]:
+            eps.append([])
+            trans.append([])
+            s = len(eps) - 1
+            eps[start].append(s)
+            eps[_rx_build(br, eps, trans, s)].append(end)
+        return end
+    if kind == "set":
+        eps.append([])
+        trans.append([])
+        end = len(eps) - 1
+        trans[start].append((node[1], end))
+        return end
+    if kind == "anchor":
+        return start
+    eps.append([])
+    trans.append([])
+    loop = len(eps) - 1
+    eps[start].append(loop)
+    inner = _rx_build(node[1], eps, trans, loop)
+    eps.append([])
+    trans.append([])
+    end = len(eps) - 1
+    if kind == "opt":
+        # `?`: the inner path, or nothing.
+        inner2 = inner
+        eps[inner2].append(end)
+        eps[loop].append(end)
+        return end
+    eps[inner].append(loop)
+    if kind == "star":
+        eps[loop].append(end)
+    elif kind == "plus":
+        eps[inner].append(end)
+    else:
+        raise AssertionError(kind)
+    return end
+
+
+def _rx_closure(eps, states):
+    out, stack = set(states), list(states)
+    while stack:
+        for t in eps[stack.pop()]:
+            if t not in out:
+                out.add(t)
+                stack.append(t)
+    return frozenset(out)
+
+
+def test_html_block_type7_section46():
+    """Type 7's DFA is PROVED equivalent to the oracle, not sampled against it.
+
+    Three prior recognisers each passed their own sampling and then diverged on
+    ambiguity the reference resolves by global backtracking, so agreement over
+    any finite set of strings is not the bar here. Both machines are finite, so
+    equivalence is DECIDABLE: determinise the oracle's own pattern and walk the
+    product to fixpoint (Codex design review, section 46, [high]).
+    """
+    tf = load("todo_fence_s46", "scripts/todo_fence.py")
+    cs = tf._cache_schema()
+    ncp = 0x110000
+
+    try:
+        from markdown_it.common.html_re import HTML_OPEN_CLOSE_TAG_STR
+    except ImportError:
+        _SKIPS.append("section 46 equivalence proof (markdown-it-py not installed)")
+        HTML_OPEN_CLOSE_TAG_STR = None
+
+    if HTML_OPEN_CLOSE_TAG_STR is not None:
+        pattern = HTML_OPEN_CLOSE_TAG_STR + r"\s*$"
+        eps, trans = [[]], [[]]
+        end = _rx_build(_RxParser(pattern).parse(), eps, trans, 0)
+
+        atoms = {}
+        for edges in trans:
+            for cset, _ in edges:
+                atoms.setdefault(cset.key(), cset)
+        atoms = list(atoms.values())
+
+        # ---- Soundness: the shipped class partition IS the oracle's own. ----
+        # A finite alphabet may stand in for all of Unicode only if every atom
+        # either machine can test is CONSTANT on each class. Checked over every
+        # code point, mechanically -- not over a hand-picked sample, which is
+        # how the earlier attempts' alphabets missed the NBSP case.
+        ws = bytes(map(str.isspace, map(chr, range(ncp))))
+        masks = [a.mask(ncp, ws) for a in atoms]
+        cls = bytes(map(cs._tag_class, map(chr, range(ncp))))
+        pairs = set(zip(zip(*masks), cls))
+        sigs = {sig for sig, _ in pairs}
+        kinds = {k for _, k in pairs}
+        check("s46 the class partition is exactly the oracle's atom partition",
+              len(pairs) == len(sigs) == len(kinds) == cs._TAG_CLASSES)
+        reps = {}
+        for k in kinds:
+            reps[k] = chr(cls.index(k))
+
+        # ---- Determinise the oracle over that alphabet. ----
+        s0 = _rx_closure(eps, {0})
+        idx, order, otrans = {s0: 0}, [s0], []
+        i = 0
+        while i < len(order):
+            cur, row = order[i], []
+            for k in range(cs._TAG_CLASSES):
+                c = reps[k]
+                nxt = set()
+                for s in cur:
+                    for cset, t in trans[s]:
+                        hit = any(lo <= c <= hi for lo, hi in cset.ranges)
+                        if not hit and "s" in cset.named:
+                            hit = c.isspace()
+                        if hit != cset.negate:
+                            nxt.add(t)
+                if not nxt:
+                    row.append(-1)
+                    continue
+                nxt = _rx_closure(eps, nxt)
+                j = idx.get(nxt)
+                if j is None:
+                    j = idx[nxt] = len(order)
+                    order.append(nxt)
+                row.append(j)
+            otrans.append(row)
+            i += 1
+        oacc = [end in s for s in order]
+
+        # ---- Product reachability to fixpoint. BFS, so the first divergence
+        # found is the SHORTEST distinguishing string. ----
+        strans, sacc = cs._TAG_DFA_TRANS, cs._TAG_DFA_ACCEPT
+        seen, queue, qi, bad = {(0, 0): ""}, [(0, 0)], 0, None
+        while qi < len(queue):
+            a, b = queue[qi]
+            qi += 1
+            av = sacc[a] if a >= 0 else False
+            bv = oacc[b] if b >= 0 else False
+            if av != bv and bad is None:
+                bad = seen[(a, b)]
+            for k in range(cs._TAG_CLASSES):
+                na = strans[a][k] if a >= 0 else -1
+                nb = otrans[b][k] if b >= 0 else -1
+                if na < 0 and nb < 0:
+                    continue
+                if (na, nb) not in seen:
+                    seen[(na, nb)] = seen[(a, b)] + reps[k]
+                    queue.append((na, nb))
+        check("s46 the DFA is EQUIVALENT to the oracle over all of Unicode "
+              "(product reachability, %d states%s)"
+              % (len(seen), "" if bad is None else ", counterexample %r" % bad),
+              bad is None)
+
+        # ---- Independent control: the compiled reference vs Python's own
+        # `re`. If `_RxParser`/`_rx_build` were wrong, the product check above
+        # would be proving equivalence to the WRONG machine, so this is what
+        # keeps the proof from being circular. It also settles `$` vs
+        # end-of-input, since the alphabet carries `\n`.
+        #
+        # EXHAUSTION ALONE IS NOT ENOUGH HERE, and the first cut of this test
+        # got that wrong: the shortest tag carrying an attribute is `<a b>` at
+        # FIVE characters, so an exhaustive sweep to length 4 never reaches
+        # `attribute*`, `\s+`, a value, a quoted group or a repeat -- which is
+        # the exact grammar the three earlier attempts died on (Codex
+        # test-coverage, section 46, [medium]). The sweep is kept for its
+        # density near the empty string and joined by two targeted generators.
+        rx = re.compile(pattern)
+        alpha = [reps[k] for k in sorted(reps)]
+        words = []
+        for n in range(5):
+            words.extend("".join(t) for t in itertools.product(alpha, repeat=n))
+
+        # (a) TRANSITION COVER of the compiled reference: the shortest word
+        # traversing every reachable (state, class) edge. A mis-compiled group
+        # or quantifier changes the machine's shape, so covering its edges is
+        # what exercises the compilation rather than the alphabet.
+        cover, seen_st, frontier = [], {0: ""}, [0]
+        while frontier:
+            st = frontier.pop()
+            for k in range(cs._TAG_CLASSES):
+                nx = otrans[st][k]
+                if nx < 0:
+                    continue
+                cover.append(seen_st[st] + reps[k])
+                if nx not in seen_st:
+                    seen_st[nx] = seen_st[st] + reps[k]
+                    frontier.append(nx)
+        words.extend(cover)
+
+        # (b) MULTIPLE LOOP ITERATIONS, which no shortest-path word forces:
+        # every attribute form crossed with every tail at 0..4 repeats.
+        for form in ("a", "a=b", "a='b'", 'a="b"', "a=b/", "a =b", "a= b",
+                     "a  =  b", "_:x.y=b", "a=b c", "a='b c'", 'a="b\'c"'):
+            for tail in (">", "/>", " >", "  />", "", "=>"):
+                for k in range(5):
+                    words.append("<x" + (" " + form) * k + tail)
+            for k in range(3):
+                words.append("</x" + (" " + form) * k + ">")
+
+        mismatch = next((w for w in words
+                         if bool(rx.search(w)) != cs.is_complete_tag_line(w)),
+                        None)
+        check("s46 %d control words (exhaustive <=4 + %d-edge transition cover"
+              " + attribute repeats) agree with `re`%s"
+              % (len(words), len(cover),
+                 "" if mismatch is None else " -- first %r" % mismatch),
+              mismatch is None)
+        check("s46 the control reaches the attribute grammar at all",
+              any(len(w) > 4 and " " in w and "=" in w for w in words))
+
+        # (c) MUTATION CONTROL: a compiler that cannot detect a WRONG pattern
+        # proves nothing about the right one. Dropping the `*` from
+        # `attribute*` must make the compiled machine disagree with `re`.
+        meps, mtrans = [[]], [[]]
+        mutated = pattern.replace(")?)*\\s*", ")?)\\s*", 1)
+        mend = _rx_build(_RxParser(mutated).parse(), meps, mtrans, 0)
+        probe = "<x a=b c=d>"
+        macc = _rx_closure(meps, {0})
+        for ch in probe:
+            nxt = set()
+            for s in macc:
+                for cset, t in mtrans[s]:
+                    hit = any(lo <= ch <= hi for lo, hi in cset.ranges)
+                    if not hit and "s" in cset.named:
+                        hit = ch.isspace()
+                    if hit != cset.negate:
+                        nxt.add(t)
+            macc = _rx_closure(meps, nxt) if nxt else frozenset()
+        check("s46 MUTATION CONTROL: a mangled `attribute*` compiles to a "
+              "machine that rejects %r, so the compiler is not vacuous" % probe,
+              mutated != pattern and mend not in macc
+              and bool(rx.search(probe)))
+
+    # ---- The boundary cases the design review named. ----
+    for word, want in (("<a>", True), ("<a/>", True), ("</a>", True),
+                       ("</a-b>", True), ("</a >", True), ("<a >", True),
+                       ("</>", False), ("</9a>", False), ("</a/>", False),
+                       ("<a/b>", False), ("<>", False), ("<a", False),
+                       ("<a b>", True), ("<a b=c>", True), ("<a b = c>", True),
+                       ("<a b=>", False), ("<a b = >", False),
+                       ("<a b='c'd>", False), ("<a b='c' d>", True),
+                       ("<a b=c/>", True), ("<a b=/>", True),
+                       ("<a _x:y.z=1>", True), ("<a .x=1>", False),
+                       ("<a b=`>", False), ("<a>x", False), ("<a> ", True)):
+        check("s46 %r is%s a complete tag" % (word, "" if want else " NOT"),
+              cs.is_complete_tag_line(word) is want)
+
+    # ---- Non-ASCII whitespace in EVERY grammar position. These 19 code points
+    # are simultaneously `\s` AND legal unquoted content, which is the exact
+    # ambiguity a single-path scanner cannot resolve: after `=` a NBSP is both
+    # the `\s*` run and the first character of a value. ----
+    for cp in (" ", "", " ", "　"):
+        for shape in ("<a%sb>", "<a b%s=c>", "<a b=%sc>", "<a b=c%s>",
+                      "<a>%s", "</a%s>", "<a%s/>"):
+            word = shape % cp
+            want = bool(re.match(r"^(?:<[A-Za-z][A-Za-z0-9\-]*"
+                                 r"(?:\s+[a-zA-Z_:][a-zA-Z0-9:._-]*"
+                                 r"(?:\s*=\s*(?:[^\"'=<>`\x00-\x20]+"
+                                 r"|'[^']*'|\"[^\"]*\"))?)*\s*/?>"
+                                 r"|</[A-Za-z][A-Za-z0-9\-]*\s*>)\s*$", word))
+            check("s46 %r agrees with the oracle grammar" % word,
+                  cs.is_complete_tag_line(word) is want)
+
+    # ---- Behaviour in the scan: opening, closing, precedence, projections. ----
+    r = tf.scan_text("<custom-widget>\n## 99. Fake\n- [x] Fake item\n\n"
+                     "## 1. Real\n")
+    check("s46 type 7 hides a heading and an item inside it",
+          r.mask[0] and r.mask[1] and r.mask[2])
+    check("s46 the block ends at the blank line, which stays unmasked",
+          not r.mask[3] and not r.mask[4])
+    check("s46 a type-7 block running to EOF is well-formed, never a terminal",
+          tf.scan_text("<custom-widget>\nx\n").terminal is None)
+    # PRECEDENCE: `<pre>` is a complete open tag too. Matching it as type 7
+    # would give it a blank-line end rule instead of `</pre>`, so the row order
+    # is load-bearing rather than cosmetic.
+    pre = tf.scan_text("<pre>\n\n## 99. Fake\n</pre>\n\n## 1. Real\n")
+    check("s46 `<pre>` stays type 1: a blank line does NOT end it",
+          pre.mask[2] and pre.kinds[2] == "script")
+    det = tf.scan_text("<details>\nx\n")
+    check("s46 `<details>` stays type 6, not the type-7 catch-all",
+          det.kinds[0] == "tag-block")
+    # A FOUR-COLUMN INDENT IS CODE, NOT HTML -- the oracle's own
+    # `is_code_block` guard, which type 7 inherits with every other row.
+    check("s46 a 4-space-indented complete tag opens no block",
+          not tf.scan_text("    <custom-widget>\nplain\n").mask[0])
+    # The projection seam: structural readers and the table formatter must not
+    # see inside, the reflow lint must.
+    pr = tf.scan_text("<custom-widget>\nprose inside\n\n## 1. Real\n")
+    check("s46 the structural mask HIDES a type-7 block", pr.mask[1])
+    # BOTH projections hide type 7, unlike type 6 -- see `PROSE_VISIBLE_KINDS`.
+    # The rewriter is the one consumer that would look inside, and it can
+    # destroy a complete-tag opener, so it is not shown one.
+    check("s46 the PROSE mask hides it too, so the rewriter never sees it",
+          pr.prose_mask()[1])
+    _pd = tf.scan_text("<details>\nprose inside\n\n## 1. Real\n")
+    check("s46 CONTROL: type 6 IS prose-visible, so the two kinds differ here",
+          _pd.mask[1] and not _pd.prose_mask()[1])
+
+    # ---- CONTAINERS, FENCES AND EOF. The root-level fixtures above do not
+    # reach any of these, and the EOF one asserted only `terminal is None` --
+    # which is ALSO true when the feature is reverted, because then no block
+    # opens at all. Every assertion here names the kind or the mask, so a
+    # revert fails it (Codex test-coverage, section 46, [medium]). ----
+    eof = tf.scan_text("<custom-widget>\nx\n")
+    check("s46 a type-7 block running to EOF is masked AND never a terminal",
+          eof.terminal is None and eof.kinds[0] == "complete-tag"
+          and eof.mask[0] and eof.mask[1])
+    for label, doc, hidden, shown in (
+            ("in a list item", "- <x>\n  ## 99. F\n\n- next\n", (0, 1), (3,)),
+            ("in a blockquote", "> <x>\n> ## 99. F\n\n## 1. R\n", (0, 1), (3,)),
+            ("after a container marker ends a paragraph",
+             "para\n- <x>\n  ## 99. F\n", (1, 2), (0,)),
+            ("under-indented blank ends it",
+             "- <x>\n  ## 99. F\n\n## 1. R\n", (0, 1), (3,))):
+        rr = tf.scan_text(doc)
+        check("s46 type 7 %s: the block is hidden" % label,
+              all(rr.mask[i] for i in hidden))
+        check("s46 type 7 %s: real structure after it is visible" % label,
+              all(not rr.mask[i] for i in shown))
+    fenced = tf.scan_text("```\n<custom-widget>\n```\n## 1. R\n")
+    check("s46 a complete tag INSIDE a fence stays fence, not type 7",
+          fenced.kinds[1] == "fence" and not fenced.mask[3])
+    check("s46 a bare `<` and an empty line open nothing",
+          not any(tf.scan_text("<\nplain\n").mask)
+          and not any(tf.scan_text("\n\n").mask))
+    check("s46 a final tag with no trailing newline still opens a block",
+          tf.scan_text("prose\n\n<custom-widget>").kinds[-1] == "complete-tag")
+
+    # ---- THE TWO CONSUMERS, RUN FOR REAL. The mask/prose_mask assertions
+    # above only inspect the projection; they never invoke either tool, so a
+    # wiring regression could make `format-md-tables.py` rewrite literal pipe
+    # rows or make `todo-reflow.py` ignore type-7 prose with every other
+    # section-46 assertion still green (Codex test-coverage, section 46,
+    # [high]). The formatter half lives beside its own suite in
+    # test_format_md_tables.py; the reflow half is here. ----
+    rf = load("todo_reflow_s46", "scripts/todo-reflow.py")
+    # THE OPENER MUST BE IN `todo-reflow.py`'s OWN 78-138 HARD-WRAP BAND, or
+    # this fixture proves nothing. A short `<custom-widget>` can never enter a
+    # run, so an earlier version of this test concluded the projection was
+    # inert -- a conclusion true only of that fixture. At 95 characters the
+    # opener is a valid complete tag AND a plausible wrapped line, and the
+    # rewriter joins it into the paragraph, destroying the block and
+    # republishing the `## 99.` and `- [x]` it was hiding (Codex
+    # re-adversarial, section 46, [high]).
+    _long_open = '<custom-widget data-x="' + "a" * 70 + '">'
+    _hidden_struct = "## 99. Fake\n- [x] Fake item\n"
+    _corrupt = (_long_open + "\n" + "\n".join(_WRAPPED_BODY[:3]) + "\n"
+                + _hidden_struct)
+    check("s46 the in-band opener really is a complete tag and in the band",
+          cs.is_complete_tag_line(_long_open) and 78 <= len(_long_open) <= 138)
+    _after = tf.scan_text(rf.reflow(_corrupt))
+    check("s46 the REWRITER may not touch a type-7 block at all",
+          rf.reflow(_corrupt) == _corrupt)
+    check("s46 ...so the structure it hides stays hidden after a reflow",
+          _after.kinds[0] == "complete-tag"
+          and all(_after.mask[i] for i, l in enumerate(_after.lines)
+                  if l.startswith("## 99.") or l.startswith("- [x] Fake")))
+    # CONTROL: with type 7 prose-VISIBLE, this same document is corrupted --
+    # which is what the assertions above are protecting against, and what makes
+    # them a real gate rather than a restatement of the current code.
+    _vis = [not (c in cs._PROSE_HIDDEN_CODES
+                 or c == cs._CODE_BY_KIND["complete-tag"])
+            for c in tf.scan_text(_corrupt).codes]
+    check("s46 CONTROL: prose-VISIBLE type 7 lets the rewriter destroy it",
+          rf.reflow(_corrupt, vmask=_vis) != _corrupt)
+    # Type 6 stays visible and that is deliberate: its opener is name-anchored,
+    # so the same join leaves the block open and hides the same structure.
+    _t6 = ('<details data-x="' + "a" * 76 + '">\n'
+           + "\n".join(_WRAPPED_BODY[:3]) + "\n" + _hidden_struct)
+    _t6r = tf.scan_text(rf.reflow(_t6))
+    check("s46 type 6 remains prose-visible, and survives the join it invites",
+          _t6r.kinds[0] == "tag-block"
+          and all(_t6r.mask[i] for i, l in enumerate(_t6r.lines)
+                  if l.startswith("## 99.") or l.startswith("- [x] Fake")))
+
+    # Accepted forms that only the equivalence proof reached: each must also
+    # OPEN the scan-level row, which the proof says nothing about. `<x a=!>`
+    # is the only behavioural input that exercises the `_T_UNQ` class.
+    for word in ("</a  >", '<x a="v"/>', "<x  a>", "<x a/>", "<x a  =v>",
+                 "<x a />", "<x a >", "<x a=!>"):
+        rw = tf.scan_text(word + "\nbody\n\n## 1. R\n")
+        check("s46 %r opens a type-7 block through the scan" % word,
+              rw.kinds[0] == "complete-tag" and rw.mask[1]
+              and not rw.mask[3])
+
+    # ---- Oracle mask parity on generated type-7 fixtures. ----
+    try:
+        from markdown_it import MarkdownIt
+    except ImportError:
+        _SKIPS.append("section 46 fixture parity (markdown-it-py not installed)")
+        return
+    md = MarkdownIt("commonmark")
+    for body in ("<custom-widget>", "</custom-widget>", "<x a=1 b='2' c=\"3\">",
+                 "<x a=1/>", "<x a=1>", "<x a= >", "<x> ",
+                 "<x a=b/c>", "<custom-widget attr>"):
+        for lead in ("", "para\n"):
+            doc = lead + body + "\nhidden line\n\n## 1. Real\n"
+            ours = tf.scan_text(doc)
+            want = set()
+            for tok in md.parse(doc):
+                if tok.type == "html_block" and tok.map:
+                    want.update(range(tok.map[0], tok.map[1]))
+            got = {i for i, k in enumerate(ours.kinds)
+                   if k in cs.ALL_HIDDEN_KINDS}
+            # markdown-it includes the terminating blank in a block's map; the
+            # scan deliberately leaves that blank unmasked so an enclosing
+            # container still closes on it, so compare the NON-blank lines.
+            want = {i for i in want if ours.lines[i].strip(" \t")}
+            check("s46 mask parity with markdown-it-py on %r (lead=%r)"
+                  % (body, lead), want == got)
 
 
 def test_html_blocks_section42():
@@ -2042,16 +2608,27 @@ def test_html_blocks_section42():
         check(f"type {num}: the terminating blank line stays unmasked",
               all(not r.mask[i] for i in blank_idx))
 
-    # TYPE 7 IS NOT SHIPPED (see the section body): a tag name outside the 62
-    # known block names is ordinary text here, exactly as it was before this
-    # section. `<custom-widget>` is the probe for that, and it doubles as the
-    # control proving type 6 really is name-driven.
+    # TYPE 7 SHIPPED IN SECTION 46, and this probe was rewritten rather than
+    # deleted. It asserted "an unknown tag name opens NO block" and would still
+    # PASS unchanged -- for a completely different reason (type 7 cannot
+    # interrupt a paragraph) -- which is the shape that turns a real control
+    # into a tautology. Both reasons are now pinned separately.
     rp = tf.scan_text("some prose\n<custom-widget>\nstill prose\n")
-    check("an unknown tag name opens NO block (type 7 is not shipped)",
-          not any(rp.mask))
+    check("type 7 does NOT interrupt an open paragraph", not any(rp.mask))
+    r7 = tf.scan_text("<custom-widget>\nhidden\n\n## 1. Real\n")
+    check("type 7: an unknown tag name DOES open a block outside a paragraph",
+          r7.mask[0] and r7.mask[1] and not r7.mask[3])
+    # The replacement control for "type 6 is name-driven": type 6 matches on
+    # the NAME and needs no complete tag, type 7 needs a complete tag and
+    # accepts any name. An unclosed unknown tag is therefore matched by
+    # neither, which is what keeps the two rules distinguishable.
     r6 = tf.scan_text("some prose\n<details>\nhidden\n")
     check("type 6: a KNOWN block name does interrupt a paragraph",
           r6.mask[1])
+    check("type 6 needs no `>`: `<details` alone still opens a block",
+          tf.scan_text("<details\nhidden\n").mask[0])
+    check("...and `<custom-widget` (no `>`) opens neither 6 nor 7",
+          not any(tf.scan_text("<custom-widget\nplain\n").mask))
     # NBSP IS NOT A BLANK LINE. `str.strip()` says it is, which ended a
     # `<details>` block early and leaked the heading and item after it.
     # ...at EVERY place the rule is asked. Fixing only the HTML branch MOVED

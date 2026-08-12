@@ -235,6 +235,42 @@ def test_table_inside_an_html_block_is_never_touched():
         assert c.returncode == 0, f"--check flagged an HTML block: {c.stdout}{c.stderr}"
 
 
+def test_table_inside_a_type7_block_is_never_touched():
+    """The same contract for type 7, whose tag name is NOT one of the 62.
+
+    The type-6 test above uses `<details>` and would stay green if type 7 were
+    reverted, so it is not a control for this row at all -- the docstring said
+    "type-6/7" while only type 6 was covered (Codex test-coverage, section 46,
+    [high]). `<custom-widget>` is a complete open tag and nothing else, so it
+    reaches the formatter ONLY through section 46's matcher. The table is
+    deliberately MISALIGNED: an unaligned table is what the formatter exists to
+    rewrite, so leaving it untouched cannot be a no-op.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        content = (
+            "# T\n\n"
+            "<custom-widget>\n"
+            "| a | bb |\n"
+            "|-|-|\n"
+            "|    1 |2|\n"
+            "\n"
+            "| c | dd |\n"
+            "| --- | --- |\n"
+            "|  3 |4|\n"
+        )
+        p = _write(d, "a.md", content)
+        r = _run(str(p))
+        assert r.returncode == 0, r.stderr
+        after = p.read_text()
+        assert after.split("\n")[2:6] == content.split("\n")[2:6], (
+            "a type-7 HTML-block table was rewritten")
+        # CONTROL: the table AFTER the terminating blank is outside the block,
+        # so it MUST be realigned -- otherwise this file proves only that the
+        # formatter did nothing at all.
+        assert after != content, "the formatter rewrote nothing; no control"
+        assert "| c   | dd  |" in after, f"table outside the block untouched: {after}"
+
+
 def test_unterminated_html_block_is_refused():
     """A document ending inside an EOF-consuming HTML block is REFUSED.
 
