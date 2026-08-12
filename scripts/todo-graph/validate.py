@@ -313,16 +313,6 @@ def _is_canonical_cache(cache_path: Path, repo_root: Path) -> bool:
     return True
 
 
-# The one name for "this document's structure could not be read", shared with
-# `todo_fence.UNCLOSED_CATEGORY`. Spelled here rather than imported because this
-# module sits beside `cache_schema` and cannot reach `scripts/todo_fence.py`
-# without a `sys.path` insertion that would change how every later plain-name
-# import in the process resolves -- the same reason `unclosed_reason` lives in
-# `cache_schema`. `scripts/tests/test_todo_fence.py` asserts the two spellings
-# are equal, so the copy cannot drift silently.
-_UNCLOSED_CATEGORY = "unreadable-document"
-
-
 def _refuse(message: str) -> None:
     """Every infrastructure refusal leaves through here, at rc 2, so it can
     never be confused with the rc 1 the ten checks return."""
@@ -1995,14 +1985,17 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
             # which is what the producer does with the same input. The Notes
             # claimed the validator now refuses; it appended a finding (Codex
             # adversarial, section 39 round 7, [medium]).
-            # The CATEGORY token is shared with `todo-reachability.py`, which
-            # reports this same condition at rc 1 rather than refusing --
-            # deliberately, because `run_phase_guard.py` blocks fixpoint on that
-            # gate's rc 1 alone and would treat an rc 2 as clean. The exit codes
-            # therefore differ on purpose and the NAME does not, so a reader
-            # grepping either tool's output finds one condition rather than two
-            # (section 43).
-            _refuse(f"{_UNCLOSED_CATEGORY}: {rel}: {reason}")
+            # THE CATEGORY TOKEN, which this refusal did not carry (section 43).
+            # `build.py` files this condition under `terminal_category(...)` and
+            # `todo-reachability.py` reports it under the SAME token; only this
+            # tool named it in prose alone, so a reader grepping `unclosed-fence`
+            # found two of the three places it occurs. The exit codes still
+            # differ on purpose -- `run_phase_guard.py` blocks fixpoint on
+            # reachability's rc 1 alone and treats every other nonzero as clean,
+            # so raising that gate to this one's rc 2 would HIDE an unclosed
+            # document from the completion gate. Same name, different codes, and
+            # the difference is the deliberate half.
+            _refuse(f"{_cs.terminal_category(_scan.terminal)}: {rel}: {reason}")
         valid = _heading_slugs(
             ev[1] for ev in _scan_markdown(lines, mask) if ev[0] == "heading")
         dead: dict = {}

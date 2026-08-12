@@ -274,7 +274,20 @@ def _oscomp_over_cap(lines, added):
 # that a number above every file can never bind.
 SECTION_SOFT_CAP = 50
 SECTION_HARD_CAP = 60
-_SECTION_RE = re.compile(r"^## (\d+)\.")
+# NO LOCAL `## N.` GRAMMAR (section 43). This was a sixth private copy --
+# column-0 anchored, unbounded digit run -- found by the AST allowlist test
+# the same section added, which is the point of checking the AST rather than
+# working from an inventory written by hand.
+def _is_section(line: str) -> bool:
+    """True for a numbered section heading, usable number or not.
+
+    Every question this file asks is "does a section start here" -- it
+    counts sections against the cap and locates their boundaries, and never
+    needs the number itself. An over-long heading still starts a section,
+    so counting it is correct: it occupies a cap slot exactly like any
+    other, and a file cannot dodge the cap by writing an unusable number.
+    """
+    return _fence().classify_heading(line).kind != "none"
 
 
 def _section_total(lines):
@@ -283,7 +296,7 @@ def _section_total(lines):
     A fenced `## 99.` example used to count toward the cap, so a file could be
     pushed over the soft or hard cap by a code sample (section 38).
     """
-    return sum(1 for line in lines if _SECTION_RE.match(line))
+    return sum(1 for line in lines if _is_section(line))
 
 
 def added_sections(added):
@@ -294,7 +307,7 @@ def added_sections(added):
     this raised IndexError on every call.
     """
     return [(lineno, text.strip()) for lineno, text in added
-            if _SECTION_RE.match(text)]
+            if _is_section(text)]
 
 
 # PARK-INTO-A-SHIPPING-SECTION (2026-08-09). A `- [/]` park is the sanctioned
@@ -328,7 +341,7 @@ def _park_into_shipping_section(lines, added):
     # section index -> (start, end) over the post-image
     bounds, cur, heads = [], None, {}
     for i, ln in enumerate(lines, 1):
-        if _SECTION_RE.match(ln.strip()):
+        if _is_section(ln.strip()):
             if cur is not None:
                 bounds.append((cur, i - 1))
             cur = i
@@ -400,7 +413,7 @@ def _review_sections_missing_user_impact(path, lines, added):
     if _file_is_new(path):
         return []
     added_nos = {n for n, _ in added}
-    starts = [i for i, ln in enumerate(lines, 1) if _SECTION_RE.match(ln.strip())]
+    starts = [i for i, ln in enumerate(lines, 1) if _is_section(ln.strip())]
     out = []
     for idx, start in enumerate(starts):
         if start not in added_nos:
@@ -430,7 +443,7 @@ def _sections_missing_provenance(path, lines, added):
     if _file_is_new(path):
         return []
     added_nos = {n for n, _ in added}
-    starts = [i for i, ln in enumerate(lines, 1) if _SECTION_RE.match(ln.strip())]
+    starts = [i for i, ln in enumerate(lines, 1) if _is_section(ln.strip())]
     out = []
     for idx, start in enumerate(starts):
         if start not in added_nos:

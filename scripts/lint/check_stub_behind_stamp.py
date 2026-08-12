@@ -191,7 +191,18 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
     # pass lint (Codex consistency, section 18 review).
     cov = {"occurrences": 0, "resolved": 0}
     cov.update({b: [] for b in _rr.ALL_BUCKETS})
+    # PER-OWNER CONTRIBUTIONS, so the exclusion set can reach the rc-7 gate
+    # (section 43). The gate compares the live population against a stored
+    # GLOBAL total, so dropping an excluded owner's refs from the walk would
+    # guarantee a `POPULATION SHRANK` refusal against a baseline that still
+    # counts them -- the wedge with extra steps. Counting per owner instead lets
+    # `main` subtract the same owner from BOTH sides, which is the only shape
+    # under which excluding a file changes nothing about what the gate means.
+    cov["by_owner"] = {}
     for node in nodes:
+        owner = node.get("file_path")
+        own = cov["by_owner"].setdefault(owner, {"occurrences": 0,
+                                                 "resolved": 0})
         items = node.get("stamped_items") or []
         # SECTION-SCOPED candidate files, computed once per section rather than
         # per ref: the section-scope pairing in ref_resolution.classify_ref
@@ -227,6 +238,7 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                 # refs exist and 1,122 carry a symbol with no file -- the blind
                 # spot was more than twice the population hiding inside it.
                 cov["occurrences"] += 1
+                own["occurrences"] += 1
                 file_rel = ref.get("file")
                 symbol = ref.get("symbol")
                 # ONE effective-path rule, shared with the identity snapshot
@@ -252,6 +264,7 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                         cov[result.bucket].append(f"{file_rel}:{symbol}")
                     continue
                 cov["resolved"] += 1
+                own["resolved"] += 1
                 stub = _is_stub_cached(result.def_abs, result.line_start,
                                        result.line_end)
                 if stub is None:
@@ -420,6 +433,11 @@ def main() -> int:
     # warn-only behaviour protected cannot occur for a tracked file.
     baseline = None
     baseline_err = None
+    # The whole parsed baseline, kept so the exclusion arithmetic below can read
+    # its per-owner contributions without a second read of the same file (a
+    # second read is a second chance to see a different file).
+    _baseline_doc = {}
+
     def _read_baseline():
         """(value, error). Catches ValueError, not just JSONDecodeError: invalid
         UTF-8 raises UnicodeDecodeError, which is a ValueError and NOT an
@@ -433,6 +451,7 @@ def main() -> int:
             return None, f"unreadable ({exc})"
         if not isinstance(doc, dict):
             return None, f"is not a JSON object ({type(doc).__name__})"
+        _baseline_doc.update(doc)
         return (doc.get("resolved"), doc.get("total")), None
 
     baseline_total = None
@@ -552,15 +571,143 @@ def main() -> int:
     for u in sorted(set(cov.get("missing_file") or ()))[:3]:
         sys.stderr.write(f"  missing file (ref points nowhere): {u}\n")
 
+    # THE EXCLUSION SET REACHES THE GATE, SYMMETRICALLY (section 43). Until now
+    # `lint.sh` filtered this helper's STDOUT, which excludes FINDINGS and
+    # nothing else -- so a TODO the commit does not touch could still move the
+    # stamped-symbol population and refuse the commit at rc 7 below, the exact
+    # unattended-worktree wedge the set exists to prevent.
+    #
+    # Subtracting the excluded owners from the LIVE side alone would not fix it,
+    # it would invert it: the stored baseline still counts them, so every
+    # exclusion would guarantee `POPULATION SHRANK`. Both sides move together or
+    # neither does, which is why the baseline carries per-owner contributions.
+    live_occ, live_res = cov["occurrences"], resolved_n
+    excluded = [p.strip() for p in
+                (os.environ.get("STUB_LINT_EXCLUDED") or "").splitlines()
+                if p.strip()]
+    base_owners = _baseline_doc.get("by_owner")
+    live_owners = cov.get("by_owner") or {}
+
+    # THE MAP IS VALIDATED ON EVERY BASELINE-BACKED RUN, not only when an
+    # exclusion is present (Codex adversarial, section 43 round 2, [medium]).
+    # Nesting the checks under `if excluded` meant ordinary lint and CI -- which
+    # pass no exclusion set -- would accept a baseline whose per-owner map was
+    # omitted, corrupted or desynchronised so long as the GLOBAL totals still
+    # looked right. The corruption then surfaces at the next scoped commit as an
+    # rc 7, recreating the unrelated-worktree wedge this change removes, and a
+    # sum-preserving misattribution would subtract the wrong owner's share.
+    # A baseline with NO map is still accepted here (nothing to check); only an
+    # exclusion actually needs one, and that is enforced below.
+    bad = None
+    if base_owners is not None:
+        if not isinstance(base_owners, dict):
+            bad = (f"{base_path.name} `by_owner` is not an object "
+                   f"({type(base_owners).__name__})")
+        else:
+            tot_o = tot_r = 0
+            for own, val in base_owners.items():
+                if not isinstance(val, dict):
+                    bad = f"baseline by_owner[{own!r}] is not an object"
+                    break
+                o, r = val.get("occurrences"), val.get("resolved")
+                if (not isinstance(o, int) or isinstance(o, bool) or o < 0
+                        or not isinstance(r, int) or isinstance(r, bool)
+                        or r < 0):
+                    bad = (f"baseline by_owner[{own!r}] is not a pair of "
+                           f"non-negative integers ({o!r}, {r!r})")
+                    break
+                if r > o:
+                    bad = (f"baseline by_owner[{own!r}] resolves more refs "
+                           f"than it has ({r} > {o})")
+                    break
+                tot_o += o
+                tot_r += r
+            if bad is None and isinstance(baseline_total, int) \
+                    and isinstance(baseline, int) \
+                    and (tot_o != baseline_total or tot_r != baseline):
+                bad = (f"baseline by_owner sums ({tot_o} occurrences, {tot_r} "
+                       f"resolved) do not equal the recorded totals "
+                       f"({baseline_total}, {baseline}); regenerate them "
+                       f"together, never separately")
+    if bad:
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] BASELINE by_owner INVALID: {bad}. The "
+            f"per-owner contributions are what let a commit-gate exclusion "
+            f"narrow this gate on both sides; an unusable map is refused here "
+            f"rather than at the next scoped commit.\n")
+        return 8
+
+    if excluded:
+        # FAIL CLOSED on what is specific to HAVING an exclusion set. The map
+        # itself was validated above, on every run.
+        bad = None
+        # THE FLOOR FIRST, because it is the root fact. An absent baseline also
+        # has no `by_owner` map, and naming the map would send a reader looking
+        # for a corrupted file when the real answer is that they asked to scope
+        # a gate that is not running (STUB_LINT_ALLOW_NO_BASELINE=1). The
+        # arithmetic below would also raise on None.
+        if not isinstance(baseline_total, int) or not isinstance(baseline, int):
+            bad = ("the baseline floor is not in force (skipped or unreadable), "
+                   "so an exclusion set has no gate to narrow")
+        elif not isinstance(base_owners, dict):
+            bad = (f"{base_path.name} carries no `by_owner` map, so an "
+                   f"exclusion cannot be subtracted from the baseline as well "
+                   f"as from the live walk")
+        elif len(set(excluded)) != len(excluded):
+            bad = "the exclusion set contains duplicate entries"
+        if bad is None:
+            for ident in excluded:
+                if (ident.startswith("/") or ".." in Path(ident).parts
+                        or not ident.startswith("todo/")):
+                    bad = (f"exclusion {ident!r} is not a repo-relative path "
+                           f"under todo/")
+                    break
+                if ident not in base_owners and ident not in live_owners:
+                    bad = (f"exclusion {ident!r} names no TODO in either the "
+                           f"baseline or the current cache -- a renamed or "
+                           f"misspelled entry excludes nothing and would widen "
+                           f"this gate silently")
+                    break
+        if bad:
+            sys.stderr.write(
+                f"[check_stub_behind_stamp] EXCLUSION SET INVALID: {bad}. The "
+                f"coverage gate is not evaluated against a set it cannot apply "
+                f"to both sides.\n")
+            return 7
+        for ident in excluded:
+            b = base_owners.get(ident) or {}
+            l = live_owners.get(ident) or {}
+            baseline_total -= int(b.get("occurrences", 0) or 0)
+            baseline -= int(b.get("resolved", 0) or 0)
+            live_occ -= int(l.get("occurrences", 0) or 0)
+            live_res -= int(l.get("resolved", 0) or 0)
+        # AND THE ADJUSTED VIEW IS ITSELF VALID. The per-entry checks above
+        # cannot see the whole exclusion set at once, and a floor at or below
+        # zero passes vacuously -- `live_res < 0` is never true, so the coverage
+        # gate would be disabled rather than scoped. Same fail-closed rule the
+        # unadjusted baseline already has (a zero floor is rc 8 there).
+        if min(live_occ, live_res, baseline_total) < 0 or baseline <= 0:
+            sys.stderr.write(
+                f"[check_stub_behind_stamp] EXCLUSION SET INVALID: after "
+                f"excluding {len(excluded)} owner(s) the gate would compare "
+                f"{live_occ}/{live_res} against {baseline_total}/{baseline}, "
+                f"which is not a floor this check can enforce. An exclusion "
+                f"may narrow the gate; it may not switch it off.\n")
+            return 7
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] coverage gate scope: {len(excluded)} "
+            f"todo file(s) excluded from BOTH the live population and the "
+            f"baseline; population {live_occ} vs {baseline_total}\n")
+
     # DENOMINATOR FIRST -- a shrunken population invalidates the ratio the
     # floor below is expressed in, so reporting the floor as clean while the
     # corpus lost refs would be the fail-open this check exists to prevent.
-    if isinstance(baseline_total, int) and cov["occurrences"] != baseline_total:
-        direction = ("SHRANK" if cov["occurrences"] < baseline_total
+    if isinstance(baseline_total, int) and live_occ != baseline_total:
+        direction = ("SHRANK" if live_occ < baseline_total
                      else "GREW")
         sys.stderr.write(
             f"[check_stub_behind_stamp] POPULATION {direction}: "
-            f"{cov['occurrences']} kind=symbol refs vs baseline total "
+            f"{live_occ} kind=symbol refs vs baseline total "
             f"{baseline_total}. The resolved floor is a RATIO, so a moving "
             f"denominator changes what passing means: refs lost from the "
             f"cache shrink the buckets and the total together, leaving "
@@ -569,17 +716,17 @@ def main() -> int:
             f"{base_path.name}'s `total` DELIBERATELY in the same commit "
             f"and say what changed.\n")
         return 7
-    if isinstance(baseline, int) and resolved_n < baseline:
+    if isinstance(baseline, int) and live_res < baseline:
         sys.stderr.write(
             f"[check_stub_behind_stamp] COVERAGE REGRESSION: resolved "
-            f"{resolved_n} < baseline {baseline}. A change made this lint "
+            f"{live_res} < baseline {baseline}. A change made this lint "
             f"blinder -- an unresolved symbol yields no finding, so losing "
             f"resolution looks identical to passing. Fix the resolver, or "
             f"update {base_path.name} DELIBERATELY with the reason.\n")
         return 7
-    if isinstance(baseline, int) and resolved_n > baseline:
+    if isinstance(baseline, int) and live_res > baseline:
         sys.stderr.write(f"stub-behind-stamp:coverage improved {baseline} -> "
-                         f"{resolved_n}; update stub-lint-baseline.json to lock "
+                         f"{live_res}; update stub-lint-baseline.json to lock "
                          f"it in\n")
     return 0
 

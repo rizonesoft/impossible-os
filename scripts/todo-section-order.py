@@ -70,7 +70,15 @@ except ImportError as _exc:                                  # pragma: no cover
 # 5,000-digit heading used to raise ValueError out of `int()`, exit 1 with an
 # EMPTY stdout, and be read as CLEAN by lint Checks 22/22b (Codex adversarial,
 # section 41 post-commit, [medium]).
-ANY_H2_RE = re.compile(r"^## ")
+# NO LOCAL BOUNDARY RULE EITHER (section 43 review). This was column-0 while
+# `_is_section` accepted CommonMark's 0-3 indent, so an indented `## Notes`
+# between numbered sections stopped being seen as unmodelled structure --
+# `parse` no longer refused, and `reorder` RELOCATED that block with the
+# section above it. A mutating tool moving prose it does not understand is the
+# one outcome this file is written to make impossible.
+def _is_h2(line: str) -> bool:
+    """Any `## ` heading, numbered or not -- see `todo_fence.is_h2`."""
+    return _fence.is_h2(line)
 
 
 def _head(line: str):
@@ -171,8 +179,8 @@ def parse(text: str, sc=None):
     for i in range(first, len(lines)):
         if mask[i]:
             continue
-        if ANY_H2_RE.match(lines[i]) and not _is_section(lines[i]):
-            title = lines[i][3:].strip()
+        if _is_h2(lines[i]) and not _is_section(lines[i]):
+            title = _fence.h2_title(lines[i])
             if i < last and title not in CLOSING_MATTER:
                 return None
             closing.append(i)
@@ -235,8 +243,8 @@ def sections_after_closing(text: str, sc=None):
         if mask[i]:
             continue
         l = lines[i]
-        if ANY_H2_RE.match(l) and not _is_section(l):
-            if l[3:].strip() in CLOSING_MATTER:
+        if _is_h2(l) and not _is_section(l):
+            if _fence.h2_title(l) in CLOSING_MATTER:
                 first_closing = i
                 break
     if first_closing is None:

@@ -7435,6 +7435,149 @@ else
     t_fail "lint Check 7: denominator not enforced (rc=$RR_POP_RC)"
 fi
 
+# 14v-x: THE COMMIT-GATE EXCLUSION SET REACHES THE rc-7 GATE (section 43).
+# Section 39 excluded Check 7's FINDINGS by filtering the helper's stdout, which
+# cannot reach the coverage/population accounting -- so a todo file the commit
+# does not touch could still move the stamped-symbol population and block the
+# commit, the exact unattended-worktree wedge the set exists to prevent.
+#
+# AGAINST THE REAL CACHE AND BASELINE, deliberately, not the RR_TREE fixture:
+# that tree resolves ZERO symbols, so no positive coverage floor is satisfiable
+# inside it and every one of these runs would refuse for a reason with nothing to
+# do with exclusions (measured: the first version of this fixture failed rc 7
+# COVERAGE REGRESSION, then rc 8, for exactly that reason). The repo's own cache
+# is the only place the full arithmetic -- population AND floor -- is exercisable.
+RR_XREAL_CACHE="$REPO_ROOT/build/todo-cache.json"
+RR_XREAL_BASE="$REPO_ROOT/scripts/lint/stub-lint-baseline.json"
+if [ ! -f "$RR_XREAL_CACHE" ] || [ ! -f "$RR_XREAL_BASE" ]; then
+    t_fail "lint Check 7 exclusion: the repo cache or baseline is absent; build it with scripts/todo-graph/build-and-validate.sh --keep-cache"
+else
+    # The baseline is DERIVED FROM THE CACHE at test time, not copied from the
+    # tracked file: `test-tooling.sh` rebuilds caches while this suite runs
+    # nested inside it, and a fixture pinned to the tracked numbers fails
+    # whenever the corpus has moved since they were recorded -- a flake with
+    # nothing to say about exclusions. One occurrence is then removed from the
+    # busiest owner, That is exactly "an
+    # excluded file moved the population": subtracting the owner cancels the
+    # move, leaving it in does not. `resolved` is untouched, so the coverage
+    # floor plays no part in what these assertions measure.
+    RR_XBASE="$TMP_DIR/rr-baseline-excl.json"
+    RR_XOWNER="$(python3 "$REPO_ROOT/scripts/todo-graph/tests/mk_excl_baseline.py" \
+        "$RR_XREAL_CACHE" "$RR_XBASE" from-cache)"
+    if [ -z "$RR_XOWNER" ] || [ "$RR_XOWNER" = "NO-USABLE-CORPUS" ]; then
+        t_fail "lint Check 7 exclusion: the live corpus carries no resolvable stamped-symbol owner ($RR_XOWNER)"
+    else
+        # CONTROL FIRST -- it must FAIL, or the fixture below proves nothing.
+        RR_XC_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XBASE" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xctl.err" || RR_XC_RC=$?
+        if [ "$RR_XC_RC" = "7" ] && grep -q "POPULATION" "$TMP_DIR/rr-xctl.err"; then
+            t_pass "lint Check 7 exclusion CONTROL: an unexcluded moved population still blocks"
+        else
+            t_fail "lint Check 7 exclusion CONTROL did not block (rc=$RR_XC_RC) -- the fixture below would be vacuous"
+        fi
+        RR_XF_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XBASE" STUB_LINT_EXCLUDED="$RR_XOWNER" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xfix.err" || RR_XF_RC=$?
+        if [ "$RR_XF_RC" != "7" ] && grep -q "coverage gate scope" "$TMP_DIR/rr-xfix.err"; then
+            t_pass "lint Check 7 exclusion: an excluded file that moves the population does NOT block"
+        else
+            t_fail "lint Check 7 exclusion: excluded owner still blocked (rc=$RR_XF_RC); $(grep -m1 -E 'POPULATION|INVALID' "$TMP_DIR/rr-xfix.err")"
+        fi
+        # FAIL CLOSED on an identity that matches nothing -- the shape a rename
+        # produces, and the one that would silently widen the gate.
+        RR_XS_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XBASE" STUB_LINT_EXCLUDED="todo/99-gone/TODO-99-renamed.md" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xstale.err" || RR_XS_RC=$?
+        if [ "$RR_XS_RC" = "7" ] && grep -q "EXCLUSION SET INVALID" "$TMP_DIR/rr-xstale.err"; then
+            t_pass "lint Check 7 exclusion: a stale identity refuses instead of excluding nothing"
+        else
+            t_fail "lint Check 7 exclusion: stale identity not refused (rc=$RR_XS_RC)"
+        fi
+        # FAIL CLOSED when the baseline cannot support symmetric subtraction.
+        RR_XN="$TMP_DIR/rr-baseline-noowner.json"
+        python3 "$REPO_ROOT/scripts/todo-graph/tests/mk_excl_baseline.py" \
+            "$RR_XBASE" "$RR_XN" drop-by-owner >/dev/null
+        RR_XN_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XN" STUB_LINT_EXCLUDED="$RR_XOWNER" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xnoown.err" || RR_XN_RC=$?
+        if [ "$RR_XN_RC" = "7" ] && grep -q "no .by_owner. map" "$TMP_DIR/rr-xnoown.err"; then
+            t_pass "lint Check 7 exclusion: a baseline without per-owner contributions refuses"
+        else
+            t_fail "lint Check 7 exclusion: missing by_owner not refused (rc=$RR_XN_RC)"
+        fi
+        # A TAMPERED map must refuse too: the per-owner sums are the invariant
+        # the section promised, and nothing else re-checks them.
+        RR_XT="$TMP_DIR/rr-baseline-tampered.json"
+        python3 "$REPO_ROOT/scripts/todo-graph/tests/mk_excl_baseline.py" \
+            "$RR_XBASE" "$RR_XT" tamper-sum >/dev/null
+        RR_XT_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XT" STUB_LINT_EXCLUDED="$RR_XOWNER" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xtamper.err" || RR_XT_RC=$?
+        # rc 8, not 7: since round 2 the map is validated on EVERY baseline-backed
+        # run, so a tampered map is refused as a bad baseline before the
+        # exclusion arithmetic is ever reached. That ordering is the fix.
+        if [ "$RR_XT_RC" = "8" ] && grep -q "do not equal the recorded totals" "$TMP_DIR/rr-xtamper.err"; then
+            t_pass "lint Check 7 exclusion: per-owner sums are enforced, not assumed"
+        else
+            t_fail "lint Check 7 exclusion: tampered by_owner sums not refused (rc=$RR_XT_RC)"
+        fi
+        # THE MAP IS CHECKED WITHOUT AN EXCLUSION SET TOO. Round 2: all of the
+        # validation above was nested under `if excluded`, so ordinary lint and
+        # CI -- which pass no set -- accepted a corrupted or desynchronised
+        # by_owner map as long as the GLOBAL totals still looked right, and the
+        # corruption surfaced later as an rc 7 at someone else's scoped commit.
+        RR_XT0_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XT" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xt0.err" || RR_XT0_RC=$?
+        if [ "$RR_XT0_RC" = "8" ] && grep -q "BASELINE by_owner INVALID" "$TMP_DIR/rr-xt0.err"; then
+            t_pass "lint Check 7 exclusion: a corrupt per-owner map is refused with NO exclusion set"
+        else
+            t_fail "lint Check 7 exclusion: corrupt map accepted without exclusions (rc=$RR_XT0_RC)"
+        fi
+        # An exclusion set with no floor to narrow is refused rather than
+        # silently applied: STUB_LINT_ALLOW_NO_BASELINE plus a MISSING baseline
+        # leaves nothing to subtract from.
+        RR_XNB_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$TMP_DIR/absent-baseline.json" \
+            STUB_LINT_ALLOW_NO_BASELINE=1 STUB_LINT_EXCLUDED="$RR_XOWNER" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xnb.err" || RR_XNB_RC=$?
+        if [ "$RR_XNB_RC" = "7" ] && grep -q "no gate to narrow" "$TMP_DIR/rr-xnb.err"; then
+            t_pass "lint Check 7 exclusion: an exclusion with no floor in force is refused"
+        else
+            t_fail "lint Check 7 exclusion: exclusion applied with no floor (rc=$RR_XNB_RC)"
+        fi
+        # AND AN EXCLUSION MAY NOT SWITCH THE GATE OFF: excluding every owner
+        # leaves a zero floor, which would pass vacuously.
+        RR_XALL="$(python3 "$REPO_ROOT/scripts/todo-graph/tests/mk_excl_baseline.py" \
+            "$RR_XBASE" /dev/null list-owners)"
+        RR_XA_RC=0
+        STUB_LINT_CACHE="$RR_XREAL_CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+            STUB_LINT_BASELINE="$RR_XBASE" STUB_LINT_EXCLUDED="$RR_XALL" \
+            python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+            >/dev/null 2>"$TMP_DIR/rr-xall.err" || RR_XA_RC=$?
+        if [ "$RR_XA_RC" = "7" ] && grep -q "may not switch it off" "$TMP_DIR/rr-xall.err"; then
+            t_pass "lint Check 7 exclusion: excluding every owner refuses rather than disabling the floor"
+        else
+            t_fail "lint Check 7 exclusion: an all-owner exclusion did not refuse (rc=$RR_XA_RC)"
+        fi
+    fi
+fi
+
 # 14q: THE IDENTITY GATE SEES THE REPAIRS. corpus_resolution_snapshot.collect()
 # used to skip every ref without a stored `file`, so a repair taught only to
 # the lint walk would be invisible to the 0-lost/0-moved proof that is supposed

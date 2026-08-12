@@ -142,7 +142,11 @@ OWNER_RE = re.compile(
     re.IGNORECASE)
 
 
-ANY_H2_RE = re.compile(r"^## ")
+# The BOUNDARY rule comes from the shared module too (section 43 review). A
+# column-0 terminator against a 0-3-indent start rule made an indented section
+# start without ending the previous one, so its items were counted in BOTH
+# bodies -- once under the wrong section number, which is a false finding in
+# the gate that holds `phase FIXPOINT` open.
 
 
 def _sections(lines, mask):
@@ -176,7 +180,7 @@ def _sections(lines, mask):
     for ln, head in starts:
         end = len(lines)
         for j in range(ln + 1, len(lines)):
-            if not mask[j] and ANY_H2_RE.match(lines[j]):
+            if not mask[j] and _fence.is_h2(lines[j]):
                 end = j
                 break
         yield head, ln, [lines[j] for j in range(ln, end) if not mask[j]]
@@ -575,17 +579,7 @@ def audit(path, root="."):
         # The CATEGORY comes from the shared mapping too, not from a local
         # if/else over two flags -- with seven HTML block types a hand-written
         # ternary here would silently label an unclosed `<script>` a comment.
-        # ONE CATEGORY WITH BOTH TOOLS (section 43). `validate.py` refuses this
-        # same condition outright (rc 2) while this gate reports it and exits 1,
-        # and that difference is deliberate -- `run_phase_guard.py` blocks
-        # fixpoint on rc 1 alone and treats every other nonzero as clean, so
-        # raising the code here would HIDE an unclosed document from the
-        # completion gate. What the two share is the NAME, so one condition
-        # reported by two tools does not read as two unrelated defects. The
-        # specific terminal (`unclosed-fence`, `unclosed-script`, ...) stays in
-        # the detail, where it is diagnosis rather than classification.
-        return [(_fence.UNCLOSED_CATEGORY, 0,
-                 f"{_fence.terminal_category(scan.terminal)}: {reason}")]
+        return [(_fence.terminal_category(scan.terminal), 0, reason)]
     rows = _io_rows(lines, mask)
     status_map = _io_status(path, root, rows)
     out = []

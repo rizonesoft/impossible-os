@@ -78,15 +78,16 @@ if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
         # correction then dropped to 10/11/24 on the further claim that "Check
         # 17 does not consult it at all", which was false at the time it was
         # written -- Check 17 has filtered `TABLE_ALIGN_RAW` per file all along.
-        # Section 39 made Check 7 exclude its FINDINGS too. It says so
-        # precisely rather than claiming the whole check, because the exclusion
-        # runs on the helper's stdout and cannot reach the coverage/population
-        # accounting behind rc 7 -- an excluded file that moves the stamped
-        # symbol population still blocks. Passing the set INTO the helper is
-        # filed in section 42; over-claiming here would be the third wrong
-        # version of this line (Codex adversarial, section 39 round 7,
-        # [medium]).
-        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 10/11/17/24, nor by Check 7's findings (its coverage/population gate stays repo-wide)${NC:-}"
+        # Section 39 made Check 7 exclude its FINDINGS, and said so precisely
+        # rather than claiming the whole check, because the exclusion ran on the
+        # helper's stdout and could not reach the coverage/population accounting
+        # behind rc 7. Section 43 passed the set INTO the helper, which
+        # subtracts each owner from the live population and from the baseline's
+        # per-owner contributions together -- so the banner now names Check 7
+        # WHOLLY, and does so for the first time truthfully. This line has been
+        # wrong in both directions before; it is accurate only because the code
+        # under it changed, never because the wording did.
+        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/10/11/17/24${NC:-}"
     fi
 fi
 
@@ -619,7 +620,14 @@ else
     # missing/stale/corrupt cache is informational, not a fatal lint
     # error -- the case statement below routes each rc to error()/warn().
     STUB_RC=0
+    # THE SET GOES IN, not just over the output (section 43). Filtering the
+    # helper's stdout reaches its FINDINGS and nothing else, so a todo file this
+    # commit does not touch could still move the stamped-symbol population and
+    # refuse the commit at rc 7 -- the wedge the set exists to prevent. The
+    # helper now subtracts each named owner from the live population AND from
+    # the baseline's per-owner contributions, and REFUSES if it cannot do both.
     STUB_LINT_CACHE="$CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+        STUB_LINT_EXCLUDED="$GATE_EXCLUDED_TODO" \
         python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
         >"$STUB_OUT_FILE" 2>"$STUB_ERR_FILE" || STUB_RC=$?
     # Drop findings owned by a todo file this commit does not touch -- see
@@ -1481,20 +1489,44 @@ else
     # handler) exited 1 with a traceback on stderr and empty stdout, and was
     # counted as ZERO unaligned files. A refusal read as a pass is the exact
     # defect Check 19 was hardened against in section 41; this is that shape.
+    # A MISSING TOOL IS NOT A CRASHED TOOL, and the distinction has to be made
+    # BEFORE the envelope below, which treats every unexpected rc as an error.
+    # `python3 <absent script>` exits 2, so without this a tree that simply does
+    # not carry the formatter -- every synthetic lint fixture under
+    # `scripts/test-tooling.sh` -- would report a Check 17 error about a file it
+    # has nothing to do with. Same shape and same wording as Check 7's missing
+    # cache: skipped, WARNED, and visible.
+    if [ ! -f "$REPO_ROOT/scripts/format-md-tables.py" ]; then
+        echo -e "${YELLOW}warn${NC}: Check 17 (table-column-align) skipped -- scripts/format-md-tables.py is absent"
+        WARNINGS=$((WARNINGS + 1))
+        TABLE_ALIGN_RAW=""
+        TABLE_ALIGN_ERR=""
+    else
     TABLE_ALIGN_ERR=$(mktemp) || { echo -e "${RED}error${NC}: Check 17 (table-column-align) mktemp failed -- the alignment scan did not run"; ERRORS=$((ERRORS + 1)); TABLE_ALIGN_ERR=""; }
     TABLE_ALIGN_RC=0
     if [ -n "$TABLE_ALIGN_ERR" ]; then
         TABLE_ALIGN_RAW=$(python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>"$TABLE_ALIGN_ERR") || TABLE_ALIGN_RC=$?
-        # A well-formed violation record is `<path>: <detail>`; a traceback line
-        # is not. Counting RECORDS rather than lines is what separates "rc 1
-        # because 3 files are ragged" from "rc 1 because the tool died".
-        TABLE_ALIGN_RECORDS=$(printf '%s' "$TABLE_ALIGN_RAW" | grep -cE '^[^:]+:' || true)
+        # EVERY line must be a record, and stderr must be EMPTY. Counting
+        # record-SHAPED lines is not enough: `format-md-tables.py` prints as it
+        # walks (`format-md-tables.py:397`), so it can emit a valid
+        # `would align: <path>` and THEN raise on a later file -- rc 1, one good
+        # record, a traceback on stderr, and a partial count published as the
+        # verdict. That is the same erased-refusal defect in a narrower window
+        # (Codex adversarial, section 43, [medium]). The producer's record is
+        # exactly `would align: <path>` in --check mode, so anything else on
+        # stdout, or anything at all on stderr, means the scan did not complete.
+        TABLE_ALIGN_RECORDS=$(printf '%s' "$TABLE_ALIGN_RAW" | grep -c . || true)
+        TABLE_ALIGN_ODD=$(printf '%s' "$TABLE_ALIGN_RAW" | grep -cvE '^would align: .' || true)
+        TABLE_ALIGN_NOISE=0
+        [ -s "$TABLE_ALIGN_ERR" ] && TABLE_ALIGN_NOISE=1
         TABLE_ALIGN_BAD=0
         case "$TABLE_ALIGN_RC" in
             0) [ "${TABLE_ALIGN_RECORDS:-0}" -eq 0 ] || TABLE_ALIGN_BAD=1 ;;
             1) [ "${TABLE_ALIGN_RECORDS:-0}" -gt 0 ] || TABLE_ALIGN_BAD=1 ;;
             *) TABLE_ALIGN_BAD=1 ;;
         esac
+        [ "${TABLE_ALIGN_ODD:-0}" -eq 0 ] || TABLE_ALIGN_BAD=1
+        [ "$TABLE_ALIGN_NOISE" = "0" ] || TABLE_ALIGN_BAD=1
         if [ "$TABLE_ALIGN_BAD" = "1" ]; then
             TABLE_ALIGN_SAID=0
             while IFS= read -r line; do
@@ -1504,7 +1536,7 @@ else
                 TABLE_ALIGN_SAID=1
             done < "$TABLE_ALIGN_ERR"
             if [ "$TABLE_ALIGN_SAID" = "0" ]; then
-                echo -e "${RED}error${NC}: Check 17 (table-column-align) scripts/format-md-tables.py exited $TABLE_ALIGN_RC with $TABLE_ALIGN_RECORDS violation record(s) and no diagnostic -- the alignment scan did not run"
+                echo -e "${RED}error${NC}: Check 17 (table-column-align) scripts/format-md-tables.py exited $TABLE_ALIGN_RC with $TABLE_ALIGN_RECORDS output line(s), $TABLE_ALIGN_ODD of them not a \`would align: <path>\` record, and no diagnostic -- the alignment scan did not complete"
                 ERRORS=$((ERRORS + 1))
             fi
             # A broken scan reports NOTHING further: the count below would be
@@ -1515,6 +1547,7 @@ else
         rm -f "$TABLE_ALIGN_ERR"
     else
         TABLE_ALIGN_RAW=""
+    fi
     fi
     # Drop findings in files the commit does not touch, through the SHARED
     # predicate rather than a second copy of it (section 39). A mid-edit table

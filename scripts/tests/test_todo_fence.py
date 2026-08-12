@@ -260,8 +260,8 @@ def test_reachability():
     lines, mask = _s.lines, _s.mask
     blind = [False] * len(lines)
 
-    aware_secs = {n for n, _, _ in reach._sections(lines, mask)}
-    blind_secs = {n for n, _, _ in reach._sections(lines, blind)}
+    aware_secs = {h.n for h, _, _ in reach._sections(lines, mask)}
+    blind_secs = {h.n for h, _, _ in reach._sections(lines, blind)}
     check("reachability: fence-aware sees only the real section",
           aware_secs == {1})
     check("reachability CONTROL: the fence-blind walk invents section 99",
@@ -359,7 +359,10 @@ def test_reachability():
           41 in reach._io_rows(wl, wm))
 
     # A fenced `- [ ]` and a fenced stamp must not reach the body scans either.
-    body = next(b for n, _, b in reach._sections(lines, mask) if n == 1)
+    # `_sections` yields the CLASSIFICATION since section 43, not a bare number:
+    # an over-long heading has no usable number and still delimits its section,
+    # and a caller has to be able to tell those apart.
+    body = next(b for h, _, b in reach._sections(lines, mask) if h.n == 1)
     check("reachability: no fenced open item in the real section's body",
           not any("a fenced example item" in b for b in body))
     check("reachability: no fenced Deferred stamp in the real section's body",
@@ -367,7 +370,7 @@ def test_reachability():
     # Fence-blind, the fenced heading TERMINATES the real section and the
     # example item is attributed to the phantom section 99 instead -- which is
     # the `no-io-row` verdict this gate used to raise over a code sample.
-    blind_99 = next((b for n, _, b in reach._sections(lines, blind) if n == 99),
+    blind_99 = next((b for h, _, b in reach._sections(lines, blind) if h.n == 99),
                     None)
     check("reachability CONTROL: fence-blind, the item lands under phantom 99",
           blind_99 is not None
@@ -1676,6 +1679,172 @@ def test_container_aware_fences():
           "<!--" in cs.mask_code_spans("- [ ] Real \\`<!--\\`"))
 
 
+def test_one_heading_rule_section43():
+    """One `## N.` classifier, and nothing may define a second one.
+
+    Section 43. Three copies were deleted in favour of `classify_heading`; the
+    fourth (`.claude/hooks/sequencer_triage.py`) is control-plane and an
+    unattended run may not edit it, so it is an ALLOWLISTED residual here rather
+    than an untested claim -- when an operator retires it, this list shrinks and
+    the test says so.
+    """
+    fence = load("todo_fence_s43", "scripts/todo_fence.py")
+    cs = load("cache_schema_s43", "scripts/todo-graph/cache_schema.py")
+
+    # --- the tagged contract -------------------------------------------------
+    ok = fence.classify_heading("## 7. Title")
+    check("s43: a plain heading classifies ok",
+          (ok.kind, ok.n, ok.title) == ("ok", 7, "Title"))
+    check("s43: a bare `## 5.` keeps its optional title as None",
+          fence.classify_heading("## 5.").title is None)
+    check("s43: CommonMark's 1-3 space indent is a heading",
+          fence.classify_heading("   ## 9. X").n == 9)
+    check("s43: four spaces is not a heading",
+          fence.classify_heading("    ## 9. X").kind == "none")
+    check("s43: a non-heading line classifies none",
+          fence.classify_heading("- [x] item").kind == "none")
+
+    # An UNREPRESENTABLE number is matched and reported, never dropped: the
+    # match is what keeps it delimiting its section. Both causes are covered --
+    # too many digits (which used to raise ValueError out of `int()`) and a
+    # value past the schema ceiling.
+    long_head = "## " + "9" * 5000 + ". Over long"
+    lr = fence.classify_heading(long_head)
+    check("s43: a 5000-digit heading is over-long, not a crash",
+          lr.kind == "over-long" and lr.n is None and lr.digits == 5000)
+    over = fence.classify_heading("## 70000. Past the ceiling")
+    check("s43: a value past the schema ceiling is over-long too",
+          over.kind == "over-long" and over.n is None)
+    check("s43: the report names the digit count for a long run",
+          "5000 digits" in fence.heading_report(3, lr))
+    check("s43: the report names the VALUE for an in-length overflow",
+          "value above" in fence.heading_report(3, over))
+    # The report must never echo the digit RUN -- a multi-megabyte heading would
+    # otherwise be printed in full onto a serial line or a lint summary.
+    check("s43: the report does not echo the digit run",
+          len(fence.heading_report(3, lr)) < 400)
+
+    # --- the producer refuses, and does not re-parent -------------------------
+    build = load("build_s43", "scripts/todo-graph/build.py")
+    body = ("# T\n\n## Implementation Order\n\n"
+            "| Order | Section | Deliverable | Depends On | Status |\n"
+            "| :---: | :-----: | --- | --- | :---: |\n"
+            "| 1 | " + S + "1 | thing | -- | [x] |\n\n"
+            "## 1. Real\n\n- [x] first item\n\n"
+            "## " + "9" * 5000 + ". Over long\n\n- [x] second item\n")
+    sc = build.scan_body(body)
+    heads = build._walk_section_headings(sc.lines, sc.mask)
+    errs = build._walk_unusable_headings(sc.lines, sc.mask)
+    items = build._walk_stamped_items(sc.lines, sc.mask, "todo/x/TODO-01-x.md")
+    check("s43: the producer records the usable heading only",
+          [h[0] for h in heads] == [1])
+    check("s43: the producer carries an unusable-heading error",
+          [e[0] for e in errs] == ["unusable-heading"])
+    # THE CONTROL THAT MATTERS. The item below the unusable heading must NOT be
+    # filed under section 1 -- that re-parenting is the silent misattribution
+    # the whole rule exists to refuse, and it is what a bounded MATCH produced.
+    check("s43: the item below an unusable heading is not re-parented to 1",
+          [i.get("section_n") for i in items] == [1])
+
+    # --- START and END must agree about indent ------------------------------
+    # Section 43's own adversarial review: `classify_heading` was widened to
+    # CommonMark's 0-3 indent while every consumer still ENDED a section on a
+    # column-0 `## `. Both halves of the desynchronisation are pinned here.
+    so = load("section_order_s43", "scripts/todo-section-order.py")
+    reach = load("reach_s43", "scripts/todo-reachability.py")
+    interleaved = ("# T\n\n## 2. Two\n\nbody two\n\n   ## Notes\n\n"
+                   "notes body\n\n   ## 1. One\n\nbody one\n")
+    check("s43: an indented non-numbered H2 between sections REFUSES the parse",
+          so.parse(interleaved) is None)
+    # The one that actually damages a file: `reorder` REWROTE this document and
+    # carried the `## Notes` block along with the section above it.
+    check("s43: ...so the mutating reorder leaves it untouched",
+          so.reorder(interleaved) is None)
+    adjacent = ("# T\n\n## 1. One\n\n- [ ] item one\n\n"
+                "   ## 2. Two\n\n- [ ] item two\n")
+    asc = fence.scan_text(adjacent)
+    bodies = {h.n: [b for b in body if b.strip().startswith("- [")]
+              for h, _, body in reach._sections(asc.lines, asc.mask)}
+    check("s43: adjacent indented sections have DISJOINT bodies",
+          bodies.get(1) == ["- [ ] item one"]
+          and bodies.get(2) == ["- [ ] item two"])
+    check("s43: the boundary rule accepts the same indent as the start rule",
+          fence.is_h2("   ## Notes") and fence.is_h2("## 1. X")
+          and not fence.is_h2("    ## Too deep"))
+    # AND THE TITLE MUST BE CUT WITH THE SAME RULE. Round 2: `is_h2` accepted
+    # 0-3 spaces while the callers still sliced `line[3:]`, so an indented
+    # `## OS Comparison` became `# OS Comparison`, stopped matching the
+    # closing-matter set, and `sections_after_closing` -- which lint Check 22b
+    # calls DIRECTLY -- reported nothing for a section placed after the tail.
+    check("s43: h2_title strips the permitted indent, not a fixed 3 columns",
+          all(fence.h2_title(pad + "## OS Comparison") == "OS Comparison"
+              for pad in ("", " ", "  ", "   ")))
+    placed = ("# T\n\n## 1. One\n\nbody\n\n{pad}## OS Comparison\n\n"
+              "table\n\n## 2. After the tail\n\nbody two\n")
+    check("s43: a section after INDENTED closing matter is still reported",
+          all(so.sections_after_closing(placed.format(pad=pad),
+                                        so.scan(placed.format(pad=pad)))
+              for pad in ("", " ", "  ", "   ")))
+
+    # --- no second grammar, checked at the AST ------------------------------
+    # A grep control is evaded by a composed or dynamically-built pattern; the
+    # AST sees the string wherever `re.compile` is actually called.
+    import ast
+    allowed = {"scripts/todo-graph/cache_schema.py"}
+    residual = {".claude/hooks/sequencer_triage.py"}
+    heading_pat = re.compile(r"##\s*\\?\(?\\d")
+    offenders = []
+    for rel in ("scripts/todo-reachability.py", "scripts/todo-section-order.py",
+                "scripts/todo-graph/build.py", "scripts/todo-graph/validate.py",
+                "scripts/todo_fence.py", "scripts/todo-reflow.py",
+                "scripts/todo-staged-check.py", "scripts/todo-orphan-check.py",
+                "scripts/lint/check_stub_behind_stamp.py"):
+        path = REPO / rel
+        if not path.exists() or rel in allowed:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if node.value.lstrip("^").startswith("## ") and "\\d" in node.value:
+                offenders.append(f"{rel}:{node.lineno}")
+            elif heading_pat.search(node.value):
+                offenders.append(f"{rel}:{node.lineno}")
+    check("s43: no consumer defines a second `## N.` grammar (AST); found "
+          + ", ".join(offenders), not offenders)
+    check("s43: the control-plane residual is still the only allowlisted copy",
+          residual == {".claude/hooks/sequencer_triage.py"})
+    triage = REPO / ".claude/hooks/sequencer_triage.py"
+    if triage.exists():
+        # The residual is REAL, not a stale note: if an operator has already
+        # retired it, this check fails and the allowlist above must shrink.
+        check("s43: the residual copy still exists (shrink the allowlist when "
+              "it is retired)",
+              "SECTION_HEADING_RE" in triage.read_text(encoding="utf-8"))
+
+    # --- one name for an unreadable document, two exit codes on purpose ------
+    # ONE NAME ACROSS THREE TOOLS for an unreadable document. The producer and
+    # the reachability gate already filed it under `terminal_category(...)`;
+    # validate.py named it in prose alone, so a reader grepping `unclosed-fence`
+    # found two of the three places it occurs. A generic category was tried here
+    # first and REVERTED: it would have replaced the specific terminal that
+    # sections 38-39 deliberately shared with the producer, trading a real
+    # parity property for a vaguer one.
+    vsrc = (REPO / "scripts/todo-graph/validate.py").read_text(encoding="utf-8")
+    check("s43: validate.py's refusal carries the shared terminal category",
+          "_refuse(f\"{_cs.terminal_category(_scan.terminal)}" in vsrc)
+    # And the token is the SAME for the same document in the gate and the
+    # producer, checked against a real terminal rather than asserted in prose.
+    unclosed = fence.scan_text("# T\n\n## 1. X\n\n```\nnever closed\n")
+    check("s43: an unclosed document has a terminal to categorise",
+          unclosed.terminal is not None)
+    check("s43: gate and producer categorise it identically",
+          fence.terminal_category(unclosed.terminal)
+          == cs.terminal_category(unclosed.terminal) == "unclosed-fence")
+    check("s43: cache_schema's ceiling is what bounds the classifier",
+          cs._HEADING_DIGIT_LIMIT == len(str(cs._MAX_SECTION_N)))
+
+
 def main():
     test_shim()
     test_container_aware_fences()
@@ -1689,6 +1858,7 @@ def main():
     test_reflow()
     test_section_order()
     test_html_blocks_section42()
+    test_one_heading_rule_section43()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
@@ -1864,9 +2034,20 @@ def test_html_blocks_section42():
     check("an over-long section number is still MATCHED as a heading",
           all(cs42.SECTION_HEADING_RE.match(l)
               for l in os_.lines if l.startswith("## ")))
+    # SECTION 43 STRENGTHENED THE OUTCOME, not the property. This used to expect
+    # the second item under section 12345678901 -- which the heading walk had
+    # matched but the cache schema pins to 0-65535, so the producer was emitting
+    # a node that its own validator would reject. The property being defended is
+    # unchanged and still checked first: the item must not be re-parented to
+    # section 1. What changed is that an unrepresentable number now records
+    # NOTHING and carries an error, instead of recording a value that cannot
+    # survive validation.
+    over_items = B._walk_stamped_items(os_.lines, os_.mask, "t.md")
     check("...so the item after it is NOT re-parented to the previous section",
-          [i["section_n"] for i in
-           B._walk_stamped_items(os_.lines, os_.mask, "t.md")] == [1, 12345678901])
+          [i["section_n"] for i in over_items] == [1])
+    check("...and the node carries an error rather than dropping it silently",
+          [e[0] for e in B._walk_unusable_headings(os_.lines, os_.mask)]
+          == ["unusable-heading"])
 
     _corpus_differential(tf, cs42)
 

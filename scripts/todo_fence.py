@@ -34,8 +34,9 @@ from pathlib import Path
 
 __all__ = [
     "fence_step", "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
-    "terminal_category", "classify_heading", "heading_report",
-    "UNCLOSED_CATEGORY", "mask_text", "unmasked", "replace_atomically",
+    "terminal_category", "classify_heading", "heading_report", "is_h2",
+    "h2_title",
+    "mask_text", "unmasked", "replace_atomically",
     "StagedSnapshotError", "index_tree", "staged_docs",
 ]
 
@@ -163,6 +164,20 @@ def classify_heading(line: str):
     return _cache_schema().classify_heading(line)
 
 
+def is_h2(line: str) -> bool:
+    """The BOUNDARY rule -- see `cache_schema.is_h2`.
+
+    Paired with `classify_heading` deliberately: a consumer that takes one from
+    here and hand-rolls the other is how section 43's walks desynchronised.
+    """
+    return _cache_schema().is_h2(line)
+
+
+def h2_title(line: str):
+    """The title of any `## ` heading -- see `cache_schema.h2_title`."""
+    return _cache_schema().h2_title(line)
+
+
 def heading_report(line_no: int, result) -> str:
     """The shared wording for an unrepresentable heading -- see `cache_schema`.
 
@@ -171,22 +186,6 @@ def heading_report(line_no: int, result) -> str:
     to describe one malformed heading reads as two separate defects.
     """
     return _cache_schema().heading_report(line_no, result)
-
-
-UNCLOSED_CATEGORY = "unreadable-document"
-"""The ONE category name for a document whose structure could not be read.
-
-Section 43. `validate.py` refuses such a document outright (rc 2) while
-`todo-reachability.py` reports it and exits 1, and that difference is DELIBERATE
-rather than drift: `.claude/hooks/run_phase_guard.py` blocks fixpoint on
-reachability's rc 1 alone and treats every other nonzero as clean, so raising
-reachability to rc 2 would hide an unclosed document from the completion gate.
-What the two must share is WHAT THEY CALL IT, so a reader (and a grep) sees one
-condition reported by two tools rather than two unrelated findings. Unifying the
-CODE as well is filed as an operator-gated item in the todo-metadata-layer
-roadmap's consumer-closure section: it needs the control-plane caller migrated in
-the same commit.
-"""
 
 
 def unmasked(lines, mask):

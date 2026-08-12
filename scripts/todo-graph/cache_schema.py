@@ -2150,6 +2150,50 @@ def classify_heading(line: str) -> HeadingResult:
     return HeadingResult("ok", n, m.group(2), len(digits))
 
 
+ANY_H2_RE = re.compile(r"^ {0,3}## ")
+
+
+def is_h2(line: str) -> bool:
+    """True for ANY `## ` heading, numbered or not, at CommonMark's 0-3 indent.
+
+    THE BOUNDARY RULE, and it must agree with `classify_heading` about indent or
+    the walks desynchronise. Section 43 shipped that bug and an adversarial
+    review reproduced both halves of it: `classify_heading` was widened to 0-3
+    spaces while every consumer still ended a section on a COLUMN-0 `## `, so an
+    indented heading started a section without ending the previous one. In
+    `todo-reachability.py` the following items appeared in BOTH bodies (double
+    counted, one of them under the wrong section number); in the MUTATING
+    `todo-section-order.py` an indented `## Notes` between two numbered sections
+    stopped being recognised as unmodelled structure, so `parse` no longer
+    refused and `reorder` relocated that block along with the section above it.
+
+    One rule for "does a section start here" and one for "does a section end
+    here", both from this module, is the only shape where that cannot recur.
+    """
+    return ANY_H2_RE.match(line) is not None
+
+
+def h2_title(line: str) -> Optional[str]:
+    """The title of ANY `## ` heading, or None when the line is not one.
+
+    THE THIRD HALF OF THE SAME RULE, and it was missed on the first pass: after
+    `is_h2` was widened to CommonMark's 0-3 indent, the callers still cut the
+    title with a fixed `line[3:]`, so an indented `## OS Comparison` yielded
+    `# OS Comparison` and stopped matching the closing-matter set. `parse`
+    refused such a document safely, but `sections_after_closing` -- which lint
+    Check 22b calls DIRECTLY -- then reported nothing at all, so a numbered
+    section sitting after the closing matter passed the placement gate (Codex
+    adversarial, section 43 round 2, [medium]).
+
+    Indent-sensitive slicing is exactly the bug the shared rule exists to end,
+    so the slice lives here with the match.
+    """
+    m = ANY_H2_RE.match(line)
+    if not m:
+        return None
+    return line[m.end():].strip()
+
+
 def heading_report(line_no: int, result: HeadingResult) -> str:
     """One wording for an unrepresentable heading, shared by gate and producer.
 
