@@ -34,7 +34,8 @@ from pathlib import Path
 
 __all__ = [
     "fence_step", "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
-    "terminal_category", "mask_text", "unmasked", "replace_atomically",
+    "terminal_category", "classify_heading", "heading_report",
+    "UNCLOSED_CATEGORY", "mask_text", "unmasked", "replace_atomically",
     "StagedSnapshotError", "index_tree", "staged_docs",
 ]
 
@@ -148,6 +149,44 @@ def terminal_category(terminal) -> str:
     a comment.
     """
     return _cache_schema().terminal_category(terminal)
+
+
+def classify_heading(line: str):
+    """The ONE `## N.` rule -- see `cache_schema.classify_heading`.
+
+    Here for the same reason `unclosed_reason` is: the gates reach the tracker
+    through this shim and should not each learn where the rule really lives.
+    Section 43 routed `todo-reachability.py` and `todo-section-order.py` here,
+    which is what let their two private grammars be deleted rather than merely
+    documented as divergent.
+    """
+    return _cache_schema().classify_heading(line)
+
+
+def heading_report(line_no: int, result) -> str:
+    """The shared wording for an unrepresentable heading -- see `cache_schema`.
+
+    Paired with `classify_heading` for the same reason `terminal_category` is
+    paired with `unclosed_reason`: a gate and the producer disagreeing about how
+    to describe one malformed heading reads as two separate defects.
+    """
+    return _cache_schema().heading_report(line_no, result)
+
+
+UNCLOSED_CATEGORY = "unreadable-document"
+"""The ONE category name for a document whose structure could not be read.
+
+Section 43. `validate.py` refuses such a document outright (rc 2) while
+`todo-reachability.py` reports it and exits 1, and that difference is DELIBERATE
+rather than drift: `.claude/hooks/run_phase_guard.py` blocks fixpoint on
+reachability's rc 1 alone and treats every other nonzero as clean, so raising
+reachability to rc 2 would hide an unclosed document from the completion gate.
+What the two must share is WHAT THEY CALL IT, so a reader (and a grep) sees one
+condition reported by two tools rather than two unrelated findings. Unifying the
+CODE as well is filed as an operator-gated item in the todo-metadata-layer
+roadmap's consumer-closure section: it needs the control-plane caller migrated in
+the same commit.
+"""
 
 
 def unmasked(lines, mask):

@@ -1100,14 +1100,41 @@ def _walk_section_headings(lines, masked) -> list:
     for ln, fenced in zip(lines, masked):
         if fenced:
             continue
-        m = _cs.SECTION_HEADING_RE.match(ln)
+        h = _cs.classify_heading(ln)
         # A TITLE IS REQUIRED HERE, as it always was: this walk feeds
         # `section_headings`, whose consumers render `N. Title`. The shared
         # matcher makes the title optional so `_walk_stamped_items` can keep its
         # own (looser) reading of a bare `## 5.`; the difference is stated at the
         # pattern rather than hidden in two regexes.
-        if m and m.group(2):
-            out.append((int(m.group(1)), m.group(2)))
+        #
+        # An "over-long" heading is skipped HERE and reported by
+        # `_walk_unusable_headings` as a node ERROR, because there is no number
+        # to record: `section_headings[].n` is a 0-65535 integer and the schema
+        # takes no sentinel. Skipping without the error would publish a node
+        # that silently lacks a section the file plainly has.
+        if h.kind == "ok" and h.title:
+            out.append((h.n, h.title))
+    return out
+
+
+def _walk_unusable_headings(lines, masked):
+    """[(category, message)] for every `## N.` whose number cannot be recorded.
+
+    THE HEADING IS NOT DROPPED, it is refused (section 43). The producer used to
+    reach `int()` with an unbounded digit run and raise ValueError out of the
+    whole build; bounding the MATCH instead was tried in section 42 and reverted,
+    because a heading that stops matching stops delimiting its section and every
+    item after it is re-filed under the previous one. So the heading still ends
+    the previous section for every walk, and the node carries an error naming the
+    line -- the same shape an unclosed document already gets.
+    """
+    out = []
+    for i, (ln, fenced) in enumerate(zip(lines, masked)):
+        if fenced:
+            continue
+        h = _cs.classify_heading(ln)
+        if h.kind == "over-long":
+            out.append(("unusable-heading", _cs.heading_report(i + 1, h)))
     return out
 
 
@@ -1175,7 +1202,7 @@ def _walk_stamped_items(lines, masked, todo_rel: str) -> list:
     out = []
     cur_section = None
     cur_item_idx = 0
-    sec_hdr_re = _cs.SECTION_HEADING_RE
+    classify = _cs.classify_heading
     # Match a `[x]` checklist line. Allow `-` or `*` bullets at any
     # indent; reject blockquoted (`>`) lines because stamp continuations
     # never carry `[x]`.
@@ -1183,9 +1210,16 @@ def _walk_stamped_items(lines, masked, todo_rel: str) -> list:
     for ln, fenced in zip(lines, masked):
         if fenced:
             continue
-        sec_m = sec_hdr_re.match(ln)
-        if sec_m:
-            cur_section = int(sec_m.group(1))
+        sec_h = classify(ln)
+        if sec_h.kind != "none":
+            # An unusable number CLOSES the current section and opens nothing:
+            # `cur_section = None` means the items below it are not recorded at
+            # all, rather than being filed under the PREVIOUS section's number.
+            # Attributing them to the previous section is the misattribution
+            # this section exists to refuse, and it is strictly worse than the
+            # omission -- `_walk_unusable_headings` makes the node carry an
+            # error either way, so the omission is never silent.
+            cur_section = sec_h.n if sec_h.kind == "ok" else None
             cur_item_idx = 0
             continue
         if cur_section is None:
@@ -1778,6 +1812,7 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     if _body.terminal is not None:
         errors.append((_cs.terminal_category(_body.terminal),
                        _body.unclosed_reason()))
+    errors.extend(_walk_unusable_headings(body_lines, body_mask))
     sections_io = _walk_implementation_order(body_lines, body_mask)
     inputs_xrefs = _walk_inputs_xrefs(body_lines, body_mask)
     stamps_xrefs = _walk_stamps_xrefs(body_lines, body_mask)

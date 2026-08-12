@@ -56,18 +56,37 @@ except ImportError as _exc:                                  # pragma: no cover
                      f"tracker: {_exc}\n")
     raise
 
-# A section number is BOUNDED, and the bound is the point. `(\d+)` went straight
-# into `int()`, and CPython refuses a string conversion over 4,300 digits -- so a
-# heading carrying a 5,000-digit number raised ValueError, exited 1 with an EMPTY
-# stdout, and lint Checks 22/22b (which discard stderr and erase the status with
-# `|| true`) read the crash as CLEAN. Reproduced before fixing (Codex
-# adversarial, section 41 post-commit, [medium]). Nine digits cannot be reached
-# by any real roadmap and cannot overflow anything downstream; a longer run does
-# not match at all, and `_OVERLONG_SECTION_RE` then NAMES it rather than letting
-# it silently stop being a heading.
-SECTION_RE = re.compile(r"^## (\d{1,9})\.")
-_OVERLONG_SECTION_RE = re.compile(r"^## \d{10,}\.")
+# NO LOCAL `## N.` GRAMMAR (section 43). This file carried the closest thing to
+# a correct one -- `^## (\d{1,9})\.` plus `_OVERLONG_SECTION_RE` to NAME what the
+# bound excluded -- and that match-and-report shape is exactly what the shared
+# rule adopted, so the pair is now `todo_fence.classify_heading` and this file
+# consumes it like every other gate. Two behaviours widened with the switch and
+# both were measured at 0 corpus incidence first: a heading indented 1-3 spaces
+# is now recognised (CommonMark says it is one), and "over-long" now means
+# "cannot be a section number" (past 65535) rather than "past 9 digits", which
+# is the bound that actually has to hold because it is the cache schema's.
+#
+# The original bug this bound was added for is unchanged and still covered: a
+# 5,000-digit heading used to raise ValueError out of `int()`, exit 1 with an
+# EMPTY stdout, and be read as CLEAN by lint Checks 22/22b (Codex adversarial,
+# section 41 post-commit, [medium]).
 ANY_H2_RE = re.compile(r"^## ")
+
+
+def _head(line: str):
+    """This file's only route to the `## N.` rule -- see `todo_fence`."""
+    return _fence.classify_heading(line)
+
+
+def _is_section(line: str) -> bool:
+    """True for a numbered section heading, INCLUDING an unusable number.
+
+    An over-long heading is still a heading: it closes the previous block and
+    opens its own. Treating it as "not a section" is what made a reorder
+    reparent the block after it, so the callers below ask this question and
+    then ask separately whether the number is usable.
+    """
+    return _head(line).kind != "none"
 
 # File-level CLOSING MATTER. A numbered section is allowed to be relocated in
 # front of these, because they belong at the end of the file by convention. Any
@@ -92,13 +111,15 @@ CLOSING_MATTER = {"OS Comparison", "Unit Tests", "Verification", "History",
 def overlong_section(lines, mask):
     """1-based line number of an over-long `## N.` heading, or None.
 
-    Reported rather than ignored: the bounded `SECTION_RE` makes such a heading
-    stop being a section, and silently dropping a heading from a REORDER is how
-    a block gets reparented. Masked lines are exempt -- a fenced example may
+    Reported rather than ignored, and since section 43 it is reported WITHOUT
+    the heading ceasing to be one: the shared classifier still matches it, so
+    the block boundaries around it are unchanged and this function's caller
+    refuses the file by name instead of silently reordering across a heading
+    it could not see. Masked lines are exempt -- a fenced example may
     legitimately contain anything.
     """
     for i, line in enumerate(lines):
-        if not mask[i] and _OVERLONG_SECTION_RE.match(line):
+        if not mask[i] and _head(line).kind == "over-long":
             return i + 1
     return None
 
@@ -129,7 +150,15 @@ def parse(text: str, sc=None):
         return None
     lines, mask = scanned.lines, scanned.mask
     starts = [i for i, l in enumerate(lines)
-              if not mask[i] and SECTION_RE.match(l)]
+              if not mask[i] and _is_section(l)]
+    # REFUSE on an unusable heading number, explicitly. Such a heading IS a
+    # block boundary but has no number to sort by, so it belongs in neither
+    # `blocks` nor `closing_blocks` below and would silently vanish from the
+    # rebuild. The pure-move proof in `reorder` would then refuse anyway -- but
+    # for the wrong stated reason, and only if that proof is reached. Saying it
+    # here keeps "I cannot model this shape" as one answer with one cause.
+    if any(_head(lines[i]).kind == "over-long" for i in starts):
+        return None
     if len(starts) < 2:
         return None
     first, last = starts[0], starts[-1]
@@ -142,7 +171,7 @@ def parse(text: str, sc=None):
     for i in range(first, len(lines)):
         if mask[i]:
             continue
-        if ANY_H2_RE.match(lines[i]) and not SECTION_RE.match(lines[i]):
+        if ANY_H2_RE.match(lines[i]) and not _is_section(lines[i]):
             title = lines[i][3:].strip()
             if i < last and title not in CLOSING_MATTER:
                 return None
@@ -152,9 +181,9 @@ def parse(text: str, sc=None):
     blocks, closing_blocks = [], []
     for k, s in enumerate(heads[:-1]):
         blk = tuple(lines[s:heads[k + 1]])
-        m = SECTION_RE.match(lines[s])
-        if m:
-            blocks.append((int(m.group(1)), blk))
+        h = _head(lines[s])
+        if h.kind == "ok":
+            blocks.append((h.n, blk))
         else:
             closing_blocks.append(blk)
     tail_at = closing[0] if closing else len(lines)
@@ -193,7 +222,7 @@ def sections_after_closing(text: str, sc=None):
     _s = sc or scan(text)
     lines, mask = _s.lines, _s.mask
     starts = [i for i, l in enumerate(lines)
-              if not mask[i] and SECTION_RE.match(l)]
+              if not mask[i] and _is_section(l)]
     if not starts:
         return []
     # Only a recognised heading that FOLLOWS the first numbered section is
@@ -206,7 +235,7 @@ def sections_after_closing(text: str, sc=None):
         if mask[i]:
             continue
         l = lines[i]
-        if ANY_H2_RE.match(l) and not SECTION_RE.match(l):
+        if ANY_H2_RE.match(l) and not _is_section(l):
             if l[3:].strip() in CLOSING_MATTER:
                 first_closing = i
                 break
@@ -216,9 +245,16 @@ def sections_after_closing(text: str, sc=None):
     for i in range(first_closing, len(lines)):
         if mask[i]:
             continue
-        m = SECTION_RE.match(lines[i])
-        if m:
-            out.append((int(m.group(1)), i + 1, lines[i].strip()))
+        h = _head(lines[i])
+        if h.kind == "ok":
+            out.append((h.n, i + 1, lines[i].strip()))
+        elif h.kind == "over-long":
+            # Still a misplaced section, and the one shape whose number cannot
+            # be printed. Reported with 0 rather than skipped: dropping it here
+            # would let a section sitting past the closing matter pass Check 22b
+            # purely because its heading is malformed, which is two defects
+            # cancelling into a clean verdict.
+            out.append((0, i + 1, lines[i].strip()[:80]))
     return out
 
 
@@ -322,8 +358,8 @@ def _check_placement(paths) -> int:
             ln = overlong_section(sc.lines, sc.mask)
             if ln is not None:
                 reason = (f"line {ln} carries a `## N.` heading whose number "
-                          f"exceeds 9 digits, so it is not a section this tool "
-                          f"can order")
+                          f"cannot be a section number, so it is not a section "
+                          f"this tool can order")
         if reason:
             hits += 1
             print(f"{path}: cannot check placement -- {reason}")
@@ -377,8 +413,8 @@ def main(argv) -> int:
             ln = overlong_section(sc.lines, sc.mask)
             if ln is not None:
                 reason = (f"line {ln} carries a `## N.` heading whose number "
-                          f"exceeds 9 digits, so it is not a section this tool "
-                          f"can order")
+                          f"cannot be a section number, so it is not a section "
+                          f"this tool can order")
         if reason:
             print(f"{path}: REFUSED -- {reason}. Left untouched.",
                   file=sys.stderr)

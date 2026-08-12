@@ -1474,7 +1474,48 @@ else
     # One summary line, not one per file -- this is repo-wide-scan cosmetic
     # debt (measured 2026-07-05: 213/251 todo/*.md files), and per-file WARN
     # spam here would drown out every other check on every future commit.
-    TABLE_ALIGN_RAW=$( { python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>/dev/null || true; } )
+    # THE WHOLE ENVELOPE IS VALIDATED, not just the output (section 43). This
+    # was `2>/dev/null || true`, which erased the diagnostic AND the status --
+    # and `--check` legitimately exits 1 for violations, so an uncaught
+    # MaskUnavailable out of the formatter's fence walk (it has no top-level
+    # handler) exited 1 with a traceback on stderr and empty stdout, and was
+    # counted as ZERO unaligned files. A refusal read as a pass is the exact
+    # defect Check 19 was hardened against in section 41; this is that shape.
+    TABLE_ALIGN_ERR=$(mktemp) || { echo -e "${RED}error${NC}: Check 17 (table-column-align) mktemp failed -- the alignment scan did not run"; ERRORS=$((ERRORS + 1)); TABLE_ALIGN_ERR=""; }
+    TABLE_ALIGN_RC=0
+    if [ -n "$TABLE_ALIGN_ERR" ]; then
+        TABLE_ALIGN_RAW=$(python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>"$TABLE_ALIGN_ERR") || TABLE_ALIGN_RC=$?
+        # A well-formed violation record is `<path>: <detail>`; a traceback line
+        # is not. Counting RECORDS rather than lines is what separates "rc 1
+        # because 3 files are ragged" from "rc 1 because the tool died".
+        TABLE_ALIGN_RECORDS=$(printf '%s' "$TABLE_ALIGN_RAW" | grep -cE '^[^:]+:' || true)
+        TABLE_ALIGN_BAD=0
+        case "$TABLE_ALIGN_RC" in
+            0) [ "${TABLE_ALIGN_RECORDS:-0}" -eq 0 ] || TABLE_ALIGN_BAD=1 ;;
+            1) [ "${TABLE_ALIGN_RECORDS:-0}" -gt 0 ] || TABLE_ALIGN_BAD=1 ;;
+            *) TABLE_ALIGN_BAD=1 ;;
+        esac
+        if [ "$TABLE_ALIGN_BAD" = "1" ]; then
+            TABLE_ALIGN_SAID=0
+            while IFS= read -r line; do
+                [ -n "$line" ] || continue
+                echo -e "${RED}error${NC}: Check 17 (table-column-align) $line"
+                ERRORS=$((ERRORS + 1))
+                TABLE_ALIGN_SAID=1
+            done < "$TABLE_ALIGN_ERR"
+            if [ "$TABLE_ALIGN_SAID" = "0" ]; then
+                echo -e "${RED}error${NC}: Check 17 (table-column-align) scripts/format-md-tables.py exited $TABLE_ALIGN_RC with $TABLE_ALIGN_RECORDS violation record(s) and no diagnostic -- the alignment scan did not run"
+                ERRORS=$((ERRORS + 1))
+            fi
+            # A broken scan reports NOTHING further: the count below would be
+            # partial output, and a partial count published as the verdict is
+            # how the erased refusal looked clean in the first place.
+            TABLE_ALIGN_RAW=""
+        fi
+        rm -f "$TABLE_ALIGN_ERR"
+    else
+        TABLE_ALIGN_RAW=""
+    fi
     # Drop findings in files the commit does not touch, through the SHARED
     # predicate rather than a second copy of it (section 39). A mid-edit table
     # is ragged for a moment by nature; that is the editing session's business,

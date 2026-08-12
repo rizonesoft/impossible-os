@@ -103,16 +103,15 @@ class CacheUnusable(RuntimeError):
         super().__init__(message)
         self.reason = reason
 
-# UNBOUNDED DIGIT RUN, deliberately -- section 42 bounded this to `\d{1,9}` and
-# reverted it with the matching bound in `cache_schema.SECTION_HEADING_RE`. The
-# bound stops the `int()` crash on line 161 (CPython refuses a conversion over
-# 4,300 digits) but makes an over-long heading stop delimiting a section, so
-# every item after it is silently re-attributed to the previous one -- a quiet
-# wrong answer in place of a loud failure, which is the wrong trade for a gate.
-# Reported as one finding across all four copies of this grammar; section 43's
-# one-grammar work owns matching-and-reporting it. Measured: 0 corpus headings
-# exceed 9 digits.
-SECTION_RE = re.compile(r"^## (\d+)\.")
+# NO LOCAL `## N.` GRAMMAR ANY MORE (section 43). This file used to carry
+# `^## (\d+)\.` -- column-0 anchored where the canonical rule allows CommonMark's
+# 0-3 space indent, and feeding an unbounded digit run to `int()`. Both are now
+# `todo_fence.classify_heading`, which MATCHES an over-long heading (so it still
+# delimits its section and nothing after it is re-attributed) and REPORTS it
+# instead of raising. Measured before the switch: 0 corpus headings are indented
+# 1-3 spaces and 0 exceed 5 digits, so adopting the wider, safer rule changed no
+# live verdict. `scripts/tests/test_todo_fence.py` walks this file's AST and
+# FAILS if a heading matcher is defined here again.
 OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
 # AUTHOR-TIME marker for a recurring/standing task -- work that is
@@ -167,15 +166,20 @@ def _sections(lines, mask):
     here, so a fenced `- [ ]` or a fenced `> **Verified:**` would otherwise
     still be counted.
     """
-    starts = [(i, int(m.group(1))) for i, l in enumerate(lines)
-              if not mask[i] and (m := SECTION_RE.match(l))]
-    for ln, num in starts:
+    # Yields the CLASSIFICATION, not a number: an over-long heading has no
+    # usable number and still delimits its section, so a caller has to be able
+    # to tell those apart. Handing back an int would force this walk to either
+    # invent one or drop the heading, and dropping it re-parents every item
+    # after it -- the exact misattribution the shared rule exists to refuse.
+    starts = [(i, h) for i, l in enumerate(lines)
+              if not mask[i] and (h := _fence.classify_heading(l)).kind != "none"]
+    for ln, head in starts:
         end = len(lines)
         for j in range(ln + 1, len(lines)):
             if not mask[j] and ANY_H2_RE.match(lines[j]):
                 end = j
                 break
-        yield num, ln, [lines[j] for j in range(ln, end) if not mask[j]]
+        yield head, ln, [lines[j] for j in range(ln, end) if not mask[j]]
 
 
 def _io_rows(lines, mask):
@@ -571,11 +575,32 @@ def audit(path, root="."):
         # The CATEGORY comes from the shared mapping too, not from a local
         # if/else over two flags -- with seven HTML block types a hand-written
         # ternary here would silently label an unclosed `<script>` a comment.
-        return [(_fence.terminal_category(scan.terminal), 0, reason)]
+        # ONE CATEGORY WITH BOTH TOOLS (section 43). `validate.py` refuses this
+        # same condition outright (rc 2) while this gate reports it and exits 1,
+        # and that difference is deliberate -- `run_phase_guard.py` blocks
+        # fixpoint on rc 1 alone and treats every other nonzero as clean, so
+        # raising the code here would HIDE an unclosed document from the
+        # completion gate. What the two share is the NAME, so one condition
+        # reported by two tools does not read as two unrelated defects. The
+        # specific terminal (`unclosed-fence`, `unclosed-script`, ...) stays in
+        # the detail, where it is diagnosis rather than classification.
+        return [(_fence.UNCLOSED_CATEGORY, 0,
+                 f"{_fence.terminal_category(scan.terminal)}: {reason}")]
     rows = _io_rows(lines, mask)
     status_map = _io_status(path, root, rows)
     out = []
-    for num, ln, body in _sections(lines, mask):
+    for head, ln, body in _sections(lines, mask):
+        # An unusable heading number is REPORTED, never dropped. Dropping it
+        # would merge this section's items into the previous section's body and
+        # then judge them against the wrong Implementation Order row, which is a
+        # wrong answer rather than a missing one. The remaining per-section
+        # checks all key on the number, so there is nothing further to say about
+        # this one until it is renumbered.
+        if head.kind == "over-long":
+            out.append(("unusable-heading", 0,
+                        _fence.heading_report(ln + 1, head)))
+            continue
+        num = head.n
         opens = [b.strip()[:90] for b in body if OPEN_ITEM_RE.match(b)]
         parked = [b.strip() for b in body if PARKED_ITEM_RE.match(b)]
         deferred = any(DEFERRED_RE.match(b) for b in body)

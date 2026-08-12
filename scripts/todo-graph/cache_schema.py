@@ -2072,6 +2072,103 @@ def scan_text(text: str):
 # Measured: 0 corpus headings exceed 9 digits, so nothing live crashes today.
 SECTION_HEADING_RE = re.compile(r"^ {0,3}## (\d+)\.(?:\s+(.+?))?\s*$")
 
+# The digit run above stays unbounded, so `classify_heading` below is the ONLY
+# sanctioned way to turn a matched heading into a number. Section 43 made it the
+# shared rule for every editable consumer; `.claude/hooks/sequencer_triage.py`
+# keeps a private copy because an unattended run may not edit the control plane,
+# and that residual is tracked as an operator-gated item in TODO-06 section 43
+# rather than silently counted as consolidated.
+#
+# WHY A DIGIT-COUNT GATE AND NOT A `try: int()`: CPython's limit is a global
+# knob (`sys.set_int_max_str_digits`), so a process that raised it -- or a
+# future default -- would turn a refusal into a 4,301-digit section number that
+# the cache schema then rejects three layers away from the line that caused it.
+# The gate is bounded by the SCHEMA's own ceiling instead, which is the number
+# that actually has to hold.
+_HEADING_DIGIT_LIMIT = len(str(_MAX_SECTION_N))
+
+
+class HeadingResult(NamedTuple):
+    """What one line is, as far as the `## N.` rule is concerned.
+
+    A TAGGED result rather than a sentinel number, because there is no number
+    available to signal with: `section_headings[].n` is pinned to 0-65535 with
+    `additionalProperties: false` (`schema/cache.schema.json`), so -1, None and
+    an object are all unrepresentable, and one scalar would merge several
+    malformed headings into one indistinguishable case (Codex design review,
+    section 43, [high]).
+
+    `kind` is one of:
+      "none"      -- the line is not a section heading at all.
+      "ok"        -- `n` and `title` are usable; `title` is None for a bare
+                     `## 5.`, which the walks have always disagreed about and
+                     still decide for themselves.
+      "over-long" -- it IS a heading and still delimits its section, but its
+                     digit run cannot be a section number. `digits` carries the
+                     run's LENGTH (never the run itself: a caller that formats
+                     it into a message would put a multi-megabyte string on the
+                     serial line).
+
+    The distinction that matters downstream: "none" means the line does not
+    close the previous section, while "over-long" means it DOES. Dropping an
+    over-long heading re-parents every item after it, which is the silent
+    misattribution this whole file exists to refuse.
+    """
+
+    kind: str
+    n: Optional[int]
+    title: Optional[str]
+    digits: int
+
+
+_HEADING_NONE = HeadingResult("none", None, None, 0)
+
+
+def classify_heading(line: str) -> HeadingResult:
+    """The ONE `## N.` rule. See `HeadingResult` for the contract.
+
+    Every editable consumer routes through this: the producer's heading and
+    item walks, `todo-reachability.py`, `todo-section-order.py`, and anything
+    reaching it through `todo_fence`. A local re-implementation is a defect --
+    `scripts/tests/test_todo_fence.py` walks the AST of the callers and FAILS
+    on a heading matcher defined outside this module, which a grep control
+    could not do (a composed or dynamically-built pattern evades a grep).
+    """
+    m = SECTION_HEADING_RE.match(line)
+    if not m:
+        return _HEADING_NONE
+    digits = m.group(1)
+    if len(digits) > _HEADING_DIGIT_LIMIT:
+        return HeadingResult("over-long", None, m.group(2), len(digits))
+    n = int(digits)
+    if n > _MAX_SECTION_N:
+        # Out of RANGE rather than out of LENGTH. Same answer: the number is
+        # unrepresentable, and the heading still delimits its section. Reported
+        # here so the producer refuses at the line instead of emitting a node
+        # that schema validation rejects with no idea which heading did it.
+        return HeadingResult("over-long", None, m.group(2), len(digits))
+    return HeadingResult("ok", n, m.group(2), len(digits))
+
+
+def heading_report(line_no: int, result: HeadingResult) -> str:
+    """One wording for an unrepresentable heading, shared by gate and producer.
+
+    Section 43 gave the unclosed document one wording (`unclosed_reason`) for
+    the same reason: two consumers describing the same defect differently is
+    how a reader concludes they found two defects.
+    """
+    # TWO CAUSES, ONE KIND. Naming which one it is costs a branch and saves the
+    # reader the wrong theory: 5 digits reads as absurd next to "4,300 digits"
+    # unless the message says the VALUE, not the length, is what failed.
+    if result.digits > _HEADING_DIGIT_LIMIT:
+        why = (f"{result.digits} digits, past the {_HEADING_DIGIT_LIMIT} that "
+               f"the maximum section number {_MAX_SECTION_N} occupies")
+    else:
+        why = f"value above the maximum section number {_MAX_SECTION_N}"
+    return (f"line {line_no}: section heading number is unusable ({why}). "
+            f"The heading still delimits its section, so nothing after it has "
+            f"been re-attributed -- but it cannot be recorded. Renumber it.")
+
 
 def unclosed_reason(terminal):
     """One wording for every consumer, or None when the document is well-formed.
