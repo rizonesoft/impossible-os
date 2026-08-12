@@ -19597,20 +19597,41 @@ else:
     spec = importlib.util.spec_from_file_location("cs", schema)
     cs = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cs)
-    small = cs.is_complete_tag_line(witness[:len(witness) // 4])
-    t0 = time.monotonic()
-    big = cs.is_complete_tag_line(witness)
-    t1 = time.monotonic()
-    t2 = time.monotonic()
-    ok = cs.is_complete_tag_line("<a" + " b=c" * n + ">")
-    t3 = time.monotonic()
-    if big or small or not ok:
-        print("dfa-wrong-answer", small, big, ok)
+
+    def timed(s):
+        t = time.monotonic()
+        r = cs.is_complete_tag_line(s)
+        return r, time.monotonic() - t
+
+    # A VALID witness, because the invalid one is now rejected in O(1) by the
+    # trailing-`>` check and would time nothing. Latin-1 is deliberate: every
+    # non-ASCII character used to leave the table and call `_tag_class`, which
+    # is what took a size-valid 16 MiB line to 4.57s against the producer's 2s
+    # budget.
+    quarter = '<a b="' + "é" * (n // 4) + '">'
+    full = '<a b="' + "é" * n + '">'
+    small, t_small = timed(quarter)
+    big, t_big = timed(full)
+    bad, _ = timed(witness)
+    if not small or not big or bad:
+        print("dfa-wrong-answer", small, big, bad)
         sys.exit(1)
-    # A 4x input must not cost dramatically more than 4x. The bound is loose on
-    # purpose: this is a SHAPE check for superlinearity, and a tight ratio on a
-    # shared WSL2 box is a flake generator, not a stronger test.
-    print("dfa-answered %.4f %.4f" % (t1 - t0, t3 - t2))
+    # AN ENFORCED CEILING, not a printed number. The earlier version of this
+    # test measured and only PRINTED, so a matcher that went quadratic while
+    # staying under RLIMIT_AS passed silently (Codex consistency + perf,
+    # section 46, [medium]). The bound is loose on purpose -- a tight ratio on
+    # a shared WSL2 box is a flake generator -- but a 4x input costing more
+    # than 8x is a shape change, not noise, and 4s on this input is already
+    # twice the whole builder budget.
+    if t_big > 4.0:
+        print("dfa-too-slow %.3fs for %d chars" % (t_big, len(full)))
+        sys.exit(1)
+    if t_small > 0.02 and t_big / t_small > 8.0:
+        print("dfa-superlinear %.3f -> %.3f (ratio %.1f for 4x input)"
+              % (t_small, t_big, t_big / t_small))
+        sys.exit(1)
+    print("dfa-answered quarter=%.3fs full=%.3fs ratio=%.1f"
+          % (t_small, t_big, t_big / t_small if t_small else 0.0))
 T41EOF
 T41_SCHEMA="$REPO_ROOT/scripts/todo-graph/cache_schema.py"
 # markdown-it-py is OPTIONAL in this repo -- it is in no setup script and no CI

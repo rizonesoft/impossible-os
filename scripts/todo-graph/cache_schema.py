@@ -1587,7 +1587,16 @@ def _tag_class(c: str) -> int:
     return _T_UNQ
 
 
-_ASCII_TAG_CLASS = bytes(_tag_class(chr(i)) for i in range(128))
+# 256 ENTRIES, NOT 128. Every literal, every ASCII range and every character
+# the `\x00-\x20` exclusion mentions lives below 128, so a 128-entry table left
+# Latin-1 -- NBSP among it -- calling `_tag_class` once per character from the
+# scan loop. MEASURED on a size-VALID 16 MiB line (the accepted per-TODO
+# ceiling): 4.57s for Latin-1 against 0.75s for ASCII, so ONE line could blow
+# the producer's whole 2s budget in every gate, hook and build (Codex perf,
+# section 46, [medium]). Above 255 there is nothing left to look up: no literal
+# and no name character is up there, so a code point is wide whitespace or it
+# is ordinary unquoted content, and `is_complete_tag_line` decides that inline.
+_TAG_CLASS_TABLE = bytes(_tag_class(chr(i)) for i in range(256))
 
 # NFA states. `_Q_CLOSE_START` is its own state because the character after
 # `</` must be an ASCII LETTER, not any name character: folding it into
@@ -1721,12 +1730,26 @@ def is_complete_tag_line(lead: str) -> bool:
     """
     if not lead.startswith("<"):
         return False
+    # THE ACCEPTING STATE IS ONLY REACHABLE THROUGH `>`, so a line whose last
+    # non-whitespace character is not `>` cannot match however long it is. That
+    # is a C-level scan and it retires the whole incomplete-tag class -- a
+    # 16 MiB `<aaaa...` used to walk every character to learn nothing, because
+    # the machine stays in a live name state the entire way and `state < 0`
+    # never fires (Codex perf, section 46, [medium]). `rstrip()` is the right
+    # trimmer here: its whitespace set is `str.isspace()`, which is exactly the
+    # `\s` the trailing `\s*$` uses.
+    if not lead.rstrip().endswith(">"):
+        return False
     trans = _TAG_DFA_TRANS
-    table = _ASCII_TAG_CLASS
+    table = _TAG_CLASS_TABLE
     state = 0
     for ch in lead:
         code = ord(ch)
-        state = trans[state][table[code] if code < 128 else _tag_class(ch)]
+        if code < 256:
+            cls = table[code]
+        else:
+            cls = _T_WS_WIDE if ch.isspace() else _T_UNQ
+        state = trans[state][cls]
         if state < 0:
             return False
     return _TAG_DFA_ACCEPT[state]
@@ -2681,7 +2704,9 @@ def fence_scan(lines):
                     # the `## N.` and `- [x]` after it as real structure, which
                     # CommonMark hides (Codex re-adversarial round 4, section
                     # 42, [high]). Live shape: `<details>` is the one HTML block
-                    # type this corpus actually uses.
+                    # type this corpus actually uses -- type 7, which shares
+                    # this blank-line end rule since section 46, has 0 live
+                    # lines corpus-wide.
                     if not _is_blank(rest):
                         out.append(True)
                         codes.append(html.code)
@@ -3004,11 +3029,12 @@ def fence_mask(lines) -> list:
     physical line, and a fence indented five spaces under `100. docs` is a real
     block here exactly as it is in a renderer.
 
-    ALL SEVEN CommonMark HTML block types are tracked since section 42, so this
-    is the STRUCTURAL projection: fenced code, comments, the four EOF-consuming
-    types, and the two blank-line-terminated ones. A consumer that lints PROSE
-    rather than structure wants `ScanResult.prose_mask()` instead, which leaves
-    types 6 and 7 visible.
+    ALL SEVEN CommonMark HTML block types are tracked -- types 1-6 since
+    section 42 and type 7 since section 46 -- so this is the STRUCTURAL
+    projection: fenced code, comments, the four EOF-consuming types, and the
+    two blank-line-terminated ones. A consumer that lints PROSE rather than
+    structure wants `ScanResult.prose_mask()` instead, which leaves type 6
+    visible and hides everything else, type 7 included.
     """
     return fence_scan(lines).mask
 

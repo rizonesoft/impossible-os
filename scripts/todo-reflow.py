@@ -145,10 +145,17 @@ def verbatim_mask(lines, mask=None):
         # THE PROSE PROJECTION, not the structural one. This tool lints
         # HARD-WRAPPED PROSE, and the 30 live `<details>` lines under `todo/`
         # are exactly the prose it exists to check -- so CommonMark HTML block
-        # types 6 and 7 stay VISIBLE here while every structural reader (and
-        # `format-md-tables.py`, which rewrites what it sees) hides them. One
+        # type 6 stays VISIBLE here while every structural reader (and
+        # `format-md-tables.py`, which rewrites what it sees) hides it. One
         # boolean mask could not serve both, which is what made this a section
         # rather than a flag (Codex design review, section 42, [high]).
+        #
+        # TYPE 7 IS HIDDEN HERE, which section 42 expected to be visible too.
+        # THIS TOOL is the reason: its hard-wrap band is 78-138 columns, a
+        # valid complete-tag opener fits inside that, and joining prose onto
+        # one destroys it -- type 6's opener is name-anchored and survives the
+        # same join. Reproduced at section 46: the block stopped existing and
+        # the `## N.` and `- [x]` it hid were published as graph data.
         mask = _fence.fence_scan(lines).prose_mask()
     return mask
 

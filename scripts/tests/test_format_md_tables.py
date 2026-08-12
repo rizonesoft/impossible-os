@@ -317,6 +317,7 @@ if __name__ == "__main__":
     test_table_after_a_fence_is_still_aligned()
     test_missing_shared_mask_fails_closed()
     test_table_inside_an_html_block_is_never_touched()
+    test_table_inside_a_type7_block_is_never_touched()
     test_unterminated_html_block_is_refused()
     test_balanced_html_block_still_formats_tables_around_it()
     print("PASS: format-md-tables")

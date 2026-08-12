@@ -2217,6 +2217,15 @@ def test_html_block_type7_section46():
         reps = {}
         for k in kinds:
             reps[k] = chr(cls.index(k))
+        # `is_complete_tag_line` does NOT call `_tag_class` in its loop -- it
+        # indexes a 256-entry table and decides everything above that inline.
+        # The proof below is about `_tag_class`, so the fast path has to be
+        # proved identical to it or the proof covers code nothing runs.
+        fast = bytes((cs._TAG_CLASS_TABLE[cp] if cp < 256 else
+                      (cs._T_WS_WIDE if chr(cp).isspace() else cs._T_UNQ))
+                     for cp in range(ncp))
+        check("s46 the scan's fast classification path IS `_tag_class`, over "
+              "every code point", fast == cls)
 
         # ---- Determinise the oracle over that alphabet. ----
         s0 = _rx_closure(eps, {0})
@@ -2656,7 +2665,7 @@ def test_html_blocks_section42():
           r.mask[2] and r.mask[3])
     check("prose mask SHOWS it, so the reflow lint still checks that prose",
           not prose[2] and not prose[3])
-    check("the two projections agree about a FENCE (only 6/7 differ)",
+    check("the two projections agree about a FENCE (only type 6 differs)",
           [m for m in tf.scan_text("```\nx\n```\n").prose_mask()]
           == [m for m in tf.scan_text("```\nx\n```\n").mask])
 
