@@ -18524,6 +18524,14 @@ PASSTHROUGH = [
     S + "10" + DASH + "13",   # range, unicode dash (8 live values)
     S + "1-" + S + "5",       # range, ascii
     S + "3," + S + "4",       # comma join
+    # A JOIN MAY CARRY WHITESPACE. `§3,§4` and `§1, §2` are the same authoring
+    # act, and a flat character class matched the first while stopping at the
+    # space in the second -- so 29 live references bound only their FIRST
+    # section and dropped the rest. A narrowed dependency looks clean, which is
+    # why it went unnoticed; these forms are pinned so it cannot recur.
+    S + "1, " + S + "2",
+    S + "1, " + S + "4, " + S + "11",
+    S + "1--" + S + "8",      # ascii double-hyphen range (this repo's dash)
 ]
 for want in PASSTHROUGH:
     line = "> **Deferred:** [M] x -> XREF: TODO-01-a.md " + want
@@ -19283,6 +19291,77 @@ if [ "$T44G" = "OK" ]; then
     t_pass "s44g: the four fail-open paths from section 44's adversarial round stay closed"
 else
     t_fail "s44g: $T44G"
+fi
+
+# Sub-test 44h: THE TWO DEFECTS §44's POST-SHIP REVIEW FOUND, both created by
+# the section itself. The adversarial and consistency legs reported the first
+# INDEPENDENTLY, which is why it is pinned twice over: by parity and by the
+# remainder it left behind.
+T44H="$(python3 - <<'PY'
+import sys, time
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+BT = "`"
+
+# (1) A SPANNED MARKER'S TRIMMED PUNCTUATION IS SPAN CONTENT, NOT A REMAINDER.
+# `marker_cut` is measured against the marker match; on the spanned path `p` is
+# the span's END, a different coordinate. Subtracting one from the other left
+# `clause.end` on the closing backtick, so the cell reported a one-backtick
+# remainder -- tolerated by the bullet, refused by the bounded table, which is
+# exactly the parity split this section exists to close.
+for tail in (",", ".", ":", ";", ""):
+    cell = BT + "TODO-02-b.md §7" + tail + BT
+    c = cs.parse_xref_clause(cell, 0)
+    if c.section != "§7":
+        bad.append("spanned marker %r bound %r" % (tail, c.section))
+    if cell[c.end:] != "":
+        bad.append("spanned marker %r left remainder %r" % (tail, cell[c.end:]))
+    t = bool(B._walk_inputs_xrefs(["## Inputs", "| -> XREF: %s | n |" % cell], [False, False]))
+    b = bool(B._walk_inputs_xrefs(["## Inputs", "- -> XREF: %s" % cell], [False, False]))
+    if t != b:
+        bad.append("spanned marker %r: table=%s bullet=%s" % (tail, t, b))
+# The UNSPANNED form still hands its punctuation back -- the two paths differ,
+# and that difference is the point.
+text = "TODO-02-b.md §7,"
+c = cs.parse_xref_clause(text, 0)
+if text[c.end:] != ",":
+    bad.append("unspanned marker stopped handing its punctuation back")
+
+# (2) THE BOUNDED MASK MUST NOT MATERIALISE THE UNSCANNED TAIL. Building the
+# mask with `list(s)` allocated the whole line as soon as ANY span closed,
+# defeating the `stop` bound that 40j pins -- and 40j could not see it, because
+# its fixture has no span before the bound. Compared against the SAME line
+# masked unbounded, so this measures the bound rather than the machine.
+BIG = 4 * 1024 * 1024
+head = "-> XREF: " + BT + "a.md §3" + BT + " x "
+line = head + ("y " + BT) * ((BIG - len(head)) // 3)
+stop = line.find("§")
+
+def clocked(fn):
+    t0 = time.monotonic()
+    fn()
+    return time.monotonic() - t0
+
+bounded = clocked(lambda: cs._mask_marking_span_ends(line, stop))
+unbounded = clocked(lambda: cs._mask_marking_span_ends(line))
+if bounded <= 0:
+    bad.append("bounded scan timed at zero; the measurement is unusable")
+elif unbounded / bounded < 5:
+    bad.append("an early closed span defeats the bound: unbounded is only %.1fx"
+               % (unbounded / bounded))
+# And the bound must still not change the ANSWER.
+if cs._mask_marking_span_ends(line, stop)[:stop + 1] != cs._mask_marking_span_ends(line)[:stop + 1]:
+    bad.append("bounded and unbounded masks disagree before the bound")
+if len(cs._mask_marking_span_ends(line, stop)) != len(line):
+    bad.append("the mask stopped preserving length")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44H" = "OK" ]; then
+    t_pass "s44h: a spanned marker's punctuation is span content, and the bound survives an early span"
+else
+    t_fail "s44h: $T44H"
 fi
 
 # ----------------------------------------------------------------------

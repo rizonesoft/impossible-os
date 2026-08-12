@@ -622,7 +622,16 @@ _XREF_TARGET_TOKEN_RE = re.compile(r"(" + XREF_TARGET_PATTERN + r")(?=[`\s]|$)")
 # separator is trimmed after the match, in `parse_xref_clause`: `§5,` is prose
 # punctuation rather than a reference with a missing half, and a character class
 # cannot tell those apart where position can.
-_SECTION_BODY = "[0-9§,\\-" + chr(0x2013) + chr(0x2014) + "/]*"
+#
+# A JOIN MAY CARRY WHITESPACE, and omitting that truncated 8 live references.
+# `§3,§4` and `§1, §2` are the same authoring act, but a flat character class
+# matches the first and stops at the space in the second -- so the graph bound
+# `§1` and dropped `§2`. A NARROWED dependency is worse than a wrong one,
+# because it looks clean. A separator therefore continues the marker only when
+# digits actually follow it; a trailing `§5,` still ends at `§5` and hands the
+# comma back, since there is nothing for it to join to.
+_SECTION_SEP = "[,\\-" + chr(0x2013) + chr(0x2014) + "/]"
+_SECTION_BODY = "[0-9]*(?:\\s*" + _SECTION_SEP + "+\\s*§?[0-9]+)*"
 _XREF_SECTION_RE = re.compile("[`\\s]*(§[0-9]" + _SECTION_BODY + ")")
 _XREF_SECTION_IN_SPAN_RE = re.compile("[`\\s]*(§[0-9]" + _SECTION_BODY + ")")
 # The optional trailing parenthetical, matching the stamp grammar's shape: the
@@ -803,6 +812,17 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
         # punctuation normalisation must not be able to swallow a second target
         # (Codex adversarial, [medium]).
         p = sm.end() if in_span_end is None else in_span_end
+        if in_span_end is not None:
+            # A SPANNED MARKER'S TRIMMED CHARACTERS ARE SPAN CONTENT, NOT A
+            # REMAINDER, so the cut normalises the VALUE only and must not reach
+            # the clause end. `marker_cut` is measured against the marker match;
+            # `p` here is the span's end, a different coordinate entirely, and
+            # subtracting one from the other left `end` sitting on the closing
+            # backtick. `` `a.md §7,` `` then reported a one-backtick remainder,
+            # which the bullet tolerated and the bounded table cell refused --
+            # reopening the very parity split this section closed (Codex
+            # adversarial + consistency, both [medium], found independently).
+            marker_cut = 0
 
     # AN ITEM OR A SECOND DESTINATION IS STILL REACHABLE ACROSS THE SENTENCE'S
     # PUNCTUATION, and it has to be, because bounding the marker grammar is what
@@ -1270,16 +1290,32 @@ def iter_code_spans(s: str, stop=None):
 
 
 def _scan_code_spans(s: str, mark_ends: bool, stop=None) -> str:
-    """`iter_code_spans` rendered as a length-preserving mask. See both docstrings."""
-    out = None
+    """`iter_code_spans` rendered as a length-preserving mask. See both docstrings.
+
+    ASSEMBLED FROM SLICES, NOT FROM A PER-CHARACTER LIST, which is what makes
+    the `stop` bound worth having. `list(s)` materialises the WHOLE line the
+    moment any span closes -- including the tail the bounded walk deliberately
+    never scanned -- so a permitted 16 MiB line with one early span cost 0.187s
+    and ~147 MiB of transient RSS against 17us and nothing for the same line
+    without it. Sub-test 40j missed it because its fixture has no span before
+    the bound, so `out` stayed `None` and the allocation never happened (Codex
+    perf, [medium]). Slices keep the unscanned suffix as one object.
+    """
+    parts = []
+    prev = 0
     for start, _inner_start, _inner_end, end in iter_code_spans(s, stop):
-        if out is None:
-            out = list(s)
-        for t in range(start, end):
-            out[t] = " "
+        if start > prev:
+            parts.append(s[prev:start])
+        fill = " " * (end - start)
         if mark_ends:
-            out[end - 1] = SPAN_END_MARK
-    return s if out is None else "".join(out)
+            fill = fill[:-1] + SPAN_END_MARK
+        parts.append(fill)
+        prev = end
+    if not parts:
+        return s
+    if prev < len(s):
+        parts.append(s[prev:])
+    return "".join(parts)
 
 
 def code_span_segments(s: str):
