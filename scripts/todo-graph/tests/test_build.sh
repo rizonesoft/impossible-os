@@ -18401,20 +18401,31 @@ for name, ref in SHAPES.items():
     if bullet != table:
         bad.append("%s: surfaces disagree %r vs %r" % (name, bullet, table))
 
-# CONTROL. Under the non-space run the bullet form keeps the delimiter and the
-# table form does not -- the exact split this section removed. A fixture that
-# cannot see that difference is not testing the fix. BOTH names are restored to
-# the old rule: the parser picks between them on the target's backtick parity,
-# so patching one leaves the spanned path -- the path that split -- untouched,
-# and the mutation would silently stop reaching the code under test.
+# CONTROL. Restoring the old non-space run must still CHANGE the answer, or the
+# fixture has stopped reaching the code under test. BOTH names are restored: the
+# parser picks between them on the target's backtick parity, so patching one
+# leaves the spanned path -- the path that split -- untouched.
+#
+# THIS CONTROL USED TO ALSO ASSERT THE TWO SURFACES DISAGREE UNDER THE MUTATION,
+# AND THAT HALF IS NOW UNREACHABLE BY CONSTRUCTION (TODO-06 §44). The split had
+# two causes and §40 removed only one: the marker regex here, and a pre-transform
+# the TABLE ran over its cell (`_cell_code_span` plus a one-character punctuation
+# strip) before the parser ever saw it. §44 deleted that pre-transform, so both
+# surfaces now hand the same raw text to the same parser and CANNOT disagree on
+# this shape however the marker rule is mutated. Asserting they still disagree
+# would be asserting the pre-transform is back. What the control can still prove
+# is that the mutation bites at all, and that when it does, both surfaces degrade
+# the SAME way -- which is the §44 property, and fails the moment a surface grows
+# a private transform again.
 saved = (cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE)
 cs._XREF_SECTION_RE = cs._XREF_SECTION_IN_SPAN_RE = re.compile(r"[`\s]*(§\S+)")
 try:
     bullet, table = surfaces(SHAPES["span-around-both"])
     if bullet != [("TODO-02-b.md", "§7`")]:
         bad.append("CONTROL did not reproduce the bullet split: %r" % (bullet,))
-    if bullet == table:
-        bad.append("CONTROL: surfaces agreed under the old pattern")
+    if bullet != table:
+        bad.append("CONTROL: surfaces diverged under the mutation (%r vs %r) -- "
+                   "a surface has regrown a private transform" % (bullet, table))
 finally:
     cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE = saved
 print("OK" if not bad else "; ".join(bad))
@@ -18485,13 +18496,23 @@ else
     t_fail "s40b: $T40B"
 fi
 
-# Sub-test 40c: THE CORPUS VOCABULARY IS NOT A GRAMMAR. A marker grammar of
-# digits with comma/dash joins was designed and rejected because it truncates
-# live values: ranges written with a unicode dash cut at the first number,
-# silently narrowing the reference. What a marker says INTERNALLY is corpus
-# vocabulary this parser does not adjudicate; only the enclosing delimiter is
-# its business. These values must pass through byte-for-byte. The dash is built
-# from its code point so this source file carries no such glyph of its own.
+# Sub-test 40c: WHAT A MARKER SAYS INTERNALLY IS CORPUS VOCABULARY; WHERE IT
+# ENDS IS THE PARSER'S BUSINESS. Section 40 wrote this fixture to reject a
+# digits-with-joins grammar, on the ground that it truncates live values --
+# ranges written with a unicode dash would cut at the first number and silently
+# narrow the reference. That objection was RIGHT and is still enforced below:
+# every join and range form passes through byte-for-byte, because both dashes
+# are in the class §44 adopted.
+#
+# WHAT §44 CHANGED IS THE END, NOT THE VOCABULARY. `§\S+` ran to the next space,
+# so it bound whatever prose followed: 38 live edges across 14 forms carried a
+# value like `§5,` or `§3:` that no resolver matches, and `a.md §1](#x)` bound a
+# fragment of a markdown link. A trailing separator is the sentence's
+# punctuation, not a reference with a missing half, so it is handed back to the
+# caller as a remainder instead of kept. The two shapes below moved deliberately
+# and are asserted in their new form rather than removed, so a regression to the
+# old greedy read fails here. The dashes are built from code points so this
+# source file carries no such glyph of its own.
 T40C="$(python3 - <<'PY'
 import sys
 sys.path.insert(0, "scripts/todo-graph")
@@ -18503,14 +18524,24 @@ PASSTHROUGH = [
     S + "10" + DASH + "13",   # range, unicode dash (8 live values)
     S + "1-" + S + "5",       # range, ascii
     S + "3," + S + "4",       # comma join
-    S + "5,",                 # trailing separator: pre-existing, NOT this fix
-    S + "*",                  # not a number at all
 ]
 for want in PASSTHROUGH:
     line = "> **Deferred:** [M] x -> XREF: TODO-01-a.md " + want
     got = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end()).section
     if got != want:
         bad.append("%r came back as %r" % (want, got))
+# Moved by §44: a trailing separator is prose punctuation, and a marker that is
+# not a section reference at all binds nothing rather than binding a fragment.
+for wrote, want_section, want_class in [
+        (S + "5,", S + "5", cs.REMAINDER_TERMINAL),
+        (S + "*", None, cs.REMAINDER_MARKER)]:
+    line = "> **Deferred:** [M] x -> XREF: TODO-01-a.md " + wrote
+    c = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end())
+    if c.section != want_section:
+        bad.append("%r bound section %r (want %r)" % (wrote, c.section, want_section))
+    got_class = cs.classify_remainder(line, c)
+    if got_class != want_class:
+        bad.append("%r classified %s (want %s)" % (wrote, got_class, want_class))
 print("OK" if not bad else "; ".join(bad))
 PY
 )"
@@ -18590,15 +18621,23 @@ edges = [r["target_path"] for r in B._walk_stamps_xrefs([LINE], [False])]
 if edges != ["TODO-01-a.md"]:
     bad.append("fabricated edge: %r" % (edges,))
 
-# CONTROL: the context-free suffix MUST fabricate it, or this fixture is inert.
-saved_plain, saved_span = cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE
+# CONTROL: the guard MUST be load-bearing, or this fixture is inert. It now
+# mutates the MASK rather than the marker regex, because §44 moved where the
+# protection lives. Until then, nothing refused the quoted lead: `§\S+` ran to
+# the next space and happened to swallow the span containing it, so blanking the
+# marker rule was enough to expose the fabrication. Bounding the marker to
+# section characters removed that side effect, and `iter_xref_clauses` now
+# refuses a lead whose start is masked. Neutralising the mask is therefore what
+# reopens the [high] defect; mutating the marker no longer would, and a control
+# that kept doing so would silently stop testing anything.
+saved_mask = cs._mask_marking_span_ends
 try:
-    cs._XREF_SECTION_RE = cs._XREF_SECTION_IN_SPAN_RE
+    cs._mask_marking_span_ends = lambda s, stop=None: s
     ctl = [r["target_path"] for r in B._walk_stamps_xrefs([LINE], [False])]
     if ctl == ["TODO-01-a.md"]:
-        bad.append("CONTROL did not fabricate; the regression is unreachable")
+        bad.append("CONTROL did not fabricate; the guard is unreachable")
 finally:
-    cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE = saved_plain, saved_span
+    cs._mask_marking_span_ends = saved_mask
 
 # The span-around-path form closes INSIDE the target token (even parity), so its
 # marker sits in prose and must not lose anything to a delimiter rule.
@@ -18637,10 +18676,15 @@ for tail in ("", ".", ":"):
 # A wordier trailing remainder is still malformed and still emits nothing.
 if B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: " + BT + "TODO-02-b.md" + BT + " trailing prose | x |\n"):
     bad.append("trailing-prose cell emitted an edge")
-# And the punctuation strip is ONE character against a CLOSER, not a general trim.
+# AN UNSPANNED CELL IS TRIMMED TOO, and that reverses what §40 asserted here.
+# Its rule was "one character, against a CLOSER" -- a punctuation allowlist that
+# only ran where a code span had just ended, so the spanned and unspanned forms
+# of the same reference disagreed: `` `a.md §7`. `` bound `§7` and `a.md §7.`
+# bound `§7.`. §44 moved the decision into the marker grammar, where it applies
+# once for both, and the trimmed character reaches the caller as a remainder.
 rows = B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: TODO-02-b.md §7. | x |\n")
-if [r["target_section"] for r in rows] != ["§7."]:
-    bad.append("unspanned cell was trimmed anyway: %r" % (rows,))
+if [r["target_section"] for r in rows] != ["§7"]:
+    bad.append("unspanned cell kept its prose punctuation: %r" % (rows,))
 print("OK" if not bad else "; ".join(bad))
 PY
 )"
@@ -18850,6 +18894,395 @@ if [ "$T40J" = "OK" ]; then
     t_pass "s40j: a backtick tail beyond the last marker is not scanned"
 else
     t_fail "s40j: $T40J"
+fi
+
+# ----------------------------------------------------------------------
+# Section 44: the inline scanner honours CommonMark precedence
+# ----------------------------------------------------------------------
+# THE EXPECTATIONS ARE RECORDED, NOT COMPUTED FROM A LIBRARY AT RUN TIME. Every
+# span below was taken from markdown-it-py 3.0.0, which is the oracle this
+# section was built against -- but pinning them as literals keeps the gate
+# authoritative on a host that has no markdown-it installed, where an
+# import-guarded differential would silently skip and read as a pass. Sub-test
+# 44f runs the live differential ON TOP when the module is importable.
+T44A="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+bad = []
+# (line, spans as (start, end) INCLUDING delimiters) -- markdown-it-py 3.0.0.
+CASES = [
+    ("`a ``b`` c`",           [(0, 11)]),
+    ("``a `b` c``",           [(0, 11)]),
+    ("a `b ``c`` d` e",       [(2, 13)]),
+    ("`a ``b ```c``` d`` e`", [(0, 21)]),
+    ("``a`b`c``",             [(0, 9)]),
+    ("`a``b`",                [(0, 6)]),
+    ("``x``y``",              [(0, 5)]),
+    ("`x` and `y`",           [(0, 3), (8, 11)]),
+    ("`x and y",              []),
+]
+for line, want in CASES:
+    got = [(a, d) for a, _b, _c, d in cs.iter_code_spans(line)]
+    if got != want:
+        bad.append("%r: want %s got %s" % (line, want, got))
+# THE CONTROL. The retired scan closed whichever pending run LENGTH it met
+# first, so it read the INNER pair here and left the outer span's text visible.
+# If this line ever masks as two spans again, precedence has regressed.
+outer = "`a ``b`` c`"
+if cs.mask_code_spans(outer).strip():
+    bad.append("outer span not fully masked -- inner-pair precedence is back")
+if len(list(cs.iter_code_spans(outer))) != 1:
+    bad.append("mixed-length nesting yielded more than one span")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44A" = "OK" ]; then
+    t_pass "s44a: leftmost-opener precedence matches CommonMark on mixed run lengths"
+else
+    t_fail "s44a: $T44A"
+fi
+
+# Sub-test 44b: A CLOSER IS MEASURED AT ITS FULL RUN LENGTH, AN OPENER AT ITS
+# ESCAPE-SHORTENED ONE. Both the producer's old scan and validate.py's retired
+# machine shortened an escaped run and then let the remainder CLOSE a pending
+# opener, fabricating a span markdown-it does not see.
+T44B="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+bad = []
+CASES = [
+    ("``x\\```", [],        "escaped+2 run must not close a 2-backtick opener"),
+    ("`x\\``",   [],        "escaped+1 run must not close a 1-backtick opener"),
+    ("\\```x``", [(2, 7)],  "an escaped FIRST backtick still opens at length-1"),
+    ("`a\\`",    [(0, 4)],  "an escaped run still CLOSES the span it is inside"),
+    ("\\`x`",    [],        "an escaped backtick opens nothing"),
+    ("`C:\\Users\\Default\\Documents\\`", [(0, 29)],
+     "a span ending in a Windows path closes"),
+]
+for line, want, why in CASES:
+    got = [(a, d) for a, _b, _c, d in cs.iter_code_spans(line)]
+    if got != want:
+        bad.append("%s: %r want %s got %s" % (why, line, want, got))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44B" = "OK" ]; then
+    t_pass "s44b: closers use the full run length; only openers are escape-shortened"
+else
+    t_fail "s44b: $T44B"
+fi
+
+# Sub-test 44c: THE OFFSET ITERATOR IS THE SHARED SURFACE. It has to publish
+# both bounds -- delimiters included for a mask, contents alone for a renderer
+# -- because a blanked mask cannot answer the second question, which is why a
+# second private implementation existed at all.
+T44C="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+bad = []
+LINES = ["`a ``b`` c`", "see `foo.md` here", "x `a` y `b` z", "no spans at all",
+         "`x and y", "``a`b`c``", "\\```x``"]
+for line in LINES:
+    parts, prev = [], 0
+    for start, i0, i1, end in cs.iter_code_spans(line):
+        if not (start <= i0 <= i1 <= end):
+            bad.append("%r: bounds out of order" % line)
+        parts.append(line[prev:start]); parts.append(line[start:end]); prev = end
+    parts.append(line[prev:])
+    if "".join(parts) != line:
+        bad.append("%r: extents do not reconstruct the line" % line)
+    # The segment view must agree with the mask about WHERE the spans are.
+    masked = cs.mask_code_spans(line)
+    for start, _i0, _i1, end in cs.iter_code_spans(line):
+        if masked[start:end].strip():
+            bad.append("%r: mask and iterator disagree at %d:%d" % (line, start, end))
+    # And the contents a renderer keeps must come back verbatim.
+    got = [t for is_code, t in cs.code_span_segments(line) if is_code]
+    want = [line[i0:i1] for _s, i0, i1, _e in cs.iter_code_spans(line)]
+    if got != want:
+        bad.append("%r: segment contents %s != iterator contents %s" % (line, got, want))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44C" = "OK" ]; then
+    t_pass "s44c: the shared iterator publishes span and content bounds that agree with the mask"
+else
+    t_fail "s44c: $T44C"
+fi
+
+# Sub-test 44d: THE RETIREMENT IS AN IMPROVEMENT, AND THE TEST SAYS SO. Section
+# 44 was planned as "prove parity with validate.py, then delete it" -- which
+# would have locked in that implementation's defect, because it applied its
+# backslash test at the CLOSER too and so never closed a span ending in a
+# Windows path (394 live corpus lines against the producer's 11). This asserts
+# validate.py now ROUTES to the shared rule AND that the shared rule DISAGREES
+# with the retired one on exactly those fixtures.
+T44D="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+import validate as V
+bad = []
+if V._code_span_segments is not cs.code_span_segments:
+    bad.append("validate.py still owns a private code-span implementation")
+
+def retired(line):
+    """The machine §44 deleted, kept here ONLY as the thing we must differ from."""
+    def esc(s, i):
+        b = i
+        while b > 0 and s[b - 1] == "\\":
+            b -= 1
+        return (i - b) % 2 == 1
+    n, remaining, i = len(line), {}, 0
+    while i < n:
+        if line[i] == "`" and not esc(line, i):
+            j = i
+            while j < n and line[j] == "`":
+                j += 1
+            remaining[j - i] = remaining.get(j - i, 0) + 1
+            i = j
+        else:
+            i += 1
+    out, i = [], 0
+    while i < n:
+        if line[i] != "`" or esc(line, i):
+            i += 1
+            continue
+        j = i
+        while j < n and line[j] == "`":
+            j += 1
+        length = j - i
+        remaining[length] -= 1
+        if remaining[length] <= 0:
+            i = j
+            continue
+        k = j
+        while k < n:
+            if line[k] == "`" and not esc(line, k):
+                m = k
+                while m < n and line[m] == "`":
+                    m += 1
+                remaining[m - k] -= 1
+                if m - k == length:
+                    break
+                k = m
+            else:
+                k += 1
+        if k >= n:
+            i = j
+            continue
+        out.append(line[j:k])
+        i = k + length
+    return out
+
+# Each of these is a shape the retired machine got WRONG. If the shared rule
+# ever agrees with it again, the defect has come back.
+for line in ["`C:\\Users\\Default\\Documents\\`", "`a\\`", "`a\\\\\\`"]:
+    shared = [t for is_code, t in cs.code_span_segments(line) if is_code]
+    if not shared:
+        bad.append("%r: shared rule found no span (the retired defect)" % line)
+    if shared == retired(line):
+        bad.append("%r: shared rule still agrees with the retired machine" % line)
+# And a shape they must AGREE on, so the test is not merely asserting difference.
+same = "see `foo.md` here"
+if [t for c, t in cs.code_span_segments(same) if c] != retired(same):
+    bad.append("control: the two disagree on an ordinary span")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44D" = "OK" ]; then
+    t_pass "s44d: validate.py routes to the shared rule, which beats the machine it retired"
+else
+    t_fail "s44d: $T44D"
+fi
+
+# Sub-test 44e: THE TWO INPUTS SURFACES AGREE BY REMAINDER CLASS. The table used
+# to pre-transform its cell -- unwrap a single-backtick span, strip one `.` or
+# `:` -- so a marker followed by anything else absorbed it, and the same text
+# was one edge as a bullet and a different edge as a row.
+T44E="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+
+def walk(line):
+    out = B._walk_inputs_xrefs(["## Inputs", line], [False, False])
+    return None if not out else (out[0]["target_path"], out[0]["target_section"])
+
+def bullet(cell):
+    return walk("- -> XREF: " + cell)
+
+def table(cell):
+    return walk("| -> XREF: " + cell + " | notes |")
+
+# CONTROL FIRST: the plainest shape must emit on both, or the probe is blind.
+if bullet("TODO-02-b.md §7") is None or table("TODO-02-b.md §7") is None:
+    bad.append("control: the plain shape emits no edge -- the walk is not reached")
+
+# The section marker must never absorb the sentence's punctuation, on EITHER
+# surface. Each of these published `§7)` / `§7,` / `§7;` as a table row before.
+for tail in [")", ",", ";", ".", ":", ""]:
+    cell = "`TODO-02-b.md §7`" + tail
+    b, t = bullet(cell), table(cell)
+    if b != t:
+        bad.append("tail %r: bullet %s != table %s" % (tail, b, t))
+    if t is not None and t[1] != "§7":
+        bad.append("tail %r: table folded the tail into the marker: %r" % (tail, t[1]))
+
+# A clause cut inside a markdown link is a parse defect, refused on BOTH.
+cut = "`TODO-02-b.md §7`](#x)"
+if bullet(cut) is not None or table(cut) is not None:
+    bad.append("a clause cut inside a link still published an edge")
+
+# The one DELIBERATE difference: a cell is a bounded field, a bullet is a
+# sentence that continues. Stated here so a future change has to face it.
+prose = "`TODO-02-b.md §7` trailing prose"
+if bullet(prose) is None:
+    bad.append("a bullet may carry trailing prose and must still bind")
+if table(prose) is not None:
+    bad.append("a table cell with unexplained trailing prose must not bind")
+
+# The remainder classes themselves, so the policy is testable apart from callers.
+for text, want in [("a.md §1", cs.REMAINDER_EXHAUSTED),
+                   ("a.md §1.", cs.REMAINDER_TERMINAL),
+                   ("a.md §1](#x)", cs.REMAINDER_MARKUP),
+                   ("a.md §1 and then some words", cs.REMAINDER_PROSE)]:
+    c = cs.parse_xref_clause(text, 0)
+    got = cs.classify_remainder(text, c)
+    if got != want:
+        bad.append("%r classified %s, want %s" % (text, got, want))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44E" = "OK" ]; then
+    t_pass "s44e: bullet and table agree by remainder class; the marker keeps no tail"
+else
+    t_fail "s44e: $T44E"
+fi
+
+# Sub-test 44f: THE LIVE ORACLE, when the host has one. The fixtures above are
+# the gate; this is the differential that would catch a shape nobody thought to
+# record, run over the whole corpus. Absent markdown-it it reports that it could
+# not run rather than passing silently.
+T44F="$(python3 - <<'PY'
+import sys, glob
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+try:
+    from markdown_it import MarkdownIt
+except ImportError:
+    print("NO-ORACLE")
+    raise SystemExit(0)
+md = MarkdownIt("commonmark")
+
+def norm(x):
+    # CommonMark strips ONE leading+trailing space when both are present and
+    # the content is not all spaces, and replaces NUL with U+FFFD. Both are
+    # CONTENT rules a renderer applies after the boundary is decided, so they
+    # are normalised away here rather than chased in the scanner.
+    if len(x) >= 2 and x[0] == " " and x[-1] == " " and x.strip():
+        x = x[1:-1]
+    return x.replace("\x00", "\ufffd")
+
+bad, lines = [], 0
+for path in glob.glob("todo/**/*.md", recursive=True):
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for no, line in enumerate(fh, 1):
+            line = line.rstrip("\n")
+            if "`" not in line:
+                continue
+            lines += 1
+            want = [norm(c.content) for t in md.parseInline(line)
+                    for c in (t.children or []) if c.type == "code_inline"]
+            got = [norm(t) for is_code, t in cs.code_span_segments(line) if is_code]
+            if got != want and len(bad) < 5:
+                bad.append("%s:%d" % (path, no))
+if bad:
+    print("diverged from markdown-it at: " + ", ".join(bad))
+elif lines < 1000:
+    print("corpus differential saw only %d backticked lines -- probe is suspect" % lines)
+else:
+    print("OK")
+PY
+)"
+if [ "$T44F" = "OK" ]; then
+    t_pass "s44f: the shared scanner matches markdown-it on every backticked corpus line"
+elif [ "$T44F" = "NO-ORACLE" ]; then
+    t_pass "s44f: live markdown-it differential skipped (module absent); 44a-44e still gate"
+else
+    t_fail "s44f: $T44F"
+fi
+
+# Sub-test 44g: THE FOUR FAIL-OPEN PATHS §44's OWN ADVERSARIAL ROUND FOUND.
+# Every one of these publishes a WRONG edge rather than refusing, which is the
+# failure direction this parser is supposed to not have, and three of the four
+# were created by §44's earlier drafts rather than inherited.
+T44G="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+BT = "`"
+
+# (1) A MARKERLESS CLAUSE MUST NOT CRASH. `marker_cut` was bound only inside the
+# section-matched arm, so every clause without a marker raised UnboundLocalError
+# -- and a producer crash is worse than any wrong edge.
+for text in ["TODO-01-a.md", "TODO-01-a.md trailing prose"]:
+    try:
+        cs.parse_xref_clause(text, 0)
+    except Exception as exc:
+        bad.append("markerless clause raised %s" % type(exc).__name__)
+
+# (2) A QUOTED LEAD AFTER THE LAST MARKER MUST NOT START A CLAUSE. The mask was
+# bounded at the last section marker, so a code span lying wholly beyond it was
+# byte-identical in the mask and its quoted lead passed the guard. It matters
+# because `--fix-line-numbers` accepts markerless targets and would rewrite from
+# a documented example.
+line = ('> **Deferred:** [M] x -> XREF: TODO-01-a.md §3 then example ' + BT
+        + '-> XREF: TODO-02-b.md (item: "Quoted" at line 9)' + BT)
+got = [c.targets for _lead, c in cs.iter_xref_clauses(line)]
+if got != [("TODO-01-a.md",)]:
+    bad.append("quoted lead past the last marker yielded %r" % (got,))
+
+# (3) A BOUNDED CELL CARRIES NO PARENTHETICAL. The retired table guard required
+# `item_span is None`; a remainder-only rule reads these as exhausted, because
+# the parenthetical was consumed INTO the clause.
+for cell in ['TODO-02-b.md §7 (item: "Unexpected")', "TODO-02-b.md §7 (some prose)"]:
+    if B._walk_inputs_xrefs(["## Inputs", "| -> XREF: %s | n |" % cell], [False, False]):
+        bad.append("table cell with a parenthetical published an edge: %r" % cell)
+# ...while the bullet surface still binds them, which is the stated difference.
+for cell in ['TODO-02-b.md §7 (item: "Unexpected")']:
+    if not B._walk_inputs_xrefs(["## Inputs", "- -> XREF: %s" % cell], [False, False]):
+        bad.append("bullet lost a legitimate parenthetical: %r" % cell)
+
+# (4) TRIMMING THE MARKER'S PUNCTUATION MUST NOT SWALLOW WHAT FOLLOWS IT.
+# Bounding the marker left the cursor ON the punctuation, where the item regex
+# cannot match -- so the item name vanished AND the extra-destination probe
+# never ran, turning a malformed two-target clause into one clean edge.
+c = cs.parse_xref_clause('TODO-01-a.md §1. (item: "X") TODO-02-b.md', 0)
+if c.item_name != "X":
+    bad.append("item name lost across the marker's punctuation: %r" % (c.item_name,))
+if c.malformed != "multiple-destinations":
+    bad.append("second destination hidden behind the punctuation: %r" % (c.malformed,))
+c = cs.parse_xref_clause("TODO-01-a.md §5, TODO-02-b.md", 0)
+if c.malformed != "multiple-destinations":
+    bad.append("second destination hidden behind a trimmed comma: %r" % (c.malformed,))
+# And with nothing following, the punctuation is still a REMAINDER, not consumed.
+text = "TODO-01-a.md §1."
+c = cs.parse_xref_clause(text, 0)
+if text[c.end:] != "." or c.section != "§1":
+    bad.append("lone punctuation was consumed instead of left as a remainder")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T44G" = "OK" ]; then
+    t_pass "s44g: the four fail-open paths from section 44's adversarial round stay closed"
+else
+    t_fail "s44g: $T44G"
 fi
 
 # ----------------------------------------------------------------------

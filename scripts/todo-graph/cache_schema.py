@@ -609,8 +609,22 @@ _XREF_TARGET_TOKEN_RE = re.compile(r"(" + XREF_TARGET_PATTERN + r")(?=[`\s]|$)")
 # a many-clause line stays linear -- recomputing it per clause is exactly the
 # quadratic shape sub-test 37h exists to catch. A direct caller may omit it (the
 # table branch parses one short cell) and pays a single pass over that string.
-_XREF_SECTION_RE = re.compile(r"[`\s]*(§\S+)")
-_XREF_SECTION_IN_SPAN_RE = re.compile(r"[`\s]*(§[^`\s]+)")
+# A SECTION MARKER IS MADE OF SECTION CHARACTERS, not "everything up to the next
+# space". `§\S+` swallowed whatever the author wrote next: `-> XREF: a.md §5, and
+# more` bound `§5,`, and `a.md §1](#x)` bound `§1](#x)` -- values no resolver
+# matches, and invisible because nothing downstream re-checks a marker's shape.
+# Measured on the live graph before this: 38 edges across 14 forms.
+#
+# The class is digits plus the SEPARATORS a multi-section reference legitimately
+# uses, so a range or a list still matches whole. The two typographic dashes are
+# built with `chr()` because this file may not contain those characters
+# (CLAUDE.md forbids them in source) while the corpus does use them. A TRAILING
+# separator is trimmed after the match, in `parse_xref_clause`: `§5,` is prose
+# punctuation rather than a reference with a missing half, and a character class
+# cannot tell those apart where position can.
+_SECTION_BODY = "[0-9§,\\-" + chr(0x2013) + chr(0x2014) + "/]*"
+_XREF_SECTION_RE = re.compile("[`\\s]*(§[0-9]" + _SECTION_BODY + ")")
+_XREF_SECTION_IN_SPAN_RE = re.compile("[`\\s]*(§[0-9]" + _SECTION_BODY + ")")
 # The optional trailing parenthetical, matching the stamp grammar's shape: the
 # `item:` / `new item:` name is optional WITHIN it, so `(some prose)` is
 # consumed as a clause tail without yielding a name.
@@ -725,6 +739,11 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
 
     section = section_span = None
     in_span_end = None
+    # How much of the marker's tail is the SENTENCE's rather than the
+    # reference's. Bound here, not inside the `if sm:` arm below: a clause with
+    # no section marker at all reaches the end of this function too, and leaving
+    # it unbound crashed every markerless clause with an `UnboundLocalError`.
+    marker_cut = 0
     # MATCH THE PROSE RULE FIRST, then re-match only if the marker it found
     # turns out to be inside a code span. Locating the marker is what tells us
     # WHICH offset to ask the mask about, so the order is forced: there is no
@@ -748,6 +767,23 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
             in_span_end = _span_end_after(text, masked, sm.end(1), end_limit)
     if sm:
         section, section_span = sm.group(1), (sm.start(1), sm.end(1))
+        # THE MARKER STOPS BEFORE THE SENTENCE'S OWN PUNCTUATION. `§\S+` runs to
+        # the next space, so `-> XREF: a.md §5, and more` bound the section as
+        # `§5,` -- a value no resolver matches, because the comma belongs to the
+        # prose. Measured on the live graph before this: 38 edges across 14
+        # forms (`§5,` x8, `§3,` x6, `§3:` x2, `§1.`), all silently unresolvable.
+        #
+        # ONLY A TRAILING RUN COMES OFF, which is what keeps the multi-section
+        # forms intact: `§3,§4` and `§1-§5` end in a digit and are untouched,
+        # while `§5,` is not a two-section reference with a missing half. This is
+        # the same fact the code-span path already had for free -- there the
+        # delimiter ended the marker -- so trimming here is what makes a bare
+        # marker agree with a spanned one rather than a new rule.
+        trimmed = section.rstrip(".,;:)]")
+        if trimmed and trimmed != section:
+            marker_cut = len(section) - len(trimmed)
+            section = trimmed
+            section_span = (section_span[0], section_span[1] - marker_cut)
         # THE SPAN'S END IS THE SEGMENTER'S ANSWER, NOT A BACKTICK MATCH. An
         # earlier version consumed a trailing backtick RUN, which stops at the
         # first run of ANY length -- so inside a doubled-delimiter span the
@@ -756,12 +792,40 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
         # a second edge holding the item name (Codex adversarial round 3,
         # [high]). The mask already blanked that whole span correctly, so the
         # regex was overriding an oracle that had the right answer.
+        #
+        # THE PARSE CURSOR STAYS AT THE MARKER'S FULL RAW MATCH; only the
+        # clause's reported END may rewind, and only when nothing else claims
+        # the tail (below). Rewinding `p` itself was fail-OPEN: on
+        # `a.md §1. (item: "X") b.md` it put the cursor on the `.`, where
+        # `_XREF_ITEM_RE` (which opens `\s*\(`) cannot match -- so the item name
+        # was dropped AND the post-item extra-destination probe never ran, and a
+        # malformed two-destination clause came back as one clean edge. A
+        # punctuation normalisation must not be able to swallow a second target
+        # (Codex adversarial, [medium]).
         p = sm.end() if in_span_end is None else in_span_end
 
+    # AN ITEM OR A SECOND DESTINATION IS STILL REACHABLE ACROSS THE SENTENCE'S
+    # PUNCTUATION, and it has to be, because bounding the marker grammar is what
+    # stopped the marker eating that punctuation itself. Under the old `§\S+`,
+    # `a.md §1. (item: "X")` matched `§1.` and the parenthetical sat right at the
+    # cursor; now the match ends at `§1` and the cursor is on the `.`, which
+    # `_XREF_ITEM_RE` (opening `\s*\(`) cannot cross -- so the item name was lost
+    # AND the post-item extra-destination probe never ran, turning a malformed
+    # two-destination clause into one clean edge (Codex adversarial, [medium]).
+    #
+    # The punctuation is stepped over for the PROBES only. If neither probe
+    # matches, `end` still rewinds to before it, so it stays a remainder the
+    # caller can judge rather than something silently consumed.
+    probe = p
+    ptail = _MARKER_PUNCT_TAIL_RE.match(text, p, end_limit)
+    if ptail and ptail.end() > p:
+        probe = ptail.end()
+
     item_name = item_span = None
-    im = _XREF_ITEM_RE.match(text, p, end_limit)
+    im = _XREF_ITEM_RE.match(text, probe, end_limit)
     if im:
         item_name, item_span, p = im.group("item_name"), (im.start(), im.end()), im.end()
+        marker_cut = 0   # the tail belongs to the item, not to a remainder
 
     # A SECOND TARGET AFTER THE ITEM PARENTHETICAL was reachable by none of the
     # four producers, so `-> XREF: a.md §1 (item: "X") b.md` bound `a.md` and
@@ -770,7 +834,10 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
     # today and closes the shape rather than waiting for the next review round
     # to find it (design review, second finding).
     if not extra:
-        extra = _XREF_ADJACENT_TARGET_RE.match(text, p, end_limit)
+        # From `probe` when the item did not match (so a second destination
+        # behind the punctuation is still seen), from `p` when it did.
+        extra = _XREF_ADJACENT_TARGET_RE.match(
+            text, p if im else max(p, probe), end_limit)
 
     # COLLECT EVERY DESTINATION, NOT JUST THE SECOND. `targets` is a tuple
     # BECAUSE the contract is "how many destinations, and what are they"; a
@@ -779,7 +846,12 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
     # because it appended the whole match rather than the `dest` group (Codex
     # consistency, [medium]).
     malformed = None
-    end = p
+    # THE TRIMMED PUNCTUATION IS GIVEN BACK ONLY IF NOTHING ELSE TOOK THE TAIL.
+    # `marker_cut` is cleared above when an item parenthetical matched, and the
+    # loop below overwrites `end` whenever a further destination does -- so the
+    # rewind can never hide a tail that was actually parsed, which is the half
+    # the first cut of this got wrong.
+    end = p - marker_cut if not extra else p
     while extra:
         targets.append(extra.group("dest"))
         malformed = "multiple-destinations"
@@ -787,6 +859,110 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
         extra = _XREF_ADJACENT_TARGET_RE.match(text, end, end_limit)
     return XrefClause(tuple(targets), target_span, section, section_span,
                       item_name, item_span, end, malformed)
+
+
+# WHAT FOLLOWS A CLAUSE, NAMED BY CLASS RATHER THAN BY ITS CHARACTERS. The two
+# Inputs surfaces each grew their own answer to "is there anything left, and
+# does it matter": the bullet ignored the remainder entirely, while the table
+# demanded the clause consume the whole cell -- so the same text was an edge as
+# a bullet and nothing as a row, and vice versa. Every repair to that split so
+# far widened a punctuation allowlist by one character, which is how a
+# two-character rule came to carry findings from sections 33, 37 and 40 without
+# ever stating what it was allowing.
+#
+# A CLASS IS TESTABLE WHERE A CHARACTER LIST IS NOT. `)` and `](#x)` both begin
+# with punctuation the old rule would have had to enumerate, but they are not
+# the same fact: one is the author's sentence closing around a complete clause,
+# the other is a clause that was CUT INSIDE a markdown link and whose target is
+# therefore only part of what was written. Naming them separately lets the
+# callers disagree on policy without disagreeing on what they are looking at.
+REMAINDER_EXHAUSTED = "exhausted"   # nothing but whitespace left
+REMAINDER_TERMINAL = "terminal"     # the sentence's own closing punctuation
+REMAINDER_MARKER = "marker"         # a section marker the grammar does not model
+REMAINDER_MARKUP = "markup"         # a structural tail: the clause cut inside a link
+REMAINDER_XREF = "xref"             # a further `-> XREF:` clause follows
+REMAINDER_PROSE = "prose"           # anything else the clause did not consume
+
+# A remainder that OPENS with the section glyph is an unmodelled marker, not
+# prose, and the difference decides whether a real dependency survives. Two live
+# rows write one: `TODO-C §"Tier 1"` names a tier rather than a number, and
+# `TODO-03 §*` is a deliberate any-section wildcard. The old `§\S+` bound them as
+# `§"Tier` and `§*`, values no resolver matches; tightening the grammar without
+# this class swung it the other way and DROPPED both edges, losing a dependency
+# the author plainly stated. Keeping the edge with no section is the honest
+# answer: the destination is real and the section is not something we model.
+_REMAINDER_MARKER_RE = re.compile("§")
+
+# Anchored, and deliberately NOT a general punctuation class: these are the
+# characters that can close a sentence around a clause. `]` is absent on
+# purpose -- a lone `]` is the markup case below, not a terminator.
+_REMAINDER_TERMINAL_RE = re.compile(r"[.:,;)]\s*\Z")
+# A link's destination half. This is the shape that proves the clause ended
+# early: the target the author wrote continues past where the clause stopped.
+_REMAINDER_MARKUP_RE = re.compile(r"\]\(")
+# The sentence punctuation that may sit between a section marker and an item
+# parenthetical or a further destination. Stepped over for those probes only.
+_MARKER_PUNCT_TAIL_RE = re.compile(r"[.,;:)]+")
+
+
+def classify_remainder(text, clause, limit=None):
+    """Which class of text follows `clause` in `text`. See the constants above."""
+    rest = text[clause.end:len(text) if limit is None else limit]
+    if not rest.strip():
+        return REMAINDER_EXHAUSTED
+    if _REMAINDER_MARKUP_RE.match(rest.lstrip()):
+        return REMAINDER_MARKUP
+    if XREF_LEAD_RE.match(rest.lstrip()):
+        return REMAINDER_XREF
+    if _REMAINDER_MARKER_RE.match(rest.lstrip()):
+        return REMAINDER_MARKER
+    if _REMAINDER_TERMINAL_RE.match(rest):
+        return REMAINDER_TERMINAL
+    return REMAINDER_PROSE
+
+
+# ONE CLASSIFICATION, TWO SURFACES, AND THE DIFFERENCE IS STATED RATHER THAN
+# EMERGENT. Both Inputs surfaces reject the same DEFECTS; they differ on one
+# axis only, and it is a property of the surface rather than of the grammar: a
+# table CELL is a bounded field, so anything the clause did not consume is
+# unexplained, while a BULLET is a sentence that legitimately continues --
+# `-> XREF: a.md §1 -- the section that owns this` is the house style, and
+# demanding a bullet consume its whole line would reject most of the corpus.
+#
+# What is NOT surface-dependent is `REMAINDER_MARKUP`. A clause that stopped
+# inside a markdown link bound only part of the destination the author wrote,
+# which is a parse defect wherever it happens, so both surfaces refuse it. The
+# old code had this backwards: the table caught it emergently through its
+# whole-cell anchor and the bullet did not catch it at all.
+INPUTS_REMAINDERS_OK = (REMAINDER_EXHAUSTED, REMAINDER_TERMINAL, REMAINDER_MARKER)
+_INPUTS_REMAINDERS_REJECTED_ANYWHERE = (REMAINDER_MARKUP,)
+
+
+def inputs_clause_ok(text, clause, limit=None, whole=False):
+    """Whether an Inputs surface should publish `clause` as an edge.
+
+    `whole` is the bounded-field surface (a table cell), which additionally
+    requires the clause to have consumed everything but the author's closing
+    punctuation.
+    """
+    if clause is None or clause.malformed is not None:
+        return False
+    kind = classify_remainder(text, clause, limit)
+    if kind in _INPUTS_REMAINDERS_REJECTED_ANYWHERE:
+        return False
+    if not whole:
+        return True
+    # A BOUNDED CELL CARRIES NO PARENTHETICAL, and this is a CONTRACT the table
+    # walk held explicitly (`clause.item_span is None`) before §44 moved the
+    # decision here. Losing it was not a policy change but an oversight: the
+    # remainder is EXHAUSTED for a cell like `a.md §7 (item: "X")` or
+    # `a.md §7 (some prose)`, because `_XREF_ITEM_RE` consumed the parenthetical
+    # into the clause -- so a remainder-only rule reads those as clean and
+    # publishes an edge the old table refused (Codex adversarial, [medium]).
+    # An Inputs ROW names a dependency; an item parenthetical belongs to a stamp.
+    if clause.item_span is not None:
+        return False
+    return kind in INPUTS_REMAINDERS_OK
 
 
 def iter_xref_clauses(text, pos=0):
@@ -815,10 +991,45 @@ def iter_xref_clauses(text, pos=0):
     # carrying no marker can never consult the mask (the lookup happens only
     # once a section has matched), so its own text stands in and nothing is
     # scanned at all.
+    # THE BOUND MUST COVER EVERY LEAD THE GUARD BELOW WILL JUDGE, not just the
+    # last marker. Bounding at the last `§` alone left a code span lying wholly
+    # AFTER it byte-identical in the mask, so a quoted `-> XREF:` there passed
+    # the masked-lead test and was yielded as a markerless clause -- and
+    # `validate.py --fix-line-numbers` deliberately accepts markerless targets,
+    # so `--write` could rewrite a line using a target that only appears inside a
+    # documented example (Codex adversarial, [high]).
+    #
+    # Taking the LAST lead start as well keeps the perf property intact: a line
+    # whose backticks sit beyond both its markers and its leads -- the shape that
+    # made this a perf finding (sub-test 40j) -- still stops early, because the
+    # bound is the last thing any clause can ask about, not end-of-line.
     last_marker = text.rfind("§")
-    masked = text if last_marker < 0 else _mask_marking_span_ends(text, last_marker)
+    last_lead = -1
+    for _m in XREF_LEAD_RE.finditer(text, pos):
+        last_lead = _m.start()
+    bound = max(last_marker, last_lead)
+    masked = text if bound < 0 else _mask_marking_span_ends(text, bound)
+    # A LEAD INSIDE A CODE SPAN DOES NOT START A CLAUSE, and the mask is asked
+    # rather than the text, because the mask is the thing that knows what is
+    # quoted. The test is on the lead's START only: matching is still done on
+    # the RAW line, since the lead consumes its own trailing whitespace and a
+    # mask fills a span WITH whitespace -- searching the mask directly let the
+    # lead run through a blanked span to its far end and bind the closing
+    # delimiter as the target.
+    #
+    # THIS PROTECTION USED TO BE AN ACCIDENT OF THE MARKER REGEX. `§\S+` ran to
+    # the next space, so on `... §3`->XREF:TODO-02-b.md §4` ...` it swallowed the
+    # backtick AND the quoted lead behind it, and the second clause was never
+    # reachable -- not because anything refused it, but because the marker had
+    # eaten it. Bounding the marker to section characters (which is what stopped
+    # `§5,` binding a comma) removed that side effect and re-exposed the [high]
+    # fabricated-edge defect sub-test 40e pins: a documented example published as
+    # a real graph edge, carrying the item name off the true clause. The guard is
+    # stated here now instead of riding on a greedy regex.
     for lead in XREF_LEAD_RE.finditer(text, pos):
         if lead.start() < pos:
+            continue
+        if masked[lead.start()] != text[lead.start()]:
             continue
         clause = parse_xref_clause(text, lead.end(), masked=masked)
         if clause is None:
@@ -905,94 +1116,190 @@ def _mask_marking_span_ends(s: str, stop=None) -> str:
     return _scan_code_spans(s, True, stop)
 
 
-def _scan_code_spans(s: str, mark_ends: bool, stop=None) -> str:
+def _find_span_closer(s: str, frm: int, length: int, remaining):
+    """First backtick run of FULL length `length` at or after `frm`.
+
+    Returns `(k, None)` with `k` that run's start offset, or `(-1, counts)`
+    when none exists -- and in the failing case `counts` maps every run length
+    at or after `frm` to how many times it occurs. THE ABSENCE PROOF AND THE
+    CENSUS ARE THE SAME TRAVERSAL, which is what keeps the repair affordable:
+    the only way to know an opener never closes is to look at the whole
+    remainder, so the counts that make every LATER opener an O(1) decision are
+    gathered on the one traversal that had to happen anyway.
+
+    `remaining`, when the caller already holds a census, is decremented for
+    every run this walk passes INCLUDING the closer it returns -- those runs
+    are consumed by the span and the main walk never sees them again, so
+    leaving them counted would overstate what is still ahead and could send a
+    later opener on a second doomed traversal.
+    """
+    counts = {}
+    p, n = frm, len(s)
+    while p < n:
+        if s[p] != "`":
+            p += 1
+            continue
+        q = p
+        while q < n and s[q] == "`":
+            q += 1
+        run = q - p
+        if remaining is not None:
+            remaining[run] = remaining.get(run, 0) - 1
+        if run == length:
+            return p, None
+        counts[run] = counts.get(run, 0) + 1
+        p = q
+    return -1, counts
+
+
+def iter_code_spans(s: str, stop=None):
+    """Yield `(start, inner_start, inner_end, end)` for each inline code span.
+
+    THE ONE PLACE THAT DECIDES WHERE A CODE SPAN BEGINS AND ENDS. `start`/`end`
+    bound the span INCLUDING its delimiters (what a mask blanks); the inner pair
+    bounds its CONTENTS (what a renderer keeps). Both are needed and neither can
+    be derived from a blanked mask: a span is filled with spaces, so a space
+    that genuinely FOLLOWS the span is indistinguishable from one inside it --
+    the ambiguity that made an earlier `_span_end_after` swallow an adjacent
+    span (Codex adversarial round 4, [medium]).
+
+    Publishing offsets is what lets a SEGMENT consumer share this rule. Before
+    it, `validate.py` carried a second private implementation because masking
+    wrappers could not serve a caller that needs the text back
+    (`_rendered_inline_text` slugs code contents into an anchor). Two
+    implementations of one rule drift, and both had drifted: measured against
+    markdown-it-py over the live corpus, this scan diverged on 11 lines and the
+    private one on 394.
+
+    `stop` bounds the walk exactly as it bounds the mask -- see `_scan_code_spans`.
+    """
     if "`" not in s:
-        return s
-    # ONE FORWARD PASS, BOUNDED MEMORY. Only the earliest unmatched opener of
-    # each run LENGTH is remembered, so the state is bounded by the number of
-    # distinct lengths rather than by the number of runs.
+        return
+    # LEFTMOST OPENER WINS, which is CommonMark and is what the three earlier
+    # cuts of this scan got wrong. They kept a pending opener per run LENGTH and
+    # closed whichever length they met first, so `` `a ``b`` c` `` -- one span
+    # by every renderer -- came back as the INNER pair, and the outer span's
+    # contents were left visible as ordinary text. Because section 40 makes this
+    # mask decide where an XREF clause ENDS, that mis-marking let the iterator
+    # publish a documented example as a real graph edge. Measured against
+    # markdown-it-py over the live corpus before the repair: 11 divergent lines,
+    # 10 of them this shape.
     #
-    # THE FIRST TWO CUTS EACH FAILED ON REAL INPUT. Rescanning the suffix for
-    # every unmatched run was quadratic -- 5.6s on a 336 KB line (Codex round
-    # 9). Indexing every run position fixed the time and not the space: a
-    # PERMITTED 16 MiB line of alternating backticks is ~8.4M runs, measured at
-    # 95 bytes of Python objects per input byte, i.e. ~1.5 GiB, which
-    # `--fix-line-numbers` would hit as an OOM (Codex round 11). This keeps
-    # both bounded.
+    # STILL ONE PASS AND STILL BOUNDED MEMORY, by a different route than the
+    # pending map. An opener consumes forward to its closer and the walk resumes
+    # past it, so every character is examined at most twice; the state is a
+    # count per distinct run LENGTH (`remaining`), never a record per run. That
+    # distinction was paid for twice: rescanning the suffix for every unmatched
+    # run was quadratic (5.6s on a 336 KB line, Codex round 9), and indexing
+    # every run position fixed the time but not the space -- a PERMITTED 16 MiB
+    # line of alternating backticks is ~8.4M runs at ~95 bytes of Python objects
+    # per input byte, ~1.5 GiB, an OOM under `--fix-line-numbers` (round 11).
+    #
+    # THE CENSUS IS BUILT LAZILY, ON THE FIRST OPENER THAT NEVER CLOSES, and
+    # that is what preserves the `stop` bound rather than trading it away. A
+    # census taken up front would read the whole line before parsing any of it,
+    # reinstating exactly the constant-factor cliff sub-test 40j pins (0.0008s
+    # -> 3.88s at 4 MiB). Built on demand, a line whose spans all close pays
+    # nothing for it, and at most ONE doomed traversal can ever happen: after it
+    # the census answers "can this length still close?" in O(1), so a second
+    # opener never repeats the walk.
     #
     # ESCAPING APPLIES TO OPENERS ONLY, and that asymmetry is CommonMark, not a
     # shortcut: a backslash escapes in normal text, but INSIDE a code span
     # everything is literal, so a backslash-prefixed run still closes the span
     # it is inside. Treating an escaped run as invisible let the span run on to
     # a later backtick and swallow a real `<!--` (Codex round 11, [high]).
-    out = None
-    pending = {}          # run length -> start offset of its earliest opener
-    span_end = 0          # end of the last masked span; earlier openers are void
+    #
+    # A CLOSER IS MEASURED AT ITS FULL RUN LENGTH, an opener at its
+    # escape-shortened one, and conflating the two was the eleventh divergent
+    # line. `` ``x\``` `` is NO span in markdown-it: the trailing run is three
+    # backticks and cannot close a two-backtick opener, even though its own
+    # first backtick is escaped and would have OPENED at two. The old scan
+    # shortened the run and let the remainder close, fabricating a span;
+    # `validate.py`'s private machine has the same defect.
+    remaining = None      # run length -> occurrences still ahead; see above
     i, n = 0, len(s)
     while i < n:
         if s[i] != "`":
             i += 1
             continue
+        # BOUNDED SCAN. Nothing that STARTS after `stop` can mask an offset at
+        # or before it, and this scan resolves each span the moment it opens --
+        # so unlike the pending-map version there is never an unresolved opener
+        # to carry, and reaching a run past `stop` is on its own proof that the
+        # rest of the line cannot change any answer the caller will ask for.
+        # Without this the parser masked whole lines it only needed a prefix of
+        # (Codex perf, [high]; sub-test 40j). A span that OPENS at or before
+        # `stop` is resolved in full however far its closer lies, so this bounds
+        # work without bounding correctness.
+        if stop is not None and i > stop:
+            break
         j = i
         while j < n and s[j] == "`":
             j += 1
-        length = j - i
-        start = pending.get(length)
-        if start is not None and start >= span_end:
-            if out is None:
-                out = list(s)
-            for t in range(start, j):
-                out[t] = " "
-            if mark_ends:
-                out[j - 1] = SPAN_END_MARK
-            span_end = j
-            del pending[length]
+        full = j - i
+        if remaining is not None:
+            remaining[full] = remaining.get(full, 0) - 1
+        b = i
+        while b > 0 and s[b - 1] == "\\":
+            b -= 1
+        if (i - b) % 2:
+            # ONLY THE FIRST BACKTICK IS ESCAPED. A backslash escapes one
+            # character, so the REST of a longer run is still an eligible
+            # delimiter -- `\``` opens a two-backtick span. Voiding the whole
+            # run left a real `<!--` unmasked and truncated a valid item name
+            # at it (Codex adversarial, section 39 round 12, [medium]).
+            start, length = i + 1, full - 1
         else:
-            b = i
-            while b > 0 and s[b - 1] == "\\":
-                b -= 1
-            if (i - b) % 2:
-                # ONLY THE FIRST BACKTICK IS ESCAPED. A backslash escapes one
-                # character, so the REST of a longer run is still an eligible
-                # delimiter -- `\``` opens a two-backtick span. Voiding the
-                # whole run left a real `<!--` unmasked and truncated a valid
-                # item name at it (Codex adversarial, section 39 round 12,
-                # [medium]).
-                if length > 1:
-                    length -= 1
-                    i += 1
-                    start = pending.get(length)
-                    if start is not None and start >= span_end:
-                        if out is None:
-                            out = list(s)
-                        for t in range(start, j):
-                            out[t] = " "
-                        if mark_ends:
-                            out[j - 1] = SPAN_END_MARK
-                        span_end = j
-                        del pending[length]
-                    elif start is None or start < span_end:
-                        pending[length] = i
-            elif start is None or start < span_end:
-                # Not escaped: it may OPEN a span. Keep the earliest live one.
-                pending[length] = i
-        i = j
-        # BOUNDED SCAN. Nothing that STARTS after `stop` can mask an offset at
-        # or before it, so once the cursor is past `stop` with no opener still
-        # pending from before it, the rest of the line cannot change any answer
-        # the caller will ask for. Without this the parser masked whole lines it
-        # only needed a prefix of: measured on a stamp carrying one early XREF
-        # followed by a dense backtick tail, 0.0002s -> 0.94s at 1 MiB and
-        # 0.0008s -> 3.88s at 4 MiB, against a 2s whole-build target, on input
-        # `_MAX_TODO_BYTES` explicitly permits (Codex perf, [high]).
-        #
-        # A span that is still OPEN across `stop` keeps the scan running to its
-        # closer, which is exactly the case the caller needs marked -- so this
-        # bounds work without bounding correctness.
-        if (stop is not None and i > stop
-                and not any(v <= stop for v in pending.values())):
-            break
+            start, length = i, full
+        if length <= 0:
+            i = j
+            continue
+        if remaining is not None and remaining.get(length, 0) <= 0:
+            i = j          # nothing of this length is left to close it
+            continue
+        k, census = _find_span_closer(s, j, length, remaining)
+        if k < 0:
+            if remaining is None:
+                remaining = census
+            i = j          # an unmatched opener is literal text
+            continue
+        end = k + length
+        yield start, j, k, end
+        i = end
+
+
+def _scan_code_spans(s: str, mark_ends: bool, stop=None) -> str:
+    """`iter_code_spans` rendered as a length-preserving mask. See both docstrings."""
+    out = None
+    for start, _inner_start, _inner_end, end in iter_code_spans(s, stop):
+        if out is None:
+            out = list(s)
+        for t in range(start, end):
+            out[t] = " "
+        if mark_ends:
+            out[end - 1] = SPAN_END_MARK
     return s if out is None else "".join(out)
+
+
+def code_span_segments(s: str):
+    """Split `s` into `(is_code, text)` segments on the shared span rule.
+
+    The SEGMENT view of `iter_code_spans`, for the two consumers that want
+    opposite things from one boundary: a link scanner DISCARDS span contents (a
+    `](#x)` written as an example is not a link) while a heading renderer KEEPS
+    them, because GitHub slugs code text into the anchor. Prose between two
+    spans is yielded as its own segment, which is also how the retired
+    implementation behaved -- it flushed its buffer before every code segment.
+    """
+    prev = 0
+    for start, inner_start, inner_end, end in iter_code_spans(s):
+        if start > prev:
+            yield False, s[prev:start]
+        yield True, s[inner_start:inner_end]
+        prev = end
+    if prev < len(s):
+        yield False, s[prev:]
 
 # A line that STARTS an HTML block comment, under CommonMark's same 0-3-space
 # bound as a fence. Commented-out checklist text is not a destination, and

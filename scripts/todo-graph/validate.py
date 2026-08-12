@@ -1640,89 +1640,25 @@ def _heading_slugs(headings: list) -> set:
     return out
 
 
-def _code_span_segments(line: str):
-    """Split ONE line into `(is_code, text)` segments on CommonMark code spans.
-
-    ONE implementation of "where does a code span begin and end", shared by
-    the two consumers that want OPPOSITE things from it: the link scanner
-    DISCARDS span contents (a `](#x)` written as an example is not a link),
-    while the heading renderer KEEPS them, because GitHub slugs the code text
-    into the anchor -- `resolve_symbol` is part of its heading's slug and 13
-    live anchors in this corpus depend on it. Two implementations of this
-    would drift, which is the defect that produced §36.
-
-    CommonMark closes a span only on a run of the SAME length as the opener,
-    so the obvious `` `[^`]*` `` pairs the wrong delimiters whenever a line
-    carries runs of different lengths and silently swallows a real link. An
-    unmatched opening run is literal text, and a BACKSLASH-ESCAPED backtick is
-    literal too -- it opens nothing, which is how `` \\`x [d](#missing)\\` ``
-    hid a live anchor.
-
-    Two passes, and the first keeps only a COUNT PER RUN LENGTH rather than a
-    record per run. That is what bounds the memory: indexing every run cost
-    ~72 bytes of Python objects per backtick and took a 4 MiB
-    alternating-backtick line to 287 MiB, extrapolating past a gigabyte at the
-    16 MiB ceiling this validator must accept. Knowing that NO later run of
-    length L exists is enough to call an opener literal without scanning for
-    it; when one does exist the forward scan consumes everything it passes, so
-    each character is examined at most twice and the scan stays linear
-    (measured at the ceiling: 5.19s, 91 MiB).
-    """
-    if "`" not in line:
-        yield False, line
-        return
-    n = len(line)
-    remaining: dict = {}
-    i = 0
-    while i < n:
-        if line[i] == "`" and not _is_escaped(line, i):
-            j = i
-            while j < n and line[j] == "`":
-                j += 1
-            remaining[j - i] = remaining.get(j - i, 0) + 1
-            i = j
-        else:
-            i += 1
-    buf: list = []
-    i = 0
-    while i < n:
-        if line[i] != "`" or _is_escaped(line, i):
-            buf.append(line[i])
-            i += 1
-            continue
-        j = i
-        while j < n and line[j] == "`":
-            j += 1
-        length = j - i
-        remaining[length] -= 1
-        if remaining[length] <= 0:
-            # Nothing of this length follows, so the run is literal text.
-            buf.append(line[i:j])
-            i = j
-            continue
-        k = j
-        while k < n:
-            if line[k] == "`" and not _is_escaped(line, k):
-                m = k
-                while m < n and line[m] == "`":
-                    m += 1
-                remaining[m - k] -= 1
-                if m - k == length:
-                    break
-                k = m
-            else:
-                k += 1
-        if k >= n:  # unreachable while the counts hold; stay literal if not
-            buf.append(line[i:j])
-            i = j
-            continue
-        if buf:
-            yield False, "".join(buf)
-            buf = []
-        yield True, line[j:k]
-        i = k + length
-    if buf:
-        yield False, "".join(buf)
+# THE VALIDATOR NO LONGER OWNS A CODE-SPAN SCANNER. It carried a private one
+# until §44, on the belief that it was the CORRECT implementation and the
+# producer's the stale duplicate -- §43's design review said exactly that, and
+# it was half right. Measured against markdown-it-py over the live corpus, this
+# one diverged on 394 lines against the producer's 11, because it applied its
+# backslash test at the CLOSER as well as the opener. CommonMark escapes only
+# openers: inside a span everything is literal, so a backslash-prefixed run
+# still closes the span it is inside. In a Win32-native repo whose canonical
+# paths end in a separator, that is not an exotic shape -- `` `C:\Users\` ``
+# simply never closed, and every link and anchor after it on the line was read
+# out of a span the scanner thought was still open.
+#
+# So the retirement ran the other way round from the plan: the producer's scan
+# was repaired to CommonMark first (§44 item 2), proven at parity with
+# markdown-it-py on the corpus, and only then did this become deletable.
+# `_rendered_inline_text` below needs the SEGMENTS rather than a blanked mask,
+# which is why `cache_schema` publishes `iter_code_spans`/`code_span_segments`
+# and not just the masking wrappers.
+_code_span_segments = cache_schema.code_span_segments
 
 
 def _strip_code_spans(line: str) -> str:

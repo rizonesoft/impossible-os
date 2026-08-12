@@ -365,13 +365,6 @@ STAMP_HEADER_RE = re.compile(
 # surface, and all that remains here, is that the arrow must open the bullet.
 INPUTS_XREF_LEAD_RE = re.compile(r"^-\s+->\s+XREF:\s+")
 
-# A table cell that closes its code span and then carries the sentence's own
-# punctuation. Anchored at the end and limited to ONE character so it can only
-# ever describe that shape; the cell-level unwrap runs after it, and by then the
-# distinction is unrecoverable (see the call site in `_walk_inputs_xrefs`).
-_CELL_SPAN_TAIL_RE = re.compile(r"(`)[.:]$")
-
-
 def _inputs_target(token: str) -> str:
     """Normalise one Inputs target token to a DESTINATION.
 
@@ -417,31 +410,15 @@ def _inputs_target(token: str) -> str:
     return inner or token
 
 
-def _cell_code_span(text: str) -> str:
-    """Remove a leading code span's DELIMITERS, keeping everything after it.
-
-    A TABLE CELL IS NOT A TOKEN, and conflating them cost a real regression. The
-    cell may be `` `path.md` §7 `` -- span around the path, section marker
-    OUTSIDE it -- which section 33 records as a live authoring form. Truncating
-    at the closing backtick (what `_code_span_inner` does, correctly, for a
-    TOKEN) silently dropped the `§7`: the base commit emitted
-    `target_section: "§7"` and the truncating version emitted None. It also
-    turned a malformed `` `path.md` trailing prose `` cell into a clean edge,
-    because the discarded prose is exactly what the whole-cell check exists to
-    reject (Codex re-adversarial, [medium]).
-
-    So the delimiters come off and the remainder stays, and the whole-cell
-    parser then decides -- which is what the two-ended `strip("`")` was reaching
-    for before doubled delimiters broke it.
-    """
-    if not text.startswith("`"):
-        return text
-    cut = text.find("`", 1)
-    if cut < 0:
-        # Unclosed: the opener still comes off, matching the retired behaviour.
-        return text[1:] or text
-    inner = text[1:cut]
-    return (inner + text[cut + 1:]) if inner else text
+# `_cell_code_span` was retired by TODO-06 §44. It hand-unwrapped a table
+# cell's leading code span so the whole-cell check could run on the remainder,
+# and it only ever knew SINGLE backticks -- so a doubled-delimiter cell got a
+# mangled destination, and the punctuation it left behind was folded into the
+# section marker. The shared parser locates the marker inside a span and stops
+# at the delimiter on its own (section 40), so the cell now reaches it RAW and
+# the imitation is gone rather than corrected. `_code_span_inner` below is a
+# different rule and stays: it unwraps a TOKEN, which must stop at an internal
+# backtick, where a cell must not.
 
 
 def _code_span_inner(text: str) -> str:
@@ -1593,7 +1570,13 @@ def _walk_inputs_xrefs(lines, masked) -> list:
         # contributes no edge rather than a confidently wrong one.
         lead = INPUTS_XREF_LEAD_RE.match(normalized)
         m = _cs.parse_xref_clause(normalized, lead.end()) if lead else None
-        if m is not None and m.malformed:
+        # ONE ACCEPTANCE RULE WITH THE TABLE (TODO-06 §44). The extra-destination
+        # refusal is the same `malformed` as before; what is new is that a clause
+        # cut INSIDE a markdown link is refused here too. It was caught on the
+        # table only, and emergently -- by a whole-cell anchor rather than by a
+        # decision -- so `-> XREF: [a](x.md) §1](#y)` bound a partial destination
+        # as a clean edge on this surface.
+        if m is not None and not _cs.inputs_clause_ok(normalized, m):
             continue
         if m is not None:
             # UNWRAP HERE so `inputs_xrefs[].target_path` keeps meaning what it
@@ -1668,8 +1651,22 @@ def _walk_inputs_xrefs(lines, masked) -> list:
                 # closing backtick: a cell whose span is followed by anything
                 # wordier is still malformed and must still emit nothing, which
                 # is what the whole-cell anchor below decides.
-                head_clean = _CELL_SPAN_TAIL_RE.sub(r"\1", head_clean)
-                head_clean = _cell_code_span(head_clean)
+                # THE RAW CELL REACHES THE PARSER (TODO-06 §44). Two
+                # transforms used to run first and both destroyed the evidence
+                # the shared rule needs. `_CELL_SPAN_TAIL_RE` stripped ONE `.`
+                # or `:` after a closing backtick, and `_cell_code_span`
+                # unwrapped a SINGLE-backtick span; between them a cell's span
+                # boundaries were gone before the boundary rule ran, so the
+                # section marker absorbed whatever punctuation followed --
+                # measured on `` `path §7` `` cells, the table published `§7)`,
+                # `§7,`, `§7;` and `§7](#x)` where the bullet, parsing the same
+                # text raw, published `§7`.
+                #
+                # Nothing replaces them because nothing needed to: the parser
+                # already locates the marker inside a code span and stops at the
+                # delimiter (section 40), which is exactly what the unwrap was
+                # imitating by hand. Removing the imitation is what makes the
+                # two surfaces agree, rather than a third rule reconciling them.
                 # THE TABLE FORM USES THE SHARED GRAMMAR TOO. It parsed the
                 # target with a bare `(\S+?)`, so an Inputs row written as
                 # `[label with space](TODO-02.md) §1` -- or with a
@@ -1695,10 +1692,8 @@ def _walk_inputs_xrefs(lines, masked) -> list:
                 # trailing parenthetical, which is what `^TARGET( §N)?$` meant
                 # (TODO-06 §37).
                 clause = _cs.parse_xref_clause(head_clean, 0)
-                path_match = (clause if clause is not None
-                              and clause.malformed is None
-                              and clause.item_span is None
-                              and clause.end == len(head_clean) else None)
+                path_match = (clause if _cs.inputs_clause_ok(
+                    head_clean, clause, whole=True) else None)
                 if path_match:
                     # STRIP BACKTICKS FROM THE TOKEN, not just the cell. The
                     # cell-level `strip("`")` above cannot reach them when a
