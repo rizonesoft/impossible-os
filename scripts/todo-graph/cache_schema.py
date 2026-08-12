@@ -1884,22 +1884,23 @@ _PROSE_HIDDEN_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_HIDDEN_KINDS)
 _PROSE_VISIBLE_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_VISIBLE_KINDS)
 
 
-def _is_tag_start(c: str) -> bool:
-    """Does `c`, right after a `<`, begin a TAG rather than ordinary text?
+def _is_alpha(c: str) -> bool:
+    """An ASCII letter, through the tag grammar's OWN character classification.
 
-    Reuses the tag grammar's own character classification rather than
-    `str.isalpha()`, which accepts non-ASCII letters that can never start an
-    HTML tag name. `/!?` are the closing tag, the declaration and the
-    processing instruction.
+    Not `str.isalpha()`, which accepts non-ASCII letters that can never start an
+    HTML tag name, and not a bare `/!?` test either: the one-character version
+    of this predicate accepted `</3` and `<!lowercase` as markup while the
+    type-7 NFA and the scanner's declaration rule both reject them, so the
+    reflow gate silently skipped eligible hard-wrapped prose (Codex
+    consistency, section 48, [medium]). `_construct_at` now owns the whole
+    decision and validates the character AFTER `/` or `!`.
 
-    THIS CHECK IS WHAT KEEPS `>=` AND `a < b` OUT OF IT. Measured 2026-08-12
-    over the 30 live type-6 lines under `todo/`: 24 are ordinary prose and
-    several carry `>=`, so a rule phrased over the CHARACTERS `<` and `>`
-    instead of over tag STARTS would freeze most of the prose that this
-    projection is deliberately visible in order to lint.
+    THE PREDICATE IS WHAT KEEPS `>=` AND `a < b` OUT. Measured 2026-08-12 over
+    the 30 live type-6 lines under `todo/`: 24 are ordinary prose and several
+    carry `>=`, so a rule phrased over the CHARACTERS `<` and `>` rather than
+    over tag STARTS would freeze most of the prose this projection is
+    deliberately visible in order to lint.
     """
-    if c in "/!?":
-        return True
     o = ord(c)
     return o < 256 and _TAG_CLASS_TABLE[o] == _T_ALPHA
 
@@ -1908,9 +1909,24 @@ def _is_tag_start(c: str) -> bool:
 # never be reflowed -- but NESTED inside an already-open type-6 block the
 # scanner does not re-open a block for them, so nothing else marks that content
 # and the reflow treats it as prose (Codex adversarial, section 48, [high]).
-_RAW_TEXT_ELEMENTS = ("script", "style", "textarea", "pre")
-_RAW_OPEN_RE = re.compile(r"<(script|style|textarea|pre)\b", re.IGNORECASE)
-_RAW_CLOSE_RE = re.compile(r"</(script|style|textarea|pre)\s*>", re.IGNORECASE)
+#
+# THE CLOSER MUST BE SYNTACTICALLY COMPLETE. A prefix-only `</script` pattern
+# treats `"</script bogus"` and `"</script-safe>"` -- both ordinary text inside
+# a script -- as the closing tag, ending protection early and letting the
+# following in-band lines join (Codex re-adversarial, section 48, [high]).
+_RAW_OPEN_AT = re.compile(r"<(script|style|textarea|pre)(?=[\s/>]|$)",
+                          re.IGNORECASE)
+_RAW_CLOSE_AT = re.compile(r"</(script|style|textarea|pre)\s*>", re.IGNORECASE)
+# The closer's NAME boundary, without requiring its `>` on the same line. The
+# lookahead is what rejects `</script-safe>`: a name character after the
+# element name means this is not that element's closing tag at all.
+_RAW_CLOSE_START = re.compile(r"</(script|style|textarea|pre)(?=[\s>]|$)",
+                              re.IGNORECASE)
+# The only two tails a closing tag in progress may have: whitespace then its
+# `>`, or whitespace to end of line (the `>` arrives on the next one). Matched
+# at an OFFSET so neither costs a copy of the remaining line.
+_CLOSE_GT = re.compile(r"\s*>")
+_WS_TO_EOL = re.compile(r"\s*\Z")
 
 
 def _construct_at(line: str, i: int) -> str:
@@ -1924,61 +1940,214 @@ def _construct_at(line: str, i: int) -> str:
     [medium]/[high]; reproduced -- a nested CDATA document was byte-identical
     before this projection existed and collapsed to one line under a generic
     terminator, which made it a REGRESSION rather than a gap).
+
+    THE CHARACTER AFTER `/` OR `!` IS VALIDATED, matching the type-7 NFA (an
+    ASCII letter must follow `</`) and the scanner's declaration rule (`<!`
+    followed by an upper-case letter). Accepting them unconditionally marked
+    ordinary prose such as `</3` or `<!lowercase` as literal markup, so the
+    reflow silently skipped prose it was supposed to repair (Codex
+    consistency, section 48, [medium]).
+
+    Uses offset-aware `startswith` and direct indexing rather than slicing: on
+    a 16 MiB line dense with `<` the slicing version cost 10.378s inside a
+    command `scripts/lint.sh` Check 19 runs over 281 files at every commit
+    (Codex perf, section 48, [high]).
     """
-    rest = line[i:i + 9]
-    if rest.startswith("<!--"):
+    if line.startswith("<!--", i):
         return "-->"
-    if rest.startswith("<![CDATA["):
+    if line.startswith("<![CDATA[", i):
         return "]]>"
-    if rest.startswith("<?"):
+    if line.startswith("<?", i):
         return "?>"
-    if rest.startswith("<!"):
-        return ">"
     c = line[i + 1:i + 2]
-    return ">" if c and (c == "/" or _is_tag_start(c)) and c not in "!?" else ""
+    if not c:
+        return ""
+    if c == "!":
+        d = line[i + 2:i + 3]
+        return ">" if d and "A" <= d <= "Z" else ""
+    if c == "/":
+        d = line[i + 2:i + 3]
+        return ">" if d and _is_alpha(d) else ""
+    return ">" if _is_alpha(c) else ""
 
 
-def _tag_carry(line: str, carry: str, quote: str):
-    """`(carry, quote)` after `line` -- which construct is still OPEN, if any.
+def _markup_scan(line: str, carry: str, quote: str, raw: str, pending: str = ""):
+    """`(carry, quote, raw, pending, saw)` after `line` -- ONE markup walk.
 
-    `carry` is the TERMINATOR still being sought (`""` when outside one), so
-    the state says what would CLOSE the construct rather than merely that
-    something is open. Quoting applies to a normal tag only: a `>` inside an
-    attribute value does not end it, while a comment or CDATA has no quoting.
+    `carry` is the TERMINATOR still being sought (`""` when outside a
+    construct), so the state says what would CLOSE the thing rather than merely
+    that something is open. `raw` is the open raw-text ELEMENT NAME, so only
+    its own complete closing tag ends it. `saw` reports that the line carried a
+    raw-text tag at all, which makes it a boundary wherever on the line it sat.
 
-    A deliberately small walk, and NOT the type-7 NFA above. That machine
-    answers "is this line a complete tag ALONE on the line", a different
-    question that keeps no state across a line ending. What the two share is
-    the character classification, so there is still exactly one answer to
-    "what starts a tag name".
+    RAW-TEXT EVENTS ARE RECOGNISED ONLY OUTSIDE OTHER CONSTRUCTS, which is why
+    this is one walk and not two. A separate pass over the whole line read the
+    `<script>` in `<!-- literal <script>` as a real opener: that set `raw`
+    while `carry` was still `-->`, every later line then took the raw branch
+    and never fed the terminator back, and BOTH states stuck -- freezing the
+    rest of the block as markup and silently disabling the lint this
+    projection exists to provide (Codex re-adversarial, section 48, [medium];
+    reproduced -- the mask came back all ones).
+
+    ORDINARY TEXT IS SKIPPED AT C SPEED. A per-character Python walk measured
+    10.378s on a 16 MiB line dense with `<`, inside a command `scripts/lint.sh`
+    Check 19 runs over 281 files at every commit (Codex perf, section 48,
+    [high]).
+
+    Deliberately small, and NOT the type-7 NFA above: that machine answers "is
+    this line a complete tag ALONE on the line", a different question that
+    keeps no state across a line ending. What the two share is the character
+    classification, so there is still one answer to "what starts a tag name".
+
+    `pending` IS PART OF THE CARRIED STATE, not a local. A raw-text element
+    opens only once its own tag CLOSES, and that tag may span a line ending --
+    `<script` then ` type="text/javascript">`. Resetting it per call meant the
+    line that closed the tag had already forgotten which element it belonged
+    to, so `raw` never activated and the script body was reflowed as prose
+    (Codex re-adversarial, section 48, [high]; reproduced -- the body's mask
+    bits came back 0 and a `//` comment swallowed the statements after it).
     """
+    saw = False
     i, n = 0, len(line)
     while i < n:
-        if carry:
-            if carry == ">":
-                ch = line[i]
-                if quote:
-                    if ch == quote:
-                        quote = ""
-                elif ch in "\"'":
-                    quote = ch
-                elif ch == ">":
-                    carry = ""
-                i += 1
+        # CARRY IS TESTED BEFORE RAW. A closing tag is consumed by the ordinary
+        # tag machinery even though `raw` is still set, which is what lets it
+        # span a line ending.
+        if pending[:1] == "/" and carry:
+            # A CLOSING tag in progress admits WHITESPACE ONLY before its `>`.
+            # Handing it to the generic tag parser instead accepted
+            # `</script bogus>` -- which `_RAW_CLOSE_AT` does not define as a
+            # closer -- so raw mode ended on ordinary script text and the
+            # following in-band lines joined, a regression against the shipped
+            # commit (Codex re-adversarial, section 48, [high]).
+            # OFFSET-AWARE, NEVER `line[i:]`. Slicing the tail to inspect it
+            # copies the whole remainder per candidate, so a line of repeated
+            # `</script bogus>` -- ordinary raw-text content -- went quadratic:
+            # 0.040/0.179/0.661s at 128/256/512 KiB, doubling to 4x each step,
+            # which can stall lint Check 19 outright on a size-valid document
+            # (Codex re-adversarial, section 48, [high]).
+            m = _CLOSE_GT.match(line, i)
+            if m is not None:
+                i = m.end()
+                carry, pending, raw = "", "", ""
                 continue
-            j = line.find(carry, i)
-            if j < 0:
-                return carry, quote          # runs on past this line ending
-            i, carry = j + len(carry), ""
+            if _WS_TO_EOL.match(line, i) is not None:
+                return carry, quote, raw, pending, saw     # continues next line
+            # Malformed: this was never a closing tag. Fall back into raw
+            # scanning rather than leaving the element closed.
+            carry, pending = "", ""
             continue
-        if line[i] == "<":
-            term = _construct_at(line, i)
-            if term:
-                carry, quote = term, ""
-                i += 2
+        if carry:
+            if carry != ">":
+                j = line.find(carry, i)
+                if j < 0:
+                    return carry, quote, raw, pending, saw
+                i, carry = j + len(carry), ""
+            elif quote:
+                j = line.find(quote, i)
+                if j < 0:
+                    return carry, quote, raw, pending, saw
+                i, quote = j + 1, ""
                 continue
-        i += 1
-    return carry, quote
+            else:
+                m = _TAG_SIGNIFICANT_RE.search(line, i)
+                if m is None:
+                    return carry, quote, raw, pending, saw
+                ch, i = m.group(0), m.end()
+                if ch != ">":
+                    quote = ch
+                    continue
+                carry = ""
+            if not carry and pending:
+                # The tag just closed. A leading `/` marks it as the CLOSING
+                # tag of the open raw element, so the same slot serves both
+                # directions and a closer split across a line ending is
+                # consumed exactly like an opener that is (Codex
+                # re-adversarial, section 48, [medium]).
+                raw = "" if pending[0] == "/" else pending
+                pending = ""
+            continue
+        if raw:
+            # Inside raw text nothing matters but this element's OWN closing
+            # tag -- not another element's, and not a prefix of ours such as
+            # `</script-safe>`. Handing the match to the tag machinery above
+            # (rather than requiring a complete `</name\s*>` on this line) is
+            # what lets `</script` and its `>` sit on different lines.
+            m = _RAW_CLOSE_START.search(line, i)
+            while m is not None and m.group(1).lower() != raw:
+                m = _RAW_CLOSE_START.search(line, m.end())
+            if m is None:
+                return carry, quote, raw, pending, saw
+            carry, quote, pending, saw = ">", "", "/" + raw, True
+            i = m.end()
+            continue
+        # A BARE `<` IS NOT A CANDIDATE. Searching for a `<` that is also
+        # followed by a plausible construct character keeps a line dense with
+        # bare `<` at C speed instead of one Python dispatch per character:
+        # 8 Mi such characters cost 4.85s while every `<` reached
+        # `_construct_at`, and milliseconds once they cannot.
+        # A RUN OF COMPLETE, SELF-CONTAINED CONSTRUCTS IS SKIPPED IN ONE C-LEVEL
+        # MATCH. Each such construct otherwise costs a Python regex plus a
+        # state-machine turn, so 16 MiB of `<a>` cost 7.10s and of `<!A>` 5.44s
+        # on input the tool accepts (Codex re-adversarial, section 48,
+        # [medium]). Raw-text element names are excluded by lookahead and
+        # quotes are excluded from the body, so nothing that CARRIES state can
+        # be swallowed here -- this path changes no variable but `i`.
+        run = _SKIPPABLE_RUN.match(line, i)
+        if run is not None:
+            i = run.end()
+            continue
+        m = _TAG_OPEN_RE.search(line, i)
+        if m is None:
+            return carry, quote, raw, pending, saw
+        j = m.start()
+        term = _construct_at(line, j)
+        if not term:
+            i = j + 1
+            continue
+        if term == ">":
+            om = _RAW_OPEN_AT.match(line, j)
+            if om is not None:
+                pending, saw = om.group(1).lower(), True
+            elif _RAW_CLOSE_AT.match(line, j) is not None:
+                saw = True
+        carry, quote, i = term, "", j + 2
+    return carry, quote, raw, pending, saw
+
+
+# Inside an open tag only three characters matter: the two quote marks and the
+# terminator. Finding them with one C-level scan replaces the per-character
+# Python dispatch the perf leg measured at 10s on a pathological line.
+_TAG_SIGNIFICANT_RE = re.compile(r"[\"'>]")
+
+# A `<` that could actually open something. It ENCODES THE VALIDATED CHARACTER
+# rather than being a loose `<[/!?A-Za-z]` superset: with the loose filter every
+# grammar-invalid candidate still reached `_construct_at`, was rejected, and
+# advanced the walk by ONE character, so a 16 MiB line of repeated `</3` --
+# ordinary prose the tool must accept -- cost 4.732s, over this file's 2s
+# producer budget (Codex re-adversarial, section 48, [medium]).
+#
+# The alternatives mirror `_construct_at` exactly, longest-prefix first, and
+# that correspondence is load-bearing: anything this fails to match is never
+# examined, so a construct added there must be added here too.
+_TAG_OPEN_RE = re.compile(r"<(?:!--|!\[CDATA\[|\?|![A-Z]|/[A-Za-z]|[A-Za-z])")
+
+# A run of constructs that OPEN AND CLOSE on the spot and cannot change any
+# state: a plain element tag with no attributes, or a declaration with no
+# quotes. Skipping the whole run in one C-level match is what keeps a line
+# densely packed with them off the per-construct Python path. The raw-text
+# names are excluded by lookahead and quotes by the character class, so nothing
+# that carries state across a line ending can be consumed here.
+#
+# THE OPTIONAL SLASH GOES INSIDE THE EXCLUSION. With `(?!names)/?` the
+# lookahead ran BEFORE the `/`, so it excluded `<script>` but not `</script>`:
+# a stray closing tag after ordinary text was swallowed without reporting an
+# event, its line was left unmasked, and the tag was joined into the prose --
+# the one thing this run may never do (Codex re-adversarial, section 48,
+# [medium]; reproduced -- `leading prose <a></script>` came back mask 0).
+_SKIPPABLE_RUN = re.compile(
+    r"(?:<(?!/?(?:script|style|textarea|pre)\b)/?[A-Za-z][A-Za-z0-9-]*\s*/?>"
+    r"|<![A-Z][^<>\"'/]*>)+", re.IGNORECASE)
 
 
 class Terminal(NamedTuple):
@@ -2259,7 +2428,7 @@ class ScanResult:
         return [c in hidden for c in self.codes]
 
     def prose_html_boundary_mask(self):
-        """True per line for raw-HTML MARKUP inside a block `prose_mask` SHOWS.
+        """Truthy per line for raw-HTML MARKUP inside a block `prose_mask` SHOWS.
 
         THE COMPANION TO `prose_mask`, and it only means anything beside it.
         Showing type 6 to a REWRITER is what lets it lint the 30 live
@@ -2267,54 +2436,85 @@ class ScanResult:
         author's literal TAG BYTES rather than prose, so the rewriter can leave
         those alone and still reflow the paragraph between them.
 
-        A line is markup when a tag is already OPEN as the line begins (a tag
-        split across a line ending), or when the line STARTS with a tag. Both
-        halves are load-bearing and each was measured on 2026-08-12:
+        A line is markup when a construct is already OPEN as the line begins (a
+        tag, comment, PI or CDATA split across a line ending), when the line
+        STARTS with one, or when it carries a raw-text element event. Each
+        clause was measured on 2026-08-12:
 
-        - Without the carry, `<details` on its own line -- which CommonMark
-          type 6 accepts, because its opener is name-anchored and needs no
-          `>` -- leaves an in-band `data-x="...">` continuation as the first
-          line of a fresh run, and the rewriter joins it into the paragraph.
-          That is a corruption path the always-join behaviour did NOT have
-          (Codex design review, section 48, [high]).
-        - Without the starts-with-a-tag half, protecting only the opener leaves
-          `</details>` as the LAST line of the run, and `_hard_wrapped` width-
-          checks `block[:-1]` only, so the closer is joined onto the prose.
+        - Without the carry, `<details` on its own line -- which type 6 accepts,
+          because its opener is name-anchored and needs no `>` -- leaves an
+          in-band `data-x="...">` continuation as the first line of a fresh run
+          and the rewriter joins it into the paragraph. That is a corruption
+          path the always-join behaviour did NOT have (Codex design review,
+          section 48, [high]).
+        - Without the starts-with clause, protecting only the opener leaves
+          `</details>` as the run's LAST line, and `_hard_wrapped` width-checks
+          `block[:-1]` only, so the closer is joined onto the prose.
+        - Without raw-text tracking, a nested `<script>` body is prose: three
+          in-band JavaScript lines join and the first line's `//` comment
+          swallows every statement after it.
+
+        A BYTEARRAY, NOT A LIST OF BOOLS, and nothing is walked when the
+        document has no prose-visible block at all -- which is 279 of the 281
+        live files. The dense-pointer version added 130,932 KiB of peak RSS on
+        a size-valid 16 MiB document that contains no type-6 block whatsoever,
+        inside a command the pre-commit lint runs over the whole corpus (Codex
+        perf, section 48, [high]).
 
         Read through `leaf_views`, so a tag under a container prefix is still
         seen as markup: 2 of the 30 live lines are `> <details>` inside a
         blockquote, and against the physical line they do not start with `<`.
+        That projection is materialised ONLY when a visible block exists.
         """
-        out = [False] * len(self.codes)
-        views = None
-        carry, quote, raw = "", "", ""
+        out = bytearray(len(self.codes))
+        visible = _PROSE_VISIBLE_CODES
+        if not any(c in visible for c in self.codes):
+            return out
+        views = self.leaf_views
+        carry, quote, raw, pending = "", "", "", ""
         for i, code in enumerate(self.codes):
-            if code not in _PROSE_VISIBLE_CODES:
+            if code not in visible:
                 # Leaving the block resets the walk: no construct stays open
                 # across one this projection does not show.
-                carry, quote, raw = "", "", ""
+                carry, quote, raw, pending = "", "", "", ""
                 continue
-            if views is None:
-                views = self.leaf_views
+            line = views[i]
+            inside = bool(carry or raw)
+            carry, quote, raw, pending, saw = _markup_scan(
+                line, carry, quote, raw, pending)
+            if inside or carry or raw or saw:
+                out[i] = 1
+                continue
+            lead = line.lstrip()
+            if lead[:1] == "<" and _construct_at(lead, 0):
+                out[i] = 1
+        return out
+        views = self.leaf_views
+        carry, quote, raw, pending = "", "", "", ""
+        for i, code in enumerate(self.codes):
+            if code not in visible:
+                # Leaving the block resets the walk: no construct stays open
+                # across one this projection does not show.
+                carry, quote, raw, pending = "", "", "", ""
+                continue
             line = views[i]
             if raw:
-                # Inside a nested raw-text element. Its CONTENT is not prose --
-                # joining three 90-column script lines puts a `//` comment in
-                # front of the statements after it.
-                out[i] = True
-                m = _RAW_CLOSE_RE.search(line)
-                if m and m.group(1).lower() == raw:
-                    raw = ""
+                # Inside a nested raw-text element: its CONTENT is never prose.
+                out[i] = 1
+                raw, _ = _raw_scan(line, raw)
                 continue
             opened_before = carry
             carry, quote = _tag_carry(line, carry, quote)
             lead = line.lstrip()
-            out[i] = bool(opened_before or carry or (
-                lead[:1] == "<" and len(lead) > 1 and _is_tag_start(lead[1])))
-            if out[i] and not carry:
-                m = _RAW_OPEN_RE.search(line)
-                if m and not _RAW_CLOSE_RE.search(line[m.end():]):
-                    raw = m.group(1).lower()
+            if opened_before or carry or (
+                    lead[:1] == "<" and _construct_at(lead, 0)):
+                out[i] = 1
+            # UNCONDITIONAL, and not gated on the line already being markup: a
+            # complete `<script>` preceded by ordinary text opens raw mode just
+            # as much as one at the start of the line.
+            raw, saw = _raw_scan(line, raw)
+            if saw:
+                out[i] = 1
         return out
 
 

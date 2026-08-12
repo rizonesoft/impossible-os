@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import gc
 import os
 import pathlib
 import re
@@ -3913,33 +3914,92 @@ def test_raw_html_is_not_rewritten_section48():
     # byte-identical BEFORE this projection existed, so shipping the generic
     # terminator would have been a regression, not merely a gap (Codex
     # adversarial [medium] + test-coverage [high], section 48).
+    # THE CONSTRUCT BODY IS INDENTED so it forms a run the tool would really
+    # join. With the body at the same indent as a short `<details>` opener, the
+    # 9-character opener falls in `_hard_wrapped`'s width window and the whole
+    # document is protected by the WIDTH TEST rather than by this projection --
+    # so the fixture passes against a tool that never learned about constructs
+    # at all. The paired false-mask control below is what caught that.
+    ibody = "\n".join("  " + l for l in B)
     for name, open_tag, close_tag in (
         ("comment", "<!-- a > b", "-->"),
         ("CDATA section", "<![CDATA[literal > continues", "]]>"),
         ("processing instruction", "<?php $a > $b", "?>"),
     ):
-        doc = "<details>\n" + open_tag + "\n" + body + "\n" + close_tag + "\n</details>\n"
+        doc = ("<details>\n" + open_tag + "\n" + ibody + "\n" + close_tag
+               + "\n</details>\n")
         cases.append(("nested " + name + " (terminator is not `>`)", doc, doc))
     # Nested raw-text elements. Their CONTENT is never prose: joining three
-    # 90-column script lines puts the first line's `//` comment in front of
-    # every statement after it (Codex adversarial, section 48, [high]).
-    js = ["  var averylongidentifier = somefunction(a, b, c) + anotherfn(d, e); // note",
-          "  var bverylongidentifier = somefunction(a, b, c) + anotherfn(d, e); ok(1)",
-          "  var cverylongidentifier = somefunction(a, b, c) + anotherfn(d, e); ok(2)"]
-    for el, inner in (("script", "\n".join(js)), ("pre", body),
-                      ("style", body), ("textarea", body)):
+    # in-band script lines puts the first line's `//` comment in front of every
+    # statement after it (Codex adversarial, section 48, [high]).
+    #
+    # THESE LINES MUST BE IN THE 78-138 BAND. The first version of this fixture
+    # used 74-76-character JavaScript, BELOW `LO=78`, so it could never enter a
+    # run and the four raw-text assertions passed against a tool with no
+    # raw-text handling at all -- the section-46 short-opener mistake repeated
+    # inside its own regression test (Codex consistency, section 48, [high]).
+    js = ["  var averylongidentifier = somefunction(a, b, c) + anotherfunction(d, e, f); // x",
+          "  var bverylongidentifier = somefunction(a, b, c) + anotherfunction(d, e, f); ok1",
+          "  var cverylongidentifier = somefunction(a, b, c) + anotherfunction(d, e, f); ok2"]
+    check("s48 the raw-text fixture lines are inside the hard-wrap band",
+          all(78 <= len(x) <= 138 for x in js))
+    for el, inner in (("script", "\n".join(js)), ("pre", ibody),
+                      ("style", ibody), ("textarea", ibody)):
         doc = ("<div>\n<" + el + ">\n" + inner + "\n</" + el + ">\n</div>\n")
         cases.append(("nested <" + el + "> content", doc, doc))
+    # The three raw-text OPENER shapes that a first-match-wins scan got wrong,
+    # each reproduced: a DIFFERENT element's closing tag inside a string
+    # cancelled the opener, a second unmatched opener after a matched pair was
+    # ignored, and an opener preceded by ordinary text was skipped entirely
+    # because the scan was gated on the line already being markup (Codex
+    # adversarial [high] + consistency [high], section 48).
+    for name, opener in (
+        ('a different element\'s closer in a string',
+         '<script>const m = "</style>";'),
+        ("a second unmatched opener", "<script></script><script>"),
+        ("an opener preceded by text", "leading prose text here <script>"),
+        # The opening TAG may itself span a line ending, and the element only
+        # opens once it closes. Holding that pending name in a local rather
+        # than in the carried state meant the line that closed the tag had
+        # forgotten which element it belonged to (Codex re-adversarial,
+        # section 48, [high]).
+        ("a multiline opening tag", '<script\n type="text/javascript">'),
+    ):
+        doc = "<div>\n" + opener + "\n" + "\n".join(js) + "\n</script>\n</div>\n"
+        cases.append(("raw-text opener: " + name, doc, doc))
+    # A CLOSER MUST BE SYNTACTICALLY COMPLETE. Ordinary script text that merely
+    # STARTS like the closing tag ended protection early, so the in-band lines
+    # after it joined (Codex re-adversarial, section 48, [high]).
+    # PADDED INTO THE BAND: at 29 characters the line sits below `LO=78` and
+    # poisons the run's width test, so the document is protected by
+    # `_hard_wrapped` and the fixture passes against a tool with no closer
+    # validation at all. The paired false-mask control is what exposes that.
+    # `</script bogus>` is the shape that survived the FIRST repair: the name
+    # boundary matched and the generic tag parser then accepted arbitrary text
+    # before the `>`, ending raw mode on ordinary script text. Only whitespace
+    # is admitted there now (Codex re-adversarial, section 48, [high]).
+    for text in ('  const s = "</script bogus";', '  const s = "</script-safe>";',
+                 '  const s = "</script bogus>";', '  const s = "</style>";'):
+        padded = text + " // " + "x" * (82 - len(text) - 4)
+        check("s48 the incomplete-closer fixture is inside the band",
+              78 <= len(padded) <= 138)
+        doc = ("<div>\n<script>\n" + padded + "\n" + "\n".join(js)
+               + "\n</script>\n</div>\n")
+        cases.append(("incomplete closer in script text: " + text.strip()[:24],
+                      doc, doc))
 
     for name, doc, want in cases:
         got = rf.reflow(doc)
         check("s48 %s: exact expected output" % name, got == want)
-        # PAIRED CONTROL: the projection is what produced that output. A mask of
-        # all-False brings the corruption straight back, so no assertion above
-        # can be passing because the tool stopped reflowing.
-        if want != doc:
-            check("s48 %s: CONTROL a false mask corrupts it" % name,
-                  rf.reflow(doc, hmask=[False] * len(doc.split("\n"))) != got)
+        # PAIRED CONTROL ON EVERY CASE, including the byte-identical ones. A
+        # mask of all-False brings the corruption straight back, so no
+        # assertion above can be passing because the tool stopped reflowing --
+        # and the raw-text and construct cases, whose expected output EQUALS
+        # their input, are exactly the ones that had no control and were
+        # therefore passing against a tool with no raw-text handling at all
+        # (Codex consistency, section 48, [high]).
+        check("s48 %s: CONTROL a false mask corrupts it" % name,
+              rf.reflow(doc, hmask=[False] * len(doc.split("\n"))) != got)
 
     # ---- NEGATIVE SIDE: what must NOT be treated as markup. 24 of the 30 live
     # type-6 lines are ordinary prose, so over-masking silently ends the lint
@@ -3955,11 +4015,167 @@ def test_raw_html_is_not_rewritten_section48():
         check("s48 %s still joins into one line" % name,
               rf.reflow(doc) == "<details>\n" + " ".join(pr) + "\n</details>\n")
 
+    # A raw-text tag INSIDE an open comment is not an opener. Recognising it as
+    # one set `raw` while `carry` was still `-->`; every later line then took
+    # the raw branch and never fed the terminator back, so BOTH states stuck
+    # and the rest of the block froze as markup -- silently disabling the lint
+    # this projection exists to provide (Codex re-adversarial, section 48,
+    # [medium]; the mask came back all ones). The assertion is the NEGATIVE
+    # one: the prose after the comment must still reflow.
+    wedge = "<details>\n<!-- literal <script>\n-->\n" + ibody + "\n</details>\n"
+    wedge_mask = tf.scan_text(wedge).prose_html_boundary_mask()
+    check("s48 a `<script>` inside an open comment does not wedge the walk",
+          not any(wedge_mask[3:6]))
+    check("s48 ...so the prose after that comment still reflows, and the "
+          "comment lines are untouched",
+          rf.reflow(wedge) == ("<details>\n<!-- literal <script>\n-->\n  "
+                               + " ".join(B) + "\n</details>\n"))
+
+    # A CLOSING tag may span a line ending too. Requiring a complete
+    # `</name\s*>` on one physical line meant `</script\n>` never cleared the
+    # raw state, so every later line stayed marked and the prose after it
+    # silently stopped being linted (Codex re-adversarial, section 48,
+    # [medium]). The assertion is the NEGATIVE one -- the prose AFTER the
+    # closer must reflow -- with the script body still untouched.
+    mlc = ("<div>\n<script>\n" + "\n".join(js) + "\n</script\n>\n" + ibody
+           + "\n</div>\n")
+    mlc_out = rf.reflow(mlc)
+    check("s48 a closing tag split across lines still clears the raw state",
+          "  " + " ".join(B) in mlc_out)
+    check("s48 ...while the script body stays byte-identical",
+          all(j in mlc_out.split("\n") for j in js))
+
+    # A STRAY raw-text CLOSING tag, outside raw mode and after ordinary text,
+    # is still markup. The fast-path run excluded `<script>` but not
+    # `</script>` -- the lookahead sat before the optional `/` -- so the run
+    # swallowed it silently, the line was left unmasked, and the tag was joined
+    # into the prose (Codex re-adversarial, section 48, [medium]).
+    stray_line = ("leading prose text that is long enough to look like a "
+                  "wrapped line <a></script>")
+    stray = "<div>\n" + stray_line + "\n" + "\n".join(B[:2]) + "\n</div>\n"
+    check("s48 a stray `</script>` after text and a skippable tag is markup",
+          bool(tf.scan_text(stray).prose_html_boundary_mask()[1]))
+    check("s48 ...so that line is never joined into the prose below it",
+          rf.reflow(stray).split("\n")[1] == stray_line)
+
+    # State may not LEAK between two separate prose-visible blocks: an element
+    # left open when the block ends must not silently protect the next one, or
+    # one malformed block would disable the lint for the rest of the document.
+    leak = ("<div>\n<script>\n" + "\n".join(js) + "\n\n<details>\n"
+            + "\n".join(B) + "\n</details>\n")
+    check("s48 an unclosed raw element does not leak into the NEXT block",
+          " ".join(B) in rf.reflow(leak))
+
+    # The projection must agree with the repo's OWN html grammar about what a
+    # construct is. A one-character `/!?` test accepted `</3` and `<!lowercase`,
+    # which the type-7 NFA and the scanner's declaration rule both reject, so
+    # the reflow silently skipped prose it exists to repair (Codex consistency,
+    # section 48, [medium]). Both directions are pinned.
+    for lead in ("</3 ", "<!lowercase "):
+        pr = [lead + l[len(lead):] for l in B]
+        doc = "<details>\n" + "\n".join(pr) + "\n</details>\n"
+        check("s48 `%s` is NOT a construct and its prose still joins" % lead.strip(),
+              not any(tf.scan_text(doc).prose_html_boundary_mask()[1:4])
+              and rf.reflow(doc) == "<details>\n" + " ".join(pr) + "\n</details>\n")
+    for good in ("</div>", "<!DOCTYPE html>", "<!-- c -->", "<?php ?>", "<a>"):
+        doc = "<details>\n" + good + "\n</details>\n"
+        check("s48 `%s` IS still recognised as a construct" % good,
+              bool(tf.scan_text(doc).prose_html_boundary_mask()[1]))
+
     # A tag under a CONTAINER prefix is still markup: 2 of the 30 live lines are
     # `> <details>` in a blockquote, which does not start with `<` physically.
     bq = tf.scan_text("> <details>\n> body\n")
     check("s48 a blockquoted opener is seen as markup through the leaf view",
           bq.prose_html_boundary_mask()[0])
+
+    # ---- COST. These helpers run from `todo-reflow.py` under lint Check 19
+    # over all 281 files at every commit, and this file carries a 2s producer
+    # budget a single pathological line has blown before. Measured on
+    # `monotonic_ns` (a wall-clock bracket can be satisfied by a clock step --
+    # section 34). A 16 MiB line dense with `<` cost 10.378s when every `<`
+    # reached `_construct_at` (Codex perf, section 48, [high]). ----
+    MiB16 = 16 * 1024 * 1024
+    # The REJECTED-CANDIDATE shapes are here on purpose. With a loose
+    # `<[/!?A-Za-z]` filter every grammar-invalid candidate still reached
+    # `_construct_at`, was rejected, and advanced the walk one character: a
+    # 16 MiB line of `</3` -- ordinary prose the tool must accept -- cost
+    # 4.732s, over this file's 2s producer budget (Codex re-adversarial,
+    # section 48, [medium]).
+    # ASSERTED AS SCALING, NOT AS A WALL-CLOCK BOUND. An absolute threshold
+    # here measures the machine as much as the code: the same dense-`<a>` case
+    # took 1.71s in a fresh process and 3.115s inside this suite, so a 3s bound
+    # failed on correct code. Ratio across a 4x size step separates the
+    # property actually under test -- linear (~4x) against the per-construct
+    # Python walk and the quadratic tail copy (~16x) that rounds 4-6 found --
+    # and it cannot be satisfied or broken by ambient load. Section 34 made the
+    # same correction for the todo-cache budgets.
+    # MEASURED IN A FRESH INTERPRETER, and that is not fastidiousness. Building
+    # several 16 MiB payloads inside THIS process makes allocation dominate:
+    # the same dense-`<a>` case measured 1.71s standalone, 3.115s in-suite
+    # against an absolute bound, and a 24.9x "superlinear" ratio in-suite while
+    # the regex under test is ~linear in isolation (0.090s at 1 MiB to 1.901s
+    # at 16 MiB). Both in-suite forms would have been read as code defects.
+    # A subprocess measures the code; this process cannot.
+    probe = r'''
+import sys, time, gc
+sys.path.insert(0, "scripts")
+import todo_fence as tf
+UNITS = [("dense `<`", "<"), ("dense `</3`", "</3"), ("dense `<!x`", "<!x"),
+         ("dense `<a>`", "<a>"), ("dense `<!A>`", "<!A>"),
+         ("ordinary text", "a"), ("dense quoted tag", '<a b="c">'),
+         ("malformed raw closer", "</script bogus>")]
+MiB = 1024 * 1024
+# The malformed-closer payload MUST sit inside an open <script>, or `raw` is
+# never set, the closing-tag-in-progress branch is never reached, and the case
+# silently measures generic tag scanning instead of the quadratic fix.
+WRAP = {"malformed raw closer": ("<div>\n<script>\n", "\n</script>\n</div>\n")}
+for name, unit in UNITS:
+    head, tail = WRAP.get(name, ("<details>\n", "\n</details>\n"))
+    times = []
+    # 2 -> 8 MiB, not 4 -> 16. The RATIO is what separates linear from
+    # quadratic, and it is size-independent, so the smaller pair keeps the
+    # discrimination at a quarter of the allocation. This suite shares a
+    # machine with timing-sensitive harnesses in the same pack.
+    for size in (2 * MiB, 8 * MiB):
+        doc = head + unit * (size // len(unit)) + tail
+        t0 = time.monotonic_ns()
+        tf.scan_text(doc).prose_html_boundary_mask()
+        times.append((time.monotonic_ns() - t0) / 1e9)
+        del doc
+        gc.collect()
+    print("%s\t%.4f\t%.4f" % (name, times[0], times[1]))
+'''
+    proc = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                          text=True, cwd=os.getcwd())
+    check("s48 the scaling probe ran (rc %d)" % proc.returncode,
+          proc.returncode == 0 and proc.stdout.strip() != "")
+    for row in proc.stdout.strip().splitlines():
+        name, small, big = row.split("\t")
+        small, big = float(small), float(big)
+        ratio = big / small if small > 0 else 0.0
+        # Linear over a 4x size step is ~4x; the per-construct Python walk and
+        # the quadratic tail copy that rounds 4-6 found were ~16x and worse.
+        check("s48 %s scales linearly (%.1fx over a 4x size step, %.2fs)"
+              % (name, ratio, big), ratio < 8.0)
+
+    # The malformed-closer shape -- the quadratic one rounds 4-6 produced -- is
+    # covered by the subprocess scaling probe above, which wraps that payload
+    # in an open `<script>` so it actually reaches the closing-tag-in-progress
+    # branch. An earlier in-process version compared 2x size steps against a
+    # 4.0 ratio, which leaves no separation margin at all: quadratic work over
+    # a 2x step IS ~4x (Codex re-adversarial, section 48, [medium]).
+
+    # A document with NO prose-visible block -- 279 of the 281 live files -- must
+    # not walk anything or materialise `leaf_views`, and the mask is a compact
+    # bytearray rather than a pointer-per-line list. The dense version added
+    # 130,932 KiB of peak RSS on a size-valid 16 MiB document (Codex perf,
+    # section 48, [high]).
+    plain = tf.scan_text("\n".join(B * 2000))
+    t0 = time.monotonic_ns()
+    m = plain.prose_html_boundary_mask()
+    dt = (time.monotonic_ns() - t0) / 1e9
+    check("s48 a document with no type-6 block short-circuits (%.4fs)" % dt,
+          dt < 0.25 and isinstance(m, bytearray) and not any(m))
 
     # ---- THE ODD-BREAK REFUSAL, section 47's remedy applied to this tool. ----
     def run(argv, text):
