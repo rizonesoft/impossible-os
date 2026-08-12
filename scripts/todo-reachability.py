@@ -123,9 +123,19 @@ PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
 # WRITES this marker when authoring the item, rather than a detector
 # guessing intent from shape. Unmarked items still flag -- fail-closed.
 STANDING_RE = re.compile(r"\bstanding:", re.I)
-VERIFIED_RE = re.compile(r"^> \*\*Verified:")
-DEFERRED_RE = re.compile(r"^> \*\*Deferred:")
-QUALITY_RE = re.compile(r"^> \*\*Quality reviewed:")
+# ONE STAMP GRAMMAR, matching the two authorities this gate has to agree with:
+# `sequencer_triage.section_stamps()` (`.claude/hooks/sequencer_triage.py:56`),
+# which is what `_is_done` below mirrors, and `todo-staged-check._STAMP_RE`.
+# These three used to differ, and in BOTH directions (Codex consistency,
+# section 47, [high]): this file required exactly one ASCII space after `>` and
+# did not require the closing `**`, so `>**Verified:**` -- valid CommonMark --
+# was DONE to the sequencer and unstamped here, hiding an `open-in-done`; while
+# a malformed `> **Verified:` was stamped here and not there, which is a false
+# blocking verdict from the gate that holds `phase FIXPOINT` open. Keeping the
+# match on physical lines establishes nothing if the patterns disagree.
+VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
+DEFERRED_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")
+QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*")
 AWAITING_RE = re.compile(r"awaiting-[a-z]+")
 IO_ROW_RE = re.compile(r"^\|[^|]*\|\s*(\d+)\s*\|")
 # An Implementation Order "Section" cell: the section marker glyph plus digits,
@@ -150,7 +160,7 @@ OWNER_RE = re.compile(
 
 
 def _sections(scan):
-    """(head, line, body_idx) with the body ending at the next `## ` of ANY kind.
+    """(head, line, (start, end)) with the body ending at the next `## ` of ANY kind.
 
     THE SECTION SET COMES FROM THE PRODUCER'S PROJECTION (section 47), not from
     physical lines. `build.py` moved its five section-context walks onto
@@ -170,8 +180,11 @@ def _sections(scan):
     corpus into a section boundary -- a regression created by the fix (Codex
     design review, section 47, [high]).
 
-    YIELDS BODY INDICES rather than lines, because the body's matchers do NOT
-    agree on a projection and must not be forced to. See `audit`.
+    YIELDS BODY BOUNDS `(start, end)` rather than lines or indices, because the
+    body's matchers do NOT agree on a projection and must not be forced to --
+    and because materialising the range costs one boxed integer per line, which
+    at the scanner's valid-input ceiling is hundreds of megabytes for a walk
+    that only ever streams. `audit` makes ONE pass over the range.
 
     Ending only at the next NUMBERED section is wrong and was caught on
     2026-08-02 before it caused a bad edit: the LAST numbered section's body
@@ -208,10 +221,10 @@ def _sections(scan):
             if not mask[j] and not in_bq(j) and _fence.is_h2(leaves[j]):
                 end = j
                 break
-        yield head, ln, [j for j in range(ln, end) if not mask[j]]
+        yield head, ln, (ln, end)
 
 
-def _io_rows(lines, mask):
+def _io_rows(scan):
     """Section numbers listed in the `## Implementation Order` table.
 
     SCOPED to that table, and tolerant of BOTH row shapes found in the corpus
@@ -226,17 +239,33 @@ def _io_rows(lines, mask):
     rows -- and a fenced `## Something` inside the real table's span would flip
     it back off, dropping every row after it. Skipping masked lines entirely
     leaves the toggle driven only by real headings.
+
+    CONTAINER-AWARE WITH THE REST OF THE CLOSURE (section 47). This walk stayed
+    on physical lines when `_sections` moved onto the projections, which is the
+    same half-migration section 45 proved dangerous, one walk over: `build.py`
+    reads Implementation Order rows through `views`/`leaf_views`
+    (`build.py:1449`), so a list-contained `- ## Implementation Order` and its
+    indented rows are a real table to the producer and invisible here -- and a
+    section whose row this walk cannot see gets a blocking `no-io-row` verdict
+    on work that is correctly filed (Codex consistency, section 47, [high]).
+    The BOUNDARY reads `leaf_views` (a heading question) while the ROWS read
+    `views` (a content question), matching the producer's split exactly.
     """
+    mask, views, leaves = scan.mask, scan.views, scan.leaf_views
+    in_bq = scan.in_blockquote
     rows = set()
     inside = False
     sec_col = None            # index of the header's "Section" column, if any
-    for i, l in enumerate(lines):
-        if mask[i]:
+    for i in range(len(scan.lines)):
+        # Blockquoted rows are quoted EXAMPLES, excluded for the same reason
+        # the heading walk excludes quoted headings.
+        if mask[i] or in_bq(i):
             continue
+        l = views[i]
         # Shared rule here too (section 43 post-ship review): a fixed `l[3:]`
         # slice reads `# mplementation Order` off an indented heading, so the
         # table would never be entered and every row in it would go unseen.
-        _h2 = _fence.h2_title(l)
+        _h2 = _fence.h2_title(leaves[i])
         if _h2 is not None:
             inside = _h2.lower().startswith("implementation order")
             sec_col = None
@@ -609,7 +638,7 @@ def audit(path, root="."):
         # if/else over two flags -- with seven HTML block types a hand-written
         # ternary here would silently label an unclosed `<script>` a comment.
         return [(_fence.terminal_category(scan.terminal), 0, reason)]
-    rows = _io_rows(lines, mask)
+    rows = _io_rows(scan)
     status_map = _io_status(path, root, rows)
     out = []
     # TWO PROJECTIONS, DELIBERATELY, because the body's matchers disagree about
@@ -642,10 +671,19 @@ def audit(path, root="."):
     # `_walk_stamps_xrefs` from the projection closure (`build.py:1077`): a walk
     # that matches ON the container marker cannot be given a projection that
     # removes it.
+    #
+    # ONE STREAMING PASS PER SECTION, over BOUNDS rather than a materialised
+    # index list. The first version yielded `[j for j in range(...)]` and built
+    # both projections from it, which replaced a list of pointers to existing
+    # strings with a list of freshly boxed integers plus two more full lists:
+    # measured on a 200,002-line single-section fixture at 8,016,688 traced
+    # bytes for the indices and 3,248,192 for the projections, extrapolating to
+    # roughly 945 MB at the scanner's 16 MiB valid-input ceiling. It is linear
+    # rather than quadratic (section ranges are disjoint), but a gate that
+    # exhausts memory on a valid maximum-size document is refusing the tree for
+    # the wrong reason (Codex perf, section 47, [high]).
     views, in_bq = scan.views, scan.in_blockquote
-    for head, ln, body_idx in _sections(scan):
-        body = [views[j] for j in body_idx if not in_bq(j)]
-        stamp_body = [lines[j] for j in body_idx]
+    for head, ln, (start, end) in _sections(scan):
         # An unusable heading number is REPORTED, never dropped. Dropping it
         # would merge this section's items into the previous section's body and
         # then judge them against the wrong Implementation Order row, which is a
@@ -657,13 +695,32 @@ def audit(path, root="."):
                         _fence.heading_report(ln + 1, head)))
             continue
         num = head.n
-        opens = [b.strip()[:90] for b in body if OPEN_ITEM_RE.match(b)]
-        parked = [b.strip() for b in body if PARKED_ITEM_RE.match(b)]
-        deferred = any(DEFERRED_RE.match(b) for b in stamp_body)
-        stamped = any(VERIFIED_RE.match(b) for b in stamp_body)
-        quality = any(QUALITY_RE.match(b) for b in stamp_body)
-        awaiting = any(DEFERRED_RE.match(b) and AWAITING_RE.search(b)
-                       for b in stamp_body)
+        opens, parked = [], []
+        deferred = stamped = quality = awaiting = False
+        for j in range(start, end):
+            if mask[j]:
+                continue
+            # STAMPS off the physical line. Every stamp pattern is anchored at
+            # column 0 on `>`, so the cheap prefix test skips three regex calls
+            # on the overwhelming majority of lines.
+            phys = lines[j]
+            if phys[:1] == ">":
+                if DEFERRED_RE.match(phys):
+                    deferred = True
+                    if AWAITING_RE.search(phys):
+                        awaiting = True
+                elif VERIFIED_RE.match(phys):
+                    stamped = True
+                elif QUALITY_RE.match(phys):
+                    quality = True
+            # ITEMS off the projection, quoted examples excluded.
+            if in_bq(j):
+                continue
+            v = views[j]
+            if OPEN_ITEM_RE.match(v):
+                opens.append(v.strip()[:90])
+            elif PARKED_ITEM_RE.match(v):
+                parked.append(v.strip())
 
         # 1. body with no Implementation Order row -- invisible to the oracle
         if num not in rows and (opens or parked):
@@ -690,8 +747,6 @@ def audit(path, root="."):
         # then refused fixpoint on it, so a correctly-shaped corpus could never
         # complete. Found by the run itself, 2026-08-05, on an annual
         # trigger-review item.
-        standing = [b for b in body
-                    if OPEN_ITEM_RE.match(b) and STANDING_RE.search(b)]
         real_opens = [b for b in opens
                       if not STANDING_RE.search(b)]
         if is_done and real_opens and deferred:

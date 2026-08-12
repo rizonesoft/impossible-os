@@ -283,9 +283,9 @@ def test_reachability():
     # The fenced example row carries order 2 and section marker 99; the real
     # row carries order 1 and marker 1, so a fence-aware walk sees only {1}.
     check("reachability: fence-aware sees only the real table row",
-          reach._io_rows(lines, mask) == {1})
+          reach._io_rows(_s) == {1})
     check("reachability CONTROL: the fence-blind walk invents the example row",
-          reach._io_rows(lines, blind) == {1, 99})
+          reach._io_rows(_Blind(_s)) == {1, 99})
 
     # THE SECTION COLUMN DECIDES, and ONLY when the header declares one. The
     # old rule took the first all-digit cell of the first two columns -- the
@@ -303,7 +303,7 @@ def test_reachability():
         ""])
     _r = tf.scan_text(reseq)
     rl, rm = _r.lines, _r.mask
-    got = reach._io_rows(rl, rm)
+    got = reach._io_rows(_r)
     check("reachability: a Section column yields the marker alone",
           got == {41})
     check("reachability: the order number does NOT also satisfy membership",
@@ -323,7 +323,7 @@ def test_reachability():
     _l = tf.scan_text(legacy)
     ll, lm = _l.lines, _l.mask
     check("reachability: no Section column -> the order number is used",
-          reach._io_rows(ll, lm) == {45})
+          reach._io_rows(_l) == {45})
 
     # A table with NO header row at all. Its single data row must still count:
     # treating "the first row after the heading" as a header positionally ate
@@ -337,7 +337,7 @@ def test_reachability():
     _h = tf.scan_text(headerless)
     hl, hm = _h.lines, _h.mask
     check("reachability: a header-less table still yields its data row",
-          reach._io_rows(hl, hm) == {1})
+          reach._io_rows(_h) == {1})
 
     # A "Section" header that holds the section TITLE, not its number. This is
     # the older four-column layout and it is most of the corpus; keying on the
@@ -352,7 +352,7 @@ def test_reachability():
     _t = tf.scan_text(titled)
     tl, tm = _t.lines, _t.mask
     check("reachability: a Section column holding a TITLE falls back to the number",
-          reach._io_rows(tl, tm) == {1})
+          reach._io_rows(_t) == {1})
 
     # A legend table BEFORE the real one, inside the same heading. The header
     # must not latch for the whole section: a non-table line ends the table.
@@ -369,7 +369,7 @@ def test_reachability():
     _w = tf.scan_text(twotables)
     wl, wm = _w.lines, _w.mask
     check("reachability: a preceding legend table does not latch the column",
-          41 in reach._io_rows(wl, wm))
+          41 in reach._io_rows(_w))
 
     # A fenced `- [ ]` and a fenced stamp must not reach the body scans either.
     # `_sections` yields the CLASSIFICATION since section 43, not a bare number:
@@ -382,7 +382,10 @@ def test_reachability():
     def _body(scan, n):
         return next((b for h, _, b in reach._sections(scan) if h.n == n), None)
 
-    body = [_s.views[j] for j in _body(_s, 1)]
+    # `audit` skips masked lines inside its streaming pass, so a caller
+    # reading the BOUNDS has to skip them too -- the bounds are a range, not
+    # a pre-filtered list.
+    body = [_s.views[j] for j in range(*_body(_s, 1)) if not _s.mask[j]]
     check("reachability: no fenced open item in the real section's body",
           not any("a fenced example item" in b for b in body))
     check("reachability: no fenced Deferred stamp in the real section's body",
@@ -391,7 +394,8 @@ def test_reachability():
     # example item is attributed to the phantom section 99 instead -- which is
     # the `no-io-row` verdict this gate used to raise over a code sample.
     _b99 = _body(_Blind(_s), 99)
-    blind_99 = None if _b99 is None else [_s.views[j] for j in _b99]
+    blind_99 = (None if _b99 is None else
+                [_s.views[j] for j in range(*_b99)])   # blind mask: nothing masked
     check("reachability CONTROL: fence-blind, the item lands under phantom 99",
           blind_99 is not None
           and any("a fenced example item" in b for b in blind_99))
@@ -1790,9 +1794,9 @@ def test_one_heading_rule_section43():
     adjacent = ("# T\n\n## 1. One\n\n- [ ] item one\n\n"
                 "   ## 2. Two\n\n- [ ] item two\n")
     asc = fence.scan_text(adjacent)
-    bodies = {h.n: [asc.views[j] for j in body
+    bodies = {h.n: [asc.views[j] for j in range(*bounds)
                     if asc.views[j].strip().startswith("- [")]
-              for h, _, body in reach._sections(asc)}
+              for h, _, bounds in reach._sections(asc)}
     check("s43: adjacent indented sections have DISJOINT bodies",
           bodies.get(1) == ["- [ ] item one"]
           and bodies.get(2) == ["- [ ] item two"])
@@ -2021,9 +2025,9 @@ def test_section_context_closure_section47():
     secs = {h.n for h, _, _ in reach._sections(_s)}
     check("s47: reachability agrees with the producer on the section set",
           secs == prod)
-    owned = {h.n: [_s.views[j] for j in body
+    owned = {h.n: [_s.views[j] for j in range(*b)
                    if _s.views[j].lstrip().startswith("- [")]
-             for h, _, body in reach._sections(_s)}
+             for h, _, b in reach._sections(_s)}
     check("s47: the nested section owns its own items",
           any("nested_helper" in b for b in owned.get(2, []))
           and not any("nested_helper" in b for b in owned.get(1, [])))
@@ -2047,9 +2051,9 @@ def test_section_context_closure_section47():
     phys_secs = {h.n for h, _, _ in reach._sections(phys)}
     check("s47 CONTROL: the physical-line classifier saw only section 1",
           phys_secs == {1})
-    phys_owned = {h.n: [phys.views[j] for j in body
+    phys_owned = {h.n: [phys.views[j] for j in range(*b)
                         if phys.views[j].lstrip().startswith("- [")]
-                  for h, _, body in reach._sections(phys)}
+                  for h, _, b in reach._sections(phys)}
     check("s47 CONTROL: ...and swept the nested item under section 1",
           any("nested_helper" in b for b in phys_owned.get(1, [])))
 
@@ -2186,9 +2190,9 @@ def test_section_context_closure_section47():
     # ...and its child item is NOT re-parented onto section 1, which is the
     # damage dropping the heading would do.
     _ls = fence.scan_text(_long)
-    _lowned = {h.n: [_ls.views[j] for j in body
+    _lowned = {h.n: [_ls.views[j] for j in range(*b)
                      if _ls.views[j].lstrip().startswith("- [")]
-               for h, _, body in reach._sections(_ls) if h.kind == "ok"}
+               for h, _, b in reach._sections(_ls) if h.kind == "ok"}
     check("s47: the unusable heading's item is not re-parented onto section 1",
           not any("under the unusable heading" in b
                   for b in _lowned.get(1, [])))
@@ -2343,8 +2347,11 @@ def test_logical_section_addition_section47():
         finally:
             os.chdir(cwd)
 
-    check("s47: HEAD's projected section set is read for comparison",
-          head_nos == set())
+    # A COUNTER, not a set: section identity is occurrence-aware so a
+    # renumbering or a delete-and-re-add (same count, different lines) does not
+    # read as an addition.
+    check("s47: HEAD's projected section counts are read for comparison",
+          not head_nos)
     check("s47: the untouched heading line joins the section additions",
           6 in {n for n, _ in widened})
     check("s47: ...so the nested section now counts as ADDED",
@@ -2353,6 +2360,116 @@ def test_logical_section_addition_section47():
           stg.added_sections(added, sec_vis) == [])
     check("s47: the line-based checks keep the UNWIDENED set",
           len(added) == 1 and added[0][0] == 5)
+
+
+def test_section_identity_shapes_section47():
+    """Section identity is OCCURRENCE-aware, so the shapes that look like an
+    addition and are not stay silent (Codex adversarial, section 47, [high])."""
+    stg = load("staged_identity_s47", "scripts/todo-staged-check.py")
+    fence = load("fence_identity_s47", "scripts/todo_fence.py")
+
+    def _run(head, staged, added):
+        s = fence.scan_text(staged)
+        sec_vis = ["" if (s.mask[i] or s.in_blockquote(i)) else l
+                   for i, l in enumerate(s.leaf_views)]
+        with tempfile.TemporaryDirectory() as d:
+            _git(d, "init", "-q", ".")
+            _git(d, "config", "user.email", "t@t")
+            _git(d, "config", "user.name", "t")
+            rel = "todo/00-x/TODO-99-id.md"
+            fp = pathlib.Path(d) / rel
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(head, encoding="utf-8")
+            _git(d, "add", rel)
+            _git(d, "commit", "-q", "-m", "base")
+            fp.write_text(staged, encoding="utf-8")
+            _git(d, "add", rel)
+            cwd = os.getcwd()
+            try:
+                os.chdir(d)
+                out = stg._section_additions(rel, s.lines, sec_vis, added)
+            finally:
+                os.chdir(cwd)
+        return [n for n, _ in stg.added_sections(out, sec_vis)]
+
+    # 1. SAME-NUMBER REPLACEMENT. HEAD already has a section 2; the commit
+    # deletes it and adds a different one. Against a number SET this looked
+    # like "2 already exists" and the new section escaped every control.
+    same = _run("# T\n\n## 2. Old two\n\nold body\n",
+                "# T\n\n## 2. New two\n\nnew body\n",
+                [(3, "## 2. New two")])
+    check("s47: a same-number replacement still counts as an added section",
+          same == [3])
+
+    # 2. RENUMBERING. One section, renamed 2 -> 3. The count of sections is
+    # unchanged, so nothing was created and no provenance is owed... but the
+    # heading line IS in the diff, so it stays line-based and is reported.
+    # That is the pre-existing behaviour and is deliberately not changed here.
+    renum = _run("# T\n\n## 2. Two\n\nbody\n",
+                 "# T\n\n## 3. Two\n\nbody\n",
+                 [(3, "## 3. Two")])
+    check("s47: a renumbering is reported from the diff, not invented twice",
+          renum == [3])
+
+    # 3. DELETE-AND-RE-ADD at a different position, same number, same count.
+    # The multiset difference is zero, so the logical walk adds NOTHING; only
+    # the genuinely-added line is reported.
+    moved = _run("# T\n\n## 2. Two\n\nbody\n\n## 5. Five\n",
+                 "# T\n\n## 5. Five\n\n## 2. Two\n\nbody\n",
+                 [(5, "## 2. Two")])
+    check("s47: a move does not invent a second addition",
+          moved == [5])
+
+    # 4. AN UNCHANGED FILE adds nothing at all -- the control proving the
+    # logical walk is silent when the commit created no section.
+    quiet = _run("# T\n\n## 2. Two\n\nbody\n",
+                 "# T\n\n## 2. Two\n\nbody edited\n",
+                 [(5, "body edited")])
+    check("s47 CONTROL: an edit that creates no section adds no section",
+          quiet == [])
+
+
+def test_baseline_fail_closed_section47():
+    """A HEAD blob that EXISTS but cannot be read must refuse, not silently
+    fall back to the pre-section-47 controls (Codex adversarial, [medium])."""
+    stg = load("staged_baseline_s47", "scripts/todo-staged-check.py")
+    check("s47: the unreadable-baseline error type exists and is distinct",
+          issubclass(stg._BaselineUnreadable, RuntimeError))
+    with tempfile.TemporaryDirectory() as d:
+        _git(d, "init", "-q", ".")
+        _git(d, "config", "user.email", "t@t")
+        _git(d, "config", "user.name", "t")
+        rel = "todo/00-x/TODO-99-base.md"
+        fp = pathlib.Path(d) / rel
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text("# T\n\n## 1. One\n", encoding="utf-8")
+        _git(d, "add", rel)
+        _git(d, "commit", "-q", "-m", "base")
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            present = stg._head_section_numbers(rel)
+            absent = stg._head_section_numbers("todo/00-x/TODO-99-nope.md")
+            # An oversized historical blob is refused rather than buffered into
+            # the blocking hook.
+            big = pathlib.Path(d) / "todo/00-x/TODO-99-big.md"
+            big.write_text("x" * (stg._MAX_BASELINE_BYTES + 1),
+                           encoding="utf-8")
+            _git(d, "add", "todo/00-x/TODO-99-big.md")
+            _git(d, "commit", "-q", "-m", "big")
+            try:
+                stg._head_section_numbers("todo/00-x/TODO-99-big.md")
+                over = False
+            except stg._BaselineUnreadable:
+                over = True
+        finally:
+            os.chdir(cwd)
+    check("s47: a readable HEAD blob yields its projected counts",
+          present is not None and present.get(1) == 1)
+    check("s47 CONTROL: a genuinely ABSENT blob is None (a new file), not an "
+          "error", absent is None)
+    check("s47: an oversized HEAD blob is REFUSED, not buffered",
+          over)
 
 
 def main():
@@ -2374,6 +2491,8 @@ def main():
     test_section_context_closure_section47()
     test_staged_coordinate_refusal_section47()
     test_logical_section_addition_section47()
+    test_section_identity_shapes_section47()
+    test_baseline_fail_closed_section47()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))

@@ -31,6 +31,7 @@ Stdlib only.
 """
 from __future__ import annotations
 
+import collections
 import os
 import re
 import subprocess
@@ -159,6 +160,55 @@ def _post_image_lines(text):
             scan.unclosed_reason())
 
 
+class _SectionView:
+    """`leaf_views` with fenced and blockquoted lines blanked, WITHOUT copying.
+
+    Index-parallel to the post-image by construction, because it indexes the
+    projection directly and substitutes `""` for a suppressed line rather than
+    filtering anything out -- which is what lets every lineno-keyed check below
+    share one coordinate system with `vis`.
+
+    LAZY, because the dense comprehension it replaces threw away the
+    projection's own memory work: `leaf_views` returns `scan.lines` by identity
+    when nothing differs and a sparse overlay when little does, and building a
+    full-length list on top of either one re-materialises exactly what those
+    representations exist to avoid. Measured by the review on a 200,001-line
+    identity document: 1,624,064 bytes and 0.175s spent solely on the list,
+    about 136 MB at the scanner's 16 MiB valid-input ceiling, inside a blocking
+    pre-commit hook (Codex perf, section 47, [medium]).
+    """
+
+    __slots__ = ("_leaves", "_mask", "_in_bq")
+
+    def __init__(self, leaves, mask, in_bq):
+        self._leaves, self._mask, self._in_bq = leaves, mask, in_bq
+
+    def __len__(self):
+        return len(self._mask)
+
+    def __getitem__(self, i):
+        if i < 0:
+            i += len(self._mask)
+        if self._mask[i] or self._in_bq(i):
+            return ""
+        return self._leaves[i]
+
+    def __iter__(self):
+        return (self[i] for i in range(len(self._mask)))
+
+
+class _BaselineUnreadable(RuntimeError):
+    """The HEAD blob exists but could not be read. Distinct from ABSENT, which
+    is a legitimate new file -- conflating the two is what made a degraded git
+    read silently switch off the logical-addition controls."""
+
+
+# The scanner's own valid-input ceiling. A historical blob larger than this
+# cannot be scanned anyway, and reading it into a blocking pre-commit hook is
+# how the hook stalls.
+_MAX_BASELINE_BYTES = 16 * 1024 * 1024
+
+
 def _head_section_numbers(path):
     """Section numbers visible in the HEAD blob under the SAME projection the
     staged post-image is read with, or None when there is no HEAD blob.
@@ -166,22 +216,60 @@ def _head_section_numbers(path):
     Projected deliberately. Comparing a projected staged scan against an
     UNPROJECTED head scan would report every container-nested section already
     in the file as newly added the first time this ran.
+
+    FAIL-CLOSED ON A DEGRADED READ, and the distinction that makes it possible
+    is MISSING vs UNREADABLE. Returning None for both meant any transient git
+    failure or decode error read as "new file", which `_section_additions`
+    treats as "everything is already added" and skips the logical widening
+    entirely -- so a degraded read silently disabled the controls it feeds
+    (Codex adversarial, section 47, [medium]). `cat-file -e` answers existence
+    on its own, so a nonzero `show` after a POSITIVE existence check is a real
+    failure and raises. The blob is read as BYTES with a timeout and a size
+    ceiling, because this runs inside a blocking pre-commit hook.
     """
     try:
+        exists = subprocess.run(["git", "cat-file", "-e", f"HEAD:{path}"],
+                                capture_output=True, timeout=30)
+        if exists.returncode != 0:
+            return None                # genuinely absent: a new file
         r = subprocess.run(["git", "show", f"HEAD:{path}"],
-                           capture_output=True, text=True, check=False)
+                           capture_output=True, check=False, timeout=60)
         if r.returncode != 0:
-            return None
-    except (OSError, UnicodeDecodeError):
-        return None
-    scan = _fence().scan_text(r.stdout)
-    out = set()
+            raise _BaselineUnreadable(
+                "git show HEAD:%s failed (rc %d)" % (path, r.returncode))
+        if len(r.stdout) > _MAX_BASELINE_BYTES:
+            raise _BaselineUnreadable(
+                "HEAD:%s is %d bytes, over the %d-byte ceiling"
+                % (path, len(r.stdout), _MAX_BASELINE_BYTES))
+        text = r.stdout.decode("utf-8")
+    except subprocess.TimeoutExpired as exc:
+        raise _BaselineUnreadable("reading HEAD:%s timed out" % path) from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _BaselineUnreadable(
+            "cannot read HEAD:%s: %s" % (path, exc)) from exc
+    return _projected_headings(_fence().scan_text(text))
+
+
+def _projected_headings(scan):
+    """`Counter` of section number -> how many times it appears, under the
+    shared projection.
+
+    A COUNTER RATHER THAN A SET, because section identity is not a membership
+    question (Codex adversarial, section 47, [high]). Against a set, a
+    context-only addition of a `## 2.` is invisible whenever HEAD holds ANY
+    other section 2 -- including one this same commit deletes or replaces -- so
+    the new section bypasses the cap and both provenance checks. Counting
+    occurrences makes the delta a multiset difference, which reports exactly
+    the sections that GAINED an occurrence and stays silent on a renumbering,
+    a move, or a delete-and-re-add that leaves the count unchanged.
+    """
+    out = collections.Counter()
     for i, ln in enumerate(scan.leaf_views):
         if scan.mask[i] or scan.in_blockquote(i):
             continue
         h = _fence().classify_heading(ln)
         if h.kind == "ok":
-            out.add(h.n)
+            out[h.n] += 1
     return out
 
 
@@ -205,21 +293,41 @@ def _section_additions(path, lines, heads_view, added):
     module's contract is that ONLY ADDED LINES ARE JUDGED -- handing an unchanged
     line to those would refuse a commit over legacy content it did not write.
     """
-    head_nos = _head_section_numbers(path)
-    if head_nos is None:
+    head_counts = _head_section_numbers(path)
+    if head_counts is None:
         return added                   # new file: the whole thing is added
     added_nos = {n for n, _ in added}
-    extra = []
+    # Occurrences of each number in the STAGED post-image, and how many of them
+    # the diff already accounts for. A number gains coverage only for the
+    # surplus over HEAD, so a renumbering or a delete-and-re-add -- same count,
+    # different lines -- adds nothing here and does not demand provenance for
+    # work the commit did not create.
+    staged, staged_lines = collections.Counter(), {}
     for i, ln in enumerate(heads_view, 1):
-        if i in added_nos or not _is_section(ln):
+        if not _is_section(ln):
             continue
         h = _fence().classify_heading(ln)
         # An over-long heading carries no number to compare, so it cannot be
         # shown new by this route and stays line-based. It still takes a cap
         # slot when its own line is added, which `added_sections` handles.
-        if h.kind == "ok" and h.n not in head_nos:
-            extra.append((i, lines[i - 1] if i - 1 < len(lines) else ln))
-    return added + extra if extra else added
+        if h.kind != "ok":
+            continue
+        staged[h.n] += 1
+        staged_lines.setdefault(h.n, []).append(i)
+    extra = []
+    for num, count in staged.items():
+        surplus = count - head_counts.get(num, 0)
+        if surplus <= 0:
+            continue
+        untouched = [i for i in staged_lines[num] if i not in added_nos]
+        # The diff may already cover some of the new occurrences; only the
+        # remainder needs attributing, and the LAST untouched lines are taken
+        # so a stable prefix keeps its identity.
+        need = surplus - (len(staged_lines[num]) - len(untouched))
+        for i in untouched[len(untouched) - need:] if need > 0 else []:
+            extra.append((i, lines[i - 1] if i - 1 < len(lines) else
+                          heads_view[i - 1]))
+    return added + sorted(extra) if extra else added
 
 
 def _added_lines(path):
@@ -640,8 +748,7 @@ def main(argv) -> int:
         # line, which is what lets the lineno-keyed checks below share one
         # coordinate system with `vis`. A nested `- ## N.` becomes visible; a
         # quoted `> ## 99.` example stays invisible, matching `build.py:1096`.
-        sec_vis = ["" if (mask[i] or in_bq(i)) else l
-                   for i, l in enumerate(leaves)]
+        sec_vis = _SectionView(leaves, mask, in_bq)
         masked_nos = {i + 1 for i, m in enumerate(mask) if m}
         added = [(n, t) for n, t in _added_lines(f) if n not in masked_nos]
         for n, ln, text in over_cap(added):
@@ -657,7 +764,15 @@ def main(argv) -> int:
         # ones keep the raw diff. A section can be created by a container edit
         # that never touches the heading line; a line-length or wrap check run
         # over that unchanged line would refuse the commit for legacy content.
-        sec_added = _section_additions(f, lines, sec_vis, added)
+        try:
+            sec_added = _section_additions(f, lines, sec_vis, added)
+        except _BaselineUnreadable as exc:
+            # FAIL CLOSED. Falling back to the line-based set here would be the
+            # fail-open path this exception exists to remove: the controls would
+            # quietly run in their pre-section-47 form and report clean.
+            unscannable.append((f, "cannot establish the HEAD baseline for "
+                                   "logical section additions: %s" % exc))
+            continue
         for n, head in _sections_missing_provenance(f, vis, sec_vis, sec_added):
             noprov.append((f, n, head))
         for n, head in _review_sections_missing_user_impact(f, vis, sec_vis,
