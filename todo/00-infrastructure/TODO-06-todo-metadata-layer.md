@@ -92,6 +92,9 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  41   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges    | §37           |  [x]   |
 | ⭐  |  42   |   §42   | HTML blocks join the tracker, and the terminal contract carries the block kind         | §39           |  [/]   |
 | ⭐  |  43   |   §43   | Finish the one-contract consolidation across the consumer closure (split from §42)     | §39, §40, §42 |  [ ]   |
+| ⭐  |  44   |   §44   | Inline span precedence + the Inputs table cell reaching the parser (split from §43)    | §39, §40, §43 |  [ ]   |
+| ⭐  |  45   |   §45   | The container phase stops being quadratic and stops erasing (split from §43)           | §39, §42, §43 |  [ ]   |
+| ⭐  |  46   |   §46   | CommonMark HTML block type 7 needs a non-backtracking matcher (split from §43)         | §42, §43      |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -2334,6 +2337,8 @@ Filed by §39's design review rather than shipped inside it, on the reviewer's o
 
 Split out of §42 on 2026-08-11, verbatim, with the original item bodies and XREFs intact. §42 was filed as one section over two surfaces and `section-manifest.py` returned `SPLIT-RECOMMENDED (10 work items; 6 subsystems; ABI impact)`. The seam is real rather than administrative: §42 owns `fence_scan`'s BLOCK MODEL and the terminal value it publishes, while this section owns the CONSUMERS of that contract -- the places where a second grammar, a second code-span state machine, a second exit-code convention or a transformed cell means the "one contract" claim is not yet true. Nothing here changes what the scanner decides; everything here changes who is allowed to decide it independently.
 
+NARROWED 2026-08-12, before any code: `section-manifest.py` returned `SPLIT-RECOMMENDED (9 files; 8 subsystems)` over the six substantive items this section carried, and the verdict is right -- they are four independent surfaces sharing only a file. The three that change what the SCANNER decides moved out verbatim, with their bodies and XREFs intact: inline span precedence and the Inputs table cell to §44, the container phase's cost and its erasure to §45, HTML block type 7 to §46. What stays here is what the title always named -- the CONSUMERS that still hold a second grammar, a second code-span state machine or a second exit-code convention.
+
 - [ ] Pass the gate-exclusion set INTO the Check 7 helper, not just over its output
       §39 made Check 7 honour the commit-gate exclusion set by filtering the helper's stdout, which reaches its FINDINGS and not its coverage/population accounting. An excluded TODO that moves the stamped-symbol population still makes the helper return rc 7, and `scripts/lint.sh` still blocks the unrelated commit -- the exact unattended-worktree wedge the set exists to prevent (Codex adversarial, §39 round 7, [medium]).
       - §39 narrowed the banner to what is true rather than over-claiming a third time. The real fix is `STUB_LINT_EXCLUDED` (or equivalent) consumed by `scripts/lint/check_stub_behind_stamp.py` before both finding generation and population accounting.
@@ -2350,6 +2355,26 @@ Split out of §42 on 2026-08-11, verbatim, with the original item bodies and XRE
       - Acceptance: one grammar consumed by all four call sites; an over-long heading is REPORTED (not dropped, not crashed) with a fixture pinning both the report and the section boundaries around it; a control proving the bounded-match variant re-parents the following item.
       - NOT HERE ANY MORE: `scripts/format-md-tables.py:139` taking the mask without the terminal state moved to §42, because that tool MUTATES and §42 adds the EOF-consuming constructs -- leaving its adoption one section behind would let it rewrite a document whose mask erases to EOF while lint Check 17 blesses the commit (Codex design review on §42, [high]). §43 keeps only the half that is not load-bearing for the new constructs: the refusal reaching the lint summary.
       - Acceptance: one grammar and one code-span state machine repo-wide, the same exit-code contract in every consumer, and a lint fixture proving a formatter refusal reaches the summary.
+- [ ] Commit: `"todo-graph: one contract across the consumer closure"`
+
+**Test checkpoint:** one heading grammar and one code-span state machine repo-wide, proven by a grep-level control that FAILS when a second grammar is reintroduced; `todo-reachability.py` and `validate.py` return the same exit code on the same unclosed document; a lint fixture proves a `format-md-tables.py` refusal reaches the summary rather than being erased; an rc-7 fixture proves an excluded TODO moving the stamped-symbol population does not block an unrelated commit; an over-long heading is REPORTED by every copy of the grammar rather than crashing the producer; the corpus graph differential stays nil; `bash scripts/todo-graph/tests/test_build.sh`, `python3 scripts/tests/test_todo_fence.py` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §42`](#42-html-blocks-join-the-tracker-and-the-terminal-contract-carries-the-block-kind) -- the block-model half this section was split out of, which defines the terminal contract these consumers must all read the same way (item: "Extend the terminal contract to carry the block KIND").
+
+-> XREF: [`TODO-06 §44`](#44-the-inline-scanner-honours-commonmark-precedence-and-the-table-cell-reaches-it-unmodified) -- the inline-scanner half split out of this section on 2026-08-12 (item: "Honour CommonMark's leftmost-opener precedence when delimiter runs of different lengths nest").
+
+-> XREF: [`TODO-06 §45`](#45-the-container-phase-stops-being-quadratic-and-stops-erasing-what-follows-an-under-indented-blank) -- the container-phase half split out of this section on 2026-08-12 (item: "Blank-line container matching is QUADRATIC, and a size-valid TODO can stall every consumer").
+
+-> XREF: [`TODO-06 §46`](#46-commonmark-html-block-type-7-needs-a-non-backtracking-matcher) -- the HTML type-7 half split out of this section on 2026-08-12 (item: "Recognise CommonMark HTML block type 7, which §42 withdrew rather than ship").
+
+---
+
+## 44. The Inline Scanner Honours CommonMark Precedence, and the Table Cell Reaches It Unmodified
+
+> **Spawned-by:** §43 (split)
+
+Split out of §43 on 2026-08-12, verbatim. Both items live on the INLINE surface -- `_scan_code_spans` and the XREF-clause parser that consumes its mask -- and both are LATENT at 0 live-corpus incidence, so one differential harness and one contract decision (what a code span's boundary is, and what remainder makes a cell malformed) answers both. §43 keeps the consumer closure; nothing here changes which consumers exist.
+
 - [ ] Make the Inputs TABLE cell reach the shared parser with its span boundaries intact
       `_walk_inputs_xrefs` transforms the cell before parsing it -- `_cell_code_span` unwraps a single-backtick span, and a caller-side strip removes one period or colon after a closing backtick -- so the boundary the shared rule needs is gone by the time the rule runs. The bullet surface parses the raw text and therefore disagrees with the table on shapes neither surface should treat differently.
       - Measured divergences (Codex adversarial + consistency, §40, both [medium]): after `` `path §7` `` a `)`, comma, semicolon or `](#x)` link tail is dropped by the bullet and folded into the table's marker; and a cell whose span uses a LONGER delimiter run emits an edge as a bullet and no edge at all as a table row, because the unwrap only knows single backticks.
@@ -2363,13 +2388,20 @@ Split out of §42 on 2026-08-11, verbatim, with the original item bodies and XRE
       - Measured: **0** live corpus lines carry a mixed-length nested run today, which is why it is an item rather than a stop-ship. The repair belongs to the scan's pending-opener bookkeeping, under §39's bounded-memory constraint (it may not index every run), so it is a scanner change with its own differential rather than a parser fix.
       - Acceptance: mask parity with markdown-it-py on paired mixed-run and escaped-run fixtures; all four producer surfaces emit exactly one edge with the item name intact; a mutation control reproduces the fabricated edge; the live corpus differential stays nil.
       -> XREF: [`TODO-06 §40`](#40-an-inputs-section-marker-keeps-its-closing-backtick-so-one-dependency-is-two-edges) -- the section whose review found it (item: "Normalise the section marker on BOTH XREF subtrees, in the shared parser, and prove it with a per-clause differential"); §40 consumes the mask and does not own the scan.
-- [ ] Recognise CommonMark HTML block type 7, which §42 withdrew rather than ship
-      A complete open or closing tag alone on a line opens a type-7 block, so a `## N.` or `- [x]` inside one is hidden by CommonMark and still indexed here. §42 tracked types 1-6 and withdrew this one after four review rounds found five [high] defects in it and none elsewhere in that section.
-      - DO NOT re-try the three approaches §42 disproved: a LENGTH BOUND above which the rule is skipped (fail-open -- a 4,125-char tag stopped being recognised and published the `## 99.` after it); a HAND-WRITTEN linear recogniser (three consecutive rounds found real divergences, because the reference resolves whitespace/value ambiguity by GLOBAL backtracking); and the real regex bounded to 64 KiB with that scanner above it (the threshold is itself a fail-open seam, and the bound was measured on benign input so the CPU path survived).
-      - The hazard is the grammar, not the code: repeated attribute groups make CPython's engine backtrack -- **1,225 MB RSS at 12 MB**, and CPU-superlinear at **0.53s/6 KB, 6.19s/20 KB, >19s/64 KB** on ambiguity-inducing input.
-      - INFERRED, and flagged as inference: an implementation that is both exact and cheap needs a non-backtracking matcher (a DFA/NFA state set). That is the bar; a fifth local-scanner or threshold attempt is not.
-      - Acceptance: mask parity with markdown-it-py on generated type-7 fixtures INCLUDING non-ASCII whitespace in every grammar position; a CPU-bound regression on the ambiguous-attribute shape; the live corpus differential stays 0/281.
-      -> XREF: [`TODO-06 §42`](#42-html-blocks-join-the-tracker-and-the-terminal-contract-carries-the-block-kind) -- the section that added types 1-6 and withdrew this one (item: "Type 7 (a complete tag alone on a line) is WITHDRAWN and its implementation handed to §43").
+- [ ] Commit: `"todo-graph: the inline scanner's span boundaries survive the table cell"`
+
+**Test checkpoint:** the raw cell or its span boundaries reach `parse_xref_clause`, with the whole-cell malformed rule stated in terms of the remainder's CLASS rather than a punctuation list; 40a/40f carry bullet-vs-table parity cases per tail class plus a control proving the old table behaviour fails; mask parity with markdown-it-py on paired mixed-run and escaped-run fixtures, with a mutation control reproducing the fabricated edge; the live corpus differential stays nil; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §43`](#43-finish-the-one-contract-consolidation-across-the-consumer-closure) -- the section this was split out of, which consolidates the consumers of the mask these two items produce (item: "Finish the one-contract consolidation §39 started, in the five places it did not reach").
+
+---
+
+## 45. The Container Phase Stops Being Quadratic, and Stops Erasing What Follows an Under-Indented Blank
+
+> **Spawned-by:** §43 (split)
+
+Split out of §43 on 2026-08-12, verbatim. One item, two symptoms, ONE function: `_match_containers` matches a blank line against arbitrarily many filled list containers without consuming input and without checking the container's content indent. The first symptom is O(N^2) work on an O(N)-byte document; the second is silently erased graph data. Both are PRE-EXISTING and §42 verified that at `f3ea34fd6`, so this is the container phase's own cost and indent model, not anything the block-kind work introduced.
+
 - [ ] Blank-line container matching is QUADRATIC, and a size-valid TODO can stall every consumer
       `_match_containers` walks the whole open container stack for every line, and the blank-line branch matches arbitrarily many FILLED list containers without consuming input. `"- " * N + "x\n" + "\n" * N` is O(N) bytes and O(N^2) work: measured 2026-08-12 at **0.068s for 1,000 levels (3 KB), 0.276s for 2,000, 1.20s for 4,000** -- so a document far below the 16 MiB per-TODO ceiling stalls `build.py` and every migrated gate (Codex re-adversarial, §42 round 5, [high]).
       - PRE-EXISTING, and §42 verified that: the function is byte-identical to its §39 form, so this is the container phase's own cost model rather than anything the block-kind work introduced. Filed here because §43 already owns the container/grammar consolidation and this is the same walk.
@@ -2377,11 +2409,34 @@ Split out of §42 on 2026-08-11, verbatim, with the original item bodies and XRE
       - SAME ROOT CAUSE, SECOND SYMPTOM -- an under-indented blank keeps a list-contained HTML leaf alive, and this one ERASES. `_match_containers` treats any spaces/tabs-only line as matching a filled list container without checking that its indent reaches the container's content indent, so `## 1. Root` / `- a` / an indented `<?pi` / an under-indented blank / `## 2. Real` + `- [x] Real item` masks section 2 and its item: markdown-it-py ends the block at the blank and exposes them, while the producer emits headings 1 and 3, no stamped item, and NO terminal error -- silently erased graph data rather than a refusal (Codex re-adversarial, §42 round 6, [high]).
       - PRE-EXISTING, and verified so rather than assumed: the identical divergence reproduces at `f3ea34fd6` (pre-§42) using `<!--`, which was already a container-alive HTML leaf. §42 widened the reach from one HTML type to five; it did not introduce the rule. A fenced block in the same shape agrees with the oracle in both versions, which is what isolates this to the HTML-leaf path.
       - Acceptance for this half: a markdown-it differential fixture with an under-indented blank followed by a real heading and item, for EACH substring-terminated HTML class, plus the comment control that proves the behaviour predates the section.
-- [ ] Commit: `"todo-graph: one contract across the consumer closure"`
+- [ ] Commit: `"todo-graph: the container phase gets a cost model and an indent check"`
 
-**Test checkpoint:** one heading grammar and one code-span state machine repo-wide, proven by a grep-level control that FAILS when a second grammar is reintroduced; `todo-reachability.py` and `validate.py` return the same exit code on the same unclosed document; a lint fixture proves a `format-md-tables.py` refusal reaches the summary rather than being erased; an rc-7 fixture proves an excluded TODO moving the stamped-symbol population does not block an unrelated commit; bullet-vs-table XREF parity holds for each tail class with a control proving the old table behaviour fails; the corpus graph differential stays nil; `bash scripts/todo-graph/tests/test_build.sh`, `python3 scripts/tests/test_todo_fence.py` and `bash scripts/test-tooling.sh` green.
+**Test checkpoint:** a scaling regression shows near-linear runtime as nesting and blank-line count double, with the 4,000-level document under a fixed time bound; a markdown-it differential fixture with an under-indented blank followed by a real heading and item passes for EACH substring-terminated HTML class, plus the `<!--` control that proves the behaviour predates §42; the live corpus differential stays 0/281; `bash scripts/todo-graph/tests/test_build.sh`, `python3 scripts/tests/test_todo_fence.py` and `bash scripts/test-tooling.sh` green.
 
--> XREF: [`TODO-06 §42`](#42-html-blocks-join-the-tracker-and-the-terminal-contract-carries-the-block-kind) -- the block-model half this section was split out of, which defines the terminal contract these consumers must all read the same way (item: "Extend the terminal contract to carry the block KIND").
+-> XREF: [`TODO-06 §43`](#43-finish-the-one-contract-consolidation-across-the-consumer-closure) -- the section this was split out of, which owns the container/grammar consolidation these walks feed (item: "Finish the one-contract consolidation §39 started, in the five places it did not reach").
+
+---
+
+## 46. CommonMark HTML Block Type 7 Needs a Non-Backtracking Matcher
+
+> **Spawned-by:** §43 (split)
+
+Split out of §43 on 2026-08-12, verbatim. It is one item and it is a section on its own because §42 spent four review rounds proving three cheap implementations wrong -- five [high] defects, all in this rule and none elsewhere in that section -- before withdrawing it. The hazard is the GRAMMAR (repeated attribute groups backtrack: 1,225 MB RSS at 12 MB, 6.19s at 20 KB), so the bar is a matcher that is exact and cheap by construction, not a fifth local scanner behind a threshold.
+
+- [ ] Recognise CommonMark HTML block type 7, which §42 withdrew rather than ship
+      A complete open or closing tag alone on a line opens a type-7 block, so a `## N.` or `- [x]` inside one is hidden by CommonMark and still indexed here. §42 tracked types 1-6 and withdrew this one after four review rounds found five [high] defects in it and none elsewhere in that section.
+      - DO NOT re-try the three approaches §42 disproved: a LENGTH BOUND above which the rule is skipped (fail-open -- a 4,125-char tag stopped being recognised and published the `## 99.` after it); a HAND-WRITTEN linear recogniser (three consecutive rounds found real divergences, because the reference resolves whitespace/value ambiguity by GLOBAL backtracking); and the real regex bounded to 64 KiB with that scanner above it (the threshold is itself a fail-open seam, and the bound was measured on benign input so the CPU path survived).
+      - The hazard is the grammar, not the code: repeated attribute groups make CPython's engine backtrack -- **1,225 MB RSS at 12 MB**, and CPU-superlinear at **0.53s/6 KB, 6.19s/20 KB, >19s/64 KB** on ambiguity-inducing input.
+      - INFERRED, and flagged as inference: an implementation that is both exact and cheap needs a non-backtracking matcher (a DFA/NFA state set). That is the bar; a fifth local-scanner or threshold attempt is not.
+      - Acceptance: mask parity with markdown-it-py on generated type-7 fixtures INCLUDING non-ASCII whitespace in every grammar position; a CPU-bound regression on the ambiguous-attribute shape; the live corpus differential stays 0/281.
+      -> XREF: [`TODO-06 §42`](#42-html-blocks-join-the-tracker-and-the-terminal-contract-carries-the-block-kind) -- the section that added types 1-6 and withdrew this one (item: "Type 7 (a complete tag alone on a line) is WITHDRAWN and its implementation handed to §43").
+- [ ] Commit: `"todo-graph: HTML block type 7 joins the tracker"`
+
+**Test checkpoint:** mask parity with markdown-it-py on generated type-7 fixtures INCLUDING non-ASCII whitespace in every grammar position; a CPU-bound regression on the ambiguous-attribute shape that FAILS against a backtracking implementation; the live corpus differential stays 0/281; `bash scripts/todo-graph/tests/test_build.sh`, `python3 scripts/tests/test_todo_fence.py` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §43`](#43-finish-the-one-contract-consolidation-across-the-consumer-closure) -- the section this was split out of, whose consumer closure reads the terminal contract this block kind publishes (item: "Finish the one-contract consolidation §39 started, in the five places it did not reach").
+
+-> XREF: [`TODO-06 §42`](#42-html-blocks-join-the-tracker-and-the-terminal-contract-carries-the-block-kind) -- the section that added types 1-6 and withdrew this one (item: "Type 7 (a complete tag alone on a line) is WITHDRAWN and its implementation handed to §43").
 
 ---
 
