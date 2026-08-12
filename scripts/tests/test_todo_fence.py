@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import tracemalloc
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -1733,9 +1734,10 @@ def test_one_heading_rule_section43():
             "## 1. Real\n\n- [x] first item\n\n"
             "## " + "9" * 5000 + ". Over long\n\n- [x] second item\n")
     sc = build.scan_body(body)
-    heads = build._walk_section_headings(sc.lines, sc.mask)
-    errs = build._walk_unusable_headings(sc.lines, sc.mask)
-    items = build._walk_stamped_items(sc.lines, sc.mask, "todo/x/TODO-01-x.md")
+    heads = build._walk_section_headings(sc.leaf_views, sc.mask, sc.in_blockquote)
+    errs = build._walk_unusable_headings(sc.leaf_views, sc.mask, sc.in_blockquote)
+    items = build._walk_stamped_items(sc.views, sc.leaf_views, sc.mask,
+                                      "todo/x/TODO-01-x.md", sc.in_blockquote)
     check("s43: the producer records the usable heading only",
           [h[0] for h in heads] == [1])
     check("s43: the producer carries an unusable-heading error",
@@ -1948,6 +1950,7 @@ def main():
     test_section_order()
     test_html_blocks_section42()
     test_one_heading_rule_section43()
+    test_container_phase_section45()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
@@ -2087,28 +2090,37 @@ def test_html_blocks_section42():
     except TypeError:
         check("a stale 3-tuple unpack fails LOUDLY rather than silently", True)
 
-    # ---- Container-stripped section headings (item 7). ----
+    # ---- Container-stripped section headings (item 7, CLOSED in section 45). ----
     B = load("build_s42", "scripts/todo-graph/build.py")
-    # ---- The walks stay MUTUALLY CONSISTENT (item 7, reverted approach). ----
-    # A container-indented `## N.` is a heading to CommonMark and invisible to
-    # every producer walk. That hole stays open ON PURPOSE: closing it for the
-    # heading walk alone made it disagree with `_walk_stamped_items`, which
-    # files an item under whatever section it last saw -- so an indented `[x]`
-    # landed under the PREVIOUS section. Agreeing to be blind is strictly better
-    # than one walk seeing a section the others do not.
+    # Section 42 left this hole open ON PURPOSE, because closing it for the
+    # heading walk alone made that walk disagree with `_walk_stamped_items` and
+    # an indented `[x]` landed under the PREVIOUS section. Section 45 closed it
+    # the only way that is an improvement: the WHOLE closure takes the same
+    # projection, so both walks see section 2 and the item is filed under it.
+    # markdown-it-py reads the same three headings from this document.
     doc = "# T\n\n## 1. Root\n\n- item\n\n    ## 2. Nested\n\n    - [x] Nested item\n"
     sc = B.scan_body(doc)
-    heads = [n for n, _ in B._walk_section_headings(sc.lines, sc.mask)]
-    check("the heading walk does NOT see a container-indented section",
-          heads == [1])
-    items = B._walk_stamped_items(sc.lines, sc.mask, "t.md")
+    heads = [n for n, _ in B._walk_section_headings(sc.leaf_views, sc.mask, sc.in_blockquote)]
+    check("the heading walk SEES a container-indented section (section 45)",
+          heads == [1, 2])
+    items = B._walk_stamped_items(sc.views, sc.leaf_views, sc.mask, "t.md",
+                                  sc.in_blockquote)
     check("...and no item is attributed to a section the heading walk denies",
           all(i["section_n"] in heads for i in items))
-    # `ScanResult` no longer publishes a per-line stripped view at all, so the
-    # desynchronised projection cannot be reintroduced by accident.
-    check("ScanResult exposes no per-line `stripped` projection",
+    check("...the nested item is filed under the nested section, not the previous",
+          [i["section_n"] for i in items] == [2])
+    # The MEMORY invariant the reverted projection broke is still pinned: no
+    # per-line stripped STRING array is retained. `conts` is one packed byte per
+    # line and `views` derives the rest, returning `lines` itself untouched when
+    # no line carries a container prefix.
+    check("ScanResult retains no per-line `stripped` string array",
           not hasattr(sc, "stripped")
           and "stripped" not in cs42.ScanResult.__slots__)
+    check("...the projection costs one byte per line",
+          isinstance(sc.conts, bytearray) and len(sc.conts) == len(sc.lines))
+    _flat = B.scan_body("## 1. A\n\n- [x] `f()` x\n\n## 2. B\n")
+    check("...and a container-free document shares `lines` rather than copying",
+          _flat.views is _flat.lines)
 
     # ---- An OVER-LONG section number still DELIMITS a section. ----
     # Section 42 bounded the digit run to `\d{1,9}` to stop the `int()` crash
@@ -2131,11 +2143,12 @@ def test_html_blocks_section42():
     # section 1. What changed is that an unrepresentable number now records
     # NOTHING and carries an error, instead of recording a value that cannot
     # survive validation.
-    over_items = B._walk_stamped_items(os_.lines, os_.mask, "t.md")
+    over_items = B._walk_stamped_items(os_.views, os_.leaf_views, os_.mask,
+                                       "t.md", os_.in_blockquote)
     check("...so the item after it is NOT re-parented to the previous section",
           [i["section_n"] for i in over_items] == [1])
     check("...and the node carries an error rather than dropping it silently",
-          [e[0] for e in B._walk_unusable_headings(os_.lines, os_.mask)]
+          [e[0] for e in B._walk_unusable_headings(os_.leaf_views, os_.mask, os_.in_blockquote)]
           == ["unusable-heading"])
 
     _corpus_differential(tf, cs42)
@@ -2185,6 +2198,480 @@ def _corpus_differential(tf, cs42):
             divergent.append(p.name)
     check("corpus differential vs markdown-it-py: the residual set is EMPTY "
           f"(divergent files: {divergent[:3]})", not divergent)
+
+
+def test_container_phase_section45():
+    """Section 45: the container phase gets a cost model, an indent check, and
+    ONE section context shared by the whole producer closure.
+
+    Every masking expectation below was taken from `markdown-it-py` before it
+    was written down, and the oracle is then re-run against those literals when
+    it is importable. Both halves matter: the literals gate on a host with no
+    oracle installed, and the oracle run proves the literals were not invented.
+    """
+    tf = load("todo_fence_s45", "scripts/todo_fence.py")
+    cs = tf._cache_schema()
+    B = load("build_s45", "scripts/todo-graph/build.py")
+
+    _CONT_CUT = cs._CONT_CUT_MASK
+
+    def hidden(text):
+        r = cs.scan_text(text)
+        return [bool(k) and k in cs.ALL_HIDDEN_KINDS for k in r.kinds]
+
+    def oracle(text, n):
+        """markdown-it's fence/html_block line set, or None when unavailable."""
+        try:
+            from markdown_it import MarkdownIt
+        except ImportError:
+            return None
+        out = [False] * n
+        for t in MarkdownIt("commonmark").parse(text):
+            if t.type in ("fence", "html_block") and t.map:
+                for i in range(t.map[0], min(t.map[1], n)):
+                    out[i] = True
+        return out
+
+    _oracle_ran = [0]
+
+    def agrees(label, text, expected):
+        got = hidden(text)[:len(expected)]
+        check("s45 %s" % label, got == expected)
+        o = oracle(text, len(expected))
+        if o is None:
+            return
+        _oracle_ran[0] += 1
+        check("s45 %s -- markdown-it agrees with that literal" % label,
+              o == expected)
+
+    # ---- The blank-line branch is no longer quadratic. ----
+    # `"- " * N + "x"` opens N list containers and the N blank lines under it
+    # each re-matched every one of them: 0.082s at 1,000 levels, 0.435s at
+    # 2,000 and 1.372s at 4,000 -- 3 KB to 12 KB of input, far below the 16 MiB
+    # per-TODO ceiling, stalling `build.py` and every migrated gate.
+    def scan_secs(n):
+        src = "- " * n + "x\n" + "\n" * n
+        t0 = time.monotonic()
+        cs.scan_text(src)
+        return time.monotonic() - t0
+
+    t1k, t4k = scan_secs(1000), scan_secs(4000)
+    # RATIO, NOT AN ABSOLUTE, for the shape: 4x the nesting and 4x the blank
+    # lines is 16x the work when quadratic and ~4x when linear. The bound is
+    # generous (8x) because this runs on a loaded CI box, and it still fails by
+    # a wide margin against the measured 16.7x regression.
+    check("s45 blank-line matching scales near-linearly, not quadratically "
+          "(4k/1k = %.1fx)" % (t4k / t1k if t1k else 0),
+          t1k > 0 and t4k / t1k < 8)
+    # ...and the absolute bound the section promised, which a uniformly slow
+    # box would otherwise satisfy by making the ratio look fine.
+    check("s45 a 4,000-level document scans in under 0.5s (%.3fs)" % t4k,
+          t4k < 0.5)
+
+    # ---- An under-indented blank ends a substring-terminated HTML block. ----
+    # PRE-EXISTING and verified so: the same divergence reproduces with `<!--`
+    # at `f3ea34fd6`, before section 42 widened the reach from one HTML type to
+    # five. Left alone it ERASES -- the producer emitted headings 1 and 3, no
+    # stamped item, and NO terminal error, because the next unindented line
+    # closes the block by container exit.
+    for opener in ("<!-- c", "<?pi", "<!DOC", "<![CDATA[x", "<script>"):
+        src = ("## 1. Root\n- a\n  %s\n \n  ## 2. Real\n  - [x] `f()` Item\n"
+               "## 3. Third\n" % opener)
+        agrees("an under-indented blank ends a %r block" % opener,
+               src, [False, False, True, False, False, False, False])
+    # THE CONTROL THAT DATES THE DEFECT. `<!--` was already a container-alive
+    # HTML leaf before section 42, so its agreeing here is what shows section 45
+    # repaired a rule rather than section 42 having broken one.
+    src = "## 1. Root\n- a\n  <!-- c\n \n  ## 2. Real\n  - [x] `f()` Item\n## 3. T\n"
+    agrees("...and the `<!--` control, which predates section 42",
+           src, [False, False, True, False, False, False, False])
+
+    # ---- The four falsifiers for that scope. ----
+    # A blank indented TO the content indent stays INSIDE the block.
+    agrees("a blank at the content indent stays inside the block",
+           "## 1. R\n- a\n  <?pi\n  \n  ## 2. X\n  ?>\n",
+           [False, False, True, True, True, True])
+    # A root-level type 1-5 block has blkIndent 0, so no blank is under it.
+    agrees("a root-level block still survives a blank line",
+           "## 1. R\n<?pi\n\n## 2. X\n?>\n## 3. T\n",
+           [False, True, True, True, True, False])
+    # A FENCE in the identical shape is NOT affected -- markdown-it keeps it
+    # alive across the under-indented blank, so widening the rule to fences
+    # would be a divergence, not a fix.
+    agrees("an under-indented blank does NOT close a list-contained fence",
+           "## 1. R\n- a\n  ```\n\n  ## 2. F\n  ```\n## 3. T\n",
+           [False, False, True, True, True, True, False])
+    # A bare `>` inside a blockquote-contained block leaves `rest` empty while
+    # the LINE is not blank; guarding on `rest` would close the block here.
+    agrees("a bare `>` inside a blockquote-contained block is not a blank",
+           "## 1. R\n> <?pi\n>\n> ## 2. X\n> ?>\n",
+           [False, True, True, True, True])
+
+    # ---- The blank-line fast path equals the walk it replaced, exhaustively. ----
+    # `min(first_unfilled, first_bq)` is the same answer only while both indices
+    # hold their exact sentinels, and the failure is silent -- an index-valued
+    # absent-blockquote sentinel closes every ordinary list on the next blank
+    # line (Codex design review, [high]). So this is a DIFFERENTIAL against a
+    # literal transcription of the pre-section-45 loop over every container
+    # stack up to depth 4, rather than a handful of documents that happen to
+    # exercise some of them.
+    def reference_blank_walk(containers):
+        """The pre-section-45 loop, blank-line path only."""
+        matched = 0
+        for kind, _arg, filled in containers:
+            if kind == "bq":
+                break            # `^ {0,3}>` cannot match a blank line
+            if not filled:
+                break
+            matched += 1
+        return matched
+
+    kinds = (("li", 2, True), ("li", 2, False), ("bq", 0, True))
+    stacks = [()]
+    for _ in range(4):
+        stacks += [s + (k,) for s in stacks for k in kinds]
+    disagreed = []
+    for stack in stacks:
+        containers = [list(k) for k in stack]
+        # The maintained invariant, spelled out: slot 0 is the first container
+        # that is not yet filled, slot 1 the first blockquote, each `_NO_BQ`-ish
+        # past the end when absent.
+        first_unfilled = next((i for i, c in enumerate(containers) if not c[2]),
+                              len(containers))
+        first_bq = next((i for i, c in enumerate(containers) if c[0] == "bq"),
+                        cs._NO_BQ)
+        for blank in ("", " ", "   ", "\t", " \t "):
+            got = cs._match_containers(containers, blank,
+                                       [first_unfilled, first_bq])
+            want = reference_blank_walk(containers)
+            if got[0] != want:
+                disagreed.append((stack, blank, got[0], want))
+    check("s45 the O(1) blank path matches the stack walk over all %d stacks "
+          "to depth 4 (%r)" % (len(stacks), disagreed[:2]), not disagreed)
+    check("s45 ...and that sweep actually covered blockquote and provisional "
+          "stops rather than only filled lists",
+          any(reference_blank_walk([list(k) for k in s]) < len(s)
+              for s in stacks))
+    # END-TO-END, because the differential above pins the function while the
+    # maintenance lives in its two callers. Each document below leaves the
+    # indices in a different state -- fresh, post-filled-push, post-truncation,
+    # blockquote-below-list, provisional -- and none of them opens a fence or an
+    # HTML block, so a mis-matched container surfaces as a spurious mask.
+    for label, src in (
+            ("a blank on a fresh stack", "\n- a\n\n  b\n"),
+            ("a blank under a filled list", "- a\n\n  b\n"),
+            ("a blank after the stack truncated", "- a\nroot\n- b\n\n  c\n"),
+            ("a blockquote below a filled list", "- a\n\n  > q\n\n  x\n"),
+            ("a provisional item", "- \n\n  x\n"),
+    ):
+        check("s45 %s: nothing is masked" % label, not any(cs.scan_text(src).mask))
+
+    # ---- The projection is lossless; there is NO physical-line fallback. ----
+    # A TAB straddling the list-indent cut cannot be expressed as a character
+    # offset, and falling back to the physical line would hide the heading while
+    # the PURE-SLICE item under it stayed visible -- filing shipped work under
+    # the previous section, which is exactly the misattribution section 42
+    # reverted a narrower change to avoid.
+    doc = "## 1. Root\n- a\n\t## 2. Real\n  - [x] `f()` Item\n"
+    sc = B.scan_body(doc)
+    check("s45 a tab-straddling prefix escapes into the sparse map, not a "
+          "physical fallback",
+          sc.views[2] == "  ## 2. Real" and 2 in sc.cont_exc)
+    check("s45 ...so the heading is seen", cs.classify_heading(sc.views[2]).kind == "ok")
+    heads = [n for n, _ in B._walk_section_headings(sc.leaf_views, sc.mask, sc.in_blockquote)]
+    items = B._walk_stamped_items(sc.views, sc.leaf_views, sc.mask, "t.md",
+                                  sc.in_blockquote)
+    check("s45 ...and the item under it is filed under section 2, not section 1",
+          heads == [1, 2] and [i["section_n"] for i in items] == [2])
+    check("s45 ...while the physical line it replaced is not a heading at all",
+          cs.classify_heading(sc.lines[2]).kind == "none")
+    # ACROSS THE CORPUS the escape is exercised and still lossless. Measured
+    # 2026-08-12: exactly 2 lines need it, both a tab inside a list-contained
+    # Makefile example. The property pinned is that an escaped line resolves to
+    # its STORED remainder and never to the physical line -- a count would break
+    # the next time a TODO gains a tab, which is not a defect.
+    _esc = 0
+    for _p in sorted((REPO / "todo").rglob("*.md")):
+        _sc = B.scan_body(_p.read_text(encoding="utf-8"))
+        for _i, _rest in _sc.cont_exc.items():
+            _esc += 1
+            if _sc.views[_i] != _rest or _sc.views[_i] == _sc.lines[_i]:
+                _esc = -10000
+    check("s45 every corpus escape resolves to its stored remainder, never to "
+          "the physical line (%d escaped lines)" % _esc, _esc >= 0)
+
+    # ---- All FIVE walks share the projection, including the refusal. ----
+    # FOUR spaces, not two: `classify_heading` accepts 0-3 leading spaces on a
+    # physical line, so a 2-space indent would be visible to the old producer
+    # too and the control below would prove nothing.
+    doc = ("# T\n\n## 1. Root\n\n- item\n\n    ## 2. Nested\n\n"
+           "    - [x] `g()` Nested\n")
+    sc = B.scan_body(doc)
+    check("s45 the heading walk sees the list-contained section",
+          [n for n, _ in B._walk_section_headings(sc.leaf_views, sc.mask, sc.in_blockquote)] == [1, 2])
+    check("s45 ...and the item walk files its indented item under THAT section",
+          [i["section_n"]
+           for i in B._walk_stamped_items(sc.views, sc.leaf_views, sc.mask,
+                                          "t.md", sc.in_blockquote)] == [2])
+    # THE CONTROL. Handed the PHYSICAL lines -- the pre-section-45 producer --
+    # the same document attributes the item to section 1. That divergence is
+    # what the shared projection removes.
+    check("s45 ...where the physical-line producer attributes it to section 1",
+          [n for n, _ in B._walk_section_headings(sc.lines, sc.mask, lambda _i: False)] == [1]
+          and [i["section_n"]
+               for i in B._walk_stamped_items(sc.lines, sc.lines, sc.mask,
+                                              "t.md", lambda _i: False)] == [1])
+    # THE FIFTH WALK. An over-long number inside a container is a heading the
+    # other four now see; leaving this one on physical lines would drop the
+    # section AND its error, which is the silent narrowing the refusal exists
+    # to prevent.
+    over = ("## 1. First\n\n- item\n\n    ## 12345678901. Over\n\n"
+            "    - [x] `h()` two\n")
+    os_ = B.scan_body(over)
+    check("s45 a list-contained over-long heading is REFUSED, not dropped",
+          [e[0] for e in B._walk_unusable_headings(os_.leaf_views, os_.mask, os_.in_blockquote)]
+          == ["unusable-heading"])
+    check("s45 ...and the item under it is not re-parented to section 1",
+          [i["section_n"]
+           for i in B._walk_stamped_items(os_.views, os_.leaf_views, os_.mask,
+                                          "t.md", os_.in_blockquote)] == [])
+    check("s45 ...while the physical-line walk would have missed the refusal",
+          B._walk_unusable_headings(os_.lines, os_.mask, lambda _i: False) == [])
+
+    # ---- The blockquote rejection survives losing the `>` marker. ----
+    # `_walk_stamped_items` used to get this free from the `>` surviving in the
+    # text it matched; on the stripped view the marker is gone, so a stamp
+    # continuation carrying `[x]` would read as a shipped item.
+    bq = "## 1. Root\n\n> **Verified:** 2026-01-01\n> - [x] `k()` not an item\n"
+    sc = B.scan_body(bq)
+    check("s45 a blockquoted `[x]` is still rejected after container stripping",
+          B._walk_stamped_items(sc.views, sc.leaf_views, sc.mask, "t.md",
+                                sc.in_blockquote) == [])
+    check("s45 ...and the scan is what says so, not the surviving marker",
+          sc.views[3] == "- [x] `k()` not an item" and sc.in_blockquote(3))
+
+    # ---- A heading sharing the container-OPENING line (adversarial, [high]). ----
+    # `views` keeps the marker a line opens, because the item walk matches on
+    # it. That makes `- ## 2. Nested` -- a real h2 to CommonMark -- invisible to
+    # `classify_heading`, so the item under it files against section 1, and the
+    # over-long form recorded NO `unusable-heading` at all, failing open. The
+    # leaf projection is the second view that closes both.
+    doc = "## 1. Root\n- ## 2. Nested\n  - [x] `same_line_sym()` shipped\n"
+    sc = B.scan_body(doc)
+    check("s45 the leaf view consumes a marker the line itself opens",
+          sc.leaf_views[1] == "## 2. Nested"
+          and sc.views[1] == "- ## 2. Nested")
+    check("s45 ...so a same-line container heading is a section",
+          [n for n, _ in B._walk_section_headings(sc.leaf_views, sc.mask, sc.in_blockquote)]
+          == [1, 2])
+    check("s45 ...and its item is filed under it",
+          [i["section_n"]
+           for i in B._walk_stamped_items(sc.views, sc.leaf_views, sc.mask,
+                                          "t.md", sc.in_blockquote)] == [2])
+    # THE CONTENT MATCHER MUST NOT TAKE THE LEAF VIEW. `- [x] shipped` leafs to
+    # `[x] shipped`, which the item regex refuses -- feeding one projection to
+    # both questions loses every checklist item in a list.
+    check("s45 ...while the leaf view of an item line drops its bullet",
+          sc.leaf_views[2] == "[x] `same_line_sym()` shipped")
+    over = "## 1. Root\n- ## 12345678901. Over\n  - [x] `s()` x\n"
+    so = B.scan_body(over)
+    check("s45 a same-line OVER-LONG heading now fails closed",
+          [e[0] for e in B._walk_unusable_headings(so.leaf_views, so.mask, so.in_blockquote)]
+          == ["unusable-heading"]
+          and B._walk_unusable_headings(so.lines, so.mask, lambda _i: False) == [])
+    check("s45 ...and takes its item with it rather than re-parenting",
+          [i["section_n"]
+           for i in B._walk_stamped_items(so.views, so.leaf_views, so.mask,
+                                          "t.md", so.in_blockquote)] == [])
+    _flat2 = B.scan_body("## 1. A\n\n## 2. B\n")
+    check("s45 a document opening no container allocates no leaf array",
+          _flat2.leafs is None and _flat2.leaf_views is _flat2.views)
+
+    # ---- The packed-cut boundary at the escape value (test-coverage, [medium]). ----
+    # Cuts 0-126 are inline and 127 is the escape, so a container prefix landing
+    # exactly on the boundary is where an off-by-one silently swaps a real
+    # offset for "consult the sparse map" -- or the reverse, which resolves to
+    # the wrong slice of a valid line.
+    for cut in (124, 126, 128, 130):
+        # The containers must be OPEN from an earlier line for the prefix to be
+        # MATCHED rather than opened, so line 1 nests `cut/2` list levels with
+        # content and line 2 continues them at exactly `cut` columns.
+        depth = cut // 2
+        src = ("## 1. Root\n" + "- " * depth + "x\n"
+               + " " * cut + "## 2. Nested\n")
+        r = cs.scan_text(src)
+        check("s45 a container prefix of %d characters projects exactly" % cut,
+              r.views[2] == "## 2. Nested"
+              and len(r.lines[2]) - len(r.views[2]) == cut)
+        packed = r.conts[2] & _CONT_CUT
+        check("s45 ...encoded inline below 127 and escaped at or above it (%d)"
+              % cut,
+              (packed == cut and 2 not in r.cont_exc) if cut < 127
+              else (packed == _CONT_CUT and r.cont_exc[2] == "## 2. Nested"))
+    # ...and the blockquote flag must survive the escape, since it shares the
+    # byte: an escape that clobbered bit 7 would let a blockquoted `[x]` through.
+    # A blockquote plus 64 list levels puts the MATCHED prefix at 130
+    # characters, past the escape, on a line that is also a checklist item. If
+    # the escape clobbered bit 7 the item would stop being blockquoted and a
+    # stamp continuation would publish as shipped work.
+    bqdeep = ("## 1. R\n> " + "- " * 64 + "x\n> " + " " * 128
+              + "- [x] `q()` no\n")
+    r = cs.scan_text(bqdeep)
+    check("s45 the blockquote flag survives a cut past the escape value",
+          (r.conts[2] & _CONT_CUT) == _CONT_CUT and (r.conts[2] & 0x80) != 0
+          and r.cont_exc[2] == "- [x] `q()` no")
+    _bqd = B.scan_body(bqdeep)
+    check("s45 ...so the deep blockquoted item is still rejected",
+          B._walk_stamped_items(_bqd.views, _bqd.leaf_views, _bqd.mask, "t.md",
+                                _bqd.in_blockquote) == [])
+
+    # ---- Lazy continuation, then the O(1) blank path (test-coverage, [medium]). ----
+    # The lazy branch `continue`s BEFORE the truncation that clamps both stack
+    # indices, so it is the one path that hands the fast blank path a stack it
+    # did not just normalise. A regression here closes a list early and exposes
+    # fenced content, or retains a blockquote and masks a real heading.
+    agrees("a lazy continuation before a blank keeps the container alive",
+           "## 1. R\n\n100. first\nlazy continuation\n\n     ```\n     - [ ] x\n"
+           "     ```\n\n## 2. Real\n",
+           [False, False, False, False, False, True, True, True, False, False])
+    # The same lazy shape through a blockquote-in-list stack. Note the answer:
+    # only the opener is masked, because the blank after it is under the list
+    # content indent and now ENDS the block -- so `## 2.` is real structure.
+    agrees("...and the same through a blockquote-in-list stack",
+           "## 1. R\n\n- > quoted\n  > lazy\n\n  <?pi\n\n  ## 2. Hidden\n  ?>\n"
+           "## 3. Real\n",
+           [False, False, False, False, False, True, False, False, False, False])
+    lazy = B.scan_body("## 1. R\n\n100. first\nlazy continuation\n\n"
+                       "     ## 2. Nested\n\n     - [x] `lazy_sym()` shipped\n")
+    check("s45 a heading after a lazy continuation is attributed correctly",
+          [n for n, _ in B._walk_section_headings(lazy.leaf_views, lazy.mask, lazy.in_blockquote)]
+          == [1, 2]
+          and [i["section_n"]
+               for i in B._walk_stamped_items(lazy.views, lazy.leaf_views,
+                                              lazy.mask, "t.md",
+                                              lazy.in_blockquote)] == [2])
+
+    # ---- Blockquote-contained HTML exits on a physical blank (test-coverage). ----
+    # A blank line cannot match `>`, so `matched` drops below `depth` and the
+    # block must close on THAT branch, before the new under-indent comparison is
+    # ever reached. The bare-`>` falsifier above keeps the blockquote matched
+    # and so exercises the opposite path; this is the competing exit.
+    agrees("a physical blank exits a blockquote-contained HTML block",
+           "## 1. R\n> <?pi\n\n## 2. Real\n",
+           [False, True, False, False])
+    agrees("...and the same inside a list-plus-blockquote stack",
+           "## 1. R\n- > <?pi\n\n## 2. Real\n",
+           [False, True, False, False])
+    bqx = B.scan_body("## 1. Root\n> <?pi\n\n## 2. Real\n\n- [x] `bq_sym()` shipped\n")
+    check("s45 ...so the heading and item after it stay visible and attributed",
+          [n for n, _ in B._walk_section_headings(bqx.leaf_views, bqx.mask, bqx.in_blockquote)]
+          == [1, 2]
+          and [i["section_n"]
+               for i in B._walk_stamped_items(bqx.views, bqx.leaf_views,
+                                              bqx.mask, "t.md",
+                                              bqx.in_blockquote)] == [2])
+
+    # ---- A blockquote is a QUOTED EXAMPLE, and stripping its marker must not
+    # turn one into graph data (adversarial round 2, both [high]). ----
+    # Every walk used to get this free from the `>` surviving in the physical
+    # text it matched. The projections delete the marker, so the guarantee
+    # inverted in three places at once, and the ONE predicate that restores it
+    # has to see a blockquote the line OPENS -- the matched-container flag
+    # cannot, which is exactly the quoted-heading case below.
+    _S = "§"          # the section sign, built rather than written inline
+    _XR = "-> XREF: [`TODO-99`](../09-x/TODO-99-y.md) %s1" % _S
+    _ROW = "| :-: | :-: | - | - | :-: |\n|  1  | %s1 | %%s | -- | [x] |" % _S
+    _HDR = "| Order | Section | Deliverable | Depends On | Status |"
+    for label, doc, want in (
+            ("a quoted Inputs block emits no dependency edge",
+             "## 1. R\n\n> ## Inputs\n> - %s\n" % _XR,
+             {"heads": [1], "items": [], "xrefs": 0, "io": 0}),
+            ("a quoted heading is not a section and reparents nothing",
+             "## 1. Real\n\n> ## 2. Quoted\n\n- [x] `actual()` shipped\n",
+             {"heads": [1], "items": [1], "xrefs": 0, "io": 0}),
+            ("a quoted Implementation Order table emits no rows",
+             "## 1. R\n\n> ## Implementation Order\n>\n> %s\n> %s\n"
+             % (_HDR, (_ROW % "Fake").replace("\n", "\n> ")),
+             {"heads": [1], "items": [], "xrefs": 0, "io": 0}),
+            # CONTROLS. The same constructs UNQUOTED must still land, or the
+            # guard above would be indistinguishable from deleting the walks.
+            ("CONTROL: a real Inputs block still emits its edge",
+             "## Inputs\n\n- %s\n\n## 1. R\n" % _XR,
+             {"heads": [1], "items": [], "xrefs": 1, "io": 0}),
+            ("CONTROL: a real Implementation Order table still emits its row",
+             "## Implementation Order\n\n%s\n%s\n" % (_HDR, _ROW % "Real"),
+             {"heads": [], "items": [], "xrefs": 0, "io": 1}),
+    ):
+        sc = B.scan_body(doc)
+        bq = sc.in_blockquote
+        got = {
+            "heads": [n for n, _ in
+                      B._walk_section_headings(sc.leaf_views, sc.mask, bq)],
+            "items": [i["section_n"] for i in
+                      B._walk_stamped_items(sc.views, sc.leaf_views, sc.mask,
+                                            "t.md", bq)],
+            "xrefs": len(B._walk_inputs_xrefs(sc.views, sc.leaf_views, sc.mask,
+                                              bq)),
+            "io": len(B._walk_implementation_order(sc.views, sc.leaf_views,
+                                                   sc.mask, bq)),
+        }
+        check("s45 %s (%r)" % (label, got), got == want)
+    # The predicate must be LEAF-level. A blockquote opened on the same line is
+    # invisible to the matched packing, which is what let the quoted heading
+    # through in the first place.
+    _q = B.scan_body("## 1. Real\n\n> ## 2. Quoted\n")
+    check("s45 the blockquote predicate sees a marker the line itself opens",
+          _q.in_blockquote(2))
+    # ...and a LAZY continuation of a quoted paragraph is inside it too, though
+    # it carries no `>` for either the packing or the old physical-line walks to
+    # see. PRE-EXISTING -- the base producer emits the same edge -- but the one
+    # predicate has to be true everywhere or it is not one predicate.
+    for label, doc, walk, want in (
+            ("a lazy blockquote XREF row emits no edge",
+             "## Inputs\n\n> quoted paragraph\n| %s | example |\n" % _XR,
+             "xrefs", 0),
+            ("a lazy blockquote IO row emits no row",
+             "## Implementation Order\n\n> quoted paragraph\n%s\n"
+             % (_ROW % "Fake").splitlines()[-1], "io", 0),
+            ("CONTROL: the same row unquoted still lands",
+             "## Inputs\n\n| %s | real |\n" % _XR, "xrefs", 1),
+    ):
+        sc = B.scan_body(doc)
+        bq = sc.in_blockquote
+        got = (len(B._walk_inputs_xrefs(sc.views, sc.leaf_views, sc.mask, bq))
+               if walk == "xrefs" else
+               len(B._walk_implementation_order(sc.views, sc.leaf_views,
+                                                sc.mask, bq)))
+        check("s45 %s (%d)" % (label, got), got == want)
+
+    # ---- The projection's memory budget, measured rather than argued. ----
+    # An `array("i")` of offsets plus a separate flag array was the first design
+    # and would add 83,886,206 bytes at the 16 MiB valid-input ceiling; one
+    # packed byte per line adds 16,777,217 (Codex design review, [medium]).
+    # MEASURED at the real ceilings on 2026-08-12: peak RSS 312,288 KB before
+    # and 328,456 KB after on a 16 MiB newline-only document, +15.8 MB / +5.2%,
+    # with `views is lines` throughout. Those runs take ~13s each, so what the
+    # SUITE pins is the per-line constant they extrapolate from, at a size a
+    # commit hook can afford.
+    n = 200_000
+    tracemalloc.start()
+    _r = cs.scan_text("\n" * n)
+    _peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    _views_shared = _r.views is _r.lines
+    _cost = len(_r.conts)
+    del _r
+    check("s45 the projection costs one byte per line (%d for %d lines)"
+          % (_cost, n + 1), _cost == n + 1)
+    check("s45 ...and a newline-only document allocates no view at all",
+          _views_shared)
+    # The whole scan of a newline-only document stays within a few times the
+    # line array itself; an offset array per line would show up here.
+    check("s45 ...so peak traced allocation stays proportionate (%.1f MB)"
+          % (_peak / 1e6), _peak < 60_000_000)
+
+    if not _oracle_ran[0]:
+        _SKIPS.append("section 45 oracle agreement (markdown-it-py not installed)")
 
 
 _ASSERTED = [0]

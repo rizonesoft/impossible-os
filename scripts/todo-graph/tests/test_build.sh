@@ -17549,13 +17549,15 @@ same = True
 for p in sorted(pathlib.Path("todo").rglob("*.md")):
     body = p.read_text(encoding="utf-8", errors="replace")
     _sb = B.scan_body(body)
-    lines, mask = _sb.lines, _sb.mask
+    lines, mask, views, leaves = _sb.lines, _sb.mask, _sb.views, _sb.leaf_views
     pairs = [
-        (B.extract_section_headings(body), B._walk_section_headings(lines, mask)),
-        (B.extract_implementation_order(body), B._walk_implementation_order(lines, mask)),
-        (B.extract_inputs_xrefs(body), B._walk_inputs_xrefs(lines, mask)),
+        (B.extract_section_headings(body), B._walk_section_headings(leaves, mask, _sb.in_blockquote)),
+        (B.extract_implementation_order(body),
+         B._walk_implementation_order(views, leaves, mask, _sb.in_blockquote)),
+        (B.extract_inputs_xrefs(body), B._walk_inputs_xrefs(views, leaves, mask, _sb.in_blockquote)),
         (B.extract_stamps_xrefs(body), B._walk_stamps_xrefs(lines, mask)),
-        (B.extract_stamped_items(body, str(p)), B._walk_stamped_items(lines, mask, str(p))),
+        (B.extract_stamped_items(body, str(p)),
+         B._walk_stamped_items(views, leaves, mask, str(p), _sb.in_blockquote)),
     ]
     if any(a != b for a, b in pairs):
         same = False
@@ -17596,9 +17598,9 @@ for name in publics:
 # so the rescanning wrapper cannot drift from the threaded path.
 body = "## 1. First\n## 2. Second\n"
 _sb = B.scan_body(body)
-lines, mask = _sb.lines, _sb.mask
+lines, mask, views, leaves = _sb.lines, _sb.mask, _sb.views, _sb.leaf_views
 unclosed = _sb.terminal is not None
-if B.extract_section_headings(body) != B._walk_section_headings(lines, mask):
+if B.extract_section_headings(body) != B._walk_section_headings(leaves, mask, _sb.in_blockquote):
     bad.append("wrapper-differs")
 if unclosed is not False:
     bad.append("unclosed-wrong")
@@ -19118,7 +19120,9 @@ import build as B, cache_schema as cs
 bad = []
 
 def walk(line):
-    out = B._walk_inputs_xrefs(["## Inputs", line], [False, False])
+    out = B._walk_inputs_xrefs(["## Inputs", line],
+                         ["## Inputs", line], [False, False],
+                         lambda _i: False)
     return None if not out else (out[0]["target_path"], out[0]["target_section"])
 
 def bullet(cell):
@@ -19260,11 +19264,15 @@ if got != [("TODO-01-a.md",)]:
 # `item_span is None`; a remainder-only rule reads these as exhausted, because
 # the parenthetical was consumed INTO the clause.
 for cell in ['TODO-02-b.md §7 (item: "Unexpected")', "TODO-02-b.md §7 (some prose)"]:
-    if B._walk_inputs_xrefs(["## Inputs", "| -> XREF: %s | n |" % cell], [False, False]):
+    if B._walk_inputs_xrefs(["## Inputs", "| -> XREF: %s | n |" % cell],
+                         ["## Inputs", "| -> XREF: %s | n |" % cell], [False, False],
+                         lambda _i: False):
         bad.append("table cell with a parenthetical published an edge: %r" % cell)
 # ...while the bullet surface still binds them, which is the stated difference.
 for cell in ['TODO-02-b.md §7 (item: "Unexpected")']:
-    if not B._walk_inputs_xrefs(["## Inputs", "- -> XREF: %s" % cell], [False, False]):
+    if not B._walk_inputs_xrefs(["## Inputs", "- -> XREF: %s" % cell],
+                         ["## Inputs", "- -> XREF: %s" % cell], [False, False],
+                         lambda _i: False):
         bad.append("bullet lost a legitimate parenthetical: %r" % cell)
 
 # (4) TRIMMING THE MARKER'S PUNCTUATION MUST NOT SWALLOW WHAT FOLLOWS IT.
@@ -19317,8 +19325,12 @@ for tail in (",", ".", ":", ";", ""):
         bad.append("spanned marker %r bound %r" % (tail, c.section))
     if cell[c.end:] != "":
         bad.append("spanned marker %r left remainder %r" % (tail, cell[c.end:]))
-    t = bool(B._walk_inputs_xrefs(["## Inputs", "| -> XREF: %s | n |" % cell], [False, False]))
-    b = bool(B._walk_inputs_xrefs(["## Inputs", "- -> XREF: %s" % cell], [False, False]))
+    t = bool(B._walk_inputs_xrefs(["## Inputs", "| -> XREF: %s | n |" % cell],
+                         ["## Inputs", "| -> XREF: %s | n |" % cell], [False, False],
+                         lambda _i: False))
+    b = bool(B._walk_inputs_xrefs(["## Inputs", "- -> XREF: %s" % cell],
+                         ["## Inputs", "- -> XREF: %s" % cell], [False, False],
+                         lambda _i: False))
     if t != b:
         bad.append("spanned marker %r: table=%s bullet=%s" % (tail, t, b))
 # The UNSPANNED form still hands its punctuation back -- the two paths differ,
@@ -19362,6 +19374,178 @@ if [ "$T44H" = "OK" ]; then
     t_pass "s44h: a spanned marker's punctuation is span content, and the bound survives an early span"
 else
     t_fail "s44h: $T44H"
+fi
+
+# ----------------------------------------------------------------------
+# Section 45: the container phase at the PRODUCER
+# ----------------------------------------------------------------------
+#
+# The scan-level rules are pinned in scripts/tests/test_todo_fence.py. What
+# these prove is that the emitted NODE changed -- which is where both defects
+# were paid for. The erasure case is the one that matters most: it produced a
+# node missing a whole section AND its stamped item with rc 0 and no error, so
+# nothing downstream could tell it apart from a TODO that simply lacks them.
+
+s45_fixture() {   # $1 = dir, $2 = body after the IO table
+    rm -rf "$1"; mkdir -p "$1/todo/d"
+    {
+        printf -- '---\nschema_version: 1\nid: s45\ndomain: d\nstatus: active\ntitle: T\n---\n\n# T\n\n'
+        printf '## Implementation Order\n\n'
+        printf '| Order | Section | Deliverable | Depends On | Status |\n'
+        printf '| :---: | :-----: | ----------- | ---------- | :----: |\n'
+        printf '|   1   |   §1    | One         | --         |  [x]   |\n'
+        printf '|   2   |   §2    | Two         | --         |  [x]   |\n\n'
+        printf '%b' "$2"
+    } > "$1/todo/d/TODO-01-a.md"
+    ( cd "$1" && git init -q . && git config user.email s45@test.invalid \
+        && git config user.name s45 && git add -A && git commit -qm s45 ) >/dev/null 2>&1
+    python3 "$BUILD_PY" --quiet --root "$1/todo" \
+        --output "$1/build/todo-cache.json" --repo-root "$1" >/dev/null 2>&1
+    echo $?
+}
+
+# --- s45a: the under-indented blank no longer ERASES a section and its item ---
+S45A="$TMP_DIR/s45a"
+S45A_RC="$(s45_fixture "$S45A" '## 1. Root\n\n- a\n  <?pi\n \n  ## 2. Real\n  - [x] `erased_sym()` shipped\n')"
+S45A_OUT="$(python3 - "$S45A/build/todo-cache.json" <<'PY'
+import json, sys
+try:
+    c = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("no-cache: %s" % e); raise SystemExit
+n = (c["nodes"] if isinstance(c, dict) and "nodes" in c else c)
+n = n[0] if isinstance(n, list) else list(n.values())[0]
+secs = sorted(h["n"] for h in n.get("section_headings", []))
+syms = sorted(r.get("symbol") for i in n.get("stamped_items", [])
+              for r in i.get("refs", []) if r.get("kind") == "symbol")
+print("sections=%s items=%s errors=%s" % (secs, syms, n.get("errors", [])))
+PY
+)"
+if [ "$S45A_RC" = "0" ] && echo "$S45A_OUT" | grep -q "sections=\[1, 2\]" \
+   && echo "$S45A_OUT" | grep -q "erased_sym"; then
+    t_pass "s45a: an under-indented blank no longer erases the section and item behind it"
+else
+    t_fail "s45a: rc=$S45A_RC $S45A_OUT"
+fi
+
+# --- s45b: a list-contained section OWNS its indented item in the node ---
+# FOUR spaces of indent, because `classify_heading` accepts 0-3 on a physical
+# line: at two the pre-section-45 producer saw the heading too and the fixture
+# would prove nothing.
+S45B="$TMP_DIR/s45b"
+S45B_RC="$(s45_fixture "$S45B" '## 1. Root\n\n- item\n\n    ## 2. Nested\n\n    - [x] `nested_sym()` shipped\n')"
+S45B_OUT="$(python3 - "$S45B/build/todo-cache.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+n = (c["nodes"] if isinstance(c, dict) and "nodes" in c else c)
+n = n[0] if isinstance(n, list) else list(n.values())[0]
+print("attrib=%s" % sorted((i["section_n"], r.get("symbol"))
+                          for i in n.get("stamped_items", [])
+                          for r in i.get("refs", []) if r.get("kind") == "symbol"))
+PY
+)"
+if [ "$S45B_RC" = "0" ] && echo "$S45B_OUT" | grep -q "(2, 'nested_sym')"; then
+    t_pass "s45b: a list-contained section owns its indented item in the emitted node"
+else
+    t_fail "s45b: rc=$S45B_RC $S45B_OUT"
+fi
+
+# --- s45c: the FIFTH walk. A list-contained over-long heading is REFUSED ---
+# The other four walks now see this heading; if `_walk_unusable_headings` stayed
+# on physical lines the node would omit the section AND carry no error, which is
+# the silent narrowing the refusal exists to prevent.
+S45C="$TMP_DIR/s45c"
+S45C_RC="$(s45_fixture "$S45C" '## 1. Root\n\n- item\n\n    ## 12345678901. Over\n\n    - [x] `over_sym()` shipped\n')"
+if [ "$S45C_RC" != "0" ] || grep -q "unusable-heading" "$S45C/build/todo-cache.json" 2>/dev/null; then
+    t_pass "s45c: a list-contained over-long heading is refused, not silently dropped"
+else
+    t_fail "s45c: rc=$S45C_RC, no unusable-heading recorded"
+fi
+
+# --- s45e: a heading sharing the container-OPENING line ---
+# `views` keeps the marker a line opens, so `- ## 2.` was invisible to
+# `classify_heading` and its item filed under section 1; the leaf projection is
+# the second view that fixes it. This is the producer-level half.
+S45E="$TMP_DIR/s45e"
+S45E_RC="$(s45_fixture "$S45E" '## 1. Root\n\n- ## 2. Nested\n  - [x] `same_line_sym()` shipped\n')"
+S45E_OUT="$(python3 - "$S45E/build/todo-cache.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+n = (c["nodes"] if isinstance(c, dict) and "nodes" in c else c)
+n = n[0] if isinstance(n, list) else list(n.values())[0]
+print("attrib=%s" % sorted((i["section_n"], r.get("symbol"))
+                          for i in n.get("stamped_items", [])
+                          for r in i.get("refs", []) if r.get("kind") == "symbol"))
+PY
+)"
+if [ "$S45E_RC" = "0" ] && echo "$S45E_OUT" | grep -q "(2, 'same_line_sym')"; then
+    t_pass "s45e: a heading on the container-opening line owns the item under it"
+else
+    t_fail "s45e: rc=$S45E_RC $S45E_OUT"
+fi
+
+# --- s45f: ...and its OVER-LONG form fails CLOSED rather than open ---
+# Before the leaf projection this recorded no error at all, which is the one
+# direction the refusal must never take.
+S45F="$TMP_DIR/s45f"
+S45F_RC="$(s45_fixture "$S45F" '## 1. Root\n\n- ## 12345678901. Over\n  - [x] `over2_sym()` shipped\n')"
+if [ "$S45F_RC" != "0" ] || grep -q "unusable-heading" "$S45F/build/todo-cache.json" 2>/dev/null; then
+    t_pass "s45f: a same-line over-long heading fails closed, not open"
+else
+    t_fail "s45f: rc=$S45F_RC, no unusable-heading recorded"
+fi
+
+# --- s45g: a QUOTED example must not become graph data ---
+# Container stripping deletes the `>` every walk used to reject on, so the
+# guarantee that a quoted example cannot affect the graph had to be published
+# as a predicate instead. This fixture quotes an Inputs block, a heading and an
+# Implementation Order row all at once; the node must carry the REAL section 1
+# and section 2 only, no edge to TODO-99, and no third IO row.
+S45G="$TMP_DIR/s45g"
+S45G_RC="$(s45_fixture "$S45G" '## 1. Root\n\n> ## Inputs\n> - -> XREF: [`TODO-99`](../d/TODO-99-z.md) \xc2\xa71\n\n> ## 3. Quoted\n\n## 2. Real\n\n- [x] `real_sym()` shipped\n')"
+S45G_OUT="$(python3 - "$S45G/build/todo-cache.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+n = (c["nodes"] if isinstance(c, dict) and "nodes" in c else c)
+n = n[0] if isinstance(n, list) else list(n.values())[0]
+print("secs=%s edges=%s attrib=%s" % (
+    sorted(h["n"] for h in n.get("section_headings", [])),
+    sorted(x.get("target_path", "") for x in n.get("inputs_xrefs", [])),
+    sorted(i["section_n"] for i in n.get("stamped_items", []))))
+PY
+)"
+if [ "$S45G_RC" = "0" ] && echo "$S45G_OUT" | grep -q "secs=\[1, 2\]" \
+   && ! echo "$S45G_OUT" | grep -q "TODO-99" && echo "$S45G_OUT" | grep -q "attrib=\[2\]"; then
+    t_pass "s45g: a quoted heading, Inputs block and IO row stay out of the graph"
+else
+    t_fail "s45g: rc=$S45G_RC $S45G_OUT"
+fi
+
+# --- s45d: CONTROL -- the live corpus builds byte-identically ---
+# 18,505 of 90,801 corpus lines carry a container prefix and 9,336 of those sit
+# inside a blockquote, so the projection is exercised heavily; it must change no
+# answer. Without this control the three fixtures above would pass against a
+# projection that silently re-parented ordinary work.
+S45D="$TMP_DIR/s45d.json"
+S45D_REF="$REPO_ROOT/build/todo-cache.json"
+if [ ! -f "$S45D_REF" ]; then
+    # A MISSING REFERENCE IS NOT A PASS. Reported as its own failure rather than
+    # a silent skip: this control is the only thing standing between the three
+    # fixtures above and a projection that re-parents ordinary corpus work, and
+    # a control that evaporates when its input is absent is the fail-silent
+    # shape this suite exists to refuse. The cache is a build artefact any run
+    # of the producer creates.
+    t_fail "s45d: no built cache at $S45D_REF to compare against -- run the producer first"
+elif python3 "$BUILD_PY" --quiet --root "$REPO_ROOT/todo" --repo-root "$REPO_ROOT" \
+        --output "$S45D" >/dev/null 2>&1 \
+   && python3 -c "
+import json,sys
+a=json.load(open('$S45D')); b=json.load(open('$S45D_REF'))
+sys.exit(0 if json.dumps(a,sort_keys=True)==json.dumps(b,sort_keys=True) else 1)
+" 2>/dev/null; then
+    t_pass "s45d: CONTROL -- the live corpus still builds the committed cache exactly"
+else
+    t_fail "s45d: the live corpus no longer builds the committed cache"
 fi
 
 # ----------------------------------------------------------------------

@@ -1048,34 +1048,52 @@ def extract_section_headings(body: str) -> list:
     structure produced an `orphan-io-row` FAIL naming a section that does not
     exist."""
     _scan = scan_body(body)
-    lines, mask = _scan.lines, _scan.mask
-    return _walk_section_headings(lines, mask)
+    return _walk_section_headings(_scan.leaf_views, _scan.mask,
+                                  _scan.in_blockquote)
 
 
-def _walk_section_headings(lines, masked) -> list:
-    """Shared by `extract_section_headings` and `build_node`; see that docstring.
+# ONE SECTION CONTEXT, CONSUMED BY THE WHOLE HEADING/ITEM/TABLE CLOSURE.
+#
+# Every walk below reads `ScanResult.views` -- the container-stripped line --
+# rather than the physical line, and section 45 changed them TOGETHER because
+# section 42 measured what happens otherwise. Giving only
+# `_walk_section_headings` the stripped view closed a real hole (a `## N.`
+# indented inside a list item is a heading to CommonMark and was invisible
+# here) and opened a worse one: a root `## 1.`, a list-contained `## 2.` and an
+# indented `[x]` item made that walk emit sections 1 and 2 while
+# `_walk_stamped_items` missed the nested heading and filed the item under
+# section 1 -- shipped-work evidence attributed to the wrong section (Codex
+# adversarial, section 42, [high]). Either all of them share one notion of
+# where a section starts, or none of them may be container-aware.
+#
+# THE CLOSURE IS FIVE WALKS, NOT THE FOUR THE SECTION NAMED.
+# `_walk_unusable_headings` is a fifth `classify_heading` consumer and it is the
+# one that REFUSES a heading whose number cannot be recorded. Left on physical
+# lines it would miss a list-contained over-long heading that the other four now
+# see, so the node would silently omit that section and its items with no error
+# at all -- the omission the refusal exists to prevent (Codex design review,
+# section 45, [high]).
+#
+# `_walk_stamps_xrefs` is deliberately NOT in the closure. It matches
+# `STAMP_HEADER_RE` against a `> **Verified:**` line, so the blockquote marker
+# is part of what it recognises; stripping containers there would delete the
+# thing it matches on. It carries no section context and emits no section-scoped
+# record, which is what makes that safe.
+#
+# Measured before the change: over 90,801 corpus lines, 18,505 carry a container
+# prefix and 9,336 of those sit inside a blockquote, yet the stripped view
+# changes 0 heading classifications and 0 item classifications. The projection
+# is a correctness contract that the current corpus does not exercise, not a
+# behaviour change to it.
 
-    STILL ANCHORED ON THE PHYSICAL LINE -- section 42 tried the alternative and
-    REVERTED it. Giving this ONE walk the container-stripped view closed a real
-    hole (a `## N.` indented inside a list item is a heading to CommonMark and
-    invisible here) but desynchronised it from its siblings, which all still
-    read physical lines. Reproduced by the review: a root `## 1.`, a
-    list-contained `## 2.` and an indented `[x]` item made this walk emit
-    sections 1 and 2 while `_walk_stamped_items` missed the nested heading and
-    filed the item under section 1 -- shipped-work evidence attributed to the
-    wrong section (Codex adversarial, section 42, [high]).
 
-    That is precisely the "two walks disagree about what a heading is" drift
-    sections 36-39 exist to end, so making one walk container-aware in isolation
-    is not an improvement on leaving them equally blind. The real repair is ONE
-    parsed section-context projection consumed by the heading, item, IO-row and
-    XREF walks together -- section 43's one-grammar work, not a parameter here.
-    Measured: 0 corpus lines where the two views disagree, so nothing live is
-    wrong meanwhile.
+def _walk_section_headings(leaf_views, masked, in_bq) -> list:
+    """Shared by `extract_section_headings` and `build_node`; see that docstring
+    and the closure note above.
     """
     out = []
-    for ln, fenced in zip(lines, masked):
-        if fenced:
+    for i, (ln, fenced) in enumerate(zip(leaf_views, masked)):
+        if fenced or in_bq(i):
             continue
         h = _cs.classify_heading(ln)
         # A TITLE IS REQUIRED HERE, as it always was: this walk feeds
@@ -1094,7 +1112,7 @@ def _walk_section_headings(lines, masked) -> list:
     return out
 
 
-def _walk_unusable_headings(lines, masked):
+def _walk_unusable_headings(leaf_views, masked, in_bq):
     """[(category, message)] for every `## N.` whose number cannot be recorded.
 
     THE HEADING IS NOT DROPPED, it is refused (section 43). The producer used to
@@ -1104,10 +1122,14 @@ def _walk_unusable_headings(lines, masked):
     item after it is re-filed under the previous one. So the heading still ends
     the previous section for every walk, and the node carries an error naming the
     line -- the same shape an unclosed document already gets.
+
+    CONTAINER-AWARE with the rest of the closure (section 45): see the note
+    above `_walk_section_headings` for why leaving this one walk on physical
+    lines would turn that refusal back into a silent omission.
     """
     out = []
-    for i, (ln, fenced) in enumerate(zip(lines, masked)):
-        if fenced:
+    for i, (ln, fenced) in enumerate(zip(leaf_views, masked)):
+        if fenced or in_bq(i):
             continue
         h = _cs.classify_heading(ln)
         if h.kind == "over-long":
@@ -1166,16 +1188,26 @@ def extract_stamped_items(body: str, todo_rel: str) -> list:
     item ordering is preserved (1-based section_n, 0-based item_idx).
     """
     _scan = scan_body(body)
-    lines, mask = _scan.lines, _scan.mask
-    return _walk_stamped_items(lines, mask, todo_rel)
+    return _walk_stamped_items(_scan.views, _scan.leaf_views, _scan.mask,
+                               todo_rel, _scan.in_blockquote)
 
 
-def _walk_stamped_items(lines, masked, todo_rel: str) -> list:
-    """Shared by `extract_stamped_items` and `build_node`; see that docstring.
+def _walk_stamped_items(views, leaf_views, masked, todo_rel: str, in_bq) -> list:
+    """Shared by `extract_stamped_items` and `build_node`; see that docstring
+    and the closure note above `_walk_section_headings`.
 
     Fence-aware: a `## N.` heading or a `- [x]` line inside a fenced block is
     documentation, not a section or a shipped item. Indexing one emitted a fake
-    symbol into `stamped_items` under a section that does not exist."""
+    symbol into `stamped_items` under a section that does not exist.
+
+    THE BLOCKQUOTE REJECTION IS NOW PUBLISHED RATHER THAN INFERRED. It used to
+    fall out of the `>` surviving in the text `item_re` matched against; on the
+    container-stripped view the marker is gone, so `> - [x] shipped` inside a
+    stamp continuation would read as a real item, and a quoted `> ## 2.` would
+    open a section that re-parents the UNQUOTED item after it. `in_bq(i)` is
+    that fact taken from the scan's own container stack, and it guards the top
+    of the loop rather than the item match, because the heading decision needs
+    it too -- which the per-item test could not give it."""
     out = []
     cur_section = None
     cur_item_idx = 0
@@ -1184,10 +1216,14 @@ def _walk_stamped_items(lines, masked, todo_rel: str) -> list:
     # indent; reject blockquoted (`>`) lines because stamp continuations
     # never carry `[x]`.
     item_re = re.compile(r"^\s*[-*]\s*\[x\]\s+(.+?)\s*$")
-    for ln, fenced in zip(lines, masked):
-        if fenced:
+    for i, (ln, fenced) in enumerate(zip(views, masked)):
+        if fenced or in_bq(i):
             continue
-        sec_h = classify(ln)
+        # HEADINGS from the leaf view, CONTENT from the marker-preserving one.
+        # The two differ on exactly one line -- `- ## 2. Nested` is a heading
+        # whose bullet `views` keeps -- and getting that wrong in either
+        # direction re-parents the item below it.
+        sec_h = classify(leaf_views[i])
         if sec_h.kind != "none":
             # An unusable number CLOSES the current section and opens nothing:
             # `cur_section = None` means the items below it are not recorded at
@@ -1410,11 +1446,11 @@ def extract_implementation_order(body: str) -> list:
     (`§N`) which can differ from execution Order.
     """
     _scan = scan_body(body)
-    lines, mask = _scan.lines, _scan.mask
-    return _walk_implementation_order(lines, mask)
+    return _walk_implementation_order(_scan.views, _scan.leaf_views,
+                                      _scan.mask, _scan.in_blockquote)
 
 
-def _walk_implementation_order(lines, masked) -> list:
+def _walk_implementation_order(views, leaf_views, masked, in_bq) -> list:
     """Shared by `extract_implementation_order` and `build_node`.
 
     Fence-aware: a fenced `## Implementation Order` example would otherwise open
@@ -1424,20 +1460,23 @@ def _walk_implementation_order(lines, masked) -> list:
     out = []
     in_io = False
     header_cols = None
-    for ln, fenced in zip(lines, masked):
-        if fenced:
+    for i, (ln, fenced) in enumerate(zip(views, masked)):
+        if fenced or in_bq(i):
             continue
+        # Heading boundary from the LEAF view, table rows from `views`; see
+        # `_walk_stamped_items` for why the two projections are not one.
+        _lv = leaf_views[i]
         # THE SAME BOUNDARY RULE AS EVERY OTHER WALK (section 43 post-ship
         # review). This hand-rolled `startswith("## ")` was invisible to the AST
         # allowlist test, which only looked for numeric matchers -- so the "one
         # rule" claim held for the heading walks and quietly did not here. An
         # indented `## Implementation Order` was not a table start, and an
         # indented heading did not end the table.
-        _io_title = _cs.h2_title(ln)
+        _io_title = _cs.h2_title(_lv)
         if _io_title is not None and _io_title.startswith("Implementation Order"):
             in_io = True
             continue
-        if in_io and _cs.is_h2(ln):
+        if in_io and _cs.is_h2(_lv):
             break
         if not in_io:
             continue
@@ -1526,11 +1565,11 @@ def extract_inputs_xrefs(body: str) -> list:
     consumed-file references and stay out of the graph.
     """
     _scan = scan_body(body)
-    lines, mask = _scan.lines, _scan.mask
-    return _walk_inputs_xrefs(lines, mask)
+    return _walk_inputs_xrefs(_scan.views, _scan.leaf_views, _scan.mask,
+                              _scan.in_blockquote)
 
 
-def _walk_inputs_xrefs(lines, masked) -> list:
+def _walk_inputs_xrefs(views, leaf_views, masked, in_bq) -> list:
     """Shared by `extract_inputs_xrefs` and `build_node`.
 
     Fence-aware for the same reason as the Implementation Order walk: a fenced
@@ -1538,16 +1577,17 @@ def _walk_inputs_xrefs(lines, masked) -> list:
     dependency and scheduling answers rather than a count."""
     out = []
     in_inputs = False
-    for ln, fenced in zip(lines, masked):
-        if fenced:
+    for i, (ln, fenced) in enumerate(zip(views, masked)):
+        if fenced or in_bq(i):
             continue
+        _lv = leaf_views[i]
         # Shared rule, same as the Implementation Order walk above (section 43
         # post-ship review found both).
-        _in_title = _cs.h2_title(ln)
+        _in_title = _cs.h2_title(_lv)
         if _in_title is not None and _in_title.startswith("Inputs"):
             in_inputs = True
             continue
-        if in_inputs and _cs.is_h2(ln):
+        if in_inputs and _cs.is_h2(_lv):
             break
         if not in_inputs:
             continue
@@ -1817,11 +1857,17 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     if _body.terminal is not None:
         errors.append((_cs.terminal_category(_body.terminal),
                        _body.unclosed_reason()))
-    errors.extend(_walk_unusable_headings(body_lines, body_mask))
-    sections_io = _walk_implementation_order(body_lines, body_mask)
-    inputs_xrefs = _walk_inputs_xrefs(body_lines, body_mask)
+    # ONE projection, computed once and shared by the whole closure -- the
+    # property is exactly that these five see the same line. `_walk_stamps_xrefs`
+    # keeps the PHYSICAL line on purpose; see the closure note in this file.
+    body_views, body_leaves = _body.views, _body.leaf_views
+    _bq = _body.in_blockquote
+    errors.extend(_walk_unusable_headings(body_leaves, body_mask, _bq))
+    sections_io = _walk_implementation_order(body_views, body_leaves,
+                                             body_mask, _bq)
+    inputs_xrefs = _walk_inputs_xrefs(body_views, body_leaves, body_mask, _bq)
     stamps_xrefs = _walk_stamps_xrefs(body_lines, body_mask)
-    section_headings = _walk_section_headings(body_lines, body_mask)
+    section_headings = _walk_section_headings(body_leaves, body_mask, _bq)
 
     created_at, last_active_at = timestamps.get(rel, (None, None))
 
@@ -1893,7 +1939,8 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     # omitted to keep the cache compact and the schema's optional contract
     # honest. Lint Check 7 reads stamped_items as the source of truth for
     # stub-behind-stamp findings.
-    stamped_items = _walk_stamped_items(body_lines, body_mask, rel)
+    stamped_items = _walk_stamped_items(body_views, body_leaves, body_mask,
+                                        rel, _bq)
     if stamped_items:
         node["stamped_items"] = stamped_items
     # A CONDITIONAL EMISSION IS STILL AN EMISSION, and this is the only place

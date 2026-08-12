@@ -1605,6 +1605,16 @@ class Terminal(NamedTuple):
     line: int            # 0-based index of the opener
 
 
+# `ScanResult.conts` bit layout -- see that class. Bit 7 is the blockquote
+# flag; bits 0-6 are the container-prefix character count, with the all-ones
+# value reserved as the escape into `cont_exc`. 126 characters of container
+# prefix is 63 nested list levels, so the escape is reached in practice only by
+# the tab case it exists for.
+_CONT_BQ = 0x80
+_CONT_CUT_MASK = 0x7F
+_CONT_ESCAPE = 0x7F
+
+
 class ScanResult:
     """`fence_scan` / `scan_text` result -- DELIBERATELY NOT A TUPLE.
 
@@ -1616,23 +1626,146 @@ class ScanResult:
     `__len__` or `__getitem__` here, so every stale unpack raises `TypeError` at
     the call site instead (Codex design review, section 42, [high]).
 
-    NO PER-LINE `stripped` VIEW. One was published briefly in section 42 and
+    NO PER-LINE `stripped` STRING VIEW, and section 45 kept that rule while
+    closing the hole behind it. One was published briefly in section 42 and
     removed in the same section: its only consumer desynchronised the heading
     walk from its siblings (see `build._walk_section_headings`), and retaining a
     string reference per line tripled this scanner's per-line storage for a
     projection nothing could safely use. Measured by the review: a 4 MiB
     newline-only document held 4,194,305 entries per array (Codex adversarial,
-    section 42, [medium]). `mask` and `kinds` are index-parallel to `lines` and
-    are the whole surface.
+    section 42, [medium]).
+
+    What section 45 publishes instead is `conts`: ONE PACKED BYTE PER LINE, the
+    same budget `codes` already spends, from which `views` derives the
+    container-stripped line on demand. Bit 7 records that a blockquote is among
+    the matched containers; bits 0-6 hold the count of leading characters the
+    container prefixes consumed, and `_CONT_ESCAPE` sends the rare line whose
+    remainder is not a plain slice of it to the sparse `cont_exc` map. An
+    `array("i")` of offsets plus a separate flag array was the first design and
+    was rejected on measurement: 83,886,206 bytes at the 16 MiB valid-input
+    ceiling, against 16,777,217 for one byte per line (Codex design review,
+    section 45, [medium]).
+
+    THE PROJECTION IS ALL-OR-NOTHING ACROSS ITS CONSUMERS. `views` is what the
+    five `build.py` walks read, together -- section 42 proved that giving it to
+    one walk alone re-parents a shipped item under the wrong section -- and
+    there is deliberately NO physical-line fallback for a line the packed form
+    cannot express. Falling back would desynchronise the same way from the
+    other direction: `- a` / a TAB-indented `## 2.` projects to `  ## 2.` and is
+    a heading, while the physical line is not, so the pure-slice item under it
+    would still be filed against section 1 (Codex design review, section 45,
+    [high]). `cont_exc` carries those lines losslessly instead; it is empty for
+    all 281 corpus files.
     """
 
-    __slots__ = ("lines", "mask", "codes", "terminal")
+    __slots__ = ("lines", "mask", "codes", "terminal", "conts", "cont_exc",
+                 "leafs", "leaf_exc", "_views", "_leaf_views")
 
-    def __init__(self, lines, mask, codes, terminal):
+    def __init__(self, lines, mask, codes, terminal, conts=None, cont_exc=None,
+                 leafs=None, leaf_exc=None):
         self.lines = lines
         self.mask = mask            # the STRUCTURAL projection; the safe default
         self.codes = codes          # bytearray, one KIND CODE per line
         self.terminal = terminal    # `Terminal` or None
+        # One packed byte per line; None only for the legacy construction path
+        # used by tests that build a result directly.
+        self.conts = bytearray(len(lines)) if conts is None else conts
+        self.cont_exc = {} if cont_exc is None else cont_exc
+        # The LEAF packing, or None when no line on this document opens a
+        # container and the two projections are the same thing.
+        self.leafs = leafs
+        self.leaf_exc = {} if leaf_exc is None else leaf_exc
+        self._views = None
+        self._leaf_views = None
+
+    def _project(self, conts, exc):
+        """Decode one packed array into index-parallel lines.
+
+        IDENTITY SHORT-CIRCUIT when no line carries a prefix: the result IS
+        `lines`, so a document with no containers -- and the newline-only worst
+        case the memory budget above is written against -- allocates nothing at
+        all. `bytearray.count` runs in C.
+
+        Materialised ONCE per document and shared by every walk, rather than
+        recomputed per walk or exposed as a per-line method call: five walks
+        over ~90,800 corpus lines is 450k slices or 450k method calls either
+        way, and the shared list pays it once. A line whose cut is 0 yields the
+        SAME string object, so the list is mostly pointers to strings that
+        already exist.
+        """
+        if conts.count(0) == len(conts):
+            return self.lines
+        lines = self.lines
+        out = []
+        for i, b in enumerate(conts):
+            c = b & _CONT_CUT_MASK
+            if c == _CONT_ESCAPE:
+                out.append(exc[i])
+            elif c:
+                out.append(lines[i][c:])
+            else:
+                out.append(lines[i])
+        return out
+
+    @property
+    def views(self):
+        """Container-stripped lines that KEEP the marker this line opens.
+
+        `- [x] shipped` still arrives with its bullet, because the checklist
+        marker is a repo grammar layered on the list marker rather than a
+        CommonMark block -- consuming it would delete the thing the item walk
+        matches on. This is the projection for CONTENT matchers: the item
+        regex, the Implementation Order rows, the Inputs/XREF bullets.
+        """
+        if self._views is None:
+            self._views = self._project(self.conts, self.cont_exc)
+        return self._views
+
+    @property
+    def leaf_views(self):
+        """Container-stripped lines with the markers this line OPENS consumed.
+
+        The projection for HEADING classification, and it exists because the
+        two questions genuinely differ on one line. `- ## 2. Nested` is a list
+        item containing a real h2 to CommonMark; `views` keeps the bullet, so
+        `classify_heading` refuses it, the heading is invisible, and the `[x]`
+        under it is filed against the PREVIOUS section -- the same
+        misattribution the shared projection exists to end, one shape over. The
+        over-long form `- ## 12345678901.` was worse: it recorded no
+        `unusable-heading` at all, so the refusal failed OPEN (Codex
+        adversarial, section 45, [high]).
+
+        ALLOCATED LAZILY. `leafs` stays None until some line actually opens a
+        container, so a document with none -- including the newline-only
+        ceiling the budget above is written against -- pays nothing and gets
+        `views` back by identity.
+        """
+        if self.leafs is None:
+            return self.views
+        if self._leaf_views is None:
+            self._leaf_views = self._project(self.leafs, self.leaf_exc)
+        return self._leaf_views
+
+    def in_blockquote(self, i: int) -> bool:
+        """Is line `i` inside a blockquote, counting one it OPENS itself?
+
+        A blockquote in this corpus is a quoted example or a stamp, and nothing
+        inside one is graph data. Every walk used to get that for free, because
+        the `>` survived in the physical text each of them matched against.
+        Container stripping deletes the marker, so the fact has to be published
+        or the guarantee silently inverts: measured before this was added,
+        `> ## Inputs` + `> - -> XREF: ...` emitted a real dependency edge, a
+        quoted Implementation Order table emitted a real section row, and
+        `> ## 2. Quoted` became a section that re-parented the UNQUOTED `- [x]`
+        item after it (Codex adversarial, section 45 round 2, both [high]).
+
+        READ FROM THE LEAF PACKING when there is one, because the matched
+        packing cannot see a blockquote this line OPENS -- which is exactly the
+        `> ## 2. Quoted` case. The leaf flag is a superset of the matched one,
+        so one predicate serves every walk in the closure.
+        """
+        conts = self.conts if self.leafs is None else self.leafs
+        return bool(conts[i] & _CONT_BQ)
 
     @property
     def kinds(self):
@@ -1765,12 +1898,25 @@ def _dedent_cols(line: str, cols: int, start_col: int = 0):
     return " " * (col - cols) + line[i:] if col >= cols else None
 
 
-def _match_containers(containers, line: str):
-    """`(matched, rest, base)` -- how many open containers this line continues.
+# `stack_state[1]` when the open container stack holds NO blockquote. It must
+# be larger than any reachable index, because it is consumed by a `min`: an
+# index-valued sentinel such as 0 reads as "a blockquote at the bottom of the
+# stack" and closes every ordinary list on the next blank line (Codex design
+# review, section 45, [high]).
+_NO_BQ = 1 << 30
+
+
+def _match_containers(containers, line: str, stack_state):
+    """`(matched, rest, base, cut)` -- how many open containers this line
+    continues.
 
     `rest` is the line with those containers' prefixes consumed, which is what
     the leaf matchers must see. `matched < len(containers)` means the tail of
-    the stack closed on this line.
+    the stack closed on this line. `cut` is the count of LEADING CHARACTERS
+    consumed when `rest` is a plain suffix of `line`, and -1 when it is not:
+    the tab paths below REBUILD the remainder instead of slicing it, and the
+    section-context projection has to know the difference rather than guess
+    (see `ScanResult.views`).
 
     A BLANK LINE CONTINUES A LIST ITEM BUT NOT A BLOCKQUOTE, and the asymmetry
     is load-bearing rather than a nicety. `100. item` / blank / five-space
@@ -1779,7 +1925,37 @@ def _match_containers(containers, line: str):
     reach every consumer as a real checklist item (Codex design review, section
     39, [high], confirmed against markdown-it-py before it was implemented). A
     blockquote is the other way round -- an unmarked blank line ends it.
+
+    THE BLANK LINE IS ANSWERED FROM STACK METADATA RATHER THAN BY WALKING THE
+    STACK, and that is a correctness bound, not a micro-optimisation. The walk
+    below matches arbitrarily many FILLED list containers while consuming no
+    input, so `"- " * N + "x"` followed by N blank lines is O(N) bytes and
+    O(N^2) work: measured 2026-08-12 at 0.082s for 1,000 levels (3 KB), 0.435s
+    for 2,000 and 1.372s for 4,000 -- a document far below the 16 MiB per-TODO
+    ceiling stalls `build.py` and every migrated gate (Codex re-adversarial,
+    section 42 round 5, [high]).
+
+    The walk stops at the first container that is either a blockquote -- a
+    blank line carries no `>`, and `_BLOCKQUOTE_RE` is anchored on one, so it
+    can never match -- or a list that is still provisional. `stack_state`
+    carries both indices exactly, as `[first_unfilled, first_bq]`, so the same
+    answer is `min` of the two in O(1). Every container below `stack_state[0]`
+    is filled and every container is a list unless `stack_state[1]` says
+    otherwise; those two invariants are what make the forms equivalent, and
+    they are maintained in `_open_containers` and in `fence_scan`'s truncation.
     """
+    if _is_blank(line):
+        n = len(containers)
+        stop = stack_state[0]
+        if stack_state[1] < stop:
+            stop = stack_state[1]
+        if stop > n:
+            stop = n
+        # `base` is 0 because no blockquote prefix can have been consumed --
+        # the walk breaks at the first one. `rest` is the empty string once any
+        # list matched, exactly as the walk below leaves it, and the empty
+        # string IS a suffix of the line, so `cut` is the whole length.
+        return (stop, "", 0, len(line)) if stop else (0, line, 0, 0)
     rest = line
     matched = 0
     # THE ABSOLUTE COLUMN of `rest[0]`, carried so tab stops stay physical. A
@@ -1829,7 +2005,21 @@ def _match_containers(containers, line: str):
             rest = d
             base += arg
         matched += 1
-    return matched, rest, base
+    # ONE `endswith` RATHER THAN A PURITY FLAG THREADED THROUGH THE LOOP. Both
+    # tab paths above (`_dedent_cols`'s expansion and the blockquote's optional
+    # tab) prepend spaces they owe, so the remainder stops being a slice of the
+    # line -- and re-deriving "was a tab in the leading run" at each site is the
+    # arithmetic `_dedent_cols` already went through twice. Asking the result
+    # directly cannot get it wrong, and it is a C-level comparison.
+    #
+    # IDENTITY FIRST. A line continuing no container hands `rest` back as the
+    # SAME object, which is the common case corpus-wide; `endswith` would
+    # otherwise compare the whole line against itself, character for character,
+    # on every such line.
+    if rest is line:
+        return matched, rest, base, 0
+    return (matched, rest, base,
+            len(line) - len(rest) if line.endswith(rest) else -1)
 
 
 def _fill(containers, state) -> None:
@@ -1863,12 +2053,25 @@ def _fill(containers, state) -> None:
 
 
 def _open_containers(containers, rest: str, can_interrupt: bool = True,
-                     base: int = 0, fill_state=None) -> str:
-    """Push every container `rest` OPENS, returning the leaf content.
+                     base: int = 0, fill_state=None):
+    """Push every container `rest` OPENS; return `(leaf_content, base)`.
 
-    Mutates `containers`. The loop is what makes nesting work: a blockquote
-    marker followed by a list marker opens both, and only the remainder after
-    each prefix can be a fence.
+    Mutates `containers` and `fill_state`. The loop is what makes nesting work:
+    a blockquote marker followed by a list marker opens both, and only the
+    remainder after each prefix can be a fence.
+
+    THE BASE IS RETURNED, not just tracked locally, because it is the absolute
+    column an HTML block opening on this line starts at -- markdown-it's
+    `blkIndent` -- and `fence_scan` needs it to decide whether a later blank
+    line is indented far enough to stay inside that block.
+
+    IT ALSO MAINTAINS THE TWO STACK INDICES `_match_containers` reads. Slot 0
+    is the first container that may still be provisional (`_fill` owns it
+    otherwise) and slot 1 is the index of the first blockquote, or `_NO_BQ`.
+    A FILLED push must ADVANCE slot 0: `_fill` runs before the push and leaves
+    slot 0 at the pre-push length, so without this a filled container appended
+    at that index would be read as the first PROVISIONAL one and a blank line
+    would close the list holding it (Codex design review, section 45, [high]).
 
     `can_interrupt` is False when the PREVIOUS line left a paragraph open. A
     list may interrupt a paragraph only if its first line is non-blank and, when
@@ -1883,7 +2086,7 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
     while True:
         m = _CONTAINER_OPEN_RE.match(rest)
         if m is None:
-            return rest
+            return rest, base
         # Opening a container is content for everything already open.
         if fill_state is not None:
             _fill(containers, fill_state)
@@ -1891,15 +2094,19 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
             marker = m.group(3)
             after_m = rest[m.end():]
             if _is_blank(after_m):
-                return rest          # an empty item cannot interrupt
+                return rest, base    # an empty item cannot interrupt
             # BY VALUE, NOT SPELLING. CommonMark reads `01.` as the number 1,
             # so it may interrupt a paragraph exactly as `1.` does; comparing
             # the text refused it and the fence below went unopened (Codex
             # adversarial, section 39 round 5, [high]).
             if marker[-1] in ".)" and int(marker[:-1]) != 1:
-                return rest          # only a marker whose value is 1 interrupts
+                return rest, base    # only a marker whose value is 1 interrupts
         if m.group(2):
+            if fill_state is not None and len(containers) < fill_state[1]:
+                fill_state[1] = len(containers)
             containers.append(["bq", 0, True])
+            if fill_state is not None:
+                fill_state[0] = len(containers)
             base += m.end()
             rest = rest[m.end():]
             # See `_match_containers`: the optional tab's width comes from the
@@ -1928,6 +2135,8 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
             # A BLANK-FIRST ITEM is provisional: CommonMark closes it if the
             # next line is also blank, so it is pushed with `filled=False`.
             containers.append(["li", marker_cols + 1, False])
+            if fill_state is not None:
+                fill_state[0] = len(containers) - 1
             rest = ""
             continue
         spaces = len(after) - len(after.lstrip(" "))
@@ -1954,6 +2163,8 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
             rest = (_dedent_cols(after, 1, abs_marker_end) if tabbed
                     else after[1:])
         containers.append(["li", content, True])
+        if fill_state is not None:
+            fill_state[0] = len(containers)
         base += content
         continue
 
@@ -2056,10 +2267,48 @@ def fence_scan(lines):
     open_line = 0            # index of the line that opened `state` / `html`
     fence_terminator = ""    # human-facing closer for the open fence
     para_open = False        # the previous line left a paragraph open
-    fill_state = [0]         # first container that may still be provisional
+    # [first container that may still be provisional, first blockquote index].
+    # Both are exact; `_match_containers` answers a blank line from them alone.
+    fill_state = [0, _NO_BQ]
     para_depth = 0           # the container depth that paragraph belongs to
+    html_indent = 0          # absolute column the open HTML block starts at
+    conts = bytearray()      # per line: the packed container projection
+    cont_exc = {}            # lineno -> remainder, when it is not a slice
+    leafs = None             # the same, with this line's OWN openers consumed
+    leaf_exc = {}
     for lineno, line in enumerate(lines):
-        matched, rest, base = _match_containers(containers, line)
+        matched, rest, base, cut = _match_containers(containers, line, fill_state)
+        # EMITTED HERE, BEFORE ANY BRANCH, because every `continue` below would
+        # otherwise have to remember to append and one of them would not --
+        # `conts` must stay index-parallel to `lines` for the walks that read
+        # it by index. The value is the post-MATCH remainder, which is what a
+        # leaf sees; containers this line OPENS are not stripped, so a
+        # `- [x] item` still reaches the item walk with its marker.
+        if 0 <= cut < _CONT_ESCAPE:
+            _packed = cut
+        else:
+            _packed = _CONT_ESCAPE
+            cont_exc[lineno] = rest
+            # SEEDED IN BOTH MAPS HERE, not only on the opener path below. Most
+            # branches of this loop `continue` before that path, so a line that
+            # escaped at MATCH time and never reached it left `leaf_exc` without
+            # the key -- and materialising `leafs` from `conts` copies the escape
+            # byte regardless, so `leaf_views` raised KeyError on a real corpus
+            # file the moment any LATER line diverged. The seed is the match-time
+            # remainder, which is precisely the leaf for every such line; the
+            # opener path overwrites it where it is not.
+            leaf_exc[lineno] = rest
+        if fill_state[1] < matched:
+            _packed |= _CONT_BQ
+        conts.append(_packed)
+        # `leafs` starts as "the same as `conts`" and is materialised only when
+        # a line first diverges, so it is appended in lockstep here and
+        # OVERWRITTEN by index after `_open_containers`. Keeping the two arrays
+        # the same length at every moment is what makes that index-write safe;
+        # a line that `continue`s before the opener phase simply keeps the
+        # match-time value, which for it IS the leaf.
+        if leafs is not None:
+            leafs.append(_packed)
         # A LEAF BLOCK DIES WITH ITS CONTAINER. When the list item or
         # blockquote holding an open fence stops matching, CommonMark ends the
         # fence there -- code blocks have no lazy continuation. This is not a
@@ -2088,6 +2337,35 @@ def fence_scan(lines):
                         out.append(True)
                         codes.append(html.code)
                         continue
+                    html = None
+                elif _is_blank(line) and _indent_cols(line) < html_indent:
+                    # AN UNDER-INDENTED BLANK ENDS A SUBSTRING-TERMINATED BLOCK,
+                    # and until section 45 it did not -- which ERASED graph data
+                    # rather than merely mis-masking one line. `## 1. Root` /
+                    # `- a` / an indented `<?pi` / a blank / an indented
+                    # `## 2. Real` + `- [x] Item` masked section 2 AND its item,
+                    # and because the next unindented line closes the block by
+                    # container exit there is no terminal error either: the
+                    # producer emitted a node missing a section the file plainly
+                    # has (Codex re-adversarial, section 42 round 6, [high]).
+                    # Reproduces for all five substring-terminated classes and,
+                    # with `<!--`, at `f3ea34fd6` -- so it PREDATES section 42's
+                    # widening rather than being introduced by it.
+                    #
+                    # This is markdown-it's `html_block` rule breaking on
+                    # `sCount < blkIndent`, and the scope is exactly that: a
+                    # fence in the identical shape agrees with the oracle in
+                    # both directions and is untouched, types 6 and 7 already
+                    # end on any blank above, and a root-level block has
+                    # `html_indent` 0 so no blank can be under it.
+                    #
+                    # GUARDED ON THE PHYSICAL LINE BEING BLANK, not on `rest`.
+                    # A bare `>` inside a blockquote-contained block leaves
+                    # `rest` empty while the line is not blank, and its
+                    # `blkIndent` is 0 rather than the absolute column -- the
+                    # blockquote case never reaches here because a blank line
+                    # cannot match `>` at all, so `matched` falls below `depth`
+                    # and the block ends on the branch below.
                     html = None
                 else:
                     # Types 1-5 consume THROUGH the terminator line; trailing
@@ -2135,10 +2413,33 @@ def fence_scan(lines):
                          and fence_step(None, rest) is not None)):
             out.append(False)
             codes.append(KIND_CODE_NONE)
+            # A LAZY LINE IS STILL INSIDE ITS CONTAINERS, and the packing above
+            # cannot know it: that flag came from `matched`, which is 0 on a
+            # line carrying no `>` at all. The stack is deliberately NOT
+            # truncated here, so the LIVE stack is the truth.
+            #
+            # PRE-EXISTING, and verified rather than assumed: the base producer
+            # emits the same edge for `## Inputs` / `> quoted paragraph` / a
+            # markerless table-shaped `-> XREF:` row, which CommonMark keeps
+            # inside the blockquote paragraph. Section 45 is where it becomes
+            # THIS function's problem, because the whole closure now asks one
+            # predicate instead of each walk re-reading a `>` that a lazy
+            # continuation never carried either (Codex adversarial, section 45
+            # round 3, [high]).
+            if fill_state[1] < len(containers):
+                conts[lineno] |= _CONT_BQ
+                if leafs is not None:
+                    leafs[lineno] |= _CONT_BQ
             continue
         del containers[matched:]
         if fill_state[0] > len(containers):
             fill_state[0] = len(containers)
+        # The first blockquote is gone with the truncation unless it survived
+        # it. Clamping to the new length instead of restoring the sentinel
+        # would leave an INDEX where "no blockquote" is meant, which the blank
+        # fast path reads as a stop at the top of the stack.
+        if fill_state[1] >= len(containers):
+            fill_state[1] = _NO_BQ
         # A PARAGRAPH BELONGS TO THE CONTAINER IT STARTED IN, and tracking only
         # a global "is a paragraph open" flag was wrong in the erasure
         # direction. In `1. first` / `2. second`, the paragraph `first` lives
@@ -2167,9 +2468,33 @@ def fence_scan(lines):
             codes.append(KIND_CODE_NONE)
             para_open = False
             continue
-        rest = _open_containers(
+        _pre_open = rest
+        rest, base = _open_containers(
             containers, rest, not (para_open and matched >= para_depth), base,
             fill_state)
+        # THE LEAF PROJECTION, recorded only where it differs from the matched
+        # one -- which is exactly the lines that open a container. When none
+        # does, `_open_containers` hands the SAME object back, so the identity
+        # test skips the whole block on the majority of lines.
+        if rest is not _pre_open:
+            _lcut = len(line) - len(rest) if line.endswith(rest) else -1
+            if 0 <= _lcut < _CONT_ESCAPE:
+                _lpacked = _lcut
+            else:
+                _lpacked = _CONT_ESCAPE
+                leaf_exc[lineno] = rest
+            if fill_state[1] < len(containers):
+                _lpacked |= _CONT_BQ
+            # `leaf_exc` is filled even while `leafs` is still None, and that is
+            # deliberate: materialising `leafs` from `conts` LATER copies this
+            # line's escape byte, so the map has to already hold the string it
+            # points at or `_project` would fault on a missing key.
+            if _lpacked != _packed:
+                if leafs is None:
+                    # `conts` already carries this line, so the copy is the
+                    # right length and only its last entry needs correcting.
+                    leafs = bytearray(conts)
+                leafs[lineno] = _lpacked
         # THE TWO GUARDS ARE THE HOT PATH, not micro-optimisation for its own
         # sake. `FENCE_RE` can only match a line containing a backtick or a
         # tilde and `HTML_BLOCK_COMMENT_RE` only one containing `<!--`, so an
@@ -2208,6 +2533,11 @@ def fence_scan(lines):
                 html = _rule
                 depth = len(containers)
                 open_line = lineno
+                # markdown-it's `blkIndent` for this block: the absolute column
+                # its content starts at, after every container prefix on the
+                # opening line. A later blank line indented below it ends the
+                # block; see the under-indent branch at the top of the loop.
+                html_indent = base
             out.append(True)
             codes.append(_rule.code)
             _fill(containers, fill_state)
@@ -2280,7 +2610,8 @@ def fence_scan(lines):
         terminal = Terminal(KIND_FENCE, 0, fence_terminator, open_line)
     elif html is not None and html.end_rule in _HTML_UNTERMINATABLE:
         terminal = Terminal(html.kind, html.number, html.terminator, open_line)
-    return ScanResult(lines, out, codes, terminal)
+    return ScanResult(lines, out, codes, terminal, conts, cont_exc,
+                      leafs, leaf_exc)
 
 
 def fence_mask(lines) -> list:
