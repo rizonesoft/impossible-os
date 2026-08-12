@@ -2214,6 +2214,7 @@ def test_container_phase_section45():
     B = load("build_s45", "scripts/todo-graph/build.py")
 
     _CONT_CUT = cs._CONT_CUT_MASK
+    _CONT_BQ = cs._CONT_BQ
 
     def hidden(text):
         r = cs.scan_text(text)
@@ -2504,10 +2505,10 @@ def test_container_phase_section45():
               r.views[2] == "## 2. Nested"
               and len(r.lines[2]) - len(r.views[2]) == cut)
         packed = r.conts[2] & _CONT_CUT
-        check("s45 ...encoded inline below 127 and escaped at or above it (%d)"
-              % cut,
-              (packed == cut and 2 not in r.cont_exc) if cut < 127
-              else (packed == _CONT_CUT and r.cont_exc[2] == "## 2. Nested"))
+        check("s45 ...encoded inline below the escape and escaped at or above "
+              "it (%d)" % cut,
+              (packed == cut and 2 not in r.cont_exc) if cut < cs._CONT_ESCAPE
+              else (packed == cs._CONT_ESCAPE and r.cont_exc[2] == "## 2. Nested"))
     # ...and the blockquote flag must survive the escape, since it shares the
     # byte: an escape that clobbered bit 7 would let a blockquoted `[x]` through.
     # A blockquote plus 64 list levels puts the MATCHED prefix at 130
@@ -2518,7 +2519,7 @@ def test_container_phase_section45():
               + "- [x] `q()` no\n")
     r = cs.scan_text(bqdeep)
     check("s45 the blockquote flag survives a cut past the escape value",
-          (r.conts[2] & _CONT_CUT) == _CONT_CUT and (r.conts[2] & 0x80) != 0
+          (r.conts[2] & _CONT_CUT) == cs._CONT_ESCAPE and (r.conts[2] & _CONT_BQ)
           and r.cont_exc[2] == "- [x] `q()` no")
     _bqd = B.scan_body(bqdeep)
     check("s45 ...so the deep blockquoted item is still rejected",
@@ -2669,6 +2670,46 @@ def test_container_phase_section45():
     # line array itself; an offset array per line would show up here.
     check("s45 ...so peak traced allocation stays proportionate (%.1f MB)"
           % (_peak / 1e6), _peak < 60_000_000)
+
+    # ---- The projection picks its representation by DENSITY. ----
+    # The identity short-circuit alone requires EVERY byte to be zero, so one
+    # container line anywhere forced two document-sized pointer lists: a 4 MiB
+    # blank document projected to 106 MB peak RSS and the same document with
+    # `- x` / `  y` appended to 180 MB, linear amplification that approaches
+    # 640 MB at the 16 MiB ceiling. The newline-only case could never show it,
+    # which is why the acceptance shape here is a LATE OPENER (Codex perf,
+    # section 45 post-ship, [high]).
+    _n = 200_000
+    _cases = (
+        ("no container at all -> `lines` itself", "\n" * _n, "list", True),
+        ("one late opener -> a sparse overlay", "\n" * _n + "- x\n  y\n",
+         "_Projection", False),
+        ("a real TODO file -> the dense list", None, "list", False),
+    )
+    for label, src, want_type, want_identity in _cases:
+        if src is None:
+            r = B.scan_body((REPO / "todo/00-infrastructure"
+                             / "TODO-06-todo-metadata-layer.md")
+                            .read_text(encoding="utf-8"))
+        else:
+            r = cs.scan_text(src)
+        v, lv = r.views, r.leaf_views
+        check("s45 %s (%s)" % (label, type(v).__name__),
+              type(v).__name__ == want_type
+              and (v is r.lines) == want_identity)
+        # WHICHEVER representation is chosen, the ANSWER is the same. An
+        # overlay that indexed or iterated differently from the dense list
+        # would be a silent producer divergence rather than a memory win.
+        check("s45 ...and it indexes, iterates and measures like a list",
+              len(v) == len(r.lines) and list(v) == [v[i] for i in range(len(v))]
+              and len(lv) == len(r.lines))
+        del r, v, lv
+    # The overlay must carry the container-stripped line, not the physical one.
+    _ov = cs.scan_text("\n" * _n + "- x\n  y\n")
+    check("s45 the overlay carries the stripped remainder, not the raw line",
+          _ov.views[-2] == "  y" and _ov.leaf_views[-2] == "  y"
+          and _ov.views[0] == "")
+    del _ov
 
     if not _oracle_ran[0]:
         _SKIPS.append("section 45 oracle agreement (markdown-it-py not installed)")

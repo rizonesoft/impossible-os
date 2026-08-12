@@ -1615,6 +1615,37 @@ _CONT_CUT_MASK = 0x7F
 _CONT_ESCAPE = 0x7F
 
 
+class _Projection:
+    """`lines` with a sparse set of container-stripped overrides on top.
+
+    The representation `ScanResult._project` picks when only a few lines carry
+    a container prefix, so a mostly-flat document pays for the differences
+    rather than for its length. It is a read-only SEQUENCE: the walks index it
+    (`leaf_views[i]`) and iterate it (`zip(views, masked)`), and `__iter__` is
+    written out rather than left to the `__getitem__` fallback so iteration
+    costs one dict lookup per line instead of a bound-method call.
+    """
+
+    __slots__ = ("_lines", "_over")
+
+    def __init__(self, lines, over):
+        self._lines = lines
+        self._over = over
+
+    def __len__(self):
+        return len(self._lines)
+
+    def __getitem__(self, i):
+        v = self._over.get(i)
+        return self._lines[i] if v is None else v
+
+    def __iter__(self):
+        over = self._over
+        if not over:
+            return iter(self._lines)
+        return (over.get(i, ln) for i, ln in enumerate(self._lines))
+
+
 class ScanResult:
     """`fence_scan` / `scan_text` result -- DELIBERATELY NOT A TUPLE.
 
@@ -1681,21 +1712,48 @@ class ScanResult:
     def _project(self, conts, exc):
         """Decode one packed array into index-parallel lines.
 
-        IDENTITY SHORT-CIRCUIT when no line carries a prefix: the result IS
-        `lines`, so a document with no containers -- and the newline-only worst
-        case the memory budget above is written against -- allocates nothing at
-        all. `bytearray.count` runs in C.
+        THREE REPRESENTATIONS, chosen by DENSITY, because the obvious two were
+        not enough. An identity short-circuit alone requires every byte to be
+        zero, so ONE container line anywhere in a document forced two dense
+        pointer lists: measured 2026-08-12, a 4 MiB blank document projected to
+        106 MB peak RSS, and the same document with `- x` / `  y` appended
+        projected to 180 MB -- linear amplification that at the 16 MiB ceiling
+        approaches 640 MB and stalls every builder and gate. On the live corpus
+        the identity case reached only 11 of 233 files for `views` and 0 of 233
+        for `leaf_views`, so it was never the common path either (Codex perf,
+        section 45 post-ship, [high]).
 
-        Materialised ONCE per document and shared by every walk, rather than
-        recomputed per walk or exposed as a per-line method call: five walks
-        over ~90,800 corpus lines is 450k slices or 450k method calls either
-        way, and the shared list pays it once. A line whose cut is 0 yields the
-        SAME string object, so the list is mostly pointers to strings that
-        already exist.
+        - NOTHING differs -> `lines` itself, no allocation.
+        - FEW lines differ -> a `_Projection` overlay holding just those, so the
+          cost is the number of differing lines rather than the document length.
+        - MANY differ (a real TODO file) -> the dense list, which is fastest and
+          whose size is proportionate to what actually changed.
+
+        The dense form is materialised ONCE per document and shared by every
+        walk rather than recomputed per walk: five walks over ~90,800 corpus
+        lines is 450k slices either way, and the shared list pays it once. A
+        line whose cut is 0 yields the SAME string object, so even the dense
+        list is mostly pointers to strings that already exist.
         """
-        if conts.count(0) == len(conts):
+        n = len(conts)
+        n_same = conts.count(0)
+        if n_same == n:
             return self.lines
         lines = self.lines
+        # The overlay stores one entry per DIFFERING line and is worth its
+        # per-access indirection only while that stays a small fraction of the
+        # document; above the threshold the dense list is both smaller and
+        # faster. An eighth is well clear of the corpus, where the median file
+        # has roughly a fifth of its lines inside a container.
+        if (n - n_same) * 8 < n:
+            over = {}
+            for i, b in enumerate(conts):
+                c = b & _CONT_CUT_MASK
+                if c == _CONT_ESCAPE:
+                    over[i] = exc[i]
+                elif c:
+                    over[i] = lines[i][c:]
+            return _Projection(lines, over)
         out = []
         for i, b in enumerate(conts):
             c = b & _CONT_CUT_MASK
@@ -1750,7 +1808,14 @@ class ScanResult:
         """Is line `i` inside a blockquote, counting one it OPENS itself?
 
         A blockquote in this corpus is a quoted example or a stamp, and nothing
-        inside one is graph data. Every walk used to get that for free, because
+        inside one is SECTION-CONTEXT graph data. The policy is scoped to the
+        five walks in `build.py` that carry section context, and the exception
+        is deliberate rather than an oversight: `_walk_stamps_xrefs` parses
+        `> **Accepted:**` / `> **Deferred:**` lines, which ARE blockquote-native
+        graph edges, so it stays on physical lines and never consults this
+        predicate (Codex consistency, section 45 post-ship, [low]).
+
+        Within that scope every walk used to get the answer for free, because
         the `>` survived in the physical text each of them matched against.
         Container stripping deletes the marker, so the fact has to be published
         or the guarantee silently inverts: measured before this was added,
@@ -1944,6 +2009,15 @@ def _match_containers(containers, line: str, stack_state):
     otherwise; those two invariants are what make the forms equivalent, and
     they are maintained in `_open_containers` and in `fence_scan`'s truncation.
     """
+    if not containers:
+        # AN EMPTY STACK ANSWERS BOTH CASES IDENTICALLY, so asking whether the
+        # line is blank first is pure tax on the commonest line in the corpus --
+        # a root-level one. Measured across 1,000,001 root blank lines: 669.2ms
+        # before this section, 887.0ms with the blank check unconditional, and
+        # 790.5ms with this early return, recovering ~44% of that regression
+        # without touching the O(1) nested-blank property below (Codex perf,
+        # section 45 post-ship, [medium]).
+        return 0, line, 0, 0
     if _is_blank(line):
         n = len(containers)
         stop = stack_state[0]
@@ -2225,8 +2299,13 @@ def fence_step(state, line: str):
 
 
 def fence_scan(lines):
-    """`(mask, unclosed_fence, unclosed_comment)` in ONE traversal -- the
-    primitive `fence_mask` wraps.
+    """The `ScanResult` for `lines`, in ONE traversal -- what `fence_mask`
+    wraps.
+
+    It returned the three-tuple `(mask, unclosed_fence, unclosed_comment)` until
+    section 42 replaced that with `ScanResult`; the signature sentence went
+    stale in the same edit and is corrected here (Codex consistency, section 45
+    post-ship, [low]).
 
     COMMENT-AWARE, in the same ORDER `validate.py:_scan_markdown` uses: a line
     is tested for fence state FIRST (inside a fence a `<!--` is literal text),
