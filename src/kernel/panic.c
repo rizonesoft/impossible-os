@@ -838,6 +838,17 @@ void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
 
 /* --- Fault-safe frame-chain walk --- */
 
+/* The kernel image window, same source of truth the RTL walker uses. */
+extern char __text_start[];
+extern char __text_end[];
+
+static int panic_is_kernel_text(uint64_t pc)
+{
+    return pc >= (uint64_t)(uintptr_t)__text_start &&
+           pc <  (uint64_t)(uintptr_t)__text_end;
+}
+
+
 /* Both terminal renderers (BSOD and disk dump) used to walk the RBP chain by
  * raw dereference, gated only by a hardcoded address window -- so a corrupt but
  * in-window RBP took a terminal fault in the very abort context the caller
@@ -861,7 +872,13 @@ uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
     if (!out || !count || !serial_emerg_ctx_allows_guarded_read(ctx))
         return 0u;
 
-    if (frame) {
+    /* A RING-3 frame carries the USER stack pointers, and this renders a KERNEL
+     * stack trace onto the BSOD and into crashdump.log. vmm.c calls panic_screen
+     * with a user-mode frame, so those values are not merely corrupt but
+     * attacker-INFLUENCED; walking them would print user memory as kernel
+     * frames. Use this CPU's live kernel registers instead -- the kernel stack
+     * is what the trace is supposed to describe. */
+    if (frame && (frame->cs & 0x3u) == 0u) {
         rbp = frame->rbp;
         lo  = frame->rsp;
     } else {
@@ -873,12 +890,14 @@ uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
 
     /* An IST entry (#DF/#MC/NMI) switched stacks, so the frame's RSP and RBP
      * describe the INTERRUPTED stack and stay a coherent pair; the live-RBP
-     * fallback above pairs with the live RSP for the same reason. */
+     * fallback above pairs with the live RSP for the same reason.
+     *
+     * The wrap guard is the only bound check needed before computing `hi`: it
+     * proves hi == lo + PANIC_STACK_SPAN >= lo + 16, so a further `hi < lo + 16`
+     * test could never fire and is deliberately not written. */
     if (lo > ~(uint64_t)0 - PANIC_STACK_SPAN)
         return 0u;                       /* span would wrap */
     hi = lo + PANIC_STACK_SPAN;
-    if (hi < lo + 16u)
-        return 0u;                       /* no room for a full [rbp, rbp+16) */
 
     while (n < count && n < PANIC_MAX_STACK_DEPTH) {
         uint64_t saved_rbp, ret;
@@ -896,7 +915,11 @@ uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
             break;
         if (__kstack_read_u64(&saved_rbp, (const void *)(uintptr_t)rbp) != 0)
             break;
-        if (ret == 0u)
+        /* Same acceptance test the RTL walker applies (rtlp_is_code_pc): a
+         * return address outside the kernel text is not a kernel frame. Without
+         * it the two walkers were only NEARLY equivalent, and this is the check
+         * that keeps a ring-3 or wild chain from rendering data as a trace. */
+        if (ret == 0u || !panic_is_kernel_text(ret))
             break;
 
         out[n++] = ret;
@@ -905,6 +928,50 @@ uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
     }
 
     return n;
+}
+
+/* --- Crash-dump append helpers: capacity-aware, always NUL-terminated ---
+ *
+ * `cap` is the FULL buffer size and one byte is always reserved for the
+ * terminator, so *pos never reaches cap and buf[*pos] is always writable.
+ * `s` may be NULL (renders nothing) so a caller need not special-case it. */
+static void cd_put(char *buf, uint32_t cap, uint32_t *pos, const char *s)
+{
+    if (!s || cap == 0u)
+        return;
+    while (*s && *pos + 1u < cap)
+        buf[(*pos)++] = *s++;
+    buf[*pos] = '\0';
+}
+
+/* Hex, `digits` wide zero-padded, or compact when digits == 0. */
+static void cd_put_hex(char *buf, uint32_t cap, uint32_t *pos, uint64_t v,
+                       int digits)
+{
+    char tmp[17];
+    int i;
+
+    if (digits > 0) {
+        for (i = digits - 1; i >= 0; i--) {
+            tmp[i] = "0123456789ABCDEF"[v & 0xFu];
+            v >>= 4;
+        }
+        tmp[digits] = '\0';
+        cd_put(buf, cap, pos, tmp);
+        return;
+    }
+
+    i = 16;
+    tmp[i] = '\0';
+    if (v == 0u) {
+        tmp[--i] = '0';
+    } else {
+        while (v && i > 0) {
+            tmp[--i] = "0123456789abcdef"[v & 0xFu];
+            v >>= 4;
+        }
+    }
+    cd_put(buf, cap, pos, &tmp[i]);
 }
 
 /* --- Crash dump to file --- */
@@ -918,143 +985,78 @@ uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
  * never ran at all when an earlier consumer faulted on the original. */
 static int write_crash_dump(struct interrupt_frame *frame, uint32_t ctx,
                             const char *description, const char *file,
-                            uint32_t line)
+                            uint32_t line, const uint64_t *frames,
+                            uint32_t nframes)
 {
     char buf[2048];
-    int pos = 0;
-    uint64_t cr2_val;
-    uint64_t cr3_val;
-    uint64_t frames[PANIC_MAX_STACK_DEPTH];
-    uint32_t nframes;
+    uint32_t pos = 0u;
     uint32_t depth;
     char num[12];
 
     if (!vfs_is_mounted('C'))
         return 0;
 
-    /* Build crash dump text manually (no snprintf in freestanding) */
-    /* Header */
+    /* Build crash dump text manually (no snprintf in freestanding).
+     *
+     * EVERY append goes through cd_put, including the single-character
+     * delimiters and the final terminator. The previous shape bounded only the
+     * string copies (`while (*s && pos < 2040)`) and then wrote `buf[pos++] =
+     * '\n'` unchecked at five sites, one of them once per frame -- so a full
+     * dump could reach 2040 and then walk to 2059, past the end of a 2 KiB
+     * buffer sitting on an IST stack, corrupting the very frame it was writing
+     * a crash report from. A capacity-aware helper is the only shape where that
+     * cannot come back: there is no unbounded write left to overlook. */
     {
-        const char *hdr = "=== IMPOSSIBLE OS CRASH DUMP ===\n";
-        const char *s = hdr;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-    }
+        cd_put(buf, sizeof buf, &pos, "=== IMPOSSIBLE OS CRASH DUMP ===\n");
 
-    /* Description */
-    {
-        const char *s;
-        const char *lbl = "Description: ";
-        s = lbl;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-        s = description;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-        buf[pos++] = '\n';
-    }
+        cd_put(buf, sizeof buf, &pos, "Description: ");
+        cd_put(buf, sizeof buf, &pos, description);
+        cd_put(buf, sizeof buf, &pos, "\n");
 
-    /* File:line */
-    if (file) {
-        const char *lbl = "Source: ";
-        const char *s = lbl;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-        s = file;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-        buf[pos++] = ':';
-        itoa_simple(line, num);
-        s = num;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-        buf[pos++] = '\n';
-    }
-
-    /* Registers from frame */
-    if (frame) {
-        const char *rlbl = "\nRegisters:\n";
-        const char *s = rlbl;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-
-        /* We'll just note that registers are available in the frame */
-        {
-            const char *note = "  (See serial output for full register dump)\n";
-            s = note;
-            while (*s && pos < 2040) buf[pos++] = *s++;
+        if (file) {
+            cd_put(buf, sizeof buf, &pos, "Source: ");
+            cd_put(buf, sizeof buf, &pos, file);
+            cd_put(buf, sizeof buf, &pos, ":");
+            itoa_simple(line, num);
+            cd_put(buf, sizeof buf, &pos, num);
+            cd_put(buf, sizeof buf, &pos, "\n");
         }
+
+        if (frame) {
+            cd_put(buf, sizeof buf, &pos, "\nRegisters:\n");
+            cd_put(buf, sizeof buf, &pos,
+                   "  (See serial output for full register dump)\n");
+        }
+
+        cd_put(buf, sizeof buf, &pos, "\nStack Trace:\n");
     }
 
-    /* Stack trace */
-    cr2_val = read_cr2();
-    cr3_val = read_cr3();
-    (void)cr2_val;
-    (void)cr3_val;
+    /* The trace was captured ONCE by the caller, before the BSOD rendered it.
+     * Walking it again here would repeat up to 32 guarded reads over the same
+     * stack and -- on a software panic, where the walk starts from live
+     * registers -- describe a DIFFERENT stack than the one the user just read
+     * off the screen. */
+    if (nframes == 0u && !serial_emerg_ctx_allows_guarded_read(ctx))
+        cd_put(buf, sizeof buf, &pos, "  " PANIC_TRACE_NO_GUARD "\n");
 
-    {
-        const char *stlbl = "\nStack Trace:\n";
-        const char *s = stlbl;
-        while (*s && pos < 2040) buf[pos++] = *s++;
-    }
-
-    nframes = panic_capture_frames(frame, ctx, frames, PANIC_MAX_STACK_DEPTH);
-    if (nframes == 0u && !serial_emerg_ctx_allows_guarded_read(ctx)) {
-        const char *s = "  " PANIC_TRACE_NO_GUARD "\n";
-        while (*s && pos < 2040) buf[pos++] = *s++;
-    }
-
-    for (depth = 0; depth < nframes; depth++) {
+    for (depth = 0u; depth < nframes; depth++) {
         uint64_t ret_addr = frames[depth];
+        uint64_t sym_off = 0;
+        const char *sym_name = symtab_resolve(ret_addr, &sym_off);
 
-        {
-            const char *fr = "  #";
-            const char *s = fr;
-            while (*s && pos < 2040) buf[pos++] = *s++;
-            itoa_simple(depth, num);
-            s = num;
-            while (*s && pos < 2040) buf[pos++] = *s++;
-            {
-                const char *at = " at 0x";
-                s = at;
-                while (*s && pos < 2040) buf[pos++] = *s++;
-            }
-            /* Hex format for return address */
-            {
-                uint64_t v = ret_addr;
-                char hex[17];
-                int hi;
-                for (hi = 15; hi >= 0; hi--) {
-                    uint32_t nib = (uint32_t)(v & 0xF);
-                    hex[hi] = "0123456789ABCDEF"[nib];
-                    v >>= 4;
-                }
-                hex[16] = '\0';
-                s = hex;
-                while (*s && pos < 2040) buf[pos++] = *s++;
-            }
-            /* Resolve symbol name */
-            {
-                uint64_t sym_off = 0;
-                const char *sym_name = symtab_resolve(ret_addr, &sym_off);
-                if (sym_name) {
-                    const char *sp = "  ";
-                    s = sp;
-                    while (*s && pos < 2040) buf[pos++] = *s++;
-                    s = sym_name;
-                    while (*s && pos < 2040) buf[pos++] = *s++;
-                    const char *plus = "+0x";
-                    s = plus;
-                    while (*s && pos < 2040) buf[pos++] = *s++;
-                    /* Hex offset (compact) */
-                    char ohex[17];
-                    int oi = 16;
-                    ohex[oi] = '\0';
-                    uint64_t ov = sym_off;
-                    if (ov == 0) { ohex[--oi] = '0'; }
-                    else { while (ov && oi > 0) { ohex[--oi] = "0123456789abcdef"[ov & 0xF]; ov >>= 4; } }
-                    s = &ohex[oi];
-                    while (*s && pos < 2040) buf[pos++] = *s++;
-                }
-            }
-            buf[pos++] = '\n';
+        cd_put(buf, sizeof buf, &pos, "  #");
+        itoa_simple(depth, num);
+        cd_put(buf, sizeof buf, &pos, num);
+        cd_put(buf, sizeof buf, &pos, " at 0x");
+        cd_put_hex(buf, sizeof buf, &pos, ret_addr, 16);
+        if (sym_name) {
+            cd_put(buf, sizeof buf, &pos, "  ");
+            cd_put(buf, sizeof buf, &pos, sym_name);
+            cd_put(buf, sizeof buf, &pos, "+0x");
+            cd_put_hex(buf, sizeof buf, &pos, sym_off, 0);
         }
+        cd_put(buf, sizeof buf, &pos, "\n");
     }
-
-    buf[pos] = '\0';
 
     /* Ensure the directory exists and write the crash dump */
     {
@@ -1074,17 +1076,15 @@ static int write_crash_dump(struct interrupt_frame *frame, uint32_t ctx,
             "C:\\Impossible\\System\\crashdump.log",
             VFS_O_WRITE | VFS_O_TRUNC);
         if (dump_file) {
-            int wrote = vfs_write(dump_file, 0, (uint32_t)pos,
+            int wrote = vfs_write(dump_file, 0, pos,
                                   (const uint8_t *)buf);
             int flushed = vfs_flush(dump_file);
             vfs_close(dump_file);
-            return wrote == pos && flushed == 0;
+            return wrote == (int)pos && flushed == 0;
         }
     }
     return 0;
 }
-
-/* --- Main panic screen --- */
 
 /* ============================================================================
  * Panic forensic evidence -- cross-boot crash record
@@ -1150,12 +1150,15 @@ static int panic_evidence_reserve(void)
     return prev == PANIC_EVIDENCE_NO_OWNER;
 }
 
-/* Whether the record belongs to this CPU at all -- the backstop for a caller
- * that reaches panic_collect_evidence without having reserved. */
-static int panic_evidence_owned_here(void)
+/* Whether the record belongs to `me` -- the backstop for a caller that reaches
+ * panic_collect_evidence without having reserved. The identity is passed IN
+ * rather than re-derived: cpu_panic_safe_apic_id executes CPUID, which
+ * serializes and exits to the hypervisor under KVM/WHPX, and the collector would
+ * otherwise pay for it four times on a path whose whole cost function is
+ * instructions-between-fault-and-durable-record. */
+static int panic_evidence_owned_by(uint32_t me)
 {
-    return __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE) ==
-           cpu_panic_safe_apic_id();
+    return __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE) == me;
 }
 
 /* Off-stack klog scratch: the collector may run on a small IST stack (#DF), so
@@ -1235,15 +1238,17 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
      * Raw physical writes only -- no kmalloc / VFS / printk / spinlock here. */
     struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
     uint32_t ctx;
+    uint32_t me;
 
     /* On an SMP double-panic two CPUs must not both write the fixed 0x80000
      * page / shared scratch. Ownership is normally decided at panic entry by
      * panic_evidence_reserve, which admits exactly ONE invocation per boot; a
      * caller that skipped that step claims here instead, so this function is
      * still correct standing alone. Non-owners return untouched. */
-    if (!panic_evidence_owned_here())
+    me = cpu_panic_safe_apic_id();
+    if (!panic_evidence_owned_by(me))
         (void)panic_evidence_reserve();
-    if (!panic_evidence_owned_here())
+    if (!panic_evidence_owned_by(me))
         return;
 
     /* A COMPLETE record already stands -- a nested fault during BSOD render must
@@ -1297,7 +1302,7 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
 
     /* Same panic-safe identity the serial owner word and the NMI depth use, so a
      * crash record names the CPU those two are keyed by. */
-    ev->cpu_id = cpu_panic_safe_apic_id();
+    ev->cpu_id = me;
     ev->line           = line;
     ev->pmm_free_pages = pmm_get_free_frames();
     /* Legacy PIC mask via port I/O (fault-safe); best-effort IRQ-state proxy. */
@@ -1364,9 +1369,15 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
     {
         uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
         ev->crc32 = panic_crc32((const uint8_t *)ev + off, ev->size - off);
-        /* Flag first, magic last -- see the completion gate at the top. */
+        /* Flag first, magic last -- see the completion gate at the top. BOTH
+         * stores are atomic, because the ordering is the guarantee: a RELEASE
+         * store is a one-way barrier that stops earlier accesses sinking below
+         * it and says nothing about a LATER plain store being hoisted above it.
+         * Written that way the compiler could legally emit magic-then-flag,
+         * which is precisely the arrangement the gate's comment says leaves one
+         * instruction where a nested abort erases a valid record. */
         __atomic_store_n(&s_evidence_published, 1, __ATOMIC_RELEASE);
-        ev->magic = PANIC_EVIDENCE_MAGIC;
+        __atomic_store_n(&ev->magic, PANIC_EVIDENCE_MAGIC, __ATOMIC_RELEASE);
     }
 }
 
@@ -2091,9 +2102,12 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
            (uint64_t)(uintptr_t)version_git_hash());
 
     /* === Write crash dump to disk === */
+    /* The SAME capture the BSOD rendered above, not a second walk: sharing it
+     * halves the guarded reads on the terminal path and guarantees the screen
+     * and the file describe one stack. */
     int dump_written = write_crash_dump(frame, snap_ctx, desc_snap,
                                         have_file ? file_snap : (const char *)0,
-                                        line);
+                                        line, frames, nframes);
 
     /* === Persist klog ring buffer to reserved physical memory === */
     klog_crash_persist();

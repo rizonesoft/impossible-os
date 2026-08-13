@@ -35,6 +35,17 @@ static int td_streq(const char *a, const char *b)
     return a[i] == b[i];
 }
 
+/* Return addresses must lie inside the kernel text window: the walker applies
+ * the same code-PC test the RTL walker does (rtlp_is_code_pc), so a made-up
+ * 0xFFFFFFFF8000xxxx constant is correctly REJECTED and a fixture built from
+ * one measures nothing. Offsets into a real function in this translation unit
+ * give distinct, valid PCs -- td_streq is a loop, comfortably larger than the
+ * offsets used here, and anything past it is still kernel text. */
+static uint64_t td_pc(uint32_t i)
+{
+    return (uint64_t)(uintptr_t)&td_streq + (uint64_t)(i * 2u);
+}
+
 static void test_panic_snap_copies_normal(void)
 {
     char dst[64];
@@ -170,17 +181,17 @@ static void test_panic_frames_walks_chain(void)
     uint32_t n;
 
     chain[0] = (uint64_t)(uintptr_t)&chain[2];   /* saved rbp -> next frame */
-    chain[1] = 0xFFFFFFFF80001111ull;            /* return address */
+    chain[1] = td_pc(0u);                        /* return address */
     chain[2] = 0u;                               /* chain terminator */
-    chain[3] = 0xFFFFFFFF80002222ull;
+    chain[3] = td_pc(1u);
 
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[0],
                   (uint64_t)(uintptr_t)&chain[0]);
 
     n = panic_capture_frames(&f, PANIC_CTX_NORMAL, out, 4u);
     TEST_ASSERT_EQ((uint64_t)n, 2u, "walker records both synthetic frames");
-    TEST_ASSERT_EQ(out[0], 0xFFFFFFFF80001111ull, "frame 0 return address");
-    TEST_ASSERT_EQ(out[1], 0xFFFFFFFF80002222ull, "frame 1 return address");
+    TEST_ASSERT_EQ(out[0], td_pc(0u), "frame 0 return address");
+    TEST_ASSERT_EQ(out[1], td_pc(1u), "frame 1 return address");
 }
 
 static void test_panic_frames_nmi_returns_zero(void)
@@ -201,9 +212,9 @@ static void test_panic_frames_nmi_returns_zero(void)
      * serial_emerg_ctx_allows_guarded_read decision, and its tests above ARE
      * read-discriminating (a leaking gate renders UNREADABLE, not NO_GUARD). */
     chain[0] = (uint64_t)(uintptr_t)&chain[2];
-    chain[1] = 0xFFFFFFFF80001111ull;
+    chain[1] = td_pc(0u);
     chain[2] = 0u;
-    chain[3] = 0xFFFFFFFF80002222ull;
+    chain[3] = td_pc(1u);
     out[0] = out[1] = out[2] = out[3] = 0xD1D1D1D1D1D1D1D1ull;
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[0],
                   (uint64_t)(uintptr_t)&chain[0]);
@@ -234,7 +245,7 @@ static uint64_t td_build_chain(uint64_t *chain, uint32_t frames)
         chain[i * 2u]      = (i + 1u < frames)
                            ? (uint64_t)(uintptr_t)&chain[(i + 1u) * 2u]
                            : 0u;                        /* terminator */
-        chain[i * 2u + 1u] = 0xFFFFFFFF80000000ull + i; /* return address */
+        chain[i * 2u + 1u] = td_pc(i);               /* return address */
     }
     return (uint64_t)(uintptr_t)&chain[0];
 }
@@ -258,7 +269,7 @@ static void test_panic_frames_clamps_count(void)
     n = panic_capture_frames(&f, PANIC_CTX_NORMAL, out, 64u);
     TEST_ASSERT_EQ((uint64_t)n, (uint64_t)PANIC_MAX_STACK_DEPTH,
                    "an oversized count is clamped to PANIC_MAX_STACK_DEPTH");
-    TEST_ASSERT_EQ(out[PANIC_MAX_STACK_DEPTH - 1u], 0xFFFFFFFF80000000ull + 15u,
+    TEST_ASSERT_EQ(out[PANIC_MAX_STACK_DEPTH - 1u], td_pc(15u),
                    "the last recorded frame is the 16th of the chain");
     TEST_ASSERT_EQ(out[PANIC_MAX_STACK_DEPTH], 0xD1D1D1D1D1D1D1D1ull,
                    "the 17th chain frame is not written");
@@ -280,7 +291,7 @@ static void test_panic_frames_honours_small_count(void)
 
     TEST_ASSERT_EQ((uint64_t)panic_capture_frames(&f, PANIC_CTX_NORMAL, out, 1u),
                    1u, "a count of 1 records exactly one frame");
-    TEST_ASSERT_EQ(out[0], 0xFFFFFFFF80000000ull, "and it is the innermost one");
+    TEST_ASSERT_EQ(out[0], td_pc(0u), "and it is the innermost one");
     TEST_ASSERT_EQ(out[1], 0xD1D1D1D1D1D1D1D1ull, "nothing past the requested count");
 }
 
@@ -291,7 +302,7 @@ static void test_panic_frames_zero_count(void)
     struct interrupt_frame f;
 
     chain[0] = 0u;
-    chain[1] = 0xFFFFFFFF80001111ull;
+    chain[1] = td_pc(0u);
     out[0] = 0xD1D1D1D1D1D1D1D1ull;
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[0],
                   (uint64_t)(uintptr_t)&chain[0]);
@@ -321,7 +332,7 @@ static void test_panic_frames_rejects_above_span(void)
     struct interrupt_frame f;
 
     chain[0] = 0u;
-    chain[1] = 0xFFFFFFFF80001111ull;
+    chain[1] = td_pc(0u);
     /* RBP more than one span above RSP is not a frame on this stack. */
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[0] - 0x20000ull,
                   (uint64_t)(uintptr_t)&chain[0]);
@@ -337,7 +348,7 @@ static void test_panic_frames_rejects_misaligned(void)
     struct interrupt_frame f;
 
     chain[0] = 0u;
-    chain[1] = 0xFFFFFFFF80001111ull;
+    chain[1] = td_pc(0u);
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[0],
                   (uint64_t)(uintptr_t)&chain[0] + 1u);
 
@@ -352,7 +363,7 @@ static void test_panic_frames_rejects_below_sp(void)
     struct interrupt_frame f;
 
     chain[0] = 0u;
-    chain[1] = 0xFFFFFFFF80001111ull;
+    chain[1] = td_pc(0u);
     /* RBP below the interrupted RSP is not a live frame. */
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[4],
                   (uint64_t)(uintptr_t)&chain[0]);
@@ -368,7 +379,7 @@ static void test_panic_frames_breaks_on_cycle(void)
     struct interrupt_frame f;
 
     chain[0] = (uint64_t)(uintptr_t)&chain[0];   /* points at itself */
-    chain[1] = 0xFFFFFFFF80001111ull;
+    chain[1] = td_pc(0u);
     td_fill_frame(&f, (uint64_t)(uintptr_t)&chain[0],
                   (uint64_t)(uintptr_t)&chain[0]);
 

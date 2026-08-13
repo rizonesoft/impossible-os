@@ -349,8 +349,16 @@ int __uaccess_touch_w(void *addr);
  * by RIP alone (read direction), redirected BEFORE the swap/mmap pager. SCOPE: it
  * is for ALWAYS-RESIDENT kernel memory (kernel stacks) reached in a context that
  * can take a #PF -- it does NOT page in swapped/demand/user memory (such a read
- * faults and returns -1, never resolved), and recovery is unavailable from a
- * #DF/#MC/NMI abort context. Rejects NULL out, a top-of-address-space wrap, and
+ * faults and returns -1, never resolved).
+ *
+ * CONTEXT: identical to __kread_u8 below, which states the per-context table in
+ * full -- #DF and #MC are SAFE, NMI is UNSAFE, and a GS-corrupt panic is outside
+ * recovery entirely. This block previously said "recovery is unavailable from a
+ * #DF/#MC/NMI abort context", which contradicted that table for the SAME
+ * mechanism; the coarse wording was the stale one, and the panic-path frame
+ * walker (panic_capture_frames) depends on the #DF case being usable, since a
+ * kernel stack overflow arriving as #DF is the motivating reason IST exists.
+ * Rejects NULL out, a top-of-address-space wrap, and
  * non-canonical operands up front (those would #GP, not #PF). Returns 0 on
  * success (*out = value read), -1 if it faulted or was rejected (*out untouched). */
 int __kstack_read_u64(uint64_t *out, const void *addr);

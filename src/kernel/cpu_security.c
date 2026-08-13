@@ -368,10 +368,13 @@ int __kstack_read_u64(uint64_t *out, const void *addr)
      * canonical space and let the load straddle the linear-address boundary and
      * raise #GP, which the #PF-only fixup cannot recover. Then require BOTH the
      * base and the last byte canonical (a non-canonical operand also #GPs).
-     * NOTE: recovery relies on normal #PF delivery, so this is only fault-safe for
-     * RESIDENT kernel memory reached in a context that can take a #PF (not from a
-     * #DF/#MC/NMI abort handler); pageable/user memory read here faults and
-     * returns -1 rather than being paged in. */
+     * NOTE: recovery relies on normal #PF delivery, so this is only fault-safe
+     * for RESIDENT kernel memory reached in a context that can take a #PF;
+     * pageable/user memory read here faults and returns -1 rather than being
+     * paged in. For WHICH abort contexts qualify, see the per-context table in
+     * cpu_security.h -- #DF and #MC are safe, NMI is not. The coarse
+     * "not from a #DF/#MC/NMI abort handler" wording that stood here
+     * contradicted that table for the same mechanism. */
     if (a > ~(uint64_t)0 - 7u)
         return -1;
     if (!MM_IS_CANONICAL_4LVL(a) || !MM_IS_CANONICAL_4LVL(a + 7u))

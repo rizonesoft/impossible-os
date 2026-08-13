@@ -82,7 +82,16 @@ static void gdt_set_tss(uint32_t index, uint64_t base, uint32_t limit)
 /* IST stacks for critical exceptions. Each IST = 1 guard page (bottom) +
  * IST_STACK_PAGES usable pages. 4 KiB was too tight: the #DF/NMI/MCE path
  * falls through to panic_screen() -> write_crash_dump(), which puts a 2 KiB
- * buffer on the stack before the VFS/NVRAM/framebuffer render chain. */
+ * buffer on the stack before the VFS/NVRAM/framebuffer render chain.
+ *
+ * The panic path's stack consumers, kept current because overflowing IST1 while
+ * already handling #DF hits the guard page and triple-faults -- the exact
+ * failure IST exists to prevent. panic_screen_impl holds the caller-string
+ * snapshot desc_snap[256] + file_snap[64] and the shared frame capture
+ * frames[PANIC_MAX_STACK_DEPTH] (128 B) live across its whole body; below it
+ * write_crash_dump adds char buf[2048]. That is ~2.5 KiB of named locals inside
+ * 8 KiB, before the VFS chain. Anything that adds a large panic-path local
+ * belongs in this list. */
 #define IST_STACK_PAGES 2   /* usable pages above the guard (8 KiB) */
 
 /* Allocate one IST stack with a guard page at the bottom; return the stack
