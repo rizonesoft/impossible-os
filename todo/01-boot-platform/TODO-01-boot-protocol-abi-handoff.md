@@ -92,7 +92,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | ⭐  |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [x]   |
 | 💎  |  20   | Bootloader build identity in handoff               | §1, §2, §17                        |  [x]   |
 | 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [x]   |
-| ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [ ]   |
+| ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
 
 ---
 
@@ -780,26 +780,32 @@ From the stamped section 1:
 
 §21 made `BOOT_INFO_PHYS_ADDR` a single definition at COMPILE time, which removes drift between the two halves of one build. It does not remove skew between two artifacts built at different times and deployed separately: the canonical ABI token hashes only `(version, struct_size, per-field name/offset/size)` (`tools/boot-info-manifest/dump-common.h:32-38`) and the bootloader's pre-jump check compares only `{magic, version, struct_size, sha256}` (`src/boot/uefi/bootx64.c:7036`). Moving the base changes none of those four, so a mixed pair still shakes hands. Filed from §21's adversarial review as an accepted out-of-scope finding: the fix edits the ABI generator, which is receipt-surface machinery an unattended run may not touch.
 
-- [ ] Add `BOOT_INFO_PHYS_ADDR` to the canonical byte stream in [`dump-common.h`](../../tools/boot-info-manifest/dump-common.h) and bump the token prefix `BOOTINFO-ABI-V1` -> `V2` so old and new hashes cannot collide.
-- [ ] Emit the base in both manifest views so `compare.sh` diffs it directly rather than leaning on the advisory hash. -> XREF: [§2](#2-generated-abi-manifest-and-offset-fingerprint), [§3](#3-full-bootloaderkernel-mirror-drift-checker).
+- [/] Add `BOOT_INFO_PHYS_ADDR` to the canonical byte stream in [`dump-common.h`](../../tools/boot-info-manifest/dump-common.h) and bump the token prefix `BOOTINFO-ABI-V1` -> `V2` so old and new hashes cannot collide.
+- [/] Emit the base in both manifest views so `compare.sh` diffs it directly rather than leaning on the advisory hash. -> XREF: [§2](#2-generated-abi-manifest-and-offset-fingerprint), [§3](#3-full-bootloaderkernel-mirror-drift-checker).
   - Both views are `dump-kernel.c` and `dump-mirror.c` under `tools/boot-info-manifest/`.
-- [ ] Extend the `.bootproto` descriptor + pre-jump comparison so a stale loader REFUSES a kernel built at a different base, observed-vs-expected in the mismatch screen. -> XREF: [§17](#17-bootloader-pre-jump-abi-mismatch-screen).
-- [ ] Add an 8th mutation scenario to [`test-drift-detection.sh`](../../tools/boot-info-manifest/test-drift-detection.sh) proving a changed base is caught, alongside the existing 7.
-- [ ] Decide and document whether moving the base also requires a `BOOT_INFO_VERSION` bump; the header's rule bumps on field add/remove/reorder only, so a base move is silent to the version gate.
-- [ ] `include/kernel/mm/memmap_boot.h` has the same hole: `bootx64.c:36` includes it but it is in NEITHER bootloader prerequisite list, so an HHDM-constant change can re-link a stale loader. Add it to both.
+- [/] Extend the `.bootproto` descriptor + pre-jump comparison so a stale loader REFUSES a kernel built at a different base, observed-vs-expected in the mismatch screen. -> XREF: [§17](#17-bootloader-pre-jump-abi-mismatch-screen).
+- [/] Add an 8th mutation scenario to [`test-drift-detection.sh`](../../tools/boot-info-manifest/test-drift-detection.sh) proving a changed base is caught, alongside the existing 7.
+- [/] Decide and document whether moving the base also requires a `BOOT_INFO_VERSION` bump; the header's rule bumps on field add/remove/reorder only, so a base move is silent to the version gate.
+- [/] `include/kernel/mm/memmap_boot.h` has the same hole: `bootx64.c:36` includes it but it is in NEITHER bootloader prerequisite list, so an HHDM-constant change can re-link a stale loader. Add it to both.
   - Found while placing §21's macro: the dual-layer prerequisite check that steered `BOOT_INFO_PHYS_ADDR` into `boot_version_constants.h` also showed the HHDM header never got that treatment. Verified 2026-08-13 -- `grep memmap_boot Makefile src/boot/uefi/Makefile` returns nothing, while the header is a live include at `src/boot/uefi/bootx64.c:36`.
   - Both edits land in receipt-surface Makefiles, so this is operator-gated for an unattended run; it is bookkeeping-safe to leave filed until then because the constants only drift when someone edits them.
-- [ ] Add `boot_version_constants.h` to the `$(BOOT_ABI_DUMPER_K)` prerequisite list at [`Makefile:659-663`](../../Makefile); §21 made `boot_info.h` include it, and that recipe carries no `-MMD -MP`.
+- [/] Add `boot_version_constants.h` to the `$(BOOT_ABI_DUMPER_K)` prerequisite list at [`Makefile:659-663`](../../Makefile); §21 made `boot_info.h` include it, and that recipe carries no `-MMD -MP`.
   - The ABI dumper is a THIRD copy of the hole above. Found by §21's review: that section updated both BOOTLOADER prerequisite lists (`Makefile:427`, `src/boot/uefi/Makefile:43`) but missed the hand-maintained consumer of `boot_info.h` its own change had just created.
   - Impact today is nil, because the header defines no struct field and a stale dumper emits identical JSON. It is latent, and the ABI manifest is a drift GATE, which is the worst place to run a silently stale binary.
   - Extend to `$(BOOT_ABI_DUMPER_M)` if it acquires the same edge. Root `Makefile` is receipt surface, so this is operator-gated for an unattended run, same as the item above.
-- [ ] Make `boot_phase0` refuse a handoff pointer that disagrees with the compiled base, or thread the validated actual address through every consumer.
+- [/] Make `boot_phase0` refuse a handoff pointer that disagrees with the compiled base, or thread the validated actual address through every consumer.
   - Today [`src/kernel/main/boot_hw.c:102-118`](../../src/kernel/main/boot_hw.c) validates only that `mbi` is aligned and inside the early map, never that it equals `BOOT_INFO_PHYS_ADDR`, while `boot_reserved.c` and `boot_payload.c` reserve and protect the COMPILED constant.
   - This is the RUNTIME half of the gap the rest of this section covers at deploy time: even once the fingerprint binds the base, a loader that writes the handoff elsewhere still reaches the kernel, which then reserves and validates a region nothing wrote. Filed from §21's consistency review as an accepted out-of-scope finding.
   - Decide the policy before coding it. Fail-closed adds a new refusal to the earliest boot path and would reject any third-party or experimental loader that places the struct elsewhere, so choosing between refusing and threading the actual address is an operator call, not a mechanical fix. -> XREF: [§17](#17-bootloader-pre-jump-abi-mismatch-screen).
-- [ ] Commit: `"boot: bind the handoff base into the deploy-time ABI fingerprint"`
+- [/] Commit: `"boot: bind the handoff base into the deploy-time ABI fingerprint"`
 
 **Test checkpoint:** `make test-boot-info-abi` reports 8/8 mutation scenarios PASS, and a fixture pairing a loader built at `0x10000` with a kernel built at `0x20000` halts pre-jump with the base named in the mismatch screen rather than booting.
+
+> **Deferred:** 2026-08-13 | operator-gated in full -- every item lands on a surface an unattended run may not touch, so the section is parked rather than half-built.
+> - Receipt surface: six items edit the ABI generator (`tools/boot-info-manifest/dump-common.h`, `dump-kernel.c`, `dump-mirror.c`, `test-drift-detection.sh`) or the root and loader `Makefile`s. CLAUDE.md reserves `Makefile*`, `scripts/build.sh` and the ABI generator to the operator, because an unattended edit there invalidates the receipts every later gate reads.
+> - Operator decisions: whether `boot_phase0` should FAIL CLOSED on a handoff pointer that disagrees with the compiled base (a new refusal in the earliest boot path, which would reject any third-party or experimental loader), and whether moving the base warrants a `BOOT_INFO_VERSION` bump.
+> - Reachable when unparked: the items are concrete and independently checkable; the blocker is authority, not analysis. Filed and re-raised by §21's review -- the [H] gap is live today, so this park is a scheduling decision, not a judgement that the gap is minor.
+> -> XREF: [§21](#21-post-ship-follow-up-backfill-orphan-cohort-2026-07-31) -- four Deferred stamps there name the individual findings that fill this section.
 
 ---
 
