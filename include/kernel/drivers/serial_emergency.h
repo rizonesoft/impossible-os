@@ -26,10 +26,10 @@
  * the panic entries the serial path serves.
  *
  * One word, one transition per state change:
- *   free -> held   acquire, a single CAS 0 -> SERIAL_LOCK_OWNER_OF(me)
+ *   free -> held   acquire, a single CAS 0 -> SERIAL_LOCK_OWNER_OF(id)
  *   held -> free   release, a single release-store of 0
  *   free -> held   try-acquire, the same CAS, non-blocking
- *   held -> free   force-release, a single CAS me -> 0, exact owner only
+ *   held -> free   force-release, a single CAS owner -> 0, exact owner only
  * There is no instant at which the lock is held by nobody, so an abort at ANY
  * instruction boundary leaves it either free or attributably owned.
  *
@@ -63,18 +63,38 @@ typedef struct {
  * Neither touches the interrupt flag or IRQL; that is the caller's business,
  * exactly as it is for spin_trylock/spin_tryunlock.
  *
- * `owner` is an ENCODED owner value -- SERIAL_LOCK_OWNER_OF(id) -- NOT a raw
- * APIC id. Every entry point on this policy surface takes the encoded form,
- * because that is what the lock word holds and one representation across the
- * surface is the entire point of having an encoding at all. A raw id passed here
- * would be accepted silently and is a bug of exactly the kind the encoding
- * exists to prevent: raw id 0 reads as SERIAL_LOCK_FREE and is refused outright,
- * while raw id N records N, after which the park-time release compares against
- * N + 1, never matches, and the panic-path hang returns with no runtime signal.
+ * IDENTITY REPRESENTATION, and it has exactly one exception:
+ *   ENCODED (SERIAL_LOCK_OWNER_OF(id)) -- serial_emergency_acquire,
+ *     serial_lock_try_acquire_owned, serial_lock_try_release_owned.
+ *   RAW APIC id -- serial_lock_release_if_owner_for, and ONLY that one, because
+ *     it exists to BE the raw-to-encoded step and encodes internally.
+ * Both forms are uint32_t, so a mix-up compiles silently, which is why the split
+ * is enumerated here rather than left to each prototype. Passing a raw id to an
+ * encoded parameter is the bug the encoding exists to prevent: raw id 0 reads as
+ * SERIAL_LOCK_FREE and is refused outright, while raw id N records N, after
+ * which the park-time release compares against N + 1, never matches, and the
+ * panic-path hang returns with no runtime signal. Passing an ENCODED owner to
+ * the raw seam is the same bug mirrored -- it encodes twice, so the exact-owner
+ * CAS misses and the parking CPU strands the UART.
  *
- * It is passed in rather than derived here so this records the same identity the
- * force-release later compares against, and so a test can drive both sides of a
- * contended lock from a single CPU. */
+ * The owner is passed in rather than derived so this records the same identity
+ * the force-release later compares against, and so a test can drive both sides
+ * of a contended lock from a single CPU.
+ *
+ * FAILURE AND INVALID INPUT, depended on by the panic path. In EVERY
+ * zero-returning case below the lock word is left byte-identical, and none of
+ * these dereferences a NULL lock -- the panic path is the worst possible place
+ * to take a fault out of a diagnostic helper.
+ *   The ENCODED-owner helpers (serial_emergency_acquire,
+ *     serial_lock_try_acquire_owned, serial_lock_try_release_owned) return 0 for
+ *     a NULL lock, for an `owner` of SERIAL_LOCK_FREE, and for genuine
+ *     contention or non-ownership.
+ *   serial_lock_release_if_owner_for returns 0 for a NULL lock and for
+ *     non-ownership. It does NOT reject a raw id of 0: 0 is a VALID APIC id that
+ *     encodes to owner 1, so this call legitimately succeeds when CPU 0 holds
+ *     the lock. Rejecting it would strand exactly the CPU the encoding exists to
+ *     keep distinguishable from a free word.
+ *   serial_emergency_release is inert on a NULL lock and on `acquired` == 0. */
 int  serial_emergency_acquire(serial_lock_t *lock, uint32_t owner);
 void serial_emergency_release(serial_lock_t *lock, int acquired);
 

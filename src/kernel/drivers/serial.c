@@ -145,7 +145,28 @@ static uint16_t s_serial_port = 0x3F8;
  * falls back to &cpu_data[0] when GS is unset (smp.c), so an AP with no valid GS
  * would record the BSP as owner and the real BSP could then force-release the
  * AP's LIVE lock. The raw CPUID has no such failure mode. */
-static serial_lock_t g_serial_lock = SERIAL_LOCK_INIT;
+/* Cacheline-SIZED, not merely aligned-start. Every ordinary serial acquisition
+ * takes this word for exclusive ownership, so anything sharing its line is
+ * dragged along with it. Measured on the linked artifact before this padding:
+ * the lock at 0x543540, the emergency latch s_emergency at 0x543544 and the
+ * charge-generation ledger at 0x543550 all sat inside ONE 64-byte line -- and
+ * the ordinary path READS that latch per byte, so every klog line on one CPU
+ * was invalidating a line other CPUs were reading. The trailing pad reserves the
+ * rest of the line so the mutable state declared after it cannot drift back into
+ * false sharing. Same idiom as the wall-clock floor (time/wall_clock.c). */
+#define SERIAL_CACHELINE 64u
+_Static_assert(sizeof(serial_lock_t) <= SERIAL_CACHELINE,
+               "serial lock must fit inside one cache line");
+static struct {
+    serial_lock_t lock;
+    uint8_t       _pad[SERIAL_CACHELINE - sizeof(serial_lock_t)];
+} __attribute__((aligned(SERIAL_CACHELINE))) g_serial_lock_cl = {
+    .lock = SERIAL_LOCK_INIT,
+    ._pad = { 0 }
+};
+/* Every existing call site reads naturally through this name; the padding is a
+ * layout property, not part of the lock's interface. */
+#define g_serial_lock (g_serial_lock_cl.lock)
 
 /* Emergency latch states. Three, not two, so that ARMING itself is the one-shot:
  * only the CPU that wins the OFF->INIT transition records the owner and clears
@@ -253,11 +274,21 @@ _Static_assert(SERIAL_LOCK_ID_MASK == SERIAL_EMERG_CPU,
 _Static_assert(SERIAL_LOCK_ID_MASK == CPU_PANIC_SAFE_ID_MASK,
                "serial lock owner must mask exactly what cpu_panic_safe_apic_id returns");
 /* The encoding is id + 1, so no valid owner can collide with FREE, and the
- * widest id must still fit the word the lock is stored in. */
+ * widest id must still fit the word the lock is stored in.
+ *
+ * The fit check is computed in a WIDER type on purpose. SERIAL_LOCK_OWNER_OF is
+ * uint32_t arithmetic, so `OWNER_OF(mask) <= 0xFFFFFFFFu` is true by
+ * construction -- it is a guard that cannot fail, and it would keep passing at
+ * exactly the moment it is needed: widen the mask until the addition wraps and
+ * the highest id encodes to 0, which IS SERIAL_LOCK_FREE, and a held lock would
+ * read as free. Assert the arithmetic before it can wrap, and assert the top of
+ * the range separately rather than inferring it from id 0. */
 _Static_assert(SERIAL_LOCK_OWNER_OF(0u) != SERIAL_LOCK_FREE,
                "serial lock: APIC id 0 must be distinguishable from a free lock");
-_Static_assert(SERIAL_LOCK_OWNER_OF(SERIAL_LOCK_ID_MASK) <= 0xFFFFFFFFu,
-               "serial lock: owner encoding must fit the lock word");
+_Static_assert((uint64_t)SERIAL_LOCK_ID_MASK + 1ULL <= 0xFFFFFFFFULL,
+               "serial lock: owner encoding must fit the lock word without wrapping");
+_Static_assert(SERIAL_LOCK_OWNER_OF(SERIAL_LOCK_ID_MASK) != SERIAL_LOCK_FREE,
+               "serial lock: the highest APIC id must not encode to a free lock");
 
 /* Emergency mode latch. One-way: set by serial_enter_emergency() on a terminal
  * path and never cleared, because nothing resumes after a panic. Once set, the
@@ -377,8 +408,24 @@ static inline void serial_lock_acquire(uint64_t *flags)
     if (pcpu->current_irql < DISPATCH_LEVEL)
         pcpu->current_irql = DISPATCH_LEVEL;
 
-    while (!serial_lock_try_acquire_owned(&g_serial_lock, me))
-        barrier();  /* spin: prevent CSE-ing the owner read */
+    /* TEST-and-test-and-set, not a bare CAS retry. A failed strong CAS still
+     * takes the line for exclusive ownership, so retrying it back-to-back is a
+     * `lock cmpxchg` storm that slows the HOLDER down -- and this holder is
+     * uniquely expensive to slow, because serial_write keeps the lock across the
+     * whole string and its UART THRE polling, with every waiter spinning
+     * IRQ-disabled. So spin on a plain relaxed LOAD and only re-attempt the
+     * locked CAS once the word actually reads free.
+     *
+     * `pause` is what makes the wait loop cheap: it hints the spin to the CPU,
+     * avoids the memory-order-violation pipeline flush on exit, and drops SMT
+     * and power pressure. barrier() alone emits NO instruction. The generic
+     * spin_lock_irqsave (sched/spinlock.c) still has the bare-CAS shape; that is
+     * worth fixing separately, but this lock is the one every klog line takes. */
+    while (!serial_lock_try_acquire_owned(&g_serial_lock, me)) {
+        while (__atomic_load_n(&g_serial_lock.owner, __ATOMIC_RELAXED) !=
+               SERIAL_LOCK_FREE)
+            __asm__ volatile ("pause");
+    }
     barrier();      /* acquire fence: no hoisting of the critical section */
 }
 
