@@ -275,8 +275,8 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 - [x] LAPIC calibration waterfall in `lapic.c`: Tier 1 Hyper-V MSR / VMware-KVM CPUID 0x40000010 / Intel CPUID 0x15 core-crystal rate, Tier 2 HPET (UC-mapped per TODO-10 §1) / ACPI PM Timer measurement, Tier 3 PIT ch2; every tier range-validated before success; stores `cal_ticks_per_ms` (0 on total failure). The old TSC-referenced helper is intentionally NOT called (TSC rate is not the APIC rate).
 - [x] Run on BSP during `timer_hal_init()` -- confirmed working in serial log
 - [x] Scheduler uses LAPIC periodic timer at 100 Hz; `sched_tick` driven by LAPIC ISR
-- [ ] AP LAPIC timer bring-up: program + unmask the LVT timer per AP with BSP calibration, per-CPU `sched_tick` (today APs are masked, BSP-only tick); consumer D03 T07 §3 per-CPU run queues
-- [ ] Recalibrate hook for CPU frequency changes -- deferred to `02-kernel-core/TODO-26-power-management.md` §15
+- [/] AP LAPIC timer bring-up: per-AP LVT timer programmed + unmasked with BSP calibration, per-CPU `sched_tick` (APs masked today). BLOCKED on per-CPU run queues -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`")
+- [/] Recalibrate hook for CPU frequency changes -- BLOCKED on the cpufreq governor -> XREF: 02-kernel-core/TODO-26 §15 (item: "CPU Frequency Scaling Governor Framework" at line 573)
 - [x] Serial log: `LAPIC timer: periodic, vec=34, ICR=N, div=1 (calibrated, 100 Hz target)`
 - [x] Already implemented -- marking complete
 - [x] Commit: "(shipped) LAPIC timer calibration waterfall + scheduler 100 Hz tick"
