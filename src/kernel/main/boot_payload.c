@@ -42,12 +42,15 @@
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
 
-/* BOOT_INFO_PHYS_ADDR is the physical base of the kernel-side struct
- * boot_info copy, single-sourced via kernel/boot_info.h (which re-exports
- * it from the UEFI-safe kernel/boot_version_constants.h the bootloader
- * also compiles against). Both that region and the bootloader's own are
- * retained until Phase 3 completes and must never be overlapped by any
- * typed payload. */
+/* BOOT_INFO_PHYS_ADDR is the physical base of the BOOTLOADER's original
+ * struct boot_info -- not the kernel's copy. The kernel copies it into
+ * g_boot_info (src/kernel/main/boot_hw.c) which lives in kernel .bss and is
+ * covered by the separate __kernel_start/__kernel_end check below, so the
+ * two regions are guarded by two different checks and only this one is
+ * anchored to the macro. The macro is single-sourced via kernel/boot_info.h,
+ * which re-exports it from the UEFI-safe kernel/boot_version_constants.h the
+ * bootloader also compiles against. The bootloader's region stays retained
+ * until Phase 3 completes and must never be overlapped by a typed payload. */
 
 /* Linker-provided kernel image bounds -- the kernel ELF ends up loaded
  * at __kernel_start through __kernel_end (end exclusive), and no typed
@@ -153,9 +156,10 @@ static enum boot_payload_error payload_overlap_check(
     uintptr_t kernel_start_addr = (uintptr_t)&__kernel_start;
     uintptr_t kernel_end_addr   = (uintptr_t)&__kernel_end;
 
-    /* 1a. The kernel's copied struct boot_info at BOOT_INFO_PHYS_ADDR.
-     *     Fixed range at a known address -- no wrap possible, pin stays
-     *     a lookup of compile-time constants. */
+    /* 1a. The bootloader's original struct boot_info at BOOT_INFO_PHYS_ADDR
+     *     (the kernel's g_boot_info copy is in .bss, caught by check 2's
+     *     kernel-image range instead). Fixed range at a known address -- no
+     *     wrap possible, pin stays a lookup of compile-time constants. */
     if (ranges_overlap(start, len,
                        BOOT_INFO_PHYS_ADDR,
                        (uint64_t)sizeof(struct boot_info))) {

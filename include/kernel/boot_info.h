@@ -1858,8 +1858,18 @@ _Static_assert(sizeof(struct boot_info) <= 65535,
  * Written as a subtraction so the bound cannot be defeated by unsigned
  * wraparound: `BASE + sizeof(...)` is computed modulo 2^64, so an aligned
  * base near UINT64_MAX would wrap to a small sum and satisfy the compare
- * while sitting far outside the map. BOOT_INFO_EARLY_MAP_END is 4 GiB and
- * the struct is tens of KiB, so the subtraction cannot underflow. */
+ * while sitting far outside the map.
+ *
+ * That moves the wraparound to the END side: if BOOT_INFO_EARLY_MAP_END
+ * were ever reduced below sizeof(struct boot_info), the subtraction
+ * underflows to near UINT64_MAX and the compare below passes vacuously for
+ * every base. It is 4 GiB today against a struct of tens of KiB, so the
+ * precondition holds by a wide margin -- but it is pinned rather than
+ * asserted in prose, because clang does not diagnose the wrap (the same
+ * class as the CLAUDE.md rule against exclusive upper bounds on the kernel
+ * image window). */
+_Static_assert(BOOT_INFO_EARLY_MAP_END > sizeof(struct boot_info),
+    "early identity map must exceed struct boot_info, or the extent assert below underflows");
 _Static_assert(BOOT_INFO_PHYS_ADDR <= BOOT_INFO_EARLY_MAP_END - sizeof(struct boot_info),
     "boot_info handoff must end below the bootloader's 4 GiB early identity map");
 

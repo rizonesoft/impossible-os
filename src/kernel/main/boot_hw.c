@@ -112,8 +112,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         if (boot_info_validate_addr(mbi_p, sizeof(struct boot_info),
                                     BOOT_INFO_EARLY_MAP_END) != BOOT_OK) {
             klog(LOG_ERROR, "UEFI",
-                 "boot_info: unsafe mbi pointer 0x%lx (expected 0x1000..0x%lx, 8-byte aligned)",
+                 "boot_info: unsafe mbi pointer 0x%lx (expected 0x%lx..0x%lx, 8-byte aligned)",
                  (uint64_t)mbi,
+                 (uint64_t)BOOT_INFO_MIN_ADDR,
                  (uint64_t)(BOOT_INFO_EARLY_MAP_END - sizeof(struct boot_info)));
             boot_halt("boot_info: unsafe mbi pointer");
         }

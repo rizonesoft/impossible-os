@@ -22,11 +22,11 @@
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 
-/* Lower bound for handoff pointers: anything below 0x1000 is the NULL
- * page, real-mode IVT, or BDA -- never a legitimate boot_info location.
- * The real handoff is at BOOT_INFO_PHYS_ADDR (0x10000) which is well
- * above this floor. */
-#define BOOT_INFO_MIN_ADDR  0x1000u
+/* BOOT_INFO_MIN_ADDR (the NULL-page / IVT / BDA floor) is single-sourced
+ * from kernel/boot_version_constants.h via kernel/boot_info.h, beside the
+ * BOOT_INFO_PHYS_ADDR it bounds -- a _Static_assert there pins the compiled
+ * handoff base above this floor, so the value cannot drift out from under
+ * the check below. */
 
 boot_result_t boot_info_validate_addr(const void *p,
                                       size_t kernel_struct_size,

@@ -152,13 +152,16 @@ static void test_validate_addr_ok_kernel_va(void)
 
 static void test_validate_addr_min_addr_ok(void)
 {
-    /* Exact lower boundary: addr == BOOT_INFO_MIN_ADDR (0x1000).
+    /* Exact lower boundary: addr == BOOT_INFO_MIN_ADDR.  Bound to the macro,
+     * not a copied literal, so the case keeps testing the floor if the floor
+     * ever moves -- a hardcoded 0x1000 would silently become an interior
+     * value and stop probing the boundary at all.
      * Catches regression of `<` to `<=` on the floor check. */
-    TEST_ASSERT_EQ(boot_info_validate_addr((const void *)(uintptr_t)0x1000,
+    TEST_ASSERT_EQ(boot_info_validate_addr((const void *)(uintptr_t)BOOT_INFO_MIN_ADDR,
                                            sizeof(struct boot_info_header),
                                            BOOT_INFO_EARLY_MAP_END),
                    BOOT_OK,
-                   "addr exactly at 0x1000 floor accepted");
+                   "addr exactly at BOOT_INFO_MIN_ADDR floor accepted");
 }
 
 static void test_validate_addr_end_exactly_max_ok(void)

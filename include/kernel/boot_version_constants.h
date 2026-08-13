@@ -15,8 +15,12 @@
  * renumber on either side fails the build via _Static_assert in
  * src/boot/uefi/bootx64.c.
  *
- * PURE #defines only -- no typedefs, no includes -- so the freestanding
- * UEFI translation unit can consume it unchanged. Same one-definition
+ * #defines plus _Static_assert only -- no typedefs, no includes -- so the
+ * freestanding UEFI translation unit can consume it unchanged. The asserts
+ * mean C11 or later is required, which every current consumer already has
+ * (the UEFI TU builds -std=gnu11, src/boot/uefi/Makefile:17); an assembler
+ * or non-C consumer would need the value hoisted, unlike the pure-macro
+ * include/kernel/mm/memmap_boot.h cited below. Same one-definition
  * discipline as include/kernel/mm/memmap_boot.h, and strictly stronger
  * than the boot_info_mirror.h convention: tools/boot-info-manifest dumps
  * struct FIELDS, so it would never diff a macro that had drifted.
@@ -55,11 +59,24 @@
  * page would retain a frame the reservation never named. */
 _Static_assert(BOOT_INFO_PHYS_ADDR % 0x1000ULL == 0ULL,
     "BOOT_INFO_PHYS_ADDR must be 4 KiB page-aligned");
-/* Clear of the NULL page / BDA: boot_info_validate_addr() rejects any
- * handoff pointer below 0x1000, so a base under that floor could never
- * pass the kernel's own validator. Page alignment alone does not imply
+/* Lower bound for handoff pointers: anything below this is the NULL page,
+ * the real-mode IVT, or the BDA -- never a legitimate boot_info location.
+ * boot_info_validate_addr() (src/kernel/main/boot_info.c) enforces it at
+ * runtime; the assert below pins the compiled base against the same value.
+ *
+ * Lives HERE rather than beside its validator for the same reason the
+ * handoff base does: it had four uncoordinated copies -- the validator's
+ * TU-local #define, the assert below, the operator-facing range in the
+ * rejection message at src/kernel/main/boot_hw.c, and the boundary case in
+ * test_boot_info.c. Raising the runtime floor while the assert kept the old
+ * literal leaves the build green and halts Phase 0: a compile-time gate
+ * certifying a base that its own validator rejects. */
+#define BOOT_INFO_MIN_ADDR                0x1000ULL
+
+/* Clear of the NULL page / BDA: a base below the validator's floor could
+ * never pass the kernel's own check. Page alignment alone does not imply
  * this -- 0x0 is aligned and still invalid. */
-_Static_assert(BOOT_INFO_PHYS_ADDR >= 0x1000ULL,
+_Static_assert(BOOT_INFO_PHYS_ADDR >= BOOT_INFO_MIN_ADDR,
     "BOOT_INFO_PHYS_ADDR must clear the NULL page (validate_addr floor)");
 
 /* BVPF = "Boot Version Protocol Fault". */
