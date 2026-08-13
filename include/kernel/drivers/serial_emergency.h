@@ -15,6 +15,45 @@
 #include "kernel/types.h"
 #include "kernel/sched/spinlock.h"
 
+/* ---- serial_lock_t: the UART lock, with ownership INSIDE the lock word ----
+ *
+ * Not a spinlock_t. A spinlock_t is a bare 0/1 flag with no owner field, so
+ * recording WHO holds it needs a second word and therefore a second store -- and
+ * an abort landing between the flag CAS and the owner store leaves the lock held
+ * with owner 0, which the force-release below then correctly refuses to touch.
+ * That is the hang this type exists to REMOVE rather than narrow: `cli` masks
+ * maskable interrupts only, while NMI and #MC pierce it, and those are exactly
+ * the panic entries the serial path serves.
+ *
+ * One word, one transition per state change:
+ *   free -> held   acquire, a single CAS 0 -> SERIAL_LOCK_OWNER_OF(me)
+ *   held -> free   release, a single release-store of 0
+ *   free -> held   try-acquire, the same CAS, non-blocking
+ *   held -> free   force-release, a single CAS me -> 0, exact owner only
+ * There is no instant at which the lock is held by nobody, so an abort at ANY
+ * instruction boundary leaves it either free or attributably owned.
+ *
+ * A DISTINCT type rather than a re-encoded spinlock_t on purpose: a spinlock_t
+ * whose flag secretly held an APIC id would still compile against every generic
+ * spin_lock/spin_trylock in the tree, each of which stores a bare 1 and would
+ * silently record "owned by APIC id 0". The type is the enforcement.
+ *
+ * 0 is never a valid owner -- the encoding is id + 1 -- so a free word and a word
+ * owned by APIC id 0 stay distinguishable. ONE definition of that encoding,
+ * because open-coding `id + 1` at the record and release sites is how the two
+ * silently stop matching: the compare-exchange would simply never fire and the
+ * handback would degrade back to the hang it was added to remove, with no
+ * runtime signal at all. */
+#define SERIAL_LOCK_FREE          0u
+#define SERIAL_LOCK_ID_MASK       0xFFu
+#define SERIAL_LOCK_OWNER_OF(id)  (((id) & SERIAL_LOCK_ID_MASK) + 1u)
+
+typedef struct {
+    volatile uint32_t owner;
+} serial_lock_t;
+
+#define SERIAL_LOCK_INIT { .owner = SERIAL_LOCK_FREE }
+
 /* Acquire/release policy for the emergency path, exposed so the never-block
  * contract is unit-testable against a caller-supplied lock with no UART and no
  * boot infrastructure involved.
@@ -22,9 +61,22 @@
  *                                 lock was held elsewhere.
  *   serial_emergency_release() -- releases only when `acquired` is non-zero.
  * Neither touches the interrupt flag or IRQL; that is the caller's business,
- * exactly as it is for spin_trylock/spin_tryunlock. */
-int  serial_emergency_acquire(spinlock_t *lock);
-void serial_emergency_release(spinlock_t *lock, int acquired);
+ * exactly as it is for spin_trylock/spin_tryunlock.
+ *
+ * `owner` is an ENCODED owner value -- SERIAL_LOCK_OWNER_OF(id) -- NOT a raw
+ * APIC id. Every entry point on this policy surface takes the encoded form,
+ * because that is what the lock word holds and one representation across the
+ * surface is the entire point of having an encoding at all. A raw id passed here
+ * would be accepted silently and is a bug of exactly the kind the encoding
+ * exists to prevent: raw id 0 reads as SERIAL_LOCK_FREE and is refused outright,
+ * while raw id N records N, after which the park-time release compares against
+ * N + 1, never matches, and the panic-path hang returns with no runtime signal.
+ *
+ * It is passed in rather than derived here so this records the same identity the
+ * force-release later compares against, and so a test can drive both sides of a
+ * contended lock from a single CPU. */
+int  serial_emergency_acquire(serial_lock_t *lock, uint32_t owner);
+void serial_emergency_release(serial_lock_t *lock, int acquired);
 
 /* Hand the driver's own UART lock back if THIS CPU is the recorded holder.
  *
@@ -40,12 +92,30 @@ void serial_emergency_release(spinlock_t *lock, int acquired);
  * a GS base the panic path cannot trust. */
 void serial_lock_release_if_owner(void);
 
-/* The ownership policy itself, over a CALLER-SUPPLIED lock and owner word, so
- * the successful handoff can be unit tested without seizing the machine's real
- * serial lock. Returns 1 if `me` owned the lock and it was released, 0 if `me`
- * owned nothing -- in which case BOTH words are left exactly as they were. */
-int serial_lock_try_release_owned(spinlock_t *lock, volatile uint32_t *owner,
-                                  uint32_t me);
+/* The raw-id-to-encoded step of the above, over a caller-supplied lock, so the
+ * ONE place that conversion happens for the real global is testable without
+ * seizing it. Takes a RAW APIC id (unlike everything else on this surface) and
+ * encodes it internally -- that asymmetry is the entire point: if the wrapper
+ * ever passed a raw id straight through, or used a different mask or a different
+ * identity source, every encoded-owner fixture would stay green while a parking
+ * CPU silently failed to hand back the UART. Returns 1 if it released. */
+int serial_lock_release_if_owner_for(serial_lock_t *lock, uint32_t raw_id);
+
+/* The ownership policy itself, over a CALLER-SUPPLIED lock, so both the
+ * successful handoff and the successful acquisition can be unit tested without
+ * seizing the machine's real serial lock.
+ *
+ * serial_lock_try_acquire_owned() -- 1 if `owner` took the lock, 0 if it was
+ *   already held. The CAS both takes the lock and records the owner, so there is
+ *   no window in which a holder is unattributable.
+ * serial_lock_try_release_owned() -- 1 if `owner` held the lock and it was
+ *   released, 0 if it held nothing, in which case the word is left exactly as it
+ *   was. The exact-owner compare IS the safety property: this can never take a
+ *   lock away from a live holder.
+ * Neither touches the interrupt flag or IRQL. `owner` is the ENCODED value in
+ * both, for the reason spelled out above serial_emergency_acquire. */
+int serial_lock_try_acquire_owned(serial_lock_t *lock, uint32_t owner);
+int serial_lock_try_release_owned(serial_lock_t *lock, uint32_t owner);
 
 /* Wedged-transmitter budget accounting, exposed for unit test. The arithmetic
  * here already regressed once (a revision charged each timeout twice, halving

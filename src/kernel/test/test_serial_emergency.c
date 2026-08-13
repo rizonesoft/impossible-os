@@ -45,20 +45,36 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/cpu_security.h"   /* __kread_u8 (guarded read under test) */
 
-/* A free lock is acquirable, and acquisition actually takes it. */
+/* Two distinct fixture identities. Concrete APIC ids rather than 0/1 so a test
+ * that accidentally compared the RAW id against the ENCODED owner would fail
+ * instead of coincidentally passing. */
+#define TEST_SERIAL_ID_A   7u
+#define TEST_SERIAL_ID_B   9u
+#define TEST_SERIAL_OWNER_A  SERIAL_LOCK_OWNER_OF(TEST_SERIAL_ID_A)
+#define TEST_SERIAL_OWNER_B  SERIAL_LOCK_OWNER_OF(TEST_SERIAL_ID_B)
+
+static int test_serial_lock_held(const serial_lock_t *lock)
+{
+    return lock->owner != SERIAL_LOCK_FREE;
+}
+
+/* A free lock is acquirable, and acquisition takes it AND records the owner in
+ * the same word -- there is no second store to observe. */
 static void test_serial_emergency_acquire_free_lock(void)
 {
-    spinlock_t lock = SPINLOCK_INIT;
+    serial_lock_t lock = SERIAL_LOCK_INIT;
     int acquired;
 
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 0, "fixture lock starts free");
+    TEST_ASSERT_EQ(test_serial_lock_held(&lock), 0, "fixture lock starts free");
 
-    acquired = serial_emergency_acquire(&lock);
+    acquired = serial_emergency_acquire(&lock, TEST_SERIAL_OWNER_A);
     TEST_ASSERT_EQ(acquired, 1, "acquire on a free lock reports success");
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 1, "acquire actually took the lock");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_A,
+                   "acquire took the lock AND recorded the owner in one word");
 
     serial_emergency_release(&lock, acquired);
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 0, "release(acquired=1) frees the lock");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE,
+                   "release(acquired=1) frees the lock and clears the owner");
 }
 
 /* THE load-bearing test: acquiring a lock somebody else holds must RETURN,
@@ -67,20 +83,20 @@ static void test_serial_emergency_acquire_free_lock(void)
  * exactly the panic-path deadlock this section removes. */
 static void test_serial_emergency_acquire_held_lock_does_not_block(void)
 {
-    spinlock_t lock = SPINLOCK_INIT;
+    serial_lock_t lock = SERIAL_LOCK_INIT;
     int acquired;
 
-    /* Simulate the interrupted code holding the lock. spin_trylock rather than
-     * spin_lock_irqsave: this must not touch IRQL or the interrupt flag inside
-     * a test. */
-    TEST_ASSERT_EQ(spin_trylock(&lock), 1, "fixture holder took the lock");
+    /* Simulate the interrupted code holding the lock, as a DIFFERENT owner. */
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "fixture holder took the lock");
 
-    acquired = serial_emergency_acquire(&lock);
+    acquired = serial_emergency_acquire(&lock, TEST_SERIAL_OWNER_A);
     TEST_ASSERT_EQ(acquired, 0, "acquire on a held lock reports failure");
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 1, "the original holder still owns it");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_B,
+                   "the original holder still owns it, unchanged");
 
-    spin_tryunlock(&lock);
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 0, "fixture holder released cleanly");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "fixture holder released cleanly");
 }
 
 /* A caller that did NOT acquire must not release. Getting this wrong would let
@@ -88,16 +104,156 @@ static void test_serial_emergency_acquire_held_lock_does_not_block(void)
  * that code's critical section instead of merely interleaving bytes. */
 static void test_serial_emergency_release_without_acquire_is_noop(void)
 {
-    spinlock_t lock = SPINLOCK_INIT;
+    serial_lock_t lock = SERIAL_LOCK_INIT;
 
-    TEST_ASSERT_EQ(spin_trylock(&lock), 1, "fixture holder took the lock");
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "fixture holder took the lock");
 
     serial_emergency_release(&lock, 0);
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 1,
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_B,
                    "release(acquired=0) left the other owner's lock held");
 
-    spin_tryunlock(&lock);
-    TEST_ASSERT_EQ(spin_is_locked(&lock), 0, "fixture holder released cleanly");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "fixture holder released cleanly");
+}
+
+/* The force-release path is owner-scoped: a CPU that owns nothing must leave a
+ * live holder's lock ALONE. This is the branch that stops a parking CPU from
+ * stealing the UART out from under a CPU that is still using it. */
+static void test_serial_lock_release_wrong_owner_leaves_holder(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "holder B took the lock");
+
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_A), 0,
+                   "A does not own the lock, so its release reports failure");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_B,
+                   "B's live lock is left exactly as it was");
+
+    /* And a force-release against a FREE lock must not claim it. */
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "B released its own lock");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_A), 0,
+                   "releasing an already-free lock reports failure");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE, "the lock stayed free");
+}
+
+/* Same-owner re-entry must FAIL. This is the panic/NMI shape: an abort taken on
+ * a CPU that already holds the lock re-enters the emergency writer and presents
+ * the SAME encoded owner. Treating a matching owner as re-entrant success would
+ * be a disaster -- the inner release would then free a lock the outer critical
+ * section is still inside, permitting concurrent UART access with no signal.
+ * The CAS gets this right for free by expecting FREE rather than comparing
+ * owners, but nothing proved it until this test. */
+static void test_serial_lock_same_owner_reentry_is_refused(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+    int outer, inner;
+
+    outer = serial_emergency_acquire(&lock, TEST_SERIAL_OWNER_A);
+    TEST_ASSERT_EQ(outer, 1, "the outer acquisition took the lock");
+
+    inner = serial_emergency_acquire(&lock, TEST_SERIAL_OWNER_A);
+    TEST_ASSERT_EQ(inner, 0, "the SAME owner is refused a second acquisition");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_A,
+                   "the outer ownership is left byte-identical");
+
+    /* The nested caller must honour its own failed result: releasing on a failed
+     * acquire is exactly the bug this shape would cause. */
+    serial_emergency_release(&lock, inner);
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_A,
+                   "a failed nested acquire releases nothing");
+
+    serial_emergency_release(&lock, outer);
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE,
+                   "the original acquisition still releases cleanly");
+}
+
+/* The raw-id-to-encoded conversion the real handoff wrapper performs. Every
+ * other fixture passes an already-encoded owner, so none of them would notice
+ * serial_lock_release_if_owner() being changed to pass a raw id, a different
+ * mask, or a different identity source -- and the visible symptom would only be
+ * a parking CPU silently failing to hand back the UART. */
+static void test_serial_lock_release_if_owner_for_encodes_raw_id(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+
+    /* Raw id 0 is the case a raw/encoded mix-up breaks first: encoded it is 1,
+     * but passed through raw it would read as SERIAL_LOCK_FREE and be refused. */
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock,
+                                                 SERIAL_LOCK_OWNER_OF(0u)), 1,
+                   "CPU 0 holds the lock");
+    TEST_ASSERT_EQ(serial_lock_release_if_owner_for(&lock, 0u), 1,
+                   "the wrapper encodes raw id 0 and releases it");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE, "the lock is free again");
+
+    /* Top of the mask, the other end a wrong mask would break. */
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(
+                       &lock, SERIAL_LOCK_OWNER_OF(SERIAL_LOCK_ID_MASK)), 1,
+                   "the highest addressable CPU holds the lock");
+    TEST_ASSERT_EQ(serial_lock_release_if_owner_for(&lock, SERIAL_LOCK_ID_MASK),
+                   1, "the wrapper encodes the top of the mask and releases it");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE, "the lock is free again");
+
+    /* A foreign id must still be refused THROUGH the wrapper, not just through
+     * the policy call underneath it. */
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock,
+                                                 SERIAL_LOCK_OWNER_OF(3u)), 1,
+                   "CPU 3 holds the lock");
+    TEST_ASSERT_EQ(serial_lock_release_if_owner_for(&lock, 5u), 0,
+                   "CPU 5 releases nothing it does not own");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_OWNER_OF(3u),
+                   "CPU 3's live lock is untouched");
+
+    TEST_ASSERT_EQ(serial_lock_release_if_owner_for((serial_lock_t *)0, 3u), 0,
+                   "a NULL lock is rejected without dereference");
+    TEST_ASSERT_EQ(serial_lock_release_if_owner_for(&lock, 3u), 1,
+                   "the real owner released cleanly through the wrapper");
+}
+
+/* SERIAL_LOCK_FREE is not a usable identity. It cannot come out of
+ * SERIAL_LOCK_OWNER_OF, so it only reaches the policy from a caller that built
+ * an owner some other way -- and accepting it would let an "acquire" store the
+ * free value, taking the lock and leaving it unlocked at the same time. */
+static void test_serial_lock_free_is_not_an_identity(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, SERIAL_LOCK_FREE), 0,
+                   "acquiring as the free value is refused");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE, "the lock was not taken");
+
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, TEST_SERIAL_OWNER_A), 1,
+                   "a real identity still acquires");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, SERIAL_LOCK_FREE), 0,
+                   "releasing as the free value is refused");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_A, "the live holder is intact");
+
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_A), 1,
+                   "the real owner released cleanly");
+}
+
+/* Every APIC id the mask admits must round-trip to a DISTINCT owner value that
+ * is never the free value. An encoding that aliased two ids would let one CPU
+ * force-release another's lock; one that produced FREE would make a held lock
+ * look free. */
+static void test_serial_lock_owner_encoding_is_injective(void)
+{
+    uint32_t id;
+
+    for (id = 0; id <= SERIAL_LOCK_ID_MASK; id++) {
+        TEST_ASSERT_EQ(SERIAL_LOCK_OWNER_OF(id) != SERIAL_LOCK_FREE, 1,
+                       "no APIC id encodes to the free value");
+        TEST_ASSERT_EQ(SERIAL_LOCK_OWNER_OF(id), id + 1u,
+                       "owner encoding is exactly id + 1 across the mask");
+    }
+    /* The mask is what makes it total: an id above it folds back in range
+     * rather than producing a value the lock word could not hold. */
+    TEST_ASSERT_EQ(SERIAL_LOCK_OWNER_OF(SERIAL_LOCK_ID_MASK + 1u),
+                   SERIAL_LOCK_OWNER_OF(0u),
+                   "ids above the mask fold, they do not escape it");
 }
 
 /* NULL must be inert on both halves -- the panic path is the worst possible
@@ -108,23 +264,28 @@ static void test_serial_emergency_null_lock_is_inert(void)
      * release performed a wild write instead of returning, the most likely
      * casualty is a neighbouring lock word. Asserting the witness is untouched
      * proves more than "the call returned" does. */
-    spinlock_t witness = SPINLOCK_INIT;
+    serial_lock_t witness = SERIAL_LOCK_INIT;
 
-    TEST_ASSERT_EQ(serial_emergency_acquire((spinlock_t *)0), 0,
+    TEST_ASSERT_EQ(serial_emergency_acquire((serial_lock_t *)0,
+                                            TEST_SERIAL_OWNER_A), 0,
                    "acquire(NULL) reports failure rather than dereferencing");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned((serial_lock_t *)0,
+                                                 TEST_SERIAL_OWNER_A), 0,
+                   "release(NULL) reports failure rather than dereferencing");
 
-    TEST_ASSERT_EQ(spin_trylock(&witness), 1, "witness lock held");
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&witness, TEST_SERIAL_OWNER_B),
+                   1, "witness lock held");
 
     /* acquired=1 is the hostile combination: a caller claiming it holds a lock
      * that does not exist. */
-    serial_emergency_release((spinlock_t *)0, 1);
-    serial_emergency_release((spinlock_t *)0, 0);
+    serial_emergency_release((serial_lock_t *)0, 1);
+    serial_emergency_release((serial_lock_t *)0, 0);
 
-    TEST_ASSERT_EQ(spin_is_locked(&witness), 1,
+    TEST_ASSERT_EQ(witness.owner, TEST_SERIAL_OWNER_B,
                    "release(NULL, ...) left unrelated lock state untouched");
 
-    spin_tryunlock(&witness);
-    TEST_ASSERT_EQ(spin_is_locked(&witness), 0, "witness released cleanly");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&witness, TEST_SERIAL_OWNER_B),
+                   1, "witness released cleanly");
 }
 
 /* The latch is one-way and only a terminal path arms it. If this fails, some
@@ -674,20 +835,21 @@ static void test_serial_emergency_kread_u8_rejects_bad_operands(void)
  * owner RELEASES the lock. */
 static void test_serial_lock_handoff_releases_for_owner(void)
 {
-    spinlock_t        fixture = SPINLOCK_INIT;
-    volatile uint32_t owner   = 0u;
-    const uint32_t    me      = 7u;
+    serial_lock_t  fixture = SERIAL_LOCK_INIT;
+    const uint32_t me      = SERIAL_LOCK_OWNER_OF(6u);
 
-    TEST_ASSERT_EQ(spin_trylock(&fixture), 1, "fixture lock starts free");
-    owner = me;                         /* stand in for the acquire-time record */
+    /* The acquire IS the owner record now -- there is no separate word to seed,
+     * which is precisely the property under test. */
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&fixture, me), 1,
+                   "acquiring a free lock records this owner in the same word");
+    TEST_ASSERT_EQ(fixture.owner, me,
+                   "the lock word names its holder with no second store");
 
-    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, &owner, me), 1,
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, me), 1,
                    "the recorded owner is allowed to release the lock");
-    TEST_ASSERT_EQ((uint32_t)owner, 0u,
-                   "a successful handoff clears the owner word");
-    TEST_ASSERT_EQ(spin_is_locked(&fixture), 0,
-                   "a successful handoff actually RELEASES the lock -- this is "
-                   "what stops the surviving CPU hanging on its next write");
+    TEST_ASSERT_EQ(fixture.owner, SERIAL_LOCK_FREE,
+                   "a successful handoff clears the owner AND frees the lock -- "
+                   "this is what stops the surviving CPU hanging on its next write");
 }
 
 /* The other half, and the one that must never fire: a CPU that does not own the
@@ -695,38 +857,40 @@ static void test_serial_lock_handoff_releases_for_owner(void)
  * release would be a way for one CPU to steal another CPU's serial lock. */
 static void test_serial_lock_handoff_refuses_foreign_owner(void)
 {
-    spinlock_t        fixture = SPINLOCK_INIT;
-    volatile uint32_t owner   = 0u;
+    serial_lock_t fixture = SERIAL_LOCK_INIT;
 
-    TEST_ASSERT_EQ(spin_trylock(&fixture), 1, "fixture lock starts free");
-    owner = 7u;                         /* CPU 6 holds it (id 6 + 1) */
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&fixture,
+                                                 SERIAL_LOCK_OWNER_OF(6u)), 1,
+                   "CPU 6 holds the fixture lock");
 
-    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, &owner, 9u), 0,
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture,
+                                                 SERIAL_LOCK_OWNER_OF(8u)), 0,
                    "a CPU that does not own the lock releases nothing");
-    TEST_ASSERT_EQ((uint32_t)owner, 7u,
-                   "the real holder's owner record is left exactly as it was");
-    TEST_ASSERT_EQ(spin_is_locked(&fixture), 1,
-                   "the live holder still holds the lock");
+    TEST_ASSERT_EQ(fixture.owner, SERIAL_LOCK_OWNER_OF(6u),
+                   "the real holder's record is left exactly as it was");
 
-    spin_tryunlock(&fixture);
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture,
+                                                 SERIAL_LOCK_OWNER_OF(6u)), 1,
+                   "the live holder released cleanly");
 }
 
 /* Safe to call unconditionally: the panic async-park path invokes it without
  * knowing whether the faulting step held the lock at all. */
 static void test_serial_lock_handoff_inert_when_unowned(void)
 {
-    spinlock_t        fixture = SPINLOCK_INIT;
-    volatile uint32_t owner   = 0u;
+    serial_lock_t fixture = SERIAL_LOCK_INIT;
 
-    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, &owner, 5u), 0,
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture,
+                                                 SERIAL_LOCK_OWNER_OF(4u)), 0,
                    "releasing a free, unowned lock reports no handoff");
-    TEST_ASSERT_EQ((uint32_t)owner, 0u, "the owner word stays clear");
-    TEST_ASSERT_EQ(spin_is_locked(&fixture), 0, "the free lock stays free");
+    TEST_ASSERT_EQ(fixture.owner, SERIAL_LOCK_FREE, "the free lock stays free");
 
-    TEST_ASSERT_EQ(serial_lock_try_release_owned((spinlock_t *)0, &owner, 5u), 0,
+    TEST_ASSERT_EQ(serial_lock_try_release_owned((serial_lock_t *)0,
+                                                 SERIAL_LOCK_OWNER_OF(4u)), 0,
                    "a NULL lock is rejected without dereference");
-    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, (volatile uint32_t *)0, 5u),
-                   0, "a NULL owner word is rejected without dereference");
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned((serial_lock_t *)0,
+                                                 SERIAL_LOCK_OWNER_OF(4u)), 0,
+                   "a NULL lock is rejected on the acquire side too");
 }
 
 /* ---- NMI nesting depth ----
@@ -883,6 +1047,21 @@ void test_register_serial_emergency(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: NULL lock is inert",
                             test_serial_emergency_null_lock_is_inert,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: wrong owner leaves the live holder",
+                            test_serial_lock_release_wrong_owner_leaves_holder,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: the free value is not an identity",
+                            test_serial_lock_free_is_not_an_identity,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: owner encoding is injective",
+                            test_serial_lock_owner_encoding_is_injective,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: same-owner re-entry is refused",
+                            test_serial_lock_same_owner_reentry_is_refused,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: handoff wrapper encodes a raw id",
+                            test_serial_lock_release_if_owner_for_encodes_raw_id,
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: latch not armed during boot",
                             test_serial_emergency_latch_not_armed_during_boot,

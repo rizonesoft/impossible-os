@@ -341,12 +341,13 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         __asm__ volatile("mov %%gs:0, %0" : "=r"(gs_self));
         if (!gs_self || gs_self->self != gs_self) {
             /* serial_write is UNUSABLE here and always was: it takes
-             * g_serial_lock via spin_lock_irqsave, which reads
+             * g_serial_lock via serial_lock_acquire, whose IRQL half reads
              * smp_this_cpu()->current_irql -- i.e. gs:0, the exact pointer this
              * branch just proved invalid. The diagnostic for "GS is broken"
              * cannot itself depend on GS. serial_write_emergency touches no
-             * per-CPU state: local_irq_save is pushfq/cli and spin_trylock is a
-             * plain CAS, so it is the only writer that can report this.
+             * per-CPU state: local_irq_save is pushfq/cli and the owner-encoded
+             * try-acquire is a plain CAS whose identity comes from CPUID rather
+             * than GS, so it is the only writer that can report this.
              * Not armed, and recoverable accounting, for the same reason as the
              * branch above: this halts one CPU, not the machine. */
             serial_write_recoverable(
