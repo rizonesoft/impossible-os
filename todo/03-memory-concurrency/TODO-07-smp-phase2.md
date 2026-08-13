@@ -99,6 +99,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] Single-CPU fast path: if `cpu_mask` has only the local CPU bit set, just `invlpg(vaddr)` without IPI overhead
 - [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xE0)`
 - [ ] `smp_call_function(cpu, fn, arg)` cross-CPU synchronous call (same IPI+ack pattern): first consumer is BSP delegation of timer-resolution transitions (`timer_set_tick_hz` refuses AP callers today; `KeSetTimerResolution` rolls back AP-side requests -- `src/kernel/time/timer_resolution.c`, filed from `01-boot-platform/TODO-11` §6 review)
+  - Second consumer: runtime PAT re-broadcast + divergent-AP MTRR reprogram (SDM 11.11.8) is parked on this call -> XREF: `01-boot-platform/TODO-09 §8` (item: "PARKED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram"). §8 ships a warn-only audit until an all-CPU rendezvous exists; a fire-and-forget IPI is NOT sufficient.
 - [ ] `irq_send_ipi(cpu, vector)` arch-neutral wrapper over `lapic_send_ipi()` in `src/kernel/irq.c`; retrofit direct callers so neutral code drops `kernel/drivers/lapic.h` (filed from `01-boot-platform/TODO-11` §10)
 - [ ] Commit: `"smp: TLB shootdown IPI -- invlpg range, atomic ack counter, vmm_unmap/mprotect hook"`
 

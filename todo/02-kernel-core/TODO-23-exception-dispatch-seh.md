@@ -272,7 +272,7 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 
 > **Verified:** 2026-07-18 | commit `7a10bb24` | 7/8 items | build OK | smoke PASS (TCG 2.72s)
 > **Accepted:** [M] framed terminal still runs `panic_screen_impl` FPU-capture POST16 + restart-registry I/O unconditionally (pre-existing, panic-path-wide; §4 skips only the persist-write + entry POST16) -> XREF: 02-kernel-core/TODO-27 §1 (item: "Fault-context gating in `panic_screen_impl`" at line 101)
-> **Accepted:** [M] 0x3B vs 0x1E classification reads `thread_current()` global cursor (pre-existing, shared with `previous_mode`; forensic-only) -> XREF: 03-memory-concurrency/TODO-07 (item: "Per-CPU current-thread cursor" at line 120)
+> **Accepted:** [M] 0x3B vs 0x1E classification reads `thread_current()` global cursor (pre-existing, shared with `previous_mode`; forensic-only) -> XREF: 03-memory-concurrency/TODO-07 (item: "Per-CPU current-thread cursor" at line 121)
 > **Quality reviewed:** 2026-07-18 | Codex 10x (design + adversarial + consistency + perf + re-adversarial) | 2H+9M+2L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
@@ -641,7 +641,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > - **Scope boundary** -- §14 owns `__try`/`__except` v1; `__try`/`__finally` collided-unwind and boot/main-thread `KI_TRY` are tracked open items here; the per-CPU current-thread cursor is TODO-07.
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
-> **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 128)
+> **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 129)
 > **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 628)
 > **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 629)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
@@ -745,7 +745,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 - [ ] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"`
 
-> **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 120)
+> **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 121)
 > **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 124)
 > **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 310)
 > **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 129)

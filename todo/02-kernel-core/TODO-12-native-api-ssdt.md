@@ -634,8 +634,8 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 > - Scope boundary: 13/15 aliases live; ZwDuplicateObject/ZwQueryObject slots + full cross-CPU cursor deferred.
 > - Canonical: zw.h header comment + ssdt.c SMP-closure note.
 > **Verified:** 2026-07-02 | commit `777ca1de` | 6/7 items | build OK | abi 423/423 + sched 296 PASS
-> **Accepted:** [H] `thread_reap_kernel_slot` publishes THREAD_FREE before APC rundown + field cleanup finish (pre-existing SMP reap race; a lockless kthread_create scan can claim the slot mid-reap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "`thread_reap_kernel_slot` publishes `THREAD_FREE`" at line 129)
-> **Accepted:** [M] cross-CPU probe-gating: `ssdt_previous_mode()` resolves via `thread_current()`, which reads the global current-thread cursor, not per-CPU state -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 120)
+> **Accepted:** [H] `thread_reap_kernel_slot` publishes THREAD_FREE before APC rundown + field cleanup finish (pre-existing SMP reap race; a lockless kthread_create scan can claim the slot mid-reap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "`thread_reap_kernel_slot` publishes `THREAD_FREE`" at line 130)
+> **Accepted:** [M] cross-CPU probe-gating: `ssdt_previous_mode()` resolves via `thread_current()`, which reads the global current-thread cursor, not per-CPU state -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
 > **Deferred:** [M] `ZwDuplicateObject`/`ZwQueryObject` dispatch to unregistered SSDT 0x0001/0x0002 (fail closed) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Register `NtDuplicateObject` → SSDT 0x0001" at line 1084; item: "Expose `NtQueryObject` at SSDT 0x0002" at line 1089)
 > **Quality reviewed:** 2026-07-02 | Codex 8x (adversarial x2, consistency x2, perf x2, re-adversarial x2) | 2H+4M+1L fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 

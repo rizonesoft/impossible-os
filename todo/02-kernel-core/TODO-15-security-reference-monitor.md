@@ -498,7 +498,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Effective token = `thread->impersonation_token ?: task->token`; no Ob reference / per-token lock (single-cursor-safe accept, same class as §6/§7) -> §4/§5.
 > - Deferred to owners: `SeCheckPrivilegedObject`+NtOpenProcess/NtSystemDebugControl (§5/§12), `module_load` (TODO-05 §4), RegSaveKey/RegRestoreKey + NtSaveKey/NtRestoreKey hive I/O bodies (TODO-14 §2).
 > **Verified:** 2026-07-05 | commit `0051a8d2` | 6/10 items | build OK | tests 1088 security + 1149 ABI PASS, smoke PASS
-> **Accepted:** [H] SePrivilegeCheck KernelMode bypass via `ssdt_previous_mode()` (global cursor, not per-CPU; single-cursor-safe, shared by every syscall gate) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 120)
+> **Accepted:** [H] SePrivilegeCheck KernelMode bypass via `ssdt_previous_mode()` (global cursor, not per-CPU; single-cursor-safe, shared by every syscall gate) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
 > **Accepted:** [H] Start Menu power button calls `acpi_shutdown()` directly (trusted in-kernel compositor, not a user-mode syscall bypass) -> XREF: 09-desktop-shell/TODO-06 §6 (item: "Route the Start Menu power button through the SeShutdownPrivilege-gated `sys_shutdown()`")
 > **Accepted:** [H] `NtQuerySystemInformation(SystemPerformance)` writes caller pointers unprobed (pre-existing across all its classes) -> XREF: 02-kernel-core/TODO-12 §29 (NT ring-3 trust boundary: user-pointer probes)
 > **Quality reviewed:** 2026-07-05 | Codex 24x (design, adversarial, re-adversarial, consistency, perf) | 1C+7H+4M fixed, 3H+1M accepted-XREF | scope: kernel-code-quality
