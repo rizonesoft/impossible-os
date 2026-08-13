@@ -467,6 +467,43 @@ def test_orphan_check():
         check("orphan-check: a well-formed file reports no malformation",
               orph.malformed(p, fence) == "")
 
+        # SCAN COST: the fence module is LOADED, not re-loaded per line.
+        # `scan_file` once called `_fence()` inside its per-line loop for the
+        # `is_h2` boundary test, so every line of every TODO file paid a full
+        # `exec_module` of the 413-line tracker: this check took 133.7s over
+        # the 281-file corpus, `scripts/lint.sh` went 22s -> 148s, and CI's
+        # 25-minute `Build Impossible OS` job was cancelled on 16 of 30 runs
+        # with no green build for ~18h. The assertion is STRUCTURAL, not a
+        # wall-clock bound -- a timing threshold on a shared runner measures
+        # the box, this measures the defect.
+        loads = []
+        real_spec = orph.importlib.util.spec_from_file_location
+
+        def _counting_spec(name, path, *a, **kw):
+            loads.append(str(path))
+            return real_spec(name, path, *a, **kw)
+
+        many = "\n".join([
+            "# T", "",
+            "| S | Order | Section | Deliverable | Dep | Status |",
+            "| - | :-: | :-: | - | - | :-: |",
+            "| x |  1  | " + S + "1 | The real section | -- |  [x]   |",
+            "",
+            "## 1. The Real Section"]
+            + ["ordinary body line %d" % i for i in range(400)]
+            + ["> **Verified:** 2026-08-01 | commit `abc` | 1/1",
+               "> **Quality reviewed:** 2026-08-01 | Codex", ""])
+        p.write_text(many, encoding="utf-8")
+        orph.importlib.util.spec_from_file_location = _counting_spec
+        try:
+            orph._fence.cache_clear()
+            orph.scan_file(p, tri)          # no fence passed -> loads once
+        finally:
+            orph.importlib.util.spec_from_file_location = real_spec
+        fence_loads = [x for x in loads if x.endswith("todo_fence.py")]
+        check("orphan-check: 400 body lines cost ONE fence-module load, not 400",
+              len(fence_loads) == 1)
+
 
 # --------------------------------------------------------------------------
 # 5. Gate 3: todo-staged-check.py (refuses a staged commit).

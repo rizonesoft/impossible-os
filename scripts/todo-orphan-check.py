@@ -44,6 +44,7 @@ Repair guidance printed with each hit:
 """
 from __future__ import annotations
 
+import functools
 import glob
 import importlib.util
 import re
@@ -63,8 +64,20 @@ def _triage(root: Path):
     return mod
 
 
+@functools.lru_cache(maxsize=1)
 def _fence():
-    """The shared fence tracker (section 38), loaded the same way as `_triage`."""
+    """The shared fence tracker (section 38), loaded the same way as `_triage`.
+
+    CACHED. `exec_module` re-runs the whole 413-line module on every call, so a
+    call from inside a per-line loop costs a module import per line of every
+    TODO file. That is not hypothetical: `scan_file` did exactly that at the
+    `is_h2` boundary test and it took this check from ~1s to 133.7s over the
+    281-file corpus, which in turn took `scripts/lint.sh` from 22s to 148s and
+    pushed CI's 25-minute `Build Impossible OS` job over its budget -- 16 of 30
+    runs cancelled, no green build between 2026-08-12 05:35 and the repair.
+    The caller-side fix (use the already-bound `fence`) is the real one; this
+    cache makes the whole defect class cost nothing.
+    """
     spec = importlib.util.spec_from_file_location(
         "todo_fence", _repo_root() / "scripts/todo_fence.py")
     mod = importlib.util.module_from_spec(spec)
@@ -147,7 +160,7 @@ def scan_file(path: Path, tri, fence=None) -> list:
         # The SHARED boundary rule (section 43 post-ship review): a column-0
         # test misses CommonMark's legal 0-3 indent, so an indented heading did
         # not end the current section here while it did in the producer.
-        if _fence().is_h2(ln):
+        if fence.is_h2(ln):
             cur = None
             continue
         if cur is None:

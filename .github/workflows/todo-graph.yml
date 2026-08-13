@@ -67,10 +67,12 @@ jobs:
       - name: Install PyYAML (build.py dependency)
         run: python3 -m pip install --quiet PyYAML jsonschema
 
-      # Primary gate: rebuild the cache and run the 7 graph-integrity
+      # Primary gate: rebuild the cache and run the 10 graph-integrity
       # checks. Fails if any check fails (stale XREF, dangling section,
-      # orphan IO row, dep cycle, missing bat, status mismatch, or
-      # unreachable $schema).
+      # orphan IO row, dep cycle, missing bat, status mismatch,
+      # unreachable $schema, duplicate id, duplicate resolver key, or an
+      # in-file `](#anchor)` naming no heading in its own file).
+      # The authority is validate.py's own header, not this comment.
       - name: Build + validate todo-graph
         run: bash scripts/todo-graph/build-and-validate.sh --keep-cache
 

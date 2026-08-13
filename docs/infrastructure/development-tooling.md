@@ -744,17 +744,15 @@ Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta
 
 ### Code Style Linter
 
-`scripts/lint.sh` -- 5 automated checks. See `bash scripts/lint.sh --help` for the current list. (Reduced from 7 on 2026-04-17: two warn-only style checks -- function length and lowercase defines -- were dropped because they duplicated signal already covered by Codex adversarial review and the domain code-quality skills. Lint now focuses on structural drift checks that nothing else watches.)
+`scripts/lint.sh` runs two tiers and the distinction matters when reading its output. **Tier 1 is the 5 C-code style checks** that `bash scripts/lint.sh --help` lists -- that help text is the authority for this tier, and `scripts/test-tooling.sh` pins its "Checks (5)" line so the two cannot drift. (Reduced from 7 on 2026-04-17: two warn-only style checks -- function length and lowercase defines -- were dropped because they duplicated signal already covered by Codex adversarial review and the domain code-quality skills. A third, the camelCase-function warning, went on 2026-04-18 as unsafe for a Win11-native OS whose NT/Rtl/Ob/Se/Ke/Mm/Io/Ex names are deliberately CamelCase.) **Tier 2 is Checks 6-27**, the repo-integrity gates that are NOT in `--help` and are not C-style checks at all: tautological tests, stub-behind-stamp, stamp-region completeness, OS Comparison sync, Codex prompt escaping, agent tool-allowlists, secrets, TODO table alignment and prose shape, section ordering and placement, orphaned items behind stamped sections, reachability, consumer delegation, and bucket emission. Read the check numbers in a finding line against `scripts/lint.sh` itself; a count quoted in prose anywhere goes stale the next time a gate lands.
 
-| Check                                          | Type    | Notes                                              |
+| Check (tier 1 -- the `--help` list)             | Type    | Notes                                              |
 | ---------------------------------------------- | ------- | -------------------------------------------------- |
 | `#pragma once` or include guard in every `.h`  | Error   | --                                                 |
 | Lines <= 120 characters                        | Error   | Excludes comment lines                             |
 | No trailing whitespace                         | Error   | --                                                 |
-| Functions <= 50 lines                          | Warning | Doesn't fail build                                 |
-| snake_case function definitions                | Warning | Excludes Win32 API wrappers (`Reg*`, `HKEY*`)      |
-| UPPER_CASE macros                              | Warning | Flags pure-lowercase `#define`                     |
 | Numeric TODO shorthand outside `todo/**`       | Error   | `TODO-NN sectionN`, `DNN TNN`; allowlisted legacy files warn instead |
+| Bare `section`-sign + digit in code comments   | Error   | Legal only with an external-spec qualifier (UEFI, Intel SDM, ACPI, RFC, ...); pre-existing files warn |
 
 Excludes auto-generated files (`build_info.h`, `os_logo.h`, etc.) and third-party code (`stb_truetype`, `stb_image`, `cJSON`).
 
@@ -1171,7 +1169,7 @@ scripts/
 | --------------------------------- | ---------------------------------------------------- |
 | `scripts/build.sh`                | Canonical build wrapper (progress bar, sentinel log) |
 | `scripts/test.sh`                 | Canonical test wrapper (`make test*` delegates here) |
-| `scripts/lint.sh`                 | Canonical lint wrapper (5 checks)                    |
+| `scripts/lint.sh`                 | Canonical lint wrapper (5 C-style checks in `--help`, plus the Check 6-27 repo-integrity gates) |
 | `scripts/run-qemu.sh`             | Generic QEMU launcher (boots `system-disk.img`)      |
 | `scripts/debug.sh`                | QEMU + GDB with kernel symbols                       |
 | `scripts/setup.sh`                | Host bootstrap wrapper                               |
