@@ -93,8 +93,9 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  14   | Bare-metal test matrix and validation plan         | §3         |  [x]   |
 | 💎  |  15   | Boot splash spinner bare-metal fix                 | §3, §10    |  [x]   |
 | 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)   | --         |  [x]   |
-| 💎  |  17   | Emergency-writer robustness residuals (§16 review) | §16        |  [ ]   |
+| 💎  |  17   | Emergency-writer robustness residuals (§16 review) | §16        |  [x]   |
 | 💎  |  18   | Panic-path cross-CPU ownership residuals           | §16, §17   |  [ ]   |
+| 💎  |  19   | Panic-path caller-string snapshot (§17 review)     | §17        |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -467,7 +468,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** N/A -- `boot.conf` skip list removed 2026-03-29; use `BOOT_TRY` / `degraded_mask` (§7) for intentional subsystem failure tests instead.
 
-> **Deferred:** [L] `boot.conf` subsystem skip-list removed 2026-03-29 (code deleted, absent from `src/`), superseded by `BOOT_TRY` / `degraded_mask` -> XREF: 01-boot-platform/TODO-10 §7 (item: "`BOOT_TRY(subsys, fn_call, name)` macro" at line 324)
+> **Deferred:** [L] `boot.conf` subsystem skip-list removed 2026-03-29 (code deleted, absent from `src/`), superseded by `BOOT_TRY` / `degraded_mask` -> XREF: 01-boot-platform/TODO-10 §7 (item: "`BOOT_TRY(subsys, fn_call, name)` macro" at line 325)
 
 ---
 
@@ -560,8 +561,8 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
 > **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 464)
-> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 761)
-> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 760)
+> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 804)
+> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 803)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
 
 ---
@@ -625,11 +626,11 @@ From the stamped section 2:
 
 > **Verified:** 2026-08-13 | 4/5 items | build OK | 28418 kernel + 17 user PASS | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint 0 errors
 > **Accepted:** [M] post-claim panic dumpers still block on `s_klog_lock`, which sits ABOVE the serial layer this section bounds (reason: klog hot path, pre-existing and repo-wide) -> XREF: 02-kernel-core/TODO-27 §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
-> **Accepted:** [H] a corrupt caller string can still fault the emergency writer; the walk is length-capped and taken with no lock held, but surviving the fault needs a kernel-range fault-suppressed read (the RIP-keyed fixup table covers USER range only) (reason: new primitive, different subsystem) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Fault-suppressed kernel reads for the emergency serial writer")
+> **Accepted (RESOLVED by §17):** [H] a corrupt caller string can still fault the emergency writer; the walk is length-capped and taken with no lock held, but surviving the fault needs a kernel-range fault-suppressed read (reason: new primitive, different subsystem) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Fault-suppressed kernel reads"). Shipped `__kread_u8`; the "USER range only" premise was stale (`__kstack_read_u64` already had no CR2 gate), and the first dereference turned out to be `pe_copy`, which is now guarded too.
 > **Accepted:** [H] no cross-CPU freeze on panic entry -- Win11 IPI-freezes and Linux `smp_send_stop`s every other CPU; healthy CPUs here keep mutating the state the dump captures (reason: SMP design decision, own section) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Freeze other CPUs on panic entry")
 > **Accepted:** [M] the async-isolation park leaves `is_online` set, so later `boot_async_group` calls assign work to a dead CPU (reason: pre-existing, async-boot surface) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Clear `is_online` when the async-isolation branch parks a faulting AP")
 > **Accepted:** [H] an AP that faults while HOLDING `g_serial_lock` parks still owning it, so the surviving BSP hangs on its next ordinary serial write; §16 publishes `async_done` first so the fallback is reached, but real ownership needs lock poisoning/handoff (reason: SMP-ownership design call) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Async-isolation lock ownership")
-> **Accepted:** [M] the wedged-UART charge is not attributable per reservation, so a stale return or the async refund can absorb a concurrent epoch's charge (reason: changes the unit-tested accounting API; bounded and errs toward more waits) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Epoch-token the wedged-UART reservation")
+> **Accepted (RESOLVED by §17):** [M] the wedged-UART charge is not attributable per reservation, so a stale return or the async refund can absorb a concurrent epoch's charge (reason: changes the unit-tested accounting API; bounded and errs toward more waits) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Epoch-tokened, attributable wedged-UART accounting"). Shipped as a slot bitmap plus epoch generation with a per-CPU slot ledger.
 > **Deferred:** [H] AP per-CPU TSS/IST leaves AP #DF/NMI/MCE IST delivery non-SMP-safe; needs a per-CPU GDT -> XREF: 01-boot-platform/TODO-09 §10 (item: "Per-CPU TSS + IST (PARKED)")
 > **Quality reviewed:** 2026-08-13 | Codex 38x (design, adversarial x12, consistency x6, perf x6, re-adversarial x13) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 21H+18M+1L fixed, 3H+2M accepted-XREF | scope: kernel-code-quality
 
@@ -642,17 +643,28 @@ From the stamped section 2:
 
 Three residuals the §16 adversarial and kernel-quality reviews raised against the emergency SERIAL WRITER itself -- surviving a faulting source pointer, attributable wedged-UART accounting, and a check-to-emit race in the recoverable writer. The cross-CPU ownership residuals from the same review are §18; the seam is that everything here is a property of the writer primitive and its accounting, while §18 is about which CPUs are running while it writes.
 
-- [ ] Fault-suppressed kernel reads for the emergency serial writer: `serial_write_emergency` bounds its walk at 1024 chars but cannot survive a corrupt source pointer -- on a #DF the nested #PF triple-faults and erases all crash evidence.
-  - The existing RIP-keyed fixup table redirects USER-range faults only (`page_fault_handler` gates on `CR2 < MM_USER_END`), so it does not cover these kernel pointers -> XREF: `02-kernel-core/TODO-23 §13` (item: "Static RIP-keyed exception table (`__uaccess_*_fault`/`_fixup` labels, `cpu_security.c`)"), which shipped the user-range half.
-  - Scope note: §16 already removed the two cheaper halves -- the walk is length-capped, and the load happens with `g_serial_lock` NOT held, so a fault can no longer strand the lock. What remains is surviving the fault itself.
-- [ ] Epoch-token the wedged-UART reservation: `serial_emerg_return` decrements whichever charge is current, so a pre-arm reservation draining after arming cancels a post-arm one -- up to a third budget beyond the two-phase ceiling.
-  - Reserve should hand back the epoch state it reserved under and return should decrement only while that still matches. Deliberately not done inside §16: it changes the unit-tested `serial_emergency.h` accounting API, and the effect is a bounded quantitative overshoot on a counter that is explicitly a heuristic bound, not a correctness invariant. Raised independently by the adversarial, consistency and perf legs.
-  - Two call sites share this one root cause and are both covered here. (a) An ordinary reservation taken pre-arm and returned post-arm. (b) The async-isolation REFUND, which gives back a snapshot delta via the same `serial_emerg_return`, so a concurrent panic's active charge can absorb it. Both are capped -- the refund never exceeds the measured delta and the return saturates at zero -- and both err toward granting extra waits rather than removing them, which is the safe direction for crash evidence. Attributable (per-reservation) accounting closes both at once; nothing narrower is worth a second mechanism.
-- [ ] Close the recoverable writer check-to-emit race: `serial_write_recoverable` tests the owner filter then emits, so an epoch arming in between lets a survivable report put bounded bytes into a just-established crash record.
-  - Bounded and non-fatal, which is why it is filed rather than fixed at the depth §16 reached: the record is one WER line, every wait inside it is capped, and it cannot hang, corrupt state, or lose the panic -- it can only interleave. The ordinary path solves the same check-then-act shape by re-testing under the lock; the recoverable path should re-test per emitted chunk.
-- [ ] Commit: `"kernel: emergency-writer robustness residuals -- fault-suppressed kernel reads, epoch-tokened UART reservation"`
+- [x] Fault-suppressed kernel reads: `__kread_u8` (`cpu_security.c`) guards the caller-string walk in BOTH `serial_emergency_write_str` and `pe_copy`, so a corrupt description truncates with a marker instead of faulting.
+  - The filed premise was STALE and the design review caught it: the fixup table was never user-range-only. `__kstack_read_u64` (shipped by `02-kernel-core/TODO-23 §7`) is matched by RIP and read direction with NO `CR2` gate, so kernel-range recovery already existed; `__kread_u8` adds the byte-load label pair beside it, and `kread_u8_fixup_lookup` factors the routing decision out of `page_fault_handler` so the wiring is unit-testable.
+  - The writer was NOT the first dereference. `panic_collect_evidence` runs before any serial output and `pe_copy` raw-loaded the same pointer, so guarding only the writer would have protected nothing -- the fault landed earlier and re-entered the panic path. Guarding both is what delivers the section's user impact.
+  - NMI is deliberately EXCLUDED, not overlooked: the fixup returns via `IRETQ`, which re-arms NMI delivery while the outer NMI still owns IST2. Callers declare `PANIC_CTX_NORMAL`/`NMI`/`UNKNOWN` (`serial.h`) from `frame->int_no`; the predicate is opt-in so an undeclared context degrades to the plain load. Nested-NMI latch/replay stays with §2 -> XREF: `01-boot-platform/TODO-10 §2` (item: "AP per-CPU TSS/IST: BSP-only today").
+- [x] Epoch-tokened, attributable wedged-UART accounting: the anonymous charge COUNT became a slot BITMAP plus an epoch generation, both packed in the existing latch word.
+  - `serial_emerg_reserve` claims the lowest free slot and returns a token naming that slot and generation; `serial_emerg_return` releases only that slot, and only while the generation still matches, so a pre-arm reservation returned post-arm no longer credits the new epoch. Tokens are SINGLE-USE by contract -- a freed slot is reissued immediately, and per-slot incarnations do not fit the 32-bit word.
+  - The async-isolation refund is now attributable: a per-CPU slot mask (`s_emerg_slot_mask`, indexed by the 8-bit APIC id so it stays GS-independent) replaces the two-snapshot delta against a global counter, which could not tell this CPU's charge from a concurrent panic's. `serial_emerg_refund_self` clears its whole selected set in ONE generation-validated compare-exchange instead of one per slot.
+  - Residual, bounded and documented at `serial.c`: if that CAS loses every attempt the charges stay outstanding, and the next arming does NOT clear them because the pre-arbitration dump runs before arming. Cost is degraded evidence on a wedged UART, never a hang or a lost panic; eliminating it needs a two-word latch.
+- [x] Recoverable writer check-to-emit race: `serial_emergency_emit` re-tests ownership before every PHYSICAL byte for recoverable output, bounding the residual to one byte.
+  - Per-chunk was not enough (a chunk is 128 bytes), and per-input-character was not either -- a `\n` expands to `\r` plus `\n`, so a single test let two bytes through after an arm. The remaining one-byte window is the load-to-`outb` gap, which no lock can close: `serial_enter_emergency` never takes `g_serial_lock` and the emergency emitter proceeds when the try-lock fails.
+- [x] Commit: `"kernel: emergency-writer robustness residuals -- fault-suppressed kernel reads, epoch-tokened UART reservation"`
 
-**Test checkpoint:** A deliberately corrupted panic description pointer produces a bounded diagnostic (or a clean skip) instead of a triple fault, verified on QEMU TCG. A reservation taken before arming and returned after it no longer cancels a post-arm charge.
+**Test checkpoint:** `bash scripts/test.sh SUITE=boot` passes with the epoch-token, per-CPU attribution, context-predicate and fixup-routing suites registered under `TEST_CAT_BOOT`; a token minted before an epoch reset cannot spend the new epoch's charge, and one CPU's refund leaves another CPU's charge standing. The live corrupt-pointer recovery needs a real #PF and stays serial-validated -- the routing DECISION is unit-tested instead, and that gap is deliberate, not claimed as covered.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 19 `serial_emergency` suites (11 pre-existing + 8 added), 28477 kernel + 17 user tests pass, 0 failures
+
+> **Notes:**
+> - Shipped: `__kread_u8` + `kread_u8_fixup_lookup`, the `PANIC_CTX_*` declared-context API, guarded walks in the emergency writer and `pe_copy`, slot-bitmap + generation latch accounting with a per-CPU ledger, per-byte recoverable ownership retest.
+> - How it runs: the guarded read reuses the RIP-keyed table beside `__kstack_read_u64`; callers declare context from `frame->int_no` rather than probing state a panic may have corrupted; the latch keeps its single-word atomic publish.
+> - Downstream effects: closes §16's Accepted [H] corrupt-caller-string and [M] non-attributable-charge findings; `serial_emerg_reserve` changed signature (`int` -> `uint32_t` token) and every caller moved with it.
+> - Scope boundary: the crash REASON path only -- the terminal renderers downstream still walk the originals -> XREF: §19. Cross-CPU panic ownership is §18; nested-NMI latch/replay is §2; the panic-safe emitter stays `02-kernel-core/TODO-27 §7`.
+> - Canonical doc: the emergency accounting block in `src/kernel/drivers/serial.c` plus the `PANIC_CTX_*` block in `include/kernel/drivers/serial.h`.
 
 ---
 
@@ -677,24 +689,42 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
 
 ---
 
+## 19. Panic-Path Caller-String Snapshot (from the §17 review)
+
+> **Spawned-by:** §17 (review)
+> **User impact:** A crash whose corruption reached the panic description now reports its reason on serial (§17), but the machine can still die before finishing the job: the BSOD never paints and the disk crash dump never lands, because the terminal renderers walk the original pointer again. The user sees the reason scroll past on a serial cable and gets no on-screen bugcheck and no dump file to send.
+
+§17 guarded the three sites that produce the crash REASON (`pe_copy`, the emergency serial walk, the async diagnostic). The §17 review then found the renderers DOWNSTREAM of that still dereference the originals, which is the same defect one layer later: fixing individual call sites does not make a pointer safe, only routing every consumer through one safe copy does.
+
+- [ ] Take ONE bounded, guarded snapshot of `description` and `file` at panic entry; every later consumer reads the snapshot, never the caller pointer (`panic.c` serial, framebuffer and `write_crash_dump` paths).
+  - The snapshot largely exists already: `panic_collect_evidence` writes guarded copies to `ev->message` / `ev->file` in the evidence record. The work is rewiring consumers to it, not building a new mechanism.
+  - The design subtlety that makes this a section rather than a patch: `panic_collect_evidence` is guarded by a one-shot atomic claim (`s_evidence_collected`), so on an SMP double panic the LOSING CPU returns without populating the record. A consumer that naively reads it would render the winner's strings as its own. Decide explicitly whether a loser renders the winner's evidence, its own locally-snapshotted copy, or a placeholder.
+  - Contexts where the guarded read is unavailable (`PANIC_CTX_NMI`, `PANIC_CTX_UNKNOWN`) must emit a fixed placeholder rather than walking the original -- the rerouted ordinary path is exactly where an unguarded walk survives today.
+- [ ] Commit: `"kernel: single guarded panic-string snapshot for every terminal renderer"`
+
+**Test checkpoint:** With a deliberately unmapped panic description, the BSOD paints with a truncation placeholder and `write_crash_dump` completes, on QEMU TCG at 1 and 2 CPUs. No renderer dereferences `description` or `file` directly -- verified by grep at review time.
+
+---
+
 ## OS Comparison
 
-| ⭐  | Feature                 | 🪟 Win11                          | 🐧 Linux                        | 🚀 Impossible OS                             |
-| --- | ----------------------- | --------------------------------- | ------------------------------- | -------------------------------------------- |
-| 💎  | UC MMIO mapping         | ✅ MmMapIoSpace                   | ✅ ioremap_uc                   | ✅ §1 vmm_map_mmio_uc                        |
-| 💎  | IST stacks              | ✅ All critical exceptions        | ✅ IST1-4 DF/NMI/MCE            | ⚠️ §2 BSP IST1-3 (AP: T09 §10)               |
-| 💎  | ACPI FADT boot arch     | ✅ HAL checks all flags           | ✅ Gates PIT/RTC/PS2            | ✅ §4 IAPC_BOOT_ARCH parsed                  |
-| 💎  | PS/2 ACPI detection     | ✅ HAL detects i8042              | ✅ i8042.nopnp                  | ✅ §5 FADT + GSI routing                     |
-| 💎  | AHCI MSI fallback       | ✅ StorAHCI INTx fallback         | ✅ libahci polled fallback      | ✅ §6 MSI→INTx→polled                        |
-| 💎  | Graceful degradation    | ✅ Safe Mode + Last Known         | ✅ systemd continues            | ✅ §7 BOOT_TRY + degraded_mask               |
-| 💎  | Per-process page tables | ✅ Each process own CR3           | ✅ mm_struct per task           | ✅ §8 PML4 clone + CR3 switch                |
-| 💎  | CPU security verify     | ✅ HAL verifies CR4/EFER          | ✅ Checks feature enable        | ✅ §9 verify NX/SMEP/SMAP                    |
-| 💎  | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize     | ✅ setup_arch + efi_call wrap   | ✅ §10 timer-last + rt_call mask             |
-| 💎  | Logging on main FS      | ✅ C:\Windows\System32            | ✅ /var/log                     | ✅ §12 KLOG_DIR X:\ (T24)                    |
-| 💎  | CPU feature minimums    | ✅ NX required since Vista        | ✅ verify_cpu required mask     | ✅ §13 NX+SSE2+LM+SYSCALL mask               |
-| ⭐  | Bare-metal test matrix  | ❌ Internal only (WHQL)           | ❌ Community-driven             | ✅ §14 4-platform matrix                     |
-| ⭐  | Boot spinner liveness   | ✅ ISR-driven ring                | ⚠️ plymouth (optional)          | ✅ §15 timer ISR @10fps Fluent               |
-| 💎  | Abort-safe panic serial | ✅ IPI-freezes CPUs before output | ✅ trylock UART + smp_send_stop | ⚠️ §16 try-lock + bounded UART (freeze: §18) |
+| ⭐  | Feature                     | 🪟 Win11                          | 🐧 Linux                        | 🚀 Impossible OS                             |
+| --- | --------------------------- | --------------------------------- | ------------------------------- | -------------------------------------------- |
+| 💎  | UC MMIO mapping             | ✅ MmMapIoSpace                   | ✅ ioremap_uc                   | ✅ §1 vmm_map_mmio_uc                        |
+| 💎  | IST stacks                  | ✅ All critical exceptions        | ✅ IST1-4 DF/NMI/MCE            | ⚠️ §2 BSP IST1-3 (AP: T09 §10)               |
+| 💎  | ACPI FADT boot arch         | ✅ HAL checks all flags           | ✅ Gates PIT/RTC/PS2            | ✅ §4 IAPC_BOOT_ARCH parsed                  |
+| 💎  | PS/2 ACPI detection         | ✅ HAL detects i8042              | ✅ i8042.nopnp                  | ✅ §5 FADT + GSI routing                     |
+| 💎  | AHCI MSI fallback           | ✅ StorAHCI INTx fallback         | ✅ libahci polled fallback      | ✅ §6 MSI→INTx→polled                        |
+| 💎  | Graceful degradation        | ✅ Safe Mode + Last Known         | ✅ systemd continues            | ✅ §7 BOOT_TRY + degraded_mask               |
+| 💎  | Per-process page tables     | ✅ Each process own CR3           | ✅ mm_struct per task           | ✅ §8 PML4 clone + CR3 switch                |
+| 💎  | CPU security verify         | ✅ HAL verifies CR4/EFER          | ✅ Checks feature enable        | ✅ §9 verify NX/SMEP/SMAP                    |
+| 💎  | Boot order / UEFI-safe      | ✅ Ordered HAL + RT serialize     | ✅ setup_arch + efi_call wrap   | ✅ §10 timer-last + rt_call mask             |
+| 💎  | Logging on main FS          | ✅ C:\Windows\System32            | ✅ /var/log                     | ✅ §12 KLOG_DIR X:\ (T24)                    |
+| 💎  | CPU feature minimums        | ✅ NX required since Vista        | ✅ verify_cpu required mask     | ✅ §13 NX+SSE2+LM+SYSCALL mask               |
+| ⭐  | Bare-metal test matrix      | ❌ Internal only (WHQL)           | ❌ Community-driven             | ✅ §14 4-platform matrix                     |
+| ⭐  | Boot spinner liveness       | ✅ ISR-driven ring                | ⚠️ plymouth (optional)          | ✅ §15 timer ISR @10fps Fluent               |
+| 💎  | Abort-safe panic serial     | ✅ IPI-freezes CPUs before output | ✅ trylock UART + smp_send_stop | ⚠️ §16 try-lock + bounded UART (freeze: §18) |
+| 💎  | Panic-string fault recovery | ✅ Probes before dereferencing    | ✅ probe_kernel_read fixups     | ✅ §17 `__kread_u8` RIP-keyed fixup          |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 

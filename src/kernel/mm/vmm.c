@@ -37,6 +37,11 @@
 #include "kernel/bugcheck.h"            /* KeBugCheckEx: pt_walk hard-error on a corrupt PTE */
 #include "kernel/sched/spinlock.h"      /* s_mmio_lock: SMP-safe MMIO VA allocator (unconditional) */
 #include "kernel/smp.h"                 /* smp_this_cpu() + MAX_CPUS: per-CPU #PF exception scratch */
+/* UNCONDITIONAL, and it must stay outside the KERNEL_TESTS guard below:
+ * page_fault_handler calls kread_u8_fixup_lookup on the production path, so
+ * test-gating this declaration breaks the release flavor (-UKERNEL_TESTS
+ * -Werror) while every test build stays green. */
+#include "kernel/cpu_security.h"        /* kread_u8_fixup_lookup: guarded-read routing */
 #ifdef KERNEL_TESTS
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
@@ -852,6 +857,24 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
             frame->rip == (uint64_t)(uintptr_t)__kstack_read_fault) {
             frame->rip = (uint64_t)(uintptr_t)__kstack_read_fixup;
             return (uint64_t)frame;  /* guarded kernel read reports fault: RAX path */
+        }
+    }
+
+    /* Fault-recoverable KERNEL byte read: __kread_u8 (cpu_security.c) is the
+     * panic path's guarded load for walking a caller-supplied C string whose
+     * pointer may itself be the corruption being reported -- serial.c's
+     * emergency writer and panic.c's evidence collector. Same reasoning as the
+     * kstack read above: matched by EXACT faulting RIP plus read direction, no
+     * per-CPU state, and redirected BEFORE the pager so a panic-context fault
+     * can never reach swap_handle_fault and its blocking I/O. Kept as a separate
+     * block rather than folded into the one above because each guarded load
+     * needs its own label pair. */
+    {
+        uint64_t kread_fixup;
+        if (kread_u8_fixup_lookup(frame->rip, (err_code & PF_EC_WRITE) != 0,
+                                  &kread_fixup)) {
+            frame->rip = kread_fixup;
+            return (uint64_t)frame;  /* guarded kernel byte read reports fault */
         }
     }
 

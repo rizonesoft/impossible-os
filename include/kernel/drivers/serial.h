@@ -79,6 +79,43 @@ int serial_in_emergency(void);
 void serial_write_emergency(const char *str);
 void serial_putchar_emergency(char c);
 
+/* PANIC CONTEXT -- which abort handler this output is being emitted from.
+ *
+ * It exists for exactly one decision: whether the caller-string walk may use the
+ * fault-suppressed read (`__kread_u8`, cpu_security.h) to survive a corrupt
+ * pointer. That read recovers by taking a real #PF and returning through IRETQ.
+ *
+ *   PANIC_CTX_NORMAL -- ordinary panic, #DF or #MC. The guarded read is used. A
+ *     #PF taken by a handler that is ALREADY RUNNING is delivered normally
+ *     (shutdown requires a fault while DELIVERING #DF), and the fixup is matched
+ *     ahead of the pager so it cannot enter blocking I/O.
+ *   PANIC_CTX_NMI -- the walk falls back to a plain load. The fixup's IRETQ
+ *     would re-arm NMI delivery while the outer NMI still owns IST2, letting a
+ *     second NMI reuse that stack and overwrite the frames -- worse than the
+ *     unguarded load, whose fault goes terminal and never returns into the NMI
+ *     handler. Until nested-NMI latch/replay exists (T10 section 2), NMI output
+ *     keeps the bounded-walk-only guarantee.
+ *   PANIC_CTX_UNKNOWN -- the caller cannot prove its vector, so it gets the
+ *     restrictive behavior. This is the REROUTED ordinary path: once the latch
+ *     is armed, serial_write / serial_putchar funnel indirect emitters (the klog
+ *     sink, subsystem dumps) in here, and none of them knows which vector is
+ *     being handled above them. Treating unknown as permissive would silently
+ *     hand the NMI hazard to every indirect emitter; treating it as restrictive
+ *     leaves those callers exactly as they behave today.
+ *
+ * The test is `ctx == PANIC_CTX_NORMAL`, not `ctx == PANIC_CTX_NMI`, so the
+ * guarded read is opt-IN: an unrecognized value degrades to the safe behavior
+ * rather than the dangerous one.
+ *
+ * DECLARED by the caller, never probed: the vector is a hardware fact known at
+ * panic entry (`frame->int_no`), whereas any state the writer could consult is
+ * exactly the state a panic may have corrupted. */
+#define PANIC_CTX_NORMAL   0u
+#define PANIC_CTX_NMI      1u
+#define PANIC_CTX_UNKNOWN  2u
+
+void serial_write_emergency_ctx(const char *str, uint32_t ctx);
+
 /* Same bounded, non-blocking writer, but for a caller the system SURVIVES (the
  * WER user-fault report). Gets a much shorter per-byte wait and a per-call
  * budget, so it can neither spend the terminal allowance nor mask interrupts

@@ -313,6 +313,34 @@ int __uaccess_touch_w(void *addr);
  * success (*out = value read), -1 if it faulted or was rejected (*out untouched). */
 int __kstack_read_u64(uint64_t *out, const void *addr);
 
+/* Fault-recoverable single-BYTE read from a possibly-corrupt KERNEL address --
+ * the panic path's primitive for walking a caller-supplied C string (a panic
+ * description, a __FILE__) that may itself be part of the corruption being
+ * reported. Same RIP-keyed mechanism and same KERNEL-VA scope as
+ * __kstack_read_u64 above, with its own label pair (the handler matches the
+ * exact faulting instruction, so guarded loads cannot share labels). A byte
+ * needs no straddle check, so only the address is canonical-tested.
+ *
+ * CONTEXT, stated precisely because the coarser "no abort context" wording is
+ * over-broad and this primitive exists to be used from abort handlers: recovery
+ * takes a real #PF and returns through IRETQ.
+ *   - #DF / #MC handler: SAFE. Shutdown requires a fault while DELIVERING #DF,
+ *     not one taken by a #DF handler that is already running, and the fixup is
+ *     matched before the pager so it cannot enter blocking I/O.
+ *   - NMI handler: UNSAFE. The fixup IRETQ re-arms NMI delivery while the outer
+ *     NMI still owns IST2, so a second NMI reuses that stack and overwrites the
+ *     frames. NMI-context callers must NOT use this; they declare their context
+ *     instead of probing it (serial.h PANIC_CTX_*).
+ * Returns 0 on success (*out = byte read), -1 if it faulted or was rejected. */
+int __kread_u8(uint8_t *out, const void *addr);
+
+/* The exception-table routing decision for __kread_u8, as a pure function so it
+ * can be unit tested: page_fault_handler consults it before the pager. Returns 1
+ * and writes the fixup RIP when `rip` is exactly the guarded load and the fault
+ * is a READ; 0 otherwise. A write fault at that RIP is NOT ours -- recovering it
+ * would swallow an unrelated kernel bug. */
+int kread_u8_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out);
+
 /* Exception-table label symbols emitted by the __uaccess_* primitives.
  * page_fault_handler compares the faulting RIP to the *_fault labels and, when
  * the fault direction matches the user operand, redirects to the *_fixup label:

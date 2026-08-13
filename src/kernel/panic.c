@@ -35,6 +35,8 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/serial_emergency.h"  /* budget refund on the survivable branch */
 #include "kernel/boot_progress.h"   /* boot_stage_history_get (panic evidence) */
+#include "kernel/cpu_security.h"    /* __kread_u8 -- guarded caller-string copy */
+#include "kernel/vectors.h"         /* VECTOR_NMI -- panic context declaration */
 #include "kernel/boot_info.h"       /* boot_history seq + g_boot_info.had_panic */
 #include "kernel/mm/pmm.h"          /* pmm_get_free_frames */
 #include "kernel/quota/quota.h"     /* quota_dump_crash (resource exhaustion) */
@@ -611,6 +613,43 @@ static void panic_append(char *buf, uint32_t cap, uint32_t *pos, const char *s)
     buf[*pos] = '\0';
 }
 
+/* panic_append for a CALLER-SUPPLIED string, i.e. one that may itself be the
+ * corruption being reported. Same bounds, but each byte is read through the
+ * guarded load, and an unreadable byte ends the append with a marker instead of
+ * faulting.
+ *
+ * This exists because guarding pe_copy and the emergency serial walk was NOT
+ * sufficient: the async-isolation branch builds its diagnostic with
+ * panic_append, so the ORIGINAL description and step name were still read raw
+ * there -- on a survivable AP fault, after `async_done` was already published,
+ * which is precisely where a nested fault turns an isolated failure into a
+ * system-terminal panic. A guarantee about a pointer holds only when every site
+ * that dereferences it honours it. */
+static void panic_append_guarded(char *buf, uint32_t cap, uint32_t *pos,
+                                 const char *s, uint32_t ctx)
+{
+    if (!s) {
+        panic_append(buf, cap, pos, "(null)");
+        return;
+    }
+    if (!serial_emerg_ctx_allows_guarded_read(ctx)) {
+        panic_append(buf, cap, pos, s);
+        return;
+    }
+    while (*pos + 1u < cap) {
+        uint8_t b;
+        if (__kread_u8(&b, s)) {
+            panic_append(buf, cap, pos, "<unreadable>");
+            return;
+        }
+        if (!b)
+            break;
+        buf[(*pos)++] = (char)b;
+        s++;
+    }
+    buf[*pos] = '\0';
+}
+
 static void panic_append_hex(char *buf, uint32_t cap, uint32_t *pos, uint64_t v)
 {
     static const char d[] = "0123456789ABCDEF";
@@ -881,12 +920,41 @@ static inline uint8_t pe_inb(uint16_t port)
     return ret;
 }
 
-static void pe_copy(char *dst, uint32_t cap, const char *src)
+/* Copy a caller-supplied C string into the evidence record, surviving a source
+ * pointer that is itself part of the corruption being reported.
+ *
+ * THIS IS THE FIRST DEREFERENCE OF THE PANIC DESCRIPTION -- earlier than the
+ * serial writer, because panic_collect_evidence runs before any output (it
+ * captures forensics before anything that could itself fault). Guarding only the
+ * serial walk would therefore protect nothing: a corrupt description would fault
+ * here, re-entering the panic path and losing the original crash evidence, long
+ * before the emergency writer ever saw the pointer.
+ *
+ * `ctx` is the panic context and selects whether the guarded read is available;
+ * see serial.h PANIC_CTX_*. On a fault the copy stops and the record keeps what
+ * was readable, NUL-terminated -- a truncated description still names the crash,
+ * whereas a triple fault names nothing. */
+static void pe_copy(char *dst, uint32_t cap, const char *src, uint32_t ctx)
 {
     uint32_t i = 0u;
-    if (src)
-        for (; i + 1u < cap && src[i]; i++)
-            dst[i] = src[i];
+
+    if (src) {
+        for (; i + 1u < cap; i++) {
+            char c;
+
+            if (serial_emerg_ctx_allows_guarded_read(ctx)) {
+                uint8_t b;
+                if (__kread_u8(&b, &src[i]))
+                    break;               /* unreadable -- keep what we have */
+                c = (char)b;
+            } else {
+                c = src[i];
+            }
+            if (!c)
+                break;
+            dst[i] = c;
+        }
+    }
     dst[i] = '\0';
 }
 
@@ -912,6 +980,8 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
                             const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line)
 {
+    uint32_t ctx;
+
     /* Atomic claim: on an SMP double-panic two CPUs must not both write the
      * fixed 0x80000 page / shared scratch. The first to swap 1 in wins; the
      * loser returns without touching any shared evidence state. */
@@ -973,8 +1043,15 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
         ev->r11 = frame->r11; ev->r12 = frame->r12; ev->r13 = frame->r13;
         ev->r14 = frame->r14; ev->r15 = frame->r15;
     }
-    pe_copy(ev->file, sizeof ev->file, file);
-    pe_copy(ev->message, sizeof ev->message, message);
+    /* Panic context, DECLARED from the hardware vector rather than probed. An
+     * NMI-sourced panic must not use the fault-suppressed read (its fixup IRETQ
+     * would re-arm NMI delivery while the outer NMI still owns IST2); every
+     * other vector, #DF and #MC included, may. A NULL frame means the caller
+     * reached here through a software panic, which is never NMI context. */
+    ctx = (frame && frame->int_no == VECTOR_NMI) ? PANIC_CTX_NMI : PANIC_CTX_NORMAL;
+
+    pe_copy(ev->file, sizeof ev->file, file, ctx);
+    pe_copy(ev->message, sizeof ev->message, message, ctx);
 
     ev->post_code = (uint32_t)boot_post_last_shadow();
 
@@ -987,7 +1064,7 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
             const boot_stage_entry_t *e = &h[cnt - n + i];
             ev->stages[i].stage      = (uint32_t)e->stage;
             ev->stages[i].elapsed_ms = e->elapsed_ms;
-            pe_copy(ev->stages[i].msg, sizeof ev->stages[i].msg, e->msg);
+            pe_copy(ev->stages[i].msg, sizeof ev->stages[i].msg, e->msg, ctx);
         }
         ev->stage_count = h ? n : 0u;
     }
@@ -1002,9 +1079,9 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
             ev->klogs[i].pid       = s_panic_klog_scratch[i].pid;
             ev->klogs[i].tid       = s_panic_klog_scratch[i].tid;
             pe_copy(ev->klogs[i].subsystem, sizeof ev->klogs[i].subsystem,
-                    s_panic_klog_scratch[i].subsystem);
+                    s_panic_klog_scratch[i].subsystem, ctx);
             pe_copy(ev->klogs[i].message, sizeof ev->klogs[i].message,
-                    s_panic_klog_scratch[i].message);
+                    s_panic_klog_scratch[i].message, ctx);
         }
         ev->klog_count = n;
     }
@@ -1278,11 +1355,16 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * identity there). */
     panic_collect_evidence(frame, bugcheck_code, bugcheck_params, description, file, line);
 
-    /* Wedged-UART charge as it stands BEFORE the unconditional dump below.
+    /* Charges THIS CPU already holds before the unconditional dump below.
      * The dump must be GS-independent, so it cannot ask whether this CPU is
      * survivable before spending; it spends first, and the async-isolation
-     * branch refunds this delta if the machine turns out to keep running. */
-    uint32_t budget_before = serial_emerg_waits();
+     * branch refunds what it spent if the machine turns out to keep running.
+     *
+     * Per-CPU, not the global charge: both reads must describe the SAME writer
+     * or the difference between them is not this CPU's spending. The global
+     * counter cannot provide that -- a concurrent panic charging between the two
+     * reads is indistinguishable from this dump charging. */
+    uint32_t charges_before = serial_emerg_charges_self();
     uint32_t screen_w;
     uint32_t screen_h;
     uint64_t cr2_val;
@@ -1325,11 +1407,21 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * path swallowed the actual reason. Panic MUST be observable
      * even under the most hostile downstream state. */
     {
+        /* The two CALLER-SUPPLIED strings go through the context-aware writer;
+         * every other emit here is a string literal or a stack hex buffer, which
+         * this kernel owns and cannot fault on. `description` and `file` are the
+         * pointers that may themselves be the corruption being reported, so they
+         * are exactly the ones that need the guarded walk -- and exactly the ones
+         * that must NOT take it in NMI context. */
+        uint32_t emit_ctx = (frame && frame->int_no == VECTOR_NMI)
+                                ? PANIC_CTX_NMI : PANIC_CTX_NORMAL;
+
         panic_emit("\n\n[PANIC] ");
-        panic_emit(description ? description : "(no description)");
+        serial_write_emergency_ctx(description ? description : "(no description)",
+                                   emit_ctx);
         if (file) {
             panic_emit("\n  at ");
-            panic_emit(file);
+            serial_write_emergency_ctx(file, emit_ctx);
         }
         panic_emit("\n");
 
@@ -1370,6 +1462,10 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * -- so reading it afterwards can misattribute the crash, or print
              * "?", which destroys the value of this diagnostic. */
             const char *step_name = pcpu->async_name ? pcpu->async_name : "?";
+            /* Same declared-context rule as the pre-arbitration dump: derived
+             * from the hardware vector, never probed. */
+            uint32_t    async_ctx = (frame && frame->int_no == VECTOR_NMI)
+                                        ? PANIC_CTX_NMI : PANIC_CTX_NORMAL;
             uint32_t    step_cpu  = pcpu->cpu_id;
 
             /* REFUND FIRST, then publish, then diagnose.
@@ -1385,20 +1481,17 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * find the allowance still spent. The refund touches only the
              * packed serial word, so it is safe this early.
              *
-             * Saturating and imprecise under concurrent charging by design: the
-             * delta is measured against a GLOBAL counter, so a concurrent
-             * panic's active charge can absorb part of this refund. It is
-             * capped at what was measured, `serial_emerg_return` saturates at
-             * zero, and the error grants extra waits rather than removing them
-             * -- the safe direction for crash evidence. Attributable
-             * per-reservation accounting would close it exactly; filed with the
-             * same root cause as the pre-arm/post-arm case, in the bare-metal
-             * hardening roadmap ("Epoch-token the wedged-UART reservation"). */
+             * ATTRIBUTABLE. Both readings come from this CPU's own charge slot,
+             * which no other CPU writes, so the difference is exactly what this
+             * dump spent -- a concurrent panic charging in between changes the
+             * global counter but not this slot. `serial_emerg_refund_self` then
+             * bounds the refund by what this CPU is still recorded as holding in
+             * the LIVE epoch, so it can neither absorb another CPU's charge nor
+             * credit an epoch that has since been published. */
             {
-                uint32_t now   = serial_emerg_waits();
-                uint32_t spent = (now > budget_before) ? (now - budget_before) : 0u;
-                while (spent--)
-                    serial_emerg_return();
+                uint32_t now   = serial_emerg_charges_self();
+                uint32_t spent = (now > charges_before) ? (now - charges_before) : 0u;
+                serial_emerg_refund_self(spent);
             }
 
             /* PUBLISH. The BSP barrier waits on async_done to run the sequential
@@ -1428,10 +1521,14 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
                 panic_append(rec, sizeof rec, &rp, "\n[ASYNC] FAULT on CPU");
                 panic_append_hex(rec, sizeof rec, &rp, step_cpu);
                 panic_append(rec, sizeof rec, &rp, " during '");
-                panic_append(rec, sizeof rec, &rp, step_name);
+                /* step_name and description are CALLER-SUPPLIED and may be the
+                 * corruption being reported; every other append here is a
+                 * literal or a formatted number this kernel owns. */
+                panic_append_guarded(rec, sizeof rec, &rp, step_name, async_ctx);
                 panic_append(rec, sizeof rec, &rp, "': ");
-                panic_append(rec, sizeof rec, &rp,
-                             description ? description : "unknown");
+                panic_append_guarded(rec, sizeof rec, &rp,
+                                     description ? description : "unknown",
+                                     async_ctx);
                 panic_append(rec, sizeof rec, &rp, " (err=");
                 panic_append_hex(rec, sizeof rec, &rp, error_code);
                 panic_append(rec, sizeof rec, &rp, " RIP=");

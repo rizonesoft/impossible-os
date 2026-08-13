@@ -395,6 +395,81 @@ int __kstack_read_u64(uint64_t *out, const void *addr)
     return 0;
 }
 
+/* Fault-suppressed single-BYTE read from an arbitrary KERNEL VA.
+ *
+ * Same static RIP-keyed mechanism as __kstack_read_u64 above -- distinct labels
+ * because page_fault_handler matches the EXACT faulting instruction, so two
+ * guarded loads cannot share one label pair. noinline so the globals emit once.
+ *
+ * Exists for the panic path, which walks caller-supplied C strings (a panic
+ * description, a __FILE__) that may themselves be part of the corruption being
+ * reported: serial.c's emergency writer and panic.c's evidence collector. A byte
+ * load needs no straddle check -- one byte cannot cross the canonical hole -- so
+ * only the address itself is canonical-tested; a non-canonical operand raises
+ * #GP, which a #PF-keyed fixup cannot recover.
+ *
+ * SAME CONTEXT CAVEAT AS __kstack_read_u64, and it is load-bearing here rather
+ * than theoretical: recovery works by taking a real #PF and IRETing out of it.
+ * Inside an already-running #DF/#MC handler that is fine -- shutdown requires a
+ * fault while DELIVERING #DF, not one taken by a handler already running. From
+ * an NMI handler it is NOT: the fixup returns through IRETQ, which re-arms NMI
+ * delivery while the outer NMI is still live on IST2, so a second NMI reuses
+ * that stack and overwrites the frames. Callers on the panic path therefore
+ * DECLARE their context rather than probing it -- see serial.h PANIC_CTX_*.
+ * Returns 0 on success (*out = byte), -1 on fault. */
+__attribute__((noinline))
+int __kread_u8(uint8_t *out, const void *addr)
+{
+    int      failed = 0;
+    uint64_t val    = 0;
+    uint64_t a      = (uint64_t)(uintptr_t)addr;
+
+    if (!out)
+        return -1;
+    if (!MM_IS_CANONICAL_4LVL(a))
+        return -1;
+
+    __asm__ volatile (
+        ".globl __kread_u8_fault\n\t"
+        ".globl __kread_u8_fixup\n\t"
+        "__kread_u8_fault:\n\t"
+        "movzbl (%[a]), %k[v]\n\t"
+        "jmp 1f\n\t"
+        "__kread_u8_fixup:\n\t"
+        "movl $1, %[f]\n\t"
+        "1:\n\t"
+        : [v]"+r"(val), [f]"+r"(failed)
+        : [a]"r"(addr)
+        : "memory", "cc");
+    if (failed)
+        return -1;
+    *out = (uint8_t)val;
+    return 0;
+}
+
+/* Pure routing decision for the __kread_u8 guarded load, factored out of
+ * page_fault_handler so the wiring is testable without provoking a real #PF.
+ *
+ * The end-to-end path (fault -> handler -> fixup -> resumed walk) genuinely
+ * needs a real page fault and stays serial-validated, but the DECISION -- exact
+ * RIP, read direction only -- is the part that silently rots: a mistyped label
+ * or a dropped direction check would still boot, and the guarded read would
+ * either stop recovering or start swallowing unrelated kernel write faults.
+ *
+ * Returns 1 and writes the fixup address when this fault belongs to the guarded
+ * load; 0 otherwise, leaving *fixup_out untouched. */
+int kread_u8_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out)
+{
+    extern char __kread_u8_fault[], __kread_u8_fixup[];
+
+    if (is_write || !fixup_out)
+        return 0;
+    if (rip != (uint64_t)(uintptr_t)__kread_u8_fault)
+        return 0;
+    *fixup_out = (uint64_t)(uintptr_t)__kread_u8_fixup;
+    return 1;
+}
+
 int copy_from_user(void *dst, const void *user_src, uint32_t len)
 {
     int r;
