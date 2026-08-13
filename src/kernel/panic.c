@@ -383,7 +383,9 @@ static int panic_try_claim_owner(void)
     return (prev == 0xFFFFFFFF || prev == my_id);
 }
 
-/* The declared panic context for this entry: PANIC_CTX_NMI whenever the
+/* ARCH: x86-64 -- will move to arch/ with the rest of the CPU primitives.
+ *
+ * The declared panic context for this entry: PANIC_CTX_NMI whenever the
  * fault-suppressed kernel read must NOT be used, PANIC_CTX_NORMAL otherwise.
  *
  * DECLARED from hardware state, never probed from memory a panic may have
@@ -1050,12 +1052,9 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
     __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
     ev->cr0 = cr0; ev->cr2 = cr2; ev->cr3 = cr3; ev->cr4 = cr4;
 
-    /* CPUID leaf 1 -> initial APIC id in EBX[31:24]; pure CPUID, fault-safe. */
-    {
-        uint32_t a, b, c, d;
-        __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1u));
-        ev->cpu_id = (b >> 24) & 0xFFu;
-    }
+    /* Same panic-safe identity the serial owner word and the NMI depth use, so a
+     * crash record names the CPU those two are keyed by. */
+    ev->cpu_id = cpu_panic_safe_apic_id();
     ev->line           = line;
     ev->pmm_free_pages = pmm_get_free_frames();
     /* Legacy PIC mask via port I/O (fault-safe); best-effort IRQ-state proxy. */
@@ -1532,16 +1531,24 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * waiting for a CPU that will never answer -- turning one recovered
              * async fault into a visibly stalled boot.
              *
-             * Ordered before the async_done publish, and with a RELEASE store, so
-             * a BSP that observes completion cannot then observe this CPU as
-             * still online and hand it the next group's work.
+             * ORDERING, attributed precisely: what stops a BSP observing
+             * async_done=1 while still seeing this CPU online is the smp_mb()
+             * below plus x86 TSO -- NOT the RELEASE annotation on this store. A
+             * release store orders EARLIER accesses before ITSELF; it says
+             * nothing about the later async_done store. The annotation is kept
+             * because it correctly publishes this write to the ACQUIRE loads in
+             * boot_init.c and smp.c, but an ARM64 port must keep the fence.
              *
-             * SCOPE: this fixes async DISPATCH. It does not retire the CPU from
-             * the system-wide count -- smp_cpu_count() is a one-time boot
-             * snapshot (smp.c) that a parked AP already contradicted before this
-             * change, since a CPU halted forever was still being counted as
-             * active. Converting topology and the NT processor-count reporting to
-             * a live online mask is separate, larger work -> XREF: section 20. */
+             * SCOPE: this fixes async DISPATCH. is_online is also read by
+             * irq.c (affinity eligibility), sched/irql.c (health aggregation),
+             * cpu_security.c (audit sets) and topology.c -- today those are all
+             * benign or beneficial because topology_init runs before the first
+             * boot_async_group, but topology.c reads the field PLAIN and
+             * non-volatile, so making it asynchronously mutable leaves a latent
+             * race that only call ordering currently hides. And the CPU is not
+             * retired from the system-wide count: smp_cpu_count() is a one-time
+             * boot snapshot (smp.c) that a parked AP already contradicted before
+             * this change. Both are owned together -> XREF: section 20. */
             __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
 
             pcpu->async_result = (uint8_t)BOOT_FATAL;

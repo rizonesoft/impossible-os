@@ -111,9 +111,16 @@ interrupt_handler_t idt_get_handler(uint8_t n);
 
 /* ---- NMI nesting depth (ARCH: x86-64) ----
  *
- * idt_in_nmi() is nonzero while THIS CPU is anywhere inside an NMI handler.
- * isr_handler raises the depth before it validates the frame or GS and lowers it
- * at its last C statement, so the whole faultable body of an NMI is covered.
+ * idt_in_nmi() is nonzero while THIS CPU is inside an NMI handler. isr_handler
+ * raises the depth before it validates the frame or GS and lowers it at its last
+ * C statement, so the whole faultable BODY of an NMI is covered.
+ *
+ * It is NOT covered end to end, and the difference matters: the stub prologue in
+ * isr_stubs.asm and isr_handler's own `frame->int_no` load run before the raise,
+ * and the swapgs + iretq epilogue runs after the lower. A fault in either window
+ * still classifies as ordinary. Closing them needs a dedicated NMI entry stub
+ * (vector 2 shares the generic stub today), tracked as the dedicated-NMI-entry-
+ * stub item in the bare-metal-hardening roadmap.
  *
  * The panic path is the consumer: a fault taken inside the NMI handler re-enters
  * panic with an INNER vector, so a context predicate reading only frame->int_no

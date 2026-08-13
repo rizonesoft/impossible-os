@@ -158,6 +158,11 @@ static spinlock_t g_serial_lock = SPINLOCK_INIT;
  * lower against it -- a rewrite of the most safety-critical primitive on the
  * panic path, and its own unit of work -> XREF: section 20. */
 #define SERIAL_LOCK_NO_OWNER  0u
+/* ONE definition of the encoding. Open-coding `id + 1` at both the record and
+ * the release site is how the two silently stop matching: the compare-exchange
+ * would simply never fire and the handback would degrade back to the hang it was
+ * added to remove, with no runtime signal at all. */
+#define SERIAL_LOCK_OWNER_OF(id)  (((id) & SERIAL_EMERG_CPU) + 1u)
 static volatile uint32_t g_serial_lock_owner = SERIAL_LOCK_NO_OWNER;
 
 /* Emergency latch states. Three, not two, so that ARMING itself is the one-shot:
@@ -323,35 +328,18 @@ static inline uint8_t inb(uint16_t port)
     return ret;
 }
 
-/* Panic-safe CPU identity: the initial APIC ID from CPUID leaf 1, EBX[31:24].
+/* Panic-safe CPU identity, shared with the NMI depth counter (idt.c) and the
+ * crash-evidence record (panic.c) so all of them provably mean the same CPU.
+ * Full rationale -- why not smp_this_cpu(), why not per_cpu_data.lapic_id, and
+ * the >255-CPU aliasing bound -- lives with the helper in cpu_security.h.
  *
- * CPUID touches NO MEMORY, so this cannot fault -- not on a corrupt GS base,
- * not on torn page tables, not with per-CPU data unmapped. That property is
- * required, not merely nice: the routing predicate runs on every rerouted write
- * AFTER the epoch is armed, and an identity lookup that could fault there would
- * take a nested fault out of the panic owner, lose owner arbitration, and
- * abandon the remaining dump and BSOD.
- *
- * NOT smp_this_cpu(): that reads gs:0 AND falls back to &cpu_data[0] when it is
- * NULL (smp.c), never returning NULL -- so an entrant with no valid per-CPU
- * identity would silently record itself as CPU 0, after which the REAL CPU 0
- * also passes routing as owner. NOT the gs:0 self-pointer either: reading it is
- * itself a dereference through a base this path cannot trust.
- *
- * 8-bit initial APIC ID matches the rest of the tree, which is xAPIC throughout
- * (SIPI target, lapic_id() and cpu_info.apic_id are all 8-bit); x2APIC systems
- * with more than 255 CPUs are already unsupported repo-wide. Identity is only
- * ever compared against another value from this same helper, so the absolute
- * numbering does not matter -- only that it is stable and per-CPU unique. */
-static uint32_t serial_emerg_self_cpu(void)
+ * The fault-freedom is required here, not merely nice: the routing predicate
+ * runs on every rerouted write AFTER the epoch is armed, and an identity lookup
+ * that could fault there would take a nested fault out of the panic owner, lose
+ * owner arbitration, and abandon the remaining dump and BSOD. */
+static inline uint32_t serial_emerg_self_cpu(void)
 {
-    uint32_t eax, ebx, ecx, edx;
-
-    __asm__ volatile ("cpuid"
-                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                      : "a"(1u), "c"(0u));
-    (void)eax; (void)ecx; (void)edx;
-    return (ebx >> 24) & 0xFFu;
+    return cpu_panic_safe_apic_id();
 }
 
 /* ---- g_serial_lock ownership bookkeeping ----
@@ -364,7 +352,7 @@ static uint32_t serial_emerg_self_cpu(void)
 static inline void serial_lock_note_owner(void)
 {
     __atomic_store_n(&g_serial_lock_owner,
-                     (serial_emerg_self_cpu() & SERIAL_EMERG_CPU) + 1u,
+                     SERIAL_LOCK_OWNER_OF(serial_emerg_self_cpu()),
                      __ATOMIC_RELEASE);
 }
 
@@ -386,32 +374,20 @@ static inline void serial_lock_release(uint64_t flags)
     spin_unlock_irqrestore(&g_serial_lock, flags);
 }
 
-/* Hand g_serial_lock back if THIS CPU is the recorded holder.
- *
- * Called by a CPU that is about to park forever (the panic async-isolation
- * branch) so the surviving CPUs are not blocked on a lock whose owner will never
- * run again. The compare-exchange is what makes it safe to call unconditionally:
- * a CPU that does not own the lock changes nothing, so this can never steal a
- * live holder's lock.
- *
- * spin_tryunlock, not spin_unlock_irqrestore: the caller never returns, so there
- * is no saved IRQL to lower and no interrupt state to restore -- and the release
- * side must not lower an IRQL the emergency try-lock path never raised.
- *
- * The UART may be mid-character when this runs. That is accepted: one garbled
- * line is strictly better than every later write blocking forever, and the
- * emergency writers restore a known line-control state before their own output
- * regardless (serial_emergency_restore_lcr). */
-/* The POLICY, split out from the globals so it is testable against a fixture
- * lock and a fixture owner word -- no UART, no g_serial_lock, no boot state.
- * The branch that matters is the SUCCESSFUL handoff (matching owner -> lock
- * released), and against the real globals a single-CPU test cannot establish
- * that precondition without seizing the machine's actual serial lock.
+/* The ownership-handoff POLICY, split out from the globals so it is testable
+ * against a fixture lock and a fixture owner word -- no UART, no g_serial_lock,
+ * no boot state. The branch that matters is the SUCCESSFUL handoff (matching
+ * owner -> lock released), and against the real globals a single-CPU test cannot
+ * establish that precondition without seizing the machine's actual serial lock.
  *
  * Returns 1 if this caller owned the lock and released it, 0 if it owned
  * nothing. The compare-exchange IS the safety property: a caller whose id does
  * not match leaves BOTH words exactly as they were, so this can never take a
- * lock away from a live holder. */
+ * lock away from a live holder.
+ *
+ * spin_tryunlock, not spin_unlock_irqrestore: the intended caller never returns,
+ * so there is no saved IRQL to lower and no interrupt state to restore -- and the
+ * release side must not lower an IRQL the emergency try-lock path never raised. */
 int serial_lock_try_release_owned(spinlock_t *lock, volatile uint32_t *owner,
                                   uint32_t me)
 {
@@ -428,11 +404,22 @@ int serial_lock_try_release_owned(spinlock_t *lock, volatile uint32_t *owner,
     return 1;
 }
 
+/* Hand g_serial_lock back if THIS CPU is the recorded holder.
+ *
+ * Called by a CPU that is about to park forever (the panic async-isolation
+ * branch) so the surviving CPUs are not blocked on a lock whose owner will never
+ * run again. Safe to call unconditionally: a CPU that owns nothing changes
+ * nothing, so this can never steal a live holder's lock.
+ *
+ * The UART may be mid-character when this runs. That is accepted -- one garbled
+ * line is strictly better than every later write blocking forever, and the
+ * emergency writers restore a known line-control state before their own output
+ * regardless (serial_emergency_restore_lcr). */
 void serial_lock_release_if_owner(void)
 {
     (void)serial_lock_try_release_owned(
         &g_serial_lock, &g_serial_lock_owner,
-        (serial_emerg_self_cpu() & SERIAL_EMERG_CPU) + 1u);
+        SERIAL_LOCK_OWNER_OF(serial_emerg_self_cpu()));
 }
 
 /* Forward declarations: the ordinary entry points below re-route into the
@@ -630,14 +617,15 @@ void serial_write(const char *str)
          * emergency route DIRECTLY -- re-calling serial_write would re-enter the
          * blocking path during the INIT window and recurse without bound. */
         serial_lock_release(flags);
-        if (!serial_emerg_reroute_should_drop())
-            /* PANIC_CTX_UNKNOWN: this is the REROUTED ordinary path, reached from
+        /* PANIC_CTX_UNKNOWN: this is the REROUTED ordinary path, reached from
          * serial_write / serial_putchar once the latch is armed. The indirect
          * emitters funnelled through here (klog's serial sink, subsystem dumps)
          * cannot say which vector is being handled above them, so they keep the
          * plain load they have always used rather than being handed the NMI
          * hazard by default. */
-        serial_emergency_write_str(str, 1 /*terminal*/, PANIC_CTX_UNKNOWN);
+        if (!serial_emerg_reroute_should_drop()) {
+            serial_emergency_write_str(str, 1 /*terminal*/, PANIC_CTX_UNKNOWN);
+        }
         return;
     }
     serial_lock_release(flags);

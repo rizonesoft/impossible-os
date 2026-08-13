@@ -23,6 +23,7 @@
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring */
 #include "kernel/smp.h"
 #include "kernel/irq.h"
+#include "kernel/cpu_security.h"  /* cpu_panic_safe_apic_id -- shared NMI-depth key */
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 
@@ -237,49 +238,47 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  * owns IST2. A second NMI then resets RSP to the IST2 top and overwrites the
  * outer frames.
  *
- * Indexed by the CPUID-derived 8-bit initial APIC ID rather than held in
- * per_cpu_data, because the consumers are panic-path emitters that are
- * deliberately GS-INDEPENDENT: the pre-arbitration dump must work when gs:0 is
- * exactly what cannot be trusted. 256 entries covers the field width exactly, so
- * an id can never index out of range. Each entry is written only by the CPU that
- * owns it, so plain relaxed atomics suffice and nothing here can block.
+ * Indexed by cpu_panic_safe_apic_id() rather than held in per_cpu_data, because
+ * the consumers are panic-path emitters that are deliberately GS-INDEPENDENT:
+ * the pre-arbitration dump must work when gs:0 is exactly what cannot be
+ * trusted. That helper is SHARED with the serial owner word and the crash
+ * evidence record, so all of them mean the same CPU by construction. Each entry
+ * is written only by the CPU that owns it, so no lock is needed and nothing here
+ * can block.
  *
  * An NMI handler that never returns (the fatal panic path is the normal case)
  * leaves the depth raised forever. That is correct, not a leak: the CPU is dead,
  * and a raised depth only ever makes the classification MORE conservative. */
-#define IDT_NMI_DEPTH_IDS  256u
+#define IDT_NMI_DEPTH_IDS  CPU_PANIC_SAFE_ID_COUNT
 static volatile uint32_t s_nmi_depth[IDT_NMI_DEPTH_IDS];
 
-static uint32_t idt_self_apic_id(void)
-{
-    uint32_t eax, ebx, ecx, edx;
-
-    __asm__ volatile ("cpuid"
-                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                      : "a"(1u), "c"(0u));
-    (void)eax; (void)ecx; (void)edx;
-    return (ebx >> 24) & 0xFFu;
-}
+/* Layer 1: the array must cover the FULL id space the index can produce, or a
+ * widened id would write past the end of a BSS array from inside the NMI
+ * handler. Derived from the mask rather than hardcoded so the two cannot drift. */
+_Static_assert(IDT_NMI_DEPTH_IDS == (size_t)CPU_PANIC_SAFE_ID_MASK + 1u,
+               "s_nmi_depth must cover every value cpu_panic_safe_apic_id can return");
 
 int idt_in_nmi(void)
 {
-    return __atomic_load_n(&s_nmi_depth[idt_self_apic_id()],
+    return __atomic_load_n(&s_nmi_depth[cpu_panic_safe_apic_id()],
                            __ATOMIC_ACQUIRE) != 0u;
 }
 
 uint32_t idt_nmi_depth_raw(void)
 {
-    return __atomic_load_n(&s_nmi_depth[idt_self_apic_id()], __ATOMIC_ACQUIRE);
+    return __atomic_load_n(&s_nmi_depth[cpu_panic_safe_apic_id()],
+                           __ATOMIC_ACQUIRE);
 }
 
 void idt_nmi_enter(void)
 {
-    __atomic_fetch_add(&s_nmi_depth[idt_self_apic_id()], 1u, __ATOMIC_ACQ_REL);
+    __atomic_fetch_add(&s_nmi_depth[cpu_panic_safe_apic_id()], 1u,
+                       __ATOMIC_ACQ_REL);
 }
 
 void idt_nmi_exit(void)
 {
-    uint32_t id = idt_self_apic_id();
+    uint32_t id = cpu_panic_safe_apic_id();
 
     /* Saturate at zero. An unbalanced exit would wrap to 0xFFFFFFFF and pin this
      * CPU in "inside NMI" for the rest of the boot, permanently disabling the
@@ -293,11 +292,21 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     uint8_t vec = (uint8_t)frame->int_no;
     uint64_t result;
 
-    /* Raise the NMI depth BEFORE the frame-integrity and GS checks below.
-     * Those checks dereference the frame and gs:0 and can themselves fault, and
-     * a fault there while the depth was still clear is exactly the nested abort
-     * this counter exists to catch. The counter is indexed by CPUID, not GS, so
-     * it is safe to touch before GS has been proven sane. */
+    /* Raise the NMI depth BEFORE the frame-integrity and GS checks below. Those
+     * checks dereference the frame and gs:0 and can themselves fault, and a
+     * fault there while the depth was still clear is exactly the nested abort
+     * this counter exists to catch. The counter is keyed by CPUID, not GS, so it
+     * is safe to touch before GS has been proven sane.
+     *
+     * WHAT THIS DOES NOT COVER, stated precisely because an earlier revision of
+     * this comment claimed "first action" and was wrong: the stub prologue in
+     * isr_stubs.asm (register pushes, conditional swapgs) and the `frame->int_no`
+     * load on the line above BOTH run before the depth is raised. A fault in
+     * that window still classifies as ordinary. Closing it needs a dedicated NMI
+     * entry stub that sets the marker before any common faultable work -- vector
+     * 2 currently shares the generic ISR_NOERRCODE macro and isr_common_stub, so
+     * there is no NMI-specific asm site to put it in. Tracked as the
+     * dedicated-NMI-entry-stub item in the bare-metal-hardening roadmap. */
     if (vec == VECTOR_NMI)
         idt_nmi_enter();
 

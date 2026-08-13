@@ -261,6 +261,48 @@ void cpu_audit_consistency_check(uint32_t total_cpus);
 void cpu_audit_ensure_bsp(void);
 void cpu_audit_populate_registry(void);
 
+/* ---- Panic-safe CPU identity (ARCH: x86-64 -- will move to arch/) ----
+ *
+ * The 8-bit initial APIC ID from CPUID leaf 1, EBX[31:24]. This is the identity
+ * every abort-context consumer must use, and it is deliberately NOT
+ * smp_this_cpu()->cpu_id or ->lapic_id:
+ *
+ *  - smp_this_cpu() reads gs:0 AND falls back to &cpu_data[0] when it is NULL
+ *    (smp.c), so an entrant with no valid per-CPU identity silently records
+ *    itself as CPU 0 -- after which the REAL CPU 0 also matches.
+ *  - per_cpu_data.lapic_id is sourced from the LAPIC ID register on the BSP and
+ *    from the ACPI MADT on APs (smp.c), a DIFFERENT derivation. Comparing a
+ *    value from that source against one from this helper is the failure mode
+ *    these consumers exist to prevent, and it fails SILENTLY.
+ *
+ * CPUID has no memory operand, so this cannot fault and needs no mapped GS --
+ * usable from NMI, #MC and #DF context. It IS a serializing instruction (a VM
+ * exit under KVM/WHPX), so hoist it out of per-byte loops; it is not free.
+ *
+ * Consumers that MUST agree on this exact derivation: the g_serial_lock owner
+ * word and the emergency-charge ledger (drivers/serial.c), the NMI nesting
+ * depth (idt.c), and the crash-evidence cpu_id (panic.c). One helper, so a
+ * change lands on all of them at once.
+ *
+ * Identity is only ever compared against another value from THIS helper, so the
+ * absolute numbering does not matter -- only that it is stable and per-CPU
+ * unique. Aliases above 255 logical CPUs; x2APIC systems with more than 255 CPUs
+ * are unsupported repo-wide (xAPIC throughout: SIPI target, lapic_id() and
+ * cpu_info.apic_id are all 8-bit). */
+#define CPU_PANIC_SAFE_ID_MASK  0xFFu
+#define CPU_PANIC_SAFE_ID_COUNT (CPU_PANIC_SAFE_ID_MASK + 1u)
+
+static inline uint32_t cpu_panic_safe_apic_id(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+
+    __asm__ volatile ("cpuid"
+                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                      : "a"(1u), "c"(0u));
+    (void)eax; (void)ecx; (void)edx;
+    return (ebx >> 24) & CPU_PANIC_SAFE_ID_MASK;
+}
+
 /* ---- SMAP user-space access brackets ---- */
 
 /* STAC: Set AC flag -- allows kernel to access user pages (SMAP bypass).
