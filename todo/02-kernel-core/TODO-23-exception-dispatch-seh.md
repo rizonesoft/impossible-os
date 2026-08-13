@@ -456,11 +456,11 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- the RtlUnwindEx / dispatch-ABI block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §9 owns the kernel unwind-to-target + terminal resume ENGINE; ring-3 `RtlDispatchException` is ntdll (TODO-04); the kernel-driver walker + full collided recovery are §14; NtContinue IRET restore is §5.
 > **Verified:** 2026-07-19 | ship `377c693f` + review fixes | 4/8 items | build OK | tests 377+16 PASS; smoke PASS (2.71s)
-> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 444)
-> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 442)
+> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 446)
+> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 444)
 > **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 343)
 > **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
-> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 443)
+> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 445)
 > **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
@@ -644,8 +644,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
 > **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 129)
-> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 628)
-> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 629)
+> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 630)
+> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 631)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement kernel-mode __try/__except via KI_EXCEPTION_REGISTRATION"`
