@@ -42,7 +42,7 @@ They said building a fully functional, feature-rich operating system from scratc
 | Feature | Status | Description |
 |---------|--------|-------------|
 | Custom UEFI bootloader | ✅ | Hand-written PE/COFF application -- no GRUB, no shims |
-| Secure Boot | ✅ | Shim chain-loading with embedded vendor certificate (`MOK.cer`) |
+| Secure Boot | 🚧 | Shim chain-loading is implemented, but no shim is pinned today (MS UEFI CA 2011 expired 2026-06-30), so a stock build direct-boots. Check any build with `scripts/test-secureboot-smoke.sh` |
 | 64-bit Long Mode kernel | ✅ | Identity-mapped page tables, GDT/IDT, APIC timers |
 | Preemptive multitasking | ✅ | Round-robin scheduler, kernel threads, mutexes, semaphores, seqlocks |
 | Virtual filesystem | ✅ | VFS with IXFS (custom), FAT32, GPT, and MBR support |

@@ -11,7 +11,7 @@
 | File | Format | Purpose | Committed? |
 |------|--------|---------|------------|
 | `MOK.key` | PEM (PKCS#8) | RSA-2048 private key -- signs `BOOTX64.EFI` at build time | ❌ **Never** |
-| `MOK.cer` | PEM (X.509) | Public certificate -- embedded in shim as `VENDOR_CERT_FILE` | ✅ Yes |
+| `MOK.cer` | PEM (X.509) | Public certificate -- embedded as `VENDOR_CERT_FILE` when a shim is built (`scripts/secure-boot/build-shim.sh`); no shim is pinned today | ✅ Yes |
 | `MOK.der` | DER (X.509) | Binary form of `MOK.cer` -- required for UEFI enrollment | ✅ Yes |
 
 **Key details:**
@@ -24,6 +24,9 @@
 
 ## How signing works
 
+> [!IMPORTANT]
+> **No shim is pinned today.** `shim/` was emptied in `aab6b6f64` (2026-07-01) because the Microsoft UEFI CA 2011 expired 2026-06-30, so a stock build stages our loader as `EFI\BOOT\BOOTX64.EFI` and **direct-boots -- there is no shim chain**. The flow below is what a pinned shim restores. Check any build with `bash scripts/test-secureboot-smoke.sh` (`REQUIRE_SHIM=1` makes an uncovered chain a hard failure); see [`shim/README.md`](../shim/README.md).
+
 ```
 UEFI Firmware
   └─ shimx64.efi  (Microsoft-signed, contains MOK.cer as VENDOR_CERT_FILE)
@@ -31,8 +34,8 @@ UEFI Firmware
             └─ loads kernel → OS boots
 ```
 
-1. At build time: `sbsign --key keys/MOK.key --cert keys/MOK.cer --output BOOTX64.EFI BOOTX64.EFI`
-2. At install time: the shim (containing `MOK.cer`) is placed on the ESP
+1. At build time: `sbsign --key keys/MOK.key --cert keys/MOK.cer --output BOOTX64.signed.efi BOOTX64.EFI` (signed output goes to a distinct path so incremental builds stay idempotent)
+2. At install time: the shim (containing `MOK.cer`) is placed on the ESP -- **skipped while `shim/` is empty**
 3. On boot: shim verifies our `BOOTX64.EFI` against the embedded cert -- no user interaction needed
 
 ---

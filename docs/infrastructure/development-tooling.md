@@ -479,7 +479,7 @@ The build produces a bootable GPT disk image: `build/system-disk.img` (512 MiB).
 
 | Partition  | Size      | Format        | Contents                                                         |
 | ---------- | --------- | ------------- | ---------------------------------------------------------------- |
-| EFI System | 64 MiB    | FAT32         | `BOOTX64.EFI`, `kernel.exe`, shim (secure boot), `MOK.cer`       |
+| EFI System | 64 MiB    | FAT32         | `BOOTX64.EFI`, `kernel.exe`, `MOK.cer`; shim + `mmx64.efi` only when a shim is pinned (none today -- direct boot) |
 | BlackBox   | 128 MiB   | FAT32 (`X:\`) | Runtime logs, crash dumps, WER data, diag output (see TODO-17)   |
 | IXFS       | Remaining | IXFS (custom) | `C:\` system volume: fonts, icons, wallpapers, kernel.sym, apps  |
 
@@ -1175,6 +1175,7 @@ scripts/
 | `scripts/setup.sh`                | Host bootstrap wrapper                               |
 | `scripts/setup-deps.sh`           | Distro package installer                             |
 | `scripts/test-smoke.sh`           | Legacy headless boot smoke test                      |
+| `scripts/test-secureboot-smoke.sh` | Artifact-level Secure Boot smoke gate (reports shim chain `COVERED` / `NOT COVERED`; `REQUIRE_SHIM=1` hard-fails an uncovered chain) |
 | `scripts/test-fs.sh`              | Filesystem driver test suite                         |
 | `scripts/test-coverage.sh`        | Coverage scanner -> `docs/test-coverage/`            |
 | `scripts/patch-boot-conf.sh`      | Patch `boot.conf` in EFI partition without rebuild   |

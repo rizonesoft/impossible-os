@@ -72,7 +72,7 @@ All QEMU launchers boot `build/system-disk.img` (GPT: EFI + BlackBox + IXFS) and
 ### [`scripts/debug/kernel/run-secureboot.bat`](../../scripts/debug/kernel/run-secureboot.bat) -- Windows
 
 - **Accelerator:** TCG + q35 + SMM + pflash.
-- **Use:** shim + MokManager + signed EFI Secure Boot validation. First run: enroll `MOK.cer` via MokManager. Subsequent runs boot with `SecureBoot=1`.
+- **Use:** shim + MokManager + signed EFI Secure Boot validation. First run: enroll `MOK.cer` via MokManager. Subsequent runs boot with `SecureBoot=1`. **Requires a pinned shim -- none is pinned today** (MS UEFI CA 2011 expired 2026-06-30), so a stock build exercises direct boot, not this flow; restore a chain via `scripts/secure-boot/build-shim.sh` and confirm with `scripts/test-secureboot-smoke.sh`.
 - **Artifacts:** `%TEMP%\OVMF_VARS_secureboot.fd` (persists MOK enrollment across runs). Delete to reset.
 - **Debugger:** `-s -S` addable via script edit; GDB on SMM paths is tricky -- prefer serial + `llvm-addr2line-19`.
 - **Caveat:** WHPX cannot emulate secboot pflash; this launcher must stay on TCG. Lives under `scripts/debug/` due to shim+MOK staging; consolidation under `scripts/machines/` is a known drift.

@@ -26,7 +26,7 @@ This domain covers the path from firmware entry through kernel handoff and early
 ## Active TODOs
 
 - [TODO-01 -- Boot Protocol ABI & Handoff Contract](TODO-01-boot-protocol-abi-handoff.md) -- Authoritative `boot_info` owner: shipped ABI header and pre-copy validation foundations, plus remaining ownership, manifest, optional payloads, memory reservation, stale-loader handling, and fuzz coverage.
-- [TODO-02 -- UEFI Bootloader Hardening & Secure Boot](TODO-02-uefi-hardening-secureboot.md) -- ✅ §1-§8 shipped in tree; §9 ops backlog + `test_uefi_boot` suite still open; advanced UEFI in [TODO-27](TODO-27-uefi-advanced.md)
+- [TODO-02 -- UEFI Bootloader Hardening & Secure Boot](TODO-02-uefi-hardening-secureboot.md) -- ✅ 20 sections; runtime services, GOP, SMBIOS, Secure Boot state + drift monitor, UKI signed payloads, SBAT revocation and ESP integrity all shipped, `test_uefi_boot` at 42 suites. Remaining items are parked with named owners (S3 refresh, UKI smoke harness, shim re-pin -- operator-gated). Advanced UEFI in [TODO-27](TODO-27-uefi-advanced.md)
 - [TODO-03 -- Bootloader Error Recovery & ELF Hardening](TODO-03-bootloader-error-recovery.md) -- Eliminate silent failures: ELF bounds checking, ExitBootServices retry, fallback kernel search, boot failure error screen
 - [TODO-04 -- Firmware Table & Platform Inventory](TODO-04-firmware-table-platform-inventory.md) -- Unified catalog, validation, Registry/BlackBox reports, ESRT, FPDT, MAT, RT properties, DTB/EBBR, and firmware quirk database.
 - [TODO-05 -- Boot Device Discovery & Fallback Chain](TODO-05-boot-device-discovery.md) -- Boot device identification via LoadedImage, local-device fallback, UEFI boot variables, partition GUID validation, removable media, Registry population, disk health check
