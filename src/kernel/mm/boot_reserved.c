@@ -30,9 +30,10 @@
 #include "kernel/fs/vfs.h"
 #include "libc/string.h"
 
-/* Bootloader writes struct boot_info here. Literal kept local to avoid
- * pulling a private header; the value is ABI-pinned. */
-#define BOOT_INFO_PHYS_ADDR  0x10000ull
+/* Bootloader writes struct boot_info at BOOT_INFO_PHYS_ADDR, single-sourced
+ * via kernel/boot_info.h (which re-exports it from the UEFI-safe
+ * kernel/boot_version_constants.h the bootloader also compiles against), so
+ * this reservation cannot name a different address than the producer used. */
 
 static struct boot_reserved_region s_table[BOOT_RESERVED_MAX];
 static uint32_t s_count;
@@ -130,7 +131,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
         return BOOT_FATAL;
     }
 
-    /* 1. struct boot_info at 0x10000. */
+    /* 1. struct boot_info at BOOT_INFO_PHYS_ADDR. */
     if (add_or_fatal(BOOT_INFO_PHYS_ADDR, (uint64_t)sizeof(struct boot_info),
                      BOOT_RESERVED_BOOT_INFO, 0u, out_err) != BOOT_OK)
         return BOOT_FATAL;

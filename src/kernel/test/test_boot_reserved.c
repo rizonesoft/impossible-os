@@ -134,9 +134,11 @@ static void test_boot_reserved_overlap_rejected(void)
     br_zero_fixture();
 
     /* Place the TPM event log at the same physical address as the
-     * struct boot_info copy (0x10000). populate_from_info adds
-     * boot_info first, then the TPM entry overlaps -> error. */
-    s_br_buf.tpm_event_log      = 0x10000u;
+     * struct boot_info copy. Bound to BOOT_INFO_PHYS_ADDR, not a literal,
+     * so the case keeps constructing a real overlap if the handoff base
+     * ever moves. populate_from_info adds boot_info first, then the TPM
+     * entry overlaps -> error. */
+    s_br_buf.tpm_event_log      = BOOT_INFO_PHYS_ADDR;
     s_br_buf.tpm_event_log_size = 0x1000u;
     s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 

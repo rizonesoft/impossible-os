@@ -128,9 +128,10 @@ static void test_validate_addr_bound_straddle(void)
 
 static void test_validate_addr_ok_early_map(void)
 {
-    /* Classic handoff address 0x10000 with the early 4 GiB bound. */
+    /* The real handoff address with the early 4 GiB bound -- bound to the
+     * macro so this stays the production case if the base ever moves. */
     bi_fill_valid();
-    TEST_ASSERT_EQ(boot_info_validate_addr((const void *)(uintptr_t)0x10000,
+    TEST_ASSERT_EQ(boot_info_validate_addr((const void *)(uintptr_t)BOOT_INFO_PHYS_ADDR,
                                            sizeof(struct boot_info),
                                            BOOT_INFO_EARLY_MAP_END),
                    BOOT_OK,
@@ -334,8 +335,8 @@ static void test_validate_addr_fuzz_sweep(void)
             forced_reject = 1;
             break;
         case 1:
-            /* Reject: misaligned by 1 byte above a valid base. */
-            addr = 0x10000ull + 1ull;
+            /* Reject: misaligned by 1 byte above the valid handoff base. */
+            addr = BOOT_INFO_PHYS_ADDR + 1ull;
             sz   = sizeof(struct boot_info);
             forced_reject = 1;
             break;
@@ -596,8 +597,9 @@ static void test_payload_overlap_boot_info(void)
     s_test_buf.payload_count              = 1;
     s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_INITRD;
     s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    /* 0x10000 = BOOT_INFO_PHYS_ADDR */
-    s_test_buf.payload_descriptors[0].phys_start = 0x10000ull + 0x10ull;
+    /* Straddle the real handoff base, not a hand-copied literal: the case
+     * must follow BOOT_INFO_PHYS_ADDR if it ever moves. */
+    s_test_buf.payload_descriptors[0].phys_start = BOOT_INFO_PHYS_ADDR + 0x10ull;
     s_test_buf.payload_descriptors[0].length     = 0x100ull;
     s_test_buf.payload_total_bytes        = 0x100ull;
 

@@ -26,6 +26,12 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_init.h"   /* boot_result_t */
+/* BOOT_INFO_PHYS_ADDR: single-sourced with the bootloader. It lives in the
+ * UEFI-safe constants header (which this header re-exports to every kernel
+ * consumer) because that file -- unlike a fresh header -- is already a
+ * prerequisite of bootx64.o in both bootloader dependency layers, so the
+ * loader cannot be re-linked stale against a changed value. */
+#include "kernel/boot_version_constants.h"
 
 /* Maximum number of memory map entries we store.
  * Real hardware (especially laptops with NVRAM, MMIO, etc.) can have 100+
@@ -1841,6 +1847,21 @@ _Static_assert(sizeof(struct boot_info_header) == 8,
  * BOOT_INFO_VERSION. */
 _Static_assert(sizeof(struct boot_info) <= 65535,
     "boot_info too large for uint16_t header.size field -- widen size field or trim struct");
+
+/* The WHOLE handoff struct -- not just its base -- must sit inside the
+ * bootloader's 4 GiB identity map, or boot_info_validate_addr() rejects the
+ * pointer it was handed and Phase 0 halts before it can say why. The base
+ * alignment and NULL-page floor are pinned beside the macro in
+ * kernel/boot_version_constants.h; the extent can only be checked here,
+ * where sizeof(struct boot_info) is complete.
+ *
+ * Written as a subtraction so the bound cannot be defeated by unsigned
+ * wraparound: `BASE + sizeof(...)` is computed modulo 2^64, so an aligned
+ * base near UINT64_MAX would wrap to a small sum and satisfy the compare
+ * while sitting far outside the map. BOOT_INFO_EARLY_MAP_END is 4 GiB and
+ * the struct is tens of KiB, so the subtraction cannot underflow. */
+_Static_assert(BOOT_INFO_PHYS_ADDR <= BOOT_INFO_EARLY_MAP_END - sizeof(struct boot_info),
+    "boot_info handoff must end below the bootloader's 4 GiB early identity map");
 
 /* S16: Cross-struct layout fingerprint.  The bootloader at
  * src/boot/uefi/bootx64.c keeps a mirror definition of struct boot_info.

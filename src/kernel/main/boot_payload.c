@@ -42,11 +42,12 @@
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
 
-/* Physical base of the kernel-side struct boot_info copy. The bootloader
- * writes its own struct to BOOT_INFO_PHYS_ADDR (0x10000); both regions
- * are retained until Phase 3 completes and must never be overlapped by
- * any typed payload. */
-#define BOOT_INFO_PHYS_ADDR  0x10000ull
+/* BOOT_INFO_PHYS_ADDR is the physical base of the kernel-side struct
+ * boot_info copy, single-sourced via kernel/boot_info.h (which re-exports
+ * it from the UEFI-safe kernel/boot_version_constants.h the bootloader
+ * also compiles against). Both that region and the bootloader's own are
+ * retained until Phase 3 completes and must never be overlapped by any
+ * typed payload. */
 
 /* Linker-provided kernel image bounds -- the kernel ELF ends up loaded
  * at __kernel_start through __kernel_end (end exclusive), and no typed

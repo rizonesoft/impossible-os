@@ -91,7 +91,8 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  18   | Anti-rollback in version fault diagnostics         | §13, §17                           |  [x]   |
 | ⭐  |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [x]   |
 | 💎  |  20   | Bootloader build identity in handoff               | §1, §2, §17                        |  [x]   |
-| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [ ]   |
+| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [x]   |
+| ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [ ]   |
 
 ---
 
@@ -733,9 +734,46 @@ The handoff today carries `BOOT_INFO_VERSION` + the kernel `.bootproto` manifest
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 1:
-- [ ] **Single source of truth for `BOOT_INFO_PHYS_ADDR` macro** (filed 2026-05-01 from [`TODO-03 §1`](TODO-03-bootloader-error-recovery.md#1-elf-bounds-checking) review Codex consistency M1): the macro is defined three times today -- `src/boot/uefi/bootx64.c:111` (bootloader), `src/kernel/mm/boot_reserved.c` (kernel PMM reservation), `src/kernel/main/boot_payload.c` (kernel payload validator). If the handoff base ever changes, the bootloader's overlap check at `bootx64.c:3962` and the kernel's retained-region validators silently diverge while each file still compiles. Move the macro to [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) (kernel-side single source of truth, mirrored by `src/boot/uefi/boot_info_mirror.h`); delete the three local `#define` copies; verify static-assert in mirror catches divergence. Test: change the macro value temporarily and confirm mirror static-assert + boot-info-abi manifest diff catch it.
+- [x] **Single source of truth for `BOOT_INFO_PHYS_ADDR`** (filed 2026-05-01 from [`TODO-03 §1`](TODO-03-bootloader-error-recovery.md#1-elf-bounds-checking) Codex consistency M1): now ONE definition, three local `#define` copies deleted.
+  - Home is [`include/kernel/boot_version_constants.h`](../../include/kernel/boot_version_constants.h), re-exported to kernel TUs by `boot_info.h` and compiled directly by `bootx64.c`. Not `boot_info.h` as the filing proposed: that header pulls kernel-only types the UEFI TU cannot compile, so the bootloader could never have consumed it. Same UEFI-safe pure-macro pattern as `include/kernel/mm/memmap_boot.h`.
+  - The design review's `[high]` drove the file choice: the UEFI build has no `-MMD`, so `bootx64.o` rebuilds only from explicit prerequisite lists, and `boot_version_constants.h` is named in BOTH of them. A new header would be in neither, so an incremental build could re-link a stale `BOOTX64.EFI` -- the exact divergence this item exists to remove.
+  - Three compile-time guards: page-alignment and NULL-page-floor asserts beside the macro, plus an extent assert in `boot_info.h` pinning the base at or below `BOOT_INFO_EARLY_MAP_END - sizeof(struct boot_info)`. Subtraction form, because the `BASE + sizeof()` form the adversarial round flagged passes after unsigned wraparound.
+  - Deliberately NOT `#ifndef`-guarded, unlike `BOOT_INFO_MAGIC` / `BOOT_INFO_VERSION` beside it: those carry an override for the stale-ABI fixture harness, whereas a guard here would let one TU `-D` itself a different base and reintroduce per-TU divergence as a supported shape.
+  - Four tests bound to the macro instead of hand-copied literals (`test_payload_overlap_boot_info`, `test_validate_addr_ok_early_map`, the misaligned-base fuzz case, `test_boot_reserved_overlap_rejected`) -- each would otherwise stop constructing its intended overlap if the base moved.
+  - Verified: four bad values rejected at compile time (unaligned `0x10001`, aligned-but-below-floor `0x0`, past-4-GiB `0xFFFFF000`, wraparound `0xFFFFFFFFFFFFF000`) with controls passing either side; a header-only touch regenerates `BOOTX64.EFI`; a temporary move to `0x20000` changed BOTH binaries, the loader returning to its exact baseline hash on restore.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- 28326 kernel + 17 user-mode tests PASS; the four handoff-base cases are compile-time asserts, so a divergent value fails the build rather than a test.
+
+> **Notes:**
+> - Shipped: `BOOT_INFO_PHYS_ADDR` defined once in `include/kernel/boot_version_constants.h` with page-alignment + NULL-floor asserts, an extent assert in `boot_info.h`, and the three duplicate `#define`s deleted.
+> - Integrates by re-export: `boot_info.h` includes the constants header so every kernel TU inherits the macro, while `bootx64.c` includes it directly at the top of its include block.
+> - Downstream: the bootloader's overlap check and the kernel's PMM reservation + payload validator can no longer name different addresses, and four boot tests now track the constant instead of a literal copy.
+> - Canonical doc: the header comment records why this file (dual-layer Makefile prerequisites) and why the macro is unguarded.
+> - Scope boundary: does NOT close deploy-time skew between separately-copied artifacts -- that gap is section 22.
+
+---
+
+## 22. Handoff Base in the Deploy-Time ABI Fingerprint
+
+> **Spawned-by:** §21 (review)
+> **User impact:** an operator who refreshes only `BOOTX64.EFI` or only `kernel.exe` on the ESP after the handoff base moves gets a boot that passes every ABI check and then silently protects the wrong physical region -- the PMM can reclaim the live handoff while the loader guards an address nothing uses.
+
+§21 made `BOOT_INFO_PHYS_ADDR` a single definition at COMPILE time, which removes drift between the two halves of one build. It does not remove skew between two artifacts built at different times and deployed separately: the canonical ABI token hashes only `(version, struct_size, per-field name/offset/size)` (`tools/boot-info-manifest/dump-common.h:32-38`) and the bootloader's pre-jump check compares only `{magic, version, struct_size, sha256}` (`src/boot/uefi/bootx64.c:7036`). Moving the base changes none of those four, so a mixed pair still shakes hands. Filed from §21's adversarial review as an accepted out-of-scope finding: the fix edits the ABI generator, which is receipt-surface machinery an unattended run may not touch.
+
+- [ ] Add `BOOT_INFO_PHYS_ADDR` to the canonical byte stream in [`dump-common.h`](../../tools/boot-info-manifest/dump-common.h) and bump the token prefix `BOOTINFO-ABI-V1` -> `V2` so old and new hashes cannot collide.
+- [ ] Emit the base in both manifest views so `compare.sh` diffs it directly rather than leaning on the advisory hash. -> XREF: [§2](#2-generated-abi-manifest-and-offset-fingerprint), [§3](#3-full-bootloaderkernel-mirror-drift-checker).
+  - Both views are `dump-kernel.c` and `dump-mirror.c` under `tools/boot-info-manifest/`.
+- [ ] Extend the `.bootproto` descriptor + pre-jump comparison so a stale loader REFUSES a kernel built at a different base, observed-vs-expected in the mismatch screen. -> XREF: [§17](#17-bootloader-pre-jump-abi-mismatch-screen).
+- [ ] Add an 8th mutation scenario to [`test-drift-detection.sh`](../../tools/boot-info-manifest/test-drift-detection.sh) proving a changed base is caught, alongside the existing 7.
+- [ ] Decide and document whether moving the base also requires a `BOOT_INFO_VERSION` bump; the header's rule bumps on field add/remove/reorder only, so a base move is silent to the version gate.
+- [ ] `include/kernel/mm/memmap_boot.h` has the same hole: `bootx64.c:36` includes it but it is in NEITHER bootloader prerequisite list, so an HHDM-constant change can re-link a stale loader. Add it to both.
+  - Found while placing §21's macro: the dual-layer prerequisite check that steered `BOOT_INFO_PHYS_ADDR` into `boot_version_constants.h` also showed the HHDM header never got that treatment. Verified 2026-08-13 -- `grep memmap_boot Makefile src/boot/uefi/Makefile` returns nothing, while the header is a live include at `src/boot/uefi/bootx64.c:36`.
+  - Both edits land in receipt-surface Makefiles, so this is operator-gated for an unattended run; it is bookkeeping-safe to leave filed until then because the constants only drift when someone edits them.
+- [ ] Commit: `"boot: bind the handoff base into the deploy-time ABI fingerprint"`
+
+**Test checkpoint:** `make test-boot-info-abi` reports 8/8 mutation scenarios PASS, and a fixture pairing a loader built at `0x10000` with a kernel built at `0x20000` halts pre-jump with the base named in the mismatch screen rather than booting.
 
 ---
 
@@ -760,6 +798,7 @@ From the stamped section 1:
 | ⭐  | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression    | ⚠️ kunit / kselftests partial   | ✅ §19 KVM+TCG harness wired to CI                |
 | ⭐  | TPM-bound kernel ABI manifest   | ⚠️ Measured Boot generic    | ⚠️ shim+SBAT only (no manifest) | ⬜ §11 cap bit + TODO-13 §9 PCR extend            |
 | 💎  | Bootloader build identity       | ⚠️ HAL-internal             | ⚠️ kernel CONFIG only           | ✅ §20 git-sha + build-time in boot_info          |
+| ⭐  | Handoff-base drift protection   | ⚠️ internal constant        | ✅ shared asm/bootparam.h       | ✅ §21 one definition; ⬜ §22 deploy-time gate    |
 
 > Parity covers the contract itself (§1-§8), mirror drift detection (§2-§3), typed payload handoff (§4-§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Explicit capability negotiation (§11), a shared boot decision record (§12), anti-rollback security-version binding (§13), and capability-gated consumer retrofit (§15) collectively make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. §14 warm-kernel-update handoff ABI positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as [warm-kernel-update runtime (03-memory-concurrency/TODO-11)](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md). §16 + §18 together split the rollback UX from structural ABI drift (no Windows or Linux equivalent): a boot that dies before its first frame cannot strand the machine on a broken image, and a rollback refusal produces operator-actionable "boot a newer kernel" guidance distinct from "rebuild both halves". §17 pre-jump `.bootproto` screen + §19 stale-ABI KVM+TCG CI harness close the regression-gate loop end-to-end (Win11 has manual HCK tests; Linux has kunit/kselftests partial -- neither ships an automated stale-image fail-closed gate).
 

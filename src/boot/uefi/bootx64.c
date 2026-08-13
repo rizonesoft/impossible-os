@@ -34,6 +34,7 @@
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
 #include "../../../include/boot/ab_boot_metadata.h"        /* A/B dual-slot metadata wire ABI + validators (TODO-21) */
 #include "../../../include/kernel/mm/memmap_boot.h"          /* single-sourced HHDM constants (no drift vs memmap.h) */
+#include "../../../include/kernel/boot_version_constants.h"  /* BOOT_INFO_PHYS_ADDR + fault-class constants */
 #include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
@@ -114,8 +115,10 @@ static UINT8 g_net_dhcp_raw[1472];   /* preserved raw DhcpAck for the boot_info 
 static int   g_net_dhcp_raw_valid;
 
 
-/* Boot info -- placed at a known physical address (64 KiB) */
-#define BOOT_INFO_PHYS_ADDR  0x10000
+/* Boot info -- placed at the known physical address (64 KiB) defined once
+ * in include/kernel/boot_version_constants.h, included at the top of this
+ * file. The kernel's PMM reservation and payload overlap validators read
+ * that same macro, so this producer cannot drift from those consumers. */
 static struct boot_info    *g_boot_info_ptr;
 
 /* Higher-half direct map (HHDM) construction state -- higher-half relocation section 2.
@@ -7137,8 +7140,8 @@ _Static_assert(__builtin_offsetof(struct bl_boot_version_fault, expected_loader_
  * against the canonical kernel constants header so a drift on either
  * side fails the build. The full kernel header
  * (include/kernel/boot_version.h) pulls kernel-only types and cannot
- * be used here; the constants sub-header is UEFI-safe. */
-#include "../../../include/kernel/boot_version_constants.h"
+ * be used here; the constants sub-header is UEFI-safe and is included
+ * at the top of this file. */
 _Static_assert(BL_FAULT_OK            == BOOT_VERSION_FAULT_VAL_OK,
     "BL_FAULT_OK drift vs kernel enum");
 _Static_assert(BL_FAULT_NULL_HDR      == BOOT_VERSION_FAULT_VAL_NULL_HDR,
