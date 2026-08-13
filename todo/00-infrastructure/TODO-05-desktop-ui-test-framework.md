@@ -352,7 +352,10 @@ Parity for Win11 `DwmGetCompositionTimingInfo` and Linux Wayland `presentation-t
 - [x] Counter-bump API: `wm_frame_stats_on_mark_dirty(was_already_dirty)` bumps `frames_queued`, and `frames_dropped` on coalesce. `wm_frame_stats_on_present(vsync_ns, present_ns)` bumps `frames_presented`, records `last_vsync_qpc` / `last_present_qpc`, and bumps `frames_late` when the elapsed budget exceeds `WM_FRAME_BUDGET_NS` (16.67 ms / 60 Hz).
 - [x] Compositor wiring in `src/kernel/main/compositor.c`: stamps `vsync_ns = mono_ns()` at frame start; calls `wm_frame_stats_on_present(vsync_ns, mono_ns())` after `fb_swap()` (or the partial-drag swap path). `wm_mark_dirty()` inside the compositor loop replaced with new silent `wm_mark_dirty_internal()` so compositor-internal reinvalidation (after `wm_process_pending_closes()`) does not inflate the external queued-frame counter.
 - [x] ETW event `WM_FRAME_PRESENTED` (`ETW_EVT_WM_FRAME_PRESENTED = 0x1001` in `include/kernel/etw.h`) emitted from `wm_frame_stats_on_present()`. New `etw_emit_kernel_event(event_id, level, payload, size)` helper walks `ETW_MAX_SESSIONS` under `s_etw_lock` and writes the snapshot into every RUNNING session; no-op when none are running. `etw_emit_wm_frame_presented(stats)` is the thin wrapper.
-- [ ] Namespace exposure `\\?\ObjectManager\FrameStats` read-only pseudo-file -- deferred to §15 along with the other object-manager exposure work. Not needed for the §10 test checkpoint (kernel tests call `wm_get_frame_stats()` directly) and building a minimal pseudo-file driver is a separate 300-line work item that belongs with the test-isolation artifact-capture stack.
+- [x] Namespace exposure `\\?\ObjectManager\FrameStats` read-only pseudo-file -- shipped `dfcac910` via [09-desktop-shell/TODO-14 §6](../09-desktop-shell/TODO-14-ob-namespace-info-files.md), not §15 as first routed.
+  - Verified at source 2026-08-13: Ob driver in `src/kernel/ob/ob_info_file.c` (`ObpInfoFileType` + `ob_info_file_register/_open_handle/_read`); the `\ObjectManager` directory is created by `ob_ns_init` (`src/kernel/ob/ob_ns.c:538`).
+  - `wm_framestats_register_info_file()` (`src/desktop/wm.c:594`) is called from `wm_init` (`src/desktop/wm.c:228`); coverage in `src/kernel/test/test_ob.c:2230+`.
+  - RESIDUAL, already named in this section's `Deferred:` stamp: user-mode `CreateFile("\\?\ObjectManager\FrameStats")` NT-path routing is a follow-up owned by TODO-14 §6, not by this section.
 - [x] `wm_frame_stats_reset_for_test()` zeroes every counter under the seqlock; gated by `#ifdef KERNEL_TESTS` so the reset path cannot be called from production callers.
 - [x] Commit: `"test: frame-timing oracle -- wm_get_frame_stats + ETW WM_FRAME_PRESENTED"`
 
@@ -443,12 +446,14 @@ Runs the compositor without a physical display and with a virtual clock the test
 
 GNOME Shell tests against fixed virtual monitors at multiple DPIs; Win11 CI is single-display. TODO-05 §3 covers one display only. Extend to N displays by {96, 144, 192} DPI.
 
-- [ ] QEMU multi-display: `-device virtio-gpu-pci,max_outputs=3` -- DEFERRED (needs the §15 virtio-gpu multi-output driver prereq item; today's GOP/Bochs path is single-output).
+- [/] QEMU multi-display `-device virtio-gpu-pci,max_outputs=3` -- blocked on the virtio-gpu multi-output driver -> XREF: [`09-desktop-shell/TODO-14 §5`](../09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md).
+  - Today's GOP/Bochs path is single-output. Owner item verified still `- [ ]` on 2026-08-13 ("VirtIO 1.2 GPU device init"); neither `src/kernel/drivers/virtio_gpu.c` nor its header exists in the tree yet.
 - [x] `boot.conf` key `test_monitors=` parsed in `src/boot/uefi/bootx64.c`. Accepts an integer count (`test_monitors=2`) OR a comma-separated geometry list (`1920x1080@96,1920x1080@144,3840x2160@192`); both forms collapse to a count today and store it in the new `boot_config.test_monitors_count` field. Counts > 3 clamp to 0 (use hardware default). Forward-compat: when virtio-gpu multi-output ships, the parser extends to capture per-monitor WxH@DPI metadata.
-- [ ] Compositor places the desktop across virtual outputs -- DEFERRED (same virtio-gpu prereq).
+- [/] Compositor places the desktop across virtual outputs -- same virtio-gpu blocker -> XREF: [`09-desktop-shell/TODO-14 §5`](../09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md).
 - [x] `fb_snapshot_monitor(uint32_t index, void *dst, uint32_t *w, uint32_t *h)` in `src/kernel/drivers/framebuffer.c`: returns 0 on success, -1 on NULL/uninit, -2 on `index >= fb_get_output_count()`. Index 0 routes to `fb_snapshot()` for the single output today; the array of per-output back-buffers lands with the virtio-gpu driver. `fb_get_output_count()` returns 1 today.
 - [x] Runner matrix in `scripts\debug\desktop\run-matrix-desktop-tests.bat`: iterates monitor count {1,2,3} x DPI {96,144,192}. Single-monitor cells (3) run today; multi-monitor cells (3) print `[SKIP] -- needs virtio-gpu multi-output driver` and become real runs the moment the §15 prereq lands. Matrix shape is committed so future driver work just removes the SKIP guards.
-- [ ] §3 smoke test per monitor index -- partial: single-output baseline is the existing §3 smoke; per-monitor non-black assertion belongs with the virtio-gpu prereq.
+- [/] Per-monitor smoke assertion -- same virtio-gpu blocker -> XREF: [`09-desktop-shell/TODO-14 §5`](../09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md).
+  - The single-output baseline is the existing §3 smoke and already runs; only the per-monitor non-black assertion is parked.
 - [x] Commit: `"test: multi-monitor + DPI scaling test matrix"`
 
 **Test checkpoint:** Boot with 2 virtual monitors at 96 and 192 DPI: `fb_snapshot_monitor(0)` captures monitor 0 with non-black pixels; `fb_snapshot_monitor(1)` captures monitor 1 with non-black pixels; taskbar appears on primary only (monitor 0).
