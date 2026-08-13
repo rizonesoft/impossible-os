@@ -22,3 +22,9 @@ So the question for this cycle is the one that keeps going unanswered: **is ther
 - **Backgrounded ship push.** The push is backgrounded and polled rather than inline. Measure poll iterations and tokens per ship against the previous inline cost.
 - **Agent-result cache hit rate.** Carried standing metric. Baseline needed: `cache-hit` entries versus total dispatches per segment.
 - **Segment-start orientation cost.** Every relaunch re-reads state, runs the triage oracle and rebuilds the graph cache. Baseline needed: tokens from segment start to first section edit. `section-pack.py` now resolves symbols for non-kernel sections and carries `spawn_chain` provenance, both of which should REDUCE the exploration that follows orientation -- measure whether they do.
+
+## Filed by the 2026-08-13 run, TODO-10 §16 ship -- EXCLUDED, below the bar
+
+- [ ] EXCLUDED (below the >= 2% bar, recorded so a later pass does not re-derive it): the ~22 full gate runs on this section cost ~90 minutes of wall-clock but almost no TOKENS.
+  - Every one went through `run-artifact.sh`, so a green run returns a bounded JSON envelope and spends zero model tokens on the output. The in-context cost per gate is one Bash call plus a ~6-line tail -- far under 2% of the segment even multiplied by 22.
+  - Recorded here anyway because the wall-clock number is large enough to LOOK like a token problem at a glance. The correct home is the FLOW finding in `overnight-runner-improvements-v14.md` (gate cadence inside a fix loop), not this file. The artifact wrapper is doing exactly what it was built to do, and this is evidence it works.
