@@ -769,6 +769,102 @@ static void test_pku_cr4_pke_set(void)
                 "CR4.PKE (bit 22) is set when PKU + XCR0 bit 9 active");
 }
 
+/* TODO-09 S11: deterministic coverage of the committed-online predicate the
+ * finalizer reduces over. This drives the SHIPPED cpu_slot_committed_online()
+ * against synthetic slots, so removing its AP_BRINGUP_ONLINE term fails HERE --
+ * the live-state test below cannot force that window (a real AP has normally
+ * published is_online by the time the suite runs). */
+static void test_cpu_slot_committed_online_states(void)
+{
+    struct per_cpu_data slot;
+
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online((struct per_cpu_data *)0), 0u,
+                   "committed-online: NULL slot is not in the intersection set");
+
+    /* Only the two publication fields are read by the predicate; set both
+     * explicitly rather than zeroing the whole block. */
+    slot.is_online = 0;
+    slot.ap_bringup_state = AP_BRINGUP_STARTING;
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 0u,
+                   "committed-online: STARTING with is_online=0 is excluded");
+
+    slot.ap_bringup_state = AP_BRINGUP_ABANDONED;
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 0u,
+                   "committed-online: ABANDONED is excluded (parks dark, never goes live)");
+
+    /* The window the bounded 100 ms wait at smp.c:507 can expire inside: the AP
+     * won the CAS and is going live, but its is_online store has not landed. */
+    slot.ap_bringup_state = AP_BRINGUP_ONLINE;
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 1u,
+                   "committed-online: ONLINE CAS won with is_online=0 is INCLUDED");
+
+    slot.is_online = 1;
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 1u,
+                   "committed-online: published is_online is included");
+
+    /* is_online alone suffices -- the BSP slot never runs the AP CAS. */
+    slot.ap_bringup_state = AP_BRINGUP_STARTING;
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 1u,
+                   "committed-online: is_online wins regardless of bringup state");
+}
+
+/* TODO-09 S11: pku_enabled must EQUAL the online-CPU intersection of CR4.PKE,
+ * not "some CPU enabled PKU". RDPKRU/WRPKRU #GP when CR4.PKE is clear on the
+ * executing CPU, so a flag set while any committed-online CPU lacks the bit
+ * faults a thread scheduled there.
+ *
+ * The expectation is recomputed here independently and compared for EQUALITY, in
+ * both directions: an implication-only test ("enabled implies X") also passes
+ * when the flag is stuck at 0, which would silently disable protection keys
+ * machine-wide.
+ *
+ * It derives expect from LIVE CR4.PKE only -- never cpu_feature_global_has(),
+ * which the same finalizer publishes and which would make this circular. That is
+ * also what keeps it correct on a no-ACPI/degraded boot that never reaches
+ * smp_init(): the global mask is unpublished there, so a mask term would force
+ * expect=0 while the BSP one-shot has legitimately published 1. Using CR4 is
+ * sound because CR4.PKE is set on a CPU only after cpu_enable_pku() cleared that
+ * CPU's own CPUID-PKU and XCR0-bit-9 gates, so the finalizer's mask clause is
+ * defense-in-depth over this value, not a separate input.
+ *
+ * Limitation, stated rather than papered over: this pins the flag against the
+ * LIVE configuration, so it catches drift, hardcoding and a wrong predicate on
+ * whatever CPUs booted -- it cannot FORCE the committed-online
+ * (AP_BRINGUP_ONLINE with is_online still 0) window, which would need an
+ * AP-bringup fault-injection seam the tree does not have and the test policy
+ * would not allow a test to drive. */
+static void test_pku_enabled_matches_online_intersection(void)
+{
+    extern int pku_enabled;
+    uint64_t cr4;
+    int enabled = __atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE);
+    int expect;
+    uint32_t i;
+
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    expect = (cr4 & (1ULL << 22)) ? 1 : 0;   /* BSP runs the suite */
+
+    /* Same committed-online predicate the finalizer uses: an AP that won the
+     * STARTING->ONLINE CAS counts even if its is_online store has not landed. */
+    for (i = 1; i < MAX_CPUS; i++) {
+        struct per_cpu_data *pc = smp_get_cpu(i);
+        if (!pc)
+            continue;
+        if (!__atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE) &&
+            __atomic_load_n(&pc->ap_bringup_state, __ATOMIC_ACQUIRE) != AP_BRINGUP_ONLINE)
+            continue;
+        if (!(pc->cr4_at_boot & (1ULL << 22)))
+            expect = 0;
+    }
+
+    TEST_ASSERT_EQ((uint32_t)enabled, (uint32_t)expect,
+                   "pku_enabled equals the committed-online CR4.PKE intersection");
+    TEST_ASSERT(!enabled || (cr4 & (1ULL << 22)),
+                "pku_enabled implies CR4.PKE is set on the CPU running this test");
+    TEST_ASSERT(!enabled || cpu_has(CPU_FEATURE_PKU),
+                "pku_enabled implies the BSP CPUID advertises PKU");
+}
+
 static void test_pku_xcr0_bit9(void)
 {
     if (!cpu_has(CPU_FEATURE_PKU)) {
@@ -782,8 +878,25 @@ static void test_pku_xcr0_bit9(void)
 
 static void test_pku_alloc_free(void)
 {
-    if (!cpu_has(CPU_FEATURE_PKU)) {
-        TEST_SKIP("PKU not available");
+    /* Gate on the FINALIZED global, not BSP CPUID: on a feature-skewed machine
+     * (BSP has PKU, an online AP lacks CR4.PKE) the online-CPU intersection
+     * correctly clears pku_enabled and pku_alloc_key() returns -1 by contract.
+     * Gating on cpu_has() alone would report that supported degradation as a
+     * test FAILURE (TODO-09 S11). */
+    if (!__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE)) {
+        /* Assert the fail-closed contract on EVERY disabled configuration, not
+         * just the rare feature-skew one -- an ordinary no-PKU leg is where a
+         * missing guard would otherwise go unexercised until it #GP'd on real
+         * hardware. Calling the WRPKRU/RDPKRU-bearing entry points here is the
+         * point: they must return without executing the instruction. */
+        TEST_ASSERT_EQ(pku_alloc_key(), -1,
+                       "PKU disabled: pku_alloc_key returns -1");
+        TEST_ASSERT_EQ(pku_read(), 0u,
+                       "PKU disabled: pku_read returns 0 without RDPKRU");
+        pku_set_permissions(1, PKU_WRITE_DISABLE);
+        pku_free_key(1);
+        TEST_ASSERT_EQ(pku_read(), 0u,
+                       "PKU disabled: set_permissions/free_key are safe no-ops (no WRPKRU)");
         return;
     }
     int key = pku_alloc_key();
@@ -800,8 +913,9 @@ static void test_pku_alloc_free(void)
 
 static void test_pku_read_pkru(void)
 {
-    if (!cpu_has(CPU_FEATURE_PKU)) {
-        TEST_SKIP("PKU not available");
+    /* Finalized global, not BSP CPUID -- see test_pku_alloc_free (TODO-09 S11). */
+    if (!__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE)) {
+        TEST_SKIP("PKU not enabled on every online CPU");
         return;
     }
     uint32_t pkru = pku_read();
@@ -812,8 +926,9 @@ static void test_pku_read_pkru(void)
 
 static void test_pku_set_permissions(void)
 {
-    if (!cpu_has(CPU_FEATURE_PKU)) {
-        TEST_SKIP("PKU not available");
+    /* Finalized global, not BSP CPUID -- see test_pku_alloc_free (TODO-09 S11). */
+    if (!__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE)) {
+        TEST_SKIP("PKU not enabled on every online CPU");
         return;
     }
     int key = pku_alloc_key();
@@ -2034,6 +2149,10 @@ void test_register_x86(void)
         test_pku_cr4_pke_set, TEST_CAT_X86);
     test_suite_register_cat("PKU: XCR0 bit 9 active",
         test_pku_xcr0_bit9, TEST_CAT_X86);
+    test_suite_register_cat("PKU: committed-online predicate state table",
+        test_cpu_slot_committed_online_states, TEST_CAT_X86);
+    test_suite_register_cat("PKU: pku_enabled matches online-CPU CR4.PKE intersection",
+        test_pku_enabled_matches_online_intersection, TEST_CAT_X86);
     test_suite_register_cat("PKU: alloc/free key",
         test_pku_alloc_free, TEST_CAT_X86);
     test_suite_register_cat("PKU: read PKRU value",

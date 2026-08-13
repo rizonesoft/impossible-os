@@ -141,6 +141,15 @@ void cpu_validate_ap_features(uint32_t cpu_id);
  * an already-published mask. */
 void cpu_features_finalize_global(void);
 
+/* 1 when this per-CPU slot belongs to the set the global intersection must
+ * cover: it published is_online, OR it won the STARTING->ONLINE bringup CAS and
+ * its is_online store has not landed yet (smp_init() waits only a bounded 100 ms
+ * for that store). ABANDONED and never-started slots return 0. Acquire-loads
+ * both publications, so the slot's ap_cpu_harden() snapshot is ordered for the
+ * caller. NULL-safe. */
+struct per_cpu_data;
+int cpu_slot_committed_online(const struct per_cpu_data *pc);
+
 /* The published global feature intersection (0 until finalized). Acquire-load.
  * A set bit means the feature is present on EVERY online CPU AND, for
  * xstate-dependent features (AVX/AVX512F/PKU/XSAVE), the OS has enabled the

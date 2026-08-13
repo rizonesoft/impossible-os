@@ -479,7 +479,9 @@ void task_alloc_xsave(struct task *t)
          * Bounds check uses subtraction to avoid uint32 overflow. */
         {
             extern int pku_enabled;
-            if (pku_enabled &&
+            /* Acquire: pku_enabled is narrowed to the online-CPU CR4.PKE
+             * intersection by cpu_features_finalize_global() (TODO-09 S11). */
+            if (__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE) &&
                 g_cpu.pkru_xsave_offset > 0 &&
                 size >= 4 &&
                 g_cpu.pkru_xsave_offset <= size - 4) {

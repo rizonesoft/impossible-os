@@ -424,7 +424,7 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 > - NX policy now hard-fails (LOG_ERROR + `boot_halt`) instead of silently leaving a text-overlapping huge page executable on a split OOM -- NX is REQUIRED and verify only reads EFER.
 > - Verified on KVM serial: `NX enabled`, `SMEP/SMAP skipped (needs KPTI)`, `UMIP enabled`, CR4=0x40e68 (SMEP/SMAP bits clear).
 > **Verified:** 2026-06-08 | commit `e194e646` | 5/5 items | build OK | security 79+16 PASS, smoke PASS (KVM 2.6s; NX enabled + SMEP/SMAP skipped confirmed in serial)
-> **Accepted:** [M] `cpu_enable_pku` publishes per-CPU PKU as global `pku_enabled` -- an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE -> XREF: 01-boot-platform/TODO-09 §6 (item: "PKU global skew" at line 426)
+> **Accepted:** [M] RESOLVED 2026-08-13 -- `cpu_enable_pku` published per-CPU PKU as global `pku_enabled`, so an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE. Closed by the online-CPU CR4.PKE intersection in `cpu_features_finalize_global()`; the item moved into the backfill cohort en route -> XREF: 01-boot-platform/TODO-09 §11 (item: "PKU global skew closed", was §6)
 > **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

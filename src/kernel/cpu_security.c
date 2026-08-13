@@ -449,25 +449,55 @@ void cpu_enable_umip(void)
 
 /* ---- PKU (Protection Keys for User-mode) via CR4.PKE ---- */
 
+/* One-shot latch: the FIRST cpu_enable_pku() caller is the BSP in boot_phase0,
+ * which runs before smp_init() starts any AP, so the BSP is the only online CPU
+ * and its result IS the online-CPU intersection at that moment. Every later
+ * caller is an AP inside ap_cpu_harden(), and an AP NEVER writes pku_enabled
+ * (see below). Written once by the BSP with no AP running, then read-only. */
+static int s_pku_published = 0;
+
 void cpu_enable_pku(void)
 {
-    if (!cpu_feature_local(CPU_FEATURE_PKU))   /* AP-local: optional, may be skewed */
-        return;
+    int have_pke = 0;
 
-    /* XCR0 bit 9 (PKRU state) must be active on THIS CPU before CR4.PKE.
-     * Read the live XCR0, not the BSP-global g_cpu.xcr0_active -- on an AP
-     * whose XCR0 was intersected down to a narrower mask, the global would
-     * lie and we would set CR4.PKE without the PKRU xstate enabled here. */
-    if (!(xcr0_read_safe() & (1UL << 9))) {
-        HARDEN_KLOG(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set on this CPU; skipping CR4.PKE");
-        return;
+    /* AP-local: PKU is optional and may be skewed. A CPU without it simply
+     * contributes have_pke = 0 to the intersection below. */
+    if (cpu_feature_local(CPU_FEATURE_PKU)) {
+        /* XCR0 bit 9 (PKRU state) must be active on THIS CPU before CR4.PKE.
+         * Read the live XCR0, not the BSP-global g_cpu.xcr0_active -- on an AP
+         * whose XCR0 was intersected down to a narrower mask, the global would
+         * lie and we would set CR4.PKE without the PKRU xstate enabled here. */
+        if (!(xcr0_read_safe() & (1UL << 9))) {
+            HARDEN_KLOG(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set on this CPU; skipping CR4.PKE");
+        } else {
+            uint64_t cr4 = read_cr4();
+            if (!(cr4 & CR4_PKE)) {
+                write_cr4(cr4 | CR4_PKE);
+                HARDEN_KLOG(LOG_DEBUG, "cpu", "PKU enabled (CR4.PKE)");
+            }
+            /* Set whenever the bit ENDS UP set, not only when this call wrote
+             * it: cpu_force_ap_required_cr4() and a re-entered cpu_harden() can
+             * both leave CR4.PKE already on, and the old write-only publication
+             * then reported "no PKU" for a CPU that has it. */
+            have_pke = 1;
+        }
     }
 
-    uint64_t cr4 = read_cr4();
-    if (!(cr4 & CR4_PKE)) {
-        write_cr4(cr4 | CR4_PKE);
-        pku_enabled = 1;
-        HARDEN_KLOG(LOG_DEBUG, "cpu", "PKU enabled (CR4.PKE)");
+    /* pku_enabled means "RDPKRU/WRPKRU are safe on EVERY online CPU" -- the
+     * instructions #GP when CR4.PKE is clear on the EXECUTING CPU, so a global
+     * set by whichever CPU happened to enable it is unsound (TODO-09 S11).
+     *
+     * An AP NEVER writes the flag, not even to narrow it. ap_entry() calls
+     * ap_cpu_harden() BEFORE the STARTING->ONLINE abandon CAS (smp.c), so an AP
+     * the BSP already timed out on still reaches this function and would
+     * otherwise store into a global the BSP had already finalized -- a CPU that
+     * never publishes is_online is not in the online set and must not move the
+     * intersection. The AP's contribution is therefore its cr4_at_boot snapshot,
+     * which cpu_features_finalize_global() reads under the is_online acquire
+     * edge, making the BSP the sole publisher once bringup is done. */
+    if (!s_pku_published) {
+        s_pku_published = 1;
+        __atomic_store_n(&pku_enabled, have_pke, __ATOMIC_RELEASE);
     }
 }
 
@@ -1216,21 +1246,68 @@ void cpu_validate_ap_features(uint32_t cpu_id)
     }
 }
 
+/* Is this slot part of the set the global intersection must cover?
+ *
+ * COMMITTED-online, not merely published-online: an AP that won the
+ * STARTING->ONLINE CAS is going live even if its is_online release store has not
+ * landed yet, and smp_init() waits only a BOUNDED 100 ms for that store
+ * (smp.c:507) before continuing. An is_online-only test therefore omits a
+ * stalled-but-committed AP, which then comes online under a mask that never
+ * intersected it. The AP's ap_cpu_harden() snapshot (features, cr4_at_boot)
+ * precedes its ACQ_REL CAS, so an acquire load of EITHER publication orders
+ * those writes for the caller. ABANDONED slots are excluded -- that AP parks
+ * dark and never goes live.
+ *
+ * Extracted from cpu_features_finalize_global() so the shipped reduction and the
+ * unit test run the SAME predicate over synthetic slots rather than two copies
+ * of the rule (TODO-09 S11 review round 4). */
+int cpu_slot_committed_online(const struct per_cpu_data *pc)
+{
+    if (!pc)
+        return 0;
+    if (__atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE))
+        return 1;
+    return __atomic_load_n(&pc->ap_bringup_state, __ATOMIC_ACQUIRE) == AP_BRINGUP_ONLINE;
+}
+
 void cpu_features_finalize_global(void)
 {
     extern struct cpu_features g_cpu;
     cpu_feature_mask_t m = cpu_feature_and(g_cpu.flags, CPU_FEATURES_AP_PROBE_MASK); /* BSP base */
     uint32_t i;
 
-    /* AND in every ONLINE AP's published features. Scan ALL slots, not
+    /* CR4.PKE intersection (TODO-09 S11). Consumers (pku.c, task.c) execute
+     * RDPKRU/WRPKRU, which #GP when CR4.PKE is clear on the EXECUTING CPU, so
+     * pku_enabled must describe the ONLINE-CPU INTERSECTION of the LIVE bit --
+     * not the CPUID feature and not "some CPU enabled it". This runs on the BSP,
+     * so the BSP's CR4 is read live; each online AP contributes its cr4_at_boot
+     * snapshot, published under the same is_online release edge that orders
+     * pc->features below. */
+    int pke_all = (read_cr4() & CR4_PKE) ? 1 : 0;
+
+    /* AND in every COMMITTED-online AP's published features. Scan ALL slots, not
      * smp_cpu_count(): that returns the dense online COUNT (1 + online), so on
      * a sparse online set (e.g. AP1 timed out, AP2 online) a count-bounded loop
      * would skip the higher-id online AP and publish an over-broad mask.
-     * is_online (acquire) gates each slot; never-started slots are zeroed BSS. */
+     * Never-started slots are zeroed BSS.
+     *
+     * COMMITTED-online, not merely published-online: an AP that won the
+     * STARTING->ONLINE CAS is going live even if its is_online release store has
+     * not landed yet, and smp_init() waits only a BOUNDED 100 ms for that store
+     * (smp.c:507) before continuing. An is_online-only test therefore omits a
+     * stalled-but-committed AP, which then comes online under a mask that never
+     * intersected it -- over-broad for both the feature set and CR4.PKE. Reading
+     * ap_bringup_state closes that window: the AP's ap_cpu_harden() snapshot
+     * (features, cr4_at_boot) precedes its ACQ_REL CAS, so an acquire load of
+     * EITHER publication orders those writes here. ABANDONED slots are excluded
+     * -- that AP parks dark and never goes live. */
     for (i = 1; i < MAX_CPUS; i++) {
         struct per_cpu_data *pc = smp_get_cpu(i);
-        if (pc && __atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE))
-            m = cpu_feature_and(m, pc->features);
+        if (!cpu_slot_committed_online(pc))
+            continue;
+        m = cpu_feature_and(m, pc->features);
+        if (!(pc->cr4_at_boot & CR4_PKE))
+            pke_all = 0;
     }
 
     /* xstate-dependent features are usable only if the OS enabled the backing
@@ -1246,6 +1323,24 @@ void cpu_features_finalize_global(void)
         if ((xcr0 & (7ULL << 5)) != (7ULL << 5))      cpu_feature_clear(&m, CPU_FEATURE_AVX512F);
         if (!(xcr0 & (1ULL << 9)))                    cpu_feature_clear(&m, CPU_FEATURE_PKU);
     }
+
+    /* Authoritative pku_enabled publication (TODO-09 S11): every online CPU has
+     * CR4.PKE AND the intersected mask still carries PKU (the XCR0 bit-9 clear
+     * above already folded in the xstate requirement). This can only NARROW what
+     * cpu_enable_pku() published on the BSP, so a consumer that read 1 earlier
+     * was correct for the online set that existed then. Release-store pairs with
+     * the acquire loads in pku.c / task.c.
+     *
+     * The 1 -> 0 transition cannot strand an allocated key: this runs inside
+     * smp_init(), before the scheduler starts, and no caller of pku_alloc_key()
+     * exists outside pku.c and the test suite -- so there is no live PKRU state
+     * to revoke here. A future key consumer that can run before smp_init() must
+     * revoke on this edge instead of relying on that. */
+    if (!cpu_feature_test(&m, CPU_FEATURE_PKU))
+        pke_all = 0;
+    if (!pke_all && __atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE))
+        klog(LOG_WARN, "smp", "PKU disabled kernel-wide: CR4.PKE is not set on every online CPU");
+    __atomic_store_n(&pku_enabled, pke_all, __ATOMIC_RELEASE);
 
     /* Publish the words, then release the flag so readers (acquire) see a fully
      * written mask. No 16-byte atomic on x86, hence the flag instead of an

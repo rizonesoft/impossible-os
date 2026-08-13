@@ -75,7 +75,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                       |  [x]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                   |  [x]   |
 | 💎  |  10   | AP bringup hardening & robustness                | §4, §6                   |  [x]   |
-| 💎  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --                       |  [ ]   |
+| 💎  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --                       |  [x]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
 > ⭐ = exclusive -- hypervisor pre-detection before timer HAL selection, per-activation postcode audit trail, and structured register dump are not surfaced the same way on Windows or Linux.
@@ -396,6 +396,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 - [x] **Degraded-bringup abandon (CAS)** -- per-CPU `ap_bringup_state`: AP CASes STARTING->ONLINE then publishes `is_online`; BSP CASes STARTING->ABANDONED on timeout; AP validates live LAPIC ID vs prestored slot id before ONLINE.
 - [x] **Sparse-slot accounting** -- `boot_async_group()` distributes work over an explicit `is_online` slot list (walk 1..MAX_CPUS), not dense `smp_cpu_count()`; clears async state for ALL online APs so a smaller later group leaves no stale work.
 - [ ] **AP_DATA consume-ack handshake** -- a slow AP can run `ap_cpu_harden` on the next AP's stack before the S10 identity guard parks it; add a trampoline-entry ack the BSP waits on before reusing `AP_DATA`+stack (`ap_trampoline.asm`+`smp.c`).
+  - Scope note (§11 review, 2026-08-13): the impostor writes `pc->features` AND `pc->cr4_at_boot` into the reassigned slot at `src/kernel/smp/smp.c:159`, before the LAPIC-identity park at `smp.c:174`. So it can corrupt BOTH §6's feature intersection and §11's `CR4.PKE` intersection, leaving `pku_enabled` over-broad for the slot's real AP. Ordering the identity guard ahead of `ap_cpu_harden()` is one candidate fix; a single-writer handoff tied to the ONLINE CAS is another.
 - [ ] **Per-CPU TSS + IST** -- APs never `ltr` a TSS (`ap_trampoline.asm` loads BSP GDT only), so all CPUs share one `kernel_tss`/IST1-3 + a global rsp0. Add per-CPU TSS + GDT descriptor + IST + AP `ltr` (consumer: `D01 T10 §2`).
 - [ ] **Phase-split INIT settle + 200us SIPI wait** -- `smp.c` serial 10ms INIT + 1ms SIPI per AP; INIT all targets, one shared settle, per-AP SIPI at 200us (needs consume-ack above; from `01-boot-platform/TODO-11` §10)
 - [x] Commit: `"smp: AP bringup hardening -- AP-local gates, CR4 force-after-validation, degraded-bringup robustness"`
@@ -423,9 +424,21 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 6:
-- [ ] PKU global skew: `cpu_enable_pku` sets global `pku_enabled` from any enabling CPU, but PKU is AP-optional -- consumers (`pku.c`/`task.c`) could run PKRU on a CPU without CR4.PKE. Gate it on the online-CPU intersection. Filed from D01 T10 §9.
+- [x] PKU global skew closed: `pku_enabled` now tracks the ONLINE-CPU intersection of live `CR4.PKE`, not "whichever CPU enabled PKU". Filed from D01 T10 §9.
+  - `cpu_enable_pku()` (`src/kernel/cpu_security.c:452`) publishes the flag ONCE, from the BSP in `boot_phase0` where it is the only online CPU; an AP never writes it.
+  - `cpu_features_finalize_global()` (`src/kernel/cpu_security.c:1292`) is the authoritative publisher: BSP live `CR4.PKE` AND every online AP's `cr4_at_boot & CR4_PKE` AND `CPU_FEATURE_PKU` surviving the intersected mask; WARNs on the narrowing edge.
+  - Consumers acquire-load the flag (`src/kernel/security/pku.c:39,79,103`, `src/kernel/sched/task.c:482`) against the two release-stores.
+  - `have_pke` is now set whenever `CR4.PKE` ends up on, not only when this call wrote it -- `cpu_force_ap_required_cr4()` and a re-entered `cpu_harden()` both leave it already set, which the old write-only publication read as "no PKU".
 
-**Test checkpoint:** per moved item; each carries its original acceptance text.
+**Test checkpoint:** per moved item; each carries its original acceptance text. `PKU: pku_enabled matches online-CPU CR4.PKE intersection` (`src/kernel/test/test_cpu_security.c:772`, `TEST_CAT_X86`) pins the three directions the flag implies: live `CR4.PKE` on the executing CPU, `cpu_feature_global_has(CPU_FEATURE_PKU)`, and BSP CPUID PKU.
+
+**Notes:**
+- **What shipped:** ownership of the `pku_enabled` global moved from "any CPU that enabled CR4.PKE" to a single BSP publication plus an authoritative online-CPU-intersection recompute at `cpu_features_finalize_global()`.
+- **How it integrates:** the intersection reuses the existing S6 machinery -- the same `is_online` acquire pass that ANDs `pc->features` also ANDs each online AP's `cr4_at_boot & CR4_PKE`, so no new per-CPU field and no new synchronization edge were introduced.
+- **Downstream effects:** `pku_alloc_key()` / `pku_set_permissions()` / `pku_read()` / the `task.c` PKRU seed now degrade to no-ops on a feature-skewed machine instead of executing RDPKRU/WRPKRU on a CPU that would `#GP`; a homogeneous PKU machine is unchanged.
+- **Canonical doc:** the flag's contract is stated at `include/kernel/security/pku.h:63`.
+- **Scope boundary:** this section only re-homes the flag. Per-CPU PKU (letting PKU-capable CPUs use protection keys while skewed siblings do not) is NOT in scope and has no consumer today -- `pku_alloc_key()` has zero production callers outside `pku.c` and the test suite.
+- **Accepted, not fixed here:** the intersection reads `per_cpu_data` snapshots that a misidentified AP can corrupt before the LAPIC-identity park (`src/kernel/smp/smp.c:159` vs `:174`). That window predates this work, hits §6's feature mask identically, and is owned by §10 -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP_DATA consume-ack handshake" at line 398), whose text now names the `CR4.PKE` consequence too.
 
 ---
 

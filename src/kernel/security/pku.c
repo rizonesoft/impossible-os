@@ -16,8 +16,13 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/klog.h"
 
-/* Global flag: set to 1 after CR4.PKE is successfully written.
- * Gates all RDPKRU/WRPKRU operations. */
+/* Global flag: 1 only when CR4.PKE is set on EVERY online CPU.
+ * Gates all RDPKRU/WRPKRU operations -- both instructions #GP when CR4.PKE is
+ * clear on the executing CPU, so a flag set by whichever CPU happened to enable
+ * PKU would fault a thread scheduled onto a PKU-less AP (TODO-09 S11).
+ * Published by cpu_enable_pku() on the BSP and narrowed to the online-CPU
+ * intersection by cpu_features_finalize_global(); both writers release-store,
+ * so every read here is an acquire load. */
 int pku_enabled = 0;
 
 /* Bitmap of allocated keys: bit N = 1 means key N is in use.
@@ -36,7 +41,7 @@ int pku_alloc_key(void)
     uint64_t irq_flags;
     int key;
 
-    if (!pku_enabled)
+    if (!__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE))
         return -1;
 
     spin_lock_irqsave(&s_key_lock, &irq_flags);
@@ -76,7 +81,7 @@ void pku_set_permissions(int key, uint32_t flags)
 
     if (key < 0 || key >= PKU_KEY_COUNT)
         return;
-    if (!pku_enabled)
+    if (!__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE))
         return;
 
     /* Read current PKRU, modify the 2-bit field for this key, write back.
@@ -100,7 +105,7 @@ uint32_t pku_read(void)
 {
     uint32_t pkru;
 
-    if (!pku_enabled)
+    if (!__atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE))
         return 0;
 
     __asm__ volatile (

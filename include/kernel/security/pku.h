@@ -60,10 +60,14 @@ void pku_set_permissions(int key, uint32_t flags);
 /* Read current PKRU value from the CPU. */
 uint32_t pku_read(void);
 
-/* Global flag: 1 if CR4.PKE was successfully set on the BSP.
- * Gates all RDPKRU/WRPKRU operations. cpu_has(CPU_FEATURE_PKU)
- * alone is not sufficient because CR4.PKE may have been skipped
- * (e.g., XCR0 bit 9 not available). */
+/* Global flag: 1 only when CR4.PKE is set on EVERY online CPU.
+ * Gates all RDPKRU/WRPKRU operations -- both instructions #GP when CR4.PKE is
+ * clear on the executing CPU, and PKU is AP-optional, so the flag tracks the
+ * ONLINE-CPU INTERSECTION rather than any single CPU (TODO-09 S11).
+ * cpu_has(CPU_FEATURE_PKU) alone is not sufficient because CR4.PKE may have
+ * been skipped (e.g., XCR0 bit 9 not available on that CPU).
+ * Read it with an acquire load; only cpu_enable_pku() (BSP publication) and
+ * cpu_features_finalize_global() (authoritative narrowing) write it. */
 extern int pku_enabled;
 
 /* Initialize PKU subsystem. Call after cpu_configure_xcr0(). */
