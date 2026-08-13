@@ -144,9 +144,14 @@ void cpu_features_finalize_global(void);
 /* 1 when this per-CPU slot belongs to the set the global intersection must
  * cover: it published is_online, OR it won the STARTING->ONLINE bringup CAS and
  * its is_online store has not landed yet (smp_init() waits only a bounded 100 ms
- * for that store). ABANDONED and never-started slots return 0. Acquire-loads
- * both publications, so the slot's ap_cpu_harden() snapshot is ordered for the
- * caller. NULL-safe. */
+ * for that store). ABANDONED-without-is_online and never-started slots return 0.
+ * is_online has PRECEDENCE: a slot reporting both is_online and ABANDONED
+ * returns 1. The bringup CAS makes that combination unreachable, and it is the
+ * safe precedence anyway -- a CPU that published is_online is live, so dropping
+ * it from a capability intersection would over-publish. Acquire-loads both
+ * publications, so the slot's ap_cpu_harden() snapshot is ordered for the
+ * caller. NOT the predicate for counting online CPUs -- see the definition.
+ * NULL-safe. */
 struct per_cpu_data;
 int cpu_slot_committed_online(const struct per_cpu_data *pc);
 

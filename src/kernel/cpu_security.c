@@ -495,9 +495,19 @@ void cpu_enable_pku(void)
      * intersection. The AP's contribution is therefore its cr4_at_boot snapshot,
      * which cpu_features_finalize_global() reads under the is_online acquire
      * edge, making the BSP the sole publisher once bringup is done. */
-    if (!s_pku_published) {
-        s_pku_published = 1;
-        __atomic_store_n(&pku_enabled, have_pke, __ATOMIC_RELEASE);
+    {
+        /* Publish only from the BSP. The one-shot latch ALONE would rest on call
+         * ORDER (boot_hw.c's cpu_harden() running before smp_init() starts any
+         * AP) -- true today, but comment-only and silent if that order ever
+         * moves. Testing for the BSP makes the rule explicit; the latch then
+         * just keeps the publication single. Same smp_this_cpu() idiom
+         * cpu_feature_local() above uses: a NULL pc is the pre-GS_BASE BSP in
+         * boot_phase0, which is exactly the caller that should publish. */
+        struct per_cpu_data *self = smp_this_cpu();
+        if ((!self || self->cpu_id == 0) && !s_pku_published) {
+            s_pku_published = 1;
+            __atomic_store_n(&pku_enabled, have_pke, __ATOMIC_RELEASE);
+        }
     }
 }
 
@@ -1255,8 +1265,23 @@ void cpu_validate_ap_features(uint32_t cpu_id)
  * stalled-but-committed AP, which then comes online under a mask that never
  * intersected it. The AP's ap_cpu_harden() snapshot (features, cr4_at_boot)
  * precedes its ACQ_REL CAS, so an acquire load of EITHER publication orders
- * those writes for the caller. ABANDONED slots are excluded -- that AP parks
- * dark and never goes live.
+ * those writes for the caller. That is a SECOND publication edge beside
+ * is_online: the AP's ACQ_REL CAS releases the same prior writes.
+ *
+ * is_online has PRECEDENCE over ap_bringup_state, so a slot reporting both
+ * is_online and ABANDONED returns 1. The bringup CAS makes that combination
+ * unreachable (exactly one of {AP-ONLINE, BSP-ABANDONED} wins, and the AP
+ * publishes is_online only after winning), and is_online-wins is the SAFE
+ * precedence regardless: a CPU that published is_online IS live, and dropping
+ * it from a capability intersection would publish a capability it may not have.
+ * ABANDONED-without-is_online and never-started slots are excluded.
+ *
+ * This predicate is deliberately NOT the one smp_init() counts total_cpus with
+ * or that cpu_audit_consistency_check() filters on -- those use is_online alone
+ * and should. The directions differ: admitting a committed-but-unpublished AP
+ * to an INTERSECTION is conservative (it can only narrow the published
+ * capability set), while admitting it to a COUNT that gates scheduling and IPI
+ * targeting would be optimistic about a CPU that may not service interrupts yet.
  *
  * Extracted from cpu_features_finalize_global() so the shipped reduction and the
  * unit test run the SAME predicate over synthetic slots rather than two copies
@@ -1331,11 +1356,24 @@ void cpu_features_finalize_global(void)
      * was correct for the online set that existed then. Release-store pairs with
      * the acquire loads in pku.c / task.c.
      *
-     * The 1 -> 0 transition cannot strand an allocated key: this runs inside
-     * smp_init(), before the scheduler starts, and no caller of pku_alloc_key()
-     * exists outside pku.c and the test suite -- so there is no live PKRU state
-     * to revoke here. A future key consumer that can run before smp_init() must
-     * revoke on this edge instead of relying on that. */
+     * The 1 -> 0 transition cannot strand live PKRU state. TWO shapes were
+     * checked, not just the obvious one:
+     *   - an allocated protection key: pku_alloc_key() has no caller outside
+     *     pku.c and the test suite, so none can exist here;
+     *   - PKRU already stamped into a per-task XSAVE area: task.c sets
+     *     XSTATE_BV bit 9 whenever it read pku_enabled as 1, and XRSTOR faults
+     *     if XSTATE_BV bit 9 is set on a CPU whose XCR0 lacks it. Unreachable
+     *     on this boot order -- XSAVE areas are allocated lazily on first FPU
+     *     use and preemption only starts in Phase 3, both strictly after this
+     *     runs inside smp_init().
+     * A future consumer of either kind that can run BEFORE smp_init() must
+     * revoke on this edge rather than rely on those orderings.
+     *
+     * The published value is only as sound as single-writer ownership of the
+     * slots it reduces: the S10 impostor window (ap_cpu_harden at smp.c:160
+     * runs before the LAPIC-identity park at smp.c:176) can put a foreign CPU's
+     * cr4_at_boot in a slot. Pre-existing and shared with the feature mask
+     * above; owned by S10's AP_DATA consume-ack handshake, NOT closed here. */
     if (!cpu_feature_test(&m, CPU_FEATURE_PKU))
         pke_all = 0;
     if (!pke_all && __atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE))

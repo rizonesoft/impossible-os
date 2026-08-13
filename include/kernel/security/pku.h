@@ -67,7 +67,15 @@ uint32_t pku_read(void);
  * cpu_has(CPU_FEATURE_PKU) alone is not sufficient because CR4.PKE may have
  * been skipped (e.g., XCR0 bit 9 not available on that CPU).
  * Read it with an acquire load; only cpu_enable_pku() (BSP publication) and
- * cpu_features_finalize_global() (authoritative narrowing) write it. */
+ * cpu_features_finalize_global() (authoritative narrowing) write it.
+ *
+ * SCOPE OF THE GUARANTEE: the intersection is computed over the per-CPU
+ * cr4_at_boot snapshots, so it is exactly as trustworthy as single-writer
+ * ownership of those slots. A misidentified AP can still write a reassigned
+ * slot before the LAPIC-identity park (src/kernel/smp/smp.c:160 vs :176), which
+ * would let an impostor's CR4 stand in for the slot's real AP. That window is
+ * pre-existing and shared with the S6 feature mask; closing it is the AP_DATA
+ * consume-ack handshake owned by 01-boot-platform/TODO-09 S10. */
 extern int pku_enabled;
 
 /* Initialize PKU subsystem. Call after cpu_configure_xcr0(). */

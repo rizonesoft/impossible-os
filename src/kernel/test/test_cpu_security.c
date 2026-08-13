@@ -776,7 +776,11 @@ static void test_pku_cr4_pke_set(void)
  * published is_online by the time the suite runs). */
 static void test_cpu_slot_committed_online_states(void)
 {
-    struct per_cpu_data slot;
+    /* STATIC, not a stack local: struct per_cpu_data is ~3.9 KiB (the 64-entry
+     * transition ring alone is 3584 bytes) and the BSP boot stack is 16 KiB
+     * behind a guard page -- a quarter of the stack in one frame, to read two
+     * uint32 fields. BSS, zero-initialized, single-threaded test. */
+    static struct per_cpu_data slot;
 
     TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online((struct per_cpu_data *)0), 0u,
                    "committed-online: NULL slot is not in the intersection set");
@@ -805,7 +809,16 @@ static void test_cpu_slot_committed_online_states(void)
     /* is_online alone suffices -- the BSP slot never runs the AP CAS. */
     slot.ap_bringup_state = AP_BRINGUP_STARTING;
     TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 1u,
-                   "committed-online: is_online wins regardless of bringup state");
+                   "committed-online: is_online admits a slot still marked STARTING");
+
+    /* is_online PRECEDENCE. The bringup CAS makes this combination unreachable
+     * (exactly one of AP-ONLINE / BSP-ABANDONED wins, and the AP publishes
+     * is_online only after winning), but the precedence is pinned because it is
+     * the SAFE direction: a CPU that published is_online is live, so dropping it
+     * from a capability intersection would over-publish. */
+    slot.ap_bringup_state = AP_BRINGUP_ABANDONED;
+    TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 1u,
+                   "committed-online: is_online takes precedence over ABANDONED");
 }
 
 /* TODO-09 S11: pku_enabled must EQUAL the online-CPU intersection of CR4.PKE,

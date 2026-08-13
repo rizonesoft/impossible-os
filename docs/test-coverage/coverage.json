@@ -1,6 +1,6 @@
 {
   "total_suites": 2757,
-  "total_assertions": 11267,
+  "total_assertions": 11268,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -29,7 +29,7 @@
     {"file": "test_boot_warm_update.c", "suites": 13, "assertions": 27},
     {"file": "test_bulletproof.c", "suites": 7, "assertions": 20},
     {"file": "test_ci.c", "suites": 14, "assertions": 81},
-    {"file": "test_cpu_security.c", "suites": 110, "assertions": 234},
+    {"file": "test_cpu_security.c", "suites": 110, "assertions": 235},
     {"file": "test_crashdump.c", "suites": 35, "assertions": 112},
     {"file": "test_desktop.c", "suites": 48, "assertions": 211},
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},

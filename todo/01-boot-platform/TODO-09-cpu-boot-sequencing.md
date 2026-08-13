@@ -424,44 +424,49 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 6:
-- [x] PKU global skew closed: `pku_enabled` now tracks the ONLINE-CPU intersection of live `CR4.PKE`, not "whichever CPU enabled PKU". Filed from D01 T10 §9.
+- [x] PKU global skew closed: `pku_enabled` now tracks the online-CPU intersection of `CR4.PKE` across the per-CPU snapshots, not "whichever CPU enabled PKU". Filed from D01 T10 §9.
   - `cpu_enable_pku()` (`src/kernel/cpu_security.c:452`) publishes the flag ONCE, from the BSP in `boot_phase0` where it is the only online CPU; an AP never writes it.
   - `cpu_features_finalize_global()` (`src/kernel/cpu_security.c:1292`) is the authoritative publisher: BSP live `CR4.PKE` AND every online AP's `cr4_at_boot & CR4_PKE` AND `CPU_FEATURE_PKU` surviving the intersected mask; WARNs on the narrowing edge.
   - Consumers acquire-load the flag (`src/kernel/security/pku.c:39,79,103`, `src/kernel/sched/task.c:482`) against the two release-stores.
   - `have_pke` is now set whenever `CR4.PKE` ends up on, not only when this call wrote it -- `cpu_force_ap_required_cr4()` and a re-entered `cpu_harden()` both leave it already set, which the old write-only publication read as "no PKU".
 
-**Test checkpoint:** per moved item; each carries its original acceptance text. `PKU: pku_enabled matches online-CPU CR4.PKE intersection` (`src/kernel/test/test_cpu_security.c:772`, `TEST_CAT_X86`) pins the three directions the flag implies: live `CR4.PKE` on the executing CPU, `cpu_feature_global_has(CPU_FEATURE_PKU)`, and BSP CPUID PKU.
+**Test checkpoint:** per moved item; each carries its original acceptance text. Two `TEST_CAT_X86` tests in `src/kernel/test/test_cpu_security.c`: `PKU: pku_enabled matches online-CPU CR4.PKE intersection` compares the flag for EQUALITY against an expectation recomputed from live `CR4.PKE` alone (deliberately NOT `cpu_feature_global_has()`, which the same finalizer publishes -- that would be circular, and would false-fail on a no-ACPI boot that never reaches `smp_init()` and so never publishes the mask), plus the BSP-CPUID implication; `PKU: committed-online predicate state table` drives the shipped `cpu_slot_committed_online()` over synthetic slots (NULL, STARTING, ABANDONED, ONLINE-CAS-won with `is_online` 0, published `is_online`, and the `is_online`-over-ABANDONED precedence).
 
 **Notes:**
 - **What shipped:** ownership of the `pku_enabled` global moved from "any CPU that enabled CR4.PKE" to a single BSP publication plus an authoritative online-CPU-intersection recompute at `cpu_features_finalize_global()`.
-- **How it integrates:** the intersection reuses the existing S6 machinery -- the same `is_online` acquire pass that ANDs `pc->features` also ANDs each online AP's `cr4_at_boot & CR4_PKE`, so no new per-CPU field and no new synchronization edge were introduced.
+- **How it integrates:** the intersection reuses the existing S6 reduction -- the same pass that ANDs `pc->features` also ANDs each committed-online AP's `cr4_at_boot & CR4_PKE`, so no new per-CPU field was introduced. Slot membership moved from `is_online` alone to `cpu_slot_committed_online()`, which adds a SECOND acquire edge (the AP's `STARTING->ONLINE` ACQ_REL CAS) beside the `is_online` release/acquire one; both order the same prior `ap_cpu_harden()` snapshot writes. `total_cpus` counting and `cpu_audit_consistency_check()` deliberately keep the `is_online`-only predicate -- widening an intersection is conservative, widening a scheduling count is not.
 - **Downstream effects:** `pku_alloc_key()` / `pku_set_permissions()` / `pku_read()` / the `task.c` PKRU seed now degrade to no-ops on a feature-skewed machine instead of executing RDPKRU/WRPKRU on a CPU that would `#GP`; a homogeneous PKU machine is unchanged.
 - **Canonical doc:** the flag's contract is stated at `include/kernel/security/pku.h:63`.
 - **Scope boundary:** this section only re-homes the flag. Per-CPU PKU (letting PKU-capable CPUs use protection keys while skewed siblings do not) is NOT in scope and has no consumer today -- `pku_alloc_key()` has zero production callers outside `pku.c` and the test suite.
 - **Accepted, not fixed here:** the intersection reads `per_cpu_data` snapshots that a misidentified AP can corrupt before the LAPIC-identity park (`src/kernel/smp/smp.c:159` vs `:174`). That window predates this work, hits §6's feature mask identically, and is owned by §10 -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP_DATA consume-ack handshake" at line 398), whose text now names the `CR4.PKE` consequence too.
 
+> **Verified:** 2026-08-13 | commit `0553a781a` | 1/1 items | build OK | 28339 kernel + 17 user-mode PASS | smoke matrix 4/4 (kvm 1+2 cpu, tcg 1+2 cpu) | lint 0 errors
+> **Accepted:** [H] a misidentified AP can write `features` + `cr4_at_boot` into a reassigned slot before the LAPIC-identity park, so the intersection can read an impostor's CR4 (reason: predates this work, hits §6's feature mask identically, fix is the trampoline handshake) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP_DATA consume-ack handshake" at line 398)
+> **Quality reviewed:** 2026-08-13 | Codex 13x (adversarial x6, re-adversarial x5, consistency, perf) + kernel-quality-auditor + concurrency-evidence-mapper + parity | 2H+8M+2L fixed, 0 open, 1H accepted (re-raised once, disposition unchanged), 1M rejected | scope: kernel-code-quality
+
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                  | 🪟 Win11                     | 🐧 Linux                  | 🚀 Impossible OS                |
-| --- | ------------------------ | ---------------------------- | ------------------------- | ------------------------------- |
-| 💎  | EFER.NXE before NX pages | ✅ Hal before paging         | ✅ cpu_init pre-paging    | ✅ §2 cpu_harden + log          |
-| 💎  | SMEP/SMAP BSP Phase 0    | ✅ Hal CR4 early             | ✅ setup_cr4 early        | ⚠️ §2 wired, T10 §2 gate        |
-| 💎  | AP hardening matches BSP | ✅ Hal per AP                | ✅ cpu_init secondary     | ✅ §4 ap_cpu_harden+profile     |
-| 💎  | XSAVE after VMM ready    | ✅ OSXSAVE post-paging       | ✅ fpu deferred           | ✅ §5 Phase 1 finalize          |
-| 💎  | PCID after page tables   | ✅ PCIDE post-PML4           | ✅ cr4 post-paging        | ✅ §5 CR4.PCIDE set             |
-| 💎  | AP feature consistency   | ✅ BugCheck 0x3E             | ✅ verify_cpu per AP      | ✅ §6 BugCheck 0x3E             |
-| 💎  | CR4 bit pinning          | ✅ HAL pins CR4              | ✅ cr4_pinned_bits        | ✅ §7 verify + 0x109            |
-| 💎  | CR0.WP pinning           | ✅ HAL invariant             | ✅ cr0_pinned_bits        | ✅ §7 per-CPU pinned            |
-| 💎  | PAT MSR AP sync          | ✅ pat per CPU               | ✅ pat per AP             | ✅ §8 registry replay + audit   |
-| 💎  | MTRR AP matches BSP      | ✅ HAL sync paths            | ✅ mtrr_bp_init on APs    | ✅ §8 parity audit (warn-only)  |
-| 💎  | Hybrid feature intersect | ✅ Group affinity            | ✅ cpu_caps per type      | ✅ §6 global AND-mask           |
-| 💎  | AP bringup robustness    | ✅ KeStartProcessors timeout | ✅ cpuhp + per-cpu cr-pin | ✅ §10 abandon CAS + verify-IPI |
-| ⭐  | HV detect before timer   | ✅ Before HAL timer          | ⚠️ Clocksource may lag    | ✅ §3 TLFS-gated hv_flags       |
-| ⭐  | Confidential VM guest    | ✅ TDX + SEV in 24H2         | ✅ TDX + SEV-SNP 6.x      | ⬜ XREF 02/T09 §13              |
-| ⭐  | CPU register audit trail | ❌ ETW fragments             | ❌ dmesg fragments        | ✅ §9 [CPU%u AUDIT] line        |
-| ⭐  | POST per activation step | ❌ BIOS POST only            | ❌ dmesg only             | ⬜ TODO-14-boot-diag §2         |
+| ⭐  | Feature                   | 🪟 Win11                     | 🐧 Linux                  | 🚀 Impossible OS                |
+| --- | ------------------------- | ---------------------------- | ------------------------- | ------------------------------- |
+| 💎  | EFER.NXE before NX pages  | ✅ Hal before paging         | ✅ cpu_init pre-paging    | ✅ §2 cpu_harden + log          |
+| 💎  | SMEP/SMAP BSP Phase 0     | ✅ Hal CR4 early             | ✅ setup_cr4 early        | ⚠️ §2 wired, T10 §2 gate        |
+| 💎  | AP hardening matches BSP  | ✅ Hal per AP                | ✅ cpu_init secondary     | ✅ §4 ap_cpu_harden+profile     |
+| 💎  | XSAVE after VMM ready     | ✅ OSXSAVE post-paging       | ✅ fpu deferred           | ✅ §5 Phase 1 finalize          |
+| 💎  | PCID after page tables    | ✅ PCIDE post-PML4           | ✅ cr4 post-paging        | ✅ §5 CR4.PCIDE set             |
+| 💎  | AP feature consistency    | ✅ BugCheck 0x3E             | ✅ verify_cpu per AP      | ✅ §6 BugCheck 0x3E             |
+| 💎  | CR4 bit pinning           | ✅ HAL pins CR4              | ✅ cr4_pinned_bits        | ✅ §7 verify + 0x109            |
+| 💎  | CR0.WP pinning            | ✅ HAL invariant             | ✅ cr0_pinned_bits        | ✅ §7 per-CPU pinned            |
+| 💎  | PAT MSR AP sync           | ✅ pat per CPU               | ✅ pat per AP             | ✅ §8 registry replay + audit   |
+| 💎  | MTRR AP matches BSP       | ✅ HAL sync paths            | ✅ mtrr_bp_init on APs    | ✅ §8 parity audit (warn-only)  |
+| 💎  | Hybrid feature intersect  | ✅ Group affinity            | ✅ cpu_caps per type      | ✅ §6 global AND-mask           |
+| 💎  | AP bringup robustness     | ✅ KeStartProcessors timeout | ✅ cpuhp + per-cpu cr-pin | ✅ §10 abandon CAS + verify-IPI |
+| 💎  | AP-optional PKU skew safe | ✅ KeFeatureBits intersect   | ⚠️ boot-CPU quirk only    | ✅ §11 online CR4.PKE AND       |
+| ⭐  | HV detect before timer    | ✅ Before HAL timer          | ⚠️ Clocksource may lag    | ✅ §3 TLFS-gated hv_flags       |
+| ⭐  | Confidential VM guest     | ✅ TDX + SEV in 24H2         | ✅ TDX + SEV-SNP 6.x      | ⬜ XREF 02/T09 §13              |
+| ⭐  | CPU register audit trail  | ❌ ETW fragments             | ❌ dmesg fragments        | ✅ §9 [CPU%u AUDIT] line        |
+| ⭐  | POST per activation step  | ❌ BIOS POST only            | ❌ dmesg only             | ⬜ TODO-14-boot-diag §2         |
 
 > **§1-§9 complete; §10 core shipped (one deeper-hardening follow-up tracked).** **§10:** AP-local enable gating (`cpu_feature_local`), CR4 force-after-validation (`cpu_force_ap_required_cr4` + `_live` PKE/PCIDE precondition drops, FSGSBASE/CET excluded), CR-pin verify-IPI (`IPI_VECTOR_CR_VERIFY` broadcast from `cpu_cr_pin_tick`), degraded-bringup abandon CAS + LAPIC-ID identity guard (`ap_bringup_state`), and sparse-slot `boot_async_group` -- closes §4's warn-only/global-gate and §7's no-periodic-AP-verify deferrals; the `AP_DATA` consume-ack handshake remains tracked as the one open §10 item. **§7:** shared `cpu_regs.h` + per-CPU CR0.WP/CR4 safety-bit pinning (`cpu_pin_control_regs`), verified on #GP return / BSP timer tick / each AP, `CRITICAL_STRUCTURE_CORRUPTION` (0x109) on a cleared pin (BSP raises; APs record + halt). **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §8, §9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
