@@ -542,7 +542,7 @@ Detect firmware tampering, NVRAM corruption, or a physical attacker that modifie
 > - **Canonical doc:** the §15 NOTE callout above; the worker-pool primitive is `02-kernel-core/TODO-07 §18`.
 > - **Scope boundary:** §5 owns the boot-time baseline; TODO-07 §18 owns the worker-pool primitive + its parking-sleep prerequisite; TODO-26 §3 owns S3 resume; the tampered-state test is owned here, blocked on a UEFI-variable mock layer.
 
-> **Verified:** 2026-06-13 | drift API + test shipped 2026-05-01 `35be4b90` | 2/5 items | build OK | scope: drift-detection API only -- consumer wiring + tampered-state test deferred (no new code this pass)
+> **Verified:** 2026-06-13 | drift API + test shipped 2026-05-01 `35be4b90` | 3/5 items as of 2026-08-13 (periodic-worker wiring closed `b93b6a77`) | build OK | scope: drift-detection API only -- no new code this pass
 > **Deferred:** [M] periodic-worker wiring -> XREF: 02-kernel-core/TODO-07 §18 (item: "Consumer wiring 1 ... register `uefi_secureboot_revalidate_tick`") **(RESOLVED 2026-08-13 by TODO-07 §18 commit `b93b6a77`: `uefi_secureboot_register_monitor()` armed from `boot_desktop.c` after `kworker_init()`)**; S3-resume refresh -> XREF: 02-kernel-core/TODO-26 §3 (item: "S3: Suspend to RAM" at line 160) + TODO-07 §18 Consumer wiring 3; tampered-state test blocked on a UEFI-variable mock layer (test-infra gap, no concrete owner)
 
 ---
@@ -586,7 +586,7 @@ Promoted from §11 deferred [H] (gap-audit 2026-05-01). The Unified Kernel Image
 > - **Canonical doc:** `docs/guides/secure-boot-keys.md` (UKI subsection).
 > - **Scope boundary:** the headless serial-to-file smoke harness for the two UKI cases is deferred test-infra (open `[ ]` below); UKI addons/profiles are advanced (TODO-27 if ever).
 
-> **Verified:** 2026-06-13 | commit `46eb95bc` | 8/10 items | build OK | smoke PASS (KVM 2.590s)
+> **Verified:** 2026-06-13 | commit `46eb95bc` | 9/11 items (recounted 2026-08-13; was 8/10 before the split-path provenance item landed) | build OK | smoke PASS (KVM 2.590s)
 > **Deferred:** [M] headless serial-to-file smoke harness for `uki_initrd_signed` + `uki_initrd_disk_override_rejected` (and the provenance fail-closed case) -- needs a new QEMU serial-capture pattern -> XREF: 01-boot-platform/TODO-02 §16 (item: "Smoke harness for UKI signed-payload cases" below)
 > **Quality reviewed:** 2026-06-13 | Codex 6x (design + adversarial + re-adversarial + consistency + perf) | 0 findings | scope: boot-code-quality
 
