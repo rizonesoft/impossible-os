@@ -75,25 +75,26 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                       | Depends On | Status |
-| --- | :---: | ------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)       | --         |  [x]   |
-| 💎  |   2   | IST stacks for critical exceptions                | --         |  [/]   |
-| 💎  |   3   | Hardware interrupt root cause investigation       | §2         |  [x]   |
-| 💎  |   4   | ACPI FADT boot architecture flags                 | --         |  [x]   |
-| 💎  |   5   | PS/2 controller detection and safe init           | §4         |  [x]   |
-| 💎  |   6   | AHCI interrupt hardening                          | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation          | --         |  [/]   |
-| 💎  |   8   | Per-process page tables (minimal base)            | §1         |  [/]   |
-| 💎  |   9   | CPU security activation and verification          | §4, §8     |  [x]   |
-| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)      | §3         |  [x]   |
-| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~               | --         |  [x]   |
-| 💎  |  12   | Logging and diagnostic storage moved to TODO-24   | §7         |  [x]   |
-| 💎  |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
-| 💎  |  14   | Bare-metal test matrix and validation plan        | §3         |  [x]   |
-| 💎  |  15   | Boot splash spinner bare-metal fix                | §3, §10    |  [x]   |
-| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --         |  [x]   |
-| 💎  |  17   | Panic-path robustness residuals (from §16 review) | §16        |  [ ]   |
+| ⭐  | Order | Deliverable                                        | Depends On | Status |
+| --- | :---: | -------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)        | --         |  [x]   |
+| 💎  |   2   | IST stacks for critical exceptions                 | --         |  [/]   |
+| 💎  |   3   | Hardware interrupt root cause investigation        | §2         |  [x]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                  | --         |  [x]   |
+| 💎  |   5   | PS/2 controller detection and safe init            | §4         |  [x]   |
+| 💎  |   6   | AHCI interrupt hardening                           | §1, §3     |  [x]   |
+| 💎  |   7   | Resilient boot with graceful degradation           | --         |  [/]   |
+| 💎  |   8   | Per-process page tables (minimal base)             | §1         |  [/]   |
+| 💎  |   9   | CPU security activation and verification           | §4, §8     |  [x]   |
+| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)       | §3         |  [x]   |
+| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                | --         |  [x]   |
+| 💎  |  12   | Logging and diagnostic storage moved to TODO-24    | §7         |  [x]   |
+| 💎  |  13   | CPU feature minimum requirements and verification  | §4, §9     |  [x]   |
+| 💎  |  14   | Bare-metal test matrix and validation plan         | §3         |  [x]   |
+| 💎  |  15   | Boot splash spinner bare-metal fix                 | §3, §10    |  [x]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)   | --         |  [x]   |
+| 💎  |  17   | Emergency-writer robustness residuals (§16 review) | §16        |  [ ]   |
+| 💎  |  18   | Panic-path cross-CPU ownership residuals           | §16, §17   |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -625,41 +626,54 @@ From the stamped section 2:
 > **Verified:** 2026-08-13 | 4/5 items | build OK | 28418 kernel + 17 user PASS | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint 0 errors
 > **Accepted:** [M] post-claim panic dumpers still block on `s_klog_lock`, which sits ABOVE the serial layer this section bounds (reason: klog hot path, pre-existing and repo-wide) -> XREF: 02-kernel-core/TODO-27 §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
 > **Accepted:** [H] a corrupt caller string can still fault the emergency writer; the walk is length-capped and taken with no lock held, but surviving the fault needs a kernel-range fault-suppressed read (the RIP-keyed fixup table covers USER range only) (reason: new primitive, different subsystem) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Fault-suppressed kernel reads for the emergency serial writer")
-> **Accepted:** [H] no cross-CPU freeze on panic entry -- Win11 IPI-freezes and Linux `smp_send_stop`s every other CPU; healthy CPUs here keep mutating the state the dump captures (reason: SMP design decision, own section) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Freeze other CPUs on panic entry")
-> **Accepted:** [M] the async-isolation park leaves `is_online` set, so later `boot_async_group` calls assign work to a dead CPU (reason: pre-existing, async-boot surface) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Clear `is_online` when the async-isolation branch parks a faulting AP")
-> **Accepted:** [H] an AP that faults while HOLDING `g_serial_lock` parks still owning it, so the surviving BSP hangs on its next ordinary serial write; §16 publishes `async_done` first so the fallback is reached, but real ownership needs lock poisoning/handoff (reason: SMP-ownership design call) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Async-isolation lock ownership")
+> **Accepted:** [H] no cross-CPU freeze on panic entry -- Win11 IPI-freezes and Linux `smp_send_stop`s every other CPU; healthy CPUs here keep mutating the state the dump captures (reason: SMP design decision, own section) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Freeze other CPUs on panic entry")
+> **Accepted:** [M] the async-isolation park leaves `is_online` set, so later `boot_async_group` calls assign work to a dead CPU (reason: pre-existing, async-boot surface) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Clear `is_online` when the async-isolation branch parks a faulting AP")
+> **Accepted:** [H] an AP that faults while HOLDING `g_serial_lock` parks still owning it, so the surviving BSP hangs on its next ordinary serial write; §16 publishes `async_done` first so the fallback is reached, but real ownership needs lock poisoning/handoff (reason: SMP-ownership design call) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Async-isolation lock ownership")
 > **Accepted:** [M] the wedged-UART charge is not attributable per reservation, so a stale return or the async refund can absorb a concurrent epoch's charge (reason: changes the unit-tested accounting API; bounded and errs toward more waits) -> XREF: 01-boot-platform/TODO-10 §17 (item: "Epoch-token the wedged-UART reservation")
 > **Deferred:** [H] AP per-CPU TSS/IST leaves AP #DF/NMI/MCE IST delivery non-SMP-safe; needs a per-CPU GDT -> XREF: 01-boot-platform/TODO-09 §10 (item: "Per-CPU TSS + IST (PARKED)")
 > **Quality reviewed:** 2026-08-13 | Codex 38x (design, adversarial x12, consistency x6, perf x6, re-adversarial x13) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 21H+18M+1L fixed, 3H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
 
-## 17. Panic-Path Robustness Residuals (from the §16 review)
+## 17. Emergency-Writer Robustness Residuals (from the §16 review)
 
 > **Spawned-by:** §16 (review)
-> **User impact:** A bare-metal crash caused by memory corruption can still produce NO usable evidence -- if the corruption also reached the panic description pointer, the emergency writer faults and the machine triple-faults instead of printing why it died, which is the exact failure §16 was written to remove. Separately, one isolated async-init fault currently costs every LATER async group a full 10-second barrier timeout, turning a recovered boot into a visibly stalled one.
+> **User impact:** A bare-metal crash caused by memory corruption can still produce NO usable evidence -- if the corruption also reached the panic description pointer, the emergency writer faults and the machine triple-faults instead of printing why it died, which is the exact failure §16 was written to remove.
 
-Two residuals the §16 adversarial and kernel-quality reviews raised that are real but sit outside an abort-safe SERIAL primitive: one needs fault-recoverable KERNEL reads (§16 bounded the walk, which is a different guarantee), the other is a pre-existing defect in the async-isolation park that §16's block rewrote around.
+Three residuals the §16 adversarial and kernel-quality reviews raised against the emergency SERIAL WRITER itself -- surviving a faulting source pointer, attributable wedged-UART accounting, and a check-to-emit race in the recoverable writer. The cross-CPU ownership residuals from the same review are §18; the seam is that everything here is a property of the writer primitive and its accounting, while §18 is about which CPUs are running while it writes.
 
 - [ ] Fault-suppressed kernel reads for the emergency serial writer: `serial_write_emergency` bounds its walk at 1024 chars but cannot survive a corrupt source pointer -- on a #DF the nested #PF triple-faults and erases all crash evidence.
   - The existing RIP-keyed fixup table redirects USER-range faults only (`page_fault_handler` gates on `CR2 < MM_USER_END`), so it does not cover these kernel pointers -> XREF: `02-kernel-core/TODO-23 §13` (item: "Static RIP-keyed exception table (`__uaccess_*_fault`/`_fixup` labels, `cpu_security.c`)"), which shipped the user-range half.
   - Scope note: §16 already removed the two cheaper halves -- the walk is length-capped, and the load happens with `g_serial_lock` NOT held, so a fault can no longer strand the lock. What remains is surviving the fault itself.
+- [ ] Epoch-token the wedged-UART reservation: `serial_emerg_return` decrements whichever charge is current, so a pre-arm reservation draining after arming cancels a post-arm one -- up to a third budget beyond the two-phase ceiling.
+  - Reserve should hand back the epoch state it reserved under and return should decrement only while that still matches. Deliberately not done inside §16: it changes the unit-tested `serial_emergency.h` accounting API, and the effect is a bounded quantitative overshoot on a counter that is explicitly a heuristic bound, not a correctness invariant. Raised independently by the adversarial, consistency and perf legs.
+  - Two call sites share this one root cause and are both covered here. (a) An ordinary reservation taken pre-arm and returned post-arm. (b) The async-isolation REFUND, which gives back a snapshot delta via the same `serial_emerg_return`, so a concurrent panic's active charge can absorb it. Both are capped -- the refund never exceeds the measured delta and the return saturates at zero -- and both err toward granting extra waits rather than removing them, which is the safe direction for crash evidence. Attributable (per-reservation) accounting closes both at once; nothing narrower is worth a second mechanism.
+- [ ] Close the recoverable writer check-to-emit race: `serial_write_recoverable` tests the owner filter then emits, so an epoch arming in between lets a survivable report put bounded bytes into a just-established crash record.
+  - Bounded and non-fatal, which is why it is filed rather than fixed at the depth §16 reached: the record is one WER line, every wait inside it is capped, and it cannot hang, corrupt state, or lose the panic -- it can only interleave. The ordinary path solves the same check-then-act shape by re-testing under the lock; the recoverable path should re-test per emitted chunk.
+- [ ] Commit: `"kernel: emergency-writer robustness residuals -- fault-suppressed kernel reads, epoch-tokened UART reservation"`
+
+**Test checkpoint:** A deliberately corrupted panic description pointer produces a bounded diagnostic (or a clean skip) instead of a triple fault, verified on QEMU TCG. A reservation taken before arming and returned after it no longer cancels a post-arm charge.
+
+---
+
+## 18. Panic-Path Cross-CPU Ownership Residuals (from the §16 review)
+
+> **Spawned-by:** §17 (split)
+> **User impact:** One isolated async-init fault currently costs every LATER async group a full 10-second barrier timeout, turning a recovered boot into a visibly stalled one; and if that AP faulted while holding the serial lock, the surviving BSP hangs on its next ordinary log write -- a silent hang instead of a boot. Meanwhile a crash dump can be captured while other CPUs are still mutating the very state it describes, so the evidence a user sends in may not reflect the machine at the moment it died.
+
+The three §16 review residuals that are about WHICH CPUs are running and who owns what while the panic path writes -- split out of §17 before implementation because they are SMP-ownership calls on `panic.c` / `smp.c`, not changes to the serial writer primitive (§17). §16 rewrote the async-isolation block these sit inside but deliberately did not change CPU ownership.
+
 - [ ] Clear `is_online` when the async-isolation branch parks a faulting AP (`panic.c`), so later `boot_async_group` calls stop assigning work to a dead CPU and eating the full 10s barrier timeout per group.
   - Pre-existing (the park predates §16), but it sits inside the block §16 rewrote and is the direct consequence of the isolation design: `boot_async_group` selects workers purely on `is_online`, and the parked AP has interrupts masked so it can never take the IPI.
 - [ ] Freeze other CPUs on panic entry: Win11 (`KiFreezeTargetExecution` IPI) and Linux (`smp_send_stop`) both halt every other CPU; we elect a panic owner but never stop healthy CPUs, which keep mutating the state the dump is capturing.
   - `panic_try_claim_owner` only arbitrates among CPUs that are THEMSELVES panicking, and the async-isolation branch parks only an AP that itself faulted; nothing stops a healthy CPU. §16's non-owner drop protects the serial byte stream, not the system state that stream describes -- a running CPU can corrupt heap/PMM/quota state mid-`write_crash_dump`, or take a second unrelated fault racing the first one's dump.
   - The primitive already exists: `lapic_send_ipi_all_but_self()` plus the registered-handler pattern `IPI_VECTOR_CR_VERIFY` established (`cpu_security.c`). Run it immediately after ownership is claimed, before `panic_capture_fpu_state()`. Relates to the "unified owner-token design" note at `panic.c` (bugcheck emission comment).
-- [ ] Epoch-token the wedged-UART reservation: `serial_emerg_return` decrements whichever charge is current, so a pre-arm reservation draining after arming cancels a post-arm one -- up to a third budget beyond the two-phase ceiling.
-  - Reserve should hand back the epoch state it reserved under and return should decrement only while that still matches. Deliberately not done inside §16: it changes the unit-tested `serial_emergency.h` accounting API, and the effect is a bounded quantitative overshoot on a counter that is explicitly a heuristic bound, not a correctness invariant. Raised independently by the adversarial, consistency and perf legs.
-  - Two call sites share this one root cause and are both covered here. (a) An ordinary reservation taken pre-arm and returned post-arm. (b) The async-isolation REFUND, which gives back a snapshot delta via the same `serial_emerg_return`, so a concurrent panic's active charge can absorb it. Both are capped -- the refund never exceeds the measured delta and the return saturates at zero -- and both err toward granting extra waits rather than removing them, which is the safe direction for crash evidence. Attributable (per-reservation) accounting closes both at once; nothing narrower is worth a second mechanism.
 - [ ] Async-isolation lock ownership: an AP that faults while HOLDING `g_serial_lock` publishes `async_done` and parks forever still owning it, so the surviving BSP hangs on its next ordinary serial write.
   - §16 IMPROVED this (the diagnostic is try-locked and bounded, and `async_done` is now published before it, so the BSP at least reaches the sequential fallback) but cannot close it: the parked AP never unwinds the interrupted `serial_write`. Arming the latch would stop the BSP blocking, but the BSP is then a non-owner and its output is dropped -- so the fix is real ownership, not routing.
   - Needs an owner-tracked poison/handoff on `g_serial_lock`, or a decision to escalate a lock-holding async fault to the system-terminal path. That is an SMP-ownership design call, not a serial-primitive change. Test by faulting an AP while it holds the lock and asserting the BSP reaches sequential fallback AND still logs.
-- [ ] Close the recoverable writer check-to-emit race: `serial_write_recoverable` tests the owner filter then emits, so an epoch arming in between lets a survivable report put bounded bytes into a just-established crash record.
-  - Bounded and non-fatal, which is why it is filed rather than fixed at the depth §16 reached: the record is one WER line, every wait inside it is capped, and it cannot hang, corrupt state, or lose the panic -- it can only interleave. The ordinary path solves the same check-then-act shape by re-testing under the lock; the recoverable path should re-test per emitted chunk.
-- [ ] Commit: `"kernel: panic-path robustness residuals -- fault-suppressed kernel reads, async-park is_online"`
+- [ ] Commit: `"kernel: panic-path cross-CPU ownership -- async-park is_online, panic CPU freeze, serial-lock ownership"`
 
-**Test checkpoint:** A deliberately corrupted panic description pointer produces a bounded diagnostic (or a clean skip) instead of a triple fault, verified on QEMU TCG. After an injected async-init fault, a subsequent `boot_async_group` completes without a 10s stall and does not report a spurious FATAL for an unrelated step.
+**Test checkpoint:** After an injected async-init fault, a subsequent `boot_async_group` completes without a 10s stall and does not report a spurious FATAL for an unrelated step. A panic on one CPU leaves every other CPU halted before `write_crash_dump` runs, and an AP faulting while holding `g_serial_lock` still lets the BSP log through the sequential fallback.
 
 ---
 
@@ -680,7 +694,7 @@ Two residuals the §16 adversarial and kernel-quality reviews raised that are re
 | 💎  | CPU feature minimums    | ✅ NX required since Vista        | ✅ verify_cpu required mask     | ✅ §13 NX+SSE2+LM+SYSCALL mask               |
 | ⭐  | Bare-metal test matrix  | ❌ Internal only (WHQL)           | ❌ Community-driven             | ✅ §14 4-platform matrix                     |
 | ⭐  | Boot spinner liveness   | ✅ ISR-driven ring                | ⚠️ plymouth (optional)          | ✅ §15 timer ISR @10fps Fluent               |
-| 💎  | Abort-safe panic serial | ✅ IPI-freezes CPUs before output | ✅ trylock UART + smp_send_stop | ⚠️ §16 try-lock + bounded UART (freeze: §17) |
+| 💎  | Abort-safe panic serial | ✅ IPI-freezes CPUs before output | ✅ trylock UART + smp_send_stop | ⚠️ §16 try-lock + bounded UART (freeze: §18) |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 
