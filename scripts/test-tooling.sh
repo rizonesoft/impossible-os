@@ -5774,8 +5774,15 @@ case "$name" in
     *) exit 1 ;;
 esac
 STUB
+    # sfdisk stub: the synthetic disk carries no real GPT, so the ESP offset is
+    # fixture-driven. GPT_ESP_START is in sectors; GPT_NO_ESP omits the ESP entry.
+    cat > "$SBS_REPO/bin/sfdisk" <<'STUB'
+#!/bin/bash
+[ -n "${GPT_NO_ESP:-}" ] && { echo '{"partitiontable":{"sectorsize":512,"partitions":[]}}'; exit 0; }
+printf '{"partitiontable":{"sectorsize":512,"partitions":[{"start":%s,"type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B"}]}}\n' "${GPT_ESP_START:-2048}"
+STUB
     chmod +x "$SBS_REPO/bin/sbverify" "$SBS_REPO/bin/llvm-objdump-19" \
-             "$SBS_REPO/bin/mdir" "$SBS_REPO/bin/mcopy"
+             "$SBS_REPO/bin/mdir" "$SBS_REPO/bin/mcopy" "$SBS_REPO/bin/sfdisk"
 
     echo "stub-efi" > "$SBS_REPO/build/tools/BOOTX64.EFI"
     echo "stub-uki" > "$SBS_REPO/build/tools/BOOTX64.UKI.efi"
@@ -5789,13 +5796,22 @@ STUB
         printf '%s\n__rc=%s\n' "$out" "$rc"
     }
     _sbs_shim_pin() {   # $1 = 2011|2023|partial|none
-        rm -f "$SBS_REPO/shim/shimx64.efi" "$SBS_REPO/shim/mmx64.efi"
+        rm -f "$SBS_REPO/shim/shimx64.efi" "$SBS_REPO/shim/mmx64.efi" "$SBS_REPO/shim/SHA256SUMS"
         case "$1" in
             partial) echo "stub-shim" > "$SBS_REPO/shim/shimx64.efi" ;;
             none)    : ;;
             *)       echo "stub-shim" > "$SBS_REPO/shim/shimx64.efi"
                      echo "stub-mm"   > "$SBS_REPO/shim/mmx64.efi" ;;
         esac
+        _sbs_shim_sums
+    }
+    # Regenerate the approved hash list for whatever is pinned (ms-ca requires it).
+    _sbs_shim_sums() {
+        rm -f "$SBS_REPO/shim/SHA256SUMS"
+        for _b in shimx64.efi mmx64.efi; do
+            [ -f "$SBS_REPO/shim/$_b" ] || continue
+            (cd "$SBS_REPO/shim" && sha256sum "$_b" >> SHA256SUMS)
+        done
     }
     _sbs_keys() {       # $1 = keyed|keyless
         rm -f "$SBS_REPO/keys/MOK.key" "$SBS_REPO/keys/MOK.cer" \
@@ -5972,15 +5988,25 @@ STUB
         t_fail "secureboot_smoke: mdir-rc" "out: $(echo "$SBS_OUT" | tail -8)"
     fi
 
-    # Case 12: disk image present but no usable EFI_OFFSET -> FAIL CLOSED.
-    printf 'EFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
-    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "no numeric EFI_OFFSET" && echo "$SBS_OUT" | grep -q "__rc=1"; then
-        t_pass "secureboot_smoke: missing EFI_OFFSET -> FAIL closed"
+    # Case 12: the image's GPT designates no EFI System Partition -> FAIL CLOSED.
+    # The sidecar is not a trust source, so its offset cannot rescue this.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" GPT_NO_ESP=1)"
+    if echo "$SBS_OUT" | grep -q "cannot locate an EFI System Partition" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: no GPT-designated ESP -> FAIL closed"
     else
-        t_fail "secureboot_smoke: esp-no-offset" "out: $(echo "$SBS_OUT" | tail -8)"
+        t_fail "secureboot_smoke: esp-no-gpt" "out: $(echo "$SBS_OUT" | tail -8)"
     fi
-    printf 'EFI_OFFSET=1048576\nEFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
+
+    # Case 12b: the sidecar disagrees with the GPT -> FAIL. A stale or crafted
+    # .info pointing at a decoy FAT is exactly what the GPT lookup exists for.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" GPT_ESP_START=4096)"
+    if echo "$SBS_OUT" | grep -q "EFI_OFFSET disagrees with the image's GPT" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: sidecar offset disagreeing with the GPT -> FAIL"
+    else
+        t_fail "secureboot_smoke: esp-offset-mismatch" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
 
     # Case 13: mtools not installed while an image exists -> FAIL CLOSED.
     # MDIR_BIN is the seam: hiding the host's real mdir from PATH would also
@@ -6036,6 +6062,56 @@ STUB
         t_pass "secureboot_smoke: untrusted mmx64.efi -> NOT COVERED (MokManager verified independently)"
     else
         t_fail "secureboot_smoke: mm-untrusted" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 16c: a pinned ms-ca shim with no approved hash list -> FAIL. "No
+    # SHA256SUMS" is the state that let an arbitrary binary with plausible
+    # certificate metadata be staged and reported covered.
+    _sbs_shim_pin 2023; _sbs_keys keyed
+    rm -f "$SBS_REPO/shim/SHA256SUMS"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "shim/SHA256SUMS is absent" \
+       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: pinned shim without SHA256SUMS -> FAIL (not hash-pinned)"
+    else
+        t_fail "secureboot_smoke: no-sha256sums" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 16d: an approved hash that does not match the pinned binary -> FAIL.
+    _sbs_shim_sums
+    printf '%s  shimx64.efi\n' "0000000000000000000000000000000000000000000000000000000000000000" \
+        > "$SBS_REPO/shim/SHA256SUMS"
+    printf '%s  mmx64.efi\n' "$(cd "$SBS_REPO/shim" && sha256sum mmx64.efi | cut -d' ' -f1)" \
+        >> "$SBS_REPO/shim/SHA256SUMS"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "does not match its shim/SHA256SUMS entry" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: shim not matching its approved hash -> FAIL"
+    else
+        t_fail "secureboot_smoke: sha256sums-mismatch" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+    _sbs_shim_sums
+
+    # Case 16e: an unusable date must exit 2, not silently accept an expired CA.
+    # With TODAY empty the lexicographic expiry comparison is false, so a 2011-CA
+    # shim would have been ACCEPTED past its 2026-06-30 expiry.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="not-a-date")"
+    if echo "$SBS_OUT" | grep -q "cannot establish the current date" \
+       && echo "$SBS_OUT" | grep -q "__rc=2"; then
+        t_pass "secureboot_smoke: unusable date -> exit 2 (never a silent expiry pass)"
+    else
+        t_fail "secureboot_smoke: bad-date" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 16f: inside the warn window the 2011 CA is accepted WITH a warning,
+    # matching scripts/sign-efi.sh's graduated policy rather than diverging.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="2026-05-15")"
+    if echo "$SBS_OUT" | grep -q "WARN  shim/shimx64.efi is signed only by the deprecated MS UEFI CA 2011" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: 2011 CA in the warn window -> WARN + accept (sign-efi parity)"
+    else
+        t_fail "secureboot_smoke: warn-window" "out: $(echo "$SBS_OUT" | tail -8)"
     fi
 
     # Case 17: a self-built MOK-dev shim carries no MS CA. Default ms-ca mode

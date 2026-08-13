@@ -167,6 +167,7 @@ DISK_IMG="${DISK_IMG:-$REPO_ROOT/build/system-disk.img}"
 # host's real binary from PATH (the smoke needs coreutils from the same PATH).
 MDIR_BIN="${MDIR_BIN:-mdir}"
 MCOPY_BIN="${MCOPY_BIN:-mcopy}"
+SFDISK_BIN="${SFDISK_BIN:-sfdisk}"
 # Hard-fail on an uncovered chain instead of reporting it. Opt-in because a dev
 # or CI build legitimately has no shim; any path that PUBLISHES an image and
 # advertises Secure Boot must set it.
@@ -185,7 +186,16 @@ SHIM_TRUST_MODE="${SHIM_TRUST_MODE:-ms-ca}"
 # sourcing that script would execute its top-level signing pipeline. These are
 # fixed historical dates, not a moving configuration.
 MS_UEFI_CA_2011_EXPIRY="2026-06-30"
-TODAY="${SHIM_CA_TEST_TODAY:-$(date -u +%Y-%m-%d)}"
+MS_UEFI_CA_2011_WARN_FROM="2026-05-01"
+# An empty or malformed TODAY makes the lexicographic expiry comparison false,
+# which would silently ACCEPT an expired 2011-CA shim. `set -e` is off, so a
+# failed `date` would do exactly that -- validate the value instead of trusting it.
+TODAY="${SHIM_CA_TEST_TODAY:-$(date -u +%Y-%m-%d 2>/dev/null)}"
+if ! printf '%s' "$TODAY" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+    echo "[ERROR] cannot establish the current date (got '"'"'$TODAY'"'"')" >&2
+    echo "  the CA expiry check would silently pass without it" >&2
+    exit 2
+fi
 
 SHIM_TRUSTED=0      # the shim's own trust anchor VERIFIED for the selected mode
 ESP_VERIFIED=0      # the staged ESP was inspected and carries the chain
@@ -198,6 +208,48 @@ UNCOVERED_WHY=""
 # merely counting the file next to it is a hole, not a shortcut.
 # $1 = path, $2 = short label. Returns 0 when trusted; sets UNCOVERED_WHY on
 # failure and emits its own PASS/FAIL line.
+# Digest of every input the ESP comparison trusts. Taken before extraction and
+# again after, so a mid-flight rebuild cannot be mistaken for a verified state.
+_verify_inputs_digest() {
+    local f
+    for f in "$DISK_IMG" "$SHIM" "$SHIM_MM" "$EFI_SIGNED"; do
+        [ -f "$f" ] && sha256sum "$f" 2>/dev/null
+    done | sha256sum 2>/dev/null | cut -d" " -f1
+}
+
+# An ms-ca shim must be covered by shim/SHA256SUMS. Absent file, missing entry
+# or mismatching digest are all refusals -- "no hash file" is the state that let
+# an arbitrary binary with plausible certificate metadata be staged.
+_shim_hash_pinned() {
+    local bin="$1" label="$2" sums="$REPO_ROOT/shim/SHA256SUMS" want have
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        t_fail "cannot hash-pin $label: sha256sum not on PATH"
+        UNCOVERED_WHY="$label is not hash-pinned (sha256sum unavailable)"
+        return 1
+    fi
+    if [ ! -f "$sums" ]; then
+        t_fail "$label is pinned but shim/SHA256SUMS is absent" \
+               "an approved hash list must accompany a pinned vendor shim"
+        UNCOVERED_WHY="shim/SHA256SUMS absent, so $label is not hash-pinned"
+        return 1
+    fi
+    # sha256sum lines are "<digest>  <name>" ("<digest> *<name>" in binary mode).
+    want="$(awk -v f="$(basename "$bin")" '$2 == f || $2 == "*" f { print $1; exit }' "$sums")"
+    if [ -z "$want" ]; then
+        t_fail "$label has no entry in shim/SHA256SUMS"
+        UNCOVERED_WHY="$label has no approved hash entry"
+        return 1
+    fi
+    have="$(sha256sum "$bin" 2>/dev/null | cut -d" " -f1)"
+    if [ "$want" != "$have" ]; then
+        t_fail "$label does not match its shim/SHA256SUMS entry" "approved $want, got ${have:-<unreadable>}"
+        UNCOVERED_WHY="$label does not match its approved hash"
+        return 1
+    fi
+    t_ok "$label matches its approved shim/SHA256SUMS entry"
+    return 0
+}
+
 shim_anchor_verify() {
     local bin="$1" label="$2" out rc year
     # Capture the exit status: a tool failure is NOT "no recognized CA".
@@ -229,6 +281,15 @@ shim_anchor_verify() {
         UNCOVERED_WHY="self-built $label is unsigned (build-shim.sh does not sbsign), so nothing can verify it"
         return 1
     fi
+    # ms-ca mode: `sbverify --list` ENUMERATES a signature table, it does not
+    # validate it, so the issuer regex below is metadata rather than proof (the
+    # pinned-CA-certificate fix for that is parked in the owning TODO section).
+    # An approved SHA256SUMS entry is the hash half of that anchor and costs
+    # nothing today: a vendor shim we pin is supposed to arrive with one, and
+    # the disk recipe only checks it when the file happens to exist.
+    if ! _shim_hash_pinned "$bin" "$label"; then
+        return 1
+    fi
     if printf '%s\n' "$out" | grep -qE "Microsoft Corporation UEFI CA 20[12][0-9]"; then
         year="$(printf '%s\n' "$out" | grep -oE 'Microsoft Corporation UEFI CA 20[12][0-9]' | grep -oE '20[12][0-9]' | sort -u | tail -1)"
         if [ "$year" = "2011" ] && [ "$TODAY" \> "$MS_UEFI_CA_2011_EXPIRY" ]; then
@@ -236,6 +297,11 @@ shim_anchor_verify() {
                    "scripts/sign-efi.sh aborts on this too; pin a 2023-CA-signed shim"
             UNCOVERED_WHY="pinned $label is signed by the expired MS UEFI CA 2011"
             return 1
+        fi
+        if [ "$year" = "2011" ] && ! [ "$TODAY" \< "$MS_UEFI_CA_2011_WARN_FROM" ]; then
+            # Same graduated policy as scripts/sign-efi.sh: WARN from
+            # 2026-05-01, hard fail after expiry (handled above).
+            echo "  WARN  $label is signed only by the deprecated MS UEFI CA 2011 (expires $MS_UEFI_CA_2011_EXPIRY)"
         fi
         t_ok "$label is signed by Microsoft Corporation UEFI CA $year"
         return 0
@@ -290,15 +356,40 @@ fi
 #     This check FAILS CLOSED: if an image is present and we cannot inspect it,
 #     that is an unverifiable claim, not a covered chain.
 if [ "$CHAIN_COVERED" = "1" ] && [ -f "$DISK_IMG" ]; then
+    # The offset must come from the image's OWN partition table, not from the
+    # sidecar: a stale or crafted .info can point at a decoy FAT holding
+    # byte-identical artifacts while the bootable ESP differs. The sidecar is
+    # kept only as a cross-check, and a disagreement is a failure.
     ESP_OFFSET=""
-    [ -f "$DISK_IMG.info" ] && ESP_OFFSET="$(grep -oE '^EFI_OFFSET=[0-9]+$' "$DISK_IMG.info" | head -1 | cut -d= -f2)"
+    ESP_OFFSET_SIDECAR=""
+    [ -f "$DISK_IMG.info" ] && ESP_OFFSET_SIDECAR="$(grep -oE '^EFI_OFFSET=[0-9]+$' "$DISK_IMG.info" | head -1 | cut -d= -f2)"
+    if command -v "$SFDISK_BIN" >/dev/null 2>&1; then
+        # GPT type GUID of an EFI System Partition.
+        ESP_OFFSET="$("$SFDISK_BIN" --json "$DISK_IMG" 2>/dev/null | python3 -c '
+import json,sys
+try:
+    t = json.load(sys.stdin)["partitiontable"]
+except Exception:
+    sys.exit(0)
+ss = int(t.get("sectorsize", 512))
+for part in t.get("partitions", []):
+    if str(part.get("type", "")).upper() == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B":
+        print(int(part["start"]) * ss)
+        break
+' 2>/dev/null)"
+    fi
     if ! command -v "$MDIR_BIN" >/dev/null 2>&1 || ! command -v "$MCOPY_BIN" >/dev/null 2>&1; then
         t_fail "cannot verify the staged ESP of $DISK_IMG: mtools not on PATH" \
                "both $MDIR_BIN and $MCOPY_BIN are required -- install mtools"
         UNCOVERED_WHY="staged ESP unverifiable (mtools missing)"
     elif [ -z "$ESP_OFFSET" ]; then
-        t_fail "cannot verify the staged ESP of $DISK_IMG: no numeric EFI_OFFSET in $DISK_IMG.info"
-        UNCOVERED_WHY="staged ESP unverifiable (no EFI_OFFSET)"
+        t_fail "cannot locate an EFI System Partition in $DISK_IMG's GPT" \
+               "need $SFDISK_BIN to authenticate the ESP offset -- the .info sidecar is not a trust source"
+        UNCOVERED_WHY="staged ESP unverifiable (no GPT-designated ESP found)"
+    elif [ -n "$ESP_OFFSET_SIDECAR" ] && [ "$ESP_OFFSET_SIDECAR" != "$ESP_OFFSET" ]; then
+        t_fail "$DISK_IMG.info EFI_OFFSET disagrees with the image's GPT" \
+               "sidecar says $ESP_OFFSET_SIDECAR, GPT says $ESP_OFFSET -- stale metadata or a decoy partition"
+        UNCOVERED_WHY="staged ESP unverifiable (sidecar/GPT offset mismatch)"
     else
         # -b prints exact full paths, one per line. The default listing is 8.3
         # columnar ("BOOTX64  EFI"), where a basename match would also accept
@@ -315,6 +406,7 @@ if [ "$CHAIN_COVERED" = "1" ] && [ -f "$DISK_IMG" ]; then
             # keeps the chain "covered" while shipping none of the verified bytes.
             ESP_MISSING=""
             ESP_MISMATCH=""
+            ESP_INPUTS_DIGEST="$(_verify_inputs_digest)"
             # An unchecked mktemp is a fail-open with teeth: `set -e` is off, so
             # a failed `mktemp -d` (read-only or full TMPDIR) would leave ESP_TMP
             # empty, extraction would target /BOOTX64.EFI and friends, and every
@@ -344,6 +436,15 @@ if [ "$CHAIN_COVERED" = "1" ] && [ -f "$DISK_IMG" ]; then
                         ESP_MISMATCH="$ESP_MISMATCH $f(bytes differ from $(basename "$ESP_SRC"))"
                     fi
                 done
+                    # A concurrent rebuild or re-sign can swap the image or the
+                # source artifacts between their trust checks and this
+                # comparison, so a match would then prove a state that never
+                # existed at one instant. Re-digest the inputs and refuse if
+                # anything moved under us.
+                if [ -z "$ESP_MISSING" ] && [ -z "$ESP_MISMATCH" ] \
+                   && [ "$(_verify_inputs_digest)" != "$ESP_INPUTS_DIGEST" ]; then
+                    ESP_MISMATCH="$ESP_MISMATCH (inputs changed during verification)"
+                fi
                 rm -rf "$ESP_TMP"
                 trap - EXIT INT TERM
             fi
