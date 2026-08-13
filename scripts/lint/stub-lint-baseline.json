@@ -1,15 +1,19 @@
 {
-  "resolved": 475,
-  "total": 1636,
+  "resolved": 476,
+  "total": 1637,
   "recorded": "2026-08-13",
   "raised_by": "todo-metadata-layer roadmap's stored-ref-repair work: 111 -> 474 (+363), proved by corpus_resolution_snapshot.py at 0 lost / 0 moved with all 363 added mappings ground-truthed (0 failed an independent head/close-brace check, 0 targeted a non-tree-unique basename, 22 stratified spot-checks exact at file:line). Both repairs are applied at RESOLUTION time in the new scripts/todo-graph/ref_resolution.py, which lint Check 7's walk AND the identity snapshot both call so they cannot drift. (1) BASENAME REPAIR -- a stored .c/.h path with no directory component that does not exist at the repo root, whose basename is unique among the tree's .c/.h files, is checked against that file (e.g. `boot_desktop.c` -> `src/kernel/main/boot_desktop.c`). It applies to `kind=file` refs as well as `kind=symbol` refs: 673 of the corpus's 1,167 stamped .c/.h FILE refs do not exist at their authored path and 629 are bare and tree-unique, so repairing only symbol refs starved the section-scope pairing of candidates (Codex adversarial, +158 occurrences once fixed). The 8 that remain -- 7 occurrences across 2 ambiguous basenames (`entropy.c`, `entropy.h`) plus 1 for an absent one (`hv_bar.h`) -- are never guessed and stay counted. (2) SECTION-SCOPE PAIRING -- a symbol ref carrying no file of its own is paired to a file when exactly ONE of the files its own TODO SECTION's stamped items author actually defines it; build.py pairs only within an ITEM, so an item whose sibling item named the file loses a pairing the section really does carry. One false positive surfaced by the new visibility was fixed at its cause rather than marked: `return <bare identifier>;` is no longer read as a stub when the identifier names a file-scope VARIABLE in the same translation unit, because that is an accessor reading state (compositor_get_test_seed at src/kernel/main/compositor.c:64), not a placeholder; `return STATUS_NOT_IMPLEMENTED;` still fires and neither a macro nor an enum constant can satisfy the exemption. The one genuine stub it found (test_usermode_color_active, the release-flavor no-op inline) got the existing INTENTIONAL-STUB marker. || 2026-08-10, total 1626 -> 1628 (denominator only; `resolved` untouched at its 474 floor): the todo-metadata-layer roadmap's fence-tracker section added two `[x]` items carrying symbol refs (`fence_mask()` and `fence_step()` in one, `fence_step` again in the other). Stamped work was genuinely ADDED, so the population grew for the reason the gate asks about; no ref was lost or moved. || 2026-08-11, total 1628 -> 1629 (denominator only; `resolved` untouched at its 474 floor): the todo-metadata-layer roadmap's section 41 marked its items [x], and one of them carries the symbol ref `todo-section-order.py:parse` -- the item that fixes the SECOND heading scan names both the file and the function. Queried from build/todo-cache.json: it is the ONLY symbol ref naming any of that section's files. `.py` is outside the resolver's .c/.h suffix set, so it lands in non-c-suffix, which is now 66. An earlier draft of this entry named `fence_step` and unpaired-ref; both were wrong and were caught by the section's own consistency review, which is the reason to derive these counts from the checker rather than from the diff you think you made. Stamped work was genuinely ADDED, which is the question the denominator check asks; no ref was lost or moved. || 2026-08-13, total 1629 -> 1630 (denominator only; `resolved` untouched at its 474 floor): the boot-protocol-abi-handoff roadmap's FILE_CLOSE sweep marked two section-3 items [x], and one of them -- the header -> manifest coverage gate, closed by commit `a197fa2ad` -- names the symbol `check_manifest_completeness` without a file of its own. Derived from the checker's own `_walk` rather than from the diff: the ONLY owner that moved is `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md`, 42 -> 43 occurrences with `resolved` unchanged at 15, and the sole bucket that moved is unpaired-ref 859 -> 860 (section 3's authored files are the boot-info-manifest shell/inc surface, so no file in its own section defines that symbol; the identically-named ref carrying `check-doc-coverage.py` belongs to a different section and pairs on its own). Stamped work was genuinely ADDED; no ref was lost or moved. || 2026-08-13, resolved floor 474 -> 475 alongside total 1631 -> 1636: the cpu-boot-sequencing roadmap's FILE_CLOSE sweep marked its `## Unit Tests` items [x], and those items cite the shipped test surface by symbol. One newly-stamped ref resolves (it names both a file and a function defined in it), so the floor rises by exactly 1 -- recorded because raising it is the point when resolution genuinely improves, not merely tolerated.",
   "why": "Check 7 can only inspect a stamped symbol it can RESOLVE; an unresolved ref yields no finding, so losing resolution is indistinguishable from passing. This number is the floor: a drop is an ERROR (rc 7). Raising it is the point -- when the resolver improves, update this file in the same commit and say what changed. This file is TRACKED state and is enforced fail-CLOSED (rc 8) when missing or malformed; STUB_LINT_ALLOW_NO_BASELINE=1 is the deliberate, reported bypass. `total` is enforced too: the floor is a RATIO, so a shrinking denominator would let refs lost from the cache read as an improved ratio (rc 7 on any move, in either direction).",
-  "standing_gap": "MEASURED 2026-08-13 at total 1636: resolved=475, unresolved=225 (216 unique), buckets calllike-unresolved=136 no-calllike-token=89 missing-file=8 non-c-suffix=66 path-escape=1 unpaired-ref=861 (1161 occurrences not resolved). The bucket names describe what was observed, not why: a call site, a prototype and a macro invocation all carry a call-like token while the real definition lives in another file. Refresh this field from the checker whenever `total` moves.",
+  "standing_gap": "MEASURED 2026-08-13 at total 1637: resolved=476, unresolved=225 (216 unique), buckets calllike-unresolved=136 no-calllike-token=89 missing-file=8 non-c-suffix=66 path-escape=1 unpaired-ref=861 (1161 occurrences not resolved). The bucket names describe what was observed, not why: a call site, a prototype and a macro invocation all carry a call-like token while the real definition lives in another file. Refresh this field from the checker whenever `total` moves.",
   "largest_recoverable_class": "unpaired-ref, at 859 occurrences, remains the largest class and is NOT straightforwardly recoverable. MEASURED 2026-08-06: 673 of the 736 unique unpaired symbols do have exactly one C definition tree-wide (1,028 occurrences), but binding on tree-wide name uniqueness alone was REJECTED for this roadmap with reason -- a bare unique-name search can bind an unrelated same-named definition in a different link product with no way to prove linkage, and the one narrow existing use of tree-wide basename uniqueness (follow_declaration's sibling rule) is an explicitly accepted risk paid for by hand-verifying all 18 of its mappings. 673 is 37x that and unverifiable at section scale. The authored scope evidence that would make it provable does not exist in this corpus either: exactly 1 of 232 TODO nodes carries a `file_patterns` frontmatter list, and it holds zero unpaired refs. What section scope could reach, it reached. The residual names a symbol with no file anywhere in its section, which is an authoring convention (prose naming an API) rather than bad stored data, and is a COUNTING-contract question, not an extractor bug.",
-  "total_moved_by": "1631 -> 1636 by the cpu-boot-sequencing roadmap's FILE_CLOSE sweep: its `## Unit Tests` section went from an all-`[ ]` plan to `[x]` items naming the test surface that shipped (`src/kernel/test/test_cpu_seq.c` plus reconciliation notes citing `cpu_msr_profile_count()`, `cpu_bsp_pat_baseline()`, `cpu_has()`, `cpu_slot_committed_online()` and the per-CPU pin fields), so 5 references became STAMPED symbol refs net. Derived from the checker's own `_walk` AFTER the last edit: the ONLY owner that moved is `todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md`, 52 -> 57 occurrences with resolved 27 -> 28, and the sums reconcile exactly to 1636 / 475. This value was recorded THREE times inside one close-out (1641, then 1637, then this) because each later edit moved it: a re-adversarial pass cut four assertions, then a line-length split rewrote the leads that carried their refs. That is the field's own lesson made concrete -- re-derive from the checker after the LAST edit, never from the edit you remember making. Stamped work was genuinely ADDED; no ref was lost or moved. by_owner regenerated in the same pass.",
+  "total_moved_by": "1636 -> 1637 with the resolved floor 475 -> 476 by the bare-metal-hardening roadmap's section 19 (panic-path caller-string snapshot): the section marked its items [x] and they cite the shipped surface by symbol. Derived from the checker's own `_walk` AFTER the last edit, not from the diff: the ONLY owner that moved is `todo/01-boot-platform/TODO-10-bare-metal-hardening.md`, 38 -> 39 occurrences with resolved 1 -> 2, and the sums reconcile exactly to 1637 / 476. The newly resolving ref names both a file and a function defined in it (`panic.c` / `panic_capture_frames`), which is why the floor rises by exactly 1 rather than the denominator moving alone. `02-kernel-core/TODO-23` also gained a checklist item in the same commit and did NOT move (11 / 6 unchanged): it is a `- [/]` park, and only stamped `[x]` items contribute refs -- a useful reminder that the denominator tracks STAMPED work, not edited lines. Stamped work was genuinely ADDED; no ref was lost or moved. by_owner regenerated in the same pass.",
   "by_owner": {
     "todo/00-infrastructure/TODO-01-developer-tooling-stack.md": {
       "occurrences": 1,
+      "resolved": 0
+    },
+    "todo/00-infrastructure/TODO-02-ai-development-system.md": {
+      "occurrences": 0,
       "resolved": 0
     },
     "todo/00-infrastructure/TODO-03-kernel-test-harness.md": {
@@ -34,6 +38,10 @@
     },
     "todo/00-infrastructure/TODO-08-automation-hardening.md": {
       "occurrences": 20,
+      "resolved": 0
+    },
+    "todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md": {
+      "occurrences": 0,
       "resolved": 0
     },
     "todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md": {
@@ -64,13 +72,17 @@
       "occurrences": 26,
       "resolved": 12
     },
+    "todo/01-boot-platform/TODO-08-alternate-boot-protocols.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md": {
       "occurrences": 57,
       "resolved": 28
     },
     "todo/01-boot-platform/TODO-10-bare-metal-hardening.md": {
-      "occurrences": 38,
-      "resolved": 1
+      "occurrences": 39,
+      "resolved": 2
     },
     "todo/01-boot-platform/TODO-11-interrupt-timer-arch.md": {
       "occurrences": 43,
@@ -132,9 +144,17 @@
       "occurrences": 11,
       "resolved": 10
     },
+    "todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/01-boot-platform/TODO-27-uefi-advanced.md": {
       "occurrences": 18,
       "resolved": 9
+    },
+    "todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md": {
+      "occurrences": 0,
+      "resolved": 0
     },
     "todo/01-boot-platform/TODO-29-boot-perf-health-observability.md": {
       "occurrences": 9,
@@ -200,6 +220,10 @@
       "occurrences": 5,
       "resolved": 0
     },
+    "todo/02-kernel-core/TODO-16-kernel-notification-facility.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/02-kernel-core/TODO-17-binary-system.md": {
       "occurrences": 18,
       "resolved": 6
@@ -244,32 +268,672 @@
       "occurrences": 12,
       "resolved": 8
     },
+    "todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/02-kernel-core/TODO-31-kernel-bulletproofing.md": {
       "occurrences": 42,
       "resolved": 3
+    },
+    "todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md": {
+      "occurrences": 0,
+      "resolved": 0
     },
     "todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md": {
       "occurrences": 16,
       "resolved": 13
     },
+    "todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/02-kernel-core/TODO-A-SSDT-Master-Table.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-02-memory-security.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-03-advanced-allocator.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md": {
       "occurrences": 12,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-07-smp-phase2.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-08-advanced-sync.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-03-acpi-power-management.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-04-security-hardware.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-05-kernel-module-system.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-07-device-manager.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-10-usb-stack.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-11-input-system.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-12-i2c-touchpad.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-14-network-drivers.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-15-wifi-drivers.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-16-bluetooth.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-18-audio-drivers.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-21-game-controller-haptics.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-01-block-storage-hardening.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-03-volume-management-automount.md": {
+      "occurrences": 0,
       "resolved": 0
     },
     "todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md": {
       "occurrences": 54,
       "resolved": 1
     },
+    "todo/05-storage-filesystems/TODO-05-win32-file-io-api.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-08-exfat-readwrite.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-09-ext4-readwrite.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-10-btrfs-readonly.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-11-optical-media.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/06-desktop-foundation/TODO-01-wm-completion.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/06-desktop-foundation/TODO-02-compositor-optimization.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/06-desktop-foundation/TODO-03-input-system.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/06-desktop-foundation/TODO-04-control-library.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/06-desktop-foundation/TODO-05-desktop-shell.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/06-desktop-foundation/TODO-06-desktop-icons.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-01-tcp-network-infrastructure.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-02-dns-sockets.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-03-http-tls.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-04-ipv6-dual-stack.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-05-firewall.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-06-ntp-status-winsock.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-07-web-browser.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-08-ssh-ftp-clients.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-09-email-client.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-10-pdf-viewer.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/07-networking/TODO-11-syslog-forwarding.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-02-text-font-internationalization.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-03-theme-system.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-04-animation-engine.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-05-widget-library-core.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-06-widget-dialogs.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-08-window-manager.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-09-desktop-shell-features.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-10-taskbar.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-12-clock-time.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-13-boot-splash-recovery.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-01-clipboard.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-02-file-associations-resources.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-03-service-manager.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-05-file-search.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/09-desktop-shell/TODO-06-security-accounts.md": {
       "occurrences": 1,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-07-cng-crypto.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-08-terminal.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-09-file-manager.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-10-notepad.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-11-control-panel.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-12-utilities.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/09-desktop-shell/TODO-13-explorer-shell-host.md": {
+      "occurrences": 0,
       "resolved": 0
     },
     "todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md": {
       "occurrences": 10,
       "resolved": 3
     },
+    "todo/10-platform-services/TODO-01-audio-system.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-02-paint-app.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-03-updates-packages.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-04-restore-recovery.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-05-screensaver-widgets-display.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-06-accessibility.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-07-win32-pe-loader.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-08-win32-api-surface.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-09-compiler-sdk.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-10-linux-compat.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-11-installer-iso.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-12-long-term-features.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-A-user32-export-master-table.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-B-comctl32-export-master-table.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/10-platform-services/TODO-C-shell32-export-master-table.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-01-web-browser.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-02-ftp-wget-wifi.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-03-ssh-client.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-04-email-client.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-05-pdf-viewer.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-06-video-player.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-07-collaboration-apps.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-08-notepad.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-09-calculator.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-10-wordpad.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-11-photos-image-viewer.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-12-screenshot-archive.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/11-apps/TODO-13-calendar-utilities.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-01-kernel-libraries.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-05-win32-subsystem.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-06-sdk-distribution.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/13-tools-accessories/TODO-02-event-viewer.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-01-sdk-build-system.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
     "todo/14-host-tools/TODO-02-ixfs-mount.md": {
       "occurrences": 1,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-03-addr2line.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-04-crash-decode.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-05-serial-analyze.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-06-disk-inspect.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-07-ixfs-fsck.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/14-host-tools/TODO-08-blackbox-log-extractor.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/15-installer-release/TODO-01-release-artifacts.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/15-installer-release/TODO-02-unattended-install.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/15-installer-release/TODO-03-update-server.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/15-installer-release/TODO-04-release-qa.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/15-installer-release/TODO-05-github-release-community.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/18-future-research/TODO-01-multi-arch-port.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/18-future-research/TODO-02-hypervisor.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/18-future-research/TODO-03-gpu-compositor.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/18-future-research/TODO-04-secureboot-tpm.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/18-future-research/TODO-05-ai-ml-runtime.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/18-future-research/TODO-06-android-app-compatibility.md": {
+      "occurrences": 0,
+      "resolved": 0
+    },
+    "todo/TODO-Claude-Overnight-Runner.md": {
+      "occurrences": 0,
       "resolved": 0
     }
   },

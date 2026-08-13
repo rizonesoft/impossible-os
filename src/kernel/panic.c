@@ -39,6 +39,7 @@
 #include "kernel/vectors.h"         /* VECTOR_NMI -- panic context declaration */
 #include "kernel/boot_info.h"       /* boot_history seq + g_boot_info.had_panic */
 #include "kernel/mm/pmm.h"          /* pmm_get_free_frames */
+#include "kernel/mm/memmap.h"       /* MM_IS_CANONICAL_4LVL -- frame-chain bound */
 #include "kernel/quota/quota.h"     /* quota_dump_crash (resource exhaustion) */
 #include "kernel/smp.h"
 #include "kernel/barrier.h"
@@ -54,8 +55,32 @@
 /* Default auto-restart seconds (0 = disabled) */
 #define DEFAULT_RESTART_SECS  30
 
-/* Maximum stack trace depth */
-#define MAX_STACK_DEPTH   16
+/* Maximum stack trace depth: PANIC_MAX_STACK_DEPTH lives in panic.h, because it
+ * is part of panic_capture_frames' contract (the walk is clamped to it however
+ * large a count the caller asks for) rather than a private rendering choice. */
+
+/* Bounded snapshot of the two CALLER-SUPPLIED panic strings. Sized to the
+ * evidence record's own fields so the BSOD, the disk dump and the cross-boot
+ * record all show the SAME text -- a renderer truncating shorter than the
+ * record would make the on-screen reason disagree with the saved one. */
+#define PANIC_DESC_SNAP_MAX   256u
+#define PANIC_FILE_SNAP_MAX    64u
+
+_Static_assert(PANIC_DESC_SNAP_MAX ==
+               sizeof(((struct panic_evidence *)0)->message),
+               "panic description snapshot must match the evidence record field");
+_Static_assert(PANIC_FILE_SNAP_MAX ==
+               sizeof(((struct panic_evidence *)0)->file),
+               "panic file snapshot must match the evidence record field");
+
+/* PANIC_STR_NO_GUARD / PANIC_STR_UNREADABLE / PANIC_STR_NONE /
+ * PANIC_TRACE_NO_GUARD -- the placeholders emitted INSTEAD of walking a pointer
+ * this context may not walk -- live in panic.h so tests assert the exact text.
+ *
+ * Span searched above the interrupted RSP when walking the frame chain -- the
+ * same bound rtl_capture_stack_from_context uses (src/kernel/rtl/unwind.c). A
+ * frame pointer outside it is corrupt, not deep. */
+#define PANIC_STACK_SPAN      0x10000u
 
 /* Exception names (duplicated here so we don't depend on idt.c internals) */
 static const char *panic_exception_names[32] = {
@@ -139,7 +164,8 @@ const BUGCHECK_INFO *bugcheck_get_last(void)
  * in-memory g_last_bugcheck + dump pipeline for persistence instead. */
 static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code,
                               uint32_t bugcheck_code, const uint64_t bugcheck_params[4],
-                              const char *description, const char *file, uint32_t line);
+                              const char *description_in, const char *file_in,
+                              uint32_t line);
 
 static __attribute__((noreturn)) void ke_bugcheck_emit(
         struct interrupt_frame *frame, BUGCHECK_CODE code,
@@ -745,12 +771,152 @@ static void draw_bsod_icon(uint32_t x, uint32_t y)
     }
 }
 
+/* --- Panic-entry snapshot of the caller-supplied strings --- */
+
+/* The BSOD, the disk crash dump and the cross-boot evidence record all name the
+ * crash using the SAME two pointers the crash may have corrupted. Guarding each
+ * consumer separately does not make the pointer safe -- it only moves which
+ * renderer dies on it, which is exactly how a machine ended up reporting its
+ * reason on serial and then painting no bugcheck and writing no dump. So the
+ * pointers are read ONCE, at panic entry, into kernel-owned storage, and every
+ * later consumer reads that copy.
+ *
+ * The copy is bounded, so a description missing its NUL costs a truncation
+ * rather than a walk off the end of the mapping.
+ *
+ * ARCH: x86-64 -- the guarded read is the fault-suppressed kernel load. */
+void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
+                        uint32_t ctx, const char *if_null)
+{
+    const char *fixed = (const char *)0;
+    uint32_t i = 0u;
+
+    if (!cap)
+        return;
+
+    if (!src) {
+        /* Decided entirely from `src`, never by falling through to the reader:
+         * a NULL `if_null` must still mean "render nothing", not "walk address
+         * zero" -- which is what a shared `fixed == NULL` test would do, in
+         * every context including the ones that forbid the read. */
+        if (!if_null) {
+            dst[0] = '\0';
+            return;
+        }
+        fixed = if_null;
+    } else if (!serial_emerg_ctx_allows_guarded_read(ctx))
+        /* No fixup available here: a raw walk of a corrupt pointer would fault,
+         * and in NMI context the fixup's IRETQ would re-arm NMI delivery over
+         * the live IST frames (see panic_declared_ctx). A fixed string names
+         * less than the description would have, and costs nothing. */
+        fixed = PANIC_STR_NO_GUARD;
+
+    if (!fixed) {
+        for (; i + 1u < cap; i++) {
+            uint8_t b;
+            if (__kread_u8(&b, &src[i])) {
+                /* A partial read still names the crash; only a pointer that was
+                 * unreadable from its FIRST byte carries no information, and an
+                 * empty line would read as "no reason given" rather than "the
+                 * reason pointer was part of the corruption". */
+                if (i == 0u)
+                    fixed = PANIC_STR_UNREADABLE;
+                break;
+            }
+            if (!b)
+                break;
+            dst[i] = (char)b;
+        }
+    }
+
+    if (fixed)
+        for (i = 0u; i + 1u < cap && fixed[i]; i++)
+            dst[i] = fixed[i];
+
+    dst[i] = '\0';
+}
+
+/* --- Fault-safe frame-chain walk --- */
+
+/* Both terminal renderers (BSOD and disk dump) used to walk the RBP chain by
+ * raw dereference, gated only by a hardcoded address window -- so a corrupt but
+ * in-window RBP took a terminal fault in the very abort context the caller
+ * strings are now protected from. One walker, fault-suppressed reads, and the
+ * same frame-validity rules the RtlCaptureStackBackTrace walker applies.
+ *
+ * Returns the number of return addresses written to out[]. Zero in a context
+ * where the guarded read is unavailable: the walk is the documented route by
+ * which a nested #PF re-arms NMI delivery, so it is not attempted there.
+ *
+ * ARCH: x86-64 -- frame-pointer chain layout and canonical-address form. */
+uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
+                              uint64_t *out, uint32_t count)
+{
+    uint64_t rbp;
+    uint64_t lo;
+    uint64_t hi;
+    uint64_t prev = 0u;
+    uint32_t n = 0u;
+
+    if (!out || !count || !serial_emerg_ctx_allows_guarded_read(ctx))
+        return 0u;
+
+    if (frame) {
+        rbp = frame->rbp;
+        lo  = frame->rsp;
+    } else {
+        __asm__ volatile ("mov %%rbp, %0" : "=r"(rbp));
+        __asm__ volatile ("mov %%rsp, %0" : "=r"(lo));
+    }
+    if (!rbp || !lo)
+        return 0u;
+
+    /* An IST entry (#DF/#MC/NMI) switched stacks, so the frame's RSP and RBP
+     * describe the INTERRUPTED stack and stay a coherent pair; the live-RBP
+     * fallback above pairs with the live RSP for the same reason. */
+    if (lo > ~(uint64_t)0 - PANIC_STACK_SPAN)
+        return 0u;                       /* span would wrap */
+    hi = lo + PANIC_STACK_SPAN;
+    if (hi < lo + 16u)
+        return 0u;                       /* no room for a full [rbp, rbp+16) */
+
+    while (n < count && n < PANIC_MAX_STACK_DEPTH) {
+        uint64_t saved_rbp, ret;
+
+        /* 8-aligned, at/above SP with the whole slot pair in range, strictly
+         * climbing (no cycle), and canonical -- a non-canonical slot would #GP
+         * rather than #PF and escape the read's fixup, so reject it first. */
+        if (rbp & 0x7u)                             break;
+        if (rbp < lo || rbp > hi - 16u)             break;
+        if (rbp <= prev)                            break;
+        if (!MM_IS_CANONICAL_4LVL(rbp) ||
+            !MM_IS_CANONICAL_4LVL(rbp + 15u))       break;
+
+        if (__kstack_read_u64(&ret, (const void *)(uintptr_t)(rbp + 8u)) != 0)
+            break;
+        if (__kstack_read_u64(&saved_rbp, (const void *)(uintptr_t)rbp) != 0)
+            break;
+        if (ret == 0u)
+            break;
+
+        out[n++] = ret;
+        prev = rbp;
+        rbp  = saved_rbp;
+    }
+
+    return n;
+}
+
 /* --- Crash dump to file --- */
 
 /* Returns 1 only when the FULL dump was confirmed written (vfs_write
  * accepted every byte); the caller's "saved" message must not lie about a
- * dump that never landed (previously it printed whenever C: was mounted). */
-static int write_crash_dump(struct interrupt_frame *frame,
+ * dump that never landed (previously it printed whenever C: was mounted).
+ *
+ * `description` and `file` are the panic-entry SNAPSHOTS, not the caller's
+ * pointers -- this runs last of the three renderers, so it is the one that
+ * never ran at all when an earlier consumer faulted on the original. */
+static int write_crash_dump(struct interrupt_frame *frame, uint32_t ctx,
                             const char *description, const char *file,
                             uint32_t line)
 {
@@ -758,7 +924,8 @@ static int write_crash_dump(struct interrupt_frame *frame,
     int pos = 0;
     uint64_t cr2_val;
     uint64_t cr3_val;
-    uint64_t rbp;
+    uint64_t frames[PANIC_MAX_STACK_DEPTH];
+    uint32_t nframes;
     uint32_t depth;
     char num[12];
 
@@ -824,22 +991,14 @@ static int write_crash_dump(struct interrupt_frame *frame,
         while (*s && pos < 2040) buf[pos++] = *s++;
     }
 
-    rbp = frame ? frame->rbp : 0;
-    if (!rbp) {
-        __asm__ volatile ("mov %%rbp, %0" : "=r"(rbp));
+    nframes = panic_capture_frames(frame, ctx, frames, PANIC_MAX_STACK_DEPTH);
+    if (nframes == 0u && !serial_emerg_ctx_allows_guarded_read(ctx)) {
+        const char *s = "  " PANIC_TRACE_NO_GUARD "\n";
+        while (*s && pos < 2040) buf[pos++] = *s++;
     }
 
-    for (depth = 0; depth < MAX_STACK_DEPTH && rbp != 0; depth++) {
-        uint64_t *frame_ptr = (uint64_t *)rbp;
-        uint64_t ret_addr;
-
-        /* Safety check: ensure RBP points to a reasonable address */
-        if (rbp < 0x100000 || rbp > 0x200000)
-            break;
-
-        ret_addr = frame_ptr[1];  /* return address is at [rbp+8] */
-        if (ret_addr == 0)
-            break;
+    for (depth = 0; depth < nframes; depth++) {
+        uint64_t ret_addr = frames[depth];
 
         {
             const char *fr = "  #";
@@ -893,8 +1052,6 @@ static int write_crash_dump(struct interrupt_frame *frame,
             }
             buf[pos++] = '\n';
         }
-
-        rbp = frame_ptr[0];  /* previous RBP */
     }
 
     buf[pos] = '\0';
@@ -933,9 +1090,73 @@ static int write_crash_dump(struct interrupt_frame *frame,
  * Panic forensic evidence -- cross-boot crash record
  * ========================================================================== */
 
-/* First-caller-wins guard: a nested fault during BSOD render must not overwrite
- * the original crash record. Set on the first collect of this boot. */
-static volatile int s_evidence_collected = 0;
+/* First-caller-wins, in TWO parts, because the two things it guards are not the
+ * same thing and no longer happen at the same moment.
+ *
+ * RESERVATION decides WHICH CPU's crash the record describes. It is taken at
+ * panic entry, before the caller-string snapshot, because the snapshot performs
+ * up to PANIC_DESC_SNAP_MAX fault-suppressed reads -- and a CPU whose
+ * description pointer is corrupt (the case this whole path exists for) pays a
+ * fixup per faulting byte. If the claim came after that work, the originating
+ * CPU could lose the record to a CPU that panicked LATER with a short, valid
+ * string, and the cross-boot evidence would then describe the cascade instead
+ * of the failure that started it.
+ *
+ * POPULATION stays a separate one-shot so a nested fault during BSOD render
+ * still cannot overwrite the original record. Reservation alone cannot carry
+ * that: the re-entering CPU is the SAME CPU, so it matches its own claim.
+ *
+ * Owner identity is the panic-safe APIC id -- the same identity the serial
+ * owner word and the evidence record's own cpu_id field use, and readable
+ * without GS. */
+#define PANIC_EVIDENCE_NO_OWNER  0xFFFFFFFFu
+_Static_assert(PANIC_EVIDENCE_NO_OWNER > CPU_PANIC_SAFE_ID_MASK,
+               "the no-owner sentinel must not alias a real CPU identity");
+static volatile uint32_t s_evidence_owner    = PANIC_EVIDENCE_NO_OWNER;
+
+/* Set only AFTER a COMPLETE record has been published, never on entry.
+ *
+ * The difference is the whole guarantee. A one-shot claimed on entry makes
+ * population irrevocable before anything durable exists, so an abort between
+ * the claim and the magic store -- and `cli` masks neither NMI nor #MC -- locks
+ * every later invocation out of a page that was never finished, and the boot
+ * ends with no record at all. Claimed on completion instead, a nested abort
+ * that interrupted an unfinished record simply writes its own complete one:
+ * the outer invocation is never coming back, so the nested crash is the best
+ * evidence still obtainable. A record that DID complete is never overwritten,
+ * which is the original nested-fault-during-BSOD guarantee, unchanged.
+ *
+ * Kept in RAM rather than read back from the page's magic so a record left by a
+ * PREVIOUS boot can never suppress this boot's collection -- the flag says
+ * "THIS boot published one" and the magic says "the page holds a restorable
+ * record"; completion needs both, and neither alone is the question. */
+static volatile int      s_evidence_published = 0;
+
+/* Claim the single evidence record. Returns 1 to the FIRST panic invocation of
+ * this boot and 0 to every other one -- another CPU's, and this CPU's own
+ * nested re-entry alike, which is what keeps the record describing the crash
+ * that started the cascade.
+ *
+ * ONE compare-and-swap, not a flag plus an owner store: `cli` does not mask NMI
+ * or #MC, so any gap between "reserved" and "owner published" is a window an
+ * abort can land in -- and a nested abort that lands there would find a
+ * reservation belonging to nobody, decline to write, and (being terminal) never
+ * let the outer invocation resume, leaving the boot with no record at all. */
+static int panic_evidence_reserve(void)
+{
+    uint32_t me = cpu_panic_safe_apic_id();
+    uint32_t prev = __sync_val_compare_and_swap(&s_evidence_owner,
+                                                PANIC_EVIDENCE_NO_OWNER, me);
+    return prev == PANIC_EVIDENCE_NO_OWNER;
+}
+
+/* Whether the record belongs to this CPU at all -- the backstop for a caller
+ * that reaches panic_collect_evidence without having reserved. */
+static int panic_evidence_owned_here(void)
+{
+    return __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE) ==
+           cpu_panic_safe_apic_id();
+}
 
 /* Off-stack klog scratch: the collector may run on a small IST stack (#DF), so
  * the snapshot lands in BSS, not on the panic stack. Panic is cli'd and
@@ -1010,19 +1231,41 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
                             const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line)
 {
-    uint32_t ctx;
-
-    /* Atomic claim: on an SMP double-panic two CPUs must not both write the
-     * fixed 0x80000 page / shared scratch. The first to swap 1 in wins; the
-     * loser returns without touching any shared evidence state. */
-    if (__atomic_exchange_n(&s_evidence_collected, 1, __ATOMIC_ACQ_REL))
-        return;
-
     /* The page at PANIC_EVIDENCE_ADDR is identity-mapped and reserved by PMM.
      * Raw physical writes only -- no kmalloc / VFS / printk / spinlock here. */
     struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    uint32_t ctx;
 
-    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). */
+    /* On an SMP double-panic two CPUs must not both write the fixed 0x80000
+     * page / shared scratch. Ownership is normally decided at panic entry by
+     * panic_evidence_reserve, which admits exactly ONE invocation per boot; a
+     * caller that skipped that step claims here instead, so this function is
+     * still correct standing alone. Non-owners return untouched. */
+    if (!panic_evidence_owned_here())
+        (void)panic_evidence_reserve();
+    if (!panic_evidence_owned_here())
+        return;
+
+    /* A COMPLETE record already stands -- a nested fault during BSOD render must
+     * not restate its own crash over the original. An INCOMPLETE one does not
+     * stop us: see s_evidence_published.
+     *
+     * BOTH conditions, because completion cannot be published in one store. The
+     * flag is written FIRST and the magic LAST, and the magic is zeroed at the
+     * start of population below, so the pair is true only over a record that
+     * reached its final instruction: re-entry between the two stores sees the
+     * flag set with the magic still zero, correctly reads that as unfinished,
+     * and rewrites the record rather than leaving the boot with an unrestorable
+     * page. Ordering the stores the other way round would leave exactly one
+     * instruction at which a nested abort erases a valid record. */
+    if (__atomic_load_n(&s_evidence_published, __ATOMIC_ACQUIRE) &&
+        ev->magic == PANIC_EVIDENCE_MAGIC)
+        return;
+
+    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). This is
+     * also what clears the magic for the completion gate above: from here until
+     * the final store the page reads as "no record", which is exactly what a
+     * re-entering invocation must conclude. */
     for (uint32_t i = 0u; i < sizeof *ev / 8u; i++)
         ((volatile uint64_t *)ev)[i] = 0u;
 
@@ -1111,10 +1354,18 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
     }
 
     /* crc32 over everything AFTER the crc32 field, then publish the magic last
-     * so a reader never sees a valid magic over a half-written record. */
+     * so a reader never sees a valid magic over a half-written record -- and
+     * only THEN mark the record complete, so an abort anywhere above leaves the
+     * next invocation free to write a whole one rather than locked out of a
+     * half-written page. Every CRC-covered byte is written exactly once, before
+     * the CRC: a record is never amended in place, because an abort between an
+     * amendment and its recomputed CRC would leave a magic-valid record that
+     * panic_evidence_restore then discards for failing its checksum. */
     {
         uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
         ev->crc32 = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+        /* Flag first, magic last -- see the completion gate at the top. */
+        __atomic_store_n(&s_evidence_published, 1, __ATOMIC_RELEASE);
         ev->magic = PANIC_EVIDENCE_MAGIC;
     }
 }
@@ -1357,12 +1608,56 @@ void panic_evidence_write_blackbox(void)
  * both the STOP identity+params and the register/vector evidence. */
 static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code,
                               uint32_t bugcheck_code, const uint64_t bugcheck_params[4],
-                              const char *description, const char *file, uint32_t line)
+                              const char *description_in, const char *file_in,
+                              uint32_t line)
 {
     /* Mask interrupts FIRST -- nothing may re-enter the panic path while the
      * collector touches the fixed 0x80000 evidence page and shared log state.
      * The faulting interrupt state is preserved in frame->rflags for forensics. */
     __asm__ volatile ("cli");
+
+    /* Decide who owns the cross-boot record BEFORE doing any variable-latency
+     * work, so the CPU that panicked FIRST is the one the record describes even
+     * when its own description pointer is the corruption being reported and
+     * every byte of the snapshot below costs a fault fixup. Exactly one
+     * invocation of this boot gets a 1 here, which is also what keeps another
+     * CPU's later panic from becoming the recorded one. It is deliberately the
+     * FIRST thing that happens: everything below, starting with the snapshot,
+     * takes time proportional to how corrupt memory is. */
+    (void)panic_evidence_reserve();
+
+    /* THE panic-string snapshot. Every consumer below -- the evidence record,
+     * the emergency serial dump, the async diagnostic, the no-framebuffer
+     * fallback, the BSOD and the disk crash dump -- reads desc_snap/file_snap.
+     * `description_in` and `file_in` are the caller's pointers and appear
+     * NOWHERE else in this function: read exactly once, here, under the guard.
+     * That is what makes the property greppable rather than a promise.
+     *
+     * Stack-local, not static: on an SMP double panic the CPU that loses the
+     * record still has to render its own bugcheck, and a shared buffer would
+     * make it paint the winner's reason. Per-invocation storage also needs no
+     * GS and no lock, which the pre-arbitration dump below requires. */
+    const uint32_t snap_ctx = panic_declared_ctx(frame);
+    const int have_file = (file_in != (const char *)0);
+    char desc_snap[PANIC_DESC_SNAP_MAX];
+    char file_snap[PANIC_FILE_SNAP_MAX];
+
+    panic_snapshot_str(desc_snap, sizeof desc_snap, description_in, snap_ctx,
+                       PANIC_STR_NONE);
+    panic_snapshot_str(file_snap, sizeof file_snap, file_in, snap_ctx, "");
+
+    /* Capture cross-boot forensic evidence before any other panic work (serial,
+     * async isolation, framebuffer, VFS) that could itself fault -- and now with
+     * the reason already in kernel-owned memory, so the collector's own copy of
+     * it cannot fault either. bugcheck_code is the authoritative STOP code (0
+     * for a raw exception -- fault_vector carries identity there).
+     *
+     * Unconditional: the ownership and completion gates live inside the
+     * collector, and this is the ONE call that must reach them -- a caller-side
+     * `if (owns_record)` would stop a nested abort from finishing a record its
+     * outer invocation never got to write. */
+    panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc_snap,
+                           have_file ? file_snap : (const char *)0, line);
 
     /* NOTE: emergency serial is NOT armed here. Arming is a SYSTEM-TERMINAL
      * declaration and this function is not yet committed to one -- the async
@@ -1372,12 +1667,6 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * routed through the lossy try-lock path. The pre-arbitration dump below is
      * made abort-safe by calling the emergency writers DIRECTLY instead, which
      * needs no global state; the latch is armed once ownership is claimed. */
-
-    /* Capture cross-boot forensic evidence before any other panic work (serial,
-     * async isolation, framebuffer, VFS) that could itself fault. bugcheck_code is
-     * the authoritative STOP code (0 for a raw exception -- fault_vector carries
-     * identity there). */
-    panic_collect_evidence(frame, bugcheck_code, bugcheck_params, description, file, line);
 
     /* Charges THIS CPU already holds before the unconditional dump below.
      * The dump must be GS-independent, so it cannot ask whether this CPU is
@@ -1393,7 +1682,8 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     uint32_t screen_h;
     uint64_t cr2_val;
     uint64_t cr3_val;
-    uint64_t rbp;
+    uint64_t frames[PANIC_MAX_STACK_DEPTH];
+    uint32_t nframes;
     uint32_t depth;
     int32_t restart_secs = 0;
     uint32_t reg_restart;
@@ -1431,20 +1721,16 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * path swallowed the actual reason. Panic MUST be observable
      * even under the most hostile downstream state. */
     {
-        /* The two CALLER-SUPPLIED strings go through the context-aware writer;
-         * every other emit here is a string literal or a stack hex buffer, which
-         * this kernel owns and cannot fault on. `description` and `file` are the
-         * pointers that may themselves be the corruption being reported, so they
-         * are exactly the ones that need the guarded walk -- and exactly the ones
-         * that must NOT take it in NMI context. */
-        uint32_t emit_ctx = panic_declared_ctx(frame);
-
+        /* Every emit here is now a string literal, a stack hex buffer, or the
+         * panic-entry snapshot -- all memory this kernel owns and cannot fault
+         * on, so the context-aware writer has nothing left to guard against and
+         * the plain emitter (which keeps the recoverable-vs-terminal accounting
+         * this branch depends on) is the right writer. */
         panic_emit("\n\n[PANIC] ");
-        serial_write_emergency_ctx(description ? description : "(no description)",
-                                   emit_ctx);
-        if (file) {
+        panic_emit(desc_snap);
+        if (have_file) {
             panic_emit("\n  at ");
-            serial_write_emergency_ctx(file, emit_ctx);
+            panic_emit(file_snap);
         }
         panic_emit("\n");
 
@@ -1570,14 +1856,13 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
                 panic_append(rec, sizeof rec, &rp, "\n[ASYNC] FAULT on CPU");
                 panic_append_hex(rec, sizeof rec, &rp, step_cpu);
                 panic_append(rec, sizeof rec, &rp, " during '");
-                /* step_name and description are CALLER-SUPPLIED and may be the
-                 * corruption being reported; every other append here is a
-                 * literal or a formatted number this kernel owns. */
+                /* step_name is still CALLER-SUPPLIED and may be the corruption
+                 * being reported, so it keeps the guarded append. The panic
+                 * description does not: it was snapshotted at entry, so it is
+                 * kernel-owned memory here like every literal beside it. */
                 panic_append_guarded(rec, sizeof rec, &rp, step_name, async_ctx);
                 panic_append(rec, sizeof rec, &rp, "': ");
-                panic_append_guarded(rec, sizeof rec, &rp,
-                                     description ? description : "unknown",
-                                     async_ctx);
+                panic_append(rec, sizeof rec, &rp, desc_snap);
                 panic_append(rec, sizeof rec, &rp, " (err=");
                 panic_append_hex(rec, sizeof rec, &rp, error_code);
                 panic_append(rec, sizeof rec, &rp, " RIP=");
@@ -1668,11 +1953,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * serial-only output via boot_halt(). No BSOD drawing is possible. */
     if (!kernel_subsystem_ready(SUBSYS_FB)) {
         serial_write("\n[PANIC] ");
-        serial_write(description ? description : "(unknown)");
+        serial_write(desc_snap);
         serial_write("\n");
-        if (file) {
+        if (have_file) {
             serial_write("  at ");
-            serial_write(file);
+            serial_write(file_snap);
             serial_write("\n");
         }
         serial_write("System halted (no framebuffer for BSOD).\n");
@@ -1726,12 +2011,13 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
 
     /* Description */
     fb_set_color(PANIC_FG_COLOR, PANIC_BG_COLOR);
-    printk("    Description: %s\n", (uint64_t)(uintptr_t)description);
+    printk("    Description: %s\n", (uint64_t)(uintptr_t)desc_snap);
 
     /* Source location */
-    if (file) {
+    if (have_file) {
         fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
-        printk("    Source:  %s:%u\n", (uint64_t)(uintptr_t)file, (uint64_t)line);
+        printk("    Source:  %s:%u\n", (uint64_t)(uintptr_t)file_snap,
+               (uint64_t)line);
     }
 
     printk("\n");
@@ -1768,40 +2054,31 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     printk("    --- Stack Trace ---\n");
     fb_set_color(PANIC_FG_COLOR, PANIC_BG_COLOR);
 
-    /* Walk the RBP chain */
-    rbp = frame ? frame->rbp : 0;
-    if (!rbp) {
-        __asm__ volatile ("mov %%rbp, %0" : "=r"(rbp));
-    }
+    /* Walk the RBP chain through the shared fault-safe walker. */
+    nframes = panic_capture_frames(frame, snap_ctx, frames, PANIC_MAX_STACK_DEPTH);
 
-    for (depth = 0; depth < MAX_STACK_DEPTH && rbp != 0; depth++) {
-        uint64_t *frame_ptr = (uint64_t *)rbp;
-        uint64_t ret_addr;
+    for (depth = 0; depth < nframes; depth++) {
+        uint64_t ret_addr = frames[depth];
+        uint64_t sym_off = 0;
+        const char *sym = symtab_resolve(ret_addr, &sym_off);
 
-        /* Safety: RBP should be in kernel memory range */
-        if (rbp < 0x100000 || rbp > 0x200000)
-            break;
-
-        ret_addr = frame_ptr[1];
-        if (ret_addr == 0)
-            break;
-
-        {
-            uint64_t sym_off = 0;
-            const char *sym = symtab_resolve(ret_addr, &sym_off);
-            if (sym) {
-                printk("    #%u  %p  %s+0x%x\n",
-                       (uint64_t)depth, ret_addr,
-                       (uint64_t)(uintptr_t)sym, sym_off);
-            } else {
-                printk("    #%u  %p\n", (uint64_t)depth, ret_addr);
-            }
+        if (sym) {
+            printk("    #%u  %p  %s+0x%x\n",
+                   (uint64_t)depth, ret_addr,
+                   (uint64_t)(uintptr_t)sym, sym_off);
+        } else {
+            printk("    #%u  %p\n", (uint64_t)depth, ret_addr);
         }
-        rbp = frame_ptr[0];
     }
 
-    if (depth == 0) {
-        printk("    (no stack frames available)\n");
+    if (nframes == 0u) {
+        /* Distinguish "walked and found nothing" from "did not walk": the
+         * second is a context decision, not an empty stack, and reading it as
+         * an empty stack would send a reader looking for a corrupt chain. */
+        if (!serial_emerg_ctx_allows_guarded_read(snap_ctx))
+            printk("    %s\n", (uint64_t)(uintptr_t)PANIC_TRACE_NO_GUARD);
+        else
+            printk("    (no stack frames available)\n");
     }
 
     /* === Version footer === */
@@ -1814,7 +2091,9 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
            (uint64_t)(uintptr_t)version_git_hash());
 
     /* === Write crash dump to disk === */
-    int dump_written = write_crash_dump(frame, description, file, line);
+    int dump_written = write_crash_dump(frame, snap_ctx, desc_snap,
+                                        have_file ? file_snap : (const char *)0,
+                                        line);
 
     /* === Persist klog ring buffer to reserved physical memory === */
     klog_crash_persist();

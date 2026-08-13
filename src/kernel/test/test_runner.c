@@ -757,6 +757,7 @@ extern void test_register_kimage(void);
 extern void test_register_usermode_launcher(void);
 extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
+extern void test_register_panic(void);
 extern void test_register_except(void);
 extern void test_register_quota(void);
 extern void test_register_quota_owner(void);
@@ -874,6 +875,7 @@ void test_runner_init(void)
 
     /* Crash dump */
     test_register_crashdump();
+    test_register_panic();
 
     /* Exception dispatch / SEH */
     test_register_except();

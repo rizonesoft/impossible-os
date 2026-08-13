@@ -157,8 +157,16 @@ uint32_t panic_crc32(const void *data, uint32_t len);
  * four STOP parameters (or NULL for a raw exception with none) -- passed by value
  * so the record cannot combine one CPU's frame with another CPU's parameters, the
  * way recovering them from the global g_last_bugcheck by code-equality could.
- * First caller wins per panic so a nested fault during BSOD render does not
- * overwrite the original record. */
+ * `message` and `file` are expected to be the panic-entry SNAPSHOT (see
+ * panic_snapshot_str), not the caller's own pointers.
+ *
+ * A COMPLETED record is never overwritten, so a nested fault during BSOD render
+ * cannot restate its own crash over the original. An INCOMPLETE one is not
+ * protected, deliberately: the invocation that was writing it has been
+ * interrupted by something terminal and is not coming back, so a later
+ * invocation finishing a whole record is the only remaining way to leave any
+ * evidence at all. Cross-CPU, the record belongs to the first CPU to reach the
+ * panic path this boot; a loser writes nothing. */
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
                             const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line);
@@ -176,6 +184,45 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
  * too. Exposed (rather than static) so the vector/depth/NULL truth table is
  * unit-testable without invoking any panic infrastructure. */
 uint32_t panic_declared_ctx(struct interrupt_frame *frame);
+
+/* Frames the panic frame-chain walk will record at most, however large a count
+ * panic_capture_frames is given. */
+#define PANIC_MAX_STACK_DEPTH  16u
+
+/* Placeholders the panic-entry snapshot emits INSTEAD of walking a pointer it
+ * is not allowed to walk (see panic_snapshot_str). Public so a test can assert
+ * the exact rendered text rather than a prefix. */
+#define PANIC_STR_NO_GUARD    "(unavailable: no guarded read in this context)"
+#define PANIC_STR_UNREADABLE  "(unreadable: the panic string pointer faulted)"
+#define PANIC_STR_NONE        "(no description)"
+#define PANIC_TRACE_NO_GUARD  "(stack trace withheld: no guarded read in this context)"
+
+/* Copy a CALLER-SUPPLIED panic string into kernel-owned storage, ONCE, at panic
+ * entry, so that every terminal renderer downstream (serial, BSOD, disk crash
+ * dump, cross-boot evidence record) reads the copy and none of them walks a
+ * pointer that may be the corruption being reported.
+ *
+ * Always NUL-terminates within `cap` (and writes nothing at all when `cap` is
+ * 0). `src == NULL` renders `if_null`, or an empty string when `if_null` is
+ * NULL too -- a NULL source is never read in ANY context; a `ctx`
+ * that forbids the fault-suppressed read renders PANIC_STR_NO_GUARD without
+ * touching `src` at all; a pointer unreadable from its FIRST byte renders
+ * PANIC_STR_UNREADABLE. A partial read is kept as-is -- a truncated description
+ * still names the crash. */
+void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
+                        uint32_t ctx, const char *if_null);
+
+/* Walk the frame-pointer chain with fault-suppressed reads, writing up to
+ * `count` return addresses to out[] and returning how many were recorded.
+ *
+ * Returns 0 without touching memory when `ctx` forbids the guarded read: the
+ * frame-chain walk is the documented route by which a nested #PF re-arms NMI
+ * delivery over live IST frames (see panic_declared_ctx). Frames are validated
+ * the same way the RtlCaptureStackBackTrace walker validates them -- 8-aligned,
+ * within one bounded span above the interrupted RSP, strictly climbing, and
+ * canonical. */
+uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
+                              uint64_t *out, uint32_t count);
 
 /* Phase-0 restore: if the evidence page holds a valid record, copy it into the
  * caller-provided buffer, clear the page magic, and return 1; else 0. Pre-heap

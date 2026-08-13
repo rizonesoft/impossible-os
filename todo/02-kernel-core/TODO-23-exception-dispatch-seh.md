@@ -374,6 +374,8 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 - [/] `src/kernel/rtl/unwind.c` -- `RtlWalkFrameChain`: `flags==0` kernel walk shipped; `flags & 1` user walk returns 0 (needs a saved current-user-`CONTEXT` accessor) -> XREF: `TODO-07 §3` (saved user trap-frame accessor)
 - [x] Fault-safe frame reads: `[rbp]`/`[rbp+8]` via `__kstack_read_u64` (RIP-keyed #PF fixup, `cpu_security.c`+`vmm.c` redirect before the pager); RBP RSP-anchored, aligned, monotonic, bounded; `ret` in kernel text -> XREF: TODO-23 §6
 - [x] IRQL requirement: callable at `IRQL <= DISPATCH_LEVEL` -- no lock, no block, fault-safe reads only (→ XREF: `TODO-07 §3`)
+- [/] PARKED: the span-and-canonical bound admits MAPPED NON-STACK memory -- a corrupt RSP can place the whole search window in MMIO, where a read has side effects the `#PF` fixup does not cover.
+  - Raised against the panic-path copy of this walker and parked on both sides, since the rule is the same one: needs a lock-free, GS-independent proof that a slot is RAM-backed kernel stack -> XREF: `01-boot-platform/TODO-10 §19` (item: "PARKED: prove a frame slot is RAM-backed kernel stack before reading it")
 
 **Test checkpoint:** `RtlCaptureStackBackTrace(0, 8, buf, &hash)` from a 4-deep chain returns ≥4 kernel-code frames with a non-zero hash; `skip=1` drops the immediate caller (first frame == skip=0 second frame); `rtl_capture_stack_from_context` on a synthetic RBP chain returns the exact frames with a deterministic hash; a non-monotonic RBP terminates the walk; `__kstack_read_u64` recovers a #PF on an unmapped kernel VA (returns -1, no bugcheck). Test on: QEMU WHPX + TCG.
 
