@@ -680,6 +680,7 @@ extern void test_register_kernel_config(void);
 extern void test_register_boot_timing(void);
 extern void test_register_boot_info(void);
 extern void test_register_boot_reserved(void);
+extern void test_register_serial_emergency(void);
 extern void test_register_boot_version(void);
 extern void test_register_boot_caps(void);
 extern void test_register_boot_decision(void);
@@ -804,6 +805,7 @@ void test_runner_init(void)
     test_register_boot_timing();
     test_register_boot_info();
     test_register_boot_reserved();
+    test_register_serial_emergency();
     test_register_boot_version();
     test_register_boot_caps();
     test_register_boot_decision();

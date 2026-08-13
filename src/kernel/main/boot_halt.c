@@ -258,6 +258,12 @@ void boot_halt(const char *reason)
      * Phase 3 "succeeded" mark. */
     boot_post_write16(POST16_BOOT_FAILED);
 
+    /* Arm abort-safe serial: boot_halt is terminal (it never returns), and it
+     * is reached from failure paths that may already hold g_serial_lock or run
+     * with a UART that never came up. From here serial_write is the bounded
+     * try-lock path, which also covers kernel_subsystem_dump's output below. */
+    serial_enter_emergency();
+
     /* Always write to serial first -- works regardless of framebuffer state */
     serial_write("\n[BOOT HALT] ");
     serial_write(reason ? reason : "(unknown reason)");

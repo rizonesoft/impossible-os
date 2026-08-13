@@ -279,21 +279,27 @@ int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fau
  * side -> XREF: 12-user-platform-sdk/TODO-04 s5. Deliberately does NO VFS and NO
  * allocation so it is safe on the interrupts-disabled fault path (unlike the
  * JSON report writer below, whose VFS I/O carries a filed reentrancy risk --
- * TODO-24 s.BlackBox). Emits via serial_write (the same fault-safe primitive
- * panic.c uses), NOT klog: klog's live-disk path (klog_disk_flush) allocates
- * pages and does VFS, which would defeat the point of a safe fallback. The
- * "wer: " prefix matches the former klog subsystem tag. */
+ * TODO-24 s.BlackBox). Emits via serial_write_emergency (the abort-safe
+ * primitive panic.c arms), NOT klog: klog's live-disk path (klog_disk_flush)
+ * allocates pages and does VFS, which would defeat the point of a safe
+ * fallback. The "wer: " prefix matches the former klog subsystem tag. */
 void WerpReportFault(uint32_t code, uint64_t fault_addr)
 {
     /* wer_format_fault_line builds the whole "wer: ...\n" line; emit it with a
-     * SINGLE serial_write so another CPU cannot interleave its output mid-record
-     * (serial_write locks g_serial_lock per call). Safe ONLY on the lock-free
-     * ring-3 user terminals (except.c, vmm.c #PF): a kernel-context caller could
-     * self-deadlock on g_serial_lock, which is why the idt.c abort fallback does
-     * NOT call this. */
+     * SINGLE call so another CPU cannot interleave its output mid-record.
+     *
+     * serial_write_emergency, not serial_write: this runs on a FAULT path with
+     * interrupts disabled, and plain serial_write both blocks on g_serial_lock
+     * (self-deadlock if the interrupted code held it) and spins unbounded on the
+     * UART transmit bit (a stuck UART stalls the report -- the risk except.c
+     * documents at its WerpReportFault call site). The emergency path try-locks
+     * and bounds every hardware wait, so the worst case degrades from "hang" to
+     * "interleaved bytes". Unlike panic.c this caller does NOT arm emergency
+     * mode: a user fault is recoverable and ordinary serial output must keep its
+     * locking after the report. */
     char line[WER_FAULT_LINE_MAX];
     if (wer_format_fault_line(line, sizeof(line), code, fault_addr) > 0)
-        serial_write(line);
+        serial_write_emergency(line);
 }
 
 /* ---- Report writer ------------------------------------------------------ */

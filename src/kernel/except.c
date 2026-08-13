@@ -953,11 +953,11 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
             /* Serial-safe hook FIRST, so the lightweight crash evidence is on the
              * wire before the fallible VFS report (which can block/fault on
              * degraded media -- the filed TODO-24 reentrancy risk, the likelier
-             * failure). The inverse risk (a stuck UART stalling serial_write, which
-             * has no timeout, before the VFS report runs) is a rarer hardware
-             * failure that would also stall panic_screen's serial output; the real
-             * fix is a bounded/try-lock serial primitive -> XREF: bare-metal
-             * hardening abort-safe serial (TODO-10). */
+             * failure). The inverse risk (a stuck UART stalling the serial write
+             * before the VFS report runs) is CLOSED: WerpReportFault now emits via
+             * serial_write_emergency, which try-locks g_serial_lock and bounds every
+             * UART wait, so a wedged transmitter costs the report its bytes rather
+             * than stalling the fault path. */
             WerpReportFault((uint32_t)m->code, fault_addr);
             wer_write_crash_report(frame, vec, fault_addr);
             klog(LOG_ERROR, "except",

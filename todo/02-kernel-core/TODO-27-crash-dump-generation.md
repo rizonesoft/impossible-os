@@ -256,6 +256,7 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 - [ ] `dump_sink_clear()` -- sets `DumpPresent = 0` after the dump has been safely moved to the filesystem (called by §8)
 
 - [ ] `dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers: `klog_emit` takes the blocking `s_klog_lock`, so a panic that interrupted logging stalls the owner. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §10`
+  - Third consumer (2026-08-13): `01-boot-platform/TODO-10 §16` shipped the abort-safe SERIAL layer (`serial_write_emergency`, try-lock + bounded UART wait, latch armed post-owner-claim), which bounds `g_serial_lock` but NOT `s_klog_lock`. So `transition_ring_dump_to_serial`, `kernel_subsystem_dump` and `quota_dump_crash` still stall if the panic interrupted a `klog` holding `s_klog_lock` (`src/kernel/klog.c:1178`). The panic reason + register dump are emitted BEFORE that point and survive regardless; this item is what makes the later dumps survive too.
 - [ ] Commit: `"kernel/crashdump: raw partition sink, VFS-bypass DMA write, dump partition header"`
 
 **Test checkpoint:** `dump_sink_probe()` finds dump partition by GPT GUID. `dump_sink_write()` writes to raw partition without VFS. `DUMP_PARTITION_HEADER.DumpPresent` == 1 after write. `dump_sink_clear()` sets `DumpPresent` == 0. `POST16(0xDE4C)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.

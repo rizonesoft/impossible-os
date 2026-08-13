@@ -87,7 +87,11 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      * of NULL, crashing the IRQL tracking in isr_handler. */
     smp_early_bsp_init();
 
-    /* --- Serial: absolute first call, no dependencies --- */
+    /* --- Serial: first subsystem. Its ONLY dependency is the per-CPU data
+     * established just above: serial_init() locks g_serial_lock across its
+     * DLAB window, and spin_lock_irqsave reads smp_this_cpu()->current_irql
+     * with no NULL check. Never move this call above smp_early_bsp_init() --
+     * it would fault with no serial port up to report the fault. --- */
     POST16(POST16_SERIAL);
     serial_init();
     POST16(POST16_SERIAL_OK);

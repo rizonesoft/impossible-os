@@ -17,6 +17,7 @@
 #include "kernel/klog.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/serial.h"   /* abort-safe emergency serial (fatal paths) */
 #include "kernel/panic.h"
 #include "kernel/sched/irql.h"
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring */
@@ -237,8 +238,15 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     {
         uint64_t cs_val = frame->cs;
         if (cs_val != 0x08 && cs_val != 0x23) {
-            extern void serial_write(const char *s);
-            serial_write("[FATAL] isr_handler: corrupt CS in interrupt frame\n");
+            /* Emit through the bounded try-lock writer. Plain serial_write
+             * would block on g_serial_lock if the interrupted code held it, and
+             * spin forever on a wedged UART -- losing the only evidence this
+             * branch ever produces.
+             * It does NOT arm the global emergency latch: this halt stops only
+             * the CURRENT CPU, so the rest of the system may keep running and
+             * must keep its ordinary locked serial path. */
+            serial_write_emergency(
+                "[FATAL] isr_handler: corrupt CS in interrupt frame\n");
             for (;;) __asm__ volatile("cli; hlt");
         }
     }
@@ -251,8 +259,17 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         struct per_cpu_data *gs_self;
         __asm__ volatile("mov %%gs:0, %0" : "=r"(gs_self));
         if (!gs_self || gs_self->self != gs_self) {
-            extern void serial_write(const char *s);
-            serial_write("[FATAL] isr_handler: GS self-pointer invalid -- swapgs symmetry broken\n");
+            /* serial_write is UNUSABLE here and always was: it takes
+             * g_serial_lock via spin_lock_irqsave, which reads
+             * smp_this_cpu()->current_irql -- i.e. gs:0, the exact pointer this
+             * branch just proved invalid. The diagnostic for "GS is broken"
+             * cannot itself depend on GS. serial_write_emergency touches no
+             * per-CPU state: local_irq_save is pushfq/cli and spin_trylock is a
+             * plain CAS, so it is the only writer that can report this.
+             * Not armed globally, for the same reason as the branch above: this
+             * halts one CPU, not the machine. */
+            serial_write_emergency(
+                "[FATAL] isr_handler: GS self-pointer invalid -- swapgs symmetry broken\n");
             for (;;) __asm__ volatile("cli; hlt");
         }
     }
@@ -310,10 +327,14 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     if (vec < 32) {
         /* Truly-unhandled-vector fallback -- terminal panic path, no WER hook. The
          * exception vectors are 0x8E interrupt gates (IF cleared) and this reaches
-         * mainly the #DF(8)/#MC(18) abort vectors on an IST stack; neither the
-         * serial hook (serial_write can self-deadlock on g_serial_lock) nor the VFS
-         * writer (FAT32/AHCI can wait on an IRQ that cannot fire with IF=0, and the
-         * abort context has no #PF recovery) is safe here. panic_screen dumps the
+         * mainly the #DF(8)/#MC(18) abort vectors on an IST stack. The VFS writer
+         * (FAT32/AHCI can wait on an IRQ that cannot fire with IF=0, and the abort
+         * context has no #PF recovery) is still unsafe here, so this path keeps no
+         * WER hook. The serial half is now safe: panic_screen emits its reason and
+         * register dump through the bounded try-lock emergency writers, and arms
+         * the emergency latch once it claims panic ownership, so the diagnostics
+         * on this path cannot self-deadlock on a lock the interrupted code held
+         * nor spin forever on a wedged UART. panic_screen dumps the
          * full trap frame to serial, which IS the crash evidence for this path. The
          * lock-free WER hook lives on the recoverable ring-3 user terminals
          * (except.c general faults, vmm.c #PF); unregistered ring-3 FP/SIMD faults

@@ -92,7 +92,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
 | 💎  |  14   | Bare-metal test matrix and validation plan        | §3         |  [x]   |
 | 💎  |  15   | Boot splash spinner bare-metal fix                | §3, §10    |  [x]   |
-| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --         |  [ ]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --         |  [/]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -599,30 +599,48 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 2:
-- [ ] AP per-CPU TSS/IST: BSP-only today -- APs share one `kernel_tss`/IST (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe. Owned by `D01 T09 §10` (item: "Per-CPU TSS + IST").
-- [ ] Abort-safe serial for the panic path: panic_screen's serial_write holds g_serial_lock, so a #DF/#MC/NMI mid-write self-deadlocks before the BSOD -- add an emergency try-lock/raw serial primitive -> XREF: 02-kernel-core/TODO-23 §12
+- [/] AP per-CPU TSS/IST: BSP-only today -- APs share one `kernel_tss`/IST (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe. Owned by `D01 T09 §10` (item: "Per-CPU TSS + IST").
+  - Blocker: needs a per-CPU GDT so each AP has its own TSS descriptor slot, which the shared-BSP-GDT trampoline does not provide. Parked HERE as a consumer; the owner carries the same blocker and already names this item as a re-open trigger -> XREF: `01-boot-platform/TODO-09 §10` (item: "Per-CPU TSS + IST (PARKED)"). Not operator-gated: ordinary kernel work awaiting a scoped owner.
+- [x] Abort-safe serial: `serial_write_emergency`/`serial_putchar_emergency` try-lock `g_serial_lock` with a bounded UART wait (`serial.c`). Closes the #DF/#MC/NMI panic self-deadlock -> XREF: 02-kernel-core/TODO-23 §12
+  - Proceeds UNLOCKED when the try-lock fails (interleaved bytes beat no crash evidence) and re-asserts LCR 8N1 first, because `serial_init` re-purposes the base port to the divisor latch across its DLAB window; `serial_init` now holds the lock across that window too, closing the cross-CPU half.
+  - Bounded on both axes: 65536 LSR polls per byte, then a shared never-reset wedged-transmitter budget (8 bytes) drops later bytes to one status probe, so a dead UART costs the WHOLE panic ~524K polls rather than millions. A 1024-char cap bounds the string walk, checked BEFORE the dereference.
+  - `serial_write`/`serial_putchar` re-route once the latch is armed, covering indirect emitters (klog's serial sink, subsystem/transition-ring/quota dumps) without opting in. Armed at exactly two terminal sites: `panic.c` after `panic_try_claim_owner()`, and `boot_halt.c`.
+  - Panic reason + register dump (incl. `serial_write_hex`) call the emergency writers DIRECTLY, before the latch, so they survive on the async-fault path where the system RECOVERS and must keep its ordinary locked serial.
+  - Consumers closed: `except.c` WER-ordering note, `idt.c` unhandled-vector + both frame-integrity branches (the GS-invalid one could never have used `serial_write`, which reads `gs:0` via `spin_lock_irqsave`), `wer.c` `WerpReportFault`.
+- [x] NMI crash routed to `KeBugCheckExFrame` (`panic.c`): it discarded a live frame and took the `persist_registry=1` + POST16 path documented as fault-unsafe; now skips both and reports faulting RIP/registers.
+- [x] Async fault isolation publishes `async_result`/`async_done` BEFORE its diagnostic, which is now the bounded lock-free emitter not `klog` -- a worker faulting inside `klog` used to hang the BSP.
 
-**Test checkpoint:** per moved item; each carries its original acceptance text.
+**Test checkpoint:** `bash scripts/test.sh SUITE=boot` passes with 5 `serial_emergency` acquire/release-policy tests registered under `TEST_CAT_BOOT`; the held-lock test proves acquisition RETURNS rather than spinning, which is the property the panic path depends on. Boot unaffected across all four smoke-matrix legs (KVM/TCG x 1/2 CPU). The wedged-UART and self-deadlock paths are not unit-testable (real UART state plus a one-way global latch), so they rest on the bounds above plus the matrix showing no boot regression.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 added `serial_emergency` suites, 3283 kernel tests pass, 0 failures
+
+> **Notes:**
+> - Shipped: abort-safe serial (`serial_write_emergency`/`serial_putchar_emergency`, emergency latch, bounded UART wait, LCR re-assert) in `serial.c`/`serial.h`, plus the panic/idt/boot_halt/wer call-site conversions and NMI frame-aware routing.
+> - How it runs: try-lock `g_serial_lock` and proceed unlocked, with `local_irq_save`/`local_irq_restore` rather than `spin_lock_irqsave` -- `spin_trylock` raises no IRQL, so the release side must lower none.
+> - Downstream effects: closes TODO-23 §12's Accepted [H] self-deadlock and [M] UART-timeout findings plus the hazards `idt.c` and `except.c` documented in prose; `serial.h` now includes `spinlock.h`.
+> - Scope boundary: bounds the SERIAL layer only -- `klog_emit` takes `s_klog_lock` above it, so post-claim dumpers still stall if the panic interrupted logging -> XREF: `02-kernel-core/TODO-27 §7`.
+> - Canonical doc: this section + the emergency block in `include/kernel/drivers/serial.h`.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                 | 🪟 Win11                      | 🐧 Linux                      | 🚀 Impossible OS                 |
-| --- | ----------------------- | ----------------------------- | ----------------------------- | -------------------------------- |
-| 💎  | UC MMIO mapping         | ✅ MmMapIoSpace               | ✅ ioremap_uc                 | ✅ §1 vmm_map_mmio_uc            |
-| 💎  | IST stacks              | ✅ All critical exceptions    | ✅ IST1-4 DF/NMI/MCE          | ⚠️ §2 BSP IST1-3 (AP: T09 §10)   |
-| 💎  | ACPI FADT boot arch     | ✅ HAL checks all flags       | ✅ Gates PIT/RTC/PS2          | ✅ §4 IAPC_BOOT_ARCH parsed      |
-| 💎  | PS/2 ACPI detection     | ✅ HAL detects i8042          | ✅ i8042.nopnp                | ✅ §5 FADT + GSI routing         |
-| 💎  | AHCI MSI fallback       | ✅ StorAHCI INTx fallback     | ✅ libahci polled fallback    | ✅ §6 MSI→INTx→polled            |
-| 💎  | Graceful degradation    | ✅ Safe Mode + Last Known     | ✅ systemd continues          | ✅ §7 BOOT_TRY + degraded_mask   |
-| 💎  | Per-process page tables | ✅ Each process own CR3       | ✅ mm_struct per task         | ✅ §8 PML4 clone + CR3 switch    |
-| 💎  | CPU security verify     | ✅ HAL verifies CR4/EFER      | ✅ Checks feature enable      | ✅ §9 verify NX/SMEP/SMAP        |
-| 💎  | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize | ✅ setup_arch + efi_call wrap | ✅ §10 timer-last + rt_call mask |
-| 💎  | Logging on main FS      | ✅ C:\Windows\System32        | ✅ /var/log                   | ✅ §12 KLOG_DIR X:\ (T24)        |
-| 💎  | CPU feature minimums    | ✅ NX required since Vista    | ✅ verify_cpu required mask   | ✅ §13 NX+SSE2+LM+SYSCALL mask   |
-| ⭐  | Bare-metal test matrix  | ❌ Internal only (WHQL)       | ❌ Community-driven           | ✅ §14 4-platform matrix         |
-| ⭐  | Boot spinner liveness   | ✅ ISR-driven ring            | ⚠️ plymouth (optional)        | ✅ §15 timer ISR @10fps Fluent   |
+| ⭐  | Feature                 | 🪟 Win11                          | 🐧 Linux                          | 🚀 Impossible OS                 |
+| --- | ----------------------- | --------------------------------- | --------------------------------- | -------------------------------- |
+| 💎  | UC MMIO mapping         | ✅ MmMapIoSpace                   | ✅ ioremap_uc                     | ✅ §1 vmm_map_mmio_uc            |
+| 💎  | IST stacks              | ✅ All critical exceptions        | ✅ IST1-4 DF/NMI/MCE              | ⚠️ §2 BSP IST1-3 (AP: T09 §10)   |
+| 💎  | ACPI FADT boot arch     | ✅ HAL checks all flags           | ✅ Gates PIT/RTC/PS2              | ✅ §4 IAPC_BOOT_ARCH parsed      |
+| 💎  | PS/2 ACPI detection     | ✅ HAL detects i8042              | ✅ i8042.nopnp                    | ✅ §5 FADT + GSI routing         |
+| 💎  | AHCI MSI fallback       | ✅ StorAHCI INTx fallback         | ✅ libahci polled fallback        | ✅ §6 MSI→INTx→polled            |
+| 💎  | Graceful degradation    | ✅ Safe Mode + Last Known         | ✅ systemd continues              | ✅ §7 BOOT_TRY + degraded_mask   |
+| 💎  | Per-process page tables | ✅ Each process own CR3           | ✅ mm_struct per task             | ✅ §8 PML4 clone + CR3 switch    |
+| 💎  | CPU security verify     | ✅ HAL verifies CR4/EFER          | ✅ Checks feature enable          | ✅ §9 verify NX/SMEP/SMAP        |
+| 💎  | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize     | ✅ setup_arch + efi_call wrap     | ✅ §10 timer-last + rt_call mask |
+| 💎  | Logging on main FS      | ✅ C:\Windows\System32            | ✅ /var/log                       | ✅ §12 KLOG_DIR X:\ (T24)        |
+| 💎  | CPU feature minimums    | ✅ NX required since Vista        | ✅ verify_cpu required mask       | ✅ §13 NX+SSE2+LM+SYSCALL mask   |
+| ⭐  | Bare-metal test matrix  | ❌ Internal only (WHQL)           | ❌ Community-driven               | ✅ §14 4-platform matrix         |
+| ⭐  | Boot spinner liveness   | ✅ ISR-driven ring                | ⚠️ plymouth (optional)            | ✅ §15 timer ISR @10fps Fluent   |
+| 💎  | Abort-safe panic serial | ✅ Freezes other CPUs at bugcheck | ✅ bust_spinlocks + console flush | ✅ §16 try-lock + bounded UART   |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 
