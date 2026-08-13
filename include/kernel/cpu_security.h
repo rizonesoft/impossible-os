@@ -331,6 +331,16 @@ int __kstack_read_u64(uint64_t *out, const void *addr);
  *     NMI still owns IST2, so a second NMI reuses that stack and overwrites the
  *     frames. NMI-context callers must NOT use this; they declare their context
  *     instead of probing it (serial.h PANIC_CTX_*).
+ *   - GS-CORRUPT panic: recovery does NOT apply. Delivery of the provoked #PF
+ *     runs the common ISR entry first, which reads and dereferences `gs:0` to
+ *     verify swapgs symmetry (`isr_handler`, idt.c) BEFORE the RIP fixup is ever
+ *     consulted, and halts the CPU when that check fails. So a guarded read on a
+ *     machine whose GS base is corrupt halts exactly as an unguarded one would.
+ *     This is a LIMIT of the guarantee, not a regression -- the same pointer
+ *     faulted to the same place before -- but it means "survives a corrupt
+ *     pointer" holds only while GS is intact. The pre-arbitration panic dump is
+ *     GS-independent in its own accounting and routing; the fault RECOVERY
+ *     underneath it is not, and cannot be without an IST-backed #PF gate.
  * Returns 0 on success (*out = byte read), -1 if it faulted or was rejected. */
 int __kread_u8(uint8_t *out, const void *addr);
 

@@ -468,7 +468,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** N/A -- `boot.conf` skip list removed 2026-03-29; use `BOOT_TRY` / `degraded_mask` (§7) for intentional subsystem failure tests instead.
 
-> **Deferred:** [L] `boot.conf` subsystem skip-list removed 2026-03-29 (code deleted, absent from `src/`), superseded by `BOOT_TRY` / `degraded_mask` -> XREF: 01-boot-platform/TODO-10 §7 (item: "`BOOT_TRY(subsys, fn_call, name)` macro" at line 325)
+> **Deferred:** [L] `boot.conf` subsystem skip-list removed 2026-03-29 (code deleted, absent from `src/`), superseded by `BOOT_TRY` / `degraded_mask` -> XREF: 01-boot-platform/TODO-10 §7 (item: "`BOOT_TRY(subsys, fn_call, name)` macro" at line 326)
 
 ---
 
@@ -561,8 +561,8 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
 > **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 464)
-> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 804)
-> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 803)
+> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 818)
+> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 817)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
 
 ---
@@ -657,7 +657,7 @@ Three residuals the §16 adversarial and kernel-quality reviews raised against t
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` passes with the epoch-token, per-CPU attribution, context-predicate and fixup-routing suites registered under `TEST_CAT_BOOT`; a token minted before an epoch reset cannot spend the new epoch's charge, and one CPU's refund leaves another CPU's charge standing. The live corrupt-pointer recovery needs a real #PF and stays serial-validated -- the routing DECISION is unit-tested instead, and that gap is deliberate, not claimed as covered.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 19 `serial_emergency` suites (11 pre-existing + 8 added), 28477 kernel + 17 user tests pass, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 23 `serial_emergency` suites (11 pre-existing + 12 added), 28511 kernel + 17 user tests pass, 0 failures
 
 > **Notes:**
 > - Shipped: `__kread_u8` + `kread_u8_fixup_lookup`, the `PANIC_CTX_*` declared-context API, guarded walks in the emergency writer and `pe_copy`, slot-bitmap + generation latch accounting with a per-CPU ledger, per-byte recoverable ownership retest.
@@ -665,6 +665,14 @@ Three residuals the §16 adversarial and kernel-quality reviews raised against t
 > - Downstream effects: closes §16's Accepted [H] corrupt-caller-string and [M] non-attributable-charge findings; `serial_emerg_reserve` changed signature (`int` -> `uint32_t` token) and every caller moved with it.
 > - Scope boundary: the crash REASON path only -- the terminal renderers downstream still walk the originals -> XREF: §19. Cross-CPU panic ownership is §18; nested-NMI latch/replay is §2; the panic-safe emitter stays `02-kernel-core/TODO-27 §7`.
 > - Canonical doc: the emergency accounting block in `src/kernel/drivers/serial.c` plus the `PANIC_CTX_*` block in `include/kernel/drivers/serial.h`.
+
+> **Verified:** 2026-08-13 | commit `98dbbb632` + review fixes | 4/4 items | build OK | 28511 kernel + 17 user PASS | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | release flavor compiles | lint 0 errors
+> **Accepted:** [H] terminal renderers (BSOD, `printk`, `write_crash_dump`) still walk the ORIGINAL `description`/`file`, so a corrupt pointer can still kill the dump after the reason is out (reason: needs one guarded snapshot consumed by every renderer, plus a double-panic ownership decision) -> XREF: 01-boot-platform/TODO-10 §19 (item: "Take ONE bounded, guarded snapshot of `description` and `file` at panic entry")
+> **Accepted:** [H] nested-abort context: `frame->int_no` names only the innermost vector, so a fault inside the NMI handler re-enables the guarded read while the outer NMI owns IST2 (reason: needs a per-CPU NMI-depth or RSP-in-IST2 signal, shares the per-CPU TSS/IST blocker) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Nested-abort panic context")
+> **Accepted:** [H] `serial_emerg_reserve` publishes the global slot before its per-CPU ledger entry, so an abort in that window leaves one unattributable charge (reason: the reviewer-proposed ledger-first order was implemented and proved strictly worse -- it lets a nested refund clear ANOTHER CPU's live charge; irreducible without per-slot owner records, which do not fit the 32-bit latch) -> XREF: 01-boot-platform/TODO-10 §18 (item: "Async-isolation lock ownership")
+> **Accepted:** [M] the panic frame-chain walk still dereferences `frame_ptr[0]`/`[1]` raw behind a hardcoded `rbp` window, in the same abort context this section hardened for strings (reason: adjacent and pre-existing; `__kstack_read_u64` already exists for it) -> XREF: 01-boot-platform/TODO-10 §19 (item: "Guard the panic frame-chain walk the same way")
+> **Accepted:** [M] the guarded caller-string walk pays a `noinline` protected-read call per byte (reason: a span-copy primitive trades away byte-precise fault position and adds a second guarded-read mechanism; the 1024-char cap already bounds the cost) -> XREF: 01-boot-platform/TODO-10 §19 (item: "Guard the panic frame-chain walk the same way")
+> **Quality reviewed:** 2026-08-13 | Codex 11x (design, adversarial x2, test-coverage x2, re-adversarial x4, consistency, perf) + kernel-quality-auditor + concurrency-evidence-mapper | 9H+11M+2L fixed, 3H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -683,6 +691,9 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
 - [ ] Async-isolation lock ownership: an AP that faults while HOLDING `g_serial_lock` publishes `async_done` and parks forever still owning it, so the surviving BSP hangs on its next ordinary serial write.
   - §16 IMPROVED this (the diagnostic is try-locked and bounded, and `async_done` is now published before it, so the BSP at least reaches the sequential fallback) but cannot close it: the parked AP never unwinds the interrupted `serial_write`. Arming the latch would stop the BSP blocking, but the BSP is then a non-owner and its output is dropped -- so the fix is real ownership, not routing.
   - Needs an owner-tracked poison/handoff on `g_serial_lock`, or a decision to escalate a lock-holding async fault to the system-terminal path. That is an SMP-ownership design call, not a serial-primitive change. Test by faulting an AP while it holds the lock and asserting the BSP reaches sequential fallback AND still logs.
+- [ ] Nested-abort panic context: `frame->int_no` names only the INNERMOST vector, so a fault INSIDE the NMI handler re-enters panic classified `PANIC_CTX_NORMAL` and re-enables the guarded read on IST2.
+  - Found by the §17 kernel-quality audit, and it defeats §17's NMI gate in exactly the case the gate exists for: NMI -> `nmi_crash_handler` -> `panic_screen` -> a fault (the raw RBP walk at `panic.c` is one live route) -> `#PF` re-enters panic with `int_no` 14. The context predicate sees a page fault, allows `__kread_u8`, and its fixup `IRETQ` re-arms NMI delivery while the outer NMI's IST2 frames are still live under RSP -- because `#PF` has no IST of its own. A second NMI then resets RSP to the IST2 top and overwrites them.
+  - The gate is correct for a DIRECT NMI panic; what it cannot see is nesting. Needs a real depth signal rather than a vector: a per-CPU NMI-depth counter set by the NMI entry, or an RSP-within-IST2 range test. Belongs here rather than §17 because it is IST/CPU-ownership state, not a serial-writer property, and it shares the per-CPU TSS/IST blocker -> XREF: `01-boot-platform/TODO-10 §2` (item: "AP per-CPU TSS/IST: BSP-only today").
 - [ ] Commit: `"kernel: panic-path cross-CPU ownership -- async-park is_online, panic CPU freeze, serial-lock ownership"`
 
 **Test checkpoint:** After an injected async-init fault, a subsequent `boot_async_group` completes without a 10s stall and does not report a spurious FATAL for an unrelated step. A panic on one CPU leaves every other CPU halted before `write_crash_dump` runs, and an AP faulting while holding `g_serial_lock` still lets the BSP log through the sequential fallback.
@@ -700,6 +711,8 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
   - The snapshot largely exists already: `panic_collect_evidence` writes guarded copies to `ev->message` / `ev->file` in the evidence record. The work is rewiring consumers to it, not building a new mechanism.
   - The design subtlety that makes this a section rather than a patch: `panic_collect_evidence` is guarded by a one-shot atomic claim (`s_evidence_collected`), so on an SMP double panic the LOSING CPU returns without populating the record. A consumer that naively reads it would render the winner's strings as its own. Decide explicitly whether a loser renders the winner's evidence, its own locally-snapshotted copy, or a placeholder.
   - Contexts where the guarded read is unavailable (`PANIC_CTX_NMI`, `PANIC_CTX_UNKNOWN`) must emit a fixed placeholder rather than walking the original -- the rerouted ordinary path is exactly where an unguarded walk survives today.
+- [ ] Guard the panic frame-chain walk the same way: it still dereferences `frame_ptr[0]`/`[1]` raw, gated only by a hardcoded `rbp` window, in the identical abort context §17 hardened for caller strings.
+  - `__kstack_read_u64` exists for exactly this walk (it was built for `RtlCaptureStackBackTrace`) and is not used here, so a corrupt-but-in-window RBP still takes a terminal fault while the description pointer beside it now recovers. Raised by the §17 kernel-quality audit as an incomplete application of §17's own guarantee; the magic address window should go with it.
 - [ ] Commit: `"kernel: single guarded panic-string snapshot for every terminal renderer"`
 
 **Test checkpoint:** With a deliberately unmapped panic description, the BSOD paints with a truncation placeholder and `write_crash_dump` completes, on QEMU TCG at 1 and 2 CPUs. No renderer dereferences `description` or `file` directly -- verified by grep at review time.

@@ -98,11 +98,14 @@
  * to hit a zero byte or an unmapped page. (The walk itself is done with the
  * lock NOT held -- see serial_write_emergency -- so a fault there is survivable;
  * this cap bounds how much it reads before giving up.)
- * A fault-suppressed read is not an option here: the kernel's RIP-keyed fixup
- * table redirects USER-range faults only (page_fault_handler gates on
- * CR2 < MM_USER_END), so it does not cover these kernel pointers. The longest
- * string reaching here in-tree is panic.c's 320-byte description buffer, so
- * this leaves 3x headroom. */
+ * The cap bounds how FAR the walk reads; surviving a pointer that is unmapped
+ * rather than unterminated is a separate guarantee, and `__kread_u8` now
+ * provides it (see serial_emergency_write_str). An earlier revision of this
+ * comment claimed a fault-suppressed read was impossible here because the
+ * RIP-keyed fixup table was user-range only -- that was never true: the kernel
+ * read `__kstack_read_u64` is matched by RIP and direction with no CR2 gate.
+ * The longest string reaching here in-tree is panic.c's 320-byte description
+ * buffer, so this leaves 3x headroom. */
 #define SERIAL_EMERG_MAX_CHARS    1024u
 
 /* Characters captured per locked emission. The caller's string is copied into a
@@ -661,6 +664,22 @@ int serial_emerg_should_drop_for(uint32_t writer, uint32_t owner)
     return writer != owner;
 }
 
+/* Same predicate with the writer identity SUPPLIED rather than recomputed.
+ *
+ * The identity comes from CPUID, which is serializing and traps to the
+ * hypervisor under KVM/WHPX/Hyper-V. It is also loop-invariant: a CPU does not
+ * change its own APIC id mid-record. So any caller re-testing ownership per byte
+ * hoists it once and re-reads only the latch, which is the part that can change
+ * under it. */
+static int serial_emerg_drop_for_writer(uint32_t me)
+{
+    uint32_t cur = __atomic_load_n(&s_emergency, __ATOMIC_ACQUIRE);
+
+    if (serial_emerg_state(cur) == SERIAL_EMERG_OFF)
+        return 0;                       /* fail open -- nobody has claimed */
+    return serial_emerg_should_drop_for(me, serial_emerg_cpu(cur));
+}
+
 static int serial_emerg_reroute_should_drop(void)
 {
     uint32_t cur = __atomic_load_n(&s_emergency, __ATOMIC_ACQUIRE);
@@ -716,7 +735,9 @@ static inline void serial_emergency_restore_lcr(void)
 }
 
 /* Claim one of the SERIAL_EMERG_STUCK_BYTES full-wait allowances.
- * Returns 1 if this call may spin, 0 if it must take the single-probe path.
+ * Returns a nonzero TOKEN if this call may spin, or SERIAL_EMERG_NO_TOKEN if it
+ * must take the single-probe path. The token names the slot claimed and the
+ * epoch it was claimed in; hand it back to serial_emerg_return exactly once.
  *
  * STRONG CAS with a bounded attempt count. Strong so a spurious failure cannot
  * cost an allowance; bounded because this runs INSIDE serial_emergency_emit's
@@ -798,11 +819,41 @@ uint32_t serial_emerg_reserve(void)
 
         want = (cur & ~SERIAL_EMERG_SLOTS) |
                ((used | bit) << SERIAL_EMERG_SSHIFT);
+
+        /* GLOBAL FIRST HERE, LEDGER FIRST IN return/refund. The asymmetry is
+         * deliberate and is the whole correctness argument, so it is spelled out
+         * rather than left to look like an inconsistency.
+         *
+         * The global slot field and this CPU's ledger entry are different words,
+         * so these are necessarily two atomic steps, and `local_irq_save` does
+         * not mask NMI or #MC -- an abort CAN land between them. What differs is
+         * whether this CPU already OWNS the thing it is recording:
+         *
+         *   reserve  -- does NOT own the slot until the CAS wins. Recording the
+         *     ledger first is therefore SPECULATIVE, and that is unsound: in the
+         *     window before the CAS another CPU can claim the same slot, and a
+         *     nested abort on this CPU then runs the async refund, which selects
+         *     the phantom bit, finds it globally set (by the OTHER CPU), and
+         *     clears THEIR live charge -- erasing a timeout that really happened.
+         *   return/refund -- DOES own the slot. Disclaiming first is conservative
+         *     there, because the worst case strands this CPU's own charge.
+         *
+         * So the rule is: never claim before you own, always disclaim before you
+         * release. Both orders fail toward "this CPU loses one of its own
+         * allowances" and never toward corrupting another CPU's accounting.
+         *
+         * Residual, bounded: an abort between this CAS and the mask_set below
+         * leaves an outstanding charge no `charges_self` can attribute, so the
+         * refund cannot reclaim it and it stands for the rest of the pre-arm
+         * phase. Cost is one full-length wait, in the safe direction. Removing it
+         * entirely needs per-slot owner+generation records, which do not fit the
+         * 32-bit latch -- the same constraint that ruled out per-slot
+         * incarnations for the token.
+         *
+         * The generation comes from the word we install, not a fresh load: that
+         * is what binds the charge to the epoch it actually lands in. */
         if (__atomic_compare_exchange_n(&s_emergency, &cur, want, 0,
                                         __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-            /* The generation comes from the word we actually mutated, not a
-             * fresh load: that is what binds the token to the epoch this charge
-             * really landed in. */
             gen = serial_emerg_gen(want);
             serial_emerg_mask_set(gen, bit);
             return SERIAL_EMERG_TOKEN_VALID |
@@ -865,12 +916,19 @@ void serial_emerg_return(uint32_t token)
             serial_emerg_mask_clear(gen, bit);
             return;                         /* already returned -- nothing to do */
         }
+        /* LEDGER FIRST, same reasoning as serial_emerg_reserve and for the same
+         * reason: these are two atomic steps and NMI/#MC are not masked, so an
+         * abort can land between them. Clearing the ledger first means a nested
+         * refund sees this slot as NOT ours and leaves it alone; clearing the
+         * global bit first would leave the slot in our ledger while it is free
+         * again globally, so a nested refund could clear a bit another CPU had
+         * meanwhile re-reserved -- erasing a timeout that really happened. An
+         * advisory ledger can only ever under-refund, which is the safe error. */
+        serial_emerg_mask_clear(gen, bit);
         want = cur & ~(bit << SERIAL_EMERG_SSHIFT);
         if (__atomic_compare_exchange_n(&s_emergency, &cur, want, 0,
-                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-            serial_emerg_mask_clear(gen, bit);
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
             return;
-        }
     }
 }
 
@@ -955,11 +1013,11 @@ void serial_emerg_refund_self(uint32_t n)
             serial_emerg_mask_clear(gen, give);
             return;                      /* nothing of ours left outstanding */
         }
+        /* LEDGER FIRST -- see serial_emerg_return. */
+        serial_emerg_mask_clear(gen, give);
         if (__atomic_compare_exchange_n(&s_emergency, &cur, want, 0,
-                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-            serial_emerg_mask_clear(gen, give);
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
             return;
-        }
     }
 }
 
@@ -1011,6 +1069,23 @@ static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov)
 
     if (!s_serial_port) return 0;
 
+    /* PROBE BEFORE RESERVING. A byte that finds the transmitter already ready
+     * never waits, and the budget counts WAITS -- so reserving for it was both
+     * wasted work and a misreading of what the allowance is for. The old order
+     * charged and immediately refunded a slot for every healthy byte, which on a
+     * working UART is the overwhelmingly common case: two CAS loops per byte on
+     * a word every other panicking CPU is also touching, plus the ledger update,
+     * for an accounting result of exactly zero.
+     *
+     * Observable behaviour is unchanged: the byte goes out either way, and the
+     * budget ends where it did. What changes is that a healthy transmitter no
+     * longer pays the contended reservation protocol at all. */
+    if ((inb(s_serial_port + UART_REG_LSR) & UART_LSR_THRE) != 0) {
+        outb(s_serial_port + UART_REG_THR, (uint8_t)c);
+        return 1;
+    }
+
+    /* Not ready: this byte is about to WAIT, which is what the budget bounds. */
     if (terminal) {
         token    = serial_emerg_reserve();
         may_wait = (token != SERIAL_EMERG_NO_TOKEN);
@@ -1062,6 +1137,11 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
     uint64_t flags;
     int      locked;
     uint32_t i;
+    /* Hoisted ONCE: the per-byte ownership retest below needs this, and deriving
+     * it per byte would put a serializing CPUID -- a VM exit under KVM/WHPX --
+     * inside the IRQ-disabled, lock-held region, once or twice for every byte of
+     * every recoverable record. Only the latch is re-read per byte. */
+    uint32_t me = (terminal ? 0u : (serial_emerg_self_cpu() & SERIAL_EMERG_CPU));
 
     /* local_irq_save rather than spin_lock_irqsave's machinery: trylock raises
      * no IRQL, so the release side must lower none (see spin_tryunlock). */
@@ -1091,7 +1171,7 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
          *
          * Terminal output is exempt: it IS the crash record, and its callers are
          * already filtered by the routing predicate before they reach here. */
-        if (!terminal && serial_emerg_reroute_should_drop())
+        if (!terminal && serial_emerg_drop_for_writer(me))
             break;
         if (buf[i] == '\n') {
             (void)serial_putchar_raw_bounded('\r', terminal, recov);
@@ -1212,11 +1292,21 @@ void serial_write_recoverable(const char *str)
      * gets the short per-byte wait and a call-local budget -- it can neither
      * spend the terminal allowance nor mask interrupts for the ~0.5 s the
      * terminal bound permits. */
-    /* PANIC_CTX_NORMAL: a recoverable report is by definition emitted by a CPU
-     * that is not taking an abort, so the guarded read is both available and the
-     * right choice -- a survivable caller must not be able to kill the machine
-     * with a bad pointer. */
-    serial_emergency_write_str(str, 0 /*recoverable*/, PANIC_CTX_NORMAL);
+    /* PANIC_CTX_UNKNOWN, NOT NORMAL. An earlier revision reasoned that "a
+     * recoverable report is by definition emitted by a CPU that is not taking an
+     * abort" and therefore hardcoded PANIC_CTX_NORMAL. That precondition is
+     * false at every in-tree call site: idt.c's corrupt-CS and GS-invalid
+     * branches run inside isr_handler for ANY vector, #NMI and #MC included, and
+     * panic.c's async-isolation diagnostic runs inside panic_screen -- which had
+     * already computed an NMI-aware context for its guarded appends and would
+     * have discarded it here.
+     *
+     * Nothing breaks today because all three sites pass a literal or a stack
+     * buffer, which cannot fault. The point is that the NEXT caller passing a
+     * caller-supplied pointer would silently inherit the nested-NMI IST2 hazard,
+     * and the restrictive default is what stops that being silent. A caller that
+     * can prove its context uses serial_write_emergency_ctx. */
+    serial_emergency_write_str(str, 0 /*recoverable*/, PANIC_CTX_UNKNOWN);
 }
 
 void serial_putchar_emergency(char c)

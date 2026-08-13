@@ -59,8 +59,12 @@ void serial_emergency_release(spinlock_t *lock, int acquired);
  *   serial_emerg_reset_for_test() -- restore the pristine state. Starts a NEW
  *                              accounting epoch (it clears the budget), so it
  *                              advances the generation and invalidates tokens.
- * The budget is MONOTONIC in timeouts: a reservation that times out is never
- * returned, and nothing else ever lowers the count. See serial.c. */
+ * The budget is MONOTONIC IN TIMEOUTS: a reservation that times out is never
+ * handed back, and no ordinary success path lowers the count for another
+ * caller's charge. It is NOT monotonic outright -- three things lower it, all
+ * deliberate: a byte that drains returns its own reservation, the async refund
+ * hands back the charges its own CPU made on a machine that turns out to
+ * survive, and publishing an epoch clears every slot. See serial.c. */
 /* Pure routing predicate: given the CPU attempting a REROUTED ordinary write
  * and the recorded arming CPU, must the write be discarded? Exposed so the
  * owner / non-owner / unknown cases are testable without arming the one-way
@@ -89,9 +93,10 @@ uint32_t serial_emerg_publish_word(uint32_t cur);
 uint32_t serial_emerg_refund_word(uint32_t cur, uint32_t give);
 
 /* Reservation token. Bit 31 marks a real reservation so that a token minted in
- * generation 0 is still distinguishable from "no allowance"; the low bits carry
- * the generation the charge landed in. Opaque to callers -- pass it back to
- * serial_emerg_return unmodified. */
+ * generation 0 is still distinguishable from "no allowance"; the generation the
+ * charge landed in sits above the low byte, and the low byte carries the slot
+ * index that names the charge itself. Opaque to callers -- pass it back to
+ * serial_emerg_return unmodified, exactly once. */
 #define SERIAL_EMERG_NO_TOKEN     0x00000000u
 #define SERIAL_EMERG_TOKEN_VALID  0x80000000u
 
