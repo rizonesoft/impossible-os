@@ -242,10 +242,12 @@ uint64_t isr_handler(struct interrupt_frame *frame)
              * would block on g_serial_lock if the interrupted code held it, and
              * spin forever on a wedged UART -- losing the only evidence this
              * branch ever produces.
-             * It does NOT arm the global emergency latch: this halt stops only
-             * the CURRENT CPU, so the rest of the system may keep running and
-             * must keep its ordinary locked serial path. */
-            serial_write_emergency(
+             * It does NOT arm the global emergency latch, and it uses the
+             * RECOVERABLE budget: this halt stops only the CURRENT CPU, so the
+             * rest of the system keeps running -- and must keep both its
+             * ordinary locked serial path and an unspent terminal allowance for
+             * a later real panic. */
+            serial_write_recoverable(
                 "[FATAL] isr_handler: corrupt CS in interrupt frame\n");
             for (;;) __asm__ volatile("cli; hlt");
         }
@@ -266,9 +268,9 @@ uint64_t isr_handler(struct interrupt_frame *frame)
              * cannot itself depend on GS. serial_write_emergency touches no
              * per-CPU state: local_irq_save is pushfq/cli and spin_trylock is a
              * plain CAS, so it is the only writer that can report this.
-             * Not armed globally, for the same reason as the branch above: this
-             * halts one CPU, not the machine. */
-            serial_write_emergency(
+             * Not armed, and recoverable accounting, for the same reason as the
+             * branch above: this halts one CPU, not the machine. */
+            serial_write_recoverable(
                 "[FATAL] isr_handler: GS self-pointer invalid -- swapgs symmetry broken\n");
             for (;;) __asm__ volatile("cli; hlt");
         }

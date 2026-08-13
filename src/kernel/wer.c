@@ -16,7 +16,7 @@
 #include "kernel/nt/filetime.h"
 #include "kernel/klog.h"
 #include "kernel/timer.h"
-#include "kernel/drivers/serial.h" /* serial_write -- fault-safe serial primitive for the WER hook */
+#include "kernel/drivers/serial.h" /* serial_write_recoverable -- bounded fault-safe serial for the WER hook */
 #include "libc/string.h"
 
 /* ---- Path helpers ------------------------------------------------------- */
@@ -279,8 +279,8 @@ int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fau
  * side -> XREF: 12-user-platform-sdk/TODO-04 s5. Deliberately does NO VFS and NO
  * allocation so it is safe on the interrupts-disabled fault path (unlike the
  * JSON report writer below, whose VFS I/O carries a filed reentrancy risk --
- * TODO-24 s.BlackBox). Emits via serial_write_emergency (the abort-safe
- * primitive panic.c arms), NOT klog: klog's live-disk path (klog_disk_flush)
+ * TODO-24 s.BlackBox). Emits via serial_write_recoverable (the bounded
+ * non-blocking writer, sized for a path the system survives), NOT klog: klog's live-disk path (klog_disk_flush)
  * allocates pages and does VFS, which would defeat the point of a safe
  * fallback. The "wer: " prefix matches the former klog subsystem tag. */
 void WerpReportFault(uint32_t code, uint64_t fault_addr)
@@ -288,18 +288,19 @@ void WerpReportFault(uint32_t code, uint64_t fault_addr)
     /* wer_format_fault_line builds the whole "wer: ...\n" line; emit it with a
      * SINGLE call so another CPU cannot interleave its output mid-record.
      *
-     * serial_write_emergency, not serial_write: this runs on a FAULT path with
+     * serial_write_recoverable, not serial_write: this runs on a FAULT path with
      * interrupts disabled, and plain serial_write both blocks on g_serial_lock
      * (self-deadlock if the interrupted code held it) and spins unbounded on the
      * UART transmit bit (a stuck UART stalls the report -- the risk except.c
      * documents at its WerpReportFault call site). The emergency path try-locks
      * and bounds every hardware wait, so the worst case degrades from "hang" to
      * "interleaved bytes". Unlike panic.c this caller does NOT arm emergency
-     * mode: a user fault is recoverable and ordinary serial output must keep its
-     * locking after the report. */
+     * mode, and it uses the RECOVERABLE budget -- a short per-byte wait and a
+     * per-call allowance -- so a wedged UART cannot make a survivable user
+     * fault stall other CPUs behind g_serial_lock. */
     char line[WER_FAULT_LINE_MAX];
     if (wer_format_fault_line(line, sizeof(line), code, fault_addr) > 0)
-        serial_write_emergency(line);
+        serial_write_recoverable(line);
 }
 
 /* ---- Report writer ------------------------------------------------------ */

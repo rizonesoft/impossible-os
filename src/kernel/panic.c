@@ -33,6 +33,7 @@
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring dump */
 #include "kernel/smp.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/drivers/serial_emergency.h"  /* budget refund on the survivable branch */
 #include "kernel/boot_progress.h"   /* boot_stage_history_get (panic evidence) */
 #include "kernel/boot_info.h"       /* boot_history seq + g_boot_info.had_panic */
 #include "kernel/mm/pmm.h"          /* pmm_get_free_frames */
@@ -532,37 +533,102 @@ static inline uint64_t read_cr3(void)
     return val;
 }
 
+/* Pre-arbitration emit. TERMINAL accounting, unconditionally, and deliberately
+ * GS-INDEPENDENT: this is the panic reason and register dump, the evidence that
+ * matters most, and it must not depend on per-CPU state being intact.
+ *
+ * An earlier revision chose the budget here by asking whether this CPU was an
+ * async worker (so a survivable park would not spend the terminal allowance).
+ * That was wrong in kind: the check calls smp_this_cpu(), which reads gs:0 and
+ * accepts any non-NULL value without validating it, so a panic caused by a
+ * corrupt or unmapped GS base took a nested fault BEFORE any output -- and on a
+ * #DF that triple-faults and erases everything. It also contradicted the
+ * routing design in serial.c, which uses CPUID precisely because GS cannot be
+ * trusted here. The budget question is not worth a faultable read in front of
+ * the crash evidence; the async branch below still uses recoverable accounting
+ * for its OWN diagnostic, where per-CPU state has already been dereferenced. */
+static void panic_emit(const char *s)
+{
+    serial_write_emergency(s);
+}
+
+
 /* --- Hang-proof hex writer for the unconditional panic-reason dump ---
  *
- * Writes a 64-bit value as "0x<hex>" directly to serial via
- * serial_putchar_emergency(). No buffers, no formatting library, and no
- * blocking lock acquisition -- so even if klog, printk, the heap, or the
- * compositor lock are corrupted, and even if the interrupted code holds
- * g_serial_lock, this still produces readable output. Used only by the
- * top-of-panic dump (before async isolation, ownership, readiness,
- * or framebuffer); elsewhere printk("%x") is fine.
+ * Formats a 64-bit value as "0x<hex>" into a stack buffer and emits it with ONE
+ * serial_write_emergency call. No heap, no formatting library, and no blocking
+ * lock acquisition -- so even if klog, printk, the heap, or the compositor lock
+ * are corrupted, and even if the interrupted code holds g_serial_lock, this
+ * still produces readable output.
  *
- * The emergency variant is named EXPLICITLY rather than relying on the
+ * The buffer matters because emitting per character (serial_putchar_emergency)
+ * drops and retakes the lock between every hex digit, and the register dump
+ * below deliberately runs on EVERY panicking CPU before panic_try_claim_owner()
+ * parks the losers -- so a concurrent panic would interleave into the middle of
+ * a register VALUE at every digit boundary. One emit per value removes those
+ * voluntary boundaries.
+ *
+ * It is NOT an atomicity guarantee, and must not be read as one: the emergency
+ * writer proceeds UNLOCKED when its try-lock fails, so a second panicking CPU
+ * can still write into the UART mid-value. Interleaving is merely made rare
+ * rather than structural; preventing it outright would need arbitration between
+ * concurrent direct panic writers, which the pre-arbitration dump deliberately
+ * does not have.
+ *
+ * The emergency writer is named EXPLICITLY rather than relying on the
  * serial_write/serial_putchar re-routing latch, because this dump runs before
  * the panic is known to be system-terminal (the async-isolation branch can park
  * one AP and let the system continue), so the latch is deliberately not armed
- * yet. The shared wedged-transmitter budget still bounds the whole dump even
- * though it is emitted one character per call. */
+ * yet. */
 static void serial_write_hex(uint64_t v)
 {
     static const char d[] = "0123456789ABCDEF";
-    serial_putchar_emergency('0');
-    serial_putchar_emergency('x');
+    char buf[19];                 /* "0x" + 16 nibbles + NUL */
+    uint32_t pos = 0;
     int leading = 1;
     int i;
+
+    buf[pos++] = '0';
+    buf[pos++] = 'x';
     for (i = 60; i >= 0; i -= 4) {
         uint32_t nib = (uint32_t)((v >> i) & 0xFu);
         if (leading && nib == 0 && i > 0)
             continue;
         leading = 0;
-        serial_putchar_emergency(d[nib]);
+        buf[pos++] = d[nib];
     }
+    buf[pos] = '\0';
+    panic_emit(buf);
 }
+
+/* Bounded appenders so a whole diagnostic record can be built in one stack
+ * buffer and emitted with ONE call. Multiple fragments would each start a fresh
+ * call-local budget, so a wedged UART could pay a full-length wait per fragment. */
+static void panic_append(char *buf, uint32_t cap, uint32_t *pos, const char *s)
+{
+    while (*s && *pos + 1u < cap)
+        buf[(*pos)++] = *s++;
+    buf[*pos] = '\0';
+}
+
+static void panic_append_hex(char *buf, uint32_t cap, uint32_t *pos, uint64_t v)
+{
+    static const char d[] = "0123456789ABCDEF";
+    int leading = 1;
+    int i;
+
+    panic_append(buf, cap, pos, "0x");
+    for (i = 60; i >= 0; i -= 4) {
+        uint32_t nib = (uint32_t)((v >> i) & 0xFu);
+        if (leading && nib == 0 && i > 0)
+            continue;
+        leading = 0;
+        if (*pos + 1u < cap)
+            buf[(*pos)++] = d[nib];
+    }
+    buf[*pos] = '\0';
+}
+
 
 /* Simple integer to decimal string (for countdown display) */
 static void itoa_simple(uint32_t val, char *buf)
@@ -1212,6 +1278,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * identity there). */
     panic_collect_evidence(frame, bugcheck_code, bugcheck_params, description, file, line);
 
+    /* Wedged-UART charge as it stands BEFORE the unconditional dump below.
+     * The dump must be GS-independent, so it cannot ask whether this CPU is
+     * survivable before spending; it spends first, and the async-isolation
+     * branch refunds this delta if the machine turns out to keep running. */
+    uint32_t budget_before = serial_emerg_waits();
     uint32_t screen_w;
     uint32_t screen_h;
     uint64_t cr2_val;
@@ -1229,14 +1300,23 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * isolation, ownership claim, readiness dump, VPD, NVRAM,
      * framebuffer BSOD, compositor unlock) hang or deadlock.
      *
-     * Uses serial_write() directly -- no printk, no klog, no
-     * framebuffer. Emergency mode is armed at the top of this function,
-     * so serial_write here is the bounded try-lock path: it cannot
-     * self-deadlock on g_serial_lock held by the code this panic
-     * interrupted, and it cannot spin forever on a wedged UART. Before
-     * that arming existed this block CLAIMED to take no locks while
-     * serial_write took g_serial_lock unconditionally, which is exactly
-     * how a #DF/#MC/NMI mid-write silenced the panic it caused.
+     * NOTE the accounting: this dump runs BEFORE we know whether the machine
+     * dies, and the async-isolation branch below parks one AP and lets it keep
+     * booting. A survivable dump must therefore not spend the shared terminal
+     * allowance -- if it did, a later REAL panic would emit its reason and
+     * registers on a saturated budget, before arming clears it, and lose exactly
+     * the evidence that matters. panic_emit/panic_emit_hex below pick
+     * recoverable accounting when this CPU is an async worker.
+     *
+     * Uses the emergency writers DIRECTLY -- no printk, no klog, no
+     * framebuffer, and NOT the re-routing latch, which is not armed yet
+     * (see the NOTE at the top of this function). They try-lock
+     * g_serial_lock and proceed unlocked on failure, with every UART wait
+     * bounded, so this block cannot self-deadlock on a lock the panicking
+     * code already held nor spin forever on a wedged transmitter. Before
+     * they existed this block CLAIMED to take no locks while serial_write
+     * took g_serial_lock unconditionally, which is exactly how a
+     * #DF/#MC/NMI mid-write silenced the panic it caused.
      *
      * Why this landed 2026-04-22: operators kept seeing boot logs
      * end at the readiness-dump `[OK] TPM` line with no panic header
@@ -1245,35 +1325,35 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * path swallowed the actual reason. Panic MUST be observable
      * even under the most hostile downstream state. */
     {
-        serial_write_emergency("\n\n[PANIC] ");
-        serial_write_emergency(description ? description : "(no description)");
+        panic_emit("\n\n[PANIC] ");
+        panic_emit(description ? description : "(no description)");
         if (file) {
-            serial_write_emergency("\n  at ");
-            serial_write_emergency(file);
+            panic_emit("\n  at ");
+            panic_emit(file);
         }
-        serial_write_emergency("\n");
+        panic_emit("\n");
 
         if (frame) {
-            serial_write_emergency("  RIP=");
+            panic_emit("  RIP=");
             serial_write_hex(frame->rip);
-            serial_write_emergency(" CS=");
+            panic_emit(" CS=");
             serial_write_hex(frame->cs);
-            serial_write_emergency(" ERR=");
+            panic_emit(" ERR=");
             serial_write_hex(error_code);
-            serial_write_emergency("\n  CR2=");
+            panic_emit("\n  CR2=");
             serial_write_hex(read_cr2());
-            serial_write_emergency(" CR3=");
+            panic_emit(" CR3=");
             serial_write_hex(read_cr3());
-            serial_write_emergency("\n");
-            serial_write_emergency("  RAX=");     serial_write_hex(frame->rax);
-            serial_write_emergency(" RBX=");      serial_write_hex(frame->rbx);
-            serial_write_emergency(" RCX=");      serial_write_hex(frame->rcx);
-            serial_write_emergency(" RDX=");      serial_write_hex(frame->rdx);
-            serial_write_emergency("\n  RSI=");   serial_write_hex(frame->rsi);
-            serial_write_emergency(" RDI=");      serial_write_hex(frame->rdi);
-            serial_write_emergency(" RBP=");      serial_write_hex(frame->rbp);
-            serial_write_emergency(" RSP=");      serial_write_hex(frame->rsp);
-            serial_write_emergency("\n");
+            panic_emit("\n");
+            panic_emit("  RAX=");     serial_write_hex(frame->rax);
+            panic_emit(" RBX=");      serial_write_hex(frame->rbx);
+            panic_emit(" RCX=");      serial_write_hex(frame->rcx);
+            panic_emit(" RDX=");      serial_write_hex(frame->rdx);
+            panic_emit("\n  RSI=");   serial_write_hex(frame->rsi);
+            panic_emit(" RDI=");      serial_write_hex(frame->rdi);
+            panic_emit(" RBP=");      serial_write_hex(frame->rbp);
+            panic_emit(" RSP=");      serial_write_hex(frame->rsp);
+            panic_emit("\n");
         }
     }
 
@@ -1284,37 +1364,81 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     {
         struct per_cpu_data *pcpu = smp_this_cpu();
         if (pcpu && pcpu->in_async_work) {
-            /* PUBLISH FIRST, DIAGNOSE SECOND. The BSP's barrier is waiting on
-             * async_done to run the sequential fallback (boot_storage.c), so the
-             * completion signal must not depend on the diagnostic surviving.
-             * This ordering used to be reversed, and the diagnostic was a klog()
-             * -- which takes s_klog_lock and sinks to the ordinary locked
-             * serial_write. An async worker that faulted while holding either
-             * lock therefore self-deadlocked HERE, never published async_done,
-             * and hung the BSP forever on a failure it was designed to recover
-             * from. */
-            pcpu->async_result = (uint8_t)2;  /* BOOT_FATAL */
+            /* Snapshot the identifying fields BEFORE publishing below. Once
+             * async_done is observed the BSP's barrier exits, and the next async
+             * group clears async_name and re-arms the slot for a DIFFERENT step
+             * -- so reading it afterwards can misattribute the crash, or print
+             * "?", which destroys the value of this diagnostic. */
+            const char *step_name = pcpu->async_name ? pcpu->async_name : "?";
+            uint32_t    step_cpu  = pcpu->cpu_id;
+
+            /* REFUND FIRST, then publish, then diagnose.
+             *
+             * The refund gives back what the GS-independent pre-arbitration
+             * dump above charged: this CPU turns out to be survivable, so it
+             * must not leave the shared terminal allowance spent, or a later
+             * REAL panic would emit its reason and registers on a saturated
+             * budget. It goes BEFORE the publication because everything after
+             * that point is observable: once async_done is visible the BSP
+             * proceeds, and a terminal NMI/#MC landing on this AP in the
+             * meantime would no longer be classified survivable -- and would
+             * find the allowance still spent. The refund touches only the
+             * packed serial word, so it is safe this early.
+             *
+             * Saturating and imprecise under concurrent charging by design: the
+             * delta is measured against a GLOBAL counter, so a concurrent
+             * panic's active charge can absorb part of this refund. It is
+             * capped at what was measured, `serial_emerg_return` saturates at
+             * zero, and the error grants extra waits rather than removing them
+             * -- the safe direction for crash evidence. Attributable
+             * per-reservation accounting would close it exactly; filed with the
+             * same root cause as the pre-arm/post-arm case, in the bare-metal
+             * hardening roadmap ("Epoch-token the wedged-UART reservation"). */
+            {
+                uint32_t now   = serial_emerg_waits();
+                uint32_t spent = (now > budget_before) ? (now - budget_before) : 0u;
+                while (spent--)
+                    serial_emerg_return();
+            }
+
+            /* PUBLISH. The BSP barrier waits on async_done to run the sequential
+             * fallback (the loop lives in boot_init.c), so the completion signal
+             * must not depend on the diagnostic below surviving. This ordering
+             * used to be reversed, and the diagnostic was a klog() -- which
+             * takes s_klog_lock and sinks to the ordinary locked serial_write.
+             * An async worker that faulted while holding either lock therefore
+             * self-deadlocked HERE, never published async_done, and hung the BSP
+             * forever on a failure it was designed to recover from. */
+            pcpu->async_result = (uint8_t)BOOT_FATAL;
             pcpu->in_async_work = 0;
             smp_mb();
             pcpu->async_done = 1;
             smp_mb();
 
-            /* Bounded, lock-free diagnostic. NOT klog: this runs before the
-             * emergency latch is armed (the system survives this branch), so
-             * the emergency writers are named explicitly. Composed from fixed
-             * strings + serial_write_hex rather than a formatter because no
+            /* DIAGNOSE, as ONE record. Built in a stack buffer and emitted with
+             * a single recoverable call: separate fragments would each start a
+             * fresh call-local budget, so a wedged UART could pay a full-length
+             * wait per fragment. Not klog -- this runs before the emergency
+             * latch is armed (the system survives this branch), and no
              * formatting machinery is trustworthy in a fault context. */
-            serial_write_emergency("\n[ASYNC] FAULT on CPU");
-            serial_write_hex(pcpu->cpu_id);
-            serial_write_emergency(" during '");
-            serial_write_emergency(pcpu->async_name ? pcpu->async_name : "?");
-            serial_write_emergency("': ");
-            serial_write_emergency(description ? description : "unknown");
-            serial_write_emergency(" (err=");
-            serial_write_hex(error_code);
-            serial_write_emergency(" RIP=");
-            serial_write_hex(frame ? frame->rip : 0);
-            serial_write_emergency(")\n");
+            {
+                char     rec[224];
+                uint32_t rp = 0;
+
+                panic_append(rec, sizeof rec, &rp, "\n[ASYNC] FAULT on CPU");
+                panic_append_hex(rec, sizeof rec, &rp, step_cpu);
+                panic_append(rec, sizeof rec, &rp, " during '");
+                panic_append(rec, sizeof rec, &rp, step_name);
+                panic_append(rec, sizeof rec, &rp, "': ");
+                panic_append(rec, sizeof rec, &rp,
+                             description ? description : "unknown");
+                panic_append(rec, sizeof rec, &rp, " (err=");
+                panic_append_hex(rec, sizeof rec, &rp, error_code);
+                panic_append(rec, sizeof rec, &rp, " RIP=");
+                panic_append_hex(rec, sizeof rec, &rp, frame ? frame->rip : 0);
+                panic_append(rec, sizeof rec, &rp, ")\n");
+                serial_write_recoverable(rec);
+            }
 
             /* Park this AP permanently -- BSP will handle the failure */
             for (;;) __asm__ volatile("hlt");

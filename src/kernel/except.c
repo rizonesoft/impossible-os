@@ -954,10 +954,12 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
              * wire before the fallible VFS report (which can block/fault on
              * degraded media -- the filed TODO-24 reentrancy risk, the likelier
              * failure). The inverse risk (a stuck UART stalling the serial write
-             * before the VFS report runs) is CLOSED: WerpReportFault now emits via
-             * serial_write_emergency, which try-locks g_serial_lock and bounds every
-             * UART wait, so a wedged transmitter costs the report its bytes rather
-             * than stalling the fault path. */
+             * before the VFS report runs) is CLOSED: WerpReportFault emits via
+             * serial_write_recoverable, which try-locks g_serial_lock and bounds
+             * every UART wait with a SHORT per-byte cap and a call-local budget --
+             * so a wedged transmitter costs the report its bytes rather than
+             * stalling this survivable path, and it never spends the shared
+             * terminal allowance a later panic depends on. */
             WerpReportFault((uint32_t)m->code, fault_addr);
             wer_write_crash_report(frame, vec, fault_addr);
             klog(LOG_ERROR, "except",
