@@ -386,7 +386,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 > **Verified:** 2026-06-12 | commit `7ea3a01f` | 4/5 items | build OK | smoke PASS (KVM 2.590s)
 > **Accepted:** [H] `platform_is_tcg()` timer-backend gate is identity-based; proper fix is a clocksource quality watchdog (reason: TCG test platform depends on PIT today) -> XREF: 02-kernel-core/TODO-08 §2 (item: "Clocksource quality watchdog" at line 80)
-> **Accepted:** [M] AP bringup serializes 10ms INIT settle + 1ms SIPI per AP (reason: INIT/SIPI restructure needs bare-metal validation) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Phase-split INIT settle + 200us SIPI wait" at line 400)
+> **Accepted:** [M] AP bringup serializes 10ms INIT settle + 1ms SIPI per AP (reason: INIT/SIPI restructure needs bare-metal validation) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Phase-split INIT settle + 200us SIPI wait" at line 401)
 > **Accepted:** [L] direct `lapic_send_ipi()` callers pending arch-neutral wrapper (reason: scope) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "irq_send_ipi(cpu, vector) arch-neutral wrapper" at line 98)
 > **Quality reviewed:** 2026-06-12 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+4M+1L fixed, 0 open, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
 
