@@ -226,10 +226,80 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  *
  * Returns the stack frame pointer to restore. Usually the same frame,
  * but the PIT scheduler may return a different task's frame. */
+/* ---- Per-CPU NMI nesting depth (ARCH: x86-64) ----
+ *
+ * Nonzero means THIS CPU is executing inside an NMI handler, at any depth. It is
+ * the signal the panic path needs and could not previously get: a fault taken
+ * INSIDE the NMI handler re-enters panic with frame->int_no naming the inner
+ * vector (a #PF, say), so a predicate reading only the vector reclassifies the
+ * abort as ordinary and re-enables the fault-suppressed kernel read -- whose
+ * fixup returns via IRETQ and re-arms NMI delivery while the outer NMI still
+ * owns IST2. A second NMI then resets RSP to the IST2 top and overwrites the
+ * outer frames.
+ *
+ * Indexed by the CPUID-derived 8-bit initial APIC ID rather than held in
+ * per_cpu_data, because the consumers are panic-path emitters that are
+ * deliberately GS-INDEPENDENT: the pre-arbitration dump must work when gs:0 is
+ * exactly what cannot be trusted. 256 entries covers the field width exactly, so
+ * an id can never index out of range. Each entry is written only by the CPU that
+ * owns it, so plain relaxed atomics suffice and nothing here can block.
+ *
+ * An NMI handler that never returns (the fatal panic path is the normal case)
+ * leaves the depth raised forever. That is correct, not a leak: the CPU is dead,
+ * and a raised depth only ever makes the classification MORE conservative. */
+#define IDT_NMI_DEPTH_IDS  256u
+static volatile uint32_t s_nmi_depth[IDT_NMI_DEPTH_IDS];
+
+static uint32_t idt_self_apic_id(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+
+    __asm__ volatile ("cpuid"
+                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                      : "a"(1u), "c"(0u));
+    (void)eax; (void)ecx; (void)edx;
+    return (ebx >> 24) & 0xFFu;
+}
+
+int idt_in_nmi(void)
+{
+    return __atomic_load_n(&s_nmi_depth[idt_self_apic_id()],
+                           __ATOMIC_ACQUIRE) != 0u;
+}
+
+uint32_t idt_nmi_depth_raw(void)
+{
+    return __atomic_load_n(&s_nmi_depth[idt_self_apic_id()], __ATOMIC_ACQUIRE);
+}
+
+void idt_nmi_enter(void)
+{
+    __atomic_fetch_add(&s_nmi_depth[idt_self_apic_id()], 1u, __ATOMIC_ACQ_REL);
+}
+
+void idt_nmi_exit(void)
+{
+    uint32_t id = idt_self_apic_id();
+
+    /* Saturate at zero. An unbalanced exit would wrap to 0xFFFFFFFF and pin this
+     * CPU in "inside NMI" for the rest of the boot, permanently disabling the
+     * guarded read on a CPU that is not in an NMI at all. */
+    if (__atomic_load_n(&s_nmi_depth[id], __ATOMIC_ACQUIRE) != 0u)
+        __atomic_fetch_sub(&s_nmi_depth[id], 1u, __ATOMIC_ACQ_REL);
+}
+
 uint64_t isr_handler(struct interrupt_frame *frame)
 {
     uint8_t vec = (uint8_t)frame->int_no;
     uint64_t result;
+
+    /* Raise the NMI depth BEFORE the frame-integrity and GS checks below.
+     * Those checks dereference the frame and gs:0 and can themselves fault, and
+     * a fault there while the depth was still clear is exactly the nested abort
+     * this counter exists to catch. The counter is indexed by CPUID, not GS, so
+     * it is safe to touch before GS has been proven sane. */
+    if (vec == VECTOR_NMI)
+        idt_nmi_enter();
 
     /* ---- Interrupt frame integrity check ----
      * CS must be kernel (0x08) or user (0x23 = GDT_USER_CODE|RPL3).
@@ -466,6 +536,20 @@ irql_restore:
                  (uint64_t)cs_rpl);
         }
     }
+
+    /* Lower the NMI depth at the LAST point in C, not at irql_restore: the block
+     * above still dereferences the outgoing frame, can klog, and records a
+     * transition -- all of it still inside the NMI, and all of it able to fault.
+     * Dropping the depth at the label would reopen the exact window this counter
+     * closes, one layer lower down.
+     *
+     * RESIDUAL: the stub's swapgs + iretq epilogue (isr_stubs.asm) runs after
+     * this returns and is not covered. Closing it would mean a per-vector test in
+     * the common stub, paid by every interrupt on the machine for a counter only
+     * the NMI path reads, and the epilogue performs no guarded reads -- it pops
+     * registers off the IST stack it is already using. */
+    if (vec == VECTOR_NMI)
+        idt_nmi_exit();
 
     return result;
 }

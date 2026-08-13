@@ -30,9 +30,16 @@
  *     actually holds
  *   - __kread_u8: the guarded caller-string read succeeds on valid kernel
  *     memory and rejects the operands that would #GP rather than #PF
+ *   - g_serial_lock ownership: the owner word is paired with the lock across
+ *     every acquisition path, and the park-time force-release is owner-scoped
+ *   - NMI nesting depth: the signal the panic context predicate needs in order
+ *     to see a fault taken INSIDE an NMI handler, which the vector cannot show
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/idt.h"            /* NMI nesting depth under test */
+#include "kernel/panic.h"          /* panic_declared_ctx truth table */
+#include "kernel/vectors.h"        /* VECTOR_NMI */
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/serial_emergency.h"
 #include "kernel/sched/spinlock.h"
@@ -656,8 +663,215 @@ static void test_serial_emergency_kread_u8_rejects_bad_operands(void)
                    "a rejected read leaves the destination untouched");
 }
 
+/* ---- g_serial_lock ownership handoff ----
+ *
+ * Against a FIXTURE lock and a FIXTURE owner word, never the real globals. An
+ * earlier revision asserted on the live owner word directly; that was both racy
+ * (on SMP another CPU may legitimately hold the serial lock at the instant of
+ * the assertion, so the expected zero is nondeterministic under unrelated serial
+ * traffic) and weak (it passed even with ownership recording removed entirely).
+ * The fixture form proves the branch that actually prevents the hang: a matching
+ * owner RELEASES the lock. */
+static void test_serial_lock_handoff_releases_for_owner(void)
+{
+    spinlock_t        fixture = SPINLOCK_INIT;
+    volatile uint32_t owner   = 0u;
+    const uint32_t    me      = 7u;
+
+    TEST_ASSERT_EQ(spin_trylock(&fixture), 1, "fixture lock starts free");
+    owner = me;                         /* stand in for the acquire-time record */
+
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, &owner, me), 1,
+                   "the recorded owner is allowed to release the lock");
+    TEST_ASSERT_EQ((uint32_t)owner, 0u,
+                   "a successful handoff clears the owner word");
+    TEST_ASSERT_EQ(spin_is_locked(&fixture), 0,
+                   "a successful handoff actually RELEASES the lock -- this is "
+                   "what stops the surviving CPU hanging on its next write");
+}
+
+/* The other half, and the one that must never fire: a CPU that does not own the
+ * lock must leave a live holder completely untouched. Without this the park-time
+ * release would be a way for one CPU to steal another CPU's serial lock. */
+static void test_serial_lock_handoff_refuses_foreign_owner(void)
+{
+    spinlock_t        fixture = SPINLOCK_INIT;
+    volatile uint32_t owner   = 0u;
+
+    TEST_ASSERT_EQ(spin_trylock(&fixture), 1, "fixture lock starts free");
+    owner = 7u;                         /* CPU 6 holds it (id 6 + 1) */
+
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, &owner, 9u), 0,
+                   "a CPU that does not own the lock releases nothing");
+    TEST_ASSERT_EQ((uint32_t)owner, 7u,
+                   "the real holder's owner record is left exactly as it was");
+    TEST_ASSERT_EQ(spin_is_locked(&fixture), 1,
+                   "the live holder still holds the lock");
+
+    spin_tryunlock(&fixture);
+}
+
+/* Safe to call unconditionally: the panic async-park path invokes it without
+ * knowing whether the faulting step held the lock at all. */
+static void test_serial_lock_handoff_inert_when_unowned(void)
+{
+    spinlock_t        fixture = SPINLOCK_INIT;
+    volatile uint32_t owner   = 0u;
+
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, &owner, 5u), 0,
+                   "releasing a free, unowned lock reports no handoff");
+    TEST_ASSERT_EQ((uint32_t)owner, 0u, "the owner word stays clear");
+    TEST_ASSERT_EQ(spin_is_locked(&fixture), 0, "the free lock stays free");
+
+    TEST_ASSERT_EQ(serial_lock_try_release_owned((spinlock_t *)0, &owner, 5u), 0,
+                   "a NULL lock is rejected without dereference");
+    TEST_ASSERT_EQ(serial_lock_try_release_owned(&fixture, (volatile uint32_t *)0, 5u),
+                   0, "a NULL owner word is rejected without dereference");
+}
+
+/* ---- NMI nesting depth ----
+ *
+ * Pure per-CPU counter arithmetic: no boot infrastructure, no interrupt is
+ * raised, and the test restores the depth it started from. The counter is what
+ * lets the panic context predicate distinguish a fault taken INSIDE an NMI
+ * handler (which must NOT use the fault-suppressed read, because its fixup
+ * IRETQs and re-arms NMI over the outer NMI's live IST2 frames) from an ordinary
+ * fault, in the case where frame->int_no names only the inner vector. */
+static void test_nmi_depth_nests_and_unwinds(void)
+{
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u,
+                   "no NMI is in flight while the test suite runs");
+    TEST_ASSERT_EQ((uint32_t)idt_in_nmi(), 0u,
+                   "in_nmi is false at depth zero");
+
+    idt_nmi_enter();
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 1u, "one enter raises the depth to 1");
+    TEST_ASSERT_EQ((uint32_t)idt_in_nmi(), 1u, "in_nmi is true at depth 1");
+
+    idt_nmi_enter();
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 2u, "the depth NESTS rather than latching");
+    TEST_ASSERT_EQ((uint32_t)idt_in_nmi(), 1u, "in_nmi stays true while nested");
+
+    idt_nmi_exit();
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 1u, "one exit unwinds one level only");
+    TEST_ASSERT_EQ((uint32_t)idt_in_nmi(), 1u,
+                   "in_nmi is STILL true with an outer NMI live -- the whole point");
+
+    idt_nmi_exit();
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u, "the balanced pair returns to zero");
+    TEST_ASSERT_EQ((uint32_t)idt_in_nmi(), 0u, "in_nmi is false once unwound");
+}
+
+/* An unbalanced exit must SATURATE, never wrap. Underflow would set the depth to
+ * 0xFFFFFFFF and pin this CPU in "inside NMI" for the rest of the boot, silently
+ * disabling the guarded read on a CPU that is not in an NMI at all -- turning a
+ * safety signal into a permanent degradation. */
+static void test_nmi_depth_exit_saturates_at_zero(void)
+{
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u, "precondition: depth starts at zero");
+
+    idt_nmi_exit();
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u,
+                   "an unbalanced exit saturates at zero instead of wrapping");
+    TEST_ASSERT_EQ((uint32_t)idt_in_nmi(), 0u,
+                   "a saturated depth does not report a phantom NMI context");
+
+    idt_nmi_exit();
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u, "repeated unbalanced exits stay at zero");
+}
+
+/* ---- the panic context decision itself ----
+ *
+ * The counter tests above prove only that a number goes up and down. THIS is the
+ * assertion that pins the fix: reverting panic_declared_ctx to the old
+ * vector-only predicate, or dropping the depth term at any consumer, restores
+ * the guarded-read/IST2 corruption path -- and would leave every other test in
+ * this file green. Needs neither a real NMI nor a real fault: a stack frame with
+ * the vector field set and explicit depth manipulation is the whole input space.
+ *
+ * Restores the depth it borrows, so it cannot leak state into a later suite. */
+static void test_panic_declared_ctx_vector_and_depth(void)
+{
+    struct interrupt_frame nmi_frame = {0};
+    struct interrupt_frame pf_frame  = {0};
+
+    nmi_frame.int_no = VECTOR_NMI;
+    pf_frame.int_no  = 14u;             /* #PF -- the live nested-abort route */
+
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u, "precondition: depth starts at zero");
+
+    TEST_ASSERT_EQ(panic_declared_ctx(&nmi_frame), (uint32_t)PANIC_CTX_NMI,
+                   "a direct NMI entry is NMI context on the vector alone");
+    TEST_ASSERT_EQ(panic_declared_ctx(&pf_frame), (uint32_t)PANIC_CTX_NORMAL,
+                   "an ordinary page fault is NORMAL context at depth zero");
+    TEST_ASSERT_EQ(panic_declared_ctx((struct interrupt_frame *)0),
+                   (uint32_t)PANIC_CTX_NORMAL,
+                   "a software panic outside any NMI is NORMAL context");
+
+    idt_nmi_enter();
+
+    /* THE CASE THE VECTOR CANNOT SEE: same page-fault frame, but taken INSIDE
+     * an NMI handler. Vector says 14, depth says NMI, and NMI must win. */
+    TEST_ASSERT_EQ(panic_declared_ctx(&pf_frame), (uint32_t)PANIC_CTX_NMI,
+                   "a fault taken INSIDE an NMI is NMI context despite its vector");
+    TEST_ASSERT_EQ(panic_declared_ctx((struct interrupt_frame *)0),
+                   (uint32_t)PANIC_CTX_NMI,
+                   "a NULL frame nested inside an NMI is still NMI context");
+    TEST_ASSERT_EQ(panic_declared_ctx(&nmi_frame), (uint32_t)PANIC_CTX_NMI,
+                   "an NMI frame at depth stays NMI context");
+
+    idt_nmi_exit();
+
+    TEST_ASSERT_EQ(panic_declared_ctx(&pf_frame), (uint32_t)PANIC_CTX_NORMAL,
+                   "once the NMI unwinds, an ordinary fault is NORMAL again");
+    TEST_ASSERT_EQ(idt_nmi_depth_raw(), 0u, "the test restores the depth it took");
+}
+
+/* The consequence, spelled out end to end: NMI context must DENY the guarded
+ * read. Asserting the predicate and the gate separately would let a correct
+ * classification feed a gate that ignores it. */
+static void test_panic_nested_nmi_denies_guarded_read(void)
+{
+    struct interrupt_frame pf_frame = {0};
+
+    pf_frame.int_no = 14u;
+
+    TEST_ASSERT_EQ(serial_emerg_ctx_allows_guarded_read(panic_declared_ctx(&pf_frame)),
+                   1, "an ordinary fault may use the fault-suppressed read");
+
+    idt_nmi_enter();
+    TEST_ASSERT_EQ(serial_emerg_ctx_allows_guarded_read(panic_declared_ctx(&pf_frame)),
+                   0, "a fault nested inside an NMI must NOT use it -- its fixup "
+                      "IRETQ would re-arm NMI over the outer NMI's IST2 frames");
+    idt_nmi_exit();
+
+    TEST_ASSERT_EQ(serial_emerg_ctx_allows_guarded_read(panic_declared_ctx(&pf_frame)),
+                   1, "the guarded read is available again once unwound");
+}
+
 void test_register_serial_emergency(void)
 {
+    test_suite_register_cat("serial_lock: owner handoff releases for owner",
+                            test_serial_lock_handoff_releases_for_owner,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: handoff refuses a foreign owner",
+                            test_serial_lock_handoff_refuses_foreign_owner,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_lock: handoff inert when unowned",
+                            test_serial_lock_handoff_inert_when_unowned,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("panic_ctx: vector and NMI depth truth table",
+                            test_panic_declared_ctx_vector_and_depth,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("panic_ctx: nested NMI denies the guarded read",
+                            test_panic_nested_nmi_denies_guarded_read,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("nmi_depth: nests and unwinds one level per exit",
+                            test_nmi_depth_nests_and_unwinds,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("nmi_depth: unbalanced exit saturates at zero",
+                            test_nmi_depth_exit_saturates_at_zero,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: free lock is acquired",
                             test_serial_emergency_acquire_free_lock,
                             TEST_CAT_BOOT);

@@ -163,6 +163,20 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
                             const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line);
 
+/* The declared panic context for this entry: PANIC_CTX_NMI when the
+ * fault-suppressed kernel read must NOT be used, PANIC_CTX_NORMAL otherwise.
+ *
+ * Derived from TWO hardware signals, never probed from memory a panic may have
+ * corrupted: the entry vector, AND this CPU's NMI nesting depth (idt_in_nmi()).
+ * The vector alone cannot see NESTING -- a fault taken inside the NMI handler
+ * re-enters panic naming the INNER vector, and classifying that as ordinary
+ * re-enables a guarded read whose fixup IRETQs and re-arms NMI while the outer
+ * NMI still owns IST2. A NULL frame is a software panic, which is never NMI
+ * BY VECTOR but may still be nested inside one, so the depth test applies there
+ * too. Exposed (rather than static) so the vector/depth/NULL truth table is
+ * unit-testable without invoking any panic infrastructure. */
+uint32_t panic_declared_ctx(struct interrupt_frame *frame);
+
 /* Phase-0 restore: if the evidence page holds a valid record, copy it into the
  * caller-provided buffer, clear the page magic, and return 1; else 0. Pre-heap
  * safe -- copies into caller storage, never allocates. */

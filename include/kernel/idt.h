@@ -109,6 +109,27 @@ void idt_register_handler(uint8_t n, interrupt_handler_t handler);
 void idt_register_handler_quiet(uint8_t n, interrupt_handler_t handler);
 interrupt_handler_t idt_get_handler(uint8_t n);
 
+/* ---- NMI nesting depth (ARCH: x86-64) ----
+ *
+ * idt_in_nmi() is nonzero while THIS CPU is anywhere inside an NMI handler.
+ * isr_handler raises the depth before it validates the frame or GS and lowers it
+ * at its last C statement, so the whole faultable body of an NMI is covered.
+ *
+ * The panic path is the consumer: a fault taken inside the NMI handler re-enters
+ * panic with an INNER vector, so a context predicate reading only frame->int_no
+ * would call the abort ordinary and re-enable the fault-suppressed kernel read --
+ * whose fixup IRETQs and re-arms NMI while the outer NMI still owns IST2.
+ * idt_in_nmi() is the depth signal that vector cannot supply.
+ *
+ * State is keyed by the CPUID-derived APIC id, NOT per_cpu_data, so it is
+ * readable from the GS-independent panic emitters. idt_nmi_depth_raw() and the
+ * enter/exit pair are exposed for unit test; production code outside isr_handler
+ * should read idt_in_nmi() and never move the counter itself. */
+int      idt_in_nmi(void);
+uint32_t idt_nmi_depth_raw(void);
+void     idt_nmi_enter(void);
+void     idt_nmi_exit(void);
+
 /* Promote vector `n`'s gate to DPL=3 so ring-3 code may raise it with `INT n`
  * (e.g. INT3 breakpoint, INTO overflow, INT 0x29 __fastfail). CPU-generated
  * exceptions ignore gate DPL, so this is only needed for software-INT vectors.

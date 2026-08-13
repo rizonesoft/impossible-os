@@ -26,6 +26,27 @@
 int  serial_emergency_acquire(spinlock_t *lock);
 void serial_emergency_release(spinlock_t *lock, int acquired);
 
+/* Hand the driver's own UART lock back if THIS CPU is the recorded holder.
+ *
+ * For a CPU that is about to park forever and therefore can never release it
+ * itself -- today that is the panic async-isolation branch, which parks a
+ * faulting async-init worker so the rest of the boot survives. Without this, an
+ * AP that faulted while holding the lock leaves it set and every surviving CPU
+ * blocks on its next ordinary serial write: a silent hang instead of a boot.
+ *
+ * Safe to call unconditionally. Ownership is compared before release, so a CPU
+ * that does not hold the lock changes nothing and can never steal it from a live
+ * holder. Owner identity is the CPUID-derived APIC id, so this does not depend on
+ * a GS base the panic path cannot trust. */
+void serial_lock_release_if_owner(void);
+
+/* The ownership policy itself, over a CALLER-SUPPLIED lock and owner word, so
+ * the successful handoff can be unit tested without seizing the machine's real
+ * serial lock. Returns 1 if `me` owned the lock and it was released, 0 if `me`
+ * owned nothing -- in which case BOTH words are left exactly as they were. */
+int serial_lock_try_release_owned(spinlock_t *lock, volatile uint32_t *owner,
+                                  uint32_t me);
+
 /* Wedged-transmitter budget accounting, exposed for unit test. The arithmetic
  * here already regressed once (a revision charged each timeout twice, halving
  * the effective budget), which is why it is testable rather than private.

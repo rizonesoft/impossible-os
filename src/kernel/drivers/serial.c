@@ -125,6 +125,41 @@ static uint16_t s_serial_port = 0x3F8;
 /* Protects UART register access from concurrent threads and IRQ handlers */
 static spinlock_t g_serial_lock = SPINLOCK_INIT;
 
+/* WHO holds g_serial_lock: 0 = free, (8-bit initial APIC ID + 1) = that CPU.
+ *
+ * spinlock_t is a bare flag word (sched/spinlock.h) with no owner field, so a
+ * CPU that faults while holding this lock and then PARKS FOREVER -- exactly what
+ * the panic async-isolation branch does to a faulting async-init worker
+ * (panic.c) -- strands the flag set and blocks every surviving CPU on its next
+ * ordinary serial write. That is a silent hang instead of a boot, and it is the
+ * failure this word exists to break: the parking CPU calls
+ * serial_lock_release_if_owner() and hands the UART back before it halts.
+ *
+ * Identified by the CPUID-derived id, not smp_this_cpu(), for the same reason
+ * the emergency ledger is: the panic path that consumes this must not depend on
+ * a GS base it cannot trust. Written only inside the lock's own
+ * interrupts-disabled region, so it needs no lock of its own.
+ *
+ * RESIDUAL, real and NOT closed by this word: the owner store is a separate
+ * instruction from the flag CAS, so an abort landing between them leaves the
+ * lock held with owner 0 -- and serial_lock_release_if_owner then correctly
+ * refuses to touch it, reproducing the very hang described above. The same gap
+ * sits between the owner clear and the release, and on the emergency try-lock
+ * path. Being inside the lock's cli'd region does NOT close it: `cli` masks
+ * maskable interrupts only, while NMI and #MC pierce it -- and those are exactly
+ * the panic entries this code serves.
+ *
+ * What this word buys is therefore a large NARROWING, not a proof: an async step
+ * faulting anywhere in the UART wait loop (the realistic case, and previously a
+ * guaranteed hang) now hands the lock back, and only an abort inside a
+ * two-instruction window still strands it. Closing it needs ownership and lock
+ * state to be ONE atomic transition, which means replacing g_serial_lock with an
+ * owner-encoded lock word and reimplementing spin_lock_irqsave's IRQL raise and
+ * lower against it -- a rewrite of the most safety-critical primitive on the
+ * panic path, and its own unit of work -> XREF: section 20. */
+#define SERIAL_LOCK_NO_OWNER  0u
+static volatile uint32_t g_serial_lock_owner = SERIAL_LOCK_NO_OWNER;
+
 /* Emergency latch states. Three, not two, so that ARMING itself is the one-shot:
  * only the CPU that wins the OFF->INIT transition records the owner and clears
  * the budget, and only it then release-stores ARMED. Every other entrant does
@@ -319,6 +354,87 @@ static uint32_t serial_emerg_self_cpu(void)
     return (ebx >> 24) & 0xFFu;
 }
 
+/* ---- g_serial_lock ownership bookkeeping ----
+ *
+ * Paired wrappers rather than open-coded stores at each of the four acquisition
+ * sites: the ordinary blocking path takes this lock in three places and the
+ * emergency try-lock path in a fourth, and an acquisition that forgets to record
+ * its owner is indistinguishable from a free lock to the force-release below --
+ * which would leave exactly the hang this is meant to remove. */
+static inline void serial_lock_note_owner(void)
+{
+    __atomic_store_n(&g_serial_lock_owner,
+                     (serial_emerg_self_cpu() & SERIAL_EMERG_CPU) + 1u,
+                     __ATOMIC_RELEASE);
+}
+
+static inline void serial_lock_clear_owner(void)
+{
+    __atomic_store_n(&g_serial_lock_owner, SERIAL_LOCK_NO_OWNER,
+                     __ATOMIC_RELEASE);
+}
+
+static inline void serial_lock_acquire(uint64_t *flags)
+{
+    spin_lock_irqsave(&g_serial_lock, flags);
+    serial_lock_note_owner();
+}
+
+static inline void serial_lock_release(uint64_t flags)
+{
+    serial_lock_clear_owner();
+    spin_unlock_irqrestore(&g_serial_lock, flags);
+}
+
+/* Hand g_serial_lock back if THIS CPU is the recorded holder.
+ *
+ * Called by a CPU that is about to park forever (the panic async-isolation
+ * branch) so the surviving CPUs are not blocked on a lock whose owner will never
+ * run again. The compare-exchange is what makes it safe to call unconditionally:
+ * a CPU that does not own the lock changes nothing, so this can never steal a
+ * live holder's lock.
+ *
+ * spin_tryunlock, not spin_unlock_irqrestore: the caller never returns, so there
+ * is no saved IRQL to lower and no interrupt state to restore -- and the release
+ * side must not lower an IRQL the emergency try-lock path never raised.
+ *
+ * The UART may be mid-character when this runs. That is accepted: one garbled
+ * line is strictly better than every later write blocking forever, and the
+ * emergency writers restore a known line-control state before their own output
+ * regardless (serial_emergency_restore_lcr). */
+/* The POLICY, split out from the globals so it is testable against a fixture
+ * lock and a fixture owner word -- no UART, no g_serial_lock, no boot state.
+ * The branch that matters is the SUCCESSFUL handoff (matching owner -> lock
+ * released), and against the real globals a single-CPU test cannot establish
+ * that precondition without seizing the machine's actual serial lock.
+ *
+ * Returns 1 if this caller owned the lock and released it, 0 if it owned
+ * nothing. The compare-exchange IS the safety property: a caller whose id does
+ * not match leaves BOTH words exactly as they were, so this can never take a
+ * lock away from a live holder. */
+int serial_lock_try_release_owned(spinlock_t *lock, volatile uint32_t *owner,
+                                  uint32_t me)
+{
+    uint32_t cur = me;
+
+    if (!lock || !owner)
+        return 0;
+
+    if (!__atomic_compare_exchange_n(owner, &cur, SERIAL_LOCK_NO_OWNER, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return 0;                       /* not ours -- leave the holder alone */
+
+    spin_tryunlock(lock);
+    return 1;
+}
+
+void serial_lock_release_if_owner(void)
+{
+    (void)serial_lock_try_release_owned(
+        &g_serial_lock, &g_serial_lock_owner,
+        (serial_emerg_self_cpu() & SERIAL_EMERG_CPU) + 1u);
+}
+
 /* Forward declarations: the ordinary entry points below re-route into the
  * emergency path, which is defined further down beside the rest of it. */
 static void serial_emergency_emit(const char *buf, uint32_t len,
@@ -404,7 +520,7 @@ void serial_init(void)
      * smp_early_bsp_init(). It does -- boot_hw.c calls them four lines apart --
      * and this is not a new constraint: serial_write has always taken the same
      * lock, so any pre-per-CPU serial output would already have faulted. */
-    spin_lock_irqsave(&g_serial_lock, &flags);
+    serial_lock_acquire(&flags);
 
     outb(s_serial_port + UART_REG_IER, 0x00);    /* Disable interrupts */
 
@@ -417,7 +533,7 @@ void serial_init(void)
     outb(s_serial_port + UART_REG_FCR, UART_FCR_INIT);
     outb(s_serial_port + UART_REG_MCR, UART_MCR_INIT);
 
-    spin_unlock_irqrestore(&g_serial_lock, flags);
+    serial_lock_release(flags);
 }
 
 void serial_putchar(char c)
@@ -440,7 +556,7 @@ void serial_putchar(char c)
         return;
     }
 
-    spin_lock_irqsave(&g_serial_lock, &flags);
+    serial_lock_acquire(&flags);
 
     /* RECHECK under the lock. The test above and this acquisition are two
      * operations, and the wait between them is unbounded under contention -- so
@@ -448,7 +564,7 @@ void serial_putchar(char c)
      * then perform UNBOUNDED raw writes with none of the emergency bounds and
      * none of the non-owner drop. Recheck and re-route instead. */
     if (serial_in_emergency()) {
-        spin_unlock_irqrestore(&g_serial_lock, flags);
+        serial_lock_release(flags);
         serial_putchar(c);
         return;
     }
@@ -460,12 +576,12 @@ void serial_putchar(char c)
          * this same lock, abandons again, and recurses without bound on a panic
          * stack. */
         uint32_t recov = 0;
-        spin_unlock_irqrestore(&g_serial_lock, flags);
+        serial_lock_release(flags);
         if (!serial_emerg_reroute_should_drop())
             serial_emergency_emit(&c, 1u, 1 /*terminal*/, &recov);
         return;
     }
-    spin_unlock_irqrestore(&g_serial_lock, flags);
+    serial_lock_release(flags);
 }
 
 /* Hold the lock for the entire string so no other caller can interleave */
@@ -488,7 +604,7 @@ void serial_write(const char *str)
         return;
     }
 
-    spin_lock_irqsave(&g_serial_lock, &flags);
+    serial_lock_acquire(&flags);
 
     /* RECHECK under the lock -- see serial_putchar. A residual remains: the
      * epoch can be armed AFTER this check, while the loop below is already
@@ -496,7 +612,7 @@ void serial_write(const char *str)
      * though: the owner's emergency writers try-lock, fail against this holder,
      * and proceed unlocked, so the crash record still reaches the wire. */
     if (serial_in_emergency()) {
-        spin_unlock_irqrestore(&g_serial_lock, flags);
+        serial_lock_release(flags);
         serial_write(str);
         return;
     }
@@ -513,7 +629,7 @@ void serial_write(const char *str)
         /* Abandoned mid-string. Release, then emit the remainder through the
          * emergency route DIRECTLY -- re-calling serial_write would re-enter the
          * blocking path during the INIT window and recurse without bound. */
-        spin_unlock_irqrestore(&g_serial_lock, flags);
+        serial_lock_release(flags);
         if (!serial_emerg_reroute_should_drop())
             /* PANIC_CTX_UNKNOWN: this is the REROUTED ordinary path, reached from
          * serial_write / serial_putchar once the latch is armed. The indirect
@@ -524,7 +640,7 @@ void serial_write(const char *str)
         serial_emergency_write_str(str, 1 /*terminal*/, PANIC_CTX_UNKNOWN);
         return;
     }
-    spin_unlock_irqrestore(&g_serial_lock, flags);
+    serial_lock_release(flags);
 }
 
 char serial_trygetchar(void)
@@ -1147,6 +1263,13 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
      * no IRQL, so the release side must lower none (see spin_tryunlock). */
     flags  = local_irq_save();
     locked = serial_emergency_acquire(&g_serial_lock);
+    /* FOURTH acquisition of g_serial_lock, and the one most likely to be held by
+     * a CPU that is about to park: this is the writer the panic path itself uses.
+     * Record ownership on success so serial_lock_release_if_owner() can hand the
+     * lock back. A failed try-lock owns nothing and must not touch the word --
+     * the real holder is another CPU. */
+    if (locked)
+        serial_lock_note_owner();
 
     serial_emergency_restore_lcr();
 
@@ -1181,6 +1304,8 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
         (void)serial_putchar_raw_bounded(buf[i], terminal, recov);
     }
 
+    if (locked)
+        serial_lock_clear_owner();
     serial_emergency_release(&g_serial_lock, locked);
     local_irq_restore(flags);
 }

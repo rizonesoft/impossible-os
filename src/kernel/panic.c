@@ -383,6 +383,34 @@ static int panic_try_claim_owner(void)
     return (prev == 0xFFFFFFFF || prev == my_id);
 }
 
+/* The declared panic context for this entry: PANIC_CTX_NMI whenever the
+ * fault-suppressed kernel read must NOT be used, PANIC_CTX_NORMAL otherwise.
+ *
+ * DECLARED from hardware state, never probed from memory a panic may have
+ * corrupted -- but from TWO signals, not one. The vector alone answers only
+ * "was I entered BY an NMI"; it cannot see NESTING, and nesting is the case
+ * that defeats the gate. NMI -> nmi_crash_handler -> panic_screen -> a fault
+ * re-enters here with int_no naming the INNER vector (a #PF from the frame-chain
+ * walk is the live route), so a vector-only predicate returns NORMAL, re-enables
+ * __kread_u8, and its fixup IRETQs -- re-arming NMI delivery while the outer
+ * NMI's frames are still live under RSP on IST2, because #PF has no IST of its
+ * own. The next NMI resets RSP to the IST2 top and overwrites them.
+ *
+ * idt_in_nmi() supplies the depth the vector cannot. It is keyed by CPUID rather
+ * than per-CPU data precisely so this predicate stays usable from the
+ * GS-independent pre-arbitration dump.
+ *
+ * A NULL frame means a software panic, which is never NMI context BY VECTOR --
+ * but may still be nested inside one, so the depth test applies there too. */
+uint32_t panic_declared_ctx(struct interrupt_frame *frame)
+{
+    if (frame && frame->int_no == VECTOR_NMI)
+        return PANIC_CTX_NMI;
+    if (idt_in_nmi())
+        return PANIC_CTX_NMI;
+    return PANIC_CTX_NORMAL;
+}
+
 void panic_capture_fpu_state(void)
 {
     POST16(POST16_FPU_CAPTURE);
@@ -1043,12 +1071,9 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
         ev->r11 = frame->r11; ev->r12 = frame->r12; ev->r13 = frame->r13;
         ev->r14 = frame->r14; ev->r15 = frame->r15;
     }
-    /* Panic context, DECLARED from the hardware vector rather than probed. An
-     * NMI-sourced panic must not use the fault-suppressed read (its fixup IRETQ
-     * would re-arm NMI delivery while the outer NMI still owns IST2); every
-     * other vector, #DF and #MC included, may. A NULL frame means the caller
-     * reached here through a software panic, which is never NMI context. */
-    ctx = (frame && frame->int_no == VECTOR_NMI) ? PANIC_CTX_NMI : PANIC_CTX_NORMAL;
+    /* Panic context, DECLARED from hardware state rather than probed -- vector
+     * OR NMI nesting depth; see panic_declared_ctx. */
+    ctx = panic_declared_ctx(frame);
 
     pe_copy(ev->file, sizeof ev->file, file, ctx);
     pe_copy(ev->message, sizeof ev->message, message, ctx);
@@ -1413,8 +1438,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
          * pointers that may themselves be the corruption being reported, so they
          * are exactly the ones that need the guarded walk -- and exactly the ones
          * that must NOT take it in NMI context. */
-        uint32_t emit_ctx = (frame && frame->int_no == VECTOR_NMI)
-                                ? PANIC_CTX_NMI : PANIC_CTX_NORMAL;
+        uint32_t emit_ctx = panic_declared_ctx(frame);
 
         panic_emit("\n\n[PANIC] ");
         serial_write_emergency_ctx(description ? description : "(no description)",
@@ -1462,10 +1486,8 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * -- so reading it afterwards can misattribute the crash, or print
              * "?", which destroys the value of this diagnostic. */
             const char *step_name = pcpu->async_name ? pcpu->async_name : "?";
-            /* Same declared-context rule as the pre-arbitration dump: derived
-             * from the hardware vector, never probed. */
-            uint32_t    async_ctx = (frame && frame->int_no == VECTOR_NMI)
-                                        ? PANIC_CTX_NMI : PANIC_CTX_NORMAL;
+            /* Same declared-context rule as the pre-arbitration dump. */
+            uint32_t    async_ctx = panic_declared_ctx(frame);
             uint32_t    step_cpu  = pcpu->cpu_id;
 
             /* REFUND FIRST, then publish, then diagnose.
@@ -1502,6 +1524,26 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * An async worker that faulted while holding either lock therefore
              * self-deadlocked HERE, never published async_done, and hung the BSP
              * forever on a failure it was designed to recover from. */
+            /* GO OFFLINE BEFORE PUBLISHING. boot_async_group selects its workers
+             * purely on is_online (boot_init.c), and this CPU is about to park
+             * with interrupts masked, so it can never take the wake IPI again.
+             * Leaving the flag set means every LATER async group assigns it a
+             * step and then eats the group's whole 10-second barrier deadline
+             * waiting for a CPU that will never answer -- turning one recovered
+             * async fault into a visibly stalled boot.
+             *
+             * Ordered before the async_done publish, and with a RELEASE store, so
+             * a BSP that observes completion cannot then observe this CPU as
+             * still online and hand it the next group's work.
+             *
+             * SCOPE: this fixes async DISPATCH. It does not retire the CPU from
+             * the system-wide count -- smp_cpu_count() is a one-time boot
+             * snapshot (smp.c) that a parked AP already contradicted before this
+             * change, since a CPU halted forever was still being counted as
+             * active. Converting topology and the NT processor-count reporting to
+             * a live online mask is separate, larger work -> XREF: section 20. */
+            __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
+
             pcpu->async_result = (uint8_t)BOOT_FATAL;
             pcpu->in_async_work = 0;
             smp_mb();
@@ -1536,6 +1578,21 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
                 panic_append(rec, sizeof rec, &rp, ")\n");
                 serial_write_recoverable(rec);
             }
+
+            /* HAND BACK THE UART BEFORE PARKING.
+             *
+             * The step that faulted may have been holding g_serial_lock -- an
+             * ordinary klog from inside an async init step is enough. This CPU
+             * never runs again, so nothing else can ever release it, and the
+             * surviving BSP would block forever on its next ordinary serial
+             * write: a silent hang instead of the recovered boot this branch
+             * exists to deliver. Owner-scoped, so a CPU that does not hold the
+             * lock changes nothing.
+             *
+             * After the diagnostic above, not before: that record is emitted
+             * through the bounded try-lock writer, which may itself be the holder,
+             * and releasing first would let another CPU interleave into it. */
+            serial_lock_release_if_owner();
 
             /* Park this AP permanently -- BSP will handle the failure */
             for (;;) __asm__ volatile("hlt");
