@@ -9,24 +9,55 @@ This guide covers the Impossible OS MOK (Machine Owner Key) pair used to sign
 
 ```
 UEFI Firmware (Microsoft UEFI CA in db -- factory default on most hardware)
-  └── shimx64.efi (Ubuntu shim-signed 1.58, Microsoft-signed)
+  └── shimx64.efi (first stage -- see "No shim is pinned today" below)
         └── grubx64.efi   <- our bootloader, signed with MOK.key
               └── kernel.exe
 ```
 
-The shipped shim is the **Ubuntu shim-signed 1.58 binary**, signed by
-Microsoft. It is committed at `shim/shimx64.efi` (with SHA256 verified
-against `shim/SHA256SUMS`) and is NOT rebuilt locally. Firmware trusts
-this shim out of the box because the Microsoft UEFI CA is in nearly
-every shipping firmware's Secure Boot db.
+> [!IMPORTANT]
+> **No shim is pinned today, so the shipped image direct-boots.** `shim/shimx64.efi`
+> and `shim/mmx64.efi` were removed from the tree in `aab6b6f64` (2026-07-01): the
+> only Microsoft-signed shim available to us was signed by the **Microsoft UEFI CA
+> 2011**, which expired **2026-06-30**, and `scripts/sign-efi.sh` hard-fails on it.
+> With `shim/` empty the disk recipe stages `BOOTX64.EFI` directly and there is no
+> shim chain at all -- everything below describing the chain applies once a shim is
+> pinned again, not to the image a clean build produces right now. `bash
+> scripts/test-secureboot-smoke.sh` reports this state explicitly (`shim chain NOT
+> COVERED`); run it with `REQUIRE_SHIM=1` to make an uncovered chain a hard failure.
 
-The shim does NOT carry an embedded vendor certificate -- the previous
-self-built-shim flow that embedded `MOK.cer` as `VENDOR_CERT_FILE` was
-retired when we switched to the MS-signed binary. To trust
-`grubx64.efi`, the shim consults the MOK list, which the user populates
-via MokManager on first boot (see "Enrolling on real hardware" below).
-After enrollment the chain runs without interaction on every subsequent
-boot.
+Two ways to get a shim back, and the smoke test must be told which one you used:
+
+| Path | How | Firmware trust | Smoke invocation |
+|---|---|---|---|
+| **MOK-dev** (available now) | `bash scripts/secure-boot/build-shim.sh` builds our own shim from rhboot/shim with `keys/MOK.cer` as `VENDOR_CERT_FILE`, **then you sbsign it yourself** | Only after your signing key is enrolled in the firmware's db -- **not** out of the box | `SHIM_TRUST_MODE=mok-dev bash scripts/test-secureboot-smoke.sh` |
+| **Stock Secure Boot** (production, vendor-gated) | a distro shim re-signed by Microsoft under the **UEFI CA 2023**, obtained through the shim-review process | Yes, out of the box | default (`SHIM_TRUST_MODE=ms-ca`) |
+
+> [!WARNING]
+> **`build-shim.sh` does not sign its output.** `VENDOR_CERT_FILE` embeds a
+> certificate that the shim uses for its own MOK-list checks; that is not an
+> Authenticode signature on the shim itself. Its raw `shimx64.efi`/`mmx64.efi`
+> are UNSIGNED, so firmware with Secure Boot ON will refuse them and
+> `SHIM_TRUST_MODE=mok-dev` reports the chain as NOT COVERED. To use this path
+> with Secure Boot enabled you must `sbsign` both binaries with a key you have
+> enrolled in db yourself. With Secure Boot OFF nothing needs signing -- and
+> nothing is being secured either.
+
+A self-built shim carries no Microsoft signature, so the default `ms-ca` mode
+rejects it as "no recognized MS UEFI CA generation" -- that is the mode
+disagreeing with the binary, not a broken shim. In `mok-dev` mode the shim is
+verified against `keys/MOK.cer` instead. Either way the build pipeline itself
+needs no code change: drop the binaries in `shim/`, refresh `shim/SHA256SUMS`,
+and rebuild.
+
+How `grubx64.efi` gets trusted depends on which shim is in play. A
+**Microsoft-signed distro shim** carries no vendor certificate of ours, so it
+consults the MOK list, which the user populates via MokManager on first boot
+(see "Enrolling on real hardware" below); after enrollment the chain runs
+without interaction on every subsequent boot. A **self-built shim** embeds
+`keys/MOK.cer` as `VENDOR_CERT_FILE` and therefore trusts our loader with no
+MokManager step -- that flow was retired in favour of the MS-signed binary in
+2026-04, and became the only available option again when that binary was
+unpinned. Both are described in the box above.
 
 ---
 
@@ -100,15 +131,29 @@ boot until the MOK list is cleared (firmware reset / `mokutil --reset`).
 
 ## Testing the Secure Boot chain
 
-The normal system disk already carries the full shim chain -- every normal
-QEMU or VirtualBox boot exercises it:
+**With no shim pinned (the state today), there is no chain to test** -- the disk
+recipe stages our own loader as `EFI\BOOT\BOOTX64.EFI` and boots it directly.
+Confirm what a given build actually produced before assuming otherwise:
+
+```
+bash scripts/test-secureboot-smoke.sh                # reports COVERED / NOT COVERED
+REQUIRE_SHIM=1 bash scripts/test-secureboot-smoke.sh # non-zero unless the chain is covered
+```
+
+Once a shim is pinned AND `keys/MOK.key` exists, the system disk carries the
+full chain and every normal QEMU or VirtualBox boot exercises it:
 
 ```
 UEFI firmware (SB off in QEMU/VBox; SB on in OVMF-secure / real hardware)
-  └── EFI\BOOT\BOOTX64.EFI  = shimx64.efi (Ubuntu shim-signed 1.58, MS-signed)
+  └── EFI\BOOT\BOOTX64.EFI  = shimx64.efi (MS-signed, or MOK-dev self-built)
         └── EFI\BOOT\grubx64.efi  = our bootloader, signed with MOK.key
               └── kernel
 ```
+
+A pinned shim WITHOUT `keys/MOK.key` does not produce that layout: the recipe
+falls back to direct boot, because the shim would reject an unsigned
+`grubx64.efi`. The smoke test reports that case as NOT COVERED rather than
+treating the two files' presence as proof.
 
 With Secure Boot OFF the chain runs without enforcement (every QEMU/VBox
 default config). With Secure Boot ON, firmware must trust the shim's MS

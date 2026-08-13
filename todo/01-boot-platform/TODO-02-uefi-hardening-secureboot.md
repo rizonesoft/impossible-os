@@ -86,7 +86,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  17   | SBAT revocation metadata in boot artifacts               | §9, §11        |  [x]   |
 | 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
 | 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13            |  [/]   |
-| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [ ]   |
+| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [/]   |
 
 ---
 
@@ -242,7 +242,7 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 - [x] `.gitignore`: `MOK.key`, `*.signed.EFI`
 - [x] Key generation documented in `docs/guides/secure-boot-keys.md`
 - [x] `scripts/sign-efi.sh` + `sign-efi` Makefile target
-- [x] Shim: `shim/shimx64.efi` + `shim/mmx64.efi` committed (SHA256 verified)
+- [x] Shim pinning: `shim/shimx64.efi` + `shim/mmx64.efi` committed, `SHA256SUMS`-verified by the disk recipe; UNPINNED again in `aab6b6f64` (2026-07-01) when their MS UEFI CA 2011 expired, so no shim ships today -- see §20 + `shim/README.md`
 - [x] Shipped shim: Ubuntu `shim-signed` 1.58 (Microsoft-signed; trusted by firmware via MS UEFI CA out of the box). Shim validates `grubx64.efi` via the MOK list, populated by MokManager on first boot from `\\MOK.cer` at the ESP root (DER-encoded). The earlier self-built/embedded-MOK.cer flow was retired when we switched to the MS-signed binary.
 - [x] Commit: `"boot: Secure Boot shim chain-loading, MOK key signing pipeline"`
 
@@ -253,7 +253,7 @@ Set up MOK key pair, sign `BOOTX64.EFI`, and integrate shim into the build.
 > **Notes:**
 > - What shipped: signed `BOOTX64.EFI` (sbsign + atomic temp+verify+mv via `scripts/sign-efi.sh`); committed Microsoft-signed Ubuntu shim 1.58 (`shim/shimx64.efi` + `mmx64.efi` + `SHA256SUMS`); MOK enrollment via MokManager from ESP-root `\MOK.cer`.
 > - How it integrates: `make sign-efi` calls `scripts/sign-efi.sh` (env-override-friendly: `MOK_KEY`, `MOK_CRT`, `EFI_BIN`); `make disk` writes DER-encoded `\MOK.cer` to ESP root; firmware -> shim (MS-signed) -> grubx64.efi (MOK-signed) -> kernel.
-> - Downstream: first-boot MokManager flow per `docs/guides/secure-boot-keys.md`; SBAT bumps + shim refreshes track Ubuntu shim-signed releases (NOT rebuilt locally).
+> - Downstream: first-boot MokManager flow per `docs/guides/secure-boot-keys.md`; the shim itself is UNPINNED since `aab6b6f64` (expired 2011 CA) so builds direct-boot -- §20 owns re-pinning and the fail-loud coverage reporting.
 > - Doc pointer: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md).
 > - Scope boundary: §6 owns the chain-loading wiring + signing pipeline + key-management docs. SBAT operations + Secure Boot DB count exposure are §7/§8 in this TODO.
 
@@ -664,34 +664,67 @@ UEFI 2.10 §13.9 (`EFI_BLOCK_IO_PROTOCOL.ReadBlocks`) requires the data buffer t
 
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
-From the stamped section 12:
-- [ ] Make shim absence fail-loud after the 2026-07-01 expiry unpin: Makefile ESP packaging + secureboot smoke must FAIL (not silently direct-boot/skip) without a trusted shim; update §6 claims + docs; re-pin a 2023-CA shim per the vendor watch.
+From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01 expiry unpin: Makefile ESP packaging + secureboot smoke must FAIL (not silently direct-boot/skip) without a trusted shim; update §6 claims + docs; re-pin a 2023-CA shim per the vendor watch." Split into its four legs below, because two of them ship and two cannot:
 
-**Test checkpoint:** per moved item; each carries its original acceptance text.
+- [x] `scripts/test-secureboot-smoke.sh` reports shim-chain coverage in EVERY state instead of skipping check 4 in silence, and `REQUIRE_SHIM=1` turns an uncovered chain into exit 1
+  - The old bare `if [ -f "$SHIM" ]` printed nothing when no shim was pinned and still ended in `PASS N/N Secure Boot smoke checks` -- read as "chain covered". Absence is the NORMAL state since `aab6b6f64`, so silence was the wrong default.
+  - `REQUIRE_SHIM` is opt-in, not unconditional: dev and CI builds legitimately ship no shim, and a blanket failure would re-break the build the unpin fixed. Any path that publishes an image and advertises Secure Boot sets it.
+  - Coverage is built from VERIFICATION booleans, never artifact existence: BOTH `shimx64.efi` and `mmx64.efi` must clear the mode's trust anchor (MokManager is launched by firmware during enrollment, so it is verified independently), `sbverify --list` must exit 0 (a tool failure is not "no CA"), and the signed loader must actually pass `sbverify --cert` -- with `keys/MOK.cer` absent nothing is verified, so nothing is covered.
+  - It also follows the disk recipe's own staging predicate (both shim files + `keys/MOK.key` + a signed loader): pinned files with no key stage direct boot, which used to read as PASS.
+  - The staged ESP is the authority when a disk image exists, and that check FAILS CLOSED -- missing mtools, missing `EFI_OFFSET`, or a non-zero `mdir` status is an unverifiable claim, not coverage. It matches exact paths via `mdir -b` (the default 8.3 listing `BOOTX64  EFI` would let `BOOTX64.BAD` pass a basename match) and then `mcopy`-extracts each component into a VALIDATED temp dir to compare it byte-for-byte with the artifact this run verified -- a filename is not an artifact, and an unchecked `mktemp` would extract to `/` and compare those bytes against their own source.
+  - `SHIM_TRUST_MODE=mok-dev` verifies a self-built shim against `keys/MOK.cer` instead of an MS CA generation, since the default `ms-ca` mode would otherwise reject the only restoration path available today (its failure text names the escape). `build-shim.sh` does NOT sbsign its output, so that raw output is correctly reported NOT COVERED until an operator signs it with a db-enrolled key -- stated in both guides.
+  - Absent shim prints a loud `UNPIN` block; a partial `shim/` dir and a 2011-CA shim past its 2026-06-30 expiry both hard-fail; both summary paths name the coverage state. Expiry constants mirror `scripts/sign-efi.sh` (sourcing it would run its signing pipeline); `SHIM_CA_TEST_TODAY` overrides the date for tests.
+  - 28 regression cases in `scripts/test-tooling.sh` `[secureboot_smoke_shim_gate]` over fixture-driven stubs that model real exit statuses and mtools' real 8.3 vs `-b` output: absent, absent+REQUIRE_SHIM, partial, keyless, expired-2011, 2011-pre-expiry, valid-2023, ESP mismatch/complete/wrong-extension, mdir failure/absent, no `EFI_OFFSET`, `sbverify` failure, no MOK.cer, loader-unverified, untrusted MokManager, per-component tampered/unextractable ESP bytes, absent TMPDIR, REQUIRE_SHIM-without-image, and three MOK-dev modes.
+- [x] `§6` claims + docs corrected to match the unpinned tree: `§6` item + Notes, `docs/guides/secure-boot-keys.md`, and `shim/README.md` no longer claim a shim that is not there
+- [/] `make disk` ESP staging must refuse a Secure-Boot-requested build instead of printing `[DISK] No shim -- using direct boot` and proceeding -- BLOCKED, attended-session-only
+  - `Makefile` is on the RECEIPT SURFACE (`receipt_surface_guard.py`), which the unattended runner may not edit; an attended session owns this leg.
+  - The smoke leg closes the reporting half; this is the packaging half. Shape it as the same opt-in (`REQUIRE_SHIM=1` or a Secure-Boot build flavor), never an unconditional failure -- the direct-boot fallback is deliberate for dev builds.
+- [/] Verify a pinned MS-signed shim CRYPTOGRAPHICALLY rather than by `sbverify --list` metadata -- BLOCKED, operator-gated: it needs a pinned Microsoft UEFI CA certificate (or an approved-hash allowlist) that nobody has chosen yet
+  - `sbverify --list` enumerates a signature table without validating it, so a tampered image that keeps plausible certificate metadata satisfies the regex. Raised by this section's round-2 Codex adversarial review 2026-08-13 (high).
+  - Fixing it in the smoke alone would ALSO diverge from `scripts/sign-efi.sh` `shim_ca_gate`, which uses the identical `--list` + regex mechanism -- both must move together, and `shim/SHA256SUMS` pinning is the cheaper in-repo half.
+  - Moot until a shim is pinned at all (see the vendor-watch item below), which is why it parks here rather than blocking the reporting work.
+- [/] `.github/workflows/release.yml` uploads `system-disk.img` without ever running the secureboot smoke, so nothing checks the coverage of what it publishes -- BLOCKED on the re-pin below
+  - A `REQUIRE_SHIM=1` release gate would fail every release while `shim/` is deliberately empty, so it can only land together with a pinned shim.
+  - Found by this section's Codex design review 2026-08-13 (high). The release notes make no Secure Boot claim, so nothing published is currently false; the gap is that the workflow cannot tell the difference.
+- [/] Re-pin a Microsoft-UEFI-CA-2023-signed `shimx64.efi` + `mmx64.efi` per the §12 vendor watch and refresh `shim/SHA256SUMS` -- **operator-gated**
+  - Needs a distro shim binary re-signed by Microsoft through the shim-review process; no TODO in this repo can own that, and only a human can decide to trust the resulting binary.
+  - `scripts/secure-boot/build-shim.sh` already covers the MOK-dev chain for our own hardware; only stock-Secure-Boot PCs need the MS-signed one, which `aab6b6f64` records as the ~2yr-out production path.
+
+**Test checkpoint:** `bash scripts/test-secureboot-smoke.sh` names the coverage state on every run and `REQUIRE_SHIM=1` makes an uncovered chain exit 1; `bash scripts/test-tooling.sh` `[secureboot_smoke_shim_gate]` is 28/28. Moved items each carry their original acceptance text.
+
+> **Test runner:** `bash scripts/test-tooling.sh` `[secureboot_smoke_shim_gate]` | 28/28 PASS | **Note:** no kernel test surface -- host-side packaging/verification only, run against a synthetic repo with stubbed `sbverify` / `llvm-objdump-19` / `mdir`.
+
+> **Notes:**
+> - What shipped: fail-loud shim-chain coverage in `scripts/test-secureboot-smoke.sh` (`UNPIN` block, partial-dir + expired-2011-CA hard fails, `REQUIRE_SHIM=1`, fail-closed byte-exact staged-ESP check, `SHIM_TRUST_MODE=mok-dev`), 28 regression cases, and corrected shim claims in §6 + both guides.
+> - How it integrates: coverage is built from verification results (shim anchor + `sbverify` exit status + a loader that actually verifies) AND the disk recipe's staging predicate, then confirmed fail-closed against the packaged ESP via `mdir -b`.
+> - Downstream: `REQUIRE_SHIM=1` is the hook a future release gate uses; it stays unset until a shim is pinned, since it would otherwise fail every build by design.
+> - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) + [`shim/README.md`](../../shim/README.md).
+> - Scope boundary: §20 owns the reporting half; the `make disk` refusal and the release-workflow gate stay parked above (receipt surface / vendor-gated), and §12 keeps the vendor watch itself.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature               | 🪟 Win11                        | 🐧 Linux                      | 🚀 Impossible OS                                              |
-| --- | --------------------- | ------------------------------- | ----------------------------- | ------------------------------------------------------------- |
-| 💎  | UEFI runtime post-EBS | ✅ Full RT via hal.dll          | ✅ efi_call wrapper           | ✅ §1 SVAM + 6 RT services                                    |
-| 💎  | UEFI variables        | ✅ NtQuery/SetSystemEnvValue    | ✅ efivarfs mount             | ✅ §2 get/set/enum + SSDT wired                               |
-| 💎  | GOP resolution        | ✅ Boot mgr + BCD               | ✅ EFIFB + simplefb           | ✅ §3 auto-select best mode                                   |
-| 💎  | SMBIOS core           | ✅ WMI Win32_BIOS class         | ✅ sysfs /sys/class/dmi       | ✅ §4 types 0-4 + registry                                    |
-| 💎  | Secure Boot shim      | ✅ MS-signed shim + MOK         | ✅ rhboot/shim + MokManager   | ✅ §6 MOK chain + sbsign                                      |
-| 💎  | Secure Boot state     | ✅ Registry + msinfo32          | ✅ efivar + mokutil --sb      | ✅ §5 NVRAM + registry State                                  |
-| ⭐  | Boot timeline         | ❌ ETW WPA (heavyweight)        | ❌ systemd-analyze (userland) | ✅ §7 per-step JSON + NVRAM                                   |
-| 💎  | Atomic serial         | ✅ KdPrint spinlock             | ✅ printk logbuf              | ✅ §8 klog ring + serial                                      |
-| 💎  | SBAT shim ops         | ✅ MS Secure Boot program       | ✅ distro shim refresh        | ✅ §9 SBAT checklist doc                                      |
-| 💎  | SBAT artifact revoke  | ✅ MS-signed shim SBAT          | ✅ shim + UKI .sbat section   | ✅ §17 BOOTX64 + UKI .sbat                                    |
-| 💎  | DB/dbx inventory      | ✅ msinfo32 SB details          | ✅ mokutil --db               | ✅ §9 registry Db/Dbx counts                                  |
-| 💎  | EBS retry hardening   | ✅ bootmgr bounded retry        | ✅ efi-stub retry patch       | ✅ §9 4-attempt bounded loop                                  |
-| 💎  | Capsule install UX    | ✅ Windows Update stack         | ✅ fwupd + LVFS               | ⬜ TODO-27 §2 (query-only)                                    |
-| 💎  | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation   | ⚠️ Distro re-sign timing      | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry       |
-| 💎  | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only    | ⚠️ efibootmgr UUID surface    | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
-| 💎  | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*     | ⚠️ WINE shim only             | ✅ kernel32 exports + RSMB/ACPI tables + Vars quota mirror    |
-| 💎  | Unified Kernel Image  | ❌ N/A (signed bootmgr+winload) | ✅ systemd-boot UKI           | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature    |
+| ⭐  | Feature                | 🪟 Win11                           | 🐧 Linux                               | 🚀 Impossible OS                                              |
+| --- | ---------------------- | ---------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
+| 💎  | UEFI runtime post-EBS  | ✅ Full RT via hal.dll             | ✅ efi_call wrapper                    | ✅ §1 SVAM + 6 RT services                                    |
+| 💎  | UEFI variables         | ✅ NtQuery/SetSystemEnvValue       | ✅ efivarfs mount                      | ✅ §2 get/set/enum + SSDT wired                               |
+| 💎  | GOP resolution         | ✅ Boot mgr + BCD                  | ✅ EFIFB + simplefb                    | ✅ §3 auto-select best mode                                   |
+| 💎  | SMBIOS core            | ✅ WMI Win32_BIOS class            | ✅ sysfs /sys/class/dmi                | ✅ §4 types 0-4 + registry                                    |
+| 💎  | Secure Boot shim       | ✅ MS-signed shim + MOK            | ✅ rhboot/shim + MokManager            | ✅ §6 MOK chain + sbsign                                      |
+| 💎  | Secure Boot state      | ✅ Registry + msinfo32             | ✅ efivar + mokutil --sb               | ✅ §5 NVRAM + registry State                                  |
+| ⭐  | Boot timeline          | ❌ ETW WPA (heavyweight)           | ❌ systemd-analyze (userland)          | ✅ §7 per-step JSON + NVRAM                                   |
+| 💎  | Atomic serial          | ✅ KdPrint spinlock                | ✅ printk logbuf                       | ✅ §8 klog ring + serial                                      |
+| 💎  | SBAT shim ops          | ✅ MS Secure Boot program          | ✅ distro shim refresh                 | ✅ §9 SBAT checklist doc                                      |
+| 💎  | SBAT artifact revoke   | ✅ MS-signed shim SBAT             | ✅ shim + UKI .sbat section            | ✅ §17 BOOTX64 + UKI .sbat                                    |
+| 💎  | DB/dbx inventory       | ✅ msinfo32 SB details             | ✅ mokutil --db                        | ✅ §9 registry Db/Dbx counts                                  |
+| 💎  | EBS retry hardening    | ✅ bootmgr bounded retry           | ✅ efi-stub retry patch                | ✅ §9 4-attempt bounded loop                                  |
+| 💎  | Capsule install UX     | ✅ Windows Update stack            | ✅ fwupd + LVFS                        | ⬜ TODO-27 §2 (query-only)                                    |
+| 💎  | MS UEFI CA lifecycle   | ✅ Windows Update CA rotation      | ⚠️ Distro re-sign timing               | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry       |
+| 💎  | ESP integrity check    | ⚠️ BootMgr GUID / FAT32 only       | ⚠️ efibootmgr UUID surface             | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
+| 💎  | Win32 firmware vars    | ✅ kernel32 GetFirmwareEnv*        | ⚠️ WINE shim only                      | ✅ kernel32 exports + RSMB/ACPI tables + Vars quota mirror    |
+| 💎  | Unified Kernel Image   | ❌ N/A (signed bootmgr+winload)    | ✅ systemd-boot UKI                    | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature    |
+| ⭐  | SB chain coverage gate | ❌ signed by construction, no gate | ❌ shim-review is external to the tree | ✅ §20 smoke names COVERED/NOT COVERED; REQUIRE_SHIM=1 fails  |
 
 > **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-27](TODO-27-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
 

@@ -14,15 +14,29 @@
 #      .osrel sections (objdump -h grep). All three must be present
 #      for the bootloader's detect_uki_sections() to fire the UKI
 #      fast path.
-#   4. shim/shimx64.efi (when present) is recognized as signed by a
-#      Microsoft Corporation UEFI CA generation that the build pipeline
-#      knows how to track.
+#   4. Shim chain COVERAGE, reported explicitly in every state: no shim
+#      pinned (the normal state since aab6b6f64), a partial shim/ dir, a
+#      shim signed by the expired MS UEFI CA 2011, and -- when the chain
+#      is otherwise covered -- that the staged ESP really carries it.
+#      An uncovered chain is always named in the summary and never hides
+#      behind a bare PASS.
 #
 # What this does NOT do:
 #   - Actually boot QEMU with Secure Boot enabled (interactive MOK
 #     enrollment via MokManager). Use scripts/debug/kernel/run-secureboot.bat
 #     for the manual end-to-end flow.
 #   - Re-run sbsign. The smoke trusts the build pipeline's output.
+#
+# Environment:
+#   REQUIRE_SHIM=1        turn an uncovered Secure Boot chain into a hard
+#                         failure. Off by default because dev and CI builds
+#                         legitimately ship no shim; any path that PUBLISHES
+#                         an image and advertises Secure Boot must set it.
+#   SHIM_TRUST_MODE       ms-ca (default) = a Microsoft-re-signed distro shim;
+#                         mok-dev = a shim we built ourselves, verified against
+#                         keys/MOK.cer instead of an MS CA generation.
+#   SHIM_CA_TEST_TODAY    override "today" for the CA-expiry check (tests).
+#   DISK_IMG / MOK_KEY    override the disk image / signing key locations.
 #
 # Exit 0: all checks pass. Exit 1: any check fails. Exit 2: required
 # tooling missing (sbverify, llvm-objdump-19).
@@ -70,6 +84,11 @@ if [ ! -f "$MOK_CRT" ]; then
     echo "  signature verification skipped; UKI structural checks still run"
 fi
 
+# Verification state. Each flag is set ONLY by a check that actually succeeded --
+# never by an artifact merely existing. Check 4 builds chain coverage out of
+# these, so a skipped verification can never be mistaken for a passed one.
+LOADER_VERIFIED=0
+
 # 1. Signed BOOTX64.signed.efi verifies against MOK -- this is the artifact the
 #    system-disk recipe ships to the ESP. When keys are present it MUST exist.
 if [ -f "$MOK_CRT" ]; then
@@ -77,6 +96,7 @@ if [ -f "$MOK_CRT" ]; then
         t_fail "BOOTX64.signed.efi missing" "MOK key present but signing produced no signed loader"
     elif sbverify --cert "$MOK_CRT" "$EFI_SIGNED" 2>&1 | grep -q "Signature verification OK"; then
         t_ok "BOOTX64.signed.efi signature verifies against keys/MOK.cer"
+        LOADER_VERIFIED=1
     else
         t_fail "BOOTX64.signed.efi signature does NOT verify against MOK.cer"
     fi
@@ -122,21 +142,252 @@ if [ -f "$UKI" ]; then
     fi
 fi
 
-# 4. Shim presence + CA generation recognition
+# 4. Shim chain coverage -- pinning, CA generation, and what actually got staged.
+#
+# Fail-loud shim-coverage contract (UEFI hardening / Secure Boot roadmap).
+# Before 2026-08-13 this block was a
+# bare `if [ -f "$SHIM" ]`, so an UNPINNED shim produced no output at all and the
+# script still printed `PASS N/N Secure Boot smoke checks` -- a verdict a reader
+# takes as "the Secure Boot chain is covered" when nothing about the chain ran.
+# The shim binaries were unpinned in aab6b6f64 (2026-07-01) because their MS UEFI
+# CA 2011 expired 2026-06-30, so absence is the NORMAL state today and must be
+# reported rather than assumed benign.
+#
+# Presence of the two shim files is NOT proof the chain shipped: the system-disk
+# recipe stages the shim chain only when shimx64.efi + mmx64.efi + keys/MOK.key
+# are ALL present (Makefile "EFI chain-load layout"), and deliberately falls back
+# to a direct unsigned BOOTX64.EFI otherwise. So coverage is decided by the same
+# predicate the Makefile uses, and confirmed against the staged ESP when a disk
+# image exists.
 SHIM="$REPO_ROOT/shim/shimx64.efi"
-if [ -f "$SHIM" ]; then
-    if sbverify --list "$SHIM" 2>&1 | grep -qE "Microsoft Corporation UEFI CA 20[12][0-9]"; then
-        SHIM_CA_YEAR="$(sbverify --list "$SHIM" 2>&1 | grep -oE 'Microsoft Corporation UEFI CA 20[12][0-9]' | grep -oE '20[12][0-9]' | sort -u | tail -1)"
-        t_ok "shim is signed by Microsoft Corporation UEFI CA $SHIM_CA_YEAR"
+SHIM_MM="$REPO_ROOT/shim/mmx64.efi"
+MOK_KEY="${MOK_KEY:-$REPO_ROOT/keys/MOK.key}"
+DISK_IMG="${DISK_IMG:-$REPO_ROOT/build/system-disk.img}"
+# Overridable so a test can simulate mtools being absent without hiding the
+# host's real binary from PATH (the smoke needs coreutils from the same PATH).
+MDIR_BIN="${MDIR_BIN:-mdir}"
+MCOPY_BIN="${MCOPY_BIN:-mcopy}"
+# Hard-fail on an uncovered chain instead of reporting it. Opt-in because a dev
+# or CI build legitimately has no shim; any path that PUBLISHES an image and
+# advertises Secure Boot must set it.
+REQUIRE_SHIM="${REQUIRE_SHIM:-0}"
+# Which trust anchor the pinned shim is expected to carry:
+#   ms-ca   (default) a distro shim re-signed by Microsoft -- the stock Secure
+#           Boot path, where firmware trusts the shim out of the box.
+#   mok-dev a shim we built ourselves (scripts/secure-boot/build-shim.sh, MOK.cer
+#           as VENDOR_CERT_FILE). It carries NO Microsoft signature, so it is
+#           verified against keys/MOK.cer instead and firmware will not trust it
+#           until the key is enrolled in db. Without this mode such a shim would
+#           be rejected as "no recognized MS UEFI CA", failing the one
+#           restoration path that is actually available today.
+SHIM_TRUST_MODE="${SHIM_TRUST_MODE:-ms-ca}"
+# Mirrors the graduated policy in scripts/sign-efi.sh. Duplicated deliberately:
+# sourcing that script would execute its top-level signing pipeline. These are
+# fixed historical dates, not a moving configuration.
+MS_UEFI_CA_2011_EXPIRY="2026-06-30"
+TODAY="${SHIM_CA_TEST_TODAY:-$(date -u +%Y-%m-%d)}"
+
+SHIM_TRUSTED=0      # the shim's own trust anchor VERIFIED for the selected mode
+ESP_VERIFIED=0      # the staged ESP was inspected and carries the chain
+CHAIN_COVERED=0
+UNCOVERED_WHY=""
+
+# Verify ONE shim-side binary against the trust anchor the selected mode
+# requires. Both shimx64.efi and mmx64.efi go through this: MokManager is an
+# executable the firmware launches during enrollment, so trusting the shim while
+# merely counting the file next to it is a hole, not a shortcut.
+# $1 = path, $2 = short label. Returns 0 when trusted; sets UNCOVERED_WHY on
+# failure and emits its own PASS/FAIL line.
+shim_anchor_verify() {
+    local bin="$1" label="$2" out rc year
+    # Capture the exit status: a tool failure is NOT "no recognized CA".
+    # Conflating them is the fail-open that scripts/sign-efi.sh was fixed for.
+    out="$(sbverify --list "$bin" 2>&1)" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        t_fail "sbverify --list failed (rc=$rc) on $label" \
+               "tool failure is not proof of anything -- refusing to treat it as trusted"
+        UNCOVERED_WHY="sbverify could not read $label (rc=$rc)"
+        return 1
+    fi
+    if [ "$SHIM_TRUST_MODE" = "mok-dev" ]; then
+        if [ ! -f "$MOK_CRT" ]; then
+            t_fail "SHIM_TRUST_MODE=mok-dev but $MOK_CRT is absent" \
+                   "a MOK-dev chain can only be verified against the MOK certificate"
+            UNCOVERED_WHY="mok-dev mode with no MOK certificate to verify against"
+            return 1
+        fi
+        if sbverify --cert "$MOK_CRT" "$bin" 2>&1 | grep -q "Signature verification OK"; then
+            t_ok "MOK-dev $label verifies against keys/MOK.cer (firmware trusts it only once that key is in db)"
+            return 0
+        fi
+        # scripts/secure-boot/build-shim.sh does NOT sign its output --
+        # VENDOR_CERT_FILE embeds a cert for the shim's own MOK-list checks,
+        # which is not an Authenticode signature. Its raw output therefore
+        # cannot be a covered chain: firmware has nothing to verify.
+        t_fail "MOK-dev $label carries no signature that keys/MOK.cer verifies" \
+               "build-shim.sh does not sign its output -- sbsign it with a db-enrolled key first"
+        UNCOVERED_WHY="self-built $label is unsigned (build-shim.sh does not sbsign), so nothing can verify it"
+        return 1
+    fi
+    if printf '%s\n' "$out" | grep -qE "Microsoft Corporation UEFI CA 20[12][0-9]"; then
+        year="$(printf '%s\n' "$out" | grep -oE 'Microsoft Corporation UEFI CA 20[12][0-9]' | grep -oE '20[12][0-9]' | sort -u | tail -1)"
+        if [ "$year" = "2011" ] && [ "$TODAY" \> "$MS_UEFI_CA_2011_EXPIRY" ]; then
+            t_fail "$label is signed by MS UEFI CA 2011, expired $MS_UEFI_CA_2011_EXPIRY" \
+                   "scripts/sign-efi.sh aborts on this too; pin a 2023-CA-signed shim"
+            UNCOVERED_WHY="pinned $label is signed by the expired MS UEFI CA 2011"
+            return 1
+        fi
+        t_ok "$label is signed by Microsoft Corporation UEFI CA $year"
+        return 0
+    fi
+    t_fail "$label present but no recognized MS UEFI CA generation" \
+           "set SHIM_TRUST_MODE=mok-dev if this is a self-built shim"
+    UNCOVERED_WHY="pinned $label names no recognized MS UEFI CA generation"
+    return 1
+}
+
+if [ -f "$SHIM" ] && [ -f "$SHIM_MM" ]; then
+    # BOTH binaries must clear the anchor. `&&` would short-circuit and skip
+    # MokManager's check entirely, so each runs and the results are combined.
+    SHIM_BIN_OK=0; MM_BIN_OK=0
+    shim_anchor_verify "$SHIM" "shim/shimx64.efi" && SHIM_BIN_OK=1
+    shim_anchor_verify "$SHIM_MM" "shim/mmx64.efi" && MM_BIN_OK=1
+    if [ "$SHIM_BIN_OK" = "1" ] && [ "$MM_BIN_OK" = "1" ]; then
+        SHIM_TRUSTED=1
+    fi
+
+    # The disk recipe stages the chain only with a signing key AND a signed
+    # loader, and check 1 above is what proves the loader really verifies.
+    # Existence of the files is not verification, so LOADER_VERIFIED gates this.
+    if [ "$SHIM_TRUSTED" = "1" ]; then
+        if [ ! -f "$MOK_KEY" ]; then
+            UNCOVERED_WHY="shim pinned but keys/MOK.key absent -- the disk recipe stages direct (unsigned) boot, not the shim chain"
+        elif [ ! -f "$MOK_CRT" ]; then
+            UNCOVERED_WHY="shim + MOK key present but $MOK_CRT is absent, so no loader signature was verified"
+        elif [ "$LOADER_VERIFIED" != "1" ]; then
+            UNCOVERED_WHY="shim + MOK key present but the signed loader did not verify (see check 1)"
+        else
+            CHAIN_COVERED=1
+        fi
+    fi
+elif [ -f "$SHIM" ] || [ -f "$SHIM_MM" ]; then
+    # `make disk` refuses this outright; the smoke must not be softer than the
+    # thing it is smoke-testing.
+    t_fail "partial shim/ directory -- need BOTH shimx64.efi and mmx64.efi" \
+           "the system-disk recipe errors out on a partial shim directory"
+    UNCOVERED_WHY="partial shim/ directory"
+else
+    UNCOVERED_WHY="no shim pinned in shim/ (unpinned in aab6b6f64, 2026-07-01: MS UEFI CA 2011 expired $MS_UEFI_CA_2011_EXPIRY)"
+    if [ "$REQUIRE_SHIM" != "1" ]; then
+        echo "  UNPIN shim/shimx64.efi absent -- Secure Boot chain-load is NOT covered by this run"
+        echo "        direct (unsigned) dev boot only; run scripts/secure-boot/build-shim.sh for a MOK-dev chain"
+        echo "        set REQUIRE_SHIM=1 to make an uncovered chain a hard failure"
+    fi
+fi
+
+# 4b. When a disk image exists it is the authority on what actually shipped --
+#     shim files on disk say nothing about what `make disk` put in EFI/BOOT.
+#     This check FAILS CLOSED: if an image is present and we cannot inspect it,
+#     that is an unverifiable claim, not a covered chain.
+if [ "$CHAIN_COVERED" = "1" ] && [ -f "$DISK_IMG" ]; then
+    ESP_OFFSET=""
+    [ -f "$DISK_IMG.info" ] && ESP_OFFSET="$(grep -oE '^EFI_OFFSET=[0-9]+$' "$DISK_IMG.info" | head -1 | cut -d= -f2)"
+    if ! command -v "$MDIR_BIN" >/dev/null 2>&1 || ! command -v "$MCOPY_BIN" >/dev/null 2>&1; then
+        t_fail "cannot verify the staged ESP of $DISK_IMG: mtools not on PATH" \
+               "both $MDIR_BIN and $MCOPY_BIN are required -- install mtools"
+        UNCOVERED_WHY="staged ESP unverifiable (mtools missing)"
+    elif [ -z "$ESP_OFFSET" ]; then
+        t_fail "cannot verify the staged ESP of $DISK_IMG: no numeric EFI_OFFSET in $DISK_IMG.info"
+        UNCOVERED_WHY="staged ESP unverifiable (no EFI_OFFSET)"
     else
-        t_fail "shim/shimx64.efi present but no recognized MS UEFI CA generation"
+        # -b prints exact full paths, one per line. The default listing is 8.3
+        # columnar ("BOOTX64  EFI"), where a basename match would also accept
+        # BOOTX64.BAD -- exactly the collision this must not have.
+        ESP_LIST="$("$MDIR_BIN" -i "$DISK_IMG@@$ESP_OFFSET" -b ::/EFI/BOOT 2>&1)" && MDIR_RC=0 || MDIR_RC=$?
+        if [ "$MDIR_RC" -ne 0 ]; then
+            t_fail "cannot verify the staged ESP of $DISK_IMG: mdir exited $MDIR_RC" \
+                   "$(printf '%s' "$ESP_LIST" | tail -1)"
+            UNCOVERED_WHY="staged ESP unverifiable (mdir rc=$MDIR_RC)"
+        else
+            # A filename is not an artifact. Extract each staged component and
+            # compare it byte-for-byte with the source we verified above --
+            # otherwise a stale or replaced image with the right THREE NAMES
+            # keeps the chain "covered" while shipping none of the verified bytes.
+            ESP_MISSING=""
+            ESP_MISMATCH=""
+            # An unchecked mktemp is a fail-open with teeth: `set -e` is off, so
+            # a failed `mktemp -d` (read-only or full TMPDIR) would leave ESP_TMP
+            # empty, extraction would target /BOOTX64.EFI and friends, and every
+            # cmp would then compare a file we just wrote against its own source
+            # and pass. Validate the directory before anything can write to it.
+            ESP_TMP="$(mktemp -d 2>/dev/null)" || ESP_TMP=""
+            if [ -z "$ESP_TMP" ] || [ ! -d "$ESP_TMP" ]; then
+                t_fail "cannot verify the staged ESP of $DISK_IMG: no writable temporary directory" \
+                       "mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"
+                UNCOVERED_WHY="staged ESP unverifiable (no temp dir to extract into)"
+                ESP_MISMATCH=" (extraction not attempted)"
+            else
+                trap 'rm -rf "$ESP_TMP"' EXIT INT TERM
+                for f in BOOTX64.EFI grubx64.efi mmx64.efi; do
+                    if ! printf '%s\n' "$ESP_LIST" | grep -qixF "::/EFI/BOOT/$f"; then
+                        ESP_MISSING="$ESP_MISSING $f"
+                        continue
+                    fi
+                    case "$f" in
+                        BOOTX64.EFI) ESP_SRC="$SHIM" ;;      # the shim is staged as BOOTX64.EFI
+                        grubx64.efi) ESP_SRC="$EFI_SIGNED" ;; # our signed loader
+                        mmx64.efi)   ESP_SRC="$SHIM_MM" ;;
+                    esac
+                    if ! "$MCOPY_BIN" -i "$DISK_IMG@@$ESP_OFFSET" -n "::/EFI/BOOT/$f" "$ESP_TMP/$f" >/dev/null 2>&1; then
+                        ESP_MISMATCH="$ESP_MISMATCH $f(unreadable)"
+                    elif ! cmp -s "$ESP_TMP/$f" "$ESP_SRC"; then
+                        ESP_MISMATCH="$ESP_MISMATCH $f(bytes differ from $(basename "$ESP_SRC"))"
+                    fi
+                done
+                rm -rf "$ESP_TMP"
+                trap - EXIT INT TERM
+            fi
+            if [ -n "$ESP_MISSING" ]; then
+                t_fail "staged ESP is missing chain component(s):$ESP_MISSING" \
+                       "shim files are pinned but the packaged image does not chain-load"
+                UNCOVERED_WHY="staged ESP is missing chain component(s):$ESP_MISSING"
+            elif [ -n "$ESP_MISMATCH" ]; then
+                t_fail "staged ESP component(s) are not the verified artifacts:$ESP_MISMATCH" \
+                       "the packaged image does not carry the bytes this run verified"
+                UNCOVERED_WHY="staged ESP component(s) differ from the verified artifacts:$ESP_MISMATCH"
+            else
+                t_ok "staged ESP carries the verified chain byte-for-byte (BOOTX64.EFI + grubx64.efi + mmx64.efi)"
+                ESP_VERIFIED=1
+            fi
+        fi
+    fi
+    [ "$ESP_VERIFIED" = "1" ] || CHAIN_COVERED=0
+fi
+
+if [ "$REQUIRE_SHIM" = "1" ]; then
+    if [ "$CHAIN_COVERED" != "1" ]; then
+        t_fail "REQUIRE_SHIM=1 but the Secure Boot chain is not covered" "$UNCOVERED_WHY"
+    elif [ "$ESP_VERIFIED" != "1" ]; then
+        # A caller demanding a covered chain is about to ship something. Verified
+        # inputs are not a verified image, and "no image was built" is not proof.
+        t_fail "REQUIRE_SHIM=1 but no packaged ESP was verified" \
+               "inputs verify; build a disk image so the shipped chain can be confirmed"
     fi
 fi
 
 echo "=================================================================="
 TOTAL=$((PASS + FAIL))
 if [ "$FAIL" -eq 0 ]; then
-    echo "  PASS  $TOTAL/$TOTAL Secure Boot smoke checks"
+    if [ "$CHAIN_COVERED" = "1" ] && [ "$ESP_VERIFIED" = "1" ]; then
+        echo "  PASS  $TOTAL/$TOTAL Secure Boot smoke checks (shim chain COVERED, staged ESP verified)"
+    elif [ "$CHAIN_COVERED" = "1" ]; then
+        # Inputs verify, but no packaged image existed to confirm what shipped.
+        echo "  PASS  $TOTAL/$TOTAL Secure Boot smoke checks (shim chain COVERED -- inputs only, no disk image to inspect)"
+    else
+        # Never let a bare PASS stand in for a chain that was never exercised.
+        echo "  PASS  $TOTAL/$TOTAL Secure Boot smoke checks -- shim chain NOT COVERED"
+        echo "        $UNCOVERED_WHY"
+    fi
     echo "=================================================================="
     exit 0
 else
@@ -144,6 +395,13 @@ else
     for f in "${FAILURES[@]}"; do
         echo "        - $f"
     done
+    # State coverage on the failing path too: a reader triaging a failure needs
+    # to know whether the chain was even in play, not just which checks failed.
+    if [ "$CHAIN_COVERED" = "1" ]; then
+        echo "        shim chain COVERED (unrelated checks failed)"
+    else
+        echo "        shim chain NOT COVERED -- ${UNCOVERED_WHY:-see failures above}"
+    fi
     echo "=================================================================="
     exit 1
 fi

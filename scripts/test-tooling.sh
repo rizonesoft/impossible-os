@@ -5674,6 +5674,410 @@ fi
 
 
 # ============================================================================
+# secureboot_smoke_shim_gate (UEFI hardening / Secure Boot: fail-loud shim coverage)
+# ============================================================================
+# scripts/test-secureboot-smoke.sh used to wrap its shim check in a bare
+# `if [ -f "$SHIM" ]`, so an UNPINNED shim printed nothing and the script still
+# reported `PASS N/N Secure Boot smoke checks`. These cases pin the fail-loud
+# contract: every uncovered state is named, and REQUIRE_SHIM=1 makes it fatal.
+#   - absent / absent+REQUIRE_SHIM / partial shim dir
+#   - keyless-present (shim pinned, no MOK.key -> disk stages direct boot)
+#   - expired-2011 (past 2026-06-30) vs 2011 pre-expiry vs valid-2023
+#   - staged-ESP mismatch (shim pinned + keyed, but ESP lacks a chain component)
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[secureboot_smoke_shim_gate]${NC}"
+
+if [ ! -f "$REPO_ROOT/scripts/test-secureboot-smoke.sh" ]; then
+    t_fail "secureboot_smoke_shim_gate: scripts/test-secureboot-smoke.sh missing"
+else
+    SBS_TMP="$(mktemp -d)"
+    SBS_REPO="$SBS_TMP/repo"
+    mkdir -p "$SBS_REPO/scripts" "$SBS_REPO/keys" "$SBS_REPO/build/tools" "$SBS_REPO/shim" "$SBS_REPO/bin"
+    cp "$REPO_ROOT/scripts/test-secureboot-smoke.sh" "$SBS_REPO/scripts/test-secureboot-smoke.sh"
+    chmod +x "$SBS_REPO/scripts/test-secureboot-smoke.sh"
+
+    # Fixture-driven, including EXIT STATUS: a stub that always exits 0 cannot
+    # catch an ignored tool failure, which is the fail-open these cases exist for.
+    cat > "$SBS_REPO/bin/sbverify" <<'STUB'
+#!/bin/bash
+if [ "$1" = "--list" ]; then
+    # mmx64.efi has its own fixture so MokManager can differ from the shim.
+    if [ "$(basename "${2:-}")" = "mmx64.efi" ] && [ -n "${SHIM_CA_FIXTURE_MM:-}" ]; then
+        echo "$SHIM_CA_FIXTURE_MM"
+    else
+        echo "${SHIM_CA_FIXTURE:-Microsoft Corporation UEFI CA 2023}"
+    fi
+    exit "${SBVERIFY_LIST_RC:-0}"
+fi
+# --cert <crt> <file>: verify only the basenames named in SBVERIFY_CERT_OK
+# (default: everything), so a mode can trust one artifact and not another.
+target="$(basename "${3:-}")"
+ok="${SBVERIFY_CERT_OK:-__all__}"
+if [ "$ok" = "__all__" ] || printf '%s\n' $ok | grep -qxF "$target"; then
+    echo "Signature verification OK"
+    exit 0
+fi
+echo "Signature verification failed"
+exit 1
+STUB
+    cat > "$SBS_REPO/bin/llvm-objdump-19" <<'STUB'
+#!/bin/bash
+# stub: section table with .sbat + the three UKI sections, .linux > 1 MiB
+cat <<'TBL'
+Sections:
+Idx Name          Size     VMA              Type
+  0 .sbat         00000100 0000000000001000 DATA
+  1 .linux        00CE0000 0000000000010000 DATA
+  2 .cmdline      00000100 0000000000f00000 DATA
+  3 .osrel        00000100 0000000000f01000 DATA
+TBL
+STUB
+    cat > "$SBS_REPO/bin/mdir" <<'STUB'
+#!/bin/bash
+# stub: ESP listing driven by ESP_FIXTURE (space-separated names) + MDIR_RC.
+# Emits mtools' REAL two shapes so the caller is held to using -b: the default
+# listing is 8.3 columnar ("BOOTX64  EFI"), where a basename match would also
+# accept BOOTX64.BAD; only -b yields exact full paths.
+brief=0
+for a in "$@"; do [ "$a" = "-b" ] && brief=1; done
+rc="${MDIR_RC:-0}"
+if [ "$rc" -ne 0 ]; then
+    echo "Cannot initialize drive (simulated)" >&2
+    exit "$rc"
+fi
+if [ "$brief" = "1" ]; then
+    for f in ${ESP_FIXTURE:-BOOTX64.EFI grubx64.efi mmx64.efi}; do echo "::/EFI/BOOT/$f"; done
+else
+    echo " Volume in drive : has no label"
+    echo "Directory for ::/EFI/BOOT"
+    echo ""
+    for f in ${ESP_FIXTURE:-BOOTX64.EFI grubx64.efi mmx64.efi}; do
+        printf '%-8s %-3s      1024 2026-08-13   4:42 \n' "$(echo "${f%%.*}" | tr a-z A-Z)" "$(echo "${f##*.}" | tr a-z A-Z)"
+    done
+fi
+exit 0
+STUB
+    # mcopy stub: materializes each staged ESP component from its synthetic
+    # source so the byte comparison is meaningful. ESP_BAD_BYTES names components
+    # to tamper with; ESP_UNREADABLE names ones that fail to extract. Relative
+    # paths are safe -- the smoke always runs with cwd at the synthetic repo.
+    cat > "$SBS_REPO/bin/mcopy" <<'STUB'
+#!/bin/bash
+args=("$@"); dest="${args[$((${#args[@]}-1))]}"; src="${args[$((${#args[@]}-2))]}"
+name="$(basename "$src")"
+case " ${ESP_UNREADABLE:-} " in *" $name "*) exit 1 ;; esac
+case " ${ESP_BAD_BYTES:-} " in *" $name "*) echo "tampered-bytes" > "$dest"; exit 0 ;; esac
+case "$name" in
+    BOOTX64.EFI) cp shim/shimx64.efi "$dest" ;;
+    grubx64.efi) cp build/tools/BOOTX64.signed.efi "$dest" ;;
+    mmx64.efi)   cp shim/mmx64.efi "$dest" ;;
+    *) exit 1 ;;
+esac
+STUB
+    chmod +x "$SBS_REPO/bin/sbverify" "$SBS_REPO/bin/llvm-objdump-19" \
+             "$SBS_REPO/bin/mdir" "$SBS_REPO/bin/mcopy"
+
+    echo "stub-efi" > "$SBS_REPO/build/tools/BOOTX64.EFI"
+    echo "stub-uki" > "$SBS_REPO/build/tools/BOOTX64.UKI.efi"
+
+    # Run the smoke in the synthetic repo. $1.. are extra `env` assignments.
+    _sbs_run() {
+        local out rc
+        out="$(cd "$SBS_REPO" && env PATH="$SBS_REPO/bin:$PATH" "$@" \
+            bash scripts/test-secureboot-smoke.sh 2>&1)"
+        rc=$?
+        printf '%s\n__rc=%s\n' "$out" "$rc"
+    }
+    _sbs_shim_pin() {   # $1 = 2011|2023|partial|none
+        rm -f "$SBS_REPO/shim/shimx64.efi" "$SBS_REPO/shim/mmx64.efi"
+        case "$1" in
+            partial) echo "stub-shim" > "$SBS_REPO/shim/shimx64.efi" ;;
+            none)    : ;;
+            *)       echo "stub-shim" > "$SBS_REPO/shim/shimx64.efi"
+                     echo "stub-mm"   > "$SBS_REPO/shim/mmx64.efi" ;;
+        esac
+    }
+    _sbs_keys() {       # $1 = keyed|keyless
+        rm -f "$SBS_REPO/keys/MOK.key" "$SBS_REPO/keys/MOK.cer" \
+              "$SBS_REPO/build/tools/BOOTX64.signed.efi" \
+              "$SBS_REPO/build/tools/BOOTX64.UKI.signed.efi"
+        if [ "$1" = "keyed" ]; then
+            echo "stub-key" > "$SBS_REPO/keys/MOK.key"
+            echo "stub-crt" > "$SBS_REPO/keys/MOK.cer"
+            echo "stub-signed"     > "$SBS_REPO/build/tools/BOOTX64.signed.efi"
+            echo "stub-signed-uki" > "$SBS_REPO/build/tools/BOOTX64.UKI.signed.efi"
+        fi
+    }
+
+    # Case 1: no shim pinned -> loud UNPIN block, NOT COVERED, still exit 0.
+    _sbs_shim_pin none; _sbs_keys keyless
+    SBS_OUT="$(_sbs_run)"
+    if echo "$SBS_OUT" | grep -q "UNPIN shim/shimx64.efi absent" \
+       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: absent shim -> loud UNPIN + NOT COVERED summary, exit 0"
+    else
+        t_fail "secureboot_smoke: absent shim" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 2: absent shim + REQUIRE_SHIM=1 -> hard failure.
+    SBS_OUT="$(_sbs_run REQUIRE_SHIM=1)"
+    if echo "$SBS_OUT" | grep -q "REQUIRE_SHIM=1 but the Secure Boot chain is not covered" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: absent shim + REQUIRE_SHIM=1 -> FAIL exit 1"
+    else
+        t_fail "secureboot_smoke: REQUIRE_SHIM absent-shim" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 3: partial shim dir -> always fatal, matching the disk recipe.
+    _sbs_shim_pin partial
+    SBS_OUT="$(_sbs_run)"
+    if echo "$SBS_OUT" | grep -q "partial shim/ directory" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: partial shim/ dir -> FAIL exit 1 (no REQUIRE_SHIM needed)"
+    else
+        t_fail "secureboot_smoke: partial shim dir" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 4: shim pinned but no MOK key -> the disk stages direct boot, so the
+    # chain is NOT covered even though both shim files are present.
+    _sbs_shim_pin 2023; _sbs_keys keyless
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "keys/MOK.key absent" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: keyless shim present -> NOT COVERED (presence != coverage)"
+    else
+        t_fail "secureboot_smoke: keyless-present" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 5: 2011 CA past its 2026-06-30 expiry -> fatal, matching sign-efi.sh.
+    _sbs_keys keyed
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="2026-07-15")"
+    if echo "$SBS_OUT" | grep -q "expired 2026-06-30" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: 2011 CA past expiry -> FAIL exit 1"
+    else
+        t_fail "secureboot_smoke: expired-2011" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 6: same 2011 shim BEFORE the expiry -> accepted, no CA failure.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="2026-01-15")"
+    if echo "$SBS_OUT" | grep -q "shim/shimx64.efi is signed by Microsoft Corporation UEFI CA 2011" \
+       && ! echo "$SBS_OUT" | grep -q "expired 2026-06-30" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: 2011 CA pre-expiry -> accepted (date-gated, not blanket)"
+    else
+        t_fail "secureboot_smoke: 2011-pre-expiry" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 7: 2023 CA + MOK key + signed loader, no disk image -> COVERED.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "shim chain COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: 2023 CA + key + signed loader -> COVERED"
+    else
+        t_fail "secureboot_smoke: covered-2023" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 8: covered predicate but the staged ESP lacks mmx64.efi -> fatal.
+    # A packaged image that cannot chain-load must not report a covered chain.
+    echo "stub-disk" > "$SBS_REPO/build/system-disk.img"
+    printf 'EFI_OFFSET=1048576\nEFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" ESP_FIXTURE="BOOTX64.EFI grubx64.efi")"
+    if echo "$SBS_OUT" | grep -q "staged ESP is missing chain component(s): mmx64.efi" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: staged ESP missing a chain component -> FAIL exit 1"
+    else
+        t_fail "secureboot_smoke: esp-mismatch" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 9: the same staged ESP, complete -> COVERED with the ESP verified.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "staged ESP carries the verified chain byte-for-byte" \
+       && echo "$SBS_OUT" | grep -q "staged ESP verified" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: complete staged ESP -> COVERED + bytes verified"
+    else
+        t_fail "secureboot_smoke: esp-complete" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 9b: REQUIRE_SHIM=1 with verified inputs but NO packaged image -> FAIL.
+    # A caller demanding a covered chain is about to ship; "no image was built"
+    # proves nothing about what would ship.
+    rm -f "$SBS_REPO/build/system-disk.img" "$SBS_REPO/build/system-disk.img.info"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" REQUIRE_SHIM=1)"
+    if echo "$SBS_OUT" | grep -q "no packaged ESP was verified" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: REQUIRE_SHIM=1 with no disk image -> FAIL (inputs are not an image)"
+    else
+        t_fail "secureboot_smoke: require-shim-no-image" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+    echo "stub-disk" > "$SBS_REPO/build/system-disk.img"
+    printf 'EFI_OFFSET=1048576\nEFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
+
+    # Case 10: entries that share the expected BASENAMES but carry the wrong
+    # extensions must not satisfy the chain. Guards the 8.3-listing collision
+    # (`BOOTX64  EFI` vs BOOTX64.BAD) that an inexact match would accept.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
+                        ESP_FIXTURE="BOOTX64.BAD grubx64.old mmx64.txt")"
+    if echo "$SBS_OUT" | grep -q "staged ESP is missing chain component(s): BOOTX64.EFI grubx64.efi mmx64.efi" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: wrong-extension ESP entries -> FAIL (exact path match)"
+    else
+        t_fail "secureboot_smoke: esp-basename-collision" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 10b: table-driven over ALL THREE components -- the expected names are
+    # staged but the bytes are not the artifacts this run verified, and (second
+    # pass) the component cannot be extracted at all. A per-component fixture
+    # would let an implementation that skips exactly one of them pass.
+    for _c in BOOTX64.EFI grubx64.efi mmx64.efi; do
+        SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" ESP_BAD_BYTES="$_c")"
+        if echo "$SBS_OUT" | grep -q "staged ESP component(s) are not the verified artifacts: $_c" \
+           && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+           && echo "$SBS_OUT" | grep -q "__rc=1"; then
+            t_pass "secureboot_smoke: tampered $_c bytes -> FAIL (content, not just names)"
+        else
+            t_fail "secureboot_smoke: esp-bad-bytes-$_c" "out: $(echo "$SBS_OUT" | tail -8)"
+        fi
+
+        SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" ESP_UNREADABLE="$_c")"
+        if echo "$SBS_OUT" | grep -q "$_c(unreadable)" \
+           && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+           && echo "$SBS_OUT" | grep -q "__rc=1"; then
+            t_pass "secureboot_smoke: unextractable $_c -> FAIL closed"
+        else
+            t_fail "secureboot_smoke: esp-unreadable-$_c" "out: $(echo "$SBS_OUT" | tail -8)"
+        fi
+    done
+
+    # Case 10d: no writable TMPDIR -> FAIL CLOSED. An unchecked mktemp would
+    # extract to /BOOTX64.EFI and then compare those bytes against their own
+    # source, passing every cmp while verifying nothing.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
+                        TMPDIR="$SBS_TMP/definitely-not-a-directory")"
+    if echo "$SBS_OUT" | grep -q "no writable temporary directory" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: mktemp failure -> FAIL closed (no root-path extraction)"
+    else
+        t_fail "secureboot_smoke: esp-no-tmpdir" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 11: mdir cannot read the image -> FAIL CLOSED. An unverifiable image
+    # is not a covered chain; swallowing mdir's status is the fail-open.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" MDIR_RC=1)"
+    if echo "$SBS_OUT" | grep -q "mdir exited 1" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: mdir failure -> FAIL closed (status not swallowed)"
+    else
+        t_fail "secureboot_smoke: mdir-rc" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 12: disk image present but no usable EFI_OFFSET -> FAIL CLOSED.
+    printf 'EFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "no numeric EFI_OFFSET" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: missing EFI_OFFSET -> FAIL closed"
+    else
+        t_fail "secureboot_smoke: esp-no-offset" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+    printf 'EFI_OFFSET=1048576\nEFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
+
+    # Case 13: mtools not installed while an image exists -> FAIL CLOSED.
+    # MDIR_BIN is the seam: hiding the host's real mdir from PATH would also
+    # hide the coreutils the script needs from that same PATH.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
+                        MDIR_BIN="mdir-definitely-not-installed")"
+    if echo "$SBS_OUT" | grep -q "mtools not on PATH" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: mdir unavailable -> FAIL closed (not silently skipped)"
+    else
+        t_fail "secureboot_smoke: esp-no-mdir" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+    rm -f "$SBS_REPO/build/system-disk.img" "$SBS_REPO/build/system-disk.img.info"
+
+    # Case 14: sbverify --list fails on the shim -> FAIL. Tool failure must not
+    # be conflated with "no recognized CA" (the sign-efi.sh fail-open lesson).
+    SBS_OUT="$(_sbs_run SBVERIFY_LIST_RC=2)"
+    if echo "$SBS_OUT" | grep -q "sbverify --list failed (rc=2)" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: sbverify --list nonzero -> FAIL (no fail-open)"
+    else
+        t_fail "secureboot_smoke: sbverify-list-rc" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 15: key + signed loader present but MOK.cer absent -> nothing was
+    # cryptographically verified, so this is NOT coverage.
+    rm -f "$SBS_REPO/keys/MOK.cer"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
+    if echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "no loader signature was verified"; then
+        t_pass "secureboot_smoke: no MOK.cer -> NOT COVERED (existence != verification)"
+    else
+        t_fail "secureboot_smoke: no-mok-cer" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 16: signed loader present but its signature does NOT verify -> the
+    # chain must not be reported covered on the strength of the file existing.
+    echo "stub-crt" > "$SBS_REPO/keys/MOK.cer"
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
+                        SBVERIFY_CERT_OK="BOOTX64.UKI.signed.efi")"
+    if echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: loader signature failure -> NOT COVERED"
+    else
+        t_fail "secureboot_smoke: loader-unverified" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 16b: shimx64.efi clears the anchor but mmx64.efi does NOT. MokManager
+    # is launched by firmware during enrollment, so an unverified one cannot ride
+    # along on the shim's verdict.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
+                        SHIM_CA_FIXTURE_MM="CN=somebody else")"
+    if echo "$SBS_OUT" | grep -q "shim/mmx64.efi present but no recognized MS UEFI CA generation" \
+       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: untrusted mmx64.efi -> NOT COVERED (MokManager verified independently)"
+    else
+        t_fail "secureboot_smoke: mm-untrusted" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 17: a self-built MOK-dev shim carries no MS CA. Default ms-ca mode
+    # must reject it, and SHIM_TRUST_MODE=mok-dev must verify it against MOK.cer
+    # -- otherwise the one restoration path available today cannot pass.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="CN=Impossible OS Secure Boot Key")"
+    if echo "$SBS_OUT" | grep -q "shim/shimx64.efi present but no recognized MS UEFI CA generation" \
+       && echo "$SBS_OUT" | grep -q "SHIM_TRUST_MODE=mok-dev" \
+       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: self-built shim in ms-ca mode -> FAIL + NOT COVERED + rc=1"
+    else
+        t_fail "secureboot_smoke: mokdev-in-msca-mode" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="CN=Impossible OS Secure Boot Key" SHIM_TRUST_MODE=mok-dev)"
+    if echo "$SBS_OUT" | grep -q "MOK-dev shim/shimx64.efi verifies against keys/MOK.cer" \
+       && echo "$SBS_OUT" | grep -q "MOK-dev shim/mmx64.efi verifies against keys/MOK.cer" \
+       && echo "$SBS_OUT" | grep -q "shim chain COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+        t_pass "secureboot_smoke: SHIM_TRUST_MODE=mok-dev verifies against MOK.cer -> COVERED"
+    else
+        t_fail "secureboot_smoke: mokdev-mode" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 18: mok-dev mode where the shim does NOT verify against MOK.cer.
+    SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="CN=Impossible OS Secure Boot Key" SHIM_TRUST_MODE=mok-dev \
+                        SBVERIFY_CERT_OK="BOOTX64.signed.efi BOOTX64.UKI.signed.efi")"
+    if echo "$SBS_OUT" | grep -q "MOK-dev shim/shimx64.efi carries no signature" \
+       && echo "$SBS_OUT" | grep -q "build-shim.sh does not sign its output" \
+       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
+       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        t_pass "secureboot_smoke: unsigned self-built shim -> FAIL naming build-shim.sh's real output"
+    else
+        t_fail "secureboot_smoke: mokdev-badsig" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    rm -rf "$SBS_TMP"
+fi
+
+
+# ============================================================================
 # stamp_completeness (TODO-08 stamp-region + OS Comparison lints)
 # ============================================================================
 #   - lint_stamp_region: synthetic TODO with [x] row whose body lacks Notes
