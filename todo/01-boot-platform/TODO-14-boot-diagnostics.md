@@ -201,8 +201,8 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` + `X:\Crash\` artifact index).
 > - Scope boundary: §5 is the warm-reboot evidence page; full minidump (MEMORY.DMP) generation is `02-kernel-core/TODO-27`; the `X:\Crash\` path is owned by TODO-24 §7.
 > **Verified:** 2026-06-14 | ship `a59b8f64` (+ this review commit) | 7/9 items | build OK | smoke PASS + tests 2633
-> **Accepted:** [H] `0x80000` is only kernel-reserved, not bootloader/reboot-reserved (firmware/BOOTX64 can clobber it pre-restore on bare metal) -> XREF: 01-boot-platform/TODO-14 §5 (item: "Bare-metal reboot-reservation of `0x80000`" at line 362)
-> **Accepted:** [H] IXFS `vfs_flush` (C:\ fallback) does not `blkdev_sync`, so consume-after-flush can lose the retry copy (reason: FS-layer durability contract) -> XREF: 01-boot-platform/TODO-14 §5 (item: "last-panic.txt true durability" at line 363)
+> **Accepted:** [H] `0x80000` is only kernel-reserved, not bootloader/reboot-reserved (firmware/BOOTX64 can clobber it pre-restore on bare metal) -> XREF: 01-boot-platform/TODO-14 §5 (item: "Bare-metal reboot-reservation of `0x80000`" at line 365)
+> **Accepted:** [H] IXFS `vfs_flush` (C:\ fallback) does not `blkdev_sync`, so consume-after-flush can lose the retry copy (reason: FS-layer durability contract) -> XREF: 01-boot-platform/TODO-14 §5 (item: "last-panic.txt true durability" at line 366)
 > **Quality reviewed:** 2026-06-14 | Codex 14x (design + test-coverage + adversarial + re-adversarial + adversarial-impl + consistency + perf) | 1C+6H+8M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -351,8 +351,8 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
 > - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver coverage + probe-result aggregation + NVMe per-controller status are the open `[ ]` items in this section.
 > **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 6/9 items | build OK | smoke PASS + tests 2605/2605
-> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 369)
-> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 370)
+> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 372)
+> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 373)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
