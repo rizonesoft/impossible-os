@@ -3190,7 +3190,11 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
     peb->OSMinorVersion = 0;
     peb->OSBuildNumber = 22621;    /* Windows 11 22H2 */
     peb->OSPlatformId = 2;        /* VER_PLATFORM_WIN32_NT */
-    peb->NumberOfProcessors = acpi_get_cpu_count();
+    /* ACTIVE processors, so the live online count (TODO-10 S21). A process
+     * sizes its thread pool from this field, so reporting a CPU that has
+     * parked over-subscribes a core that is gone -- acpi_get_cpu_count() is
+     * the MADT enumeration and never moves. */
+    peb->NumberOfProcessors = smp_cpu_count();
 
     /* ---- Populate RTL_USER_PROCESS_PARAMETERS ---- */
     pp->MaximumLength = sizeof(RTL_USER_PROCESS_PARAMETERS);

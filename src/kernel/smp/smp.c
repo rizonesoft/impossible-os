@@ -42,16 +42,18 @@ extern void idt_get_idtr(void *out_idtr);  /* fills 10-byte IDTR */
 static struct per_cpu_data cpu_data[MAX_CPUS];
 
 /* Live online set (TODO-10 S21). Bit N = logical CPU N is online NOW. This is
- * the SOLE active-membership API: per_cpu_data.is_online remains the AP's own
- * bringup publication word (the BSP's per-AP wait loops key off it), but every
- * consumer asking "which CPUs are active" reads this mask, so a parked CPU
- * disappears from the system's view of itself the moment it parks.
+ * both the SOLE active-membership API and the PUBLICATION POINT: the BSP's
+ * per-AP bringup waits, the live count, and every consumer asking "which CPUs
+ * are active" read this word, so a parked CPU disappears from the system's
+ * view of itself the moment it parks. per_cpu_data.is_online remains the AP's
+ * own per-CPU flag and is written earlier in the same sequence.
  *
  * The two words cannot disagree in the dangerous direction: publish sets
  * is_online BEFORE the mask bit and retract clears the mask bit BEFORE
  * is_online, so the mask is always a SUBSET of the true online set. An
  * interleaving can under-report a CPU that is coming up; none can report a
- * parked CPU as active. */
+ * parked CPU as active. smp_init verifies that subset relation once, at the
+ * end of bringup, where the online set is fixed. */
 static uint32_t            online_mask = 0;
 
 /* CPU slots bringup DISCOVERED (1 + APs enumerated from the MADT). Fixed once
@@ -61,7 +63,7 @@ static uint32_t            online_mask = 0;
  * answer before this section, and that answer was wrong for one of them. */
 static uint32_t            present_cpus = 0;
 
-_Static_assert(MAX_CPUS <= 32,
+_Static_assert(MAX_CPUS <= SMP_ONLINE_MASK_BITS,
     "online_mask is a uint32_t -- one bit per logical CPU slot");
 
 /* ---- MSR helpers ---- */
@@ -221,14 +223,16 @@ void ap_entry(uint32_t cpu_index)
     /* Memory barrier to ensure all writes are visible before incrementing count */
     smp_mb();
 
-    /* Publish this AP as online with a RELEASE store, as the LAST write before
-     * parking. is_online is the SINGLE source of truth the BSP uses to (a) end
-     * its per-AP bringup wait, (b) count total_cpus, and (c) gate the per-AP
-     * audit -- there is no separate count hint that could race ahead of this
-     * publication. An acquire-load that observes is_online==1 is guaranteed to
-     * see every preceding write (lapic_id, the ap_cpu_harden() snapshot); an
-     * AP that never reached here has is_online==0, so the BSP's waited / counted
-     * / audited sets are identical. The AP emits NO serial output from here to
+    /* Publish this AP as online as the LAST act before parking. The
+     * ONLINE-MASK BIT is the single publication point the BSP uses to (a) end
+     * its per-AP bringup wait, (b) derive the live CPU count, and (c) gate the
+     * per-AP audit -- it is written last inside smp_publish_cpu_online, so
+     * there is no partial publication a waiter can mistake for a complete one
+     * (TODO-10 S21; before that section the waits keyed off is_online, which
+     * lands earlier in the same sequence). An acquire-load that observes the
+     * bit is guaranteed to see every preceding write (lapic_id, the
+     * ap_cpu_harden() snapshot); an AP that never reached here has no bit, so
+     * the BSP's waited / counted / audited sets are identical. The AP emits NO serial output from here to
      * `sti` (klog busy-waits on the UART with IRQs masked); the BSP emits the
      * "online" line + hardening audit from the buffered per_cpu_data after
      * bringup -- see smp_init. */
@@ -594,6 +598,27 @@ void smp_init(void)
      * broadcast re-verify IPIs that the APs service. */
     cpu_cr_verify_ipi_init();
 
+    /* Layer 2 (runtime verification at init) for the two-word membership
+     * design. The subset invariant -- every mask bit implies is_online -- is
+     * asserted in prose and unit-tested over synthetic words, neither of which
+     * can observe the LIVE kernel state where the two words could actually
+     * diverge. Checked here, once, where the online set is fixed. A violation
+     * is a WARN rather than a halt: the mask is the conservative word, so a
+     * divergence under-reports rather than dispatching to a dead CPU. */
+    {
+        uint32_t mask = smp_online_mask();
+        uint32_t bad = 0;
+        for (i = 0; i < MAX_CPUS; i++) {
+            if (smp_mask_test(mask, i) &&
+                !__atomic_load_n(&cpu_data[i].is_online, __ATOMIC_ACQUIRE))
+                bad++;
+        }
+        if (bad)
+            klog(LOG_WARN, "smp",
+                 "%u CPU(s) carry an online-mask bit without is_online -- "
+                 "membership publication is inconsistent", (uint64_t)bad);
+    }
+
     {
         uint32_t live = smp_cpu_count();
         klog(LOG_INFO, "smp", "%u of %u CPUs online (BSP + %u APs)",
@@ -642,6 +667,19 @@ void smp_publish_cpu_online(struct per_cpu_data *pcpu)
 {
     if (!pcpu)
         return;
+
+    /* A slot past the mask's width would go live with no mask bit -- the
+     * live-but-uncounted state this section exists to eliminate, produced
+     * silently. Unreachable today (acpi.c caps discovery at MAX_CPUS and the
+     * _Static_assert pins MAX_CPUS <= the mask width), so this is a loud
+     * backstop rather than a live path, but a bare return here is exactly the
+     * silence that would make the next bug unfindable. */
+    if (pcpu->cpu_id >= MAX_CPUS) {
+        klog(LOG_ERROR, "smp",
+             "CPU %u is past MAX_CPUS (%u) -- cannot publish online membership",
+             (uint64_t)pcpu->cpu_id, (uint64_t)MAX_CPUS);
+        return;
+    }
     /* The MASK BIT IS THE PUBLICATION POINT, and it is written LAST. Every
      * wait loop in bringup keys off it (smp_cpu_is_online), so an AP stalled
      * by an SMI part-way through this sequence cannot be observed as complete:
@@ -659,10 +697,28 @@ void smp_retract_cpu_online(struct per_cpu_data *pcpu)
 {
     if (!pcpu)
         return;
-    /* Mask bit FIRST, so no window exists in which a consumer still counts a
+
+    /* The GLOBAL word is gated on a GS-INDEPENDENT identity check; the per-CPU
+     * words are not. The only caller is the panic async-fault branch, which
+     * reaches its pcpu through smp_this_cpu() -- and that SILENTLY substitutes
+     * &cpu_data[0] when GS reads zero. Before this section a wrong pcpu was
+     * self-damage confined to that block's own fields; the mask clear is
+     * indexed by pcpu->cpu_id, so the same fallback would clear the BSP's bit
+     * and drop a RUNNING BSP out of every membership consumer.
+     * cpu_panic_safe_apic_id() derives the id from CPUID, which no GS state can
+     * corrupt -- the identity rule section 20 adopted for the serial lock.
+     *
+     * Scoping the check to the mask alone is deliberate: a CPU that cannot
+     * prove its identity must not edit shared state, but the per-CPU park and
+     * is_online clear below are exactly what this path did before this section,
+     * so refusing them as well would trade a narrow new hazard for the old
+     * 10-second async stall.
+     *
+     * Mask bit FIRST, so no window exists in which a consumer still counts a
      * CPU that has already stopped answering. Panic-path safe: three atomics,
      * no lock, no allocation, no klog. */
-    smp_mask_clear(&online_mask, pcpu->cpu_id);
+    if ((pcpu->lapic_id & CPU_PANIC_SAFE_ID_MASK) == cpu_panic_safe_apic_id())
+        smp_mask_clear(&online_mask, pcpu->cpu_id);
     smp_async_claim_park(&pcpu->async_claim);
     __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
 }

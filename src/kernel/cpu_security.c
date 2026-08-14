@@ -2127,14 +2127,20 @@ void cpu_audit_consistency_check(uint32_t total_cpus)
     if (!bsp || !bsp->audit_captured)
         return;
 
-    /* Iterate ALL slots filtered on is_online, NOT i < total_cpus: AP logical
-     * IDs are slot-allocated, so after a partial bringup (AP1 times out, AP2
-     * online) the live AP sits past the dense online count. Bounding by
-     * total_cpus would skip it and falsely report consistency. */
+    /* Iterate ALL slots filtered on live membership, NOT i < total_cpus: AP
+     * logical IDs are slot-allocated, so after a partial bringup (AP1 times
+     * out, AP2 online) the live AP sits past the dense online count. Bounding
+     * by the count would skip it and falsely report consistency.
+     *
+     * The filter is smp_cpu_is_online() rather than a raw is_online read
+     * (TODO-10 S21) so that the set SCANNED here is the same set the caller
+     * COUNTED when it passed total_cpus -- both now derive from the online
+     * mask. Two different predicates meant the "[SMP] All %u CPUs
+     * register-consistent" line could name a number that did not match the
+     * CPUs actually examined. */
     for (i = 1; i < MAX_CPUS; i++) {
         struct per_cpu_data *pc = smp_get_cpu(i);
-        if (!pc || !__atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE) ||
-            !pc->audit_captured)
+        if (!pc || !smp_cpu_is_online(i) || !pc->audit_captured)
             continue;
         if (((pc->efer_at_boot ^ bsp->efer_at_boot) & EFER_NXE) ||
             ((pc->cr4_at_boot & s_bsp_required_cr4) != s_bsp_required_cr4) ||

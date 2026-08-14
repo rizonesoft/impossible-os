@@ -1325,9 +1325,16 @@ static void test_topo_cpu_count(void)
 {
     TEST_ASSERT(g_topo_cpu_count >= 1,
                 "topology CPU count >= 1");
-    uint32_t smp_count = smp_cpu_count();
-    TEST_ASSERT_EQ(g_topo_cpu_count, smp_count,
-                   "topology CPU count matches smp_cpu_count()");
+    /* topology_init bounds its slot walk with the DISCOVERED count, not the
+     * live one (TODO-10 S21) -- the two diverge exactly when an AP is
+     * abandoned at bringup or a CPU parks, which is the configuration this
+     * assertion exists to cover. Comparing against the live count would pass
+     * only on a fully healthy boot. */
+    uint32_t present = smp_cpu_present_count();
+    TEST_ASSERT_EQ(g_topo_cpu_count, present,
+                   "topology CPU count matches smp_cpu_present_count()");
+    TEST_ASSERT(smp_cpu_count() <= present,
+                "live CPU count never exceeds the discovered slot count");
 }
 
 static void test_topo_numa_nodes(void)

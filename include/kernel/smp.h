@@ -131,9 +131,23 @@ _Static_assert(SMP_ASYNC_OFFLINE != SMP_ASYNC_IDLE &&
                SMP_ASYNC_RESERVED != SMP_ASYNC_IDLE &&
                SMP_ASYNC_RESERVED != SMP_ASYNC_BUSY,
     "claim states must be distinct");
-_Static_assert(SMP_ASYNC_RESERVED <= SMP_ASYNC_STATE_MASK &&
+/* Assert over the ENCODED values, not the raw constants. Asserting raw
+ * distinctness alone is satisfied by an out-of-range constant that
+ * SMP_ASYNC_CLAIM then truncates: renumber IDLE to 4 and it stays "distinct"
+ * while every idle slot encodes and decodes as OFFLINE, so no CPU is ever
+ * dispatchable -- with a green build and no failing test. */
+_Static_assert(SMP_ASYNC_OFFLINE  <= SMP_ASYNC_STATE_MASK &&
+               SMP_ASYNC_IDLE     <= SMP_ASYNC_STATE_MASK &&
+               SMP_ASYNC_RESERVED <= SMP_ASYNC_STATE_MASK &&
                SMP_ASYNC_BUSY     <= SMP_ASYNC_STATE_MASK,
     "every claim state must fit the state field");
+_Static_assert(SMP_ASYNC_STATE_OF(SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, 1)) == SMP_ASYNC_OFFLINE &&
+               SMP_ASYNC_STATE_OF(SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 1))    == SMP_ASYNC_IDLE &&
+               SMP_ASYNC_STATE_OF(SMP_ASYNC_CLAIM(SMP_ASYNC_RESERVED, 1)) == SMP_ASYNC_RESERVED &&
+               SMP_ASYNC_STATE_OF(SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 1))     == SMP_ASYNC_BUSY,
+    "every claim state must survive encode-then-decode");
+_Static_assert(SMP_ASYNC_GEN_OF(SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, SMP_ASYNC_GEN_MAX)) == SMP_ASYNC_GEN_MAX,
+    "the maximum generation must survive encode-then-decode");
 _Static_assert((SMP_ASYNC_GEN_MAX << SMP_ASYNC_GEN_SHIFT) ==
                (0xFFFFFFFFu & ~SMP_ASYNC_STATE_MASK),
     "the generation field must occupy every bit the state field does not");
@@ -463,13 +477,25 @@ uint32_t smp_cpu_count(void);
 /* Number of CPU slots discovered at bringup (>= 1, fixed after smp_init) */
 uint32_t smp_cpu_present_count(void);
 
+/* Bit width of the online-mask word. Named because two files bound loops by
+ * it, and widening the mask without updating both would leave the test
+ * silently checking half the word. */
+#define SMP_ONLINE_MASK_BITS   32u
+
 /* One coherent snapshot of the live online set, bit N = logical CPU N */
 uint32_t smp_online_mask(void);
 
 /* 1 when logical CPU `cpu` is in the live online set */
 int smp_cpu_is_online(uint32_t cpu);
 
-/* Publish/retract a CPU's online membership. The ONLY transitions:
+/* `ap_bringup_state` is NOT part of this set. It is a BRINGUP-EPOCH word that
+ * records which side won the STARTING race, and it is deliberately left at
+ * ONLINE when a CPU later parks: `cpu_slot_committed_online()`
+ * (cpu_security.c) reads it precisely so an AP that has committed but not yet
+ * published is admitted to the feature intersection. A consumer asking "is
+ * this CPU running work RIGHT NOW" must use the mask, never that word.
+ *
+ * Publish/retract a CPU's online membership. The ONLY transitions:
  * publish sets is_online then the mask bit, retract clears the mask bit then
  * is_online, so the mask is always a SUBSET of the true online set and can
  * never report a parked CPU as active. Retract is panic-path safe (atomics
@@ -479,7 +505,21 @@ void smp_retract_cpu_online(struct per_cpu_data *pcpu);
 
 /* ---- Async claim transitions (TODO-10 S21) ----
  * Pure operations over a caller-supplied claim word so the state machine is
- * testable without a live SMP system. Each is ONE atomic transition. */
+ * testable without a live SMP system. Each is ONE atomic transition.
+ *
+ * CONTRACT SHARED BY ALL OF THEM, so no caller has to read the implementation:
+ *   - A NULL `claim` is inert: the int-returning helpers answer 0, the
+ *   void ones do nothing. These run from an ISR and from the panic path,
+ *   where refusing is the only safe answer.
+ *   - `out_gen` is OPTIONAL everywhere it appears; pass NULL when the caller
+ *   does not need the generation. A helper that returns 0 never writes it,
+ *   so a caller's sentinel survives a refusal.
+ *   - A refused transition leaves the word BYTE-IDENTICAL. Refusal is
+ *   ordinary control flow (the CPU parked, another dispatch owns the slot),
+ *   not an error condition, and the caller decides what it means.
+ *   - Every `gen` argument is masked to SMP_ASYNC_GEN_MAX before comparison,
+ *   so an out-of-range generation is normalised rather than rejected. Only
+ *   generations this API produced are ever passed in practice. */
 
 /* Phase 1: IDLE(g) -> RESERVED(g+1). Returns 1 and the new generation on
  * success; 0 when the slot is OFFLINE, RESERVED, or still BUSY from a dispatch
@@ -488,11 +528,16 @@ int  smp_async_claim_dispatch(uint32_t *claim, uint32_t *out_gen);
 
 /* Phase 2: RESERVED(gen) -> BUSY(gen), exact-value. Call ONLY after the
  * payload is written and fenced -- this is the transition that makes the slot
- * runnable. Returns 0 when the CPU parked between reserve and arm. */
+ * runnable. Returns 0 for ANY word that is not exactly RESERVED(gen): the CPU
+ * parked between reserve and arm, the slot is already armed, it is IDLE or
+ * OFFLINE, or the generation is not the one this caller reserved. */
 int  smp_async_claim_arm(uint32_t *claim, uint32_t gen);
 
 /* BUSY(gen) -> IDLE(gen), exact-value: a worker whose dispatch was superseded
- * or whose CPU parked cannot retire the slot. Returns 1 on success. */
+ * or whose CPU parked cannot retire the slot. Returns 1 on success, and 0 for
+ * any other word -- a foreign generation, an already-completed (IDLE) slot, a
+ * still-reserved one, or a parked one. Completing twice therefore fails the
+ * second time rather than reopening the slot. */
 int  smp_async_claim_complete(uint32_t *claim, uint32_t gen);
 
 /* -> OFFLINE, preserving the generation, from any state. */

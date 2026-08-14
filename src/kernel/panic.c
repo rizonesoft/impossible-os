@@ -1821,8 +1821,9 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * self-deadlocked HERE, never published async_done, and hung the BSP
              * forever on a failure it was designed to recover from. */
             /* GO OFFLINE BEFORE PUBLISHING. boot_async_group selects its workers
-             * purely on is_online (boot_init.c), and this CPU is about to park
-             * with interrupts masked, so it can never take the wake IPI again.
+             * on live online membership plus a lifecycle-claim CAS
+             * (boot_init.c, TODO-10 S21), and this CPU is about to park with
+             * interrupts masked, so it can never take the wake IPI again.
              * Leaving the flag set means every LATER async group assigns it a
              * step and then eats the group's whole 10-second barrier deadline
              * waiting for a CPU that will never answer -- turning one recovered

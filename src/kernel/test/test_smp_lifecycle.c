@@ -422,7 +422,7 @@ static void test_online_mask_bits_are_within_present_slots(void)
         TEST_ASSERT(!smp_mask_test(mask, i), msg);
         TEST_ASSERT(!smp_cpu_is_online(i), msg);
     }
-    for (i = MAX_CPUS; i < 32u; i++) {
+    for (i = MAX_CPUS; i < SMP_ONLINE_MASK_BITS; i++) {
         snprintf(msg, sizeof(msg), "online mask carries bit %u past MAX_CPUS",
                  (unsigned)i);
         TEST_ASSERT(!(mask & (1u << i)), msg);

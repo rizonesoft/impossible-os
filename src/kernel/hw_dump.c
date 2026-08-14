@@ -257,8 +257,11 @@ void hw_dump_write_file(void)
         pos = hw_line(buf, pos, max_sz, cpu->brand);
         {
             char line[80];
+            /* Hardware INVENTORY, so the discovered slot count (TODO-10
+             * S21): a dump that lists fewer logical CPUs after one parks is
+             * describing the run, not the machine. */
             snprintf(line, sizeof(line), "Cores: %u, Logical: %u",
-                     cpu->num_cores, smp_cpu_count());
+                     cpu->num_cores, smp_cpu_present_count());
             pos = hw_line(buf, pos, max_sz, line);
         }
         {
