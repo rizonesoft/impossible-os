@@ -423,6 +423,21 @@ int kread_u8_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out);
 #define KSTR_STOP_FAULT     2u   /* the guarded load took a #PF                */
 #define KSTR_STOP_NONCANON  3u   /* the walk reached a non-canonical address   */
 
+/* Did the walk end for a reason OTHER than ordinary completion?
+ *
+ * FAIL-CLOSED BY CONSTRUCTION, and that is the point: every consumer asks
+ * "was this readable?" rather than testing for the two failure values it
+ * happens to know about. A consumer written the other way round classifies any
+ * stop reason added later as a clean terminator, which on this path means an
+ * unreadable panic description is rendered as complete text and, in the serial
+ * writer, a walk that made no progress repeats forever. Whitelisting the two
+ * COMPLETIONS makes a new reason unreadable until someone decides otherwise --
+ * the same direction serial.h argues for on the neighbouring context enum. */
+static inline int kstr_stop_is_unreadable(uint32_t stop)
+{
+    return stop != KSTR_STOP_NUL && stop != KSTR_STOP_CAP;
+}
+
 /* Fault-recoverable BOUNDED C-string read from a possibly-corrupt KERNEL
  * address: the same guarantee as __kread_u8 over a whole string, in ONE
  * protected loop instead of a call per byte.
@@ -469,12 +484,13 @@ int kstr_read_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out);
 uint32_t kstr_read_budget(const void *src, uint32_t cap, int *clipped);
 
 #ifdef KERNEL_TESTS
-/* Entry counter for the guarded loop. The panic path's context gate decides
- * whether the guarded reader runs AT ALL, and for a READABLE string the guarded
- * and raw paths emit identical bytes -- so a caller that ignored `ctx` and
- * always took the guarded path would be invisible to any output assertion, and
- * in NMI context that regression is the one the gate exists to prevent. Test
- * builds only. */
+/* CALL counter for the guarded reader (counted at entry, ahead of the argument
+ * guards, so a rejected call still counts). The panic path's context gate
+ * decides whether this function is REACHED at all, and for a READABLE string
+ * the guarded and raw paths emit identical bytes -- so a caller that ignored
+ * `ctx` and always took the guarded path would be invisible to any output
+ * assertion, and in NMI context that regression is the one the gate exists to
+ * prevent. Test builds only. */
 uint32_t kstr_read_guarded_calls(void);
 void     kstr_read_guarded_calls_reset(void);
 #endif /* KERNEL_TESTS */

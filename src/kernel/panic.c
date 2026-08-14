@@ -726,10 +726,11 @@ static void panic_append_guarded(char *buf, uint32_t cap, uint32_t *pos,
         uint32_t n    = __kstr_read_guarded(buf + *pos, s, cap - *pos, &stop);
 
         *pos += n;
-        /* Same two-reason test as panic_snapshot_str: FAULT and NONCANON both
-         * mean the pointer was part of the corruption, and both used to arrive
-         * through the per-byte load's single failure return. */
-        if (stop == KSTR_STOP_FAULT || stop == KSTR_STOP_NONCANON)
+        /* Same fail-closed test as panic_snapshot_str: anything that is not an
+         * ordinary completion means the pointer was part of the corruption.
+         * FAULT and NONCANON both used to arrive through the per-byte load's
+         * single failure return. */
+        if (kstr_stop_is_unreadable(stop))
             panic_append(buf, cap, pos, "<unreadable>");
     }
 }
@@ -850,7 +851,7 @@ void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
          * FAULT does -- the per-byte walk rejected a non-canonical address
          * through the same return value, and a source running into the
          * canonical hole must not be rendered as a complete string. */
-        if (i == 0u && (stop == KSTR_STOP_FAULT || stop == KSTR_STOP_NONCANON))
+        if (i == 0u && kstr_stop_is_unreadable(stop))
             fixed = PANIC_STR_UNREADABLE;
     }
 
@@ -1677,7 +1678,14 @@ static void panic_evidence_terminal_retry(struct interrupt_frame *frame,
  * re-entrant, so the collector can be re-entered mid-write on one CPU. It is
  * safe because (a) across CPUs the owner word admits exactly one writer at a
  * time, and (b) a nested invocation on this CPU has interrupted an outer one
- * that will never resume, so the two never interleave their use of it. */
+ * that will never resume, so the two never interleave their use of it.
+ *
+ * That argument is about the LIVE path, and panic_evidence_populate is now
+ * callable WITHOUT taking the page -- the test fixtures do exactly that. It
+ * still holds for them by a different route: a test fixture is single-threaded
+ * by construction and no live panic is in flight beside it, so the buffer has
+ * one writer there too. A future caller that is neither the collector nor a
+ * fixture would need its own argument, or a caller-supplied scratch. */
 static klog_entry_t s_panic_klog_scratch[PANIC_EVIDENCE_KLOGS];
 
 /* Fault-safe port read (no shared io.h in this tree; pic.c uses the same). */
@@ -1748,7 +1756,11 @@ static void pe_copy(char *dst, uint32_t cap, const char *src, uint32_t ctx)
  * WB memory, so it takes ordinary stores exactly as a BSS fixture does.
  *
  * `ctx` is the panic context DERIVED ONCE at entry and passed down -- see the
- * panic_collect_evidence contract in panic.h. */
+ * panic_collect_evidence contract in panic.h.
+ *
+ * ARCH: x86-64 -- will move to arch/ with the rest of the CPU primitives. The
+ * control-register reads and the legacy-PIC port I/O below are the x86 parts;
+ * everything else is portable record population. */
 void panic_evidence_populate(struct panic_evidence *ev,
                              struct interrupt_frame *frame,
                              uint32_t bugcheck_code,
@@ -2465,8 +2477,16 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * -- so reading it afterwards can misattribute the crash, or print
              * "?", which destroys the value of this diagnostic. */
             const char *step_name = pcpu->async_name ? pcpu->async_name : "?";
-            /* Same declared-context rule as the pre-arbitration dump. */
-            uint32_t    async_ctx = panic_declared_ctx(frame);
+            /* THE ENTRY context, not a fresh derivation. Same declared-context
+             * rule as the pre-arbitration dump, and the same reason the
+             * collector stopped re-deriving it: panic_declared_ctx reads the
+             * NMI depth through cpu_panic_safe_apic_id(), i.e. a CPUID, which
+             * serializes and exits to the hypervisor under KVM/WHPX. This
+             * branch runs inside the SAME panic entry that already computed
+             * snap_ctx, so a second derivation could not legitimately differ
+             * from it -- it would only cost another exit on the path whose
+             * whole budget is instructions-before-the-record-is-durable. */
+            uint32_t    async_ctx = snap_ctx;
             uint32_t    step_cpu  = pcpu->cpu_id;
 
             /* REFUND FIRST, then publish, then diagnose.

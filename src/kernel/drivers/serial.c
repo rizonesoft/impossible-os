@@ -116,6 +116,20 @@
  * #DF/#MC IST stack while keeping records emitted in large atomic pieces. */
 #define SERIAL_EMERG_CHUNK        128u
 
+/* The guarded chunk buffer is SERIAL_EMERG_CHUNK + 1: __kstr_read_guarded
+ * reserves one byte of its `cap` for a terminator, so copying a FULL chunk of
+ * payload needs cap = SERIAL_EMERG_CHUNK + 1 and a destination to match. The
+ * two sides are written in different functions and the fit is exact, with the
+ * buffer living on a #DF/#MC IST stack -- the one context where an overflow
+ * cannot report itself -- so the relationship is pinned here rather than left
+ * to whoever next edits either side. */
+#define SERIAL_EMERG_CHUNK_BUF    (SERIAL_EMERG_CHUNK + 1u)
+_Static_assert(SERIAL_EMERG_CHUNK_BUF == SERIAL_EMERG_CHUNK + 1u,
+               "the guarded chunk buffer must hold a full chunk plus the "
+               "terminator __kstr_read_guarded reserves inside its cap");
+_Static_assert(SERIAL_EMERG_CHUNK <= SERIAL_EMERG_MAX_CHARS,
+               "a chunk cannot exceed the total emergency character budget");
+
 /* Bounded retries for the full-wait reservation CAS -- see
  * serial_emerg_reserve. Contention losers degrade to a single status probe. */
 #define SERIAL_EMERG_CAS_TRIES    64u
@@ -1437,7 +1451,7 @@ static void serial_emergency_write_str(const char *str, int terminal, uint32_t c
          * The emitted span is `k` bytes, so the extra byte is never written to
          * the UART -- it exists so the guarded loop can still copy a full
          * SERIAL_EMERG_CHUNK of payload. */
-        char     chunk[SERIAL_EMERG_CHUNK + 1u];
+        char     chunk[SERIAL_EMERG_CHUNK_BUF];
         uint32_t k = 0;
 
         if (serial_emerg_ctx_allows_guarded_read(ctx)) {
@@ -1474,11 +1488,24 @@ static void serial_emergency_write_str(const char *str, int terminal, uint32_t c
              * chunk[] is sized SERIAL_EMERG_CHUNK + 1 for exactly this. */
             k = __kstr_read_guarded(chunk, &str[n], budget + 1u, &stop);
             n += k;
-            if (stop == KSTR_STOP_FAULT || stop == KSTR_STOP_NONCANON) {
+            /* EXHAUSTIVE, and the default FAILS CLOSED. Only CAP continues the
+             * walk, and only because it means the budget ran out with the
+             * string still going. Treating an unrecognized reason as CAP is the
+             * dangerous default here: a stop that returns k == 0 would leave n
+             * unchanged and spin this loop forever, on the panic path, with the
+             * UART as the only thing the machine still has. */
+            switch (stop) {
+            case KSTR_STOP_CAP:
+                break;                       /* more string; next chunk */
+            case KSTR_STOP_NUL:
+                done = 1;
+                break;
+            case KSTR_STOP_FAULT:
+            case KSTR_STOP_NONCANON:
+            default:
                 faulted = 1;
                 done    = 1;
-            } else if (stop == KSTR_STOP_NUL) {
-                done = 1;
+                break;
             }
             if (k)
                 serial_emergency_emit(chunk, k, terminal, &recov);

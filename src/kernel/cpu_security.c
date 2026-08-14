@@ -516,11 +516,16 @@ uint32_t kstr_read_budget(const void *src, uint32_t cap, int *clipped)
  *
  * noinline so the two global labels are emitted exactly once. */
 #ifdef KERNEL_TESTS
-/* Counts entries into the guarded loop. The panic path's context gate decides
- * whether the guarded reader is used AT ALL -- in NMI context the fixup's IRETQ
- * would re-arm NMI delivery over live IST frames -- and for a READABLE string
- * the guarded and raw paths produce identical bytes, so output alone cannot
- * tell a caller that honours `ctx` from one that ignores it. Test builds only. */
+/* Counts CALLS into the guarded reader -- deliberately ahead of the argument
+ * guards below, so a rejected call still counts. What the panic path's context
+ * gate decides
+ * is whether the guarded reader is REACHED at all -- in NMI context the fixup's
+ * IRETQ would re-arm NMI delivery over live IST frames -- and for a READABLE
+ * string the guarded and raw paths produce identical bytes, so output alone
+ * cannot tell a caller that honours `ctx` from one that ignores it. Counting
+ * the call rather than the loop is what makes that question answerable: a
+ * caller that reached this function has already ignored the gate, whether or
+ * not its arguments then survived validation. Test builds only. */
 static uint32_t s_kstr_read_guarded_calls;
 
 uint32_t kstr_read_guarded_calls(void)
@@ -580,7 +585,14 @@ uint32_t __kstr_read_guarded(char *dst, const char *src, uint32_t cap,
         "2:\n\t"
         "movl $1, %[ok]\n\t"
         "__kstr_read_fixup:\n\t"
-        : [i]"+r"(idx), [ok]"+r"(ok)
+        /* EARLYCLOBBER on both written operands. `idx` is incremented while
+         * %[s], %[d] and %[n] are still read on every later iteration, which is
+         * the shape the constraint syntax exists to describe. It is safe today
+         * without it -- all five operands hold distinct live values at entry, so
+         * the allocator cannot coalesce them -- but that is register-allocation
+         * reasoning, and it is exactly what stops holding when someone edits the
+         * loop. Say it in the constraints instead. */
+        : [i]"+&r"(idx), [ok]"+&r"(ok)
         : [s]"r"(src), [d]"r"(dst), [n]"r"(n)
         : "rdx", "memory", "cc");
 
