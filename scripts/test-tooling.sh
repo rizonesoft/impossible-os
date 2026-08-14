@@ -1365,6 +1365,34 @@ fi
 assert_exit_zero "memmap layout gate: constants + translation helpers" \
     bash "$REPO_ROOT/tools/memmap-check/check.sh"
 
+# --- atomic-claim gate (generated object) ------------------------------------
+# The panic path's ownership transitions each claim a resource AND record who
+# owns it in ONE compare-exchange, so that an abort at any instruction boundary
+# leaves the resource either free or attributably owned. That property is
+# invisible to every fixture: a two-step implementation reaches a byte-identical
+# post-state, and no test can schedule the NMI that lands between the steps. It
+# is checked against the DISASSEMBLY instead.
+#
+# Exit 2 means the kernel object has not been built, which is not a failure --
+# a caller that has not compiled cannot be asked to prove codegen. The skip is
+# NAMED rather than silent, because a gate that quietly passes when it did not
+# run reads exactly like a gate that passed.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[atomic_claim_gate]${NC}"
+# The matcher's own negative controls first -- including the shape that a
+# naive "count lock prefixes, count cmpxchg mnemonics" gate accepts: one
+# unrelated locked instruction plus one UNLOCKED cmpxchg. This runs with no
+# kernel object, so it holds even when the gate below skips.
+assert_exit_zero "atomic-claim gate: matcher negative controls" \
+    bash "$REPO_ROOT/tools/atomic-claim-check/check.sh" --selftest
+_ac_out="$(bash "$REPO_ROOT/tools/atomic-claim-check/check.sh" 2>&1)"; _ac_rc=$?
+case "$_ac_rc" in
+    0) t_pass "atomic-claim gate: one lock cmpxchg per audited transition" ;;
+    2) _TT_SKIPPED+=("atomic-claim gate (kernel object not built)")
+       [ "$QUIET" = "0" ] && echo "  SKIP: $(echo "$_ac_out" | tail -1)" ;;
+    *) t_fail "atomic-claim gate: one lock cmpxchg per audited transition" \
+              "exit $_ac_rc; $(echo "$_ac_out" | grep '^FAIL' | head -1)" ;;
+esac
+
 # --- Check 16 tracked-secret guard ------------------------------------------
 # Fake keys are GENERATED at runtime inside a throwaway git repo so this
 # file's own source never carries a live-looking key pattern.

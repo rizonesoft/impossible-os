@@ -937,6 +937,18 @@ static void test_serial_emergency_malformed_token_is_rejected(void)
                        "and left the ledger alone");
     }
 
+    /* A NONZERO token with the VALID bit cleared. Every other refusal case
+     * above keeps VALID set, and the "no allowance" token is zero, so a
+     * regression from testing `token & SERIAL_EMERG_TOKEN_VALID` to testing
+     * `token != 0` would pass all of them -- and would then let a token
+     * carrying a live generation and a live slot release a real charge,
+     * lengthening the stall budget by a full-length wait. */
+    serial_emerg_return(held & ~SERIAL_EMERG_TOKEN_VALID);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1,
+                   "a nonzero token without the VALID bit releases nothing");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1,
+                   "and the charge stays attributed to this CPU");
+
     serial_emerg_return(held);
     TEST_ASSERT_EQ(serial_emerg_waits(), 0, "the real token still works");
 
@@ -953,44 +965,448 @@ static void test_serial_emergency_malformed_token_is_rejected(void)
  * reset-based test can reach that transition. */
 static void test_serial_emergency_latch_transitions_preserve_generation(void)
 {
-    /* An OFF word carrying generation 5 and two occupied slots. */
+    /* An OFF word carrying generation 5. The reserved span that once held the
+     * slot bitmap is set too, so a transition that leaked it back into a live
+     * field would be visible rather than silently harmless. */
     uint32_t off   = (5u << 12) | (3u << 20);
     uint32_t claim = serial_emerg_claim_word(off, 7u);
     uint32_t armed;
 
     TEST_ASSERT_EQ((claim >> 12) & 0xFFu, 5u,
                    "OFF->INIT PRESERVES the generation, never rewinds it");
-    TEST_ASSERT_EQ((claim >> 20) & 0xFFu, 3u, "and preserves occupied slots");
     TEST_ASSERT_EQ(claim & 0xFFu, 7u, "and records the claiming owner");
     TEST_ASSERT_EQ(claim & 0xC0000000u, 0x40000000u, "and the state is INIT");
+    TEST_ASSERT_EQ(claim & 0x0FF00000u, 0u,
+                   "and leaves the reserved span clear rather than carrying it");
 
     armed = serial_emerg_publish_word(claim);
     TEST_ASSERT_EQ((armed >> 12) & 0xFFu, 6u,
                    "INIT->ARMED ADVANCES the generation exactly once");
-    TEST_ASSERT_EQ((armed >> 20) & 0xFFu, 0u,
-                   "and clears every slot as it publishes");
     TEST_ASSERT_EQ(armed & 0xFFu, 7u, "while keeping the owner immutable");
     TEST_ASSERT_EQ(armed & 0xC0000000u, 0x80000000u, "and the state is ARMED");
+    TEST_ASSERT_EQ(armed & 0x0FF00000u, 0u, "and the reserved span stays clear");
 }
 
-/* The refund subtraction, tested directly for the cases the CAS loop only
- * reaches under contention: it must clear exactly the named slots, leave every
- * other field alone, and change nothing when none of them are set. */
-static void test_serial_emergency_refund_word_clears_only_named_slots(void)
+/* THE ALLOWANCE IS RELEASED BY THE GENERATION BUMP, NOT BY A SECOND PASS.
+ *
+ * This is the property that replaced the explicit slot-bitmap clear: every
+ * outstanding claim carries the epoch it was taken in, so advancing the
+ * generation invalidates all of them at once. Asserted through the reset hook,
+ * which starts a new epoch exactly as the publishing compare-exchange does. */
+static void test_serial_emergency_epoch_bump_releases_every_allowance(void)
 {
-    uint32_t cur = 0x80000000u | (9u << 12) | (0x0Fu << 20) | 2u;
-    uint32_t out;
+    uint32_t held[SERIAL_EMERG_STUCK_BYTES];
+    uint32_t i, n = 0;
 
-    out = serial_emerg_refund_word(cur, 0x05u);
-    TEST_ASSERT_EQ((out >> 20) & 0xFFu, 0x0Au,
-                   "exactly the named slots are cleared");
-    TEST_ASSERT_EQ((out >> 12) & 0xFFu, 9u, "the generation is untouched");
-    TEST_ASSERT_EQ(out & 0xFFu, 2u, "the owner is untouched");
-    TEST_ASSERT_EQ(out & 0xC0000000u, 0x80000000u, "the state is untouched");
+    serial_emerg_reset_for_test();
 
-    out = serial_emerg_refund_word(cur, 0xF0u);
-    TEST_ASSERT_EQ(out, cur,
-                   "refunding slots that are not set changes nothing at all");
+    while (n < SERIAL_EMERG_STUCK_BYTES) {
+        uint32_t t = serial_emerg_reserve();
+        if (t == SERIAL_EMERG_NO_TOKEN) break;
+        held[n++] = t;
+    }
+    TEST_ASSERT_EQ(n, SERIAL_EMERG_STUCK_BYTES,
+                   "every advertised allowance can actually be reserved");
+    TEST_ASSERT_EQ(serial_emerg_waits(), SERIAL_EMERG_STUCK_BYTES,
+                   "and each one reads back as an outstanding charge");
+    TEST_ASSERT_EQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN,
+                   "a saturated budget refuses rather than exceeding the ceiling");
+
+    serial_emerg_reset_for_test();
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "one generation bump releases every allowance at once");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0u,
+                   "and leaves nothing attributed to this CPU");
+
+    /* Stale claims must be RECLAIMABLE, not merely uncounted: the words are
+     * deliberately never cleared, so a reserve that could not take them over
+     * would strand the whole budget after the first epoch. */
+    for (i = 0; i < n; i++)
+        serial_emerg_return(held[i]);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "and a token from the dead epoch releases nothing");
+
+    n = 0;
+    while (n < SERIAL_EMERG_STUCK_BYTES) {
+        uint32_t t = serial_emerg_reserve();
+        if (t == SERIAL_EMERG_NO_TOKEN) break;
+        held[n++] = t;
+    }
+    TEST_ASSERT_EQ(n, SERIAL_EMERG_STUCK_BYTES,
+                   "the full budget is reclaimable in the fresh epoch");
+
+    for (i = 0; i < n; i++)
+        serial_emerg_return(held[i]);
+    serial_emerg_reset_for_test();
+}
+
+/* EVERY ALLOWANCE IS REACHABLE, not just the lowest free one.
+ *
+ * A reserve that stopped at the first slot it could not take would report the
+ * budget exhausted while most of it sat idle. Driven here by holding a claim on
+ * slot 0 and requiring the remaining allowances to still be issued. */
+static void test_serial_emergency_reserve_sweeps_past_a_held_slot(void)
+{
+    uint32_t first, t, n = 0;
+    uint32_t held[SERIAL_EMERG_STUCK_BYTES];
+
+    serial_emerg_reset_for_test();
+
+    first = serial_emerg_reserve();
+    TEST_ASSERT_EQ(first & SERIAL_EMERG_TOKEN_VALID, SERIAL_EMERG_TOKEN_VALID,
+                   "the first reservation succeeds");
+    TEST_ASSERT_EQ(first & 0xFFu, 0u, "and takes the lowest allowance");
+
+    while ((t = serial_emerg_reserve()) != SERIAL_EMERG_NO_TOKEN)
+        held[n++] = t;
+
+    TEST_ASSERT_EQ(n, SERIAL_EMERG_STUCK_BYTES - 1u,
+                   "the held slot costs exactly one allowance, not the rest");
+    TEST_ASSERT_EQ(serial_emerg_waits(), SERIAL_EMERG_STUCK_BYTES,
+                   "and the budget reads fully spent, never short");
+
+    serial_emerg_return(first);
+    while (n--)
+        serial_emerg_return(held[n]);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u, "returning them all clears the budget");
+    serial_emerg_reset_for_test();
+}
+
+/* A RETURN CANNOT CROSS CPUS. The claim records an owner, so a token handed to a
+ * different CPU releases nothing -- otherwise one CPU could hand back a charge
+ * attributed to another and put the ceiling back out by a full-length wait,
+ * which is the failure the composite claim exists to make impossible. */
+static void test_serial_emergency_return_rejects_a_foreign_owner(void)
+{
+    uint32_t token;
+
+    serial_emerg_reset_for_test();
+    serial_emerg_set_ledger_id_for_test(3u);
+
+    token = serial_emerg_reserve();
+    TEST_ASSERT_EQ(token & SERIAL_EMERG_TOKEN_VALID, SERIAL_EMERG_TOKEN_VALID,
+                   "CPU 3 takes an allowance");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u, "and is charged for it");
+
+    serial_emerg_set_ledger_id_for_test(4u);
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0u,
+                   "another CPU is charged nothing for it");
+    serial_emerg_return(token);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u,
+                   "and returning CPU 3's token releases nothing");
+    serial_emerg_refund_self(SERIAL_EMERG_STUCK_BYTES);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u,
+                   "nor can a refund absorb a charge it does not own");
+
+    serial_emerg_set_ledger_id_for_test(3u);
+    serial_emerg_return(token);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "while the owning CPU releases exactly its own charge");
+
+    serial_emerg_set_ledger_id_for_test(SERIAL_EMERG_NO_OWNER);
+    serial_emerg_reset_for_test();
+}
+
+/* THE OVERRIDE RESTORE IS PROVED, NOT PERFORMED.
+ *
+ * Every owner-isolation test above ends by storing SERIAL_EMERG_NO_OWNER, and
+ * none of them exercises ledger identity afterwards -- so a restore path that
+ * left a fake id selected would pass all of them, silently attribute later
+ * suites' charges to a CPU that does not exist, and undermine exactly the
+ * attribution evidence those tests are cited for.
+ *
+ * The fake id is derived from the real one rather than fixed, because a
+ * hardcoded fake that happened to equal this machine's APIC id would make the
+ * isolation assertion vacuous on that machine only. */
+static void test_serial_emergency_restore_ledger_identity(void *unused)
+{
+    (void)unused;
+    serial_emerg_set_ledger_id_for_test(SERIAL_EMERG_NO_OWNER);
+}
+
+static void test_serial_emergency_ledger_override_restores(void)
+{
+    uint32_t real = cpu_panic_safe_apic_id() & 0xFFu;
+    uint32_t fake = real ^ 1u;
+    uint32_t token;
+
+    /* Registered BEFORE the overrides, so identity is restored even if an
+     * assertion below ends the test early. */
+    test_add_action(test_serial_emergency_restore_ledger_identity, 0);
+
+    serial_emerg_reset_for_test();
+    serial_emerg_set_ledger_id_for_test(SERIAL_EMERG_NO_OWNER);
+
+    token = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(token, SERIAL_EMERG_NO_TOKEN, "the real identity reserves");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u,
+                   "and NO_OWNER selects the real CPUID identity, not a stub");
+
+    serial_emerg_set_ledger_id_for_test(fake);
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0u,
+                   "a different id is charged nothing for it");
+
+    serial_emerg_set_ledger_id_for_test(SERIAL_EMERG_NO_OWNER);
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u,
+                   "and restoring NO_OWNER selects the real identity again");
+
+    serial_emerg_return(token);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "so the restored identity can still return its own token");
+    serial_emerg_reset_for_test();
+}
+
+/* THE CLAIM AND ITS EXACT INVERSE, driven directly.
+ *
+ * That the transition is ONE lock-prefixed instruction is not assertable from
+ * here -- a two-step implementation reaches an identical post-state, which is
+ * why tools/atomic-claim-check disassembles the built object instead. What IS
+ * assertable is the exactness contract those instructions implement: a claim
+ * lands only over the word the caller observed, and a release frees only the
+ * claim the caller actually holds. */
+static void test_serial_emergency_claim_is_exact(void)
+{
+    uint32_t gen;
+
+    serial_emerg_reset_for_test();
+    gen = 0u;
+
+    /* Reserve slot 0 so the array holds a known live claim, then read the epoch
+     * back out of the token rather than assuming it. */
+    {
+        uint32_t t = serial_emerg_reserve();
+        TEST_ASSERT_EQ(t & SERIAL_EMERG_TOKEN_VALID, SERIAL_EMERG_TOKEN_VALID,
+                       "a reservation succeeds on a fresh epoch");
+        TEST_ASSERT_EQ(t & 0xFFu, 0u, "taking slot 0");
+        gen = (t >> 8) & 0xFFu;
+    }
+
+    /* A TOKEN NEVER NAMES A DEAD EPOCH. The generation is read before the claim
+     * compare-exchange and lives in a different word, so a publication can land
+     * between them; reserve re-reads it afterwards and releases the claim rather
+     * than handing back an allowance nothing counts while its holder still
+     * spends a full-length wait. A single CPU cannot schedule that interleaving,
+     * so what is asserted here is the post-condition it exists to guarantee. */
+    TEST_ASSERT_EQ(gen, serial_emerg_gen_for_test(),
+                   "a granted token always names the LIVE epoch");
+
+    /* A claim over a stale expectation must FAIL and change nothing: this is
+     * what stops a second CPU from overwriting a live charge. */
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_claim_slot(0u, 0u /*expect FREE*/,
+                                                     gen, 9u), 0u,
+                   "claiming a live slot with a FREE expectation is refused");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "and the live charge still stands");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u,
+                   "still attributed to the CPU that took it");
+
+    /* A release over a wrong expectation must be equally inert. */
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_release_slot(0u, 0u), 0u,
+                   "releasing with a stale expectation is refused");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "and frees nothing");
+
+    /* An unheld slot is claimable, and the claim shows up as a charge owned by
+     * the id the caller named. */
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_claim_slot(1u, 0u, gen, 9u), 1u,
+                   "an unheld slot is claimable over a FREE expectation");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 2u, "which is a second outstanding charge");
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_release_slot(1u, 0u), 0u,
+                   "and a mismatched release still cannot free it");
+
+    serial_emerg_reset_for_test();
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u, "the epoch bump clears both");
+}
+
+/* --- the emergency string walk (section 26) ------------------------------
+ * The walk cuts a record into SERIAL_EMERG_CHUNK pieces, stops at
+ * SERIAL_EMERG_MAX_CHARS, continues past a capacity stop but not past a fault,
+ * and appends the unreadable marker after whatever it managed to read. None of
+ * that was observable while every byte left through the UART, so a walk that
+ * dropped the final partial chunk, stopped early on a capacity result, or
+ * emitted the marker instead of the text would have looked identical.
+ *
+ * Static rather than a local: the collector is larger than a panic-path frame
+ * should ever be, and the tests run one at a time. */
+#define WALK_SINK_CAP  2048u
+static struct {
+    char     buf[WALK_SINK_CAP];
+    uint32_t len;
+    uint32_t calls;
+    uint32_t first_len;
+    uint32_t last_len;
+    uint32_t overflow;
+} g_walk;
+
+static char g_walk_src[SERIAL_EMERG_MAX_CHARS + SERIAL_EMERG_CHUNK + 1u];
+
+static void test_walk_collect(void *sink, const char *buf, uint32_t len)
+{
+    uint32_t i;
+
+    (void)sink;
+    if (len > WALK_SINK_CAP - g_walk.len) { g_walk.overflow++; return; }
+    for (i = 0; i < len; i++)
+        g_walk.buf[g_walk.len + i] = buf[i];
+    g_walk.len += len;
+    if (!g_walk.calls)
+        g_walk.first_len = len;
+    g_walk.last_len = len;
+    g_walk.calls++;
+}
+
+static void test_walk_reset(void)
+{
+    memset(&g_walk, 0, sizeof g_walk);
+}
+
+/* Fill a source of `n` printable characters and terminate it. */
+static const char *test_walk_source(uint32_t n)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++)
+        g_walk_src[i] = (char)('a' + (i % 26u));
+    g_walk_src[n] = '\0';
+    return g_walk_src;
+}
+
+static void test_serial_emergency_walk_cuts_records_at_the_chunk_edge(void)
+{
+    /* Shorter than one chunk: one emission of exactly the payload. */
+    test_walk_reset();
+    serial_emerg_walk_for_test("panic", PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.calls, 1u, "a short record is emitted in one piece");
+    TEST_ASSERT_EQ(g_walk.len, 5u, "of exactly its own length");
+    TEST_ASSERT_EQ((uint32_t)(memcmp(g_walk.buf, "panic", 5u) == 0), 1u,
+                   "and the bytes are the caller's, unaltered");
+
+    /* Exactly one chunk. The guarded read reports a CAPACITY stop here, and a
+     * walk that treated that as the end would still look correct -- so the next
+     * case is the one that actually pins it. */
+    test_walk_reset();
+    serial_emerg_walk_for_test(test_walk_source(SERIAL_EMERG_CHUNK),
+                               PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_CHUNK,
+                   "a full-chunk record emits every byte and no more");
+    TEST_ASSERT_EQ(g_walk.calls, 1u, "in a single emission");
+
+    /* One byte past the edge: the capacity stop must CONTINUE the walk, and the
+     * trailing partial chunk must not be dropped. */
+    test_walk_reset();
+    serial_emerg_walk_for_test(test_walk_source(SERIAL_EMERG_CHUNK + 1u),
+                               PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.calls, 2u,
+                   "a record past the chunk edge continues past the capacity stop");
+    TEST_ASSERT_EQ(g_walk.first_len, SERIAL_EMERG_CHUNK, "a full first chunk");
+    TEST_ASSERT_EQ(g_walk.last_len, 1u, "and the trailing byte is not dropped");
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_CHUNK + 1u,
+                   "so the whole record reaches the sink");
+    TEST_ASSERT_EQ(g_walk.overflow, 0u, "and nothing overran the collector");
+}
+
+static void test_serial_emergency_walk_stops_at_the_character_ceiling(void)
+{
+    const char *src;
+
+    /* EXACTLY the ceiling: every byte must survive, and the record must end
+     * because the string ended, not because the walk clipped it. */
+    test_walk_reset();
+    src = test_walk_source(SERIAL_EMERG_MAX_CHARS);
+    serial_emerg_walk_for_test(src, PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_MAX_CHARS,
+                   "a record of exactly the ceiling is emitted whole");
+    TEST_ASSERT_EQ(g_walk.calls, SERIAL_EMERG_MAX_CHARS / SERIAL_EMERG_CHUNK,
+                   "in whole chunks, with no short final emission");
+    TEST_ASSERT_EQ((uint32_t)(memcmp(g_walk.buf, src, SERIAL_EMERG_MAX_CHARS) == 0),
+                   1u, "byte for byte, in order");
+    TEST_ASSERT_EQ(g_walk.overflow, 0u, "and nothing overran the collector");
+
+    /* ONE byte over: the extra byte must be absent, not merely uncounted. The
+     * adjacent boundaries are tested separately because an off-by-one that
+     * clipped at MAX-1 or admitted MAX+1 still reports a plausible aggregate
+     * length on a coarse over-long input. */
+    test_walk_reset();
+    src = test_walk_source(SERIAL_EMERG_MAX_CHARS + 1u);
+    serial_emerg_walk_for_test(src, PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_MAX_CHARS,
+                   "one byte past the ceiling truncates to the ceiling exactly");
+    TEST_ASSERT_EQ((uint32_t)(memcmp(g_walk.buf, src, SERIAL_EMERG_MAX_CHARS) == 0),
+                   1u, "keeping every byte up to it");
+    TEST_ASSERT_EQ(g_walk.last_len, SERIAL_EMERG_CHUNK,
+                   "the final chunk is full, so the ceiling clipped it, not the walk");
+
+    /* Well past the ceiling: the same answer, so the bound is the ceiling and
+     * not some property of how far the source happened to run. */
+    test_walk_reset();
+    serial_emerg_walk_for_test(
+        test_walk_source(SERIAL_EMERG_MAX_CHARS + SERIAL_EMERG_CHUNK),
+        PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_MAX_CHARS,
+                   "and a far-over-long record stops at the same place");
+    TEST_ASSERT_EQ(g_walk.overflow, 0u, "with nothing overrunning the collector");
+}
+
+/* An unreadable source must produce the marker rather than silence: an empty
+ * tail is indistinguishable from a short string, and the difference is "that is
+ * all it said" versus "the pointer describing the crash was itself corrupt".
+ *
+ * Driven with a NON-CANONICAL source, the same fault surface the guarded-read
+ * tests above use: the live unmapped-page recovery needs a real #PF and is
+ * serial-validated, while a non-canonical address is rejected before the load
+ * and reaches the identical stop reason. */
+static void test_serial_emergency_walk_marks_an_unreadable_source(void)
+{
+    static const char mark[] = "<truncated: unreadable>";
+
+    test_walk_reset();
+    serial_emerg_walk_for_test((const char *)0x0000800000000000ull,
+                               PANIC_CTX_NORMAL, test_walk_collect, 0);
+
+    TEST_ASSERT_EQ(g_walk.calls, 1u,
+                   "an unreadable source still emits -- silence would be a lie");
+    TEST_ASSERT_EQ(g_walk.len, (uint32_t)(sizeof mark - 1u),
+                   "and what it emits is the marker, whole");
+    TEST_ASSERT_EQ((uint32_t)(memcmp(g_walk.buf, mark, sizeof mark - 1u) == 0), 1u,
+                   "with the exact text a serial log reader is looking for");
+
+    /* A readable record must NOT carry it. */
+    test_walk_reset();
+    serial_emerg_walk_for_test("clean", PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.len, 5u, "a readable record ends without a marker");
+}
+
+/* NMI context takes the unguarded byte walk instead of the guarded loop, because
+ * recovery through IRETQ would re-arm NMI delivery while the outer NMI still
+ * owns IST2. It must divide the record identically -- the chunking is not a
+ * property of which read primitive was used. */
+static void test_serial_emergency_walk_chunks_alike_in_nmi_context(void)
+{
+    test_walk_reset();
+    serial_emerg_walk_for_test(test_walk_source(SERIAL_EMERG_CHUNK + 1u),
+                               PANIC_CTX_NMI, test_walk_collect, 0);
+
+    TEST_ASSERT_EQ(g_walk.calls, 2u, "the unguarded walk chunks at the same edge");
+    TEST_ASSERT_EQ(g_walk.first_len, SERIAL_EMERG_CHUNK, "with a full first chunk");
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_CHUNK + 1u,
+                   "and loses no byte of the record");
+
+    test_walk_reset();
+    serial_emerg_walk_for_test(
+        test_walk_source(SERIAL_EMERG_MAX_CHARS + SERIAL_EMERG_CHUNK),
+        PANIC_CTX_NMI, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.len, SERIAL_EMERG_MAX_CHARS,
+                   "and honours the same character ceiling");
+}
+
+/* Neither a NULL record nor a NULL sink may walk anything: the panic path is the
+ * worst possible place to take a fault out of a diagnostic helper. */
+static void test_serial_emergency_walk_refuses_null_operands(void)
+{
+    test_walk_reset();
+    serial_emerg_walk_for_test(0, PANIC_CTX_NORMAL, test_walk_collect, 0);
+    TEST_ASSERT_EQ(g_walk.calls, 0u, "a NULL record emits nothing at all");
+
+    serial_emerg_walk_for_test("text", PANIC_CTX_NORMAL, 0, 0);
+    TEST_ASSERT_EQ(g_walk.calls, 0u, "and a NULL sink is inert rather than fatal");
 }
 
 static void test_serial_emergency_kread_u8_rejects_bad_operands(void)
@@ -1324,7 +1740,34 @@ void test_register_serial_emergency(void)
     test_suite_register_cat("serial_emergency: latch transitions preserve generation",
                             test_serial_emergency_latch_transitions_preserve_generation,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("serial_emergency: refund word clears only named slots",
-                            test_serial_emergency_refund_word_clears_only_named_slots,
+    test_suite_register_cat("serial_emergency: ledger override restores identity",
+                            test_serial_emergency_ledger_override_restores,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: claim and release are exact",
+                            test_serial_emergency_claim_is_exact,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: epoch bump releases every allowance",
+                            test_serial_emergency_epoch_bump_releases_every_allowance,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: reserve sweeps past a held slot",
+                            test_serial_emergency_reserve_sweeps_past_a_held_slot,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: return rejects a foreign owner",
+                            test_serial_emergency_return_rejects_a_foreign_owner,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: walk cuts records at the chunk edge",
+                            test_serial_emergency_walk_cuts_records_at_the_chunk_edge,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: walk stops at the character ceiling",
+                            test_serial_emergency_walk_stops_at_the_character_ceiling,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: walk marks an unreadable source",
+                            test_serial_emergency_walk_marks_an_unreadable_source,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: walk chunks alike in NMI context",
+                            test_serial_emergency_walk_chunks_alike_in_nmi_context,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: walk refuses NULL operands",
+                            test_serial_emergency_walk_refuses_null_operands,
                             TEST_CAT_BOOT);
 }

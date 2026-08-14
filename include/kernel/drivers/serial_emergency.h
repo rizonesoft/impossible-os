@@ -197,17 +197,37 @@ int serial_emerg_ctx_allows_guarded_read(uint32_t ctx);
  * testable without arming the one-way latch. serial_enter_emergency uses exactly
  * these, so testing them tests it. claim() must PRESERVE the generation (losing
  * it rewinds epoch identity and revalidates invalidated tokens); publish() must
- * advance the generation and clear every slot. refund() clears exactly the named
- * slots and no other field. */
+ * ADVANCE it, which is what starts the new accounting epoch -- every outstanding
+ * allowance carries a generation, so the bump invalidates all of them in the
+ * same compare-exchange that publishes ARMED, with no second pass and therefore
+ * no window in which the two epochs coexist. */
 uint32_t serial_emerg_claim_word(uint32_t cur, uint32_t owner);
 uint32_t serial_emerg_publish_word(uint32_t cur);
-uint32_t serial_emerg_refund_word(uint32_t cur, uint32_t give);
 
-/* Reservation token. Bit 31 marks a real reservation so that a token minted in
+/* THE ALLOWANCE IS ONE WORD, AND TAKING IT IS ONE INSTRUCTION.
+ *
+ * Each of the SERIAL_EMERG_STUCK_BYTES full-length waits is a composite
+ * {generation, owner} claim word of its own, and the single compare-exchange
+ * that takes the allowance is the same one that records who owns it and which
+ * epoch it belongs to. There is no separate publication step and no separate
+ * owner ledger, so there is no instant at which a charge exists without an
+ * owner -- the failure that made a charge unattributable, and therefore
+ * unrefundable, when the allowance was a bit in the latch and the owner a write
+ * to a second word that an NMI or #MC could land in front of.
+ *
+ * Two consequences the callers below depend on. A charge exists if and only if a
+ * live claim exists, so serial_emerg_waits and serial_emerg_charges_self read
+ * the claims directly instead of reconstructing a count from two sources that
+ * can disagree. And publishing an epoch releases every allowance by advancing
+ * one generation field, so no reader ever sees a half-cleared budget.
+ *
+ * Reservation token. Bit 31 marks a real reservation so that a token minted in
  * generation 0 is still distinguishable from "no allowance"; the generation the
  * charge landed in sits above the low byte, and the low byte carries the slot
  * index that names the charge itself. Opaque to callers -- pass it back to
- * serial_emerg_return unmodified, exactly once. */
+ * serial_emerg_return unmodified, exactly once, ON THE CPU THAT RESERVED IT: the
+ * claim records an owner and the return compares against it, so a token that has
+ * crossed CPUs releases nothing rather than releasing somebody else's charge. */
 #define SERIAL_EMERG_NO_TOKEN     0x00000000u
 #define SERIAL_EMERG_TOKEN_VALID  0x80000000u
 
@@ -225,3 +245,78 @@ void     serial_emerg_reset_for_test(void);
  * MUST restore it. Affects ONLY the ledger: the panic owner claim and the
  * rerouted-write routing predicate keep reading real CPUID. */
 void     serial_emerg_set_ledger_id_for_test(uint32_t id);
+
+/* The live accounting epoch, exposed so a test can assert that a granted token
+ * names it. The generation and the claim are separate words, so a publication
+ * can land between reserve reading one and writing the other; reserve releases
+ * such a claim rather than granting an allowance nothing counts. A single CPU
+ * cannot schedule that interleaving, so the post-condition is what is checked. */
+uint32_t serial_emerg_gen_for_test(void);
+
+/* The emergency string walk with its OUTPUT AS A PARAMETER, so the chunking is
+ * testable without a UART.
+ *
+ * serial_write_emergency cuts a record into SERIAL_EMERG_CHUNK-sized pieces,
+ * stops at SERIAL_EMERG_MAX_CHARS, continues past a capacity stop but not past a
+ * fault, and appends an unreadable marker AFTER whatever it managed to read.
+ * None of that was observable while every byte left through the UART, so none of
+ * it was tested -- a walk that dropped the final partial chunk, stopped early on
+ * a capacity result, or emitted the marker instead of the text would have looked
+ * identical from outside.
+ *
+ * A PARAMETER rather than an installable sink, deliberately: a writable function
+ * pointer consulted on the panic path is mutable control-flow state, which can
+ * be swapped between the calls comprising one report and which turns the
+ * diagnostic into a second fault if it is ever corrupted. Here the production
+ * path passes a constant callee and the test passes a collector; nothing global
+ * decides where a panic's output goes.
+ *
+ * `emit` receives a byte SPAN, not a C string -- `len` is authoritative and the
+ * buffer is not terminated. A NULL `str` or `emit` walks nothing. */
+typedef void (*serial_emerg_emit_fn)(void *sink, const char *buf, uint32_t len);
+
+void serial_emerg_walk_for_test(const char *str, uint32_t ctx,
+                                serial_emerg_emit_fn emit, void *sink);
+
+/* The two numbers that walk divides a record by: the total character ceiling for
+ * one emergency record, and how many characters are captured per locked
+ * emission. Here rather than private to serial.c so a test asserts against the
+ * values the walk actually uses -- a fixture carrying its own copy of 128 would
+ * keep passing after the chunk size changed, which is the one thing a chunk-edge
+ * test exists to catch.
+ *
+ * The chunk size is what keeps the capture buffer a small frame on a #DF/#MC IST
+ * stack while still emitting records in large atomic pieces; the ceiling leaves
+ * 3x headroom over the longest string that reaches this path in-tree. */
+#define SERIAL_EMERG_MAX_CHARS    1024u
+#define SERIAL_EMERG_CHUNK        128u
+
+/* The advertised ceiling: how many full-length waits one accounting epoch may
+ * spend on a wedged transmitter. Also the extent of the claim array, since there
+ * is exactly one claim word per allowance -- so a test that asserts the whole
+ * budget is reachable, or that a held allowance costs exactly one, must use this
+ * number and not a copy of it. */
+#define SERIAL_EMERG_STUCK_BYTES  8u
+
+/* THE SINGLE TRANSITION, and its exact inverse.
+ *
+ * serial_emerg_claim_slot() takes allowance `idx` for {gen, owner} -- but only
+ * while it still reads exactly `expect`, which the caller observed to be either
+ * free or a claim from an epoch that has since been replaced. Taking the
+ * allowance and recording who owns it are the SAME compare-exchange; there is no
+ * second step, which is the whole reason an allowance is a word of its own
+ * rather than a bit in the latch beside an owner written separately.
+ * serial_emerg_release_slot() frees it, again only while it reads exactly
+ * `expect`, so a release can never touch a claim the caller does not hold.
+ * Both return 1 on success and leave the word byte-identical on failure.
+ *
+ * These carry external linkage deliberately. A static helper is inlined into its
+ * caller, and the single-lock-prefixed-transition property then has no symbol to
+ * check -- tools/atomic-claim-check disassembles this function in the built
+ * object precisely because no post-state a test can assert distinguishes one
+ * atomic transition from two. `idx` must be below SERIAL_EMERG_STUCK_BYTES;
+ * callers validate it, and the token path validates it against a malformed
+ * token before it reaches here. */
+int serial_emerg_claim_slot(uint32_t idx, uint32_t expect,
+                            uint32_t gen, uint32_t owner);
+int serial_emerg_release_slot(uint32_t idx, uint32_t expect);

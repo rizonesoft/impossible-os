@@ -149,6 +149,21 @@ jobs:
           fi
           echo "✅ Build succeeded"
 
+      # ── Prove the panic-path ownership transitions are single, atomic ───────
+      # Each audited helper must claim a resource AND record its owner in ONE
+      # lock-prefixed compare-exchange, so that an NMI or #MC landing at any
+      # instruction boundary leaves the resource free or attributably owned. No
+      # fixture can see that: a two-step implementation reaches an identical
+      # post-state and no test can schedule the abort. It is checked against the
+      # disassembly of the object that was just built.
+      #
+      # HERE rather than in the tooling pack above, which runs BEFORE the clean
+      # build -- there the object does not exist yet, so the gate could only
+      # ever skip. --required refuses to pass on a missing or stale object, so
+      # this step cannot silently become a no-op the way the skip would.
+      - name: Verify atomic claim transitions (generated object)
+        run: bash tools/atomic-claim-check/check.sh --required
+
       # ── Verify disk image exists ────────────────────────────────────────────
       - name: Verify disk image
         run: |
