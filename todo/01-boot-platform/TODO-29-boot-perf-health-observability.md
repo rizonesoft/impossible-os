@@ -467,6 +467,12 @@ From the stamped section 3:
 - [ ] Linearize `boot_trend_publish_json()` traversal (`boot_trend.c:317`): replace indexed `json_array_get` (O(N^2) loop on dense/malformed file) with `json_array_first`/`json_array_next`; quarantine over-long `boots` arrays. (TODO-24 §6)
 - [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline, or gate BlackBox-only + document no fallback. (TODO-24 §6)
 
+From the stamped section 2 (filed 2026-08-14 by the `01-boot-platform/TODO-10 §27` review):
+- [ ] Per-DRIVER degraded state for storage, not just a per-subsystem bit: `boot_health.c` has no `SUBSYS_AHCI`/`SUBSYS_NVME` to set, so a boot that excluded one storage driver reports only the aggregate class. XREF: `01-boot-platform/TODO-10 §27`.
+  - TODO-10 §27 made a storage driver whose async init did not complete excludable from `ahci_setup_interrupts()` and `blkdev_register_all()`, but the mask (`storage_unsafe`) is a local in `boot_phase2` and is never published anywhere durable.
+  - Parity: Windows marks the devnode `CM_PROB_FAILED_START` ("Code 10"), a persistent per-device property queryable via `CM_Get_DevNode_Status` long after boot; Linux leaves the device unbound and visible in `/sys`. Impossible OS has only the boot-time klog ERROR text, so nothing can answer "is AHCI excluded right now".
+  - Wants either `SUBSYS_*` entries per storage driver or a small queryable degraded-driver registry that `boot_health_publish_json()` reads.
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

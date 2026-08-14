@@ -32,6 +32,7 @@
 #include "registry.h"
 #include "kernel/symtab.h"
 #include "kernel/cpuid_platform.h"
+#include "kernel/config.h"   /* boot_arg_resolved_ival -- S27 injection keys */
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/usb_legacy.h"
@@ -300,6 +301,27 @@ void boot_phase2(void)
         topology_init();
     }
 
+#ifdef KERNEL_TESTS
+    /* Degraded-configuration injection (TODO-10 S27): park an already-online
+     * CPU and check the live-versus-present relations on a live boot. Placed
+     * AFTER topology_init() deliberately -- the point is that a CPU going away
+     * does NOT move the discovery-scoped counts, which is only a claim worth
+     * testing once those counts have been established. */
+    {
+        int64_t park = boot_arg_resolved_ival("test_park_cpu");
+        /* The RESULT is the verdict, and it is checked. Discarding it let a
+         * rejected target or a violated relation pass as a healthy boot, which
+         * is exactly the false-coverage shape this injection exists to
+         * eliminate: a harness keying on "Boot complete" would go green having
+         * proven no live/present/topology relation at all. */
+        if (park > 0 && !smp_test_park_cpu((uint32_t)park))
+            klog(LOG_ERROR, "boot",
+                 "[S27] test_park_cpu=%u did NOT establish the degraded "
+                 "configuration -- treat this boot as FAILED coverage",
+                 (uint32_t)park);
+    }
+#endif
+
     /* Performance monitoring counters (Intel PMU / AMD PMC) */
     {
         extern void pmc_init(void);
@@ -320,6 +342,22 @@ void boot_phase2(void)
     uint8_t  storage_state = BOOT_LOAD_LOADED;
     uint16_t storage_err   = 0u;
     uint16_t storage_post  = POST16_NVME_OK;   /* sequential terminal (last driver) */
+    /* Drivers the recovery path could not make safe (TODO-10 S27). Carried out
+     * of the async branch because the consumers it gates -- interrupt setup and
+     * block registration -- run below for BOTH branches. Zero on the sequential
+     * path: every initializer there ran to completion on this CPU. */
+    uint32_t storage_unsafe = 0;
+#ifdef KERNEL_TESTS
+    /* A REQUESTED HOLD THAT NOBODY HONOURS MUST SAY SO (TODO-10 S27). Only the
+     * target AP reads `test_hold_async_cpu`, and it only reads it inside the
+     * async IPI handler -- so on a single-CPU boot, with async_init=0, or when
+     * the named slot is simply never claimed as a worker for this group, the
+     * key is silently ignored, storage initializes sequentially, and the boot
+     * reaches "Boot complete" clean. A harness keying on completion would then
+     * record degraded-path coverage for a run in which no worker was ever
+     * held. Validated here and confirmed after dispatch, below. */
+    int64_t hold_req = boot_arg_resolved_ival("test_hold_async_cpu");
+#endif
     if (g_boot_info.config.async_init && smp_cpu_count() > 1) {
         storage_post = POST16_ASYNC_DONE;      /* async group terminal */
         /* Async: probe storage drivers in parallel across CPUs */
@@ -329,33 +367,194 @@ void boot_phase2(void)
             { "NVMe",      async_nvme_init },
             { "VirtIO-blk", async_virtio_blk_init },
         };
-        boot_result_t async_rc = boot_async_group("storage", storage_steps, 4);
+        /* Per-driver POST pairs, indexed to match storage_steps[] above, so the
+         * fallback emits the same crash/recovery telemetry as the sequential
+         * branch for exactly the drivers it actually re-ran. VirtIO-blk has no
+         * POST pair of its own in the sequential branch either; 0 means "emit
+         * nothing" rather than inventing a code the decoder has never seen. */
+        static const uint16_t storage_post_pre[4] = {
+            POST16_ATA, POST16_AHCI, POST16_NVME, 0
+        };
+        static const uint16_t storage_post_ok[4] = {
+            POST16_ATA_OK, POST16_AHCI_OK, POST16_NVME_OK, 0
+        };
+        /* Which driver each step index degrades, NAMED rather than derived.
+         * This was `(1u << i)` guarded by a _Static_assert that the
+         * BLKDEV_UNSAFE_* bits equal 1<<0..1<<3 -- which is a tautology over
+         * constants and could not observe storage_steps[] at all, so the
+         * reorder it claimed to catch would still have mapped a degraded NVMe
+         * onto the AHCI bit. A table cannot detect a reorder either; what it
+         * does is put the mapping ON the line being reordered, so moving a step
+         * without its bit is visible in the diff instead of inferred. */
+        static const uint32_t storage_unsafe_bit[] = {
+            BLKDEV_UNSAFE_ATA, BLKDEV_UNSAFE_AHCI,
+            BLKDEV_UNSAFE_NVME, BLKDEV_UNSAFE_VIRTIO
+        };
+        /* One step count for the dispatch, the fallback loop and every parallel
+         * table. The literal 4 was repeated at each of those, so adding a fifth
+         * storage driver would have dispatched it and gated it nowhere while
+         * every check stayed green. */
+        enum { STORAGE_STEP_COUNT =
+                   (uint32_t)(sizeof storage_steps / sizeof storage_steps[0]) };
+        _Static_assert(sizeof storage_post_pre == sizeof storage_post_ok,
+                       "storage POST pre/ok tables must stay the same length");
+        _Static_assert(sizeof storage_post_pre / sizeof storage_post_pre[0]
+                           == STORAGE_STEP_COUNT &&
+                       sizeof storage_unsafe_bit / sizeof storage_unsafe_bit[0]
+                           == STORAGE_STEP_COUNT,
+                       "every per-step storage table must cover every step");
+        _Static_assert(STORAGE_STEP_COUNT <= BOOT_ASYNC_MAX_STEPS,
+                       "storage group must fit the outcome record");
+        boot_async_outcome_t outcome;
+        boot_result_t async_rc = boot_async_group_ex("storage", storage_steps,
+                                                     STORAGE_STEP_COUNT,
+                                                     &outcome);
+#ifdef KERNEL_TESTS
+        /* Confirm the requested worker was actually DISPATCHED. The group only
+         * claims as many APs as it can, and a slot that is offline, already
+         * busy, or beyond the step count is never woken -- in which case the
+         * hold never happened, whatever the key said. */
+        if (hold_req > 0) {
+            int held = 0;
+            for (uint32_t i = 0; i < STORAGE_STEP_COUNT; i++)
+                if (outcome.step[i].worker_cpu == (uint32_t)hold_req)
+                    held = 1;
+            if (!held)
+                klog(LOG_ERROR, "boot",
+                     "[S27] FAILED coverage: test_hold_async_cpu=%u was never "
+                     "dispatched a storage step, so no worker was held",
+                     (uint32_t)hold_req);
+        }
+#endif
         if (async_rc == BOOT_FATAL) {
+            uint32_t skipped = 0;
+
             klog(LOG_ERROR, "boot",
                  "Async storage init FATAL -- falling back to sequential");
-            /* Fall through to sequential path. Emit the same per-driver POST
-             * sequence as the sequential branch so crash/recovery telemetry
-             * reflects the path that actually ran (not a bare terminal code). */
-            POST16(POST16_ATA);
-            ata_init();
-            POST16(POST16_ATA_OK);
-            virtio_blk_init();
-            POST16(POST16_AHCI);
-            ahci_init();
-            POST16(POST16_AHCI_OK);
-            POST16(POST16_NVME);
-            nvme_init();
-            POST16(POST16_NVME_OK);
+
+            /* OWNERSHIP, not blanket re-entry (TODO-10 S27). The old fallback
+             * re-ran all four initializers unconditionally, which is wrong in
+             * two separate directions: a driver whose worker overran the
+             * deadline is STILL INSIDE its controller reset, so re-running it
+             * puts two CPUs into the same DMA and MMIO programming; and a
+             * driver that already succeeded gets reset and re-queued for
+             * nothing, since none of these initializers is idempotent. Ask each
+             * step what actually happened to it, re-reading the worker's live
+             * claim so a worker that finished late is credited with finishing.  */
+            for (uint32_t i = 0; i < STORAGE_STEP_COUNT; i++) {
+                const boot_async_step_outcome_t *o = &outcome.step[i];
+                int decision = boot_async_step_fallback(o);
+
+                if (decision == BOOT_ASYNC_FALLBACK_KEEP) {
+                    klog(LOG_INFO, "boot",
+                         "Storage fallback: %s already initialized -- not re-run",
+                         storage_steps[i].name);
+                    continue;
+                }
+                if (decision == BOOT_ASYNC_FALLBACK_SKIP) {
+                    skipped++;
+                    /* DEGRADED IS A STATE, NOT A LOG LINE (TODO-10 S27). SKIP
+                     * means the initializer never completed -- the worker is
+                     * still inside it, or was cut down inside it -- and the BSP
+                     * deliberately did not re-run it. Nothing downstream may
+                     * build on that driver's globals, so record it rather than
+                     * only reporting it. */
+                    storage_unsafe |= storage_unsafe_bit[i];
+                    klog(LOG_ERROR, "boot",
+                         "Storage fallback: %s NOT re-run on the BSP -- its "
+                         "worker on CPU%u has not released the step; driver degraded",
+                         storage_steps[i].name, (uint64_t)o->worker_cpu);
+                    continue;
+                }
+                if (storage_post_pre[i])
+                    POST16(storage_post_pre[i]);
+                storage_steps[i].fn();
+                if (storage_post_ok[i])
+                    POST16(storage_post_ok[i]);
+            }
+
+            /* SKIP kept the BSP out of the initializer; it did NOT stop the
+             * worker. The consumers below (ahci_setup_interrupts,
+             * blkdev_register_all) read the very driver globals that worker may
+             * still be writing, so not re-entering the initializer is only half
+             * the safety property. Wait, bounded, for those workers to release
+             * their steps before anything downstream builds on them. */
+            if (skipped) {
+                uint32_t stuck = boot_async_quiesce(&outcome,
+                                                    BOOT_ASYNC_QUIESCE_MS);
+                if (stuck)
+                    klog(LOG_ERROR, "boot",
+                         "Storage: %u async worker(s) never released their step "
+                         "-- those drivers stay excluded from interrupt setup "
+                         "and device registration",
+                         (uint64_t)stuck);
+            }
+
+#ifdef KERNEL_TESTS
+            /* The injected worker has now been observed still-running by every
+             * stage that had to see it: the barrier recorded RUNNING, the
+             * fallback read its claim and chose SKIP, and quiescence spent its
+             * whole deadline on it. Releasing here rather than on a timer is
+             * what makes those three observations deterministic (TODO-10 S27).
+             * Inert unless test_hold_async_cpu named a CPU. */
+            boot_async_test_release_hold();
+#endif
+
+            /* THE GATE, not a warning (TODO-10 S27). Quiescence bounds how long
+             * a still-running worker keeps writing; it does not finish the
+             * initializer, and it does not touch a POISONED step at all (that
+             * worker is already gone, having left the driver's globals
+             * arbitrarily partial). Either way `storage_unsafe` names a driver
+             * nothing completed, so the consumers below are suppressed for it
+             * rather than allowed to run on half-written state.
+             *
+             * EXCLUSION IS NOT CONTAINMENT, and the difference is not closed
+             * here. Suppressing registration and interrupt setup stops the
+             * KERNEL from building on partial driver state; it does not undo
+             * what the initializer already did to the HARDWARE. Each of these
+             * initializers enables PCI bus mastering and can program MSI-X
+             * before it finishes (VirtIO-blk does both inside virtio_blk_init),
+             * so a worker still inside its step, or one cut down between
+             * arming MSI-X and registering its handler, can leave a device able
+             * to DMA or raise an interrupt no matter what this mask says.
+             * Closing that needs either driver-specific quarantine (clear bus
+             * master + MSI/MSI-X/INTx on the degraded controller) or the
+             * cooperative-cancellation protocol the drivers do not have -- both
+             * driver-owner decisions, not barrier decisions
+             * -> XREF: 02-kernel-core/TODO-01 "Async Subsystem Init (SMP
+             * Parallel)", item "Contain a degraded storage driver at the
+             * HARDWARE, not just in bookkeeping". */
+
             storage_state = BOOT_LOAD_DEGRADED;   /* async failed; recovered serially */
             storage_err   = (uint16_t)BOOT_FATAL;
-            storage_post  = POST16_NVME_OK;       /* recovered via the sequential path */
+            storage_post  = skipped ? POST16_ASYNC_DONE : POST16_NVME_OK;
         } else if (async_rc == BOOT_DEGRADED) {
             klog(LOG_WARN, "boot",
                  "Async storage init degraded -- some drivers may be unavailable");
             storage_state = BOOT_LOAD_DEGRADED;
             storage_err   = (uint16_t)BOOT_DEGRADED;
         }
+#ifdef KERNEL_TESTS
+        /* Backstop release for every async path, not just the FATAL one: a
+         * dispatched-and-held worker whose group did NOT end FATAL would
+         * otherwise sit until its post-barrier cap. Idempotent -- it sets a
+         * latch -- so the deterministic release after quiescence above still
+         * owns the ordering on the path that matters. */
+        boot_async_test_release_hold();
+#endif
     } else {
+#ifdef KERNEL_TESTS
+        /* The async branch was not taken at all (single CPU, or async_init=0),
+         * so nothing could have honoured the hold. Say so rather than letting a
+         * clean sequential boot read as degraded-path coverage. */
+        if (hold_req > 0)
+            klog(LOG_ERROR, "boot",
+                 "[S27] FAILED coverage: test_hold_async_cpu=%u requested but "
+                 "storage init took the SEQUENTIAL path (async_init=%u, %u live "
+                 "CPU(s)) -- no async worker exists to hold",
+                 (uint32_t)hold_req, (uint32_t)g_boot_info.config.async_init,
+                 smp_cpu_count());
+#endif
         /* Sequential: original order */
         POST16(POST16_ATA);
         ata_init();
@@ -371,9 +570,16 @@ void boot_phase2(void)
 
     boot_load_finish(storage_tok, storage_state, storage_err, storage_post);
 
-    ahci_setup_interrupts();
+    /* Arming AHCI's MSI/INTx reads the port map and command-list addresses the
+     * initializer publishes. On a degraded AHCI those are partial, so an
+     * interrupt would fire into a half-built ISR context. */
+    if (storage_unsafe & BLKDEV_UNSAFE_AHCI)
+        klog(LOG_ERROR, "boot",
+             "AHCI degraded -- interrupt setup suppressed, controller left polled");
+    else
+        ahci_setup_interrupts();
     xhci_setup_interrupts();  /* After enumeration -- ISR would steal events from polling loops */
-    blkdev_register_all();
+    blkdev_register_all(storage_unsafe);
     boot_progress(2, "STORAGE_DRV", POST16_AHCI_OK);
 
     /* --- VFS: requires HEAP --- */

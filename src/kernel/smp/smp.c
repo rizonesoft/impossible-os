@@ -21,6 +21,10 @@
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
 #include "kernel/atomic.h"
+#include "kernel/config.h"
+#ifdef KERNEL_TESTS
+#include "kernel/topology.h"   /* g_topo_cpu_count -- S27 park-injection check */
+#endif
 
 /* ---- External symbols ---- */
 
@@ -65,6 +69,24 @@ static uint32_t            present_cpus = 0;
 
 _Static_assert(MAX_CPUS <= SMP_ONLINE_MASK_BITS,
     "online_mask is a uint32_t -- one bit per logical CPU slot");
+
+#ifdef KERNEL_TESTS
+/* Degraded-configuration injection (TODO-10 S27). BSP-only: written once at the
+ * top of smp_init() from the `test_abandon_ap` boot key, read only by that same
+ * loop on the same CPU, so no synchronisation is required or implied. 0 = off
+ * (slot 0 is the BSP and is never an AP, so it is not a legal target). */
+static uint32_t            s_inject_abandon_ap = 0;
+#endif
+
+/* 1 when AP slot `cpu` has announced READY -- the signal the BSP's bringup wait
+ * keys off since TODO-10 S27, replacing the AP's own membership publication. */
+static int ap_bringup_is_ready(uint32_t cpu)
+{
+    if (cpu >= MAX_CPUS)
+        return 0;
+    return __atomic_load_n(&cpu_data[cpu].ap_bringup_state, __ATOMIC_ACQUIRE)
+           == AP_BRINGUP_READY;
+}
 
 /* ---- MSR helpers ---- */
 
@@ -236,30 +258,46 @@ void ap_entry(uint32_t cpu_index)
      * `sti` (klog busy-waits on the UART with IRQs masked); the BSP emits the
      * "online" line + hardening audit from the buffered per_cpu_data after
      * bringup -- see smp_init. */
-    /* Bringup handshake (TODO-09-boot S10): claim ONLINE via CAS. If the BSP
-     * already CAS'd us to ABANDONED (its per-AP wait timed out), we LOST the
-     * race -- do NOT publish is_online and do NOT sti; park dark so a CPU the
-     * BSP gave up on never goes live-but-uncounted (no scheduler visibility, no
-     * stray IPI handling). Exactly one of {AP-ONLINE, BSP-ABANDONED} wins. */
+    /* Bringup handshake (TODO-09-boot S10, made terminal by TODO-10 S27):
+     * announce READY and then WAIT for the BSP's verdict. This AP publishes
+     * nothing of its own -- membership is the BSP's to grant, which is what
+     * makes the live set final when smp_init() returns. Losing this CAS means
+     * the BSP already abandoned us, so park dark. */
+    if (!smp_ap_bringup_ready(&pcpu->ap_bringup_state)) {
+        for (;;)
+            __asm__ volatile("cli; hlt");
+    }
+
+    /* Await the verdict with interrupts still masked. The BSP resolves EVERY
+     * discovered slot inside its bringup loop, so this wait terminates without
+     * a deadline of its own: either it accepts us (membership already
+     * published, then ONLINE) or it abandons us. An AP stalled arbitrarily long
+     * before reaching READY is abandoned and never gets here at all; one
+     * stalled HERE simply observes the verdict late and acts on it, which is
+     * exactly the property the old protocol lacked -- there, a stall after the
+     * AP's own ONLINE CAS made it live with the BSP unable to intervene. */
     {
-        uint32_t expected = AP_BRINGUP_STARTING;
-        if (!__atomic_compare_exchange_n(&pcpu->ap_bringup_state, &expected,
-                                         AP_BRINGUP_ONLINE, 0,
-                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            /* Abandoned -- park dark, never online. */
+        uint32_t verdict;
+        do {
+            __asm__ volatile("pause");
+            verdict = __atomic_load_n(&pcpu->ap_bringup_state, __ATOMIC_ACQUIRE);
+        } while (verdict == AP_BRINGUP_READY);
+
+        if (verdict != AP_BRINGUP_ONLINE) {
+            /* Abandoned -- park dark, never online: no scheduler visibility and
+             * no stray IPI handling for a CPU the BSP gave up on. */
             for (;;)
                 __asm__ volatile("cli; hlt");
         }
     }
 
-    /* Won the handshake -- publish online (RELEASE; the BSP's acquire-load sees
-     * every preceding write) as the LAST write before going live. The claim
-     * word goes IDLE and the online-mask bit is set in the same helper, so this
-     * AP becomes dispatchable and countable in one place. */
-    smp_publish_cpu_online(pcpu);
-
-    /* AP is parked -- enable interrupts and halt.
-     * The LAPIC timer or IPI will wake it when the scheduler is ready. */
+    /* Accepted. The BSP published this slot's membership BEFORE storing ONLINE,
+     * so by the time the acquire-load above returned it, the async claim, the
+     * is_online flag and the online-mask bit are all already visible -- there is
+     * no window in which this CPU is live but uncounted.
+     *
+     * AP is parked -- enable interrupts and halt. The LAPIC timer or IPI will
+     * wake it when the scheduler is ready. */
     __asm__ volatile("sti");
     for (;;)
         __asm__ volatile("hlt");
@@ -285,6 +323,18 @@ void smp_init(void)
      * final state, not a recomputed-from-CPUID approximation. Recorded on
      * every platform, including single-CPU, for the register audit trail. */
     cpu_record_bsp_profile();
+
+#ifdef KERNEL_TESTS
+    /* Read the injection target once, on the BSP, before any AP starts. */
+    {
+        int64_t v = boot_arg_resolved_ival("test_abandon_ap");
+        s_inject_abandon_ap = (v > 0 && v < (int64_t)MAX_CPUS) ? (uint32_t)v : 0u;
+        if (s_inject_abandon_ap)
+            klog(LOG_WARN, "smp",
+                 "test_abandon_ap=%u -- AP slot %u will be abandoned at bringup",
+                 (uint64_t)s_inject_abandon_ap, (uint64_t)s_inject_abandon_ap);
+    }
+#endif
 
     cpu_count = acpi_get_cpu_count();
     if (cpu_count <= 1) {
@@ -485,22 +535,21 @@ void smp_init(void)
         lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
         delay_ms(1);        /* 200µs minimum per Intel spec, use 1ms */
 
-        /* Wait for THIS AP to publish online (its own online-mask bit, which
-         * smp_publish_cpu_online writes LAST; timeout 100ms). Polling the
-         * per-AP publication point -- not a separate cumulative count -- means
-         * the BSP never proceeds while an AP is mid-publication, and the
-         * wait/count/audit all key off one signal (TODO-10 S21: that signal is
-         * the mask bit, because is_online lands before the claim word and the
-         * mask and so could be observed with the sequence unfinished). */
+        /* Wait for THIS AP to announce READY (TODO-10 S27). The waited-on signal
+         * is the AP's readiness, NOT its membership, because membership is now
+         * this loop's to grant: an AP that reaches READY has completed all of
+         * its local bringup and is parked awaiting the verdict, so there is
+         * nothing left for it to do that the BSP could observe half-finished.
+         * 100 ms, then a second SIPI and 50 ms, as before. */
         {
             uint32_t timeout = 100;
-            while (!smp_cpu_is_online(ap_count) && timeout > 0) {
+            while (!ap_bringup_is_ready(ap_count) && timeout > 0) {
                 delay_ms(1);
                 timeout--;
             }
         }
 
-        if (!smp_cpu_is_online(ap_count)) {
+        if (!ap_bringup_is_ready(ap_count)) {
             /* Retry with second SIPI */
             lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
             delay_ms(1);
@@ -508,41 +557,43 @@ void smp_init(void)
             /* Wait again (50ms) */
             {
                 uint32_t timeout = 50;
-                while (!smp_cpu_is_online(ap_count) && timeout > 0) {
+                while (!ap_bringup_is_ready(ap_count) && timeout > 0) {
                     delay_ms(1);
                     timeout--;
                 }
             }
         }
 
-        /* Bringup verdict (TODO-09-boot S10): if the AP still has not published
-         * online, CAS its handshake STARTING->ABANDONED. Winning the CAS means
-         * the AP has not yet claimed ONLINE, so a late arrival will lose its own
-         * CAS and park dark instead of going live-but-uncounted. Losing the CAS
-         * means the AP claimed ONLINE in the publication gap (between its ONLINE
-         * CAS and its online-mask publication) -- it is committed to going live,
-         * so we MUST wait (bounded) for that publication to land before the
-         * count/audit/feature pass below runs. Skipping the wait would let the
-         * count loop observe the CPU as offline and omit an AP that is about to
-         * sti and handle IPIs -- the live-but-uncounted state this whole
-         * protocol exists to prevent. ONLINE is the only state the failing CAS can observe: the
-         * AP is the sole setter of ONLINE and the BSP is the sole setter of
-         * ABANDONED, which we just failed to set. */
-        if (!smp_cpu_is_online(ap_count)) {
-            uint32_t expected = AP_BRINGUP_STARTING;
-            if (__atomic_compare_exchange_n(&cpu_data[ap_count].ap_bringup_state,
-                                            &expected, AP_BRINGUP_ABANDONED, 0,
-                                            __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-                klog(LOG_WARN, "smp",
-                     "AP %u abandoned (bringup timeout) -- parked, not counted",
-                     (uint64_t)ap_count);
-            } else if (expected == AP_BRINGUP_ONLINE) {
-                uint32_t timeout = 100;
-                while (!smp_cpu_is_online(ap_count) && timeout > 0) {
-                    delay_ms(1);
-                    timeout--;
-                }
-            }
+#ifdef KERNEL_TESTS
+        /* Degraded-configuration injection (TODO-10 S27): force this slot down
+         * the abandon path even though it may be perfectly healthy, so a live
+         * boot can produce live-count < present-count on demand. Placed AFTER
+         * the waits so the AP really is sitting in READY when we reject it --
+         * that is the interesting case (a healthy AP told to park dark), not an
+         * AP that simply never arrived. */
+        if (s_inject_abandon_ap && s_inject_abandon_ap == ap_count) {
+            klog(LOG_WARN, "smp",
+                 "AP %u abandoned by test_abandon_ap injection", (uint64_t)ap_count);
+            __atomic_store_n(&cpu_data[ap_count].ap_bringup_state,
+                             AP_BRINGUP_ABANDONED, __ATOMIC_RELEASE);
+            continue;
+        }
+#endif
+
+        /* TERMINAL VERDICT (TODO-10 S27). Exactly one of {BSP-ABANDONED,
+         * BSP-ONLINE} is reached for this slot, here, before the loop moves on
+         * -- so no slot is left in a state a later AP write could change.
+         * Publication order is load-bearing: membership FIRST, then the ONLINE
+         * store that releases the AP. Reversed, the AP could sti and start
+         * taking IPIs before its own mask bit existed, which is the
+         * live-but-uncounted state this protocol exists to eliminate. */
+        if (smp_bsp_bringup_arbitrate(&cpu_data[ap_count].ap_bringup_state)) {
+            smp_publish_cpu_online(&cpu_data[ap_count]);
+            smp_ap_bringup_accept(&cpu_data[ap_count].ap_bringup_state);
+        } else {
+            klog(LOG_WARN, "smp",
+                 "AP %u abandoned (bringup timeout) -- parked, not counted",
+                 (uint64_t)ap_count);
         }
     }
 
@@ -619,6 +670,28 @@ void smp_init(void)
                  "membership publication is inconsistent", (uint64_t)bad);
     }
 
+    /* Layer 2 for the terminality property (TODO-10 S27). The unit tests prove
+     * the state machine over synthetic words; only here can the LIVE claim be
+     * checked -- that every discovered slot reached a verdict before this
+     * function returns, so nothing can still join the live set afterwards. A
+     * non-terminal slot means an AP is sitting in READY (or was never
+     * arbitrated) with the loop already past it, which is precisely the
+     * live-but-late join this section closes. WARN rather than halt: the slot
+     * has no membership either way, so the machine is under-populated rather
+     * than unsafe, and halting a boot over an under-populated CPU set would be
+     * a worse outcome than reporting it. */
+    {
+        uint32_t nonterminal = 0;
+        for (i = 1; i <= ap_count && i < MAX_CPUS; i++) {
+            if (!smp_ap_bringup_is_terminal(&cpu_data[i].ap_bringup_state))
+                nonterminal++;
+        }
+        if (nonterminal)
+            klog(LOG_WARN, "smp",
+                 "%u AP slot(s) left bringup without a terminal verdict -- "
+                 "the live set is not sealed", (uint64_t)nonterminal);
+    }
+
     {
         uint32_t live = smp_cpu_count();
         klog(LOG_INFO, "smp", "%u of %u CPUs online (BSP + %u APs)",
@@ -661,6 +734,80 @@ uint32_t smp_mask_count(uint32_t mask)
         n++;
     }
     return n;
+}
+
+/* ---- Bringup arbitration (TODO-10 S27) ----
+ *
+ * Four pure transitions over a caller-supplied handshake word. Keeping them
+ * word-local rather than pcpu-local is what makes the terminality property
+ * testable: the failure this protocol prevents needs an AP stalled at an exact
+ * instruction, which no boot on any emulator this repo runs can be asked to
+ * produce, but every reachable interleaving of these four is reachable over
+ * synthetic words. */
+
+int smp_ap_bringup_ready(uint32_t *state)
+{
+    uint32_t expected = AP_BRINGUP_STARTING;
+
+    if (!state)
+        return 0;
+
+    /* ACQ_REL: the AP's whole local bringup (lapic_id, the ap_cpu_harden()
+     * register/feature snapshot) precedes this and must be visible to the BSP
+     * that observes READY, because the BSP -- not the AP -- is what publishes
+     * this slot's membership afterwards. */
+    return __atomic_compare_exchange_n(state, &expected, AP_BRINGUP_READY, 0,
+                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+int smp_bsp_bringup_arbitrate(uint32_t *state)
+{
+    uint32_t expected = AP_BRINGUP_STARTING;
+
+    if (!state)
+        return 0;
+
+    /* Try to REJECT first, and let the failure tell us what the slot really is.
+     * Ordering it this way is what removes the window: there is no load-then-act
+     * gap for the AP to slip through, because the only value that can defeat
+     * this CAS is one the AP has already committed to (READY), and the AP never
+     * leaves READY on its own. Reading the word first and branching would
+     * reintroduce exactly the race the section closes. */
+    if (__atomic_compare_exchange_n(state, &expected, AP_BRINGUP_ABANDONED, 0,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return 0;   /* we abandoned it -- a late AP now loses its own CAS */
+
+    /* The CAS failed, so `expected` holds the observed value. READY means the
+     * AP got there first and the caller must publish. ONLINE means this slot
+     * was already accepted (re-arbitration is idempotent, not a second
+     * publication). ABANDONED means it was already rejected. */
+    if (expected == AP_BRINGUP_READY || expected == AP_BRINGUP_ONLINE)
+        return 1;
+    return 0;
+}
+
+void smp_ap_bringup_accept(uint32_t *state)
+{
+    if (!state)
+        return;
+
+    /* RELEASE, and the ordering here is the whole contract: membership is
+     * already published, and this store is what lets the AP leave its wait and
+     * enable interrupts. Publishing AFTER it would re-open the live-but-
+     * unpublished window. A plain store is correct because the BSP is the sole
+     * writer of ONLINE and it only reaches here having observed READY, which
+     * the AP never leaves. */
+    __atomic_store_n(state, AP_BRINGUP_ONLINE, __ATOMIC_RELEASE);
+}
+
+int smp_ap_bringup_is_terminal(const uint32_t *state)
+{
+    uint32_t s;
+
+    if (!state)
+        return 0;
+    s = __atomic_load_n(state, __ATOMIC_ACQUIRE);
+    return s == AP_BRINGUP_ONLINE || s == AP_BRINGUP_ABANDONED;
 }
 
 void smp_publish_cpu_online(struct per_cpu_data *pcpu)
@@ -722,6 +869,126 @@ void smp_retract_cpu_online(struct per_cpu_data *pcpu)
     smp_async_claim_park(&pcpu->async_claim);
     __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
 }
+
+#ifdef KERNEL_TESTS
+int smp_test_park_cpu(uint32_t cpu)
+{
+    struct per_cpu_data *pcpu;
+    uint32_t live_before, present_before, topo_before, mask_before;
+    uint32_t live_after,  present_after,  topo_after,  mask_after;
+    int ok = 1;
+
+    /* IT PARKS THE BOOKKEEPING, NOT THE CPU. panic.c's park is real because the
+     * CPU that calls it is on its way to halting with interrupts masked; this
+     * one runs on the BSP against a target that is sitting in `sti; hlt` and
+     * stays there, taking interrupts. So after the injection the kernel
+     * believes a still-executing CPU is gone -- which is exactly the state the
+     * accounting consumers must survive and therefore what this exercises, but
+     * it is NOT a model of a dead CPU. One consequence worth naming: the CR0/CR4
+     * pin re-verify IPI filters on is_online, so the injected CPU permanently
+     * drops out of security re-verification for the rest of that boot. There is
+     * no unpark path. Test-only, one-shot, and never on a released kernel.
+     *
+     * Slot 0 is the BSP and is never a legal target: parking the CPU running
+     * this code would retract the caller out from under itself. */
+    /* A REJECTED TARGET IS A TEST FAILURE, NOT A NO-OP. Returning 0 silently
+     * here let a requested degraded-CPU scenario simply not happen while the
+     * boot continued to a clean "Boot complete" -- so a completion-based
+     * harness would pass having proven nothing. Every rejection says so, with
+     * the reason, on the same [S27] marker the success path uses. */
+    if (cpu == 0 || cpu >= MAX_CPUS) {
+        klog(LOG_ERROR, "SMP", "[S27] park REJECTED: CPU%u is not a legal "
+             "target (slot 0 is the BSP; max is %u)", cpu, (uint32_t)MAX_CPUS - 1);
+        return 0;
+    }
+    pcpu = smp_get_cpu(cpu);
+    if (!pcpu) {
+        klog(LOG_ERROR, "SMP", "[S27] park REJECTED: no per-CPU block for CPU%u",
+             cpu);
+        return 0;
+    }
+    if (!smp_cpu_is_online(cpu)) {
+        klog(LOG_ERROR, "SMP", "[S27] park REJECTED: CPU%u is not online, so "
+             "parking it would prove nothing about a live-count fall", cpu);
+        return 0;
+    }
+
+    live_before    = smp_cpu_count();
+    present_before = smp_cpu_present_count();
+    topo_before    = g_topo_cpu_count;
+    mask_before    = smp_online_mask();
+
+    /* NOT smp_retract_cpu_online(): that gates its mask clear on the CALLER's
+     * own CPUID identity, because its only real caller is a CPU parking ITSELF
+     * from the panic path. The BSP retracting a DIFFERENT slot fails that check
+     * and would clear is_online while leaving the mask bit set -- the exact
+     * mask/is_online divergence the publication order exists to prevent. This
+     * is an orderly BSP-driven injection, not a self-park, so it performs the
+     * same three atomics in the same order, indexed by the TARGET.
+     *
+     * Mask bit FIRST (the publication point), then the async claim, then
+     * is_online -- so no consumer can observe a CPU counted as live that has
+     * already stopped answering. */
+    smp_mask_clear(&online_mask, cpu);
+    smp_async_claim_park(&pcpu->async_claim);
+    __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
+
+    live_after    = smp_cpu_count();
+    present_after = smp_cpu_present_count();
+    topo_after    = g_topo_cpu_count;
+    mask_after    = smp_online_mask();
+
+    /* The four relations section 27 exists to prove. A CPU count is not a slot
+     * bound and the two counts are not interchangeable: LIVE falls when a CPU
+     * parks, PRESENT is the discovery snapshot and must not move, and topology
+     * keeps its discovered slot binding either way. */
+    if (live_after + 1u != live_before) {
+        klog(LOG_ERROR, "SMP", "[S27] live count %u -> %u parking CPU%u "
+             "(expected a fall of exactly 1)", live_before, live_after, cpu);
+        ok = 0;
+    }
+    if (present_after != present_before) {
+        klog(LOG_ERROR, "SMP", "[S27] PRESENT count moved %u -> %u parking "
+             "CPU%u -- the discovery snapshot must not track liveness",
+             present_before, present_after, cpu);
+        ok = 0;
+    }
+    if (topo_after != topo_before) {
+        klog(LOG_ERROR, "SMP", "[S27] topology count moved %u -> %u parking "
+             "CPU%u -- slot bindings are discovery-scoped",
+             topo_before, topo_after, cpu);
+        ok = 0;
+    }
+    if (mask_after & (1u << cpu)) {
+        klog(LOG_ERROR, "SMP", "[S27] CPU%u still set in the online mask "
+             "(0x%x) after parking", cpu, mask_after);
+        ok = 0;
+    }
+    /* The mask IS the live count's source, and every NT-facing consumer
+     * (PEB NumberOfProcessors, the NUMBER_OF_PROCESSORS registry/env value)
+     * reads smp_cpu_count(). Pinning popcount(mask) == live count is therefore
+     * what makes "NtQuerySystemInformation agrees with the mask" hold, rather
+     * than asserting each consumer's copy separately. */
+    if (smp_mask_count(mask_after) != live_after) {
+        klog(LOG_ERROR, "SMP", "[S27] online mask 0x%x has %u bits but the live "
+             "count reads %u -- NT processor reporting would disagree",
+             mask_after, smp_mask_count(mask_after), live_after);
+        ok = 0;
+    }
+    if (smp_cpu_is_online(cpu)) {
+        klog(LOG_ERROR, "SMP", "[S27] CPU%u still reports online after parking",
+             cpu);
+        ok = 0;
+    }
+
+    klog(ok ? LOG_INFO : LOG_ERROR, "SMP",
+         "[S27] parked CPU%u: live %u->%u, present %u (held), topo %u (held), "
+         "mask 0x%x->0x%x -- %s",
+         cpu, live_before, live_after, present_after, topo_after,
+         mask_before, mask_after, ok ? "consistent" : "INCONSISTENT");
+    return ok;
+}
+#endif /* KERNEL_TESTS */
 
 int smp_async_claim_dispatch(uint32_t *claim, uint32_t *out_gen)
 {

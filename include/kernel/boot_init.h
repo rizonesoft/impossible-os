@@ -503,6 +503,32 @@ void boot_run_deferred(void);
 
 #define BOOT_ASYNC_MAX_STEPS 8
 
+/* How long the group barrier waits for a worker before declaring it overrun. */
+#define BOOT_ASYNC_BARRIER_MS 10000u
+
+/* Deadlock backstop for the S27 test-only worker hold. The hold is released by
+ * the BSP once it has finished deciding the degraded path, so this bound is
+ * only reached when that release never arrives -- a held worker must not be
+ * able to hold a boot open forever. Comfortably past barrier + quiesce so it
+ * cannot fire during a scenario that IS progressing.
+ *
+ * It replaced a hold of exactly BOOT_ASYNC_BARRIER_MS measured from the AP's
+ * own start, which could expire before the BSP even created its deadline.
+ *
+ * DEPENDS ON THE BSP'S TICK. The held AP spins with IF clear, so it cannot
+ * advance any timer of its own; the backstop works only because
+ * system_get_ticks() reads the LAPIC tick counter that the BSP advances (AP
+ * LAPIC timers are masked). Arming per-CPU LAPIC timers would both skew every
+ * /10 deadline computed in boot_init.c and remove this backstop's tick source,
+ * so that change has to revisit this constant rather than inherit it. */
+#define BOOT_ASYNC_HOLD_CAP_MS 30000u
+
+/* How long a caller waits for a skipped worker to release its step before it
+ * gives up and says so. Deliberately far shorter than the barrier: by this
+ * point the worker has ALREADY overrun a 10-second deadline, so this is a grace
+ * period for one that is about to finish, not a second full budget. */
+#define BOOT_ASYNC_QUIESCE_MS 2000u
+
 /* A step in an async init group */
 typedef struct {
     const char    *name;
@@ -513,11 +539,135 @@ typedef struct {
  * Call after IDT and LAPIC are ready. */
 void boot_async_init(void);
 
+/* Per-step disposition after a group returns (TODO-10 S27). The group's worst
+ * result says whether the GROUP failed; it says nothing about which individual
+ * steps a caller may safely re-run on the BSP, and that is the distinction a
+ * sequential fallback needs. */
+typedef enum {
+    /* The step ran to completion and delivered its own result -- on the BSP, on
+     * an overflow pass, or on a worker that published before the barrier. */
+    BOOT_ASYNC_STEP_COMPLETED = 0,
+    /* The step overran the barrier deadline and its worker STILL OWNS the slot:
+     * that CPU is inside the initializer right now. */
+    BOOT_ASYNC_STEP_RUNNING,
+    /* The step's worker faulted and parked mid-step (panic.c async isolation).
+     * Nobody is executing it, but it was abandoned at an arbitrary instruction. */
+    BOOT_ASYNC_STEP_POISONED,
+    /* The step was never dispatched or run at all. */
+    BOOT_ASYNC_STEP_UNDISPATCHED,
+} boot_async_step_state_t;
+
+/* What a sequential fallback may do with one step. */
+#define BOOT_ASYNC_FALLBACK_KEEP  0   /* already done -- re-running would redo it */
+#define BOOT_ASYNC_FALLBACK_RUN   1   /* safe to run on the BSP now */
+#define BOOT_ASYNC_FALLBACK_SKIP  2   /* unsafe to run -- degrade this step */
+
+/* Per-step outcome record, indexed by the caller's step index. */
+typedef struct {
+    boot_async_step_state_t state;
+    boot_result_t           result;      /* meaningful when state == COMPLETED */
+    uint32_t                worker_cpu;  /* 0 when the step did not run on an AP */
+    uint32_t                dispatch_gen;/* claim generation the worker owns */
+} boot_async_step_outcome_t;
+
+typedef struct {
+    uint32_t                  count;
+    boot_async_step_outcome_t step[BOOT_ASYNC_MAX_STEPS];
+} boot_async_outcome_t;
+
 /* Dispatch an async init group across available APs.
  * Steps run in parallel on different CPUs. BSP runs one step too.
- * Blocks until all steps complete. Returns worst boot_result_t. */
+ * Blocks until all steps complete. Returns worst boot_result_t.
+ *
+ * `out` is OPTIONAL; pass NULL when the caller has no fallback path. When
+ * supplied it is filled with one outcome per step, which is the ONLY safe basis
+ * for deciding what a sequential fallback may re-run. */
+boot_result_t boot_async_group_ex(const char *group_name,
+                                  boot_async_step_t *steps, uint32_t count,
+                                  boot_async_outcome_t *out);
+
+/* Convenience wrapper: boot_async_group_ex() with no outcome record. */
 boot_result_t boot_async_group(const char *group_name,
-                               boot_async_step_t *steps, uint32_t count);
+                              boot_async_step_t *steps, uint32_t count);
+
+/* PURE decision: may the BSP run step `st` itself, now?
+ *
+ * `claim_word` is a LIVE read of the worker's claim taken at fallback time, not
+ * at barrier time -- a worker that overran the deadline may have finished since,
+ * and re-reading is what turns "we gave up waiting" into "it still owns the
+ * slot". `dispatch_gen` is the generation the step was dispatched under.
+ *
+ *   COMPLETED + OK/DEGRADED   -> KEEP. The initializer already ran; none of the
+ *                               storage initializers is idempotent (each resets
+ *                               its own module globals and reprograms the
+ *                               device), so re-running a success is a fresh
+ *                               hazard, not a recovery.
+ *   COMPLETED + FATAL/DEFERRED-> RUN. It returned a failure through its own
+ *                               control flow, so it holds no lock and no CPU is
+ *                               inside it; retrying is the whole point of a
+ *                               fallback.
+ *   RUNNING + slot still owned -> SKIP. Re-entering means two CPUs in one
+ *                               controller reset.
+ *   RUNNING + slot released    -> decided as COMPLETED with `result`.
+ *   POISONED                   -> SKIP. Absence of a running CPU is not restart
+ *                               safety: the worker was cut at an arbitrary
+ *                               instruction, so device state is half-programmed
+ *                               and any lock it held is abandoned.
+ *   UNDISPATCHED               -> RUN.
+ */
+int boot_async_fallback_decision(boot_async_step_state_t st, boot_result_t result,
+                                 uint32_t claim_word, uint32_t dispatch_gen);
+
+/* PURE: 0 while the worker dispatched at `dispatch_gen` still owns the slot
+ * (BUSY or RESERVED at that generation), 1 once it does not. Shared by the
+ * decision above and by the live callers, so "still inside the step" has ONE
+ * definition rather than a copy per caller. */
+int boot_async_claim_released(uint32_t claim_word, uint32_t dispatch_gen);
+
+/* PURE: 1 when a RELEASED slot was released by the worker itself -- i.e. its
+ * `async_retired` witness is exactly SMP_ASYNC_CLAIM(IDLE, dispatch_gen) and
+ * the claim word is still at that generation -- so `async_result` is that
+ * worker's own published result. 0 when the release was a panic-path park
+ * (OFFLINE with no witness: the worker faulted INSIDE the step and never
+ * published) or when the slot has since been re-dispatched at a later
+ * generation (any result there belongs to the newer dispatch).
+ *
+ * Released is NOT finished. The claim word reaches the same OFFLINE(gen) for a
+ * worker that completed and whose CPU parked afterwards and for one cut down
+ * mid-initializer; only the witness separates them, and only one is safe to
+ * credit with a result. */
+int boot_async_release_attributable(uint32_t claim_word, uint32_t witness,
+                                    uint32_t dispatch_gen);
+
+/* LIVE wrapper around boot_async_fallback_decision(): re-reads the worker's
+ * claim and, when that shows the step released at its dispatch generation BY
+ * THE WORKER ITSELF (attributable per above), substitutes the worker's
+ * PUBLISHED result for the barrier's timeout sentinel before deciding. A
+ * release that is NOT attributable is decided as POISONED -- SKIP -- because
+ * the worker was parked at an arbitrary instruction inside the initializer.
+ * Callers with a fallback path should use this rather than calling the pure
+ * decision with a recorded result, which cannot distinguish a step that failed
+ * from one that merely finished late, nor either from one that was cut down. */
+int boot_async_step_fallback(const boot_async_step_outcome_t *o);
+
+/* Wait, bounded, for every step still recorded RUNNING to release its slot.
+ * Returns the number that did NOT, which is the number of drivers whose
+ * downstream consumers (interrupt setup, device registration) cannot safely
+ * run. SKIPPING a step keeps the BSP out of the initializer; it does NOT stop
+ * the worker, so a caller that proceeds to touch the same driver state must
+ * quiesce first or degrade. Full cooperative cancellation -- a cancel flag each
+ * long initializer polls plus an acknowledgement -- is a driver-owner decision
+ * tracked in 02-kernel-core/TODO-01 "Async Subsystem Init (SMP Parallel)". */
+uint32_t boot_async_quiesce(const boot_async_outcome_t *out, uint32_t timeout_ms);
+
+#ifdef KERNEL_TESTS
+/* Release the worker held by `test_hold_async_cpu`. Called by the BSP once it
+ * has recorded the timeout, decided the fallback, and run quiescence to its own
+ * deadline -- so every stage of the degraded path observed a genuinely
+ * still-running worker rather than one that happened to finish first. Safe to
+ * call when nothing is held; it only sets a latch. */
+void boot_async_test_release_hold(void);
+#endif
 
 /* Internal helper used by BOOT_REQUIRE -- logs via serial (klog optional). */
 void _boot_require_failed(const char *subsys_name);

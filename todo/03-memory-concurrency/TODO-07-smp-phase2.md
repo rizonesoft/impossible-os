@@ -193,6 +193,10 @@ Provide `cpu_up(id)` and `cpu_down(id)` kernel functions that manage the online 
 - [ ] Add `cpu_state_t` enum per CPU: `CPU_OFFLINE`, `CPU_ONLINE`, `CPU_GOING_OFFLINE`; stored in `g_cpu_state[MAX_CPUS]`
 - [ ] `cpu_down(id)`: set state to `CPU_GOING_OFFLINE`; wait for target CPU to reach scheduler idle; drain its run queue -- `steal_work(local_rq, &g_rq[id])` moving all threads; send INIT IPI to park AP; set state `CPU_OFFLINE`
 - [ ] `cpu_up(id)`: re-send SIPI to parked AP; wait for AP to signal `CPU_ONLINE` via atomic store; reinitialise `g_rq[id]`
+- [ ] `cpu_up(id)` must also cover an AP ABANDONED at bringup, not only one parked by `cpu_down`: the S27 handshake is terminal by construction, so a failed-to-start AP can never rejoin. XREF: `01-boot-platform/TODO-10 §27`.
+  - `01-boot-platform/TODO-10 §27` made the bringup handshake terminal on purpose (an AP that loses the STARTING->ABANDONED race must never join the live set after `smp_init()` returns), which closed a real hazard but forecloses recovery for the rest of that boot.
+  - Parity: Linux keeps a failed CPU in `cpu_present_mask` and retries it via `echo 1 > /sys/devices/system/cpu/cpuN/online`; Windows supports ACPI processor hot-add. Both let a failed-to-start CPU come online later without a reboot.
+  - Needs an explicit re-arm path out of `AP_BRINGUP_ABANDONED` (or a documented decision that abandonment stays permanent), plus the accounting rule: `smp_cpu_present_count()` must not move, `smp_cpu_count()` must rise.
 - [ ] Registry: `HKLM\HARDWARE\CPU\<N>\Enabled` (`REG_DWORD 0` = offline on next boot); hotplug stub reads at runtime but does not require reboot
 - [ ] Expose `sys_cpu_hotplug(id, action)` syscall -- requires `CAP_SYS_ADMIN`
 - [ ] Boot log: `[SMP] hotplug: cpu_up/cpu_down registered for %u CPUs`

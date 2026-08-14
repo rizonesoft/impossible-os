@@ -26,6 +26,7 @@
 #include "kernel/test/test.h"
 #include "kernel/smp.h"
 #include "kernel/acpi.h"
+#include "kernel/boot_init.h"   /* pure S27 fallback decision, no boot state */
 
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 
@@ -429,6 +430,320 @@ static void test_online_mask_bits_are_within_present_slots(void)
     }
 }
 
+/* ---- Bringup arbitration (TODO-10 S27) ----
+ *
+ * The property under test is TERMINALITY: when the BSP's bringup loop moves
+ * past a slot, that slot's verdict can no longer change, so no AP can join the
+ * live set afterwards. That is unreachable from a boot -- it needs an AP
+ * stalled at an exact instruction, which no emulator this repo runs can be
+ * asked to produce -- but every interleaving of the four transitions is
+ * reachable over caller-supplied words. */
+
+static void test_bringup_ap_ready_from_starting(void)
+{
+    uint32_t state = AP_BRINGUP_STARTING;
+
+    TEST_ASSERT(smp_ap_bringup_ready(&state),
+        "an AP must be able to announce READY from STARTING");
+    TEST_ASSERT_EQ(state, AP_BRINGUP_READY,
+        "a won readiness CAS must leave the slot READY");
+    TEST_ASSERT(!smp_ap_bringup_ready(&state),
+        "announcing READY twice must fail -- the AP is already committed");
+    TEST_ASSERT_EQ(state, AP_BRINGUP_READY,
+        "a refused readiness CAS must not mutate the word");
+}
+
+/* The race the protocol exists to arbitrate, in the order where the BSP wins:
+ * a slot it abandoned must refuse a late AP, which then parks dark. */
+static void test_bringup_abandoned_slot_refuses_late_ap(void)
+{
+    uint32_t state = AP_BRINGUP_STARTING;
+
+    TEST_ASSERT(!smp_bsp_bringup_arbitrate(&state),
+        "arbitrating a slot that never reached READY must abandon it");
+    TEST_ASSERT_EQ(state, AP_BRINGUP_ABANDONED,
+        "an abandoned slot must read ABANDONED");
+    TEST_ASSERT(!smp_ap_bringup_ready(&state),
+        "an AP arriving after the verdict must lose and park dark");
+    TEST_ASSERT_EQ(state, AP_BRINGUP_ABANDONED,
+        "a late AP must not resurrect an abandoned slot");
+}
+
+/* And the order where the AP wins: the BSP must then accept it rather than
+ * abandon it, because the AP is already parked awaiting a verdict. */
+static void test_bringup_ready_slot_is_accepted_not_abandoned(void)
+{
+    uint32_t state = AP_BRINGUP_STARTING;
+
+    TEST_ASSERT(smp_ap_bringup_ready(&state), "AP announces READY first");
+    TEST_ASSERT(smp_bsp_bringup_arbitrate(&state),
+        "arbitrating a READY slot must accept it");
+    TEST_ASSERT_EQ(state, AP_BRINGUP_READY,
+        "arbitration must NOT publish -- membership lands before ONLINE");
+
+    smp_ap_bringup_accept(&state);
+    TEST_ASSERT_EQ(state, AP_BRINGUP_ONLINE,
+        "accept must release the AP by storing ONLINE");
+}
+
+/* Arbitration is idempotent on a slot that already has a verdict: re-running
+ * the loop must not re-publish an accepted AP nor revive an abandoned one. */
+static void test_bringup_arbitration_is_idempotent(void)
+{
+    uint32_t online = AP_BRINGUP_ONLINE;
+    uint32_t abandoned = AP_BRINGUP_ABANDONED;
+
+    TEST_ASSERT(smp_bsp_bringup_arbitrate(&online),
+        "an already-ONLINE slot must still report accepted");
+    TEST_ASSERT_EQ(online, AP_BRINGUP_ONLINE,
+        "re-arbitrating an ONLINE slot must not change it");
+    TEST_ASSERT(!smp_bsp_bringup_arbitrate(&abandoned),
+        "an already-ABANDONED slot must still report rejected");
+    TEST_ASSERT_EQ(abandoned, AP_BRINGUP_ABANDONED,
+        "re-arbitrating an ABANDONED slot must not change it");
+}
+
+static void test_bringup_terminality_predicate(void)
+{
+    uint32_t starting  = AP_BRINGUP_STARTING;
+    uint32_t ready     = AP_BRINGUP_READY;
+    uint32_t online    = AP_BRINGUP_ONLINE;
+    uint32_t abandoned = AP_BRINGUP_ABANDONED;
+
+    TEST_ASSERT(!smp_ap_bringup_is_terminal(&starting),
+        "STARTING is not a verdict");
+    TEST_ASSERT(!smp_ap_bringup_is_terminal(&ready),
+        "READY is not a verdict -- the BSP may still abandon it");
+    TEST_ASSERT(smp_ap_bringup_is_terminal(&online), "ONLINE is terminal");
+    TEST_ASSERT(smp_ap_bringup_is_terminal(&abandoned),
+        "ABANDONED is terminal");
+}
+
+static void test_bringup_helpers_tolerate_null(void)
+{
+    TEST_ASSERT(!smp_ap_bringup_ready((uint32_t *)0),
+        "a NULL handshake word must refuse readiness rather than fault");
+    TEST_ASSERT(!smp_bsp_bringup_arbitrate((uint32_t *)0),
+        "a NULL handshake word must arbitrate as rejected");
+    TEST_ASSERT(!smp_ap_bringup_is_terminal((const uint32_t *)0),
+        "a NULL handshake word is not terminal");
+    smp_ap_bringup_accept((uint32_t *)0);   /* must not fault */
+}
+
+/* ---- Async fallback ownership decision (TODO-10 S27) ---- */
+
+/* A step that already succeeded must NOT be re-run: none of the storage
+ * initializers is idempotent, so re-running a success resets a working
+ * controller and reallocates its queues. */
+static void test_fallback_keeps_completed_success(void)
+{
+    uint32_t idle = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 7);
+
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_COMPLETED, BOOT_OK, idle, 7),
+        (uint32_t)BOOT_ASYNC_FALLBACK_KEEP,
+        "a completed BOOT_OK step must be kept, not re-run");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_COMPLETED, BOOT_DEGRADED, idle, 7),
+        (uint32_t)BOOT_ASYNC_FALLBACK_KEEP,
+        "a completed BOOT_DEGRADED step must be kept -- it ran to completion");
+}
+
+/* A step that failed through its own control flow holds no lock and has no CPU
+ * inside it, so retrying it is exactly what the fallback is for. */
+static void test_fallback_runs_completed_failure(void)
+{
+    uint32_t idle = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 3);
+
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_COMPLETED, BOOT_FATAL, idle, 3),
+        (uint32_t)BOOT_ASYNC_FALLBACK_RUN,
+        "a completed BOOT_FATAL step must be re-run on the BSP");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_COMPLETED, BOOT_DEFERRED, idle, 3),
+        (uint32_t)BOOT_ASYNC_FALLBACK_RUN,
+        "a completed BOOT_DEFERRED step must be re-run on the BSP");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_UNDISPATCHED, BOOT_OK, 0, 0),
+        (uint32_t)BOOT_ASYNC_FALLBACK_RUN,
+        "a step that never ran must be run");
+}
+
+/* THE defect this section exists to close: a worker that overran the deadline
+ * and still owns its slot is inside the initializer right now. */
+static void test_fallback_skips_step_whose_worker_still_owns_it(void)
+{
+    uint32_t busy     = SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 5);
+    uint32_t reserved = SMP_ASYNC_CLAIM(SMP_ASYNC_RESERVED, 5);
+
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_FATAL, busy, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_SKIP,
+        "a BUSY slot at the dispatch generation means the worker is still inside");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_FATAL, reserved, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_SKIP,
+        "a RESERVED slot at the dispatch generation is equally un-re-enterable");
+}
+
+/* A worker that finished LATE released its slot, so it is credited with what it
+ * actually published -- not re-entered on the strength of the barrier's
+ * sentinel.
+ *
+ * THE RESULT ARGUMENT IS THE LIVE ONE, and that is the whole point of these
+ * cases. A timed-out step is RECORDED as (RUNNING, BOOT_FATAL), where the
+ * BOOT_FATAL is a sentinel the barrier invented rather than anything the worker
+ * said. Feeding that sentinel back in returns RUN and re-runs a driver that
+ * merely finished late; boot_async_step_fallback() is what substitutes the
+ * worker's published result once the claim shows the step released. So the
+ * tuples below pair a RELEASED claim with each result a worker can really
+ * publish -- which is exactly the caller-reachable set. */
+static void test_fallback_credits_late_worker_by_its_claim(void)
+{
+    uint32_t retired   = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 5);
+    uint32_t next_gen  = SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 6);
+    uint32_t offline   = SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, 5);
+
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_OK, retired, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_KEEP,
+        "a late worker that published BOOT_OK must be kept, never re-run");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_DEGRADED, retired, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_KEEP,
+        "a late worker that published BOOT_DEGRADED ran to completion -- keep it");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_FATAL, retired, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_RUN,
+        "a late worker that published BOOT_FATAL may be retried");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_DEFERRED, retired, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_RUN,
+        "a late worker that published BOOT_DEFERRED may be retried");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_OK, next_gen, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_KEEP,
+        "a slot BUSY at a LATER generation no longer owns our step");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_OK, offline, 5),
+        (uint32_t)BOOT_ASYNC_FALLBACK_KEEP,
+        "a parked slot is not executing our step -- the PURE decision trusts the "
+        "result it is handed; boot_async_step_fallback() is what refuses to hand "
+        "it an unattributable one (see the attributable-release tests below)");
+}
+
+/* WHICH release was it? A slot reaches the same OFFLINE(gen) whether the worker
+ * finished and its CPU parked afterwards, or the worker faulted INSIDE the step
+ * and panic.c parked it. Only the first published a result. The witness is the
+ * separator, and getting this wrong is a driver re-entered mid-reset or a driver
+ * that never initialized recorded as complete. */
+static void test_release_attribution_requires_the_witness(void)
+{
+    uint32_t idle_5    = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 5);
+    uint32_t offline_5 = SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, 5);
+    uint32_t witness_5 = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 5);
+
+    TEST_ASSERT(boot_async_release_attributable(idle_5, witness_5, 5),
+        "the worker's own retirement (IDLE at our gen, witness published) IS "
+        "attributable -- its async_result is what it stored");
+    TEST_ASSERT(boot_async_release_attributable(offline_5, witness_5, 5),
+        "completed, then the CPU parked afterwards: the witness survives the "
+        "park, so the result is still the worker's own");
+    TEST_ASSERT(!boot_async_release_attributable(offline_5, 0u, 5),
+        "parked by panic.c with NO witness -- the worker faulted inside the "
+        "step and never published; its async_result must not be believed");
+    TEST_ASSERT(!boot_async_release_attributable(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 6), witness_5, 6),
+        "a witness from generation 5 does not attribute generation 6");
+    TEST_ASSERT(!boot_async_release_attributable(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 6),
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 6), 5),
+        "a slot re-dispatched at a later generation carries THAT dispatch's "
+        "result, never ours");
+    TEST_ASSERT(!boot_async_release_attributable(offline_5,
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 5), 5),
+        "the witness is the exact IDLE(gen) word -- a BUSY-shaped value is not "
+        "a retirement and must not be accepted as one");
+
+    /* The predicate is self-contained: it does not assume the caller already
+     * proved release. The worker publishes its witness BEFORE the retiring CAS,
+     * so BUSY(gen) paired with witness IDLE(gen) is a REAL window in which the
+     * worker is still executing while looking attributable. */
+    TEST_ASSERT(!boot_async_release_attributable(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 5), witness_5, 5),
+        "witness published but the claim still BUSY -- the worker has not "
+        "retired yet and its result is not final");
+    TEST_ASSERT(!boot_async_release_attributable(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_RESERVED, 5), witness_5, 5),
+        "a RESERVED claim is mid-publication, never an attributable release");
+}
+
+/* The generation is masked on this path too, so an over-wide dispatch_gen
+ * normalises rather than failing the witness compare and poisoning a healthy
+ * step. */
+static void test_release_attribution_masks_generation(void)
+{
+    uint32_t gen  = SMP_ASYNC_GEN_MAX;
+    uint32_t idle = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, gen);
+
+    TEST_ASSERT(boot_async_release_attributable(idle,
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, gen), 0xFFFFFFFFu),
+        "an over-wide generation must mask down and still match its witness");
+}
+
+/* The release predicate the decision and every live caller share. One
+ * definition of "still inside the step", pinned here so a copy cannot drift. */
+static void test_fallback_release_predicate(void)
+{
+    TEST_ASSERT(!boot_async_claim_released(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 5), 5),
+        "BUSY at the dispatch generation is NOT released");
+    TEST_ASSERT(!boot_async_claim_released(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_RESERVED, 5), 5),
+        "RESERVED at the dispatch generation is NOT released");
+    TEST_ASSERT(boot_async_claim_released(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 5), 5),
+        "IDLE at the dispatch generation IS released");
+    TEST_ASSERT(boot_async_claim_released(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, 5), 5),
+        "a parked slot is released -- nobody is executing the step");
+    TEST_ASSERT(boot_async_claim_released(
+                    SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, 6), 5),
+        "BUSY at a LATER generation belongs to a different dispatch");
+    TEST_ASSERT(boot_async_claim_released(0u, 5),
+        "a zero word is OFFLINE at generation 0 -- not our running step");
+}
+
+/* Absence of a running CPU is not restart safety: a worker cut down mid-step
+ * left the controller half-programmed and any lock it held abandoned. */
+static void test_fallback_skips_poisoned_step(void)
+{
+    uint32_t offline = SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, 9);
+    uint32_t idle    = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, 9);
+
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_POISONED, BOOT_FATAL, offline, 9),
+        (uint32_t)BOOT_ASYNC_FALLBACK_SKIP,
+        "a step whose worker faulted mid-way must be degraded, not re-entered");
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_POISONED, BOOT_OK, idle, 9),
+        (uint32_t)BOOT_ASYNC_FALLBACK_SKIP,
+        "POISONED is decided by HOW the step ended, never by a stale result");
+}
+
+/* The generation argument is masked before comparison, exactly as the claim
+ * helpers mask theirs -- an out-of-range generation must normalise rather than
+ * silently miss the ownership test and license a re-entry. */
+static void test_fallback_generation_is_masked(void)
+{
+    uint32_t busy = SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, SMP_ASYNC_GEN_MAX);
+
+    TEST_ASSERT_EQ((uint32_t)boot_async_fallback_decision(
+                       BOOT_ASYNC_STEP_RUNNING, BOOT_FATAL, busy, 0xFFFFFFFFu),
+        (uint32_t)BOOT_ASYNC_FALLBACK_SKIP,
+        "an over-wide generation must mask down and still detect ownership");
+}
+
 /* ---- Registration ---- */
 
 void test_register_smp_lifecycle(void)
@@ -474,6 +789,36 @@ void test_register_smp_lifecycle(void)
         test_present_count_bounds_live_count, TEST_CAT_BOOT);
     test_suite_register_cat("smp_lifecycle: online mask bits within MAX_CPUS",
         test_online_mask_bits_are_within_present_slots, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: AP announces READY from STARTING",
+        test_bringup_ap_ready_from_starting, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: abandoned slot refuses a late AP",
+        test_bringup_abandoned_slot_refuses_late_ap, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: READY slot is accepted, not abandoned",
+        test_bringup_ready_slot_is_accepted_not_abandoned, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: arbitration is idempotent",
+        test_bringup_arbitration_is_idempotent, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: only ONLINE/ABANDONED are terminal",
+        test_bringup_terminality_predicate, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: bringup helpers tolerate NULL",
+        test_bringup_helpers_tolerate_null, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: fallback keeps a completed success",
+        test_fallback_keeps_completed_success, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: fallback re-runs a completed failure",
+        test_fallback_runs_completed_failure, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: fallback skips a still-owned step",
+        test_fallback_skips_step_whose_worker_still_owns_it, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: fallback credits a late worker",
+        test_fallback_credits_late_worker_by_its_claim, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: fallback skips a poisoned step",
+        test_fallback_skips_poisoned_step, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: fallback masks the generation",
+        test_fallback_generation_is_masked, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: claim-released predicate",
+        test_fallback_release_predicate, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: release attribution needs a witness",
+        test_release_attribution_requires_the_witness, TEST_CAT_BOOT);
+    test_suite_register_cat("smp_lifecycle: release attribution masks the gen",
+        test_release_attribution_masks_generation, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -209,6 +209,15 @@ boot_args_status_t boot_args_parse_cmdline_n(const char *cmdline, uint32_t max_l
  * Returns NULL when the key was absent (caller falls back to desc->default_val). */
 const boot_arg_value_t *boot_args_get(const boot_args_t *args, const char *name);
 
+#ifdef KERNEL_TESTS
+/* Resolved value of an extension key with no kernel_config_t field of its own.
+ * Exists for the TODO-10 S27 degraded-configuration injection keys
+ * (`test_abandon_ap`, `test_hold_async_cpu`, `test_park_cpu`), whose schema
+ * rows and consumers both compile out at KERNEL_TESTS=off. Returns 0 (= off)
+ * before the Phase-0 reconciliation has published the parsed table. */
+int64_t boot_arg_resolved_ival(const char *name);
+#endif
+
 /* ---- Phase-0 entry point + provenance ------------------------------------ */
 
 /* Validate the bootloader handoff: project the `boot_config` fields through the

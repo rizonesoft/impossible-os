@@ -1512,15 +1512,23 @@ void cpu_validate_ap_features(uint32_t cpu_id)
 
 /* Is this slot part of the set the global intersection must cover?
  *
- * COMMITTED-online, not merely published-online: an AP that won the
- * STARTING->ONLINE CAS is going live even if its is_online release store has not
- * landed yet, and smp_init() waits only a BOUNDED 100 ms for that store
- * (smp.c:507) before continuing. An is_online-only test therefore omits a
- * stalled-but-committed AP, which then comes online under a mask that never
- * intersected it. The AP's ap_cpu_harden() snapshot (features, cr4_at_boot)
- * precedes its ACQ_REL CAS, so an acquire load of EITHER publication orders
- * those writes for the caller. That is a SECOND publication edge beside
- * is_online: the AP's ACQ_REL CAS releases the same prior writes.
+ * COMMITTED-online, not merely published-online. That distinction was
+ * load-bearing under the ORIGINAL handshake, where the AP itself CASed
+ * STARTING->ONLINE and then published is_online: an AP stalled between the two
+ * was going live with smp_init() waiting only a bounded 100 ms for it, so an
+ * is_online-only test omitted a committed AP that then came online under a mask
+ * which never intersected it.
+ *
+ * TODO-10 S27 removed that window at source. Membership is now published by the
+ * BSP BEFORE it stores ONLINE, so ONLINE implies is_online and this predicate's
+ * two arms agree by construction rather than by ordering luck. The
+ * ap_bringup_state arm is retained deliberately: it costs one relaxed load, it
+ * keeps the predicate correct for any future protocol that reintroduces a
+ * commit-then-publish gap, and it is what the unit tests pin. READY is NOT
+ * committed -- the BSP may still abandon a READY slot -- so it is excluded, and
+ * excluding it is what keeps the intersection honest. The AP's ap_cpu_harden()
+ * snapshot (features, cr4_at_boot) precedes its ACQ_REL CAS to READY, so an
+ * acquire load of either publication orders those writes for the caller.
  *
  * is_online has PRECEDENCE over ap_bringup_state, so a slot reporting both
  * is_online and ABANDONED returns 1. The bringup CAS makes that combination

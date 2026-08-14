@@ -62,14 +62,58 @@
  * this grows with it, and the envelope-containment assert below re-checks. */
 #define AP_DATA_FOOTPRINT      (AP_OFF_CANARY + 4)
 
-/* AP bringup handshake states (TODO-09-boot S10), CAS-transitioned in
- * per_cpu_data.ap_bringup_state. STARTING is the initial value the BSP sets
- * before SIPI; the AP CASes it to ONLINE (winner publishes is_online + goes
- * live), the BSP CASes it to ABANDONED on timeout (winner means the AP must
- * park). */
+/* AP bringup handshake states, in per_cpu_data.ap_bringup_state.
+ *
+ * TERMINAL BY CONSTRUCTION (TODO-10 S27). Each transition has exactly one
+ * writer and the live-set publication is BSP-OWNED, so by the time smp_init()
+ * returns every discovered slot is already ONLINE or ABANDONED and no AP can
+ * join the live set afterwards:
+ *
+ *   STARTING   the BSP arms this before the SIPI. Sole writer: the BSP, once.
+ *   READY      the AP has finished ALL of its local bringup and is parked with
+ *              interrupts still masked, awaiting the verdict. Sole writer: the
+ *              AP, by CAS from STARTING. It publishes NOTHING of its own.
+ *   ONLINE     the BSP accepted this AP: it published membership on the AP's
+ *              behalf (async claim IDLE, is_online, online-mask bit) and only
+ *              THEN released the AP. Sole writer: the BSP.
+ *   ABANDONED  the BSP rejected this AP -- it did not reach READY inside the
+ *              bringup budget. Sole writer: the BSP, by CAS from STARTING.
+ *
+ * The AP no longer publishes its own membership, and that is the whole point.
+ * Under the previous protocol the AP CASed STARTING->ONLINE and then wrote the
+ * mask bit, so an AP stalled between the two was COMMITTED to going live with
+ * the BSP unable to stop it: the BSP waited a bounded 100 ms, gave up, and ran
+ * cpu_features_finalize_global(), cpu_audit_consistency_check() and (after
+ * smp_init returned) topology_init() over a set the AP was not in -- after
+ * which the AP published its bit and started taking IPIs. Splitting the AP's
+ * READINESS from the system's ACCEPTANCE makes the decision the BSP's alone,
+ * and an AP that stalls simply never reaches READY in time. A late AP then
+ * observes ABANDONED and parks dark instead of joining.
+ *
+ * ONLINE therefore now IMPLIES is_online: membership is published BEFORE the
+ * state store that reveals it. That is strictly stronger than the old
+ * "committed, publication still pending" meaning that
+ * cpu_slot_committed_online() was written to tolerate. READY is deliberately
+ * NOT committed -- the BSP may still abandon it. */
 #define AP_BRINGUP_STARTING    0u
 #define AP_BRINGUP_ONLINE      1u
 #define AP_BRINGUP_ABANDONED   2u
+#define AP_BRINGUP_READY       3u
+
+/* Layer 1 for the handshake. STARTING must stay 0 because the BSP arms a
+ * zero-initialised slot, and READY must NOT be 0 or a slot nobody armed would
+ * read as an AP awaiting a verdict. */
+_Static_assert(AP_BRINGUP_STARTING == 0u,
+               "AP_BRINGUP_STARTING must be the zero-initialised slot value");
+_Static_assert(AP_BRINGUP_READY != 0u,
+               "AP_BRINGUP_READY must not alias an unarmed slot");
+_Static_assert(AP_BRINGUP_STARTING  != AP_BRINGUP_ONLINE    &&
+               AP_BRINGUP_STARTING  != AP_BRINGUP_ABANDONED &&
+               AP_BRINGUP_STARTING  != AP_BRINGUP_READY     &&
+               AP_BRINGUP_ONLINE    != AP_BRINGUP_ABANDONED &&
+               AP_BRINGUP_ONLINE    != AP_BRINGUP_READY     &&
+               AP_BRINGUP_ABANDONED != AP_BRINGUP_READY,
+               "AP bringup states must be mutually distinct");
 
 /* ---- Async worker lifecycle claim (TODO-10 S21) ----
  *
@@ -305,7 +349,20 @@ struct per_cpu_data {
      * gs:128 and gs:136 by _Static_assert -- inserting a field earlier would
      * shift them. */
     uint32_t          async_claim;         /* SMP_ASYNC_CLAIM(state, generation) */
-    uint32_t          _claim_pad;          /* alignment */
+
+    /* Terminal-cause witness for the claim (TODO-10 S27). The worker writes the
+     * exact word it is about to retire its slot to -- SMP_ASYNC_CLAIM(IDLE, gen)
+     * -- immediately BEFORE completing; the BSP clears it to 0 when it reserves
+     * the slot.
+     *
+     * It exists because the claim word alone cannot say WHY a slot reads OFFLINE
+     * at a generation. A worker that completed normally and whose CPU parked
+     * afterwards, and a worker that faulted mid-step and was parked by panic.c,
+     * both leave OFFLINE(gen) -- yet the first ran to completion and the second
+     * abandoned a half-programmed controller. Re-running is correct for one and
+     * forbidden for the other. 0 is a safe "no retirement": a real retirement
+     * always encodes IDLE, which is never 0. */
+    uint32_t          async_retired;       /* SMP_ASYNC_CLAIM(IDLE, gen), or 0 */
 
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
@@ -488,12 +545,12 @@ uint32_t smp_online_mask(void);
 /* 1 when logical CPU `cpu` is in the live online set */
 int smp_cpu_is_online(uint32_t cpu);
 
-/* `ap_bringup_state` is NOT part of this set. It is a BRINGUP-EPOCH word that
- * records which side won the STARTING race, and it is deliberately left at
- * ONLINE when a CPU later parks: `cpu_slot_committed_online()`
- * (cpu_security.c) reads it precisely so an AP that has committed but not yet
- * published is admitted to the feature intersection. A consumer asking "is
- * this CPU running work RIGHT NOW" must use the mask, never that word.
+/* `ap_bringup_state` is NOT part of this set. It is a BRINGUP-EPOCH word
+ * recording which side won the handshake, and it is deliberately left at ONLINE
+ * when a CPU later parks. A consumer asking "is this CPU running work RIGHT
+ * NOW" must use the mask, never that word. Since TODO-10 S27 the BSP publishes
+ * membership BEFORE storing ONLINE, so ONLINE implies is_online and the word is
+ * a strictly coarser view of the same fact rather than an earlier one.
  *
  * Publish/retract a CPU's online membership. The ONLY transitions:
  * publish sets is_online then the mask bit, retract clears the mask bit then
@@ -502,6 +559,35 @@ int smp_cpu_is_online(uint32_t cpu);
  * only, no locks, no allocation). */
 void smp_publish_cpu_online(struct per_cpu_data *pcpu);
 void smp_retract_cpu_online(struct per_cpu_data *pcpu);
+
+/* ---- Bringup arbitration (TODO-10 S27) ----
+ *
+ * Pure transitions over a caller-supplied handshake word, so the terminality
+ * property is testable without a live SMP system -- the same discipline the
+ * async claim helpers above follow. A NULL `state` is inert and answers 0.
+ *
+ * AP side: STARTING -> READY. Returns 1 when this AP may now wait for a
+ * verdict, and 0 when the BSP already abandoned it (park dark, publish
+ * nothing). */
+int smp_ap_bringup_ready(uint32_t *state);
+
+/* BSP side, called once per discovered slot after the bringup budget expires.
+ * Returns 1 when the AP reached READY and the caller MUST publish its
+ * membership and then release it with smp_ap_bringup_accept(); returns 0 when
+ * the slot was abandoned (it CASed STARTING -> ABANDONED, so a late AP loses
+ * its own CAS and parks dark). Already-terminal slots answer by their state:
+ * ONLINE reports 1 without re-publishing, ABANDONED reports 0. */
+int smp_bsp_bringup_arbitrate(uint32_t *state);
+
+/* BSP side: the release store that reveals an accepted AP. Call ONLY after
+ * membership is published -- this is the transition that lets the AP leave its
+ * wait and enable interrupts, so publishing after it would re-open the
+ * live-but-unpublished window the protocol exists to close. */
+void smp_ap_bringup_accept(uint32_t *state);
+
+/* 1 when the slot has reached a terminal verdict (ONLINE or ABANDONED). After
+ * smp_init() returns this holds for every discovered slot. */
+int smp_ap_bringup_is_terminal(const uint32_t *state);
 
 /* ---- Async claim transitions (TODO-10 S21) ----
  * Pure operations over a caller-supplied claim word so the state machine is
@@ -562,6 +648,20 @@ void     smp_mask_set(uint32_t *mask, uint32_t cpu);
 void     smp_mask_clear(uint32_t *mask, uint32_t cpu);
 int      smp_mask_test(uint32_t mask, uint32_t cpu);
 uint32_t smp_mask_count(uint32_t mask);
+
+#ifdef KERNEL_TESTS
+/* Degraded-configuration injection (TODO-10 S27): park an ALREADY-ONLINE CPU
+ * after bringup has finalized, then check the relations that a live/present
+ * divergence must satisfy -- live count falls by one, present count and the
+ * topology slot count hold, the mask bit clears, and popcount(mask) still
+ * equals the live count that every NT-facing consumer reports.
+ *
+ * Returns 1 when all of them held, 0 on a rejected target (slot 0, out of
+ * range, already offline) or a violated relation, each violation klogged. The
+ * BSP calls this for ANOTHER slot, which is why it does not route through
+ * smp_retract_cpu_online() -- see the note at the implementation. */
+int smp_test_park_cpu(uint32_t cpu);
+#endif
 
 /* Current CPU's logical index (0 = BSP). Uses GS-based per-CPU data. */
 uint32_t smp_cpu_id(void);

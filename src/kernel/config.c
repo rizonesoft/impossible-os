@@ -7,6 +7,7 @@
  * ============================================================================ */
 
 #include "kernel/config.h"
+#include "kernel/acpi.h"       /* MAX_CPUS -- bounds the S27 injection keys */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/boot_halt.h"
@@ -56,6 +57,36 @@ static const boot_arg_desc_t k_arg_table[] = {
       0, 0, 0, (void *)0,            "driver verifier flags (CSV or *)" },
     { "boot.allow_unknown", BOOT_ARG_BOOL,    BOOT_ARG_CLASS_NORMAL,   BOOT_ARG_PHASE0,
       0, 1, 0, (void *)0,            "downgrade unknown kernel.* keys to a warning" },
+#ifdef KERNEL_TESTS
+    /* Degraded-configuration fault injection (TODO-10 S27). Every automated leg
+     * this repo runs boots HEALTHY, where the live CPU count equals the present
+     * count -- so the two-count split and the quiescence rules that depend on it
+     * had no live coverage of the case they exist for. These two keys produce
+     * those configurations on demand. Both the branches they gate AND these
+     * schema rows compile out at KERNEL_TESTS=off, so a released kernel carries
+     * neither the injection code nor the configuration surface to reach it.
+     * A CPU index of 0 means "off": the BSP is never an AP and never an async
+     * worker, so it is not a legal target either way.
+     *
+     * REACHED VIA `cmdline=`, NOT as a bare boot.conf line. Only the typed
+     * struct boot_config fields are projected into the arg table
+     * (boot_args_init below); an extension key written directly into boot.conf
+     * is consumed by the bootloader's own key parser and never arrives here --
+     * and it is not reported as unknown either, so the mistake is silent and
+     * reads as "the injection did not fire". Reproduce with:
+     *
+     *   bash scripts/patch-boot-conf.sh cmdline "test_park_cpu=1"
+     *   bash scripts/patch-boot-conf.sh async_init 1 cmdline "test_hold_async_cpu=1"
+     *
+     * then boot build/system-disk.img directly: test-smoke.sh rebuilds the
+     * image and would overwrite the patch before QEMU ever sees it. */
+    { "test_abandon_ap",   BOOT_ARG_INT,      BOOT_ARG_CLASS_DEBUG,    BOOT_ARG_PHASE2,
+      0, MAX_CPUS - 1, 0, (void *)0, "abandon this AP slot at bringup (0 = off)" },
+    { "test_hold_async_cpu", BOOT_ARG_INT,    BOOT_ARG_CLASS_DEBUG,    BOOT_ARG_PHASE2,
+      0, MAX_CPUS - 1, 0, (void *)0, "hold this CPU inside its async step (0 = off)" },
+    { "test_park_cpu",     BOOT_ARG_INT,      BOOT_ARG_CLASS_DEBUG,    BOOT_ARG_PHASE2,
+      0, MAX_CPUS - 1, 0, (void *)0, "park this CPU after bringup (0 = off)" },
+#endif
 };
 #define K_ARG_COUNT (sizeof(k_arg_table) / sizeof(k_arg_table[0]))
 
@@ -418,7 +449,12 @@ boot_result_t boot_args_init(const struct boot_config *cfg)
     if (cfg->boot_mode == 1)
         project(&g_boot_args, "safemode", 1, "minimal");
 
-    g_boot_args_ready = 1;
+    /* RELEASE, because the reader is cross-CPU. boot_arg_resolved_ival()
+     * ACQUIRE-loads this flag from an AP inside the async IPI handler, and a
+     * plain store here would leave that acquire nothing to pair with: the
+     * several-KB g_boot_args table filled above could be visible after the
+     * flag. x86 TSO hides it today; the planned ARM64 port would not. */
+    __atomic_store_n(&g_boot_args_ready, 1, __ATOMIC_RELEASE);
 
     if (g_boot_args.overridden_count)
         klog(LOG_INFO, "CONF", "[CONF] %u cmdline override(s) of boot.conf keys",
@@ -477,6 +513,20 @@ static int64_t resolved_ival(const boot_args_t *a, const char *name)
     const boot_arg_desc_t *d = boot_arg_find(name);
     return d ? d->default_val : 0;
 }
+
+#ifdef KERNEL_TESTS
+/* Resolved value of a boot-arg key that has no kernel_config_t field of its own
+ * (TODO-10 S27 injection keys). Answers 0 before the Phase-0 reconciliation has
+ * published g_boot_args, so an injection site that runs early reads "off"
+ * rather than a half-parsed table. Test-flavor only: at KERNEL_TESTS=off there
+ * are no extension keys of this shape and no caller. */
+int64_t boot_arg_resolved_ival(const char *name)
+{
+    if (!name || !__atomic_load_n(&g_boot_args_ready, __ATOMIC_ACQUIRE))
+        return 0;
+    return resolved_ival(&g_boot_args, name);
+}
+#endif
 
 void safe_mode_resolve(uint8_t boot_mode, uint8_t sm_arg, int operator_set,
                        uint8_t *out_level, uint8_t *out_reason)

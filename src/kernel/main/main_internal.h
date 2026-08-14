@@ -92,5 +92,24 @@ struct vfs_node;
 uint32_t dump_dir_tree(const char *parent_path, struct vfs_node *node,
                        uint32_t depth);
 
-/* blkdev_register_all (blkdev_adapters.c) -- Register all detected drives */
-void blkdev_register_all(void);
+/* Storage drivers a failed async init could NOT make safe (TODO-10 S27). Bit
+ * index matches the async storage step index in boot_storage.c, so one loop
+ * over the outcome record builds the mask.
+ *
+ * A driver is unsafe when its step ended SKIP: either its worker still owns the
+ * step (it is inside the controller reset right now) or the step was POISONED
+ * (the worker was cut at an arbitrary instruction, so the driver's globals are
+ * arbitrarily partial). In both cases the BSP deliberately did NOT re-run the
+ * initializer, so nothing ever completed it -- reading those globals to size a
+ * disk or to arm an interrupt is reading half-written state. */
+#define BLKDEV_UNSAFE_ATA     (1u << 0)
+#define BLKDEV_UNSAFE_AHCI    (1u << 1)
+#define BLKDEV_UNSAFE_NVME    (1u << 2)
+#define BLKDEV_UNSAFE_VIRTIO  (1u << 3)
+
+/* blkdev_register_all (blkdev_adapters.c) -- Register all detected drives.
+ * `unsafe_mask` is a BLKDEV_UNSAFE_* OR; those drivers are skipped rather than
+ * registered, because a block device built from partial driver state hands the
+ * VFS a wrong capacity or sector size and corrupts on first write. Pass 0 when
+ * every driver initialized to completion. */
+void blkdev_register_all(uint32_t unsafe_mask);

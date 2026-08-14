@@ -18,6 +18,10 @@
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 #include "kernel/fs/vfs.h"
+/* Own declarations: the BLKDEV_UNSAFE_* mask bits and the blkdev_register_all
+ * prototype live here, so including it is what makes a signature change a
+ * compile error at BOTH ends rather than at the call site only. */
+#include "main/main_internal.h"
 
 /* ---- Block device adapter wrappers ---- */
 
@@ -286,12 +290,22 @@ uint32_t dump_dir_tree(const char *parent_path, struct vfs_node *node,
 
 /* ---- Block device registration ---- */
 
-void blkdev_register_all(void)
+void blkdev_register_all(uint32_t unsafe_mask)
 {
     struct blkdev bd;
 
+    /* A driver named in the mask lost its async initializer part-way through
+     * (TODO-10 S27) and nothing completed it, so every field below that would
+     * be read out of its globals -- capacity, sector size, queue state -- may be
+     * partial. Registering it anyway publishes those numbers to the VFS as if
+     * they were a real device. */
+    if (unsafe_mask)
+        klog(LOG_ERROR, "blkdev",
+             "Skipping registration for degraded storage driver(s), mask=0x%x",
+             unsafe_mask);
+
     /* ATA master */
-    if (ata_get_drive(0)->present) {
+    if (!(unsafe_mask & BLKDEV_UNSAFE_ATA) && ata_get_drive(0)->present) {
         const struct ata_drive *drv = ata_get_drive(0);
         bd = (struct blkdev){0};
         bd.name[0]='a'; bd.name[1]='t'; bd.name[2]='a';
@@ -305,7 +319,7 @@ void blkdev_register_all(void)
     }
 
     /* VirtIO-blk */
-    if (virtio_blk_present()) {
+    if (!(unsafe_mask & BLKDEV_UNSAFE_VIRTIO) && virtio_blk_present()) {
         bd = (struct blkdev){0};
         bd.name[0]='v'; bd.name[1]='i'; bd.name[2]='r';
         bd.name[3]='t'; bd.name[4]='i'; bd.name[5]='o';
@@ -321,7 +335,7 @@ void blkdev_register_all(void)
     }
 
     /* AHCI / SATA drives */
-    {
+    if (!(unsafe_mask & BLKDEV_UNSAFE_AHCI)) {
         int di;
         for (di = 0; di < ahci_drive_count(); di++) {
             bd = (struct blkdev){0};
@@ -339,8 +353,8 @@ void blkdev_register_all(void)
         }
     }
 
-    /* AHCI / ATAPI (optical) devices */
-    {
+    /* AHCI / ATAPI (optical) devices -- same controller, same partial state */
+    if (!(unsafe_mask & BLKDEV_UNSAFE_AHCI)) {
         int ai;
         for (ai = 0; ai < ahci_atapi_count(); ai++) {
             bd = (struct blkdev){0};
@@ -390,7 +404,7 @@ void blkdev_register_all(void)
 
     /* NVMe namespaces */
     POST16(POST16_NVME_BLK);
-    {
+    if (!(unsafe_mask & BLKDEV_UNSAFE_NVME)) {
         int ci;
         for (ci = 0; ci < nvme_controller_count(); ci++) {
             struct nvme_controller *nc = nvme_get_controller(ci);
