@@ -673,7 +673,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: security-path negative tests need a live VFS file-handle fixture; registration checks cover all handlers.
 > **Verified:** 2026-07-02 | commit `24c110fb` | 16/16 items | build OK | abi 426/426 PASS
 > **Accepted:** [Critical] IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task inject/drain), no per-process OB isolation -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate IO completion ports to OB handles" at line 332)
-> **Accepted:** [M] IXFS silently truncates names > 252 bytes on rename/create, so a 252-259 char op resolves to a different entry -> XREF: 05-storage-filesystems/TODO-06 §1 (item: "Reject over-length names" at line 79)
+> **Accepted:** [M] IXFS silently truncates names > 252 bytes on rename/create, so a 252-259 char op resolves to a different entry -> XREF: 05-storage-filesystems/TODO-06 §1 (item: "Reject over-length names" at line 82)
 > **Quality reviewed:** 2026-07-02 | Codex 8x (adversarial x2, consistency x2, perf x2, re-adversarial x2) | 4H+4M fixed, 1Crit+1M accepted-XREF | scope: kernel-code-quality
 
 ---

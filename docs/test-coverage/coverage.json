@@ -1,6 +1,6 @@
 {
-  "total_suites": 2913,
-  "total_assertions": 12041,
+  "total_suites": 2912,
+  "total_assertions": 12040,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -10,7 +10,7 @@
     {"file": "test_boot_caps.c", "suites": 15, "assertions": 32},
     {"file": "test_boot_decision.c", "suites": 49, "assertions": 102},
     {"file": "test_boot_device.c", "suites": 18, "assertions": 45},
-    {"file": "test_boot_diag.c", "suites": 16, "assertions": 209},
+    {"file": "test_boot_diag.c", "suites": 15, "assertions": 208},
     {"file": "test_boot_entry_kind.c", "suites": 32, "assertions": 46},
     {"file": "test_boot_entry_parser.c", "suites": 30, "assertions": 47},
     {"file": "test_boot_health.c", "suites": 5, "assertions": 15},

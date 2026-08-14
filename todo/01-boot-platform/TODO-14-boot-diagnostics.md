@@ -190,6 +190,9 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 - [x] `panic_evidence_restore_early()` (`kernel_main` after `boot_phase0`) restores and logs; `panic_evidence_write_blackbox()` -> `X:\Crash\last-panic.txt` at desktop-ready. -> XREF: D01 T24 §7.
   - Restore RETAINS the page (it does NOT clear the magic), so a boot that dies before the write retries next boot; only `panic_evidence_consume()` clears it, after a successful write plus flush.
 - [x] Unexpected-shutdown notice: kernel-side `panic_had_previous_crash()` flag (NOT `g_boot_info` -- avoids the boot ABI change) -> `boot_splash_diag` + klog before `boot_splash_finish`.
+- [/] PARKED: nothing preserves `0x80000` between the reset and Phase 0 -- firmware and BOOTX64 allocate before the kernel restores it -> XREF: `01-boot-platform/TODO-10` §28 (item: "Decide and implement the memory-type policy").
+  - The kernel-side half above is real and verified: `pmm_init`'s first-1-MiB reservation keeps the page out of THIS boot's allocator. The pre-kernel window is what nothing covers -- firmware and the bootloader run and allocate before `panic_evidence_restore_early` reads the page, and neither reserves nor copies it first.
+  - TODO-10 §28 made the record reach memory before the reset, which was the missing half on the write side. Surviving until Phase 0 reads it is this side's guarantee, and it is unowned: the shape is an `AllocateAddress` reservation at bootloader entry (or an early copy out), with the outcome reported through the `boot_info` handoff so the kernel can distinguish "no crash" from "record lost".
 - [x] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
 
 **Test checkpoint:** Force a panic (`crash_test=1`), reboot: serial shows `[PANIC] Previous crash evidence found`; `X:\Crash\last-panic.txt` contains the fault RIP + POST code. QEMU WHPX, QEMU TCG, VirtualBox, bare metal: evidence survives warm reboot.

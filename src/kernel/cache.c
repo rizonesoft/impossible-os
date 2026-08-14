@@ -113,10 +113,12 @@ int cache_plan_range(uintptr_t addr, uint64_t len, uint32_t line,
     if (len == 0u)
         return CACHE_PLAN_NONE;
 
-    /* No usable line granularity: a full writeback is a strict superset of the
-     * requested range, so the durability guarantee still holds. Degrading to a
-     * no-op instead would silently drop it on exactly the processors that
-     * cannot make it any other way. */
+    /* No usable line granularity. A full writeback covers at least the
+     * requested range, but it is BEST EFFORT and not the same promise: WBINVD
+     * signals any external cache rather than waiting for it, so the completion
+     * property is weaker than a targeted flush's (kernel/cache.h). It is still
+     * the right answer -- degrading to a no-op would silently drop durability
+     * on exactly the processors that cannot achieve it any other way. */
     if (line == 0u)
         return CACHE_PLAN_ALL;
 
@@ -160,6 +162,11 @@ void cache_writeback_range(const void *addr, uint64_t len)
     case CACHE_PLAN_NONE:
         return;
     case CACHE_PLAN_ALL:
+        /* Deliberately OUTSIDE the MFENCE bracket below, and that is not an
+         * omission: WBINVD is itself a serializing instruction, so it drains
+         * buffered writes before it executes and blocks later accesses from
+         * being reordered ahead of it. Adding fences here would state the
+         * property twice and imply the bare instruction lacks it. */
         cache_writeback_all();
         return;
     default:

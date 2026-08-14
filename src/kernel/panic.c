@@ -1658,9 +1658,19 @@ void panic_evidence_abandon(uint32_t me)
         return;                              /* superseded -- the page is theirs */
 
     if (pub != 0u) {
+        /* Revocation is only real once in memory. The owner word was already
+         * relinquished above, so a successor can be mid-publication while this
+         * flush lands -- which is bounded, not unbounded: every operation here
+         * is keyed to the epoch captured before the relinquish, so none of them
+         * can touch a successor's record. What the window DOES leave is our own
+         * complete, CRC-valid record standing in memory if a reset arrives
+         * between the CAS and the flush, so the next boot reports a fault the
+         * machine survived. That is a wrong report, not a torn one, and the CRC
+         * cannot catch it -- the repair is a retiring state in the ownership
+         * machinery, parked in TODO-10 with an owner. */
         if (__sync_bool_compare_and_swap(ev_pubword(ev),
                                          ev_pubword_val(pub), 0ull))
-            ev_persist_pubword(ev);   /* revocation is only real once in DRAM */
+            ev_persist_pubword(ev);
         (void)__sync_bool_compare_and_swap(&s_evidence_pub_epoch, pub, 0u);
         /* Keyed to OUR epoch. An unconditional clear here would strip the
          * classification off a terminal successor's record: it can take the page
@@ -2160,14 +2170,25 @@ void panic_evidence_consume_at(volatile struct panic_evidence *page, uint32_t ep
 {
     if (epoch == 0u)
         return;
-    /* Persisted, because this is the transition that RETIRES a crash the user
-     * has already been shown. Cleared in cache only, a reset restores DRAM's
-     * still-valid word and the next boot reports the same crash again -- and
-     * that stale record holds the single slot against the crash that actually
-     * killed the machine, which is the failure the page epoch exists to end. */
-    if (__sync_bool_compare_and_swap(ev_pubword(page),
-                                     ev_pubword_val(epoch), 0ull))
-        ev_persist_pubword(page);
+    /* NOT persisted, unlike every other edge in this lifecycle, and the
+     * asymmetry is the point.
+     *
+     * Consume retires a crash on the strength of last-panic.txt having been
+     * written. Making the retirement durable is only safe if the FILE is
+     * durable, and it is not yet: the caller treats vfs_flush() == 0 as proof,
+     * while the fallback filesystem's flush writes its own caches without a
+     * device-level sync. A durable clear on top of that turns a reset in the
+     * window into deterministic loss of BOTH copies -- the record retired for
+     * good, the file never on the platter.
+     *
+     * The cost of leaving it in cache is that a reset can restore the still
+     * valid word and the next boot re-reports a crash the user has already
+     * seen. That is an annoyance; losing the evidence is the failure this
+     * whole subsystem exists to prevent, so the annoyance wins. Persist this
+     * edge once the backend can prove a device-level sync -- tracked as a
+     * parked item in TODO-10 with the filesystem-side owner named. */
+    (void)__sync_bool_compare_and_swap(ev_pubword(page),
+                                       ev_pubword_val(epoch), 0ull);
 }
 
 void panic_evidence_consume(void)

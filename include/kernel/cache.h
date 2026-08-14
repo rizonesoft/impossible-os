@@ -96,8 +96,19 @@ int cache_plan_range(uintptr_t addr, uint64_t len, uint32_t line,
 
 /* Write every cache line overlapping [addr, addr + len) back to memory,
  * fenced before and after so the flush observes prior stores and later work
- * observes the flush. A zero length does nothing. Safe on any memory, cached
- * or not.
+ * observes the flush. A zero length does nothing.
+ *
+ * CALLER OWES A MAPPED, CANONICAL RANGE. CLFLUSH takes a memory operand, so it
+ * raises #PF on a not-present page and #GP on a non-canonical address like any
+ * other access. Every other panic hazard is closed inside this module -- no
+ * locks, no allocation, no logging, no global state, and the CPUID gate that
+ * prevents a #UD on a processor without CLFLUSH -- but this one cannot be, and
+ * a fault raised in here destroys the evidence the call was made to save. In
+ * tree the callers pass the PMM-reserved identity-mapped evidence page and a
+ * crash region clamped to its own allocated size; a new panic-path caller must
+ * be equally sure of its range.
+ *
+ * The fallback path is exempt: it issues no memory operand at all.
  *
  * When cache_line_size() reports 0 this falls back to cache_writeback_all(),
  * which is the strongest thing available without CLFLUSH and NOT an equivalent
@@ -118,10 +129,16 @@ void cache_writeback_range(const void *addr, uint64_t len);
  * call exists to save) or reuse a larger stride and silently skip dirty lines.
  * The saving was measured at roughly 420 cycles on bare-metal Rocket Lake,
  * against a collector whose takeover budget is 200,000 spins -- not a rate
- * worth putting a pinning precondition on a public panic-path API. Probing per
- * call is what makes "every call describes the CPU actually executing it"
- * true, which is the property that lets this be called from an AP and before
- * any feature table exists. */
+ * worth putting a pinning precondition on a public panic-path API.
+ *
+ * Probing per call NARROWS that window to one call rather than closing it: the
+ * probe and the flush loop inside a single call are not atomic either, so a
+ * preemptible caller migrated mid-loop still finishes on a CPU it did not
+ * probe. Every in-tree caller is immune (the panic paths run under cli, and
+ * klog crash recovery runs before SMP), and the consequence is nil on any
+ * homogeneous x86-64 part. The honest claim is therefore "each call describes
+ * the CPU that began it", which is what lets this be called from an AP and
+ * before any feature table exists. */
 
 /* Write the entire cache hierarchy back to memory. Expensive, and correct
  * only as a LOCAL act: it runs on the calling CPU and does not quiesce the

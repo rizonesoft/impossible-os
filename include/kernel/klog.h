@@ -392,12 +392,25 @@ void klog_crash_persist(void);
  * unassertable. The ring globals are READ here and never mutated, so a
  * fixture call has no effect on the live crash region or on logging.
  *
- * PUBLICATION ORDER, which is the contract: the header magic is cleared and
- * that clear is pushed to memory BEFORE any entry byte changes; the entries
- * and the rest of the header are written and flushed while the magic still
- * reads zero; the magic is stored and flushed LAST. A reset at any point
- * therefore finds either no log or a complete one, never a valid header over
- * entries from a previous crash. */
+ * PUBLICATION ORDER, which is the contract: the header magic is stored zero
+ * WITHOUT a flush of its own; the entries and the rest of the header are
+ * written and then flushed as one range, which is what carries that clear to
+ * memory; the magic is stored and flushed LAST.
+ *
+ * The missing flush on the clear is deliberate, and reversing it would be a
+ * regression. This region has no ownership arbitration and the panic owner is
+ * same-CPU re-entrant, so an eagerly durable clear lets a nested panic destroy
+ * a complete record from the outer invocation and then die before writing its
+ * replacement. Leaving the clear unflushed does NOT close that window -- a
+ * dirty line can be written back by ordinary cache replacement at any time --
+ * it only narrows it; the closure is a protocol that never overwrites a
+ * complete record in place, tracked as a parked item in this TODO.
+ *
+ * So the guarantee is weaker than the evidence page's and must not be quoted
+ * as equal to it: a reset mid-sequence can leave memory holding the previous
+ * tenant's valid magic over partly-replaced entries, and it is the CRC that
+ * rejects that, not the ordering. What the ordering buys is that the magic is
+ * never published ahead of the entries it vouches for. */
 uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size);
 
 /* Check reserved region for valid crash data from previous boot.

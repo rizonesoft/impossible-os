@@ -809,14 +809,14 @@ static void test_cache_writeback_preserves_contents(void)
     TEST_ASSERT_EQ(cache_buf_mismatches(), 0u, "single-byte and empty flush preserve bytes");
 }
 
-static void test_cache_writeback_all_preserves_contents(void)
-{
-    cache_buf_fill();
-    /* Also proves the instruction is legal in this context: an unsupported or
-     * mis-encoded WBINVD would fault rather than return. */
-    cache_writeback_all();
-    TEST_ASSERT_EQ(cache_buf_mismatches(), 0u, "full writeback preserves bytes");
-}
+/* NO test_cache_writeback_all case, deliberately. An unconditional WBINVD from
+ * the unit suite would be the only one in the tree outside a reset path, and it
+ * writes back AND INVALIDATES the whole hierarchy on the executing CPU -- a
+ * multi-millisecond stall plus a cold cache for every subsequent suite, on bare
+ * metal, which is this section's stated acceptance platform. Both emulators
+ * model it as a no-op, so the cost would be invisible exactly where the suite
+ * is normally run and land only where it hurts. The instruction is exercised on
+ * every reset path instead. */
 
 static void test_cache_decode_line_size_rejections(void)
 {
@@ -1016,8 +1016,6 @@ void test_register_boot_diag(void)
                             test_cache_line_size_contract, TEST_CAT_BOOT);
     test_suite_register_cat("boot: cache range writeback preserves contents",
                             test_cache_writeback_preserves_contents, TEST_CAT_BOOT);
-    test_suite_register_cat("boot: full cache writeback preserves contents",
-                            test_cache_writeback_all_preserves_contents, TEST_CAT_BOOT);
     test_suite_register_cat("boot: evidence record survives its own persist",
                             test_evidence_record_survives_its_own_persist, TEST_CAT_BOOT);
     test_suite_register_cat("boot: cache line size decoder rejections",
