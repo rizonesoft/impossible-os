@@ -110,12 +110,31 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
      * message fits within the line buffer's remaining space.  Track
      * the silent-drop case and append '~' as the final byte before
      * NUL when truncation actually happened. */
+    /* The argument is evaluated EXACTLY ONCE, into a local, BEFORE the capacity
+     * test -- never inside the store branch.  Every caller below passes an
+     * expression whose side effect is what advances the loop (`*s++`,
+     * `*fmt++`, `tmp[--n]`), so a form that skipped evaluation on the
+     * full-buffer branch left `while (*s) BUF_PUT(*s++);` spinning forever on
+     * the first byte that did not fit -- inside `klog_emit`'s ring lock with
+     * interrupts disabled, which silences the machine with no fault to report.
+     * Any message crossing `klog_entry_t.message[256]` hung the boot that way. */
     #define BUF_PUT(c) do { \
-        if (pos < bufsize - 1) buf[pos++] = (c); \
+        char _bp_c = (char)(c); \
+        if (pos < bufsize - 1) buf[pos++] = _bp_c; \
         else truncated = 1; \
     } while(0)
 
-    while (*fmt) {
+    /* STOP AT THE FIRST BYTE THAT DOES NOT FIT.
+     *
+     * Every loop below is guarded on `!truncated`, so total work is bounded by
+     * `bufsize` plus the length of the FORMAT string -- never by the length of
+     * an argument. Merely fixing the macro's side effect was not enough: the
+     * `%s` loop still walked a caller's whole string after the buffer filled,
+     * and the pad loop still ran `width` times, so `%20000000u` (a typo, not an
+     * attack) spun for tens of millions of iterations. This runs inside
+     * `klog_emit`'s ring lock with interrupts disabled, where unbounded work is
+     * indistinguishable from the hang this function just stopped causing. */
+    while (*fmt && !truncated) {
         if (*fmt != '%') {
             BUF_PUT(*fmt++);
             continue;
@@ -128,12 +147,17 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
         int zero_pad = 0;
         if (*fmt == '0') { zero_pad = 1; fmt++; }
 
-        /* Parse width */
-        int width = 0;
+        /* Parse width, accumulated UNSIGNED and clamped to what the buffer
+         * could ever hold. Accumulating into an int and clamping afterwards
+         * would still overflow on the way there (signed overflow is UB, not a
+         * wrap), and no width past `bufsize` can change the output anyway. */
+        uint64_t wacc = 0;
         while (*fmt >= '0' && *fmt <= '9') {
-            width = width * 10 + (*fmt - '0');
+            if (wacc <= (uint64_t)bufsize)
+                wacc = wacc * 10u + (uint64_t)(*fmt - '0');
             fmt++;
         }
+        int width = (wacc > (uint64_t)bufsize) ? (int)bufsize : (int)wacc;
 
         /* Parse length modifier: skip l, ll, h, hh */
         while (*fmt == 'l' || *fmt == 'h') fmt++;
@@ -142,12 +166,18 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
         switch (*fmt) {
         case 'd': case 'i': {
             int64_t v = va_arg(ap, int64_t);
+            /* Magnitude taken UNSIGNED. `-v` is undefined for INT64_MIN (its
+             * negation is not representable), and on the ordinary two's
+             * complement result v stays negative, the digit loop never runs,
+             * and the record renders as a bare "-": a diagnostic that silently
+             * loses its value at exactly the boundary worth printing. */
+            uint64_t mag = (v < 0) ? (0u - (uint64_t)v) : (uint64_t)v;
             char tmp[20]; int n = 0;
-            if (v < 0) { BUF_PUT('-'); v = -v; }
-            if (v == 0) { tmp[n++] = '0'; }
-            else { while (v > 0) { tmp[n++] = '0' + (char)(v % 10); v /= 10; } }
-            while (n < width) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
-            while (n > 0) BUF_PUT(tmp[--n]);
+            if (v < 0) BUF_PUT('-');
+            if (mag == 0) { tmp[n++] = '0'; }
+            else { while (mag > 0) { tmp[n++] = '0' + (char)(mag % 10u); mag /= 10u; } }
+            while (n < width && !truncated) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
+            while (n > 0 && !truncated) BUF_PUT(tmp[--n]);
             break;
         }
         case 'u': {
@@ -155,8 +185,8 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
             char tmp[20]; int n = 0;
             if (v == 0) { tmp[n++] = '0'; }
             else { while (v > 0) { tmp[n++] = '0' + (char)(v % 10); v /= 10; } }
-            while (n < width) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
-            while (n > 0) BUF_PUT(tmp[--n]);
+            while (n < width && !truncated) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
+            while (n > 0 && !truncated) BUF_PUT(tmp[--n]);
             break;
         }
         case 'x': case 'X': {
@@ -166,22 +196,22 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
             char tmp[16]; int n = 0;
             if (v == 0) { tmp[n++] = '0'; }
             else { while (v > 0) { tmp[n++] = hex[v & 0xF]; v >>= 4; } }
-            while (n < width) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
-            while (n > 0) BUF_PUT(tmp[--n]);
+            while (n < width && !truncated) { BUF_PUT(zero_pad ? '0' : ' '); width--; }
+            while (n > 0 && !truncated) BUF_PUT(tmp[--n]);
             break;
         }
         case 'p': {
             const char hex[] = "0123456789abcdef";
             uint64_t v = va_arg(ap, uint64_t);
             BUF_PUT('0'); BUF_PUT('x');
-            for (int sh = 60; sh >= 0; sh -= 4)
+            for (int sh = 60; sh >= 0 && !truncated; sh -= 4)
                 BUF_PUT(hex[(v >> sh) & 0xF]);
             break;
         }
         case 's': {
             const char *s = va_arg(ap, const char *);
             if (!s) s = "(null)";
-            while (*s) BUF_PUT(*s++);
+            while (*s && !truncated) BUF_PUT(*s++);
             break;
         }
         case 'c':
@@ -209,6 +239,28 @@ done:
     return pos;
 }
 
+
+/* 1 when `tag` is exactly `name`, optionally followed by ':' (the test runner
+ * tags suites as "TEST:sub"). Bounded by BOTH strings: the walk stops at the
+ * first mismatch, and a tag shorter than `name` mismatches at its own NUL
+ * rather than being indexed past it.
+ *
+ * The fixed-offset form this replaces read `subsystem[4]` and `subsystem[5]`
+ * unconditionally to find the terminator, so EVERY record logged under an
+ * ordinary short tag -- "ob", "irq", "idt" -- read one or two bytes past the
+ * end of its string literal. It never faulted in practice (literals sit
+ * mid-.rodata), which is exactly why it survived: the classification result
+ * was still correct, so nothing downstream ever looked wrong. */
+static int klog_tag_is(const char *tag, const char *name)
+{
+    uint32_t i = 0;
+
+    while (name[i]) {
+        if (tag[i] != name[i]) return 0;
+        i++;
+    }
+    return tag[i] == '\0' || tag[i] == ':';
+}
 
 /* ---- Level prefixes, ANSI serial colors, and framebuffer colors ---- */
 
@@ -1287,8 +1339,16 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
         #define KLOG_LINE_TAIL_RESERVE 16U
         #define KLOG_LINE_USABLE (sizeof(line) - 1U - KLOG_LINE_TAIL_RESERVE)
 
+        /* Same one-evaluation contract as vformat_buf's BUF_PUT, and for the
+         * same reason: the timestamp digit loop below is `while (n > 0)
+         * LP(tmp[--n])`, so a form that skipped the argument on the full
+         * branch would spin forever. It is unreachable today only because the
+         * timestamp is the FIRST thing written into an empty line buffer --
+         * an ordering property, not a guarantee, and not one a later edit
+         * would know it was preserving. */
         #define LP(c) do { \
-            if (pos < KLOG_LINE_USABLE) line[pos++] = (c); \
+            char _lp_c = (char)(c); \
+            if (pos < KLOG_LINE_USABLE) line[pos++] = _lp_c; \
             else line_truncated = 1; \
         } while(0)
         #define LS(s) do { \
@@ -1340,24 +1400,14 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
          *   "DTEST" (desktop UI)  -> #C586B5  pink-mauve (reserved) */
         {
             const char *test_color = (const char *)0;
-            int s4_term, s5_term;
 
             if (subsystem) {
-                s4_term = (subsystem[4] == '\0' || subsystem[4] == ':');
-                s5_term = (subsystem[5] == '\0' || subsystem[5] == ':');
-
-                if (subsystem[0] == 'T' && subsystem[1] == 'E' &&
-                    subsystem[2] == 'S' && subsystem[3] == 'T' && s4_term) {
+                if (klog_tag_is(subsystem, "TEST"))
                     test_color = ANSI_TEST_KERNEL;
-                } else if (subsystem[0] == 'U' && subsystem[1] == 'T' &&
-                           subsystem[2] == 'E' && subsystem[3] == 'S' &&
-                           subsystem[4] == 'T' && s5_term) {
+                else if (klog_tag_is(subsystem, "UTEST"))
                     test_color = ANSI_TEST_USER;
-                } else if (subsystem[0] == 'D' && subsystem[1] == 'T' &&
-                           subsystem[2] == 'E' && subsystem[3] == 'S' &&
-                           subsystem[4] == 'T' && s5_term) {
+                else if (klog_tag_is(subsystem, "DTEST"))
                     test_color = ANSI_TEST_DESKTOP;
-                }
             }
 
             /* UTEST color scope: when the user-mode test launcher has
@@ -1435,20 +1485,12 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
         uint32_t fb_color = level_color[level];
 
         if (subsystem) {
-            int s4 = (subsystem[4] == '\0' || subsystem[4] == ':');
-            int s5 = (subsystem[5] == '\0' || subsystem[5] == ':');
-            if (subsystem[0] == 'T' && subsystem[1] == 'E' &&
-                subsystem[2] == 'S' && subsystem[3] == 'T' && s4) {
+            if (klog_tag_is(subsystem, "TEST"))
                 fb_color = FB_TEST_KERNEL;
-            } else if (subsystem[0] == 'U' && subsystem[1] == 'T' &&
-                       subsystem[2] == 'E' && subsystem[3] == 'S' &&
-                       subsystem[4] == 'T' && s5) {
+            else if (klog_tag_is(subsystem, "UTEST"))
                 fb_color = FB_TEST_USER;
-            } else if (subsystem[0] == 'D' && subsystem[1] == 'T' &&
-                       subsystem[2] == 'E' && subsystem[3] == 'S' &&
-                       subsystem[4] == 'T' && s5) {
+            else if (klog_tag_is(subsystem, "DTEST"))
                 fb_color = FB_TEST_DESKTOP;
-            }
         }
 
         fb_set_color(fb_color, FB_COLOR_BG_DEFAULT);

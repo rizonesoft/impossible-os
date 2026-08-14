@@ -2601,8 +2601,8 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
  * (s_utest_color_active = 0 at test_usermode.c:2895, well before
  * u_emit_skip_records() runs at test_usermode.c:3062). The explicit
  * "UTEST-<8hex>" subsystem match in klog's renderer also does not fire for
- * this tag: it requires subsystem[5] to be '\0' or ':' (klog.c:1279-1280),
- * but subsystem[5] here is '-'. So klog's renderer (klog.c:1274-1327) never
+ * this tag: `klog_tag_is()` requires the character after "UTEST" to be '\0' or
+ * ':', and here it is '-'. So klog's renderer never
  * takes the TEST-color branch for these specific records -- it always takes
  * the plain LOG_ERROR path, where `level_full_line[LOG_ERROR]` is 1
  * (klog.c:276), so the badge's level-ANSI sequence is re-emitted after the

@@ -280,6 +280,225 @@ int test_count_record_format(char *dst, uint32_t cap, uint32_t ordinal,
     return 1;
 }
 
+/* Append `v` in decimal, 64-bit. Same contract as tc_append(). */
+static int tc_append_u64(char *dst, uint32_t *pos, uint32_t cap, uint64_t v)
+{
+    char     tmp[21];               /* 18446744073709551615 + NUL */
+    uint32_t n = 0;
+
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        char     rev[20];
+        uint32_t r = 0;
+        while (v > 0) { rev[r++] = (char)('0' + (uint32_t)(v % 10u)); v /= 10u; }
+        while (r > 0) tmp[n++] = rev[--r];
+    }
+    tmp[n] = '\0';
+    return tc_append(dst, pos, cap, tmp);
+}
+
+/* Append at most `n` characters of `src`, also bounded by `cap`. Used where a
+ * field is deliberately given a share of the budget rather than all-or-nothing:
+ * the record still carries the marker, so a shortened field is never mistaken
+ * for the whole one. */
+static void tc_append_n(char *dst, uint32_t *pos, uint32_t cap,
+                        const char *src, uint32_t n)
+{
+    uint32_t p = *pos;
+
+    while (n > 0u && *src) {
+        if (p + 1u >= cap) break;
+        dst[p++] = *src++;
+        n--;
+    }
+    dst[p] = '\0';
+    *pos = p;
+}
+
+/* Length of `s`, measured only as far as `limit`. Stopping early is what keeps
+ * the budget arithmetic below in range: a full-width measurement of several
+ * fields can in principle sum past what a uint32_t holds, and the wrapped total
+ * would then compare as "fits" and return success for a record that was in fact
+ * cut. Nothing longer than the budget can change any decision here, so there is
+ * no reason to walk it. */
+static uint32_t tc_len_bounded(const char *s, uint32_t limit)
+{
+    uint32_t n = 0;
+
+    if (!s) return 0;
+    while (n < limit && s[n]) n++;
+    return n;
+}
+
+/* Last path component. Both separators are handled because __FILE__ carries
+ * whatever the build used, and a Windows-style path must not defeat the
+ * shortening ladder below by looking like one long component. */
+static const char *tc_basename(const char *path)
+{
+    const char *base = path;
+    const char *p;
+
+    for (p = path; *p; p++)
+        if (*p == '/' || *p == '\\')
+            base = p + 1;
+    return base;
+}
+
+/* Build "  (<file>:<line>)", shedding path components until it fits both `cap`
+ * and `budget`. Returns 1 when some form fit, 0 when even ":<line>" did not.
+ *
+ * The suffix is built BEFORE any author text is spent because it is the half
+ * of a failure record that makes the failure locatable: a left-to-right
+ * bounded append would cut precisely this and leave a loud, unlocatable
+ * message. */
+static int fail_suffix_build(char *dst, uint32_t cap, const char *file,
+                             int line, uint32_t budget, int *degraded)
+{
+    const char *cand[3];
+    uint32_t    i;
+    /* Keep room beside the suffix for the marker, so a pathological path
+     * cannot consume the record and erase the evidence that anything was
+     * cut. */
+    uint32_t    room = (budget > TEST_COUNT_TRUNC_MARK_LEN)
+                           ? budget - TEST_COUNT_TRUNC_MARK_LEN
+                           : 0u;
+
+    cand[0] = file ? file : "";
+    cand[1] = file ? tc_basename(file) : "";
+    cand[2] = "";
+    *degraded = 0;
+
+    for (i = 0; i < 3u; i++) {
+        uint32_t pos = 0;
+        uint64_t mag = (line < 0) ? (uint64_t)(-(int64_t)line)
+                                  : (uint64_t)(int64_t)line;
+
+        dst[0] = '\0';
+        if (!tc_append(dst, &pos, cap, "  ("))        continue;
+        if (!tc_append(dst, &pos, cap, cand[i]))      continue;
+        if (!tc_append(dst, &pos, cap, ":"))          continue;
+        if (line < 0 && !tc_append(dst, &pos, cap, "-")) continue;
+        if (!tc_append_u64(dst, &pos, cap, mag))      continue;
+        if (!tc_append(dst, &pos, cap, ")"))          continue;
+        if (pos <= room) {
+            /* A shed path is a CUT, and the record must say so. Without this,
+             * `(module_name.c:900)` is indistinguishable from a record whose
+             * file really was named that, and a reader trusts a path the
+             * formatter invented by subtraction. */
+            *degraded = (i != 0u);
+            return 1;
+        }
+    }
+    dst[0] = '\0';
+    *degraded = 1;
+    return 0;
+}
+
+int test_fail_detail_format(char *dst, uint32_t cap, const char *lead,
+                            uint64_t a, const char *mid, uint64_t b)
+{
+    uint32_t pos = 0;
+
+    if (!dst || cap == 0) return 0;
+    dst[0] = '\0';
+
+    /* All-or-nothing: a half-written diagnostic ("got 12, expec") reads as a
+     * real one, and the caller has no way to tell. Empty is honest. */
+    if (!tc_append(dst, &pos, cap, "  ("))                  goto fail;
+    if (!tc_append(dst, &pos, cap, lead ? lead : ""))       goto fail;
+    if (!tc_append_u64(dst, &pos, cap, a))                  goto fail;
+    if (mid) {
+        if (!tc_append(dst, &pos, cap, mid))                goto fail;
+        if (!tc_append_u64(dst, &pos, cap, b))              goto fail;
+    }
+    if (!tc_append(dst, &pos, cap, ")"))                    goto fail;
+    return 1;
+
+fail:
+    dst[0] = '\0';
+    return 0;
+}
+
+int test_fail_record_format(char *dst, uint32_t cap, const char *suite,
+                            const char *msg, const char *detail,
+                            const char *file, int line)
+{
+    char     suffix[128];
+    uint32_t budget, suffix_len, detail_len, suite_len, msg_len;
+    uint32_t pos = 0;
+    int      suffix_degraded = 0;
+
+    if (!dst || cap < 2u) {
+        if (dst && cap) dst[0] = '\0';
+        return 0;
+    }
+    dst[0] = '\0';
+
+    budget = cap - 1u;                  /* usable characters, NUL excluded */
+    if (!suite)  suite  = "?";
+    if (!msg)    msg    = "?";
+    if (!detail) detail = "";
+
+    if (!fail_suffix_build(suffix, sizeof(suffix), file, line, budget,
+                           &suffix_degraded))
+        suffix[0] = '\0';
+
+    /* Measured against the budget, never full width: see tc_len_bounded. A
+     * field reported as budget+1 is "too long" for every decision below, which
+     * is all the arithmetic needs to know. */
+    suffix_len = tc_len_bounded(suffix, budget + 1u);
+    detail_len = tc_len_bounded(detail, budget + 1u);
+    suite_len  = tc_len_bounded(suite,  budget + 1u);
+    msg_len    = tc_len_bounded(msg,    budget + 1u);
+
+    if (!suffix_degraded && suite_len <= TEST_FAIL_SUITE_MAX &&
+        suite_len + 4u + msg_len + detail_len + suffix_len <= budget) {
+        int ok = 1;
+
+        /* The arithmetic above already proved this fits, so a failing append
+         * would mean the two disagree. Returning what actually happened rather
+         * than what was predicted keeps the contract honest either way. */
+        if (!tc_append(dst, &pos, cap, suite))    ok = 0;
+        if (!tc_append(dst, &pos, cap, " :: "))   ok = 0;
+        if (!tc_append(dst, &pos, cap, msg))      ok = 0;
+        if (!tc_append(dst, &pos, cap, detail))   ok = 0;
+        if (!tc_append(dst, &pos, cap, suffix))   ok = 0;
+        if (ok) return 1;
+        /* Fall through and re-compose as a marked, truncated record. */
+        pos = 0;
+        dst[0] = '\0';
+    }
+
+    {
+        /* Everything except the author text is reserved first, so the cut lands
+         * on the message rather than on the suffix or the diagnostic. */
+        uint32_t fixed = 4u + detail_len + TEST_COUNT_TRUNC_MARK_LEN + suffix_len;
+        uint32_t text  = (budget > fixed) ? budget - fixed : 0u;
+        uint32_t s_use = (suite_len < TEST_FAIL_SUITE_MAX)
+                             ? suite_len : TEST_FAIL_SUITE_MAX;
+
+        if (s_use > text) s_use = text;
+
+        if (text == 0u) {
+            /* Degenerate budget: keep the two fields a consumer can still act
+             * on -- the marker that says this is not a whole record, and the
+             * location. */
+            (void)tc_append(dst, &pos, cap, "trunc=1");
+            (void)tc_append(dst, &pos, cap, suffix);
+            return 0;
+        }
+
+        tc_append_n(dst, &pos, cap, suite, s_use);
+        (void)tc_append(dst, &pos, cap, " :: ");
+        tc_append_n(dst, &pos, cap, msg, text - s_use);
+        (void)tc_append(dst, &pos, cap, detail);
+        (void)tc_append(dst, &pos, cap, " trunc=1");
+        (void)tc_append(dst, &pos, cap, suffix);
+    }
+    return 0;
+}
+
 int test_count_trailer_format(char *dst, uint32_t cap, uint32_t records,
                               uint32_t passed, uint32_t failed,
                               uint32_t skipped, uint32_t pending)
@@ -481,12 +700,16 @@ void _test_assert(int condition, const char *msg, const char *file, int line)
         g_test_state.passed++;
         test_pass_emit(msg);
     } else {
+        char rec[TEST_FAIL_RECORD_MAX];
+
         /* Flush first so the collapsed run reads BEFORE the failure that
          * followed it, rather than after. */
         test_pass_run_flush();
         g_test_state.failed++;
-        klog(LOG_ERROR, test_tag(), "%s :: %s  (%s:%d)",
-             g_test_state.current_suite, msg, file, line);
+        (void)test_fail_record_format(rec, sizeof(rec),
+                                      g_test_state.current_suite, msg,
+                                      (const char *)0, file, line);
+        klog(LOG_ERROR, test_tag(), "%s", rec);
     }
 }
 
@@ -497,10 +720,17 @@ void _test_assert_eq(uint64_t a, uint64_t b, const char *msg,
         g_test_state.passed++;
         test_pass_emit(msg);
     } else {
+        char rec[TEST_FAIL_RECORD_MAX];
+        char det[64];
+
         test_pass_run_flush();
         g_test_state.failed++;
-        klog(LOG_ERROR, test_tag(), "%s :: %s  (got %u, expected %u)  (%s:%d)",
-             g_test_state.current_suite, msg, a, b, file, line);
+        (void)test_fail_detail_format(det, sizeof(det), "got ", a,
+                                      ", expected ", b);
+        (void)test_fail_record_format(rec, sizeof(rec),
+                                      g_test_state.current_suite, msg, det,
+                                      file, line);
+        klog(LOG_ERROR, test_tag(), "%s", rec);
     }
 }
 
@@ -511,10 +741,17 @@ void _test_assert_neq(uint64_t a, uint64_t b, const char *msg,
         g_test_state.passed++;
         test_pass_emit(msg);
     } else {
+        char rec[TEST_FAIL_RECORD_MAX];
+        char det[64];
+
         test_pass_run_flush();
         g_test_state.failed++;
-        klog(LOG_ERROR, test_tag(), "%s :: %s  (both are %u)  (%s:%d)",
-             g_test_state.current_suite, msg, a, file, line);
+        (void)test_fail_detail_format(det, sizeof(det), "both are ", a,
+                                      (const char *)0, 0);
+        (void)test_fail_record_format(rec, sizeof(rec),
+                                      g_test_state.current_suite, msg, det,
+                                      file, line);
+        klog(LOG_ERROR, test_tag(), "%s", rec);
     }
 }
 
@@ -542,10 +779,14 @@ void _test_pending(int condition, const char *msg,
         klog(LOG_WARN, test_tag(), "%s :: [STUB] %s",
              g_test_state.current_suite, msg);
     } else {
+        char rec[TEST_FAIL_RECORD_MAX];
+
         g_test_state.failed++;
-        klog(LOG_ERROR, test_tag(),
-             "%s :: PENDING-CONTRACT BROKEN: %s  (%s:%d)",
-             g_test_state.current_suite, msg, file, line);
+        (void)test_fail_record_format(rec, sizeof(rec),
+                                      g_test_state.current_suite,
+                                      msg, "  (PENDING-CONTRACT BROKEN)",
+                                      file, line);
+        klog(LOG_ERROR, test_tag(), "%s", rec);
     }
 }
 

@@ -15,6 +15,39 @@
 #include "kernel/etw.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
+#include "libc/string.h"        /* strcmp for the rendered-record assertions */
+
+/* Room for a full 255-character entry plus its NUL. */
+#define TEST_KLOG_PROBE_CAP  260u
+
+/* One probe argument, carried in the type its conversion specifier reads. */
+#define TK_ARG_NONE 0
+#define TK_ARG_PTR  1
+#define TK_ARG_U64  2
+#define TK_ARG_S64  3
+
+typedef struct {
+    int         kind;
+    const void *p;
+    uint64_t    u;
+    int64_t     s;
+} klog_probe_arg;
+
+/* Format-string fixtures for the truncation shapes below. Built by literal
+ * concatenation so the lengths are a compile-time property of the source
+ * rather than something a loop has to reproduce correctly. */
+#define TK_X10  "xxxxxxxxxx"
+#define TK_X50  TK_X10 TK_X10 TK_X10 TK_X10 TK_X10
+
+/* 307 characters, no conversions at all: drives BUF_PUT(*fmt++). */
+#define TEST_KLOG_LONG_LITERAL \
+    "LITERAL" TK_X50 TK_X50 TK_X50 TK_X50 TK_X50 TK_X50
+
+/* 251 characters of prefix, then %u: the value needs 20 digits and only 4 fit,
+ * so the reverse-digit loop BUF_PUT(tmp[--n]) is the one that crosses the
+ * limit. */
+#define TEST_KLOG_DIGIT_FMT \
+    "DIGITS" TK_X50 TK_X50 TK_X50 TK_X50 TK_X10 TK_X10 TK_X10 TK_X10 "xxxxx%u"
 
 /* ---- Ring buffer: klog writes to ring and head advances ---- */
 
@@ -95,6 +128,241 @@ static void test_klog_ring_write(void)
                    "klog() landed exactly this entry in the ring");
 
     klog_remove_override("TESTRING");
+}
+
+/* Emit `fmt` under a private tag and return the stored message length, or
+ * (uint32_t)-1 when the record could not be identified in the ring window.
+ * `probe` is a prefix the caller knows the record starts with.
+ *
+ * Shared by the truncation tests below because each of them drives a DIFFERENT
+ * BUF_PUT caller, and the value of that is lost if only one shape is covered:
+ * the literal-format loop, the digit loops and the %s loop each carried the
+ * same skipped-side-effect defect, and each could re-acquire it alone. */
+static uint32_t klog_probe_len(const char *tag, const char *probe,
+                               const char *fmt, const klog_probe_arg *arg,
+                               char *out, uint32_t out_cap)
+{
+    const klog_entry_t *ring;
+    uint32_t            head_after, added, i, n;
+    uint64_t            seq_before, seq_after;
+
+    klog_set_level(tag, LOG_DEBUG);
+    seq_before = klog_get_seq();
+    /* The vararg is passed with the type the CONVERSION will read, never a
+     * convenient 64-bit stand-in. Handing `%d` a uint64_t is undefined at
+     * INT64_MIN -- the signed/unsigned vararg exception needs the value to be
+     * representable in BOTH types -- so a boundary test written that way would
+     * prove the fix using the same class of undefined behavior the fix removes,
+     * and would hold only for as long as the current ABI does. */
+    switch (arg->kind) {
+    case TK_ARG_NONE: klog(LOG_INFO, tag, fmt);         break;
+    case TK_ARG_PTR:  klog(LOG_INFO, tag, fmt, arg->p); break;
+    case TK_ARG_S64:  klog(LOG_INFO, tag, fmt, arg->s); break;
+    default:          klog(LOG_INFO, tag, fmt, arg->u); break;
+    }
+    ring = klog_get_ring_snapshot((uint32_t *)0, &head_after, &seq_after);
+    klog_remove_override(tag);
+
+    if (seq_after - seq_before == 0u ||
+        seq_after - seq_before >= (uint64_t)KLOG_RING_SIZE)
+        return (uint32_t)-1;
+    added = (uint32_t)(seq_after - seq_before);
+
+    for (i = 1u; i <= added && i <= KLOG_RING_SIZE; i++) {
+        const klog_entry_t *e =
+            &ring[(head_after + KLOG_RING_SIZE - i) % KLOG_RING_SIZE];
+        uint32_t k = 0;
+
+        while (probe[k] && e->message[k] == probe[k])
+            k++;
+        if (probe[k])
+            continue;
+
+        for (n = 0; n < sizeof(e->message) && e->message[n]; n++)
+            ;
+        if (out) {
+            uint32_t c;
+            for (c = 0; c + 1u < out_cap && c < n; c++)
+                out[c] = e->message[c];
+            out[c] = '\0';
+        }
+        return n;
+    }
+    return (uint32_t)-1;
+}
+
+/* ---- Over-long message: truncates, and above all RETURNS ----
+ *
+ * This is the regression control for a boot-wedging defect, so the strongest
+ * thing it asserts is that it runs to completion at all. `vformat_buf`'s
+ * BUF_PUT macro used to skip evaluating its argument once the buffer was full,
+ * which left `while (*s) BUF_PUT(*s++);` spinning forever on the first byte
+ * that did not fit -- inside klog's ring lock with interrupts disabled. Every
+ * message crossing `klog_entry_t.message[256]` hung the machine with no fault
+ * and no output. A hang here fails the run by timeout rather than by
+ * assertion; the assertions below then pin the truncation contract itself.
+ *
+ * The three shapes are deliberate: `%s`, a bare literal format, and a numeric
+ * conversion whose digit loop crosses the boundary all drive DIFFERENT
+ * BUF_PUT call sites, and all three carried the defect. */
+static void test_klog_overlong_shapes_truncate(void)
+{
+    static char src[400];
+    char        got[TEST_KLOG_PROBE_CAP];
+    uint32_t    n, len;
+
+    for (n = 0; n < 320u; n++)
+        src[n] = (char)('a' + (n % 26u));
+    src[320] = '\0';
+
+    TEST_ASSERT(!klog_has_override("TESTLONG"),
+                "the private over-long tag starts without an override");
+
+    /* 1. The %s argument loop. */
+    {
+        klog_probe_arg a = { TK_ARG_PTR, src, 0, 0 };
+        len = klog_probe_len("TESTLONG", "abcdefghij", "%s", &a,
+                             got, sizeof(got));
+    }
+    TEST_ASSERT_EQ((uint64_t)len, (uint64_t)255,
+                   "an over-long %s argument fills the entry to exactly 255 "
+                   "characters and returns");
+    TEST_ASSERT_EQ((uint64_t)got[254], (uint64_t)'~',
+                   "the %s truncation is marked with a trailing tilde");
+
+    /* 2. The literal-format loop -- BUF_PUT(*fmt++), no conversions at all. */
+    {
+        klog_probe_arg a = { TK_ARG_NONE, (void *)0, 0, 0 };
+        len = klog_probe_len("TESTLONG", "LITERAL", TEST_KLOG_LONG_LITERAL, &a,
+                             got, sizeof(got));
+    }
+    TEST_ASSERT_EQ((uint64_t)len, (uint64_t)255,
+                   "an over-long LITERAL format truncates and returns, with no "
+                   "argument to advance");
+    TEST_ASSERT_EQ((uint64_t)got[254], (uint64_t)'~',
+                   "the literal-format truncation is marked");
+
+    /* 3. A digit loop that crosses the boundary: the prefix leaves 4 characters
+     *    of room and the value needs 20, so BUF_PUT(tmp[--n]) fills and then
+     *    must stop rather than spin. */
+    {
+        klog_probe_arg a = { TK_ARG_U64, (void *)0, 18446744073709551615ULL, 0 };
+        len = klog_probe_len("TESTLONG", "DIGITS", TEST_KLOG_DIGIT_FMT, &a,
+                             got, sizeof(got));
+    }
+    TEST_ASSERT_EQ((uint64_t)len, (uint64_t)255,
+                   "a numeric conversion whose digits cross the limit "
+                   "truncates and returns");
+    TEST_ASSERT_EQ((uint64_t)got[254], (uint64_t)'~',
+                   "the digit-loop truncation is marked");
+
+    TEST_ASSERT(!klog_has_override("TESTLONG"),
+                "every probe removed its override");
+}
+
+/* Exactly at the limit and exactly one past it. The boundary is what the
+ * original bisect turned on -- 255 emitted and completed, 256 hung -- so an
+ * off-by-one here would either mark an untruncated record or lose a byte
+ * without saying so. */
+static void test_klog_truncation_boundary(void)
+{
+    static char src[300];
+    char        got[TEST_KLOG_PROBE_CAP];
+    uint32_t    i, len;
+
+    /* "B " is the probe prefix; the message is that plus `src`. */
+    for (i = 0; i < 253u; i++)
+        src[i] = (char)('a' + (i % 26u));
+    src[253] = '\0';
+
+    {
+        klog_probe_arg a = { TK_ARG_PTR, src, 0, 0 };
+        len = klog_probe_len("TESTEDGE", "B ", "B %s", &a, got, sizeof(got));
+    }
+    TEST_ASSERT_EQ((uint64_t)len, (uint64_t)255,
+                   "a message of exactly 255 characters is stored whole");
+    TEST_ASSERT_NEQ((uint64_t)got[254], (uint64_t)'~',
+                   "a message that exactly fits is NOT marked truncated");
+
+    src[253] = 'z';
+    src[254] = '\0';
+    {
+        klog_probe_arg a = { TK_ARG_PTR, src, 0, 0 };
+        len = klog_probe_len("TESTEDGE", "B ", "B %s", &a, got, sizeof(got));
+    }
+    TEST_ASSERT_EQ((uint64_t)len, (uint64_t)255,
+                   "one character past the limit still stores 255 characters");
+    TEST_ASSERT_EQ((uint64_t)got[254], (uint64_t)'~',
+                   "one character past the limit IS marked truncated");
+}
+
+/* The signed boundary value. `%d` reads a full int64_t, and taking its
+ * magnitude by negation is undefined at INT64_MIN -- in practice the value
+ * stays negative, the digit loop never runs, and the record renders as a bare
+ * "-", losing the number at exactly the value most worth seeing. */
+static void test_klog_int64_min_renders(void)
+{
+    char     got[TEST_KLOG_PROBE_CAP];
+    uint32_t len;
+
+    {
+        /* INT64_MIN written without an unsigned literal. */
+        klog_probe_arg a = { TK_ARG_S64, (void *)0, 0,
+                             -9223372036854775807LL - 1 };
+        len = klog_probe_len("TESTMIN", "MIN ", "MIN %d", &a, got, sizeof(got));
+    }
+    TEST_ASSERT_NEQ((uint64_t)len, (uint64_t)-1,
+                    "the INT64_MIN record reached the ring");
+    TEST_ASSERT_EQ(strcmp(got, "MIN -9223372036854775808"), 0,
+                   "INT64_MIN renders its full magnitude, not a bare minus");
+}
+
+/* Short tags must render normally.
+ *
+ * WHAT THIS DOES NOT PROVE, stated plainly because the distinction is the whole
+ * value of the test: it does NOT detect the out-of-bounds read it was written
+ * alongside. The renderer used to compute its terminator checks from
+ * `subsystem[4]` and `subsystem[5]` unconditionally, reading one or two bytes
+ * past the end of every ordinary tag like "ob" or "irq" -- but the comparisons
+ * that consume those bytes short-circuit first, so the classification ANSWER
+ * was identical and no C-level assertion can tell the two implementations
+ * apart. Every case below passes against the old code too.
+ *
+ * What it IS: a behavior-preservation pin. Replacing the fixed offsets with
+ * `klog_tag_is()` had to keep the exact answers for tags shorter than those
+ * offsets and for the near-miss shapes, and that is checkable. Detecting the
+ * read itself needs a poisoned-boundary fixture for kernel string helpers,
+ * which the test harness does not have yet -- tracked in the kernel test
+ * harness roadmap. */
+static void test_klog_short_tag_classification(void)
+{
+    char     got[TEST_KLOG_PROBE_CAP];
+    uint32_t len;
+    klog_probe_arg none = { TK_ARG_NONE, (void *)0, 0, 0 };
+
+    len = klog_probe_len("ob", "shorttag", "shorttag two", &none,
+                         got, sizeof(got));
+    TEST_ASSERT_EQ(strcmp(got, "shorttag two"), 0,
+                   "a two-character tag renders its record intact");
+    TEST_ASSERT_NEQ((uint64_t)len, (uint64_t)-1,
+                    "the two-character-tag record reached the ring");
+
+    len = klog_probe_len("irq", "shorttag", "shorttag three", &none,
+                         got, sizeof(got));
+    TEST_ASSERT_EQ(strcmp(got, "shorttag three"), 0,
+                   "a three-character tag renders its record intact");
+
+    /* "TESTING" starts with TEST but is not TEST: the terminator check is what
+     * separates them, and it must not be satisfied by reading past a shorter
+     * tag either. */
+    len = klog_probe_len("TESTING", "shorttag", "shorttag longer", &none,
+                         got, sizeof(got));
+    TEST_ASSERT_EQ(strcmp(got, "shorttag longer"), 0,
+                   "a tag that merely starts with TEST still renders intact");
+
+    TEST_ASSERT(!klog_has_override("ob") && !klog_has_override("irq") &&
+                !klog_has_override("TESTING"),
+                "every short-tag probe removed its override");
 }
 
 /* ---- Per-subsystem level filtering: dropped below threshold ---- */
@@ -912,6 +1180,14 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: deferral DISABLED-dominant",
                             test_klog_defer_active, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring write", test_klog_ring_write, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: over-long message truncates without wedging",
+                            test_klog_overlong_shapes_truncate, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: truncation boundary at exactly 255 characters",
+                            test_klog_truncation_boundary, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: INT64_MIN renders its full magnitude",
+                            test_klog_int64_min_renders, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: short subsystem tags classify without overreading",
+                            test_klog_short_tag_classification, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: receipt acknowledges a delivered record",

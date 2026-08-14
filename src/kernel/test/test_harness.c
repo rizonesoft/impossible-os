@@ -699,6 +699,218 @@ static void test_harness_count_name_is_safe(void)
                    "a prefix of the reserved token is not the token");
 }
 
+/* ---------------------------------------------------------------------------
+ * Failing-assertion record formatter.
+ *
+ * Pure, for the same reason the [COUNT] formatters are: the truncation branch
+ * is the one that matters and it is unreachable from an ordinary run, because
+ * an ordinary run has no failing assertions at all. It is also the branch that
+ * used to wedge the boot, so it gets exercised with synthetic inputs on every
+ * green run rather than only on the day something fails loudly.
+ * ------------------------------------------------------------------------ */
+
+static uint32_t harness_str_len(const char *s)
+{
+    uint32_t n = 0;
+
+    while (s[n]) n++;
+    return n;
+}
+
+/* 1 when `hay` ends with `needle`. */
+static int harness_ends_with(const char *hay, const char *needle)
+{
+    uint32_t h = harness_str_len(hay);
+    uint32_t n = harness_str_len(needle);
+
+    if (n > h) return 0;
+    return strcmp(hay + (h - n), needle) == 0;
+}
+
+static void test_harness_fail_record_format(void)
+{
+    char rec[TEST_FAIL_RECORD_MAX];
+
+    TEST_ASSERT_EQ(test_fail_record_format(rec, sizeof(rec), "MM: alloc",
+                                           "frame count matches", (void *)0,
+                                           "src/kernel/mm/pmm.c", 412), 1,
+                   "a record within budget formats");
+    TEST_ASSERT_EQ(strcmp(rec, "MM: alloc :: frame count matches  "
+                               "(src/kernel/mm/pmm.c:412)"), 0,
+                   "the record carries suite, message and the file:line suffix");
+
+    /* The diagnostic field sits between the message and the suffix, so the
+     * location stays last no matter what the emitter supplies. */
+    TEST_ASSERT_EQ(test_fail_record_format(rec, sizeof(rec), "S", "m",
+                                           "  (got 5, expected 6)", "f.c", 1), 1,
+                   "a record with a diagnostic field formats");
+    TEST_ASSERT_EQ(strcmp(rec, "S :: m  (got 5, expected 6)  (f.c:1)"), 0,
+                   "the diagnostic precedes the suffix");
+
+    /* NULL fields must not fault: a registration bug should surface as a
+     * readable record, not a page fault inside the failure reporter. */
+    TEST_ASSERT_EQ(test_fail_record_format(rec, sizeof(rec), (void *)0,
+                                           (void *)0, (void *)0, (void *)0, 7), 1,
+                   "NULL suite, message and file format without faulting");
+    TEST_ASSERT_EQ(strcmp(rec, "? :: ?  (:7)"), 0,
+                   "NULL fields render as ? placeholders and keep the line");
+
+    TEST_ASSERT_EQ(test_fail_record_format((void *)0, sizeof(rec), "s", "m",
+                                           (void *)0, "f", 1), 0,
+                   "NULL destination is refused");
+    TEST_ASSERT_EQ(test_fail_record_format(rec, 0, "s", "m", (void *)0, "f", 1), 0,
+                   "zero-capacity buffer is refused");
+}
+
+static void test_harness_fail_record_overflow(void)
+{
+    /* 300 characters: past the 255 a klog entry can hold, which is the exact
+     * case that used to wedge the boot. */
+    static char big[301];
+    char        rec[TEST_FAIL_RECORD_MAX];
+    uint32_t    i, len;
+
+    for (i = 0; i < 300u; i++)
+        big[i] = (char)('a' + (i % 26u));
+    big[300] = '\0';
+
+    TEST_ASSERT_EQ(test_fail_record_format(rec, sizeof(rec), "Suite", big,
+                                           (void *)0, "src/kernel/test/x.c",
+                                           4242), 0,
+                   "an over-budget record reports failure");
+
+    len = harness_str_len(rec);
+    TEST_ASSERT(len < sizeof(rec),
+                "the over-budget record stays NUL-terminated inside the buffer");
+    TEST_ASSERT_EQ((uint64_t)len, (uint64_t)(sizeof(rec) - 1u),
+                   "the record spends its whole budget rather than stopping "
+                   "short");
+    TEST_ASSERT(harness_ends_with(rec, "  (src/kernel/test/x.c:4242)"),
+                "the file:line suffix survives truncation -- it is what makes "
+                "a failure locatable, so it is reserved before author text");
+    TEST_ASSERT(harness_ends_with(rec, " trunc=1  (src/kernel/test/x.c:4242)"),
+                "the cut record self-describes with the same marker the "
+                "[COUNT] trace uses");
+    TEST_ASSERT_EQ(strncmp(rec, "Suite :: ", 9), 0,
+                   "the suite name and separator survive truncation");
+
+    /* One byte past the exact fit must truncate, and the exact fit must not --
+     * an off-by-one here would either lose a whole message or mark a record
+     * that was never cut. */
+    {
+        static char exact[TEST_FAIL_RECORD_MAX];
+        /* "S :: " (5) + msg + "  (f.c:1)" (9) == 255 usable -> msg == 241 */
+        for (i = 0; i < 241u; i++)
+            exact[i] = 'x';
+        exact[241] = '\0';
+        TEST_ASSERT_EQ(test_fail_record_format(rec, sizeof(rec), "S", exact,
+                                               (void *)0, "f.c", 1), 1,
+                       "a record that exactly fills the budget is not marked "
+                       "truncated");
+        TEST_ASSERT_EQ((uint64_t)harness_str_len(rec),
+                       (uint64_t)(sizeof(rec) - 1u),
+                       "the exact-fit record is exactly 255 characters");
+
+        exact[241] = 'x';
+        exact[242] = '\0';
+        TEST_ASSERT_EQ(test_fail_record_format(rec, sizeof(rec), "S", exact,
+                                               (void *)0, "f.c", 1), 0,
+                       "one byte past the exact fit truncates");
+        TEST_ASSERT(harness_ends_with(rec, " trunc=1  (f.c:1)"),
+                    "the one-byte overflow is marked, not silently cut");
+    }
+}
+
+static void test_harness_fail_record_suffix_ladder(void)
+{
+    char small[48];
+
+    /* A path too long for the remaining budget sheds directory components
+     * rather than surrendering the line number, which is the field that
+     * actually locates the failure. */
+    TEST_ASSERT_EQ(test_fail_record_format(small, sizeof(small), "S", "m",
+                                           (void *)0,
+                                           "src/kernel/subsystem/very/deep/"
+                                           "path/module_name.c", 900), 0,
+                   "a record whose path exceeds the budget reports failure");
+    TEST_ASSERT(harness_ends_with(small, "  (module_name.c:900)"),
+                "the suffix degrades to the basename rather than being cut");
+    TEST_ASSERT(harness_str_len(small) < sizeof(small),
+                "the degraded record stays inside its buffer");
+
+    /* Backslash separators must shed the same way. `__FILE__` carries whatever
+     * the build used, and if this branch regressed the full path and the
+     * "basename" would be the same string -- so the ladder would skip straight
+     * to the line-number-only form and drop the filename exactly when a
+     * diagnostic needs it. */
+    {
+        char win[48];
+
+        TEST_ASSERT_EQ(test_fail_record_format(win, sizeof(win), "S", "m",
+                                               (void *)0,
+                                               "src\\kernel\\subsystem\\very\\"
+                                               "deep\\path\\module_name.c",
+                                               900), 0,
+                       "a backslash path over the budget reports failure");
+        TEST_ASSERT(harness_ends_with(win, "  (module_name.c:900)"),
+                    "a backslash path sheds components to its basename too");
+    }
+
+    /* When even the basename cannot fit, the line number alone survives. */
+    {
+        char tiny[24];
+
+        TEST_ASSERT_EQ(test_fail_record_format(tiny, sizeof(tiny), "SuiteName",
+                                               "some message", (void *)0,
+                                               "a_rather_long_file_name.c",
+                                               12345), 0,
+                       "a record with no room for any path reports failure");
+        TEST_ASSERT(harness_ends_with(tiny, "(:12345)"),
+                    "the line number is the last field to go");
+        TEST_ASSERT(harness_str_len(tiny) < sizeof(tiny),
+                    "the minimal record stays inside its buffer");
+    }
+}
+
+static void test_harness_fail_detail_format(void)
+{
+    char det[64];
+    char small[8];
+
+    TEST_ASSERT_EQ(test_fail_detail_format(det, sizeof(det), "got ", 12,
+                                           ", expected ", 34), 1,
+                   "a two-value diagnostic formats");
+    TEST_ASSERT_EQ(strcmp(det, "  (got 12, expected 34)"), 0,
+                   "both values render with their labels");
+
+    TEST_ASSERT_EQ(test_fail_detail_format(det, sizeof(det), "both are ", 0,
+                                           (void *)0, 0), 1,
+                   "a one-value diagnostic omits the second value");
+    TEST_ASSERT_EQ(strcmp(det, "  (both are 0)"), 0,
+                   "zero is a real value, not an absent field");
+
+    /* 64-bit values must survive whole: the assertion helpers take uint64_t
+     * and a narrowed diagnostic would misreport the very mismatch it is
+     * describing. */
+    TEST_ASSERT_EQ(test_fail_detail_format(det, sizeof(det), "got ",
+                                           18446744073709551615ULL,
+                                           (void *)0, 0), 1,
+                   "a full-width 64-bit value formats");
+    TEST_ASSERT_EQ(strcmp(det, "  (got 18446744073709551615)"), 0,
+                   "the 64-bit value is not narrowed");
+
+    TEST_ASSERT_EQ(test_fail_detail_format(small, sizeof(small), "got ", 12,
+                                           ", expected ", 34), 0,
+                   "a diagnostic that does not fit reports failure");
+    TEST_ASSERT_EQ(strcmp(small, ""), 0,
+                   "a diagnostic that did not fit is left EMPTY -- a half "
+                   "written one reads as a real one");
+
+    TEST_ASSERT_EQ(test_fail_detail_format((void *)0, sizeof(det), "g", 1,
+                                           (void *)0, 0), 0,
+                   "NULL destination is refused");
+}
+
 /* Registration */
 void test_register_harness(void)
 {
@@ -766,6 +978,16 @@ void test_register_harness(void)
                             test_harness_count_trailer_format, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: count-trace suite-name key validation",
                             test_harness_count_name_is_safe, TEST_CAT_BOOT);
+
+    /* Failing-assertion record formatters -- order-independent (pure). */
+    test_suite_register_cat("Harness: failure-record format",
+                            test_harness_fail_record_format, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: failure-record overflow keeps the file:line suffix",
+                            test_harness_fail_record_overflow, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: failure-record suffix degrades by shedding path",
+                            test_harness_fail_record_suffix_ladder, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: failure-record diagnostic field format",
+                            test_harness_fail_detail_format, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

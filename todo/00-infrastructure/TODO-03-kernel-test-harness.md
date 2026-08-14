@@ -64,7 +64,8 @@ title: "TODO-03 -- Kernel Test Harness"
 | 💎  |   7   |   §8    | Per-test heap-leak detection                             | §7           |  [x]   |
 | 💎  |   8   |   §4    | Retrofit existing "Test gaps" stamps across `todo/`      | §1-§3, §5-§8 |  [x]   |
 | 💎  |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced     | §8           |  [/]   |
-| 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [ ]   |
+| 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [x]   |
+| 💎  |  11   |   §11   | Poisoned-boundary fixture so an overread fails a test    | §10          |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -370,30 +371,65 @@ No fourth category. If a leak does not fit any of these three, the `[LEAK]` line
 
 Found while negative-controlling the emitted-code probes in `01-boot-platform/TODO-10 §22`, and the harness is the owner rather than that section: this reproduces for ANY test, and it fires only on the FAILURE path, which is exactly when the harness has to work. The observed cost was three wasted verification cycles reading a hang as a defect in the code under test -> XREF: `01-boot-platform/TODO-10 §22` (item: "Dedicated vector-2 entry stub").
 
-- [ ] A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot rather than reporting the failure, so the louder the assertion, the likelier it silently eats its own result.
-  - OBSERVED, reproduced 3 times: with a ~158-char message the suite emitted no summary and the boot stopped at ~1.8s (`[FAIL] Test summary not found within 60s`); with the SAME assertion failing under a ~48-char message it reported `FAIL: 1 of 4246 failed` and named the assertion, reproduced 3 times. The composed line is `"<suite> :: <msg>  (<file>:<line>)"` from `_test_assert` (`src/kernel/test/test_runner.c:488`), so the suite name and full path count toward the limit, not just the author's text.
-  - INFERRED, not yet traced: the trigger is length crossing `struct klog_entry.message[256]` (`include/kernel/klog.h:202`) into the truncation path of `vformat_buf` (`src/kernel/klog.c:99`). A control isolated this to LENGTH and not content -- a SHORT message still containing `%rcx` printed literally and failed cleanly, so the `%` in the text is not re-parsed and is NOT the cause. What the wedge itself is, between truncation and the serial sink, is unproven.
-  - The fix wants a decision rather than a longer buffer: either bound the message at the `_test_assert` layer so a failure can never be lost, or make the truncation path provably non-blocking. Whichever lands, the regression test is a deliberately over-long failing assertion that must still produce a summary.
-- [ ] Commit: `"test: bound the failing-assertion message so a long one cannot wedge the boot"`
+- [x] A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot rather than reporting the failure, so the louder the assertion, the likelier it silently eats its own result.
+  - ROOT CAUSE, traced not inferred: `vformat_buf`'s `BUF_PUT` macro (`src/kernel/klog.c:113`) did not evaluate its argument on the full-buffer branch, so `while (*s) BUF_PUT(*s++);` (`klog.c:184`) never advanced `s` past the first byte that did not fit and spun forever -- inside `klog_emit`'s ring lock with interrupts disabled, which is why the machine went silent with no fault. `BUF_PUT(*fmt++)` and the three `BUF_PUT(tmp[--n])` digit loops had the same shape. Fixed by evaluating the argument exactly once into a local before the capacity test.
+  - The defect was NEVER harness-specific: a plain `klog(LOG_ERROR, "TEST", "PROBE n=%u %s", ...)` wedged identically. Bisected to one byte -- composed length 255 emits and completes, 256 hangs -- so ANY kernel caller with a long line could halt the boot, not just a loud assertion.
+  - Reporting is bounded at the harness layer too, as defense in depth AND because klog's truncation cut the wrong end: `test_fail_record_format` (`include/kernel/test/test.h:188`) reserves the `(file:line)` suffix FIRST, spends the remainder on the author message, and marks a cut record ` trunc=1`. All four failure emitters use it -- `_test_assert`, `_test_assert_eq`, `_test_assert_neq` and the broken-pending-contract path.
+  - A second defect on the same path, found by the end-to-end control: `line` is an `int` passed as the 7th vararg, so it landed in a stack slot whose upper 4 bytes are uninitialized while klog's `%d` read 64 bits -- rendering `test_harness.c:-194693637781585198`. Composing the record without varargs removes it structurally; the kernel-wide class is filed -> XREF: `01-boot-platform/TODO-14 §13` (item: "Move `%d`/`%u`/`%x` to standard C width semantics").
+- [x] Regression coverage, with a live negative control: the over-long klog tests would HANG the run on the old code, and four pure formatter suites pin exact fit, one-byte overflow, suffix survival and path-shedding.
+  - The `Klog:` suites (`src/kernel/test/test_klog.c`) drive all three `BUF_PUT` callers that carried the defect -- `%s`, a bare literal format, and a digit loop crossing the limit -- plus the exact 255-vs-256 boundary, `INT64_MIN`, and short subsystem tags.
+  - The four `Harness: failure-record ...` suites (`src/kernel/test/test_harness.c`) are pure, so the truncation branch -- unreachable from a green run, because a green run has no failing assertions -- is exercised on every boot with synthetic inputs.
+  - Control observed live, not assumed: BEFORE the fix the sweep stopped dead at `n=244` with no further serial output; AFTER, all 241 lengths from 100 to 340 emit and the suite completes.
+  - ORIGINAL FILING, now superseded and kept only as the report that opened this section: a ~158-char message produced no summary and stopped the boot at ~1.8s, while the SAME assertion under a ~48-char message reported cleanly. That filing marked the mechanism INFERRED and asked for a decision between bounding the message and making the truncation path non-blocking. Both were wrong about the location -- the mechanism is traced above, it is not in the harness, and both fixes shipped.
+- [x] Commit: `"test: bound the failing-assertion message so a long one cannot wedge the boot"`
 
 **Test checkpoint:** A test that fails with a message long enough to exceed the 256-byte klog entry still produces a parseable `FAIL: N of M failed` summary and names its own assertion, on the same boot, with no timeout; the existing suites stay green and the summary format `scripts/test.sh` parses is unchanged.
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot` (kernel `TEST_CAT_BOOT`); 8 added suites -- 4 `Klog: ...` (truncation shapes, the 255/256 boundary, INT64_MIN, short-tag classification) and 4 `Harness: failure-record ...`. Full run: 29368 kernel + 17 user-mode, 0 failed.
+
+> **Notes:**
+> - Shipped: `vformat_buf` truncation made bounded and side-effect-safe (`src/kernel/klog.c`), ending a kernel-wide boot hang, plus `test_fail_record_format` / `test_fail_detail_format` in `src/kernel/test/test_runner.c` and 8 new suites.
+> - Integrates by replacing the six-vararg klog call in all four failure emitters with one pre-composed `"%s"`, so the record's shape is decided by a pure function the tests can drive directly.
+> - Downstream: every klog caller, not just tests -- any message over 255 bytes previously hung the machine with the ring lock held and interrupts disabled.
+> - Scope boundary: the klog format engine still reads all numeric conversions as 64-bit; converting it to standard C width semantics with `-Wformat` is filed as `01-boot-platform/TODO-14 §13`.
+> - Contract doc: `include/kernel/klog.h` now states the 64-bit vararg rule and the truncation behavior at the declaration.
+
+---
+
+## 11. A Read One Byte Past a Buffer Is Invisible to Every Test We Can Write
+
+> **Spawned-by:** §10 (review)
+> **User impact:** a kernel helper that reads past the end of a caller's string keeps returning the RIGHT answer until the day that byte lands on an unmapped page, and then the machine faults inside the logger while it is reporting some other failure. Today nothing in the harness can tell the safe implementation from the unsafe one.
+
+Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]`/`subsystem[5]`, read for every record under an ordinary short tag like `ob` or `irq`) with a bounded comparison. The behavior-preservation test that shipped with it passes against BOTH implementations, because the comparisons consuming those bytes short-circuit first and the classification answer never differed. That test says so in its own comment rather than implying a coverage it does not have -> XREF: `00-infrastructure/TODO-03 §10` (item: "A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot").
+
+- [ ] A `TEST_POISON_TAIL(buf, n)` fixture that places a string so its NUL is the last byte before a poisoned or unmapped boundary, so a helper that reads one byte past it is detected rather than merely suspected.
+  - The existing `vmm_install_guard_page()` gives the unmapped-boundary half, but a raw guard page turns the detection into a #PF that kills the boot instead of failing one assertion, which is worse than no test. The fixture needs a way to CATCH that fault and attribute it to the running suite.
+  - Kernel SEH (`__try`/`__except`) shipped in `02-kernel-core/TODO-23 §14` and is the obvious catcher; confirm it is usable from a test suite body before designing around it.
+  - A poison-byte variant (fill the tail with a sentinel and check it afterwards) detects a WRITE but not a READ, so it is a weaker fallback, not the design.
+- [ ] Retrofit the §10 short-tag suite onto the fixture once it exists, so `klog_tag_is` is verified rather than merely pinned.
+- [ ] Commit: `"test: poisoned-boundary fixture so an overread fails a test instead of a boot"`
+
+**Test checkpoint:** a deliberately reintroduced fixed-offset read of `subsystem[4]` fails the short-tag suite with a named assertion, on the same boot, without halting the run; the suite stays green against the bounded implementation.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                           | 🪟 Win11                    | 🐧 Linux                                            | 🚀 Impossible OS                            |
-| --- | --------------------------------- | --------------------------- | --------------------------------------------------- | ------------------------------------------- |
-| 💎  | Slab/kmalloc fault injection      | ⚠️ DV Low-Resources (heavy) | ✅ `failslab` + fail-nth                            | ✅ §1 `kmalloc_fail_countdown`              |
-| 💎  | Multi-allocator fault injection   | ⚠️ DV LRS (coarse)          | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ✅ §6 pmm/vmm/copy_user countdowns          |
-| 💎  | Task-scoped fault injection       | ❌ Rare                     | ✅ `task_filter` (fault-inject)                     | ✅ §6 `kmalloc_fail_task_filter`            |
-| 💎  | Deterministic concurrency testing | ⚠️ TAEF with effort         | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered) |
-| 💎  | Test-scoped cleanup registry      | ❌ Manual in TAEF           | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped) |
-| 💎  | Test-scoped scratch allocation    | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)   |
-| 💎  | Per-test leak detection           | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)                         | ✅ §8 heap_used delta (per-test, built-in)  |
-| ⭐  | Test-scoped klog level demotion   | ❌ None                     | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                  |
-| ⭐  | Single-boot 436-suite runner      | ❌ WDK run per-driver       | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure         |
-| ⭐  | CI-gated unannotated-leak counter | ❌ DV advisory, not CI-gate | ⚠️ kmemleak is kernel-wide, not per-test CI-gate    | ✅ §9 `L leaked` folds into FAILED          |
+| ⭐  | Feature                                       | 🪟 Win11                       | 🐧 Linux                                            | 🚀 Impossible OS                            |
+| --- | --------------------------------------------- | ------------------------------ | --------------------------------------------------- | ------------------------------------------- |
+| 💎  | Slab/kmalloc fault injection                  | ⚠️ DV Low-Resources (heavy)    | ✅ `failslab` + fail-nth                            | ✅ §1 `kmalloc_fail_countdown`              |
+| 💎  | Multi-allocator fault injection               | ⚠️ DV LRS (coarse)             | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ✅ §6 pmm/vmm/copy_user countdowns          |
+| 💎  | Task-scoped fault injection                   | ❌ Rare                        | ✅ `task_filter` (fault-inject)                     | ✅ §6 `kmalloc_fail_task_filter`            |
+| 💎  | Deterministic concurrency testing             | ⚠️ TAEF with effort            | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered) |
+| 💎  | Test-scoped cleanup registry                  | ❌ Manual in TAEF              | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped) |
+| 💎  | Test-scoped scratch allocation                | ⚠️ Manual in TAEF              | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)   |
+| 💎  | Per-test leak detection                       | ⚠️ DV verifier pool checks     | ✅ `kmemleak` (kernel-wide)                         | ✅ §8 heap_used delta (per-test, built-in)  |
+| ⭐  | Test-scoped klog level demotion               | ❌ None                        | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                  |
+| ⭐  | Single-boot 436-suite runner                  | ❌ WDK run per-driver          | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure         |
+| ⭐  | CI-gated unannotated-leak counter             | ❌ DV advisory, not CI-gate    | ⚠️ kmemleak is kernel-wide, not per-test CI-gate    | ✅ §9 `L leaked` folds into FAILED          |
+| 💎  | Over-long log line cannot hang the kernel     | ✅ `DbgPrint` truncates at 512 | ✅ `printk` truncates at 1024                       | ✅ §10 truncates + marks, never spins       |
+| ⭐  | Failure record keeps its `file:line` when cut | ❌ tail cut first              | ❌ tail cut first                                   | ✅ §10 suffix reserved before author text   |
 
 After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model. §9 (shipped 2026-04-22) promoted the §8 advisory L column into a CI-failing gate by closing all 56 [LEAK] lines (root-cause fixes in OB namespace locking, ETW IDLE state, and ALPC disconnect ordering; two `test_*_cleanup_named` helpers) and hardening `scripts/test.sh` to fail-closed on unparseable summaries -- a third edge neither Win11's Driver Verifier nor Linux's kernel-wide kmemleak delivers at the per-test, CI-gated layer.
 

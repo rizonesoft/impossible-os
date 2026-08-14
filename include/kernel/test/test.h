@@ -202,6 +202,54 @@ int test_count_trailer_format(char *dst, uint32_t cap, uint32_t records,
  * RESOLVED string at registration, because adjacent string literals and
  * macro-built names are invisible to any source-level grep. */
 int test_count_name_is_safe(const char *name);
+
+/* ---- Failing-assertion record ----
+ *
+ * Every failure emitter composes its whole record HERE and hands klog a single
+ * "%s", instead of letting klog compose it from six varargs. Two defects made
+ * that necessary and both fired only on the failure path, which is exactly when
+ * the harness has to work:
+ *
+ *   1. A record longer than klog's `message[256]` used to WEDGE THE BOOT.
+ *      That root cause is fixed in `vformat_buf` (src/kernel/klog.c), but the
+ *      report was still lost to silent truncation, and the part klog cut was
+ *      the trailing (file:line) -- the half that makes a failure locatable.
+ *   2. `line` is an `int`, and as the 7th argument it lands in a STACK vararg
+ *      slot whose upper 4 bytes are never initialized, while klog's `%d` reads
+ *      a full 64 bits. Observed rendering: `test_harness.c:-194693637781585198`.
+ *      Formatting the line number here, with no varargs involved, removes the
+ *      whole class rather than casting at four call sites.
+ *
+ * Budget is the ring field itself: the record IS the message, so 255 usable
+ * characters plus NUL. The suffix is reserved FIRST and never cut; the author
+ * message is what yields, and a cut record self-describes with ` trunc=1` --
+ * the same marker the [COUNT] trace already uses, so one consumer rule covers
+ * both. */
+#define TEST_FAIL_RECORD_MAX     256u
+
+/* Longest suite-name prefix a record will spend before the author message gets
+ * the remainder. The longest registered suite name is 85 bytes. */
+#define TEST_FAIL_SUITE_MAX       96u
+
+/* Compose "<suite> :: <msg><detail>[ trunc=1]  (<file>:<line>)" into `dst`.
+ * Returns 1 when everything fit, 0 when any field had to be cut (the record
+ * then carries the marker) or the destination was unusable. Pure: no logging,
+ * no counters, no locks, so every branch is reachable from a unit test.
+ *
+ * A path that does not fit sheds directory components before the line number
+ * is touched, and THAT counts as a cut: a shortened path is otherwise
+ * indistinguishable from a real one, so the marker is what stops a reader
+ * trusting a filename the formatter arrived at by subtraction. */
+int test_fail_record_format(char *dst, uint32_t cap, const char *suite,
+                            const char *msg, const char *detail,
+                            const char *file, int line);
+
+/* Compose the optional diagnostic field: "  (<lead><a>)", or
+ * "  (<lead><a><mid><b>)" when `mid` is non-NULL. Returns 1 on success, 0 when
+ * it did not fit (in which case `dst` is left empty rather than half-written --
+ * a partial diagnostic reads as a real one). */
+int test_fail_detail_format(char *dst, uint32_t cap, const char *lead,
+                            uint64_t a, const char *mid, uint64_t b);
 #endif /* KERNEL_TESTS -- defined in test_runner.c, which the release flavor
         * prunes entirely; declaring it unconditionally left a prototype with
         * no possible definition in that build. */

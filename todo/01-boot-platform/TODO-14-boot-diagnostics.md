@@ -55,20 +55,21 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                      | Depends On                         | Status |
-| --- | :---: | ------------------------------------------------ | ---------------------------------- | :----: |
-| 💎  |   1   | UEFI pre-kernel POST codes                       | --                                 |  [/]   |
-| 💎  |   2   | Boot progress named-stage API                    | §1                                 |  [/]   |
-| 💎  |   3   | POST-style hex code display                      | §2                                 |  [x]   |
-| 💎  |   4   | Alive blink / visual heartbeat                   | permanently deferred; hang=TODO-23 |  [/]   |
-| 💎  |   5   | Panic forensic evidence                          | §2                                 |  [/]   |
-| ⭐  |   6   | Panic QR code                                    | §5; T03 §14 (QR seed)              |  [/]   |
-| 💎  |   7   | System-wide multi-instance spinner               | D08 T08 §8 (compositor)            |  [/]   |
-| ⭐  |   8   | Runtime vital signs strip                        | D02 T25 §7 (CPU accounting)        |  [/]   |
-| 💎  |   9   | Boot timeline visualization/import               | §2                                 |  [/]   |
-| ⭐  |  10   | Bootloader build identity dump in BlackBox       | TODO-01 §20                        |  [x]   |
-| 💎  |  11   | Boot load status log (ntbtlog parity)            | §2                                 |  [/]   |
-| 💎  |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                 |  [ ]   |
+| ⭐  | Order | Deliverable                                                | Depends On                         | Status |
+| --- | :---: | ---------------------------------------------------------- | ---------------------------------- | :----: |
+| 💎  |   1   | UEFI pre-kernel POST codes                                 | --                                 |  [/]   |
+| 💎  |   2   | Boot progress named-stage API                              | §1                                 |  [/]   |
+| 💎  |   3   | POST-style hex code display                                | §2                                 |  [x]   |
+| 💎  |   4   | Alive blink / visual heartbeat                             | permanently deferred; hang=TODO-23 |  [/]   |
+| 💎  |   5   | Panic forensic evidence                                    | §2                                 |  [/]   |
+| ⭐  |   6   | Panic QR code                                              | §5; T03 §14 (QR seed)              |  [/]   |
+| 💎  |   7   | System-wide multi-instance spinner                         | D08 T08 §8 (compositor)            |  [/]   |
+| ⭐  |   8   | Runtime vital signs strip                                  | D02 T25 §7 (CPU accounting)        |  [/]   |
+| 💎  |   9   | Boot timeline visualization/import                         | §2                                 |  [/]   |
+| ⭐  |  10   | Bootloader build identity dump in BlackBox                 | TODO-01 §20                        |  [x]   |
+| 💎  |  11   | Boot load status log (ntbtlog parity)                      | §2                                 |  [/]   |
+| 💎  |  12   | Post-ship follow-up backfill (2026-07-31 cohort)           | --                                 |  [ ]   |
+| 💎  |  13   | klog format-width contract (`-Wformat` on every call site) | --                                 |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -369,6 +370,24 @@ From the stamped section 11:
 - [ ] NVMe per-controller status: expose attempted-vs-initialized count from `nvme_init` (today returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK. Owner: this section / NVMe driver.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+---
+
+## 13. klog Format-Width Contract, Compiler-Checked
+
+> **Spawned-by:** root
+
+`vformat_buf` reads EVERY numeric conversion as a full 64-bit vararg (`src/kernel/klog.c:144`, `:154`, `:165`), so a caller passing a 32-bit value is relying on luck: the compiler usually zero-extends into a register slot and it prints correctly, but a value that lands in a STACK slot (roughly the 4th vararg onward) leaves the upper 4 bytes uninitialized. Found live, not projected -- the test runner's failing-assertion line passed `int line` as its 7th argument and rendered `test_harness.c:-194693637781585198`. That ONE site is fixed at its source (the record is now composed without varargs); this section closes the CLASS -> XREF: `00-infrastructure/TODO-03 §10` (item: "A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot").
+
+- [ ] Move `%d`/`%u`/`%x` to standard C width semantics (32-bit by default, 64-bit only under `l`/`ll`) in `vformat_buf` (`src/kernel/klog.c:99`), which today SKIPS length modifiers outright at `klog.c:139`.
+  - The migration is the work, not the parse change: every call site passing a deliberate `(uint64_t)` cast against a bare `%u` starts truncating silently, and addresses printed with `%x` are the common case.
+  - Sites must be converted in the SAME commit as the engine change, never after it, because the intermediate state is silently wrong rather than broken.
+  - Measured surface as of 2026-08-14: 73 `klog(...)` call sites use `%d`; the `%u`/`%x` population is not yet counted.
+- [ ] Add `__attribute__((format(printf, 3, 4)))` to `klog`/`klog_unrated`/`klog_receipted` once the semantics are standard, so `-Wformat` checks every call site and the class cannot come back. This is the Linux `printk` model.
+- [ ] Delete the hand-written width warning from `include/kernel/klog.h` once the compiler enforces it -- a documented contract the compiler could check instead is a contract that drifts.
+- [ ] Commit: `"klog: standard printf width semantics with -Wformat on every call site"`
+
+**Test checkpoint:** a `klog` call with eight 32-bit arguments renders all eight correctly (the stack-slot case that fails today); a build with a deliberately mismatched conversion FAILS with `-Wformat`; the full suite stays green and no existing log line changes shape.
 
 ---
 

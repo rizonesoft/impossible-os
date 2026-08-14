@@ -36,7 +36,22 @@ extern const char *klog_dir;
 extern int klog_using_blackbox;  /* 1 if X:\Logs\, 0 if C:\ fallback */
 
 /* Log a message with level and subsystem tag.
- * fmt supports: %d, %u, %x, %p, %s, %c, %%  (same as printk) */
+ * fmt supports: %d, %u, %x, %p, %s, %c, %%  (same as printk)
+ *
+ * INTEGER ARGUMENTS MUST BE 64-BIT. The format engine reads every numeric
+ * conversion as a full 64-bit vararg, so a 32-bit value must be cast at the
+ * call site: `klog(..., "%u", (uint64_t)n)`. Passing a bare `int` is not a
+ * style nit and does not always show up in testing -- a value that lands in a
+ * REGISTER slot is usually zero-extended by the compiler and prints correctly,
+ * while the same value in a STACK slot (roughly, the 4th vararg onward) leaves
+ * the upper 4 bytes uninitialized and prints garbage. Observed on the test
+ * runner's failing-assertion line, whose `int line` was the 7th argument and
+ * rendered as `test_harness.c:-194693637781585198`.
+ *
+ * Messages are truncated at `klog_entry_t.message[256]`, marked with a
+ * trailing `~`, and the record still reaches every sink. A caller that cannot
+ * afford to lose the tail composes its own bounded record and passes a single
+ * "%s" (see `test_fail_record_format` in include/kernel/test/test.h). */
 void klog(log_level_t level, const char *subsystem, const char *fmt, ...);
 
 /* Like klog() but bypasses ONLY the per-subsystem rate limiter -- for a caller
