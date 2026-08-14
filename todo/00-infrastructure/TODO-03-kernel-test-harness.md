@@ -64,6 +64,7 @@ title: "TODO-03 -- Kernel Test Harness"
 | 💎  |   7   |   §8    | Per-test heap-leak detection                             | §7           |  [x]   |
 | 💎  |   8   |   §4    | Retrofit existing "Test gaps" stamps across `todo/`      | §1-§3, §5-§8 |  [x]   |
 | 💎  |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced     | §8           |  [/]   |
+| 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -360,6 +361,22 @@ No fourth category. If a leak does not fit any of these three, the `[LEAK]` line
 > **Accepted:** [H] NtQueryDirectoryObject residual handle-close UAF window; ObReferenceObject pin narrows it but the atomic-lookup+ref primitive is the real fix (reason: handle-table atomicity is broader than §9 scope) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle` primitive" at line 112 -- retrofit list now explicitly names `NtQueryDirectoryObject` in `src/kernel/ob/ob.c:437`)
 > **Accepted:** [M] `ob_thread_mark_dead` / `ob_process_mark_dead` do O(n) `ObLookupObjectByName` + linear `ObpRemoveFromDirectory` walk under IRQ-off spinlock on every thread exit; not blocking today but a scalability regression under kthread churn (reason: perf refinement, not correctness) -> XREF: 02-kernel-core/TODO-05 §4 (item: "Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup" at line 187)
 > **Quality reviewed:** 2026-04-22 | Codex 2x (adversarial, quality) | 1M fixed, 2 open | scope: kernel-code-quality
+
+---
+
+## 10. An Over-Long Failing Assertion Wedges the Boot Instead of Reporting
+
+> **Spawned-by:** root
+
+Found while negative-controlling the emitted-code probes in `01-boot-platform/TODO-10 §22`, and the harness is the owner rather than that section: this reproduces for ANY test, and it fires only on the FAILURE path, which is exactly when the harness has to work. The observed cost was three wasted verification cycles reading a hang as a defect in the code under test -> XREF: `01-boot-platform/TODO-10 §22` (item: "Dedicated vector-2 entry stub").
+
+- [ ] A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot rather than reporting the failure, so the louder the assertion, the likelier it silently eats its own result.
+  - OBSERVED, reproduced 3 times: with a ~158-char message the suite emitted no summary and the boot stopped at ~1.8s (`[FAIL] Test summary not found within 60s`); with the SAME assertion failing under a ~48-char message it reported `FAIL: 1 of 4246 failed` and named the assertion, reproduced 3 times. The composed line is `"<suite> :: <msg>  (<file>:<line>)"` from `_test_assert` (`src/kernel/test/test_runner.c:488`), so the suite name and full path count toward the limit, not just the author's text.
+  - INFERRED, not yet traced: the trigger is length crossing `struct klog_entry.message[256]` (`include/kernel/klog.h:202`) into the truncation path of `vformat_buf` (`src/kernel/klog.c:99`). A control isolated this to LENGTH and not content -- a SHORT message still containing `%rcx` printed literally and failed cleanly, so the `%` in the text is not re-parsed and is NOT the cause. What the wedge itself is, between truncation and the serial sink, is unproven.
+  - The fix wants a decision rather than a longer buffer: either bound the message at the `_test_assert` layer so a failure can never be lost, or make the truncation path provably non-blocking. Whichever lands, the regression test is a deliberately over-long failing assertion that must still produce a summary.
+- [ ] Commit: `"test: bound the failing-assertion message so a long one cannot wedge the boot"`
+
+**Test checkpoint:** A test that fails with a message long enough to exceed the 256-byte klog entry still produces a parseable `FAIL: N of M failed` summary and names its own assertion, on the same boot, with no timeout; the existing suites stay green and the summary format `scripts/test.sh` parses is unchanged.
 
 ---
 

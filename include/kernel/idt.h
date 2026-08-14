@@ -111,16 +111,16 @@ interrupt_handler_t idt_get_handler(uint8_t n);
 
 /* ---- NMI nesting depth (ARCH: x86-64) ----
  *
- * idt_in_nmi() is nonzero while THIS CPU is inside an NMI handler. isr_handler
- * raises the depth before it validates the frame or GS and lowers it at its last
- * C statement, so the whole faultable BODY of an NMI is covered.
+ * idt_in_nmi() is nonzero while THIS CPU is inside an NMI handler. The counter
+ * is moved by the DEDICATED vector-2 stub in isr_stubs.asm (S22), not by C: the
+ * stub raises it ahead of its own error-code push and lowers it after the
+ * register pops, the frame pop, the CS test, VERW and swapgs. Prologue, body and
+ * epilogue are therefore all covered, which is what isr_handler could not do
+ * from inside C.
  *
- * It is NOT covered end to end, and the difference matters: the stub prologue in
- * isr_stubs.asm and isr_handler's own `frame->int_no` load run before the raise,
- * and the swapgs + iretq epilogue runs after the lower. A fault in either window
- * still classifies as ordinary. Closing them needs a dedicated NMI entry stub
- * (vector 2 shares the generic stub today), tracked as the dedicated-NMI-entry-
- * stub item in the bare-metal-hardening roadmap.
+ * Two residuals remain, both argued at their site in isr_stubs.asm: four stack
+ * writes (the CPUID clobber set the marker needs to index itself) precede the
+ * raise, and one register restore plus the IRETQ execute after the lower.
  *
  * The panic path is the consumer: a fault taken inside the NMI handler re-enters
  * panic with an INNER vector, so a context predicate reading only frame->int_no
@@ -130,12 +130,18 @@ interrupt_handler_t idt_get_handler(uint8_t n);
  *
  * State is keyed by the CPUID-derived APIC id, NOT per_cpu_data, so it is
  * readable from the GS-independent panic emitters. idt_nmi_depth_raw() and the
- * enter/exit pair are exposed for unit test; production code outside isr_handler
- * should read idt_in_nmi() and never move the counter itself. */
+ * enter/exit pair are the same arithmetic in C, exposed so a unit test can drive
+ * the semantics the assembly implements; production code reads idt_in_nmi() and
+ * never moves the counter itself. */
 int      idt_in_nmi(void);
 uint32_t idt_nmi_depth_raw(void);
 void     idt_nmi_enter(void);
 void     idt_nmi_exit(void);
+
+/* The counter itself, one entry per panic-safe CPU id. Declared only because
+ * isr_stubs.asm indexes it directly and the stub tests resolve the emitted
+ * relocation against it -- C code reads idt_in_nmi() and never touches this. */
+extern volatile uint32_t g_nmi_depth[];
 
 /* Promote vector `n`'s gate to DPL=3 so ring-3 code may raise it with `INT n`
  * (e.g. INT3 breakpoint, INTO overflow, INT 0x29 __fastfail). CPU-generated

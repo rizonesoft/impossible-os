@@ -248,31 +248,49 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  *
  * An NMI handler that never returns (the fatal panic path is the normal case)
  * leaves the depth raised forever. That is correct, not a leak: the CPU is dead,
- * and a raised depth only ever makes the classification MORE conservative. */
+ * and a raised depth only ever makes the classification MORE conservative.
+ *
+ * NOT static, and the counter's PRODUCTION mutator is not in this file: the
+ * dedicated vector-2 stub in isr_stubs.asm (S22) raises the depth before its
+ * own error-code push and lowers it after the register pops, which is the only
+ * way to cover the asm prologue and epilogue that S18 had to leave open. The
+ * helpers below are the same arithmetic in C, kept because they are what a unit
+ * test can drive; the static asserts underneath pin every assumption the
+ * assembly makes about this array, so the two encodings cannot drift silently. */
 #define IDT_NMI_DEPTH_IDS  CPU_PANIC_SAFE_ID_COUNT
-static volatile uint32_t s_nmi_depth[IDT_NMI_DEPTH_IDS];
+volatile uint32_t g_nmi_depth[IDT_NMI_DEPTH_IDS];
 
 /* Layer 1: the array must cover the FULL id space the index can produce, or a
  * widened id would write past the end of a BSS array from inside the NMI
  * handler. Derived from the mask rather than hardcoded so the two cannot drift. */
 _Static_assert(IDT_NMI_DEPTH_IDS == (size_t)CPU_PANIC_SAFE_ID_MASK + 1u,
-               "s_nmi_depth must cover every value cpu_panic_safe_apic_id can return");
+               "g_nmi_depth must cover every value cpu_panic_safe_apic_id can return");
+
+/* Layer 1, assembly contract: isr_stubs.asm indexes this array itself, with
+ * `shr ebx, 24` for the id and a scale of NMI_DEPTH_ENTRY_SIZE for the element.
+ * NASM cannot see this header, so both assumptions are pinned here -- narrowing
+ * the mask or widening the element would otherwise leave the assembly reading a
+ * different entry than the C helpers, from inside an NMI, silently. */
+_Static_assert(CPU_PANIC_SAFE_ID_MASK == 0xFFu,
+               "isr_stubs.asm derives the NMI depth index with `shr ebx, 24`");
+_Static_assert(sizeof(g_nmi_depth[0]) == 4u,
+               "isr_stubs.asm indexes g_nmi_depth with NMI_DEPTH_ENTRY_SIZE = 4");
 
 int idt_in_nmi(void)
 {
-    return __atomic_load_n(&s_nmi_depth[cpu_panic_safe_apic_id()],
+    return __atomic_load_n(&g_nmi_depth[cpu_panic_safe_apic_id()],
                            __ATOMIC_ACQUIRE) != 0u;
 }
 
 uint32_t idt_nmi_depth_raw(void)
 {
-    return __atomic_load_n(&s_nmi_depth[cpu_panic_safe_apic_id()],
+    return __atomic_load_n(&g_nmi_depth[cpu_panic_safe_apic_id()],
                            __ATOMIC_ACQUIRE);
 }
 
 void idt_nmi_enter(void)
 {
-    __atomic_fetch_add(&s_nmi_depth[cpu_panic_safe_apic_id()], 1u,
+    __atomic_fetch_add(&g_nmi_depth[cpu_panic_safe_apic_id()], 1u,
                        __ATOMIC_ACQ_REL);
 }
 
@@ -283,8 +301,8 @@ void idt_nmi_exit(void)
     /* Saturate at zero. An unbalanced exit would wrap to 0xFFFFFFFF and pin this
      * CPU in "inside NMI" for the rest of the boot, permanently disabling the
      * guarded read on a CPU that is not in an NMI at all. */
-    if (__atomic_load_n(&s_nmi_depth[id], __ATOMIC_ACQUIRE) != 0u)
-        __atomic_fetch_sub(&s_nmi_depth[id], 1u, __ATOMIC_ACQ_REL);
+    if (__atomic_load_n(&g_nmi_depth[id], __ATOMIC_ACQUIRE) != 0u)
+        __atomic_fetch_sub(&g_nmi_depth[id], 1u, __ATOMIC_ACQ_REL);
 }
 
 uint64_t isr_handler(struct interrupt_frame *frame)
@@ -292,23 +310,19 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     uint8_t vec = (uint8_t)frame->int_no;
     uint64_t result;
 
-    /* Raise the NMI depth BEFORE the frame-integrity and GS checks below. Those
-     * checks dereference the frame and gs:0 and can themselves fault, and a
-     * fault there while the depth was still clear is exactly the nested abort
-     * this counter exists to catch. The counter is keyed by CPUID, not GS, so it
-     * is safe to touch before GS has been proven sane.
+    /* The NMI nesting depth is NOT raised here. S22 moved it into the dedicated
+     * vector-2 stub (isr_stubs.asm), which raises it ahead of its own error-code
+     * push -- so by the time this function is entered the depth is already up,
+     * and the `frame->int_no` load above, the frame-integrity and GS checks
+     * below, and the whole asm prologue are all covered. Raising it again here
+     * would give the counter two owners for one transition; the stub is the one
+     * that can cover the windows this function cannot see.
      *
-     * WHAT THIS DOES NOT COVER, stated precisely because an earlier revision of
-     * this comment claimed "first action" and was wrong: the stub prologue in
-     * isr_stubs.asm (register pushes, conditional swapgs) and the `frame->int_no`
-     * load on the line above BOTH run before the depth is raised. A fault in
-     * that window still classifies as ordinary. Closing it needs a dedicated NMI
-     * entry stub that sets the marker before any common faultable work -- vector
-     * 2 currently shares the generic ISR_NOERRCODE macro and isr_common_stub, so
-     * there is no NMI-specific asm site to put it in. Tracked as the
-     * dedicated-NMI-entry-stub item in the bare-metal-hardening roadmap. */
-    if (vec == VECTOR_NMI)
-        idt_nmi_enter();
+     * WHAT IS STILL NOT COVERED, stated precisely because an earlier revision of
+     * this comment claimed "first action" and was wrong: four stack writes (the
+     * CPUID clobber set) precede the marker in the stub, and IRETQ itself runs
+     * with it already lowered. Both residuals are argued at their site in
+     * isr_stubs.asm rather than restated here. */
 
     /* ---- Interrupt frame integrity check ----
      * CS must be kernel (0x08) or user (0x23 = GDT_USER_CODE|RPL3).
@@ -547,19 +561,12 @@ irql_restore:
         }
     }
 
-    /* Lower the NMI depth at the LAST point in C, not at irql_restore: the block
-     * above still dereferences the outgoing frame, can klog, and records a
-     * transition -- all of it still inside the NMI, and all of it able to fault.
-     * Dropping the depth at the label would reopen the exact window this counter
-     * closes, one layer lower down.
-     *
-     * RESIDUAL: the stub's swapgs + iretq epilogue (isr_stubs.asm) runs after
-     * this returns and is not covered. Closing it would mean a per-vector test in
-     * the common stub, paid by every interrupt on the machine for a counter only
-     * the NMI path reads, and the epilogue performs no guarded reads -- it pops
-     * registers off the IST stack it is already using. */
-    if (vec == VECTOR_NMI)
-        idt_nmi_exit();
+    /* The NMI depth is NOT lowered here either. S22 moved the lower into the NMI
+     * copy of the stub body, past the register pops, the frame pop, the CS test,
+     * VERW and swapgs -- so the epilogue this comment used to name as an open
+     * residual is now covered too. The build-time-parameterized body is what
+     * made that affordable: the shared path pays no per-interrupt branch for a
+     * counter only the NMI path reads. */
 
     return result;
 }
