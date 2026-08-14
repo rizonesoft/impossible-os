@@ -102,6 +102,15 @@ static uint32_t vformat_buf(char *buf, uint32_t bufsize, const char *fmt,
     uint32_t pos = 0;
     int truncated = 0;
 
+    /* A zero capacity has no valid answer -- there is not even room for the
+     * NUL -- and the bound below is `pos < bufsize - 1` on an unsigned, which
+     * would wrap to 0xFFFFFFFF and turn this function into the unbounded write
+     * it exists to prevent. Unreachable from the single caller today; refused
+     * here because the comment above states the bound as a guarantee, and a
+     * guarantee with an unstated precondition is how the next caller gets it
+     * wrong. */
+    if (!buf || bufsize == 0) return 0;
+
     /* Truncation-marker contract: the BUF_PUT macro silently drops
      * chars once pos reaches bufsize-1 (reserved for NUL); a long %s
      * that overflows the message buffer would otherwise leave the
@@ -1522,6 +1531,10 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     /* ---- FATAL: halt ---- */
     if (level == LOG_FATAL) {
         serial_write("[**] FATAL -- system halted\r\n");
+        /* ARCH: x86-64 -- will move to arch/. klog.c is otherwise
+         * architecture-neutral code, and this is its one inline asm: the
+         * terminal halt after a fatal record reaches the wire. It needs a HAL
+         * cpu_halt() to become neutral, which does not exist yet. */
         for (;;)
             __asm__ volatile ("hlt");
     }

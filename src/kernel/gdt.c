@@ -89,9 +89,12 @@ static void gdt_set_tss(uint32_t index, uint64_t base, uint32_t limit)
  * failure IST exists to prevent. panic_screen_impl holds the caller-string
  * snapshot desc_snap[256] + file_snap[64] and the shared frame capture
  * frames[PANIC_MAX_STACK_DEPTH] (128 B) live across its whole body; below it
- * write_crash_dump adds char buf[2048]. That is ~2.5 KiB of named locals inside
- * 8 KiB, before the VFS chain. Anything that adds a large panic-path local
- * belongs in this list. */
+ * write_crash_dump adds char buf[2048]. klog_emit -- reachable from these paths
+ * and treated as panic-context by its own clock choice -- adds a klog_entry_t
+ * snapshot (288 B) plus the line[512] serial buffer, ~800 B whenever anything
+ * on the path logs. That is ~3.3 KiB of named locals inside 8 KiB, before the
+ * VFS chain. Anything that adds a large panic-path local belongs in this
+ * list. */
 #define IST_STACK_PAGES 2   /* usable pages above the guard (8 KiB) */
 
 /* Allocate one IST stack with a guard page at the bottom; return the stack

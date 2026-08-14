@@ -53,7 +53,7 @@ void symtab_init(void)
     /* Read header */
     rc = vfs_read(f, 0, sizeof(hdr), (uint8_t *)&hdr);
     if (rc < (int)sizeof(hdr)) {
-        klog(LOG_ERROR, "SYMTAB", "Failed to read header (%d bytes)", rc);
+        klog(LOG_ERROR, "SYMTAB", "Failed to read header (%d bytes)", (int64_t)rc);
         vfs_close(f);
         return;
     }
@@ -87,7 +87,8 @@ void symtab_init(void)
     vfs_close(f);
 
     if (rc < (int)data_size) {
-        klog(LOG_ERROR, "SYMTAB", "Short read: got %d, expected %u", rc, data_size);
+        klog(LOG_ERROR, "SYMTAB", "Short read: got %d, expected %u", (int64_t)rc,
+             (uint64_t)data_size);
         /* Free PMM pages */
         for (uint32_t i = 0; i < pages; i++) {
             pmm_free_frame((uintptr_t)g_entries + i * 4096);

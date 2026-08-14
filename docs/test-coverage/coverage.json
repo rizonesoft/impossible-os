@@ -1,6 +1,6 @@
 {
   "total_suites": 2858,
-  "total_assertions": 11675,
+  "total_assertions": 11680,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -43,7 +43,7 @@
     {"file": "test_firmware_advisor.c", "suites": 5, "assertions": 17},
     {"file": "test_firmware_platform.c", "suites": 15, "assertions": 35},
     {"file": "test_firmware_tables.c", "suites": 41, "assertions": 72},
-    {"file": "test_harness.c", "suites": 34, "assertions": 110},
+    {"file": "test_harness.c", "suites": 34, "assertions": 114},
     {"file": "test_heap.c", "suites": 16, "assertions": 42},
     {"file": "test_idt.c", "suites": 4, "assertions": 21},
     {"file": "test_ipc.c", "suites": 5, "assertions": 12},
@@ -54,7 +54,7 @@
     {"file": "test_kernel_config.c", "suites": 49, "assertions": 309},
     {"file": "test_kimage.c", "suites": 6, "assertions": 62},
     {"file": "test_klibs.c", "suites": 24, "assertions": 311},
-    {"file": "test_klog.c", "suites": 41, "assertions": 149},
+    {"file": "test_klog.c", "suites": 41, "assertions": 150},
     {"file": "test_knf.c", "suites": 30, "assertions": 234},
     {"file": "test_kworker.c", "suites": 5, "assertions": 20},
     {"file": "test_mat_violation.c", "suites": 6, "assertions": 15},

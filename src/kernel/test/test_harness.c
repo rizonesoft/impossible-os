@@ -856,6 +856,28 @@ static void test_harness_fail_record_suffix_ladder(void)
                     "a backslash path sheds components to its basename too");
     }
 
+    /* The text-exhausted branch: the budget leaves NO room for any author
+     * text, so the record degrades to marker plus location. It is the branch
+     * most likely to be written casually -- it was, and shipped a bare
+     * "trunc=1" without the token's leading space, which the consumer that
+     * the token exists for would not have matched. */
+    {
+        char tiny[22];
+
+        TEST_ASSERT_EQ(test_fail_record_format(tiny, sizeof(tiny), "SuiteName",
+                                               "a message", (void *)0,
+                                               "f.c", 7), 0,
+                       "a record with no room for author text reports failure");
+        TEST_ASSERT_EQ(strncmp(tiny, TEST_TRUNC_MARK, TEST_COUNT_TRUNC_MARK_LEN),
+                       0,
+                       "the text-exhausted record leads with the FULL shared "
+                       "marker, leading space included");
+        TEST_ASSERT(harness_ends_with(tiny, "(f.c:7)"),
+                    "the text-exhausted record still carries its location");
+        TEST_ASSERT(harness_str_len(tiny) < sizeof(tiny),
+                    "the text-exhausted record stays inside its buffer");
+    }
+
     /* When even the basename cannot fit, the line number alone survives. */
     {
         char tiny[24];

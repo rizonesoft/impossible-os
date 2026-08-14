@@ -340,28 +340,38 @@ static void test_klog_short_tag_classification(void)
     uint32_t len;
     klog_probe_arg none = { TK_ARG_NONE, (void *)0, 0, 0 };
 
-    len = klog_probe_len("ob", "shorttag", "shorttag two", &none,
+    /* PRIVATE tags, never the production ones the classifier really sees.
+     * `klog_probe_len` sets a level override and removes it, so probing "ob"
+     * or "irq" would overwrite and then delete whatever level those subsystems
+     * were actually configured with -- and the closing assertion would still
+     * pass, because the test is the thing that removed it. Length is the
+     * property under test; the name only has to be short. */
+    TEST_ASSERT(!klog_has_override("zz") && !klog_has_override("zq3") &&
+                !klog_has_override("ZZTESTING"),
+                "the short-tag probes start without overrides");
+
+    len = klog_probe_len("zz", "shorttag", "shorttag two", &none,
                          got, sizeof(got));
     TEST_ASSERT_EQ(strcmp(got, "shorttag two"), 0,
                    "a two-character tag renders its record intact");
     TEST_ASSERT_NEQ((uint64_t)len, (uint64_t)-1,
                     "the two-character-tag record reached the ring");
 
-    len = klog_probe_len("irq", "shorttag", "shorttag three", &none,
+    len = klog_probe_len("zq3", "shorttag", "shorttag three", &none,
                          got, sizeof(got));
     TEST_ASSERT_EQ(strcmp(got, "shorttag three"), 0,
                    "a three-character tag renders its record intact");
 
-    /* "TESTING" starts with TEST but is not TEST: the terminator check is what
-     * separates them, and it must not be satisfied by reading past a shorter
-     * tag either. */
-    len = klog_probe_len("TESTING", "shorttag", "shorttag longer", &none,
+    /* A tag LONGER than the offsets the old form probed, and one that starts
+     * with a classifier prefix without being it: the terminator check is what
+     * separates them. */
+    len = klog_probe_len("ZZTESTING", "shorttag", "shorttag longer", &none,
                          got, sizeof(got));
     TEST_ASSERT_EQ(strcmp(got, "shorttag longer"), 0,
-                   "a tag that merely starts with TEST still renders intact");
+                   "a longer tag renders intact too");
 
-    TEST_ASSERT(!klog_has_override("ob") && !klog_has_override("irq") &&
-                !klog_has_override("TESTING"),
+    TEST_ASSERT(!klog_has_override("zz") && !klog_has_override("zq3") &&
+                !klog_has_override("ZZTESTING"),
                 "every short-tag probe removed its override");
 }
 

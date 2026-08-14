@@ -274,7 +274,7 @@ int test_count_record_format(char *dst, uint32_t cap, uint32_t ordinal,
                             : 0u;
         if (back < pos) pos = back;
         dst[pos] = '\0';
-        (void)tc_append(dst, &pos, cap, " trunc=1");
+        (void)tc_append(dst, &pos, cap, TEST_TRUNC_MARK);
         return 0;
     }
     return 1;
@@ -483,8 +483,11 @@ int test_fail_record_format(char *dst, uint32_t cap, const char *suite,
         if (text == 0u) {
             /* Degenerate budget: keep the two fields a consumer can still act
              * on -- the marker that says this is not a whole record, and the
-             * location. */
-            (void)tc_append(dst, &pos, cap, "trunc=1");
+             * location. The marker is the FULL shared token including its
+             * leading space; emitting a bare "trunc=1" here would save one
+             * byte and make the record unrecognisable to the consumer the
+             * token exists for. */
+            (void)tc_append(dst, &pos, cap, TEST_TRUNC_MARK);
             (void)tc_append(dst, &pos, cap, suffix);
             return 0;
         }
@@ -493,7 +496,7 @@ int test_fail_record_format(char *dst, uint32_t cap, const char *suite,
         (void)tc_append(dst, &pos, cap, " :: ");
         tc_append_n(dst, &pos, cap, msg, text - s_use);
         (void)tc_append(dst, &pos, cap, detail);
-        (void)tc_append(dst, &pos, cap, " trunc=1");
+        (void)tc_append(dst, &pos, cap, TEST_TRUNC_MARK);
         (void)tc_append(dst, &pos, cap, suffix);
     }
     return 0;
@@ -578,7 +581,7 @@ test_category_t test_category_from_string(const char *str)
  * Pure and side-effect free, so the harness can drive every branch. */
 int test_count_name_is_safe(const char *name)
 {
-    static const char reserved[] = " trunc=1";
+    static const char reserved[] = TEST_TRUNC_MARK;
     uint32_t i, j;
 
     if (!name)
@@ -774,6 +777,14 @@ void _test_skip(const char *msg, const char *file, int line)
 void _test_pending(int condition, const char *msg,
                    const char *file, int line)
 {
+    /* Flush the collapsed pass-run FIRST, on both branches, for the reason
+     * _test_assert states at its own flush: the "(repeated xN)" summary must
+     * read BEFORE the line that followed the run, not after it. This emitter
+     * was the only one of the five that did not, so a [STUB] or a broken
+     * contract landed mid-run and inverted the log order in exactly the
+     * collapse case the flush exists to order. */
+    test_pass_run_flush();
+
     if (condition) {
         g_test_state.pending++;
         klog(LOG_WARN, test_tag(), "%s :: [STUB] %s",

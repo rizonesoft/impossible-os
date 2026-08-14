@@ -171,12 +171,22 @@ quota_sweep_verdict_t quota_sweep_classify(const quota_leak_snapshot_t *open,
  * synthetic inputs. They return 1 on success and 0 on overflow. */
 
 /* Record buffer budget. Sized against klog's `message[256]` ring field, which
- * CUTS a longer message silently -- for a completeness-checked format that
- * turns a load-bearing field into an unparseable line with no fault. The
- * longest registered suite name is 85 bytes, so this leaves ample headroom. */
+ * cuts a longer message and marks the cut with a trailing `~`. That generic
+ * marker is not enough here: a [COUNT] record is parsed field by field, so a
+ * klog-level cut still destroys a load-bearing field, and the record's own
+ * intact ` trunc=1` protocol marker is what a consumer checks. Staying below
+ * the 255-character limit is what keeps the two markers from competing.
+ * The longest registered suite name is 85 bytes, so this leaves headroom. */
 #define TEST_COUNT_RECORD_MAX    224u
 
-/* Length of the " trunc=1" overflow marker, excluding its NUL. */
+/* The truncation marker, shared by the [COUNT] records and the failure
+ * records. ONE literal, so the two record types cannot drift: a consumer
+ * applying the documented token to both is what makes it a protocol rather
+ * than a convention. The leading space is PART OF THE TOKEN -- a branch that
+ * emitted a bare "trunc=1" would not be recognised by that consumer. */
+#define TEST_TRUNC_MARK          " trunc=1"
+
+/* Length of TEST_TRUNC_MARK, excluding its NUL. */
 #define TEST_COUNT_TRUNC_MARK_LEN 8u
 
 /* klog subsystem tag every [COUNT] record carries. Fixed, NOT the runner's

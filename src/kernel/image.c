@@ -289,7 +289,8 @@ int image_load(image_t *img, const char *path)
     vfs_close(f);
 
     if (bytes_read <= 0) {
-        klog(LOG_ERROR, "IMG", "read error on '%s' (got %d)", path, bytes_read);
+        klog(LOG_ERROR, "IMG", "read error on '%s' (got %d)", path,
+             (int64_t)bytes_read);
         if (buf_is_pmm) {
             uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
             uint64_t fi;
