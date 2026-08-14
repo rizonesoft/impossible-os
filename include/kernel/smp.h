@@ -71,6 +71,73 @@
 #define AP_BRINGUP_ONLINE      1u
 #define AP_BRINGUP_ABANDONED   2u
 
+/* ---- Async worker lifecycle claim (TODO-10 S21) ----
+ *
+ * ONE word per CPU holding both the slot's dispatchability and the identity of
+ * the dispatch that owns it, so no instruction boundary exists at which a slot
+ * reads "free" while a worker is still running on it. Layout:
+ *
+ *   bits [1:0]  state -- OFFLINE (never online, or parked), IDLE, RESERVED,
+ *                        BUSY
+ *   bits [31:2] generation -- incremented by each successful dispatch
+ *
+ * Dispatch is TWO-PHASE, and that is correctness rather than bookkeeping. A
+ * single IDLE -> BUSY transition would expose a RUNNABLE slot before its
+ * payload was written: a delayed or misdelivered async IPI landing in that
+ * window would find BUSY, execute the PREVIOUS group's function under the new
+ * generation, retire the new group's claim, and leave the new group reported
+ * complete having never run -- with a non-idempotent boot step run twice. So
+ * the BSP reserves (IDLE -> RESERVED), writes the payload, fences, and only
+ * then arms (RESERVED -> BUSY). RESERVED is not runnable; the AP handler
+ * accepts BUSY alone.
+ *
+ * The generation is what makes a completion attributable: a worker the BSP
+ * already timed out cannot retire a LATER dispatch's claim, because its
+ * exact-value compare-exchange names the generation it was dispatched under.
+ *
+ * OFFLINE at generation 0 encodes to 0, which is the value a zero-initialised
+ * per_cpu_data slot already holds -- a CPU that never came online is therefore
+ * undispatchable by construction rather than by an initialiser someone has to
+ * remember to run.
+ *
+ * DISTINCT FROM in_async_work, deliberately. The claim is BSP-owned dispatch
+ * state and reads BUSY before the target AP has taken the wake IPI, whereas
+ * in_async_work is CPU-local and means "this CPU is actually executing an
+ * async step". Only the latter may gate the survivable async park in panic.c:
+ * treating BUSY as equivalent would classify an unrelated NMI or machine check
+ * landing in the claim-to-handler window as a recovered async failure and let
+ * the kernel continue past an arbitrary fault. */
+#define SMP_ASYNC_STATE_MASK   0x3u
+#define SMP_ASYNC_OFFLINE      0x0u
+#define SMP_ASYNC_IDLE         0x1u
+#define SMP_ASYNC_BUSY         0x2u
+#define SMP_ASYNC_RESERVED     0x3u
+#define SMP_ASYNC_GEN_SHIFT    2u
+#define SMP_ASYNC_GEN_MAX      (0xFFFFFFFFu >> SMP_ASYNC_GEN_SHIFT)
+
+#define SMP_ASYNC_CLAIM(state, gen)                                     \
+    (((((uint32_t)(gen)) & SMP_ASYNC_GEN_MAX) << SMP_ASYNC_GEN_SHIFT) | \
+     (((uint32_t)(state)) & SMP_ASYNC_STATE_MASK))
+#define SMP_ASYNC_STATE_OF(w)  (((uint32_t)(w)) & SMP_ASYNC_STATE_MASK)
+#define SMP_ASYNC_GEN_OF(w)    (((uint32_t)(w)) >> SMP_ASYNC_GEN_SHIFT)
+
+_Static_assert(SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, 0) == 0u,
+    "a zero-initialised claim word must read OFFLINE -- a slot that never came "
+    "online must not be dispatchable");
+_Static_assert(SMP_ASYNC_OFFLINE != SMP_ASYNC_IDLE &&
+               SMP_ASYNC_IDLE    != SMP_ASYNC_BUSY &&
+               SMP_ASYNC_OFFLINE != SMP_ASYNC_BUSY &&
+               SMP_ASYNC_RESERVED != SMP_ASYNC_OFFLINE &&
+               SMP_ASYNC_RESERVED != SMP_ASYNC_IDLE &&
+               SMP_ASYNC_RESERVED != SMP_ASYNC_BUSY,
+    "claim states must be distinct");
+_Static_assert(SMP_ASYNC_RESERVED <= SMP_ASYNC_STATE_MASK &&
+               SMP_ASYNC_BUSY     <= SMP_ASYNC_STATE_MASK,
+    "every claim state must fit the state field");
+_Static_assert((SMP_ASYNC_GEN_MAX << SMP_ASYNC_GEN_SHIFT) ==
+               (0xFFFFFFFFu & ~SMP_ASYNC_STATE_MASK),
+    "the generation field must occupy every bit the state field does not");
+
 /* Per-AP kernel stack size (16 KiB, same as BSP) */
 #define AP_STACK_SIZE          16384
 
@@ -218,6 +285,14 @@ struct per_cpu_data {
     uint32_t          mtrr_var_count;      /* MTRRCAP.VCNT captured */
     uint32_t          mtrr_supported;      /* 1 = MTRRs present + snapshotted */
 
+    /* Async worker lifecycle claim (TODO-10 S21). SMP_ASYNC_* encoding above;
+     * every transition is a single atomic on this word. Placed at the tail of
+     * the struct, NOT beside the async block, because the KPTI trampoline pins
+     * gs:128 and gs:136 by _Static_assert -- inserting a field earlier would
+     * shift them. */
+    uint32_t          async_claim;         /* SMP_ASYNC_CLAIM(state, generation) */
+    uint32_t          _claim_pad;          /* alignment */
+
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
      * On each kmalloc() call, a non-zero value decrements; when the
@@ -362,8 +437,86 @@ void smp_early_bsp_init(void);
 
 void smp_init(void);
 
-/* Number of CPUs currently online */
+/* ---- Online membership (TODO-10 S21) ----
+ *
+ * TWO counts, deliberately, because they answer different questions and a
+ * single snapshot answered both wrongly:
+ *
+ *   smp_cpu_count()          -- how many CPUs are online RIGHT NOW. Live: a
+ *                               CPU that parks (panic.c async fault) drops out
+ *                               of it. Use for "how many active processors do
+ *                               we have" -- NT processor reporting, async
+ *                               parallelism decisions, NUMBER_OF_PROCESSORS.
+ *   smp_cpu_present_count()  -- how many CPU slots bringup DISCOVERED. Fixed
+ *                               after smp_init(). Use for machine-configuration
+ *                               stamps and as the upper bound when iterating
+ *                               logical slots.
+ *
+ * NEITHER is a dense index bound for a CPU id taken from an affinity mask:
+ * slots are sparse, so slot 2 can be online while slot 1 is not. Test
+ * membership with smp_cpu_is_online(), or take ONE smp_online_mask() snapshot
+ * and test bits in it when several fields must agree with each other. */
+
+/* Number of CPUs currently online (live; >= 1) */
 uint32_t smp_cpu_count(void);
+
+/* Number of CPU slots discovered at bringup (>= 1, fixed after smp_init) */
+uint32_t smp_cpu_present_count(void);
+
+/* One coherent snapshot of the live online set, bit N = logical CPU N */
+uint32_t smp_online_mask(void);
+
+/* 1 when logical CPU `cpu` is in the live online set */
+int smp_cpu_is_online(uint32_t cpu);
+
+/* Publish/retract a CPU's online membership. The ONLY transitions:
+ * publish sets is_online then the mask bit, retract clears the mask bit then
+ * is_online, so the mask is always a SUBSET of the true online set and can
+ * never report a parked CPU as active. Retract is panic-path safe (atomics
+ * only, no locks, no allocation). */
+void smp_publish_cpu_online(struct per_cpu_data *pcpu);
+void smp_retract_cpu_online(struct per_cpu_data *pcpu);
+
+/* ---- Async claim transitions (TODO-10 S21) ----
+ * Pure operations over a caller-supplied claim word so the state machine is
+ * testable without a live SMP system. Each is ONE atomic transition. */
+
+/* Phase 1: IDLE(g) -> RESERVED(g+1). Returns 1 and the new generation on
+ * success; 0 when the slot is OFFLINE, RESERVED, or still BUSY from a dispatch
+ * that never completed. The slot is NOT runnable yet. */
+int  smp_async_claim_dispatch(uint32_t *claim, uint32_t *out_gen);
+
+/* Phase 2: RESERVED(gen) -> BUSY(gen), exact-value. Call ONLY after the
+ * payload is written and fenced -- this is the transition that makes the slot
+ * runnable. Returns 0 when the CPU parked between reserve and arm. */
+int  smp_async_claim_arm(uint32_t *claim, uint32_t gen);
+
+/* BUSY(gen) -> IDLE(gen), exact-value: a worker whose dispatch was superseded
+ * or whose CPU parked cannot retire the slot. Returns 1 on success. */
+int  smp_async_claim_complete(uint32_t *claim, uint32_t gen);
+
+/* -> OFFLINE, preserving the generation, from any state. */
+void smp_async_claim_park(uint32_t *claim);
+
+/* OFFLINE(gen) -> IDLE(gen): a CPU publishing itself dispatchable. Refuses to
+ * touch a RESERVED or BUSY slot -- republishing one as IDLE would erase an
+ * in-flight worker's ownership and let a second dispatch land on a CPU still
+ * running the first, which is the exact failure this claim exists to prevent.
+ * An already-IDLE slot is a no-op. */
+void smp_async_claim_publish_idle(uint32_t *claim);
+
+/* 1 when the slot reads OFFLINE at exactly `gen` -- the dispatch identified by
+ * `gen` will never complete. */
+int  smp_async_claim_is_dead(const uint32_t *claim, uint32_t gen);
+
+/* 1 when the slot reads BUSY; reports the owning generation via out_gen. */
+int  smp_async_claim_is_busy(const uint32_t *claim, uint32_t *out_gen);
+
+/* Pure mask helpers (same testability rationale). */
+void     smp_mask_set(uint32_t *mask, uint32_t cpu);
+void     smp_mask_clear(uint32_t *mask, uint32_t cpu);
+int      smp_mask_test(uint32_t mask, uint32_t cpu);
+uint32_t smp_mask_count(uint32_t mask);
 
 /* Current CPU's logical index (0 = BSP). Uses GS-based per-CPU data. */
 uint32_t smp_cpu_id(void);

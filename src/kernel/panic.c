@@ -1836,17 +1836,15 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * because it correctly publishes this write to the ACQUIRE loads in
              * boot_init.c and smp.c, but an ARM64 port must keep the fence.
              *
-             * SCOPE: this fixes async DISPATCH. is_online is also read by
-             * irq.c (affinity eligibility), sched/irql.c (health aggregation),
-             * cpu_security.c (audit sets) and topology.c -- today those are all
-             * benign or beneficial because topology_init runs before the first
-             * boot_async_group, but topology.c reads the field PLAIN and
-             * non-volatile, so making it asynchronously mutable leaves a latent
-             * race that only call ordering currently hides. And the CPU is not
-             * retired from the system-wide count: smp_cpu_count() is a one-time
-             * boot snapshot (smp.c) that a parked AP already contradicted before
-             * this change. Both are owned together -> XREF: section 20. */
-            __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
+             * SCOPE, closed by TODO-10 S21: this CPU is now retired from the
+             * SYSTEM's view of itself, not just from async dispatch. The
+             * retract clears the live online-mask bit (which is what
+             * smp_cpu_count(), NT processor reporting and IRQ affinity read),
+             * parks the async claim word so no later group can dispatch to this
+             * CPU even if it already selected it, and clears is_online last.
+             * All three are atomics -- no lock, no allocation, panic-path
+             * safe. */
+            smp_retract_cpu_online(pcpu);
 
             pcpu->async_result = (uint8_t)BOOT_FATAL;
             pcpu->in_async_work = 0;

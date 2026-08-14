@@ -40,7 +40,29 @@ extern void idt_get_idtr(void *out_idtr);  /* fills 10-byte IDTR */
 /* ---- State ---- */
 
 static struct per_cpu_data cpu_data[MAX_CPUS];
-static uint32_t            total_cpus = 0;
+
+/* Live online set (TODO-10 S21). Bit N = logical CPU N is online NOW. This is
+ * the SOLE active-membership API: per_cpu_data.is_online remains the AP's own
+ * bringup publication word (the BSP's per-AP wait loops key off it), but every
+ * consumer asking "which CPUs are active" reads this mask, so a parked CPU
+ * disappears from the system's view of itself the moment it parks.
+ *
+ * The two words cannot disagree in the dangerous direction: publish sets
+ * is_online BEFORE the mask bit and retract clears the mask bit BEFORE
+ * is_online, so the mask is always a SUBSET of the true online set. An
+ * interleaving can under-report a CPU that is coming up; none can report a
+ * parked CPU as active. */
+static uint32_t            online_mask = 0;
+
+/* CPU slots bringup DISCOVERED (1 + APs enumerated from the MADT). Fixed once
+ * smp_init() returns; this is the machine's configuration, not its live state.
+ * Kept separate from the online mask because a consumer asking "how big is
+ * this machine" and one asking "how many CPUs can run work" got the same
+ * answer before this section, and that answer was wrong for one of them. */
+static uint32_t            present_cpus = 0;
+
+_Static_assert(MAX_CPUS <= 32,
+    "online_mask is a uint32_t -- one bit per logical CPU slot");
 
 /* ---- MSR helpers ---- */
 
@@ -65,7 +87,10 @@ void smp_early_bsp_init(void)
      * garbage instead of NULL -- crashing the IRQL code. */
     cpu_data[0].self          = &cpu_data[0];
     cpu_data[0].cpu_id        = 0;
-    cpu_data[0].is_online     = 1;
+    /* Publishes is_online, the claim word (IDLE) and online-mask bit 0 in one
+     * place, so smp_cpu_count() reports the BSP from Phase 0 onward rather
+     * than depending on smp_init() having run. */
+    smp_publish_cpu_online(&cpu_data[0]);
     cpu_data[0].current_irql  = PASSIVE_LEVEL;
     cpu_data[0].current_task  = (void *)0;
     cpu_data[0].irq_count     = 0;
@@ -224,8 +249,10 @@ void ap_entry(uint32_t cpu_index)
     }
 
     /* Won the handshake -- publish online (RELEASE; the BSP's acquire-load sees
-     * every preceding write) as the LAST write before going live. */
-    __atomic_store_n(&pcpu->is_online, 1, __ATOMIC_RELEASE);
+     * every preceding write) as the LAST write before going live. The claim
+     * word goes IDLE and the online-mask bit is set in the same helper, so this
+     * AP becomes dispatchable and countable in one place. */
+    smp_publish_cpu_online(pcpu);
 
     /* AP is parked -- enable interrupts and halt.
      * The LAPIC timer or IPI will wake it when the scheduler is ready. */
@@ -262,13 +289,13 @@ void smp_init(void)
         cpu_data[0].self         = &cpu_data[0];
         cpu_data[0].cpu_id       = 0;
         cpu_data[0].lapic_id     = lapic_available() ? lapic_id() : 0;
-        cpu_data[0].is_online    = 1;
+        smp_publish_cpu_online(&cpu_data[0]);
         cpu_data[0].irq_count    = 0;
         cpu_data[0].preempt_count = 0;
         cpu_data[0].current_irql  = PASSIVE_LEVEL;
         cpu_data[0].current_task  = (void *)0;
         msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
-        total_cpus = 1;
+        __atomic_store_n(&present_cpus, 1u, __ATOMIC_RELEASE);
         /* No APs to validate; the global feature intersection is just the BSP's
          * probed feature set (TODO-09-boot S6). Publish it so consumers and the
          * cpu_feature_global_mask() query are valid on single-CPU systems. */
@@ -278,7 +305,7 @@ void smp_init(void)
          * verdict here, since this path returns before the SMP audit below. */
         cpu_audit_registers(0);
         cpu_audit_log(0);
-        cpu_audit_consistency_check(total_cpus);
+        cpu_audit_consistency_check(smp_cpu_count());
         return;
     }
 
@@ -286,7 +313,7 @@ void smp_init(void)
     cpu_data[0].self         = &cpu_data[0];
     cpu_data[0].cpu_id       = 0;
     cpu_data[0].lapic_id     = lapic_id();
-    cpu_data[0].is_online    = 1;
+    smp_publish_cpu_online(&cpu_data[0]);
     cpu_data[0].irq_count    = 0;
     cpu_data[0].preempt_count = 0;
     cpu_data[0].current_irql  = PASSIVE_LEVEL;
@@ -454,20 +481,22 @@ void smp_init(void)
         lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
         delay_ms(1);        /* 200µs minimum per Intel spec, use 1ms */
 
-        /* Wait for THIS AP to publish online (acquire-load its own is_online
-         * flag; timeout 100ms). Polling the per-AP authoritative flag -- not a
-         * separate cumulative count -- means the BSP never proceeds while an AP
-         * is mid-publication, and the wait/count/audit all key off one signal. */
+        /* Wait for THIS AP to publish online (its own online-mask bit, which
+         * smp_publish_cpu_online writes LAST; timeout 100ms). Polling the
+         * per-AP publication point -- not a separate cumulative count -- means
+         * the BSP never proceeds while an AP is mid-publication, and the
+         * wait/count/audit all key off one signal (TODO-10 S21: that signal is
+         * the mask bit, because is_online lands before the claim word and the
+         * mask and so could be observed with the sequence unfinished). */
         {
             uint32_t timeout = 100;
-            while (!__atomic_load_n(&cpu_data[ap_count].is_online,
-                                    __ATOMIC_ACQUIRE) && timeout > 0) {
+            while (!smp_cpu_is_online(ap_count) && timeout > 0) {
                 delay_ms(1);
                 timeout--;
             }
         }
 
-        if (!__atomic_load_n(&cpu_data[ap_count].is_online, __ATOMIC_ACQUIRE)) {
+        if (!smp_cpu_is_online(ap_count)) {
             /* Retry with second SIPI */
             lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
             delay_ms(1);
@@ -475,8 +504,7 @@ void smp_init(void)
             /* Wait again (50ms) */
             {
                 uint32_t timeout = 50;
-                while (!__atomic_load_n(&cpu_data[ap_count].is_online,
-                                        __ATOMIC_ACQUIRE) && timeout > 0) {
+                while (!smp_cpu_is_online(ap_count) && timeout > 0) {
                     delay_ms(1);
                     timeout--;
                 }
@@ -488,15 +516,15 @@ void smp_init(void)
          * the AP has not yet claimed ONLINE, so a late arrival will lose its own
          * CAS and park dark instead of going live-but-uncounted. Losing the CAS
          * means the AP claimed ONLINE in the publication gap (between its ONLINE
-         * CAS and its is_online release store) -- it is committed to going live,
-         * so we MUST wait (bounded) for that release store to land before the
+         * CAS and its online-mask publication) -- it is committed to going live,
+         * so we MUST wait (bounded) for that publication to land before the
          * count/audit/feature pass below runs. Skipping the wait would let the
-         * count loop observe is_online==0 and omit an AP that is about to sti and
-         * handle IPIs -- the live-but-uncounted state this whole protocol exists
-         * to prevent. ONLINE is the only state the failing CAS can observe: the
+         * count loop observe the CPU as offline and omit an AP that is about to
+         * sti and handle IPIs -- the live-but-uncounted state this whole
+         * protocol exists to prevent. ONLINE is the only state the failing CAS can observe: the
          * AP is the sole setter of ONLINE and the BSP is the sole setter of
          * ABANDONED, which we just failed to set. */
-        if (!__atomic_load_n(&cpu_data[ap_count].is_online, __ATOMIC_ACQUIRE)) {
+        if (!smp_cpu_is_online(ap_count)) {
             uint32_t expected = AP_BRINGUP_STARTING;
             if (__atomic_compare_exchange_n(&cpu_data[ap_count].ap_bringup_state,
                                             &expected, AP_BRINGUP_ABANDONED, 0,
@@ -506,8 +534,7 @@ void smp_init(void)
                      (uint64_t)ap_count);
             } else if (expected == AP_BRINGUP_ONLINE) {
                 uint32_t timeout = 100;
-                while (!__atomic_load_n(&cpu_data[ap_count].is_online,
-                                        __ATOMIC_ACQUIRE) && timeout > 0) {
+                while (!smp_cpu_is_online(ap_count) && timeout > 0) {
                     delay_ms(1);
                     timeout--;
                 }
@@ -515,13 +542,13 @@ void smp_init(void)
         }
     }
 
-    /* Count online APs and emit each one's "online" line + CPU-hardening audit
-     * from the BSP, both gated on that AP's OWN is_online flag via an ACQUIRE
-     * load. is_online is the single publication source (release-stored last by
-     * the AP), so the count and the audit derive from the same flags -- they
-     * cannot diverge, and the acquire/release edge makes the AP's lapic_id +
-     * ap_cpu_harden() snapshot visible here. An AP that never published
-     * is_online is neither counted nor audited (consistent). BSP-side emission
+    /* Emit each online AP's "online" line + CPU-hardening audit from the BSP,
+     * gated on that AP's own online-mask bit. The mask is the single
+     * publication point (release-written last by the AP), so the live count and
+     * the audit derive from the same word -- they cannot diverge, and the
+     * acquire/release edge makes the AP's lapic_id + ap_cpu_harden() snapshot
+     * visible here. An AP that never published is neither counted nor audited
+     * (consistent). BSP-side emission
      * keeps unbounded serial I/O off the AP bringup critical path. */
     /* CPU register audit trail (TODO-09-boot S9): capture + emit the BSP's
      * consolidated [CPU0 AUDIT] line here (Phase 2, IDT loaded -> msr_try_read
@@ -531,20 +558,20 @@ void smp_init(void)
     cpu_audit_registers(0);
     cpu_audit_log(0);
 
-    {
-        uint32_t online = 0;
-        for (i = 1; i <= ap_count; i++) {
-            if (__atomic_load_n(&cpu_data[i].is_online, __ATOMIC_ACQUIRE)) {
-                online++;
-                klog(LOG_INFO, "smp", "AP %u online (LAPIC ID=%u)",
-                     (uint64_t)i, (uint64_t)cpu_data[i].lapic_id);
-                ap_cpu_harden_log(i);
-                cpu_audit_log(i);
-            } else {
-                klog(LOG_WARN, "smp", "AP %u did not respond", (uint64_t)i);
-            }
+    /* The DISCOVERED slot count, not the online one: this is what the machine
+     * has, and it must not move when a CPU parks later (TODO-10 S21). The live
+     * count comes from the online mask, which each AP published for itself. */
+    __atomic_store_n(&present_cpus, 1u + ap_count, __ATOMIC_RELEASE);
+
+    for (i = 1; i <= ap_count; i++) {
+        if (smp_cpu_is_online(i)) {
+            klog(LOG_INFO, "smp", "AP %u online (LAPIC ID=%u)",
+                 (uint64_t)i, (uint64_t)cpu_data[i].lapic_id);
+            ap_cpu_harden_log(i);
+            cpu_audit_log(i);
+        } else {
+            klog(LOG_WARN, "smp", "AP %u did not respond", (uint64_t)i);
         }
-        total_cpus = 1 + online;
     }
 
     /* If any AP failed feature validation it recorded the fault and halted
@@ -560,22 +587,243 @@ void smp_init(void)
     /* Per-CPU register consistency verdict (TODO-09-boot S9), after the online
      * set is fixed: one [SMP] All N CPUs register-consistent line or per-CPU
      * divergence WARNs. */
-    cpu_audit_consistency_check(total_cpus);
+    cpu_audit_consistency_check(smp_cpu_count());
 
     /* Arm the periodic CR-pin verify-IPI (TODO-09-boot S10): the online set is
      * fixed and APs are parked with IRQs enabled, so the BSP timer tick can now
      * broadcast re-verify IPIs that the APs service. */
     cpu_cr_verify_ipi_init();
 
-    klog(LOG_INFO, "smp", "%u CPUs online (BSP + %u APs)",
-         (uint64_t)total_cpus, (uint64_t)(total_cpus - 1));
+    {
+        uint32_t live = smp_cpu_count();
+        klog(LOG_INFO, "smp", "%u of %u CPUs online (BSP + %u APs)",
+             (uint64_t)live, (uint64_t)smp_cpu_present_count(),
+             (uint64_t)(live - 1));
+    }
+}
+
+/* ---- Online membership + async claim (TODO-10 S21) ---- */
+
+void smp_mask_set(uint32_t *mask, uint32_t cpu)
+{
+    if (!mask || cpu >= MAX_CPUS)
+        return;
+    __atomic_fetch_or(mask, 1u << cpu, __ATOMIC_RELEASE);
+}
+
+void smp_mask_clear(uint32_t *mask, uint32_t cpu)
+{
+    if (!mask || cpu >= MAX_CPUS)
+        return;
+    __atomic_fetch_and(mask, ~(1u << cpu), __ATOMIC_RELEASE);
+}
+
+int smp_mask_test(uint32_t mask, uint32_t cpu)
+{
+    if (cpu >= MAX_CPUS)
+        return 0;
+    return (mask & (1u << cpu)) ? 1 : 0;
+}
+
+/* Population count by shift-and-add rather than __builtin_popcount: the
+ * freestanding kernel links no compiler-rt, and clang lowers the builtin to a
+ * __popcountsi2 call whenever it cannot prove POPCNT is available. */
+uint32_t smp_mask_count(uint32_t mask)
+{
+    uint32_t n = 0;
+    while (mask) {
+        mask &= mask - 1u;
+        n++;
+    }
+    return n;
+}
+
+void smp_publish_cpu_online(struct per_cpu_data *pcpu)
+{
+    if (!pcpu)
+        return;
+    /* The MASK BIT IS THE PUBLICATION POINT, and it is written LAST. Every
+     * wait loop in bringup keys off it (smp_cpu_is_online), so an AP stalled
+     * by an SMI part-way through this sequence cannot be observed as complete:
+     * before this section the BSP waited on is_online, which meant a stall
+     * after that store let smp_init finish, topology_init cache the CPU as
+     * permanently offline, and the first async group omit a CPU that then went
+     * live. Writing the mask last also keeps the mask a SUBSET of is_online,
+     * so no consumer can ever count a CPU the per-CPU flag does not claim. */
+    smp_async_claim_publish_idle(&pcpu->async_claim);
+    __atomic_store_n(&pcpu->is_online, 1u, __ATOMIC_RELEASE);
+    smp_mask_set(&online_mask, pcpu->cpu_id);
+}
+
+void smp_retract_cpu_online(struct per_cpu_data *pcpu)
+{
+    if (!pcpu)
+        return;
+    /* Mask bit FIRST, so no window exists in which a consumer still counts a
+     * CPU that has already stopped answering. Panic-path safe: three atomics,
+     * no lock, no allocation, no klog. */
+    smp_mask_clear(&online_mask, pcpu->cpu_id);
+    smp_async_claim_park(&pcpu->async_claim);
+    __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
+}
+
+int smp_async_claim_dispatch(uint32_t *claim, uint32_t *out_gen)
+{
+    uint32_t cur;
+
+    if (!claim)
+        return 0;
+
+    cur = __atomic_load_n(claim, __ATOMIC_ACQUIRE);
+    for (;;) {
+        uint32_t gen, next;
+
+        /* OFFLINE means the CPU cannot answer; BUSY means a dispatch this
+         * word still owns never completed (a timed-out worker the BSP
+         * deliberately left running); RESERVED means another dispatch is
+         * mid-publication. None is dispatchable, and BUSY staying un-reusable
+         * is the point of the claim, not a leak. */
+        if (SMP_ASYNC_STATE_OF(cur) != SMP_ASYNC_IDLE)
+            return 0;
+
+        gen  = (SMP_ASYNC_GEN_OF(cur) + 1u) & SMP_ASYNC_GEN_MAX;
+        next = SMP_ASYNC_CLAIM(SMP_ASYNC_RESERVED, gen);
+
+        if (__atomic_compare_exchange_n(claim, &cur, next, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            if (out_gen)
+                *out_gen = gen;
+            return 1;
+        }
+        /* cur was reloaded with the observed value; loop re-tests the state. */
+    }
+}
+
+int smp_async_claim_arm(uint32_t *claim, uint32_t gen)
+{
+    uint32_t expect;
+
+    if (!claim)
+        return 0;
+
+    /* RELEASE on success: everything the caller wrote to the payload while the
+     * slot was RESERVED must be visible to the AP that observes BUSY. */
+    expect = SMP_ASYNC_CLAIM(SMP_ASYNC_RESERVED, gen);
+    return __atomic_compare_exchange_n(claim, &expect,
+                                       SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, gen), 0,
+                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+           ? 1 : 0;
+}
+
+int smp_async_claim_complete(uint32_t *claim, uint32_t gen)
+{
+    uint32_t expect;
+
+    if (!claim)
+        return 0;
+
+    expect = SMP_ASYNC_CLAIM(SMP_ASYNC_BUSY, gen);
+    return __atomic_compare_exchange_n(claim, &expect,
+                                       SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, gen), 0,
+                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+           ? 1 : 0;
+}
+
+void smp_async_claim_park(uint32_t *claim)
+{
+    uint32_t cur;
+
+    if (!claim)
+        return;
+
+    cur = __atomic_load_n(claim, __ATOMIC_ACQUIRE);
+    for (;;) {
+        uint32_t next = SMP_ASYNC_CLAIM(SMP_ASYNC_OFFLINE, SMP_ASYNC_GEN_OF(cur));
+
+        if (cur == next)
+            return;   /* already parked at this generation */
+        if (__atomic_compare_exchange_n(claim, &cur, next, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return;
+    }
+}
+
+void smp_async_claim_publish_idle(uint32_t *claim)
+{
+    uint32_t cur;
+
+    if (!claim)
+        return;
+
+    cur = __atomic_load_n(claim, __ATOMIC_ACQUIRE);
+    for (;;) {
+        uint32_t next;
+
+        /* ONLY from OFFLINE. Republishing a RESERVED or BUSY slot as IDLE
+         * would erase an in-flight worker's ownership and let the next group
+         * dispatch onto a CPU still running the previous step. */
+        if (SMP_ASYNC_STATE_OF(cur) != SMP_ASYNC_OFFLINE)
+            return;
+
+        next = SMP_ASYNC_CLAIM(SMP_ASYNC_IDLE, SMP_ASYNC_GEN_OF(cur));
+        if (__atomic_compare_exchange_n(claim, &cur, next, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return;
+    }
+}
+
+int smp_async_claim_is_dead(const uint32_t *claim, uint32_t gen)
+{
+    uint32_t w;
+
+    if (!claim)
+        return 0;
+
+    w = __atomic_load_n(claim, __ATOMIC_ACQUIRE);
+    return (SMP_ASYNC_STATE_OF(w) == SMP_ASYNC_OFFLINE &&
+            SMP_ASYNC_GEN_OF(w) == (gen & SMP_ASYNC_GEN_MAX)) ? 1 : 0;
+}
+
+int smp_async_claim_is_busy(const uint32_t *claim, uint32_t *out_gen)
+{
+    uint32_t w;
+
+    if (!claim)
+        return 0;
+
+    w = __atomic_load_n(claim, __ATOMIC_ACQUIRE);
+    if (SMP_ASYNC_STATE_OF(w) != SMP_ASYNC_BUSY)
+        return 0;
+    if (out_gen)
+        *out_gen = SMP_ASYNC_GEN_OF(w);
+    return 1;
 }
 
 /* ---- Query API ---- */
 
 uint32_t smp_cpu_count(void)
 {
-    return total_cpus > 0 ? total_cpus : 1;
+    uint32_t n = smp_mask_count(__atomic_load_n(&online_mask, __ATOMIC_ACQUIRE));
+    /* The BSP is online before smp_early_bsp_init() has published anything
+     * (Phase 0 code calls this), so the floor is 1 -- same guarantee the old
+     * one-time snapshot gave. */
+    return n > 0 ? n : 1;
+}
+
+uint32_t smp_cpu_present_count(void)
+{
+    uint32_t n = __atomic_load_n(&present_cpus, __ATOMIC_ACQUIRE);
+    return n > 0 ? n : 1;
+}
+
+uint32_t smp_online_mask(void)
+{
+    return __atomic_load_n(&online_mask, __ATOMIC_ACQUIRE);
+}
+
+int smp_cpu_is_online(uint32_t cpu)
+{
+    return smp_mask_test(__atomic_load_n(&online_mask, __ATOMIC_ACQUIRE), cpu);
 }
 
 uint32_t smp_cpu_id(void)

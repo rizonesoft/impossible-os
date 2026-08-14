@@ -225,8 +225,14 @@ void boot_run_deferred(void)
 static uint64_t async_ipi_handler(struct interrupt_frame *frame)
 {
     struct per_cpu_data *pcpu = smp_this_cpu();
+    uint32_t gen = 0;
 
-    if (!pcpu || !pcpu->async_fn) {
+    /* The claim is the authority on whether there is work here, not async_fn
+     * (TODO-10 S21). A stray or misdelivered async IPI arriving at a slot the
+     * BSP never claimed would otherwise rerun whatever function pointer was
+     * last left in the slot. */
+    if (!pcpu || !smp_async_claim_is_busy(&pcpu->async_claim, &gen) ||
+        !pcpu->async_fn) {
         /* Spurious -- no work assigned */
         extern void lapic_eoi(void);
         lapic_eoi();
@@ -251,6 +257,12 @@ static uint64_t async_ipi_handler(struct interrupt_frame *frame)
     smp_mb();
     pcpu->async_done = 1;
     smp_mb();
+
+    /* Retire the claim LAST, and only for the generation this worker was
+     * dispatched under: a worker the BSP already timed out cannot hand its
+     * slot back into the idle pool, because the exact-value compare-exchange
+     * fails against whatever state the slot has reached since. */
+    smp_async_claim_complete(&pcpu->async_claim, gen);
 
     if (r == BOOT_OK || r == BOOT_DEGRADED) {
         klog(LOG_INFO, "ASYNC", "[ASYNC] %s completed on CPU%u in %ums",
@@ -319,27 +331,28 @@ boot_result_t boot_async_group(const char *group_name,
         return worst;
     }
 
-    /* Build the list of ONLINE AP slots (TODO-09-boot S10). Logical CPU IDs are
+    /* CLAIM the AP slots this group will use (TODO-10 S21). Logical CPU IDs are
      * slot-allocated, so after a partial bringup the online set can be sparse
      * (slot 1 abandoned, slot 2 live). smp_cpu_count() is a DENSE count; using
      * it as a slot bound (the old `ap_idx < ncpus`) skipped a live high slot and
-     * left it without work. Walk every slot and collect the ones truly online;
-     * one async step goes to each, step 0 stays on the BSP, overflow to BSP. */
-    uint32_t online_aps[MAX_CPUS];
-    uint32_t n_online_aps = 0;
-    for (uint32_t s = 1; s < MAX_CPUS; s++) {
-        struct per_cpu_data *ap = smp_get_cpu(s);
-        if (ap && __atomic_load_n(&ap->is_online, __ATOMIC_ACQUIRE))
-            online_aps[n_online_aps++] = s;
-    }
-    uint32_t n_workers = (count - 1 < n_online_aps) ? (count - 1) : n_online_aps;
+     * left it without work. Walk every slot and CLAIM the ones that are both
+     * online and idle; one async step goes to each, step 0 stays on the BSP,
+     * overflow to BSP.
+     *
+     * A CLAIM, not the is_online snapshot it replaces. The snapshot was an
+     * acquire-load that could not be retracted: a worker this group selected
+     * could park (panic.c async fault) before the dispatch reached it, and the
+     * group still assigned it a step and then waited out the whole 10s barrier
+     * for a CPU that can never answer. The claim CAS makes selection and
+     * ownership ONE transition, and it also refuses a slot still BUSY from an
+     * earlier group's timed-out worker -- that worker is deliberately left
+     * running (see the barrier below), so its slot must stay un-reusable until
+     * it retires itself. */
+    uint32_t claimed_aps[MAX_CPUS];
+    uint32_t claimed_gen[MAX_CPUS];
+    uint32_t n_workers = 0;
+    uint32_t max_workers = count - 1;
 
-    /* Clear async state on the BSP + EVERY online AP (not just this group's
-     * n_workers): a prior larger group may have left async_fn/async_name armed
-     * on a high online slot this smaller group does not reassign. The async IPI
-     * handler treats a non-NULL async_fn as live work, so a stray/misdelivered
-     * async IPI to that slot would rerun stale boot init. Clear all, assign
-     * n_workers. */
     {
         struct per_cpu_data *bsp = smp_get_cpu(0);
         if (bsp) {
@@ -348,26 +361,51 @@ boot_result_t boot_async_group(const char *group_name,
             bsp->in_async_work = 0;
         }
     }
-    for (uint32_t w = 0; w < n_online_aps; w++) {
-        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
-        if (ap) {
-            ap->async_done = 0; ap->async_result = (uint8_t)BOOT_OK;
+
+    for (uint32_t s = 1; s < MAX_CPUS && n_workers < max_workers; s++) {
+        struct per_cpu_data *ap = smp_get_cpu(s);
+        uint32_t gen = 0;
+
+        if (!ap || !smp_cpu_is_online(s))
+            continue;
+        if (!smp_async_claim_dispatch(&ap->async_claim, &gen))
+            continue;   /* parked, or still owned by an earlier dispatch */
+
+        /* RESERVED, not yet runnable. The slot is ours for `gen`, so nothing
+         * else may write these fields, and a stale async_fn from a larger
+         * earlier group is overwritten here rather than left armed. Arming
+         * before the payload landed would let a delayed or misdelivered IPI
+         * run the PREVIOUS group's function under this generation and retire
+         * this dispatch's claim, reporting a step complete that never ran. */
+        ap->async_done = 0; ap->async_result = (uint8_t)BOOT_OK;
+        ap->in_async_work = 0;
+        ap->async_name = steps[n_workers + 1].name;
+        ap->async_fn   = (void *)steps[n_workers + 1].fn;
+        smp_mb();
+
+        /* RESERVED -> BUSY: the payload is published, the slot is runnable.
+         * Fails only if the CPU parked in between, in which case it is not a
+         * worker of this group at all and its step falls to the BSP overflow
+         * loop below. */
+        if (!smp_async_claim_arm(&ap->async_claim, gen)) {
+            klog(LOG_WARN, "ASYNC",
+                 "[ASYNC] CPU%u parked between reserve and dispatch -- step "
+                 "falls back to the BSP", (uint32_t)s);
             ap->async_fn = (void *)0; ap->async_name = (void *)0;
-            ap->in_async_work = 0;
+            continue;
         }
+
+        claimed_aps[n_workers] = s;
+        claimed_gen[n_workers] = gen;
+        n_workers++;
     }
     smp_mb();
 
-    /* Assign work: step (w+1) -> online_aps[w]. */
+    /* Wake the claimed workers only after EVERY payload is published, so a fast
+     * AP cannot observe its own async_fn before the fence. */
     for (uint32_t w = 0; w < n_workers; w++) {
-        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
+        struct per_cpu_data *ap = smp_get_cpu(claimed_aps[w]);
         if (!ap) continue;
-
-        ap->async_name = steps[w + 1].name;
-        ap->async_fn   = (void *)steps[w + 1].fn;
-        smp_mb();
-
-        /* Send IPI to wake the AP */
         lapic_send_ipi(ap->lapic_id, IPI_VECTOR_ASYNC_INIT);
     }
 
@@ -393,24 +431,39 @@ boot_result_t boot_async_group(const char *group_name,
     uint32_t timeout_ms = 10000;  /* 10 second timeout */
     uint64_t deadline = system_get_ticks() + timeout_ms / 10;
 
-    /* BSP-local, authoritative record of which workers the BSP timed out. A
-     * timed-out AP is still running and may later overwrite its async_result
-     * with BOOT_OK/DEGRADED before the collect loop reads it; deriving the
-     * result from this local flag (not the shared async_result) makes the
-     * timeout sticky, so a late AP completion cannot make the FATAL vanish. */
-    uint8_t timed_out[MAX_CPUS] = {0};
+    /* BSP-local, authoritative record of which workers did not deliver a result
+     * of their own -- timed out, or parked before completing. A timed-out AP is
+     * still running and may later overwrite its async_result with
+     * BOOT_OK/DEGRADED before the collect loop reads it; deriving the result
+     * from this local flag (not the shared async_result) makes the failure
+     * sticky, so a late AP completion cannot make the FATAL vanish. The parked
+     * case needs the same treatment for a sharper reason: panic.c retracts
+     * online membership BEFORE it stores async_result and async_done, so a
+     * barrier that exited on the retraction and then read async_result would
+     * collect the PREVIOUS group's BOOT_OK and call a faulted step successful. */
+    uint8_t forced_fatal[MAX_CPUS] = {0};
 
     for (uint32_t w = 0; w < n_workers; w++) {
-        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
+        struct per_cpu_data *ap = smp_get_cpu(claimed_aps[w]);
         if (!ap) continue;
 
         while (!ap->async_done) {
+            /* The worker's CPU parked while owning THIS dispatch: it will never
+             * publish, so stop waiting now instead of burning the remaining
+             * deadline on a CPU that cannot answer. */
+            if (smp_async_claim_is_dead(&ap->async_claim, claimed_gen[w])) {
+                klog(LOG_WARN, "ASYNC",
+                     "[ASYNC] OFFLINE: %s on CPU%u parked before completing",
+                     ap->async_name ? ap->async_name : "?", ap->cpu_id);
+                forced_fatal[w] = 1;
+                break;
+            }
             if (system_get_ticks() > deadline) {
                 klog(LOG_WARN, "ASYNC",
                      "[ASYNC] TIMEOUT: %s on CPU%u did not complete in %ums",
                      ap->async_name ? ap->async_name : "?",
                      ap->cpu_id, timeout_ms);
-                timed_out[w] = 1;
+                forced_fatal[w] = 1;
                 ap->async_result = (uint8_t)BOOT_FATAL;
                 ap->async_done = 1;
                 break;
@@ -424,16 +477,16 @@ boot_result_t boot_async_group(const char *group_name,
      * async_result and mask an AP FATAL/DEGRADED in the worst-pick below. */
     smp_mb();
 
-    /* Collect results. A timed-out worker is forced to BOOT_FATAL from the
-     * BSP-local flag regardless of any value a late AP completion may have
-     * stored, so a fired timeout always drives the worst-pick (and the
+    /* Collect results. A timed-out or parked worker is forced to BOOT_FATAL
+     * from the BSP-local flag regardless of any value a late AP completion may
+     * have stored, so a fired failure always drives the worst-pick (and the
      * async-fatal fallback) rather than silently disappearing. */
     boot_result_t worst = bsp_result;
     for (uint32_t w = 0; w < n_workers; w++) {
-        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
+        struct per_cpu_data *ap = smp_get_cpu(claimed_aps[w]);
         if (!ap) continue;
-        boot_result_t r = timed_out[w] ? BOOT_FATAL
-                                       : (boot_result_t)ap->async_result;
+        boot_result_t r = forced_fatal[w] ? BOOT_FATAL
+                                          : (boot_result_t)ap->async_result;
         if (boot_result_severity(r) > boot_result_severity(worst))
             worst = r;
     }

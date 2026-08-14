@@ -939,13 +939,16 @@ int irq_set_affinity(uint32_t gsi, uint64_t cpu_mask)
     }
 
     cpu = (uint32_t)__builtin_ctzll(cpu_mask);
-    if (cpu >= smp_cpu_count())
+    /* MAX_CPUS is the slot bound, NEVER a CPU COUNT (TODO-10 S21). Slots are
+     * sparse: with slots 0 and 2 online the live count is 2, so a count-bound
+     * check rejected CPU2 -- a valid target -- and the caller could not steer
+     * an interrupt to the CPU that survived. Membership is a mask test. */
+    if (cpu >= MAX_CPUS)
         return -1;
     p = smp_get_cpu(cpu);
     if (!p)
         return -1;
-    /* CPU 0 (BSP) is always online; APs publish via is_online */
-    if (cpu != 0 && !__atomic_load_n(&p->is_online, __ATOMIC_ACQUIRE))
+    if (!smp_cpu_is_online(cpu))
         return -1;
 
     /* Route-lifetime lock: a concurrent release/free must not be able to

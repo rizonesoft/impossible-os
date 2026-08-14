@@ -38,7 +38,10 @@ static void topology_parse_zen(void)
      * APs get node_id=0 and ccd_id=0 (unknown). */
     for (i = 0; i < g_topo_cpu_count; i++) {
         struct per_cpu_data *cpu = smp_get_cpu(i);
-        if (cpu && !cpu->is_online && i > 0)
+        /* Membership through the mask accessor, not a plain read of is_online:
+         * the field is asynchronously mutable (a CPU parks on an async fault)
+         * and this walked it unsynchronised (TODO-10 S21). */
+        if (cpu && !smp_cpu_is_online(i) && i > 0)
             continue;  /* skip offline AP slots */
         if (i == 0) {
             /* BSP: compute_unit_id = core within CCD */
@@ -157,7 +160,8 @@ static void topology_parse_generic(void)
     uint32_t i;
     for (i = 0; i < g_topo_cpu_count; i++) {
         struct per_cpu_data *cpu = smp_get_cpu(i);
-        if (cpu && !cpu->is_online && i > 0)
+        /* Same mask-accessor rule as topology_parse_zen (TODO-10 S21). */
+        if (cpu && !smp_cpu_is_online(i) && i > 0)
             continue;
         if (cpu) {
             g_cpu_topo[i].core_id = cpu->lapic_id;
@@ -179,7 +183,11 @@ static void topology_parse_generic(void)
 
 void topology_init(void)
 {
-    uint32_t cpu_count = smp_cpu_count();
+    /* SLOT BOUND, so the DISCOVERED count, not the live one (TODO-10 S21).
+     * Logical CPU slots are sparse after a partial bringup, so bounding the
+     * walk by the number of ONLINE CPUs skipped a live high slot entirely; the
+     * per-slot online filter below is what excludes the CPUs that are down. */
+    uint32_t cpu_count = smp_cpu_present_count();
     uint32_t i;
 
     if (cpu_count == 0)

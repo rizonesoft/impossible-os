@@ -1210,8 +1210,17 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         info->AllocationGranularity = 0x10000;  /* 64 KB */
         info->MinimumUserModeAddress = 0x10000;
         info->MaximumUserModeAddress = 0x7FFFFFFEFFFF;
-        info->ActiveProcessorsAffinityMask = ((uint64_t)1 << smp_cpu_count()) - 1;
-        info->NumberOfProcessors = (uint8_t)smp_cpu_count();
+        /* ONE snapshot of the live online set drives BOTH fields (TODO-10 S21).
+         * Two separate reads let a CPU park between them and return a mask
+         * whose population disagrees with NumberOfProcessors. The mask is also
+         * the real membership, not (1 << count) - 1: slots are sparse, so a
+         * dense mask claims a parked low CPU is available and omits the live
+         * high one that replaced it. */
+        {
+            uint32_t online = smp_online_mask();
+            info->ActiveProcessorsAffinityMask = (uint64_t)online;
+            info->NumberOfProcessors = (uint8_t)smp_mask_count(online);
+        }
         {
             int pi;
             for (pi = 0; pi < 7; pi++) info->_pad[pi] = 0;
@@ -1235,7 +1244,10 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         info->ProcessorArchitecture = 9;  /* AMD64 */
         info->ProcessorLevel = 6;
         info->ProcessorRevision = 0;
-        info->MaximumProcessors = (uint16_t)smp_cpu_count();
+        /* MAXIMUM, so the DISCOVERED slot count (TODO-10 S21) -- a live count
+         * here would shrink when a CPU parks, and a maximum that falls is not
+         * a maximum. */
+        info->MaximumProcessors = (uint16_t)smp_cpu_present_count();
         info->ProcessorFeatureBits = 0;
         if (return_length) *return_length = 12;
         return STATUS_SUCCESS;

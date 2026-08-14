@@ -601,7 +601,11 @@ void boot_perf_compare(void)
      * before TSC calibration, so it would compare against cpu_count 1 and
      * tsc_khz 0 and decline every time. */
     {
-        uint32_t cur_cpus = smp_cpu_count();
+        /* MACHINE CONFIGURATION, so the discovered slot count (TODO-10 S21).
+         * The live count moves when a CPU parks mid-boot, which would report
+         * two comparable boots of the same machine as different configurations
+         * on the strength of one recovered async fault. */
+        uint32_t cur_cpus = smp_cpu_present_count();
         uint32_t cur_khz  = (uint32_t)(s_tsc_freq / 1000ULL);
         /* TSC frequency is compared with a tolerance: calibration jitters by a
          * few kHz between boots on the same host, which is not a config change.
@@ -713,7 +717,7 @@ void boot_perf_save(void)
     hdr->count = count;
     /* Stamp the machine configuration alongside the timings so the next boot
      * can tell whether they are comparable at all (see boot_perf_read_prev). */
-    hdr->cpu_count = smp_cpu_count();
+    hdr->cpu_count = smp_cpu_present_count();   /* configuration, not live (S21) */
     hdr->tsc_khz   = (uint32_t)(s_tsc_freq / 1000ULL);
 
     boot_perf_record_t *recs = (boot_perf_record_t *)(buf + sizeof(boot_perf_header_t));
