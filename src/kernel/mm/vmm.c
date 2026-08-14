@@ -878,6 +878,23 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
         }
     }
 
+    /* Fault-recoverable KERNEL string walk: __kstr_read_guarded (cpu_security.c)
+     * is the bounded form of the load above -- one protected loop instead of a
+     * call per byte, for the ~2,900 bytes the panic collector copies before its
+     * record is durable. Identical routing rules (exact faulting RIP, READ
+     * direction only, ahead of the pager) and its own label pair, because the
+     * handler matches one instruction. The loop's STORE is not covered: `dst` is
+     * kernel-owned by contract, so a write fault there is a real kernel bug and
+     * must stay terminal. */
+    {
+        uint64_t kstr_fixup;
+        if (kstr_read_fixup_lookup(frame->rip, (err_code & PF_EC_WRITE) != 0,
+                                   &kstr_fixup)) {
+            frame->rip = kstr_fixup;
+            return (uint64_t)frame;  /* guarded kernel string walk reports fault */
+        }
+    }
+
     /* Pager chain runs FIRST: swap-in for evicted pages, then mmap demand-load
      * and MAP_PRIVATE copy-on-write (a present-bit write fault -- must NOT be
      * gated out by a not-present check). A guarded user copy to a swapped /

@@ -186,9 +186,18 @@ _Static_assert(__builtin_offsetof(struct panic_evidence, boot_seq) >
                __builtin_offsetof(struct panic_evidence, crc32),
                "crc32 must precede the region it covers");
 
-/* IEEE CRC-32 (self-contained; shared by collector + Phase-0 restore so both
- * sides compute identical checksums). */
-uint32_t panic_crc32(const void *data, uint32_t len);
+/* CHECKSUM: `kcrc32` (kernel/kchecksum.h) -- the collector and the Phase-0
+ * restore both call it, so both sides compute identical checksums by sharing
+ * one implementation rather than by two copies agreeing.
+ *
+ * The self-contained bit-at-a-time `panic_crc32` that used to live here was
+ * retired: it cost about 53 instructions per byte over the whole ~3.2 KiB
+ * record (~170k instructions) inside the window between the fault and a durable
+ * record, against ~13 per two bytes for the table-driven routine already linked
+ * into this kernel. Both are the reflected IEEE CRC-32 (poly 0xEDB88320,
+ * init/xorout 0xFFFFFFFF), so the on-page format is unchanged and a record
+ * written by an older kernel still validates -- asserted directly against the
+ * retired algorithm in test_boot_diag.c, not reasoned about here. */
 
 /* Collect crash evidence into the physical evidence page. Safe to call from a
  * faulted context: raw physical writes only. `frame` may be NULL (software
@@ -212,12 +221,40 @@ uint32_t panic_crc32(const void *data, uint32_t len);
  * invocation system-terminal -- which is what licenses it to take the page from
  * a survivable owner. An invocation that does not win the page writes nothing.
  * Calling with the SAME token over a record that invocation already published is
- * a no-op: the standing record already describes that fault. */
+ * a no-op: the standing record already describes that fault.
+ *
+ * `ctx` is the panic context DERIVED ONCE at panic entry (panic_declared_ctx)
+ * and passed down, not re-derived here. panic_declared_ctx reads the NMI depth
+ * through cpu_panic_safe_apic_id(), i.e. a CPUID -- a serializing instruction
+ * that exits to the hypervisor under KVM/WHPX -- and the entry context is the
+ * one that must govern: it is the context of the fault being recorded, and the
+ * invocation whose frames the guarded read could trample is the one already on
+ * the stack. Passing it also makes the value the collector uses provably the
+ * same one the panic-string snapshot was taken under. This is the CONTEXT half
+ * of the same rule the IDENTITY half (`me`) already follows. */
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
                             const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line,
                             uint32_t me, uint32_t token, int terminal,
-                            uint32_t spins_max);
+                            uint32_t spins_max, uint32_t ctx);
+
+/* Populate a crash record IN PLACE, from `version` through `crc32` -- the
+ * CONTENT half of panic_collect_evidence, split out so it can be exercised
+ * against a fixture page. The collector's own body can only run on the live
+ * 0x80000 page through panic_evidence_take, which mutates boot-global ownership
+ * and would lock a later real panic out of the record, so the whole of record
+ * population had no test surface at all.
+ *
+ * Writes NO publication state: arbitration, the epoch, the un-publish, the
+ * zeroing and the final publication word all stay in the collector, which is
+ * what keeps every lifecycle transition on the publication word atomic and in
+ * one place. Callers other than the collector are test fixtures. */
+void panic_evidence_populate(struct panic_evidence *ev,
+                             struct interrupt_frame *frame,
+                             uint32_t bugcheck_code,
+                             const uint64_t bugcheck_params[4],
+                             const char *message, const char *file,
+                             uint32_t line, uint32_t me, uint32_t ctx);
 
 /* The declared panic context for this entry: PANIC_CTX_NMI when the
  * fault-suppressed kernel read must NOT be used, PANIC_CTX_NORMAL otherwise.
@@ -232,6 +269,15 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
  * too. Exposed (rather than static) so the vector/depth/NULL truth table is
  * unit-testable without invoking any panic infrastructure. */
 uint32_t panic_declared_ctx(struct interrupt_frame *frame);
+
+#ifdef KERNEL_TESTS
+/* Derivation counter for the section-24 assertion that a panic pays for the
+ * context ONCE and hands it down. "Once" is not a property a signature can
+ * carry: a later edit could re-derive it inside the collector exactly as the
+ * original did, and every other test would still pass. Test builds only. */
+uint32_t panic_declared_ctx_calls(void);
+void     panic_declared_ctx_calls_reset(void);
+#endif /* KERNEL_TESTS */
 
 /* Frames the panic frame-chain walk will record at most, however large a count
  * panic_capture_frames is given. */

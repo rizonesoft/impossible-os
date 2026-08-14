@@ -1433,36 +1433,64 @@ static void serial_emergency_write_str(const char *str, int terminal, uint32_t c
      * concurrent panic, and one 1024-byte buffer would be an unwelcome frame on
      * a #DF IST stack. */
     while (!done && n < SERIAL_EMERG_MAX_CHARS) {
-        char     chunk[SERIAL_EMERG_CHUNK];
+        /* +1 for the terminator __kstr_read_guarded reserves inside its cap.
+         * The emitted span is `k` bytes, so the extra byte is never written to
+         * the UART -- it exists so the guarded loop can still copy a full
+         * SERIAL_EMERG_CHUNK of payload. */
+        char     chunk[SERIAL_EMERG_CHUNK + 1u];
         uint32_t k = 0;
 
-        while (k < SERIAL_EMERG_CHUNK && n < SERIAL_EMERG_MAX_CHARS) {
-            char    c;
-            uint8_t b;
-
-            /* THE ONLY LOAD FROM CALLER MEMORY, and the one that can fault.
-             *
-             * The cap above bounds how FAR this walks; it cannot make the walk
+        if (serial_emerg_ctx_allows_guarded_read(ctx)) {
+            /* THE ONLY LOAD FROM CALLER MEMORY, and the one that can fault --
+             * now ONE protected loop per chunk instead of a call per byte. The
+             * cap above bounds how FAR this walks; it cannot make the walk
              * survive a pointer that is unmapped rather than unterminated. That
-             * is what __kread_u8 adds: a #PF at its guarded load is redirected
-             * by page_fault_handler to a fixup, so a corrupt description ends
-             * the record with a marker instead of taking the machine down while
-             * it is trying to say why it died.
+             * is what the guarded primitive adds: a #PF at its load is
+             * redirected by page_fault_handler to a fixup, so a corrupt
+             * description ends the record with a marker instead of taking the
+             * machine down while it is trying to say why it died.
              *
-             * NMI context does NOT take that path. Recovery returns through
-             * IRETQ, which re-arms NMI delivery while the outer NMI still owns
-             * IST2, so a second NMI would reuse that stack and overwrite the
-             * frames -- strictly worse than the unguarded load, whose fault goes
-             * terminal and never returns into the NMI handler at all. The caller
-             * DECLARES this rather than the writer probing for it: the vector is
-             * a hardware fact known at panic entry, and any state a probe could
-             * consult here is exactly the state a panic may have corrupted. */
-            if (serial_emerg_ctx_allows_guarded_read(ctx)) {
-                if (__kread_u8(&b, &str[n])) { faulted = 1; done = 1; break; }
-                c = (char)b;
-            } else {
-                c = str[n];
+             * NMI context does NOT take that path (the `else` below). Recovery
+             * returns through IRETQ, which re-arms NMI delivery while the outer
+             * NMI still owns IST2, so a second NMI would reuse that stack and
+             * overwrite the frames -- strictly worse than the unguarded load,
+             * whose fault goes terminal and never returns into the NMI handler
+             * at all. The caller DECLARES this rather than the writer probing
+             * for it: the vector is a hardware fact known at panic entry, and
+             * any state a probe could consult here is exactly the state a panic
+             * may have corrupted.
+             *
+             * NONCANON is reported as a fault for the same reason the per-byte
+             * __kread_u8 returned failure on a non-canonical address: a source
+             * running into the canonical hole is unreadable, not terminated. */
+            uint32_t budget = SERIAL_EMERG_CHUNK;
+            uint32_t stop   = KSTR_STOP_NUL;
+
+            if (budget > SERIAL_EMERG_MAX_CHARS - n)
+                budget = SERIAL_EMERG_MAX_CHARS - n;
+
+            /* +1: the primitive reserves a terminator inside `cap`, and this
+             * chunk is a byte span, not a C string -- the NUL is never emitted.
+             * chunk[] is sized SERIAL_EMERG_CHUNK + 1 for exactly this. */
+            k = __kstr_read_guarded(chunk, &str[n], budget + 1u, &stop);
+            n += k;
+            if (stop == KSTR_STOP_FAULT || stop == KSTR_STOP_NONCANON) {
+                faulted = 1;
+                done    = 1;
+            } else if (stop == KSTR_STOP_NUL) {
+                done = 1;
             }
+            if (k)
+                serial_emergency_emit(chunk, k, terminal, &recov);
+            continue;
+        }
+
+        /* NMI context: the unguarded walk, one byte at a time. No fixup is
+         * available here by design, so there is nothing a bounded protected
+         * loop would buy -- and a raw `rep`-style copy would lose the
+         * stop-at-terminator this needs. */
+        while (k < SERIAL_EMERG_CHUNK && n < SERIAL_EMERG_MAX_CHARS) {
+            char c = str[n];
 
             if (!c) { done = 1; break; }
             chunk[k++] = c;

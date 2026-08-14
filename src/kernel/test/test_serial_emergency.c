@@ -43,7 +43,8 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/serial_emergency.h"
 #include "kernel/sched/spinlock.h"
-#include "kernel/cpu_security.h"   /* __kread_u8 (guarded read under test) */
+#include "kernel/cpu_security.h"   /* __kread_u8 + __kstr_read_guarded (under test) */
+#include "libc/string.h"           /* memset -- fixture buffer prefill */
 
 /* Two distinct fixture identities. Concrete APIC ids rather than 0/1 so a test
  * that accidentally compared the RAW id against the ENCODED owner would fail
@@ -578,6 +579,188 @@ static void test_serial_emergency_kread_u8_reads_valid_bytes(void)
     TEST_ASSERT_EQ((uint32_t)__kread_u8(&b, &src[2]), 0u,
                    "reading the terminator succeeds");
     TEST_ASSERT_EQ((uint32_t)b, 0u, "and reports it as zero, ending a walk");
+}
+
+/* --- bounded guarded string read (section 24) ----------------------------
+ * __kstr_read_guarded is the same guarantee over a whole string in ONE
+ * protected loop: the panic collector copied ~2,900 bytes through a call per
+ * byte before its record was durable. As with __kread_u8 the live #PF recovery
+ * is serial-validated; what is unit-testable is the copy semantics, the
+ * terminator discipline, and the four stop reasons -- and the stop reason is
+ * load-bearing, because a walk that clipped at the canonical boundary and
+ * reported a clean terminator would render a corrupt pointer as complete text. */
+static void test_kstr_read_guarded_copies_and_terminates(void)
+{
+    char dst[8];
+    uint32_t stop = 0xFFu;
+
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, "abc", sizeof dst, &stop), 3u,
+                   "copies the payload length, excluding the terminator");
+    TEST_ASSERT_EQ(stop, KSTR_STOP_NUL, "and reports the source terminator");
+    TEST_ASSERT_EQ((uint32_t)dst[0], (uint32_t)'a', "first byte copied");
+    TEST_ASSERT_EQ((uint32_t)dst[2], (uint32_t)'c', "last byte copied");
+    TEST_ASSERT_EQ((uint32_t)dst[3], 0u, "destination is NUL-terminated");
+    TEST_ASSERT_EQ((uint32_t)dst[4], (uint32_t)'Z',
+                   "and nothing past the terminator is touched");
+
+    /* An empty source stores nothing but must still terminate: the panic path
+     * distinguishes this from unreadable by the stop reason, not by length. */
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, "", sizeof dst, &stop), 0u,
+                   "an empty source copies nothing");
+    TEST_ASSERT_EQ(stop, KSTR_STOP_NUL, "and is reported as a clean terminator");
+    TEST_ASSERT_EQ((uint32_t)dst[0], 0u, "with the destination terminated");
+}
+
+static void test_kstr_read_guarded_bounds_the_copy(void)
+{
+    char dst[4];
+    uint32_t stop = 0xFFu;
+
+    /* cap is the FULL destination size and the terminator is reserved inside
+     * it, so a longer source yields cap-1 payload bytes and never overruns. */
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, "abcdef", sizeof dst, &stop), 3u,
+                   "a longer source is truncated to cap-1 payload bytes");
+    TEST_ASSERT_EQ(stop, KSTR_STOP_CAP, "and reports budget exhaustion");
+    TEST_ASSERT_EQ((uint32_t)dst[3], 0u, "the last byte is the terminator");
+
+    /* cap 1 leaves room for the terminator only. */
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, "abc", 1u, &stop), 0u,
+                   "cap 1 copies no payload");
+    TEST_ASSERT_EQ((uint32_t)dst[0], 0u, "but still terminates");
+    TEST_ASSERT_EQ((uint32_t)dst[1], (uint32_t)'Z', "without touching dst[1]");
+
+    /* cap 0 has nowhere to put a terminator, so it must write NOTHING. */
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, "abc", 0u, &stop), 0u,
+                   "cap 0 copies nothing");
+    TEST_ASSERT_EQ((uint32_t)dst[0], (uint32_t)'Z',
+                   "and writes no terminator it has no room for");
+}
+
+/* The stop reason must separate UNREADABLE from TERMINATED. A non-canonical
+ * source is rejected before the load (a #GP there is not recoverable by a #PF
+ * fixup), exactly as __kread_u8 rejects it -- and it must surface as NONCANON,
+ * not as a clean empty string, or the panic path prints "no reason given" for a
+ * pointer that was part of the corruption. */
+static void test_kstr_read_guarded_reports_unreadable(void)
+{
+    char dst[8];
+    uint32_t stop = 0xFFu;
+
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, (const char *)0, sizeof dst, &stop),
+                   0u, "a NULL source copies nothing");
+    TEST_ASSERT_EQ(stop, KSTR_STOP_NONCANON,
+                   "and is reported unreadable, not as a terminator");
+    TEST_ASSERT_EQ((uint32_t)dst[0], 0u, "with the destination still terminated");
+
+    /* Non-canonical: the middle of the 4-level hole. Same address family the
+     * __kread_u8 rejection test uses. */
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, (const char *)0x0000800000000000ull,
+                                       sizeof dst, &stop), 0u,
+                   "a non-canonical source copies nothing");
+    TEST_ASSERT_EQ(stop, KSTR_STOP_NONCANON, "and reports NONCANON");
+
+    /* stop is optional -- the collector passes NULL because a truncated field
+     * in a forensic record IS the report. That must not fault. */
+    memset(dst, 'Z', sizeof dst);
+    TEST_ASSERT_EQ(__kstr_read_guarded(dst, "hi", sizeof dst, (uint32_t *)0), 2u,
+                   "a NULL stop pointer is accepted");
+}
+
+/* The canonical-half CLIP, which is the half of the primitive a mapped-address
+ * test cannot reach: a source whose RANGE runs off the end of its half has a
+ * canonical base and a non-canonical interior, and the walk must stop at the
+ * boundary and SAY so -- a silent clip would render a corrupt pointer as a
+ * complete string, the one outcome the per-byte walk never produced. Exercising
+ * it through the loop would need an address that is both on a half edge and
+ * mapped, which no test can arrange, so the arithmetic is tested directly (same
+ * reasoning as the fixup-lookup case below). */
+static void test_kstr_read_budget_clips_at_the_canonical_half(void)
+{
+    char probe[8];
+    int  clipped = 0xFF;
+
+    /* An ordinary kernel address: cap binds, nothing is clipped. */
+    TEST_ASSERT_EQ(kstr_read_budget(probe, sizeof probe, &clipped), 7u,
+                   "an ordinary source gets the full cap-1 payload budget");
+    TEST_ASSERT_EQ((uint32_t)clipped, 0u, "and is not reported as clipped");
+
+    /* The LAST address of the low half: exactly one byte remains before the
+     * canonical hole, so the budget must be 1 and the clip must be reported. */
+    TEST_ASSERT_EQ(kstr_read_budget((const void *)0x00007FFFFFFFFFFFull, 8u,
+                                    &clipped), 1u,
+                   "the last low-half address leaves a one-byte budget");
+    TEST_ASSERT_EQ((uint32_t)clipped, 1u, "and reports the clip");
+
+    /* Four bytes short of the hole: the clip still binds, at 5. */
+    TEST_ASSERT_EQ(kstr_read_budget((const void *)0x00007FFFFFFFFFFBull, 8u,
+                                    &clipped), 5u,
+                   "a source near the hole is clipped to what remains in-half");
+    TEST_ASSERT_EQ((uint32_t)clipped, 1u, "and reports the clip");
+
+    /* Five bytes short with cap 6 (budget 5): the half boundary and the cap
+     * bind at the same value, and that is NOT a clip -- reporting one would
+     * turn an ordinary truncation into an "unreadable" verdict. */
+    TEST_ASSERT_EQ(kstr_read_budget((const void *)0x00007FFFFFFFFFFBull, 6u,
+                                    &clipped), 5u,
+                   "cap and boundary agreeing yields that budget");
+    TEST_ASSERT_EQ((uint32_t)clipped, 0u, "and is not a clip");
+
+    /* THE TOP OF THE ADDRESS SPACE. The high half ends at UINT64_MAX, so a
+     * budget computed as (end - a) with an exclusive end would wrap to a huge
+     * value here and hand the loop an unbounded walk. */
+    TEST_ASSERT_EQ(kstr_read_budget((const void *)~(uint64_t)0, 8u, &clipped),
+                   1u, "the top address yields one byte, not a wrapped budget");
+    TEST_ASSERT_EQ((uint32_t)clipped, 1u, "and reports the clip");
+
+    /* The BASE of the high half has the whole upper half ahead of it, so cap
+     * binds -- the same arithmetic must not mistake a half start for an end. */
+    TEST_ASSERT_EQ(kstr_read_budget((const void *)0xFFFF800000000000ull, 8u,
+                                    &clipped), 7u,
+                   "the high-half base gets the full budget");
+    TEST_ASSERT_EQ((uint32_t)clipped, 0u, "and is not clipped");
+
+    /* cap 0 has no payload and no terminator slot. */
+    TEST_ASSERT_EQ(kstr_read_budget(probe, 0u, &clipped), 0u, "cap 0 -> 0");
+    TEST_ASSERT_EQ((uint32_t)clipped, 0u, "and is not a clip");
+}
+
+/* The exception-table routing decision, testable without provoking a real #PF
+ * (same reasoning as the __kread_u8 lookup case): a mistyped label or a dropped
+ * direction check would still boot, and the loop would either stop recovering
+ * or start swallowing unrelated kernel WRITE faults. */
+static void test_kstr_read_fixup_lookup_routes_reads_only(void)
+{
+    extern char __kstr_read_fault[], __kstr_read_fixup[];
+    uint64_t fault = (uint64_t)(uintptr_t)__kstr_read_fault;
+    uint64_t out   = 0u;
+
+    TEST_ASSERT_EQ((uint32_t)kstr_read_fixup_lookup(fault, 0, &out), 1u,
+                   "a read fault at the guarded load is ours");
+    TEST_ASSERT_EQ(out, (uint64_t)(uintptr_t)__kstr_read_fixup,
+                   "and routes to this loop's own fixup");
+
+    out = 0u;
+    TEST_ASSERT_EQ((uint32_t)kstr_read_fixup_lookup(fault, 1, &out), 0u,
+                   "a WRITE fault at that RIP is not ours (dst is trusted)");
+    TEST_ASSERT_EQ(out, 0u, "and leaves the caller's fixup untouched");
+
+    TEST_ASSERT_EQ((uint32_t)kstr_read_fixup_lookup(fault + 1u, 0, &out), 0u,
+                   "a read fault at any other RIP is not ours");
+    TEST_ASSERT_EQ((uint32_t)kstr_read_fixup_lookup(fault, 0, (uint64_t *)0), 0u,
+                   "a NULL fixup out-parameter is rejected");
+
+    /* The two guarded loads must not share a label: page_fault_handler matches
+     * the EXACT faulting instruction, so an overlap would route one primitive's
+     * fault into the other's fixup. */
+    TEST_ASSERT_EQ((uint32_t)kread_u8_fixup_lookup(fault, 0, &out), 0u,
+                   "the byte-load lookup does not claim the string-loop label");
 }
 
 /* The refund must leave charges it was NOT asked for standing. Production passes
@@ -1116,6 +1299,21 @@ void test_register_serial_emergency(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: __kread_u8 fixup routing",
                             test_serial_emergency_kread_u8_fixup_routing,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: guarded string copy terminates",
+                            test_kstr_read_guarded_copies_and_terminates,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: guarded string copy is bounded",
+                            test_kstr_read_guarded_bounds_the_copy,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: guarded string copy reports unreadable",
+                            test_kstr_read_guarded_reports_unreadable,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: guarded string clips at canonical half",
+                            test_kstr_read_budget_clips_at_the_canonical_half,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: guarded string fixup routing",
+                            test_kstr_read_fixup_lookup_routes_reads_only,
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: slot reuse reissues the freed slot",
                             test_serial_emergency_slot_reuse_picks_the_freed_slot,

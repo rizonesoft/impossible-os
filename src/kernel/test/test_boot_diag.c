@@ -9,6 +9,9 @@
 #include "kernel/panic.h"
 #include "kernel/klog.h"
 #include "kernel/time_iso.h"
+#include "kernel/kchecksum.h"   /* kcrc32 -- the panic record's checksum */
+#include "kernel/drivers/serial.h"  /* PANIC_CTX_* -- the declared panic context */
+#include "kernel/cpu_security.h"    /* kstr_read_guarded_calls -- ctx gate probe */
 #include "libc/string.h"
 
 /* Off-stack restore target (struct panic_evidence is one 4 KiB page). */
@@ -269,9 +272,9 @@ static void test_panic_evidence(void)
     uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
 
     /* Canonical IEEE CRC-32 check value: crc32("123456789") == 0xCBF43926. */
-    TEST_ASSERT_EQ(panic_crc32("123456789", 9u), 0xCBF43926u, "CRC-32 check value");
-    TEST_ASSERT_EQ(panic_crc32("", 0u), 0u, "CRC-32 of empty input is 0");
-    TEST_ASSERT_EQ(panic_crc32("a", 1u), 0xE8B7BE43u, "CRC-32 single-byte known vector");
+    TEST_ASSERT_EQ(kcrc32("123456789", 9u), 0xCBF43926u, "CRC-32 check value");
+    TEST_ASSERT_EQ(kcrc32("", 0u), 0u, "CRC-32 of empty input is 0");
+    TEST_ASSERT_EQ(kcrc32("a", 1u), 0xE8B7BE43u, "CRC-32 single-byte known vector");
 
     /* Well-formed record built in place is restored, then the magic is cleared
      * so the same crash is never reported twice. (Built manually -- not via the
@@ -282,7 +285,7 @@ static void test_panic_evidence(void)
     ev->size          = (uint32_t)sizeof *ev;
     ev->bugcheck_code = 0xABCDu;
     ev->rip           = 0x1234u;
-    ev->crc32         = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
+    ev->crc32         = kcrc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic         = PANIC_EVIDENCE_MAGIC;
     TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1, "valid record restored");
     TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0xABCDu, "restored bugcheck_code matches");
@@ -316,7 +319,7 @@ static void test_panic_evidence(void)
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION + 99u;
     ev->size    = (uint32_t)sizeof *ev;
-    ev->crc32   = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
+    ev->crc32   = kcrc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic   = PANIC_EVIDENCE_MAGIC;
     TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "wrong version rejected");
 
@@ -326,7 +329,7 @@ static void test_panic_evidence(void)
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev - 8u;
-    ev->crc32   = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
+    ev->crc32   = kcrc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic   = PANIC_EVIDENCE_MAGIC;
     TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "size mismatch rejected");
     TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "size-mismatch record dropped");
@@ -339,7 +342,7 @@ static void test_panic_evidence(void)
     ev->version     = PANIC_EVIDENCE_VERSION;
     ev->size        = (uint32_t)sizeof *ev;
     ev->stage_count = PANIC_EVIDENCE_STAGES + 1u;
-    ev->crc32       = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
+    ev->crc32       = kcrc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic       = PANIC_EVIDENCE_MAGIC;
     TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "over-cap stage_count rejected");
     TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "over-cap stage_count record dropped");
@@ -348,7 +351,7 @@ static void test_panic_evidence(void)
     ev->version    = PANIC_EVIDENCE_VERSION;
     ev->size       = (uint32_t)sizeof *ev;
     ev->klog_count = PANIC_EVIDENCE_KLOGS + 1u;
-    ev->crc32      = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
+    ev->crc32      = kcrc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic      = PANIC_EVIDENCE_MAGIC;
     TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "over-cap klog_count rejected");
 
@@ -361,7 +364,7 @@ static void test_panic_evidence(void)
     ev->size    = (uint32_t)sizeof *ev;
     memset((void *)(uintptr_t)ev->message, 'A', sizeof ev->message);   /* no NUL anywhere */
     memset((void *)(uintptr_t)ev->file,    'B', sizeof ev->file);
-    ev->crc32   = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
+    ev->crc32   = kcrc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic   = PANIC_EVIDENCE_MAGIC;
     TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1, "valid record with unterminated strings restored");
     TEST_ASSERT_EQ((uint32_t)s_pe_out.message[sizeof s_pe_out.message - 1u], 0u, "message force-terminated");
@@ -467,7 +470,7 @@ static void test_panic_evidence_epoch(void)
         memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
         s_pe_fixture.version = PANIC_EVIDENCE_VERSION;
         s_pe_fixture.size    = (uint32_t)sizeof s_pe_fixture;
-        s_pe_fixture.crc32   = panic_crc32((const uint8_t *)&s_pe_fixture + off,
+        s_pe_fixture.crc32   = kcrc32((const uint8_t *)&s_pe_fixture + off,
                                            s_pe_fixture.size - off);
         s_pe_fixture.magic   = PANIC_EVIDENCE_MAGIC;    /* magic set, epoch 0 */
         TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 0,
@@ -545,10 +548,208 @@ static void test_klog_panic_snapshot(void)
     TEST_ASSERT_EQ(klog_panic_snapshot((klog_entry_t *)0, 3u), 0u, "NULL out -> 0");
 }
 
+/* The RETIRED bit-at-a-time panic_crc32, kept here and nowhere else.
+ *
+ * Section 24 replaced it with the table-driven kcrc32 on the argument that both
+ * are the reflected IEEE CRC-32 (poly 0xEDB88320, init/xorout 0xFFFFFFFF). That
+ * argument is not what the collector and the Phase-0 restore rely on: they rely
+ * on producing the SAME 32 bits over the SAME bytes, and a record written by an
+ * older kernel is validated on the next boot by whichever routine is linked
+ * then. So the retired algorithm lives on as the test oracle, and the identity
+ * is asserted over the real record rather than reasoned about in a comment. */
+static uint32_t crc32_bitwise_reference(const void *data, uint32_t len)
+{
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFFu;
+    for (uint32_t i = 0u; i < len; i++) {
+        crc ^= (uint32_t)p[i];
+        for (int b = 0; b < 8; b++)
+            crc = (crc & 1u) ? ((crc >> 1) ^ 0xEDB88320u) : (crc >> 1);
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+static void test_panic_crc_table_matches_bitwise(void)
+{
+    volatile struct panic_evidence *ev = &s_pe_fixture;
+    uint32_t off  = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+    uint32_t body = (uint32_t)sizeof *ev - off;
+    const uint8_t *p;
+
+    /* 1. Known vectors: the two routines agree with the published check value,
+     *    so an oracle that drifted with the code would be caught here first. */
+    TEST_ASSERT_EQ(crc32_bitwise_reference("123456789", 9u), 0xCBF43926u,
+                   "reference oracle still produces the IEEE check value");
+    TEST_ASSERT_EQ(kcrc32("123456789", 9u), 0xCBF43926u,
+                   "kcrc32 produces the IEEE check value");
+    TEST_ASSERT_EQ(kcrc32("", 0u), crc32_bitwise_reference("", 0u),
+                   "empty input agrees");
+    TEST_ASSERT_EQ(kcrc32("a", 1u), crc32_bitwise_reference("a", 1u),
+                   "single byte agrees");
+
+    /* 2. THE FULL RECORD, over the exact byte range the collector checksums.
+     *    Filled with a non-repeating pattern so every table index is exercised
+     *    (a zeroed page would agree under almost any bug). */
+    p = (const uint8_t *)(uintptr_t)ev;
+    for (uint32_t i = 0u; i < sizeof *ev; i++)
+        ((volatile uint8_t *)ev)[i] = (uint8_t)(i * 31u + (i >> 3));
+
+    TEST_ASSERT_EQ(kcrc32(p + off, body), crc32_bitwise_reference(p + off, body),
+                   "full-record CRC is byte-identical to the retired routine");
+
+    /* 3. THE PHASE-0 RESTORE PATH, end to end: a record checksummed by the
+     *    RETIRED routine -- which is what a page written by an older kernel
+     *    holds -- must still restore under the table-driven one. */
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
+    ev->epoch         = 1u;
+    ev->version       = PANIC_EVIDENCE_VERSION;
+    ev->size          = (uint32_t)sizeof *ev;
+    ev->bugcheck_code = 0x5A5Au;
+    ev->crc32         = crc32_bitwise_reference(p + off, ev->size - off);
+    ev->magic         = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1,
+                   "record checksummed by the retired routine still restores");
+    TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0x5A5Au,
+                   "restored payload survives the checksum swap");
+
+    /* 4. And the swap did not make the check vacuous: one flipped bit in the
+     *    covered body must still be rejected. */
+    ((volatile uint8_t *)ev)[off] ^= 0x01u;
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0,
+                   "a single flipped body bit is still rejected");
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
+}
+
+/* Record population against the FIXTURE page, which is the first test surface
+ * this code has ever had: the collector proper can only run on the live 0x80000
+ * page through panic_evidence_take, and taking it from a test would lock a later
+ * real panic out of the record. Section 24 split the content half out for
+ * exactly this.
+ *
+ * The load-bearing assertion is the CONTEXT one. Passing `ctx` down instead of
+ * re-deriving it is the whole point of the change, and "derived once" cannot be
+ * asserted from a signature -- so the derivation is counted. */
+static void test_panic_evidence_populate_derives_ctx_once(void)
+{
+    struct panic_evidence *ev = &s_pe_fixture;
+    uint32_t off  = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+    uint64_t params[4] = { 0x11u, 0x22u, 0x33u, 0x44u };
+    uint32_t before;
+
+    memset(ev, 0, sizeof *ev);
+
+    /* The caller derives the context ONCE, exactly as panic_screen does. */
+    panic_declared_ctx_calls_reset();
+    {
+        uint32_t ctx = panic_declared_ctx((struct interrupt_frame *)0);
+        TEST_ASSERT_EQ(panic_declared_ctx_calls(), 1u,
+                       "the entry derivation is the first and only one so far");
+        TEST_ASSERT_EQ(ctx, PANIC_CTX_NORMAL,
+                       "a NULL frame outside NMI is normal context");
+
+        before = panic_declared_ctx_calls();
+        panic_evidence_populate(ev, (struct interrupt_frame *)0, 0xDEADu,
+                                params, "populated by the section-24 fixture",
+                                "test_boot_diag.c", 4242u, 3u, ctx);
+    }
+
+    /* THE ASSERTION: population re-derived nothing. Before section 24 the
+     * collector called panic_declared_ctx itself, which reads the NMI depth
+     * through cpu_panic_safe_apic_id() -- a CPUID, serializing and a hypervisor
+     * exit under KVM/WHPX -- inside the window before the record is durable. */
+    TEST_ASSERT_EQ(panic_declared_ctx_calls(), before,
+                   "populating the record derives the panic context ZERO times");
+
+    /* And the record it produced is a real one: header, payload, and a checksum
+     * that the restore path accepts. */
+    TEST_ASSERT_EQ(ev->version, PANIC_EVIDENCE_VERSION, "version stamped");
+    TEST_ASSERT_EQ(ev->size, (uint32_t)sizeof *ev, "size stamped");
+    TEST_ASSERT_EQ(ev->bugcheck_code, 0xDEADu, "bugcheck code recorded");
+    TEST_ASSERT_EQ((uint32_t)ev->bugcheck_params[3], 0x44u,
+                   "all four STOP parameters recorded");
+    TEST_ASSERT_EQ(ev->line, 4242u, "source line recorded");
+    TEST_ASSERT_EQ(ev->cpu_id, 3u,
+                   "the identity passed in is recorded, not re-derived");
+    TEST_ASSERT_EQ((uint32_t)ev->message[0], (uint32_t)'p',
+                   "the message was copied through the guarded string primitive");
+    TEST_ASSERT_EQ((uint32_t)ev->file[0], (uint32_t)'t', "and so was the file");
+    TEST_ASSERT_EQ(kcrc32((const uint8_t *)ev + off, ev->size - off), ev->crc32,
+                   "the CRC populate wrote covers the record it wrote");
+
+    /* Populate must NOT publish: the publication word is the collector's, and
+     * an epoch or magic written here would make a half-built record readable. */
+    TEST_ASSERT_EQ(ev->magic, 0u, "populate leaves the magic unpublished");
+    TEST_ASSERT_EQ(ev->epoch, 0u, "and leaves the epoch unset");
+
+    /* A NULL record is a no-op rather than a fault. */
+    panic_evidence_populate((struct panic_evidence *)0,
+                            (struct interrupt_frame *)0, 0u, params, "x", "y",
+                            0u, 0u, PANIC_CTX_NORMAL);
+
+    memset(ev, 0, sizeof *ev);
+}
+
+/* The record's string copies must HONOUR the context they are handed, and that
+ * is not observable from the record: for a readable source the guarded and raw
+ * paths write identical bytes, so a pe_copy that ignored `ctx` and always took
+ * the guarded reader would satisfy every content assertion above. In NMI
+ * context that regression is the dangerous one -- the guarded load's fixup
+ * returns through IRETQ, re-arming NMI delivery while the outer NMI still owns
+ * IST2 -- so the guarded reader is counted instead of inferred. */
+static void test_panic_evidence_populate_honours_ctx(void)
+{
+    struct panic_evidence *ev = &s_pe_fixture;
+    uint64_t params[4] = { 0u, 0u, 0u, 0u };
+    uint32_t normal_calls, nmi_calls, unknown_calls;
+
+    memset(ev, 0, sizeof *ev);
+
+    /* Readable literals throughout: the point is WHICH path ran, not what it
+     * produced, and a faulting source would confound the two. */
+    kstr_read_guarded_calls_reset();
+    panic_evidence_populate(ev, (struct interrupt_frame *)0, 1u, params,
+                            "readable message", "readable file", 1u, 0u,
+                            PANIC_CTX_NORMAL);
+    normal_calls = kstr_read_guarded_calls();
+    TEST_ASSERT(normal_calls > 0u,
+                "NORMAL context routes the record's copies through the guarded reader");
+
+    kstr_read_guarded_calls_reset();
+    panic_evidence_populate(ev, (struct interrupt_frame *)0, 1u, params,
+                            "readable message", "readable file", 1u, 0u,
+                            PANIC_CTX_NMI);
+    nmi_calls = kstr_read_guarded_calls();
+    TEST_ASSERT_EQ(nmi_calls, 0u,
+                   "NMI context never enters the guarded reader");
+
+    kstr_read_guarded_calls_reset();
+    panic_evidence_populate(ev, (struct interrupt_frame *)0, 1u, params,
+                            "readable message", "readable file", 1u, 0u,
+                            PANIC_CTX_UNKNOWN);
+    unknown_calls = kstr_read_guarded_calls();
+    TEST_ASSERT_EQ(unknown_calls, 0u,
+                   "UNKNOWN context never enters the guarded reader either");
+
+    /* The record is still populated on the forbidden paths -- the context gate
+     * chooses the READER, never whether the crash gets recorded. */
+    TEST_ASSERT_EQ((uint32_t)ev->message[0], (uint32_t)'r',
+                   "the message is copied in NMI context too, just unguarded");
+
+    memset(ev, 0, sizeof *ev);
+}
+
 void test_register_boot_diag(void)
 {
     test_suite_register_cat("boot: panic forensic evidence",
                             test_panic_evidence, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: panic CRC table-vs-bitwise identity",
+                            test_panic_crc_table_matches_bitwise, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: panic record population derives ctx once",
+                            test_panic_evidence_populate_derives_ctx_once,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot: panic record population honours panic context",
+                            test_panic_evidence_populate_honours_ctx,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("boot: panic evidence epoch lifecycle",
                             test_panic_evidence_epoch, TEST_CAT_BOOT);
     test_suite_register_cat("boot: klog panic snapshot",

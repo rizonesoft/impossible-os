@@ -450,6 +450,170 @@ int __kread_u8(uint8_t *out, const void *addr)
     return 0;
 }
 
+/* How many payload bytes __kstr_read_guarded's loop may touch, as a pure
+ * function for the same reason kread_u8_fixup_lookup is one: the boundary
+ * arithmetic is what silently rots, and it cannot be exercised through the loop
+ * itself without an address that both sits on a canonical-half edge AND is
+ * mapped -- which no test can arrange.
+ *
+ * Clips the walk to the canonical half `src` starts in. Both endpoints being
+ * canonical is NOT sufficient: a range straddling the hole has canonical ends
+ * and a non-canonical interior. A per-byte canonical test would give back
+ * exactly what the single loop buys, whereas staying inside one half costs
+ * nothing per byte -- every address between a canonical base and the last
+ * address of its own half is canonical.
+ *
+ * PRECONDITION: `src` canonical, `cap` >= 1 (the loop's caller has already
+ * rejected the rest). Reserves one byte of `cap` for the terminator and sets
+ * *clipped when the half boundary, not `cap`, is what bounded the walk. */
+uint32_t kstr_read_budget(const void *src, uint32_t cap, int *clipped)
+{
+    uint64_t a = (uint64_t)(uintptr_t)src;
+    uint64_t half_last, avail, n;
+
+    if (clipped)
+        *clipped = 0;
+    if (!cap)
+        return 0u;
+
+    half_last = ((a >> MM_CANONICAL_SHIFT_4LVL) == 0ull)
+                    ? ((1ull << MM_CANONICAL_SHIFT_4LVL) - 1ull)
+                    : ~(uint64_t)0;
+    /* >= 1 and cannot wrap: a <= half_last by construction, so the subtraction
+     * is never negative and the +1 never overflows a 64-bit count for any
+     * address in either half. */
+    avail = half_last - a + 1ull;
+
+    n = (uint64_t)cap - 1ull;              /* payload budget; terminator reserved */
+    if (n > avail) {
+        n = avail;
+        if (clipped)
+            *clipped = 1;
+    }
+    return (uint32_t)n;                    /* n <= cap - 1, so the cast is exact */
+}
+
+/* Fault-recoverable BOUNDED C-string read -- the same guarantee __kread_u8
+ * gives one byte, given to a whole string in ONE protected loop.
+ *
+ * WHY THIS EXISTS: the panic collector copies ~2,900 bytes of caller-supplied
+ * text into the evidence record before that record is durable, and every byte
+ * was a separate noinline call that re-tested canonicality and re-did the fixup
+ * bookkeeping. The saving is not the instruction count alone; it is that all of
+ * it is spent in the window between the fault and the first durable byte, which
+ * is precisely the window a second fault destroys.
+ *
+ * The guarded instruction is the LOAD (its RIP == __kstr_read_fault); on a #PF
+ * page_fault_handler redirects to __kstr_read_fixup, which is placed AFTER the
+ * `ok` store so a fault is distinguishable from either normal exit. The index
+ * advances only AFTER a successful store, so the value the fixup inherits is
+ * exactly the number of bytes already in `dst` -- the readable prefix, with no
+ * separate residual to keep in step.
+ *
+ * The STORE is deliberately unguarded: `dst` is kernel-owned by contract, so a
+ * faulting store is a kernel bug and must stay terminal rather than be silently
+ * absorbed by this fixup.
+ *
+ * noinline so the two global labels are emitted exactly once. */
+#ifdef KERNEL_TESTS
+/* Counts entries into the guarded loop. The panic path's context gate decides
+ * whether the guarded reader is used AT ALL -- in NMI context the fixup's IRETQ
+ * would re-arm NMI delivery over live IST frames -- and for a READABLE string
+ * the guarded and raw paths produce identical bytes, so output alone cannot
+ * tell a caller that honours `ctx` from one that ignores it. Test builds only. */
+static uint32_t s_kstr_read_guarded_calls;
+
+uint32_t kstr_read_guarded_calls(void)
+{
+    return __atomic_load_n(&s_kstr_read_guarded_calls, __ATOMIC_RELAXED);
+}
+
+void kstr_read_guarded_calls_reset(void)
+{
+    __atomic_store_n(&s_kstr_read_guarded_calls, 0u, __ATOMIC_RELAXED);
+}
+#endif /* KERNEL_TESTS */
+
+__attribute__((noinline))
+uint32_t __kstr_read_guarded(char *dst, const char *src, uint32_t cap,
+                             uint32_t *stop)
+{
+#ifdef KERNEL_TESTS
+    __atomic_fetch_add(&s_kstr_read_guarded_calls, 1u, __ATOMIC_RELAXED);
+#endif
+    uint64_t a       = (uint64_t)(uintptr_t)src;
+    uint64_t n;
+    uint64_t idx     = 0u;
+    int      ok      = 0;
+    int      clipped = 0;
+
+    if (!dst || !cap) {
+        if (stop)
+            *stop = KSTR_STOP_CAP;
+        return 0u;
+    }
+    /* A NULL or non-canonical source is unreadable, not empty: reporting it as
+     * a clean terminator is what would let a corrupt pointer be rendered as "no
+     * reason given". __kread_u8 rejects both the same way. */
+    if (!src || !MM_IS_CANONICAL_4LVL(a)) {
+        dst[0] = '\0';
+        if (stop)
+            *stop = KSTR_STOP_NONCANON;
+        return 0u;
+    }
+
+    n = kstr_read_budget(src, cap, &clipped);
+
+    __asm__ volatile (
+        "1:\n\t"
+        "cmpq %[n], %[i]\n\t"
+        "jae 2f\n\t"
+        ".globl __kstr_read_fault\n\t"
+        ".globl __kstr_read_fixup\n\t"
+        "__kstr_read_fault:\n\t"
+        "movzbl (%[s],%[i]), %%edx\n\t"    /* THE guarded load */
+        "testb %%dl, %%dl\n\t"
+        "jz 2f\n\t"
+        "movb %%dl, (%[d],%[i])\n\t"       /* trusted dst -- NOT guarded */
+        "incq %[i]\n\t"
+        "jmp 1b\n\t"
+        "2:\n\t"
+        "movl $1, %[ok]\n\t"
+        "__kstr_read_fixup:\n\t"
+        : [i]"+r"(idx), [ok]"+r"(ok)
+        : [s]"r"(src), [d]"r"(dst), [n]"r"(n)
+        : "rdx", "memory", "cc");
+
+    dst[idx] = '\0';                        /* idx <= n <= cap - 1 */
+
+    if (stop) {
+        if (!ok)
+            *stop = KSTR_STOP_FAULT;
+        else if (idx < n)
+            *stop = KSTR_STOP_NUL;          /* the loop exited on the terminator */
+        else if (clipped)
+            *stop = KSTR_STOP_NONCANON;     /* ran into the canonical hole */
+        else
+            *stop = KSTR_STOP_CAP;
+    }
+    return (uint32_t)idx;
+}
+
+/* Pure routing decision for the __kstr_read_guarded loop -- same shape and same
+ * rationale as kread_u8_fixup_lookup below, with its own label pair because the
+ * handler matches the EXACT faulting instruction. */
+int kstr_read_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out)
+{
+    extern char __kstr_read_fault[], __kstr_read_fixup[];
+
+    if (is_write || !fixup_out)
+        return 0;
+    if (rip != (uint64_t)(uintptr_t)__kstr_read_fault)
+        return 0;
+    *fixup_out = (uint64_t)(uintptr_t)__kstr_read_fixup;
+    return 1;
+}
+
 /* Pure routing decision for the __kread_u8 guarded load, factored out of
  * page_fault_handler so the wiring is testable without provoking a real #PF.
  *

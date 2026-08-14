@@ -414,6 +414,71 @@ int __kread_u8(uint8_t *out, const void *addr);
  * would swallow an unrelated kernel bug. */
 int kread_u8_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out);
 
+/* Why the guarded string walk ended. The panic path distinguishes them because
+ * a truncated reason and an unreadable one say different things about the
+ * crash: NUL and CAP are ordinary outcomes, FAULT and NONCANON both mean the
+ * source pointer was part of the corruption being reported. */
+#define KSTR_STOP_NUL       0u   /* source terminator reached (and stored)     */
+#define KSTR_STOP_CAP       1u   /* budget exhausted; the string continues     */
+#define KSTR_STOP_FAULT     2u   /* the guarded load took a #PF                */
+#define KSTR_STOP_NONCANON  3u   /* the walk reached a non-canonical address   */
+
+/* Fault-recoverable BOUNDED C-string read from a possibly-corrupt KERNEL
+ * address: the same guarantee as __kread_u8 over a whole string, in ONE
+ * protected loop instead of a call per byte.
+ *
+ * The panic path copies ~2,900 bytes of caller-supplied text into the evidence
+ * record before that record is durable (a description, a __FILE__, 16
+ * boot-stage messages, 8 klog entries), and every one of those bytes went
+ * through a separate noinline call with its own canonical test and fixup
+ * bookkeeping. The cost is paid in the exact window a panic exists to survive,
+ * so the walk is hoisted into a single guarded loop whose fault label is the
+ * load itself.
+ *
+ * `dst` must be a TRUSTED, writable, kernel-owned buffer of at least `cap`
+ * bytes: only the LOAD is protected, so a faulting store is a kernel bug and
+ * stays terminal. `src` is the untrusted side.
+ *
+ * Always NUL-terminates when cap > 0. Returns the number of source bytes stored
+ * EXCLUDING the terminator, so a fault leaves exactly the readable prefix, and
+ * writes the reason to *stop (KSTR_STOP_*; may be NULL).
+ *
+ * CANONICAL RANGE: a bounded walk cannot canonical-test every byte address
+ * without giving back what it saves, so the range is clipped to the canonical
+ * half `src` starts in, and a walk that reaches that clip reports NONCANON
+ * rather than a clean terminator. Otherwise a source running into the canonical
+ * hole would be presented as a complete string, which is the one outcome the
+ * per-byte walk never produced (__kread_u8 rejects a non-canonical address the
+ * same way it reports a fault).
+ *
+ * SAME CONTEXT TABLE AS __kread_u8 above: safe from #DF/#MC, UNSAFE from NMI,
+ * and no recovery at all once GS is corrupt. */
+uint32_t __kstr_read_guarded(char *dst, const char *src, uint32_t cap,
+                             uint32_t *stop);
+
+/* The exception-table routing decision for __kstr_read_guarded's loop, as a
+ * pure function for the same reason kread_u8_fixup_lookup is one. */
+int kstr_read_fixup_lookup(uint64_t rip, int is_write, uint64_t *fixup_out);
+
+/* __kstr_read_guarded's canonical-half clip, exposed as a pure function so the
+ * boundary arithmetic is testable: exercising it through the loop would need an
+ * address that is BOTH on a canonical-half edge and mapped, which no test can
+ * arrange. Returns the payload bytes the walk may touch (one byte of `cap` is
+ * reserved for the terminator) and sets *clipped when the half boundary rather
+ * than `cap` is what bounded it. Preconditions: `src` canonical, `cap` >= 1. */
+uint32_t kstr_read_budget(const void *src, uint32_t cap, int *clipped);
+
+#ifdef KERNEL_TESTS
+/* Entry counter for the guarded loop. The panic path's context gate decides
+ * whether the guarded reader runs AT ALL, and for a READABLE string the guarded
+ * and raw paths emit identical bytes -- so a caller that ignored `ctx` and
+ * always took the guarded path would be invisible to any output assertion, and
+ * in NMI context that regression is the one the gate exists to prevent. Test
+ * builds only. */
+uint32_t kstr_read_guarded_calls(void);
+void     kstr_read_guarded_calls_reset(void);
+#endif /* KERNEL_TESTS */
+
 /* Exception-table label symbols emitted by the __uaccess_* primitives.
  * page_fault_handler compares the faulting RIP to the *_fault labels and, when
  * the fault direction matches the user operand, redirects to the *_fixup label:

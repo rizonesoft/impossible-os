@@ -388,6 +388,7 @@ int klog_disk_enable(void)
 #include "kernel/boot_init.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/user_range.h"   /* USER_ELF_END (0x900000) crash-region floor */
+#include "kernel/kchecksum.h"       /* kcrc32 -- the tree's one table-driven CRC-32 */
 
 /* Serialized entry: no pointers, fixed-size for physical memory layout */
 typedef struct {
@@ -415,23 +416,14 @@ static uint32_t s_crash_region_size;  /* KLOG_CRASH_PAGES * 4096 */
 static klog_crash_entry_t s_recovered[KLOG_RING_SIZE];
 static uint32_t           s_recovered_count;
 
-/* Simple inline CRC32 (IEEE 802.3, polynomial 0xEDB88320) */
-static uint32_t crash_crc32(const void *data, uint32_t len)
-{
-    const uint8_t *p = (const uint8_t *)data;
-    uint32_t crc = 0xFFFFFFFF;
-    uint32_t i, j;
-    for (i = 0; i < len; i++) {
-        crc ^= p[i];
-        for (j = 0; j < 8; j++) {
-            if (crc & 1)
-                crc = (crc >> 1) ^ 0xEDB88320;
-            else
-                crc >>= 1;
-        }
-    }
-    return crc ^ 0xFFFFFFFF;
-}
+/* CRC-32 over the serialized crash region: `kcrc32` (kernel/kchecksum.h), the
+ * tree's one table-driven IEEE implementation.
+ *
+ * The bit-at-a-time copy that used to live here ran in PANIC CONTEXT over up to
+ * KLOG_RING_SIZE * sizeof(klog_crash_entry_t) bytes -- 164 KB at a full ring,
+ * about 53 instructions per byte -- while the machine was already dying. Same
+ * reflected polynomial, init and xorout as the retired loop, so a crash region
+ * written by an older kernel still passes the check on the next boot. */
 
 static void str_copy_n(char *dst, const char *src, uint32_t max)
 {
@@ -493,7 +485,7 @@ void klog_crash_persist(void)
     hdr->crc32          = 0;  /* zero before computing */
 
     /* CRC32 over all serialized entries */
-    hdr->crc32 = crash_crc32(dst, count * sizeof(klog_crash_entry_t));
+    hdr->crc32 = kcrc32(dst, count * sizeof(klog_crash_entry_t));
 
     /* POST code: crash log persisted */
     POST16(POST16_CRASHLOG);
@@ -569,7 +561,7 @@ void klog_crash_recover(void)
                     klog_crash_entry_t *src = (klog_crash_entry_t *)
                         ((uint8_t *)(uintptr_t)prev_phys + sizeof(klog_crash_header_t));
                     uint32_t expected_crc = prev_hdr->crc32;
-                    uint32_t actual_crc = crash_crc32(src, count * sizeof(klog_crash_entry_t));
+                    uint32_t actual_crc = kcrc32(src, count * sizeof(klog_crash_entry_t));
 
                     if (actual_crc == expected_crc) {
                         /* Valid crash data -- replay to serial */

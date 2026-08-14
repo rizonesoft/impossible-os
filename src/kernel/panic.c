@@ -35,7 +35,8 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/serial_emergency.h"  /* budget refund on the survivable branch */
 #include "kernel/boot_progress.h"   /* boot_stage_history_get (panic evidence) */
-#include "kernel/cpu_security.h"    /* __kread_u8 -- guarded caller-string copy */
+#include "kernel/cpu_security.h"    /* __kstr_read_guarded -- guarded string copy */
+#include "kernel/kchecksum.h"       /* kcrc32 -- the tree's one table-driven CRC-32 */
 #include "kernel/vectors.h"         /* VECTOR_NMI -- panic context declaration */
 #include "kernel/boot_info.h"       /* boot_history seq + g_boot_info.had_panic */
 #include "kernel/mm/pmm.h"          /* pmm_get_free_frames */
@@ -409,6 +410,13 @@ static int panic_try_claim_owner(void)
     return (prev == 0xFFFFFFFF || prev == my_id);
 }
 
+#ifdef KERNEL_TESTS
+/* Counts panic_declared_ctx derivations, for the section-24 assertion that a
+ * panic pays for the context ONCE. Test-build only: the live panic path must
+ * not carry an atomic it never reads. */
+static uint32_t s_panic_declared_ctx_calls;
+#endif
+
 /* ARCH: x86-64 -- will move to arch/ with the rest of the CPU primitives.
  *
  * The declared panic context for this entry: PANIC_CTX_NMI whenever the
@@ -432,12 +440,33 @@ static int panic_try_claim_owner(void)
  * but may still be nested inside one, so the depth test applies there too. */
 uint32_t panic_declared_ctx(struct interrupt_frame *frame)
 {
+#ifdef KERNEL_TESTS
+    /* Derivation counter. The point of passing `ctx` down (section 24) is that
+     * a panic derives it ONCE, and "once" is not something a signature can
+     * assert -- a later edit could quietly re-derive it inside the collector
+     * exactly as this one did, and every test would still pass. Relaxed: the
+     * counter is read only by the same CPU that ran the fixture, and making it
+     * ordered would put a barrier on the panic path to serve a test. */
+    __atomic_fetch_add(&s_panic_declared_ctx_calls, 1u, __ATOMIC_RELAXED);
+#endif
     if (frame && frame->int_no == VECTOR_NMI)
         return PANIC_CTX_NMI;
     if (idt_in_nmi())
         return PANIC_CTX_NMI;
     return PANIC_CTX_NORMAL;
 }
+
+#ifdef KERNEL_TESTS
+uint32_t panic_declared_ctx_calls(void)
+{
+    return __atomic_load_n(&s_panic_declared_ctx_calls, __ATOMIC_RELAXED);
+}
+
+void panic_declared_ctx_calls_reset(void)
+{
+    __atomic_store_n(&s_panic_declared_ctx_calls, 0u, __ATOMIC_RELAXED);
+}
+#endif /* KERNEL_TESTS */
 
 void panic_capture_fpu_state(void)
 {
@@ -692,18 +721,17 @@ static void panic_append_guarded(char *buf, uint32_t cap, uint32_t *pos,
         panic_append(buf, cap, pos, s);
         return;
     }
-    while (*pos + 1u < cap) {
-        uint8_t b;
-        if (__kread_u8(&b, s)) {
+    {
+        uint32_t stop = KSTR_STOP_NUL;
+        uint32_t n    = __kstr_read_guarded(buf + *pos, s, cap - *pos, &stop);
+
+        *pos += n;
+        /* Same two-reason test as panic_snapshot_str: FAULT and NONCANON both
+         * mean the pointer was part of the corruption, and both used to arrive
+         * through the per-byte load's single failure return. */
+        if (stop == KSTR_STOP_FAULT || stop == KSTR_STOP_NONCANON)
             panic_append(buf, cap, pos, "<unreadable>");
-            return;
-        }
-        if (!b)
-            break;
-        buf[(*pos)++] = (char)b;
-        s++;
     }
-    buf[*pos] = '\0';
 }
 
 static void panic_append_hex(char *buf, uint32_t cap, uint32_t *pos, uint64_t v)
@@ -812,21 +840,18 @@ void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
         fixed = PANIC_STR_NO_GUARD;
 
     if (!fixed) {
-        for (; i + 1u < cap; i++) {
-            uint8_t b;
-            if (__kread_u8(&b, &src[i])) {
-                /* A partial read still names the crash; only a pointer that was
-                 * unreadable from its FIRST byte carries no information, and an
-                 * empty line would read as "no reason given" rather than "the
-                 * reason pointer was part of the corruption". */
-                if (i == 0u)
-                    fixed = PANIC_STR_UNREADABLE;
-                break;
-            }
-            if (!b)
-                break;
-            dst[i] = (char)b;
-        }
+        uint32_t stop = KSTR_STOP_NUL;
+
+        i = __kstr_read_guarded(dst, src, cap, &stop);
+        /* A partial read still names the crash; only a pointer that was
+         * unreadable from its FIRST byte carries no information, and an empty
+         * line would read as "no reason given" rather than "the reason pointer
+         * was part of the corruption". NONCANON counts as unreadable exactly as
+         * FAULT does -- the per-byte walk rejected a non-canonical address
+         * through the same return value, and a source running into the
+         * canonical hole must not be rendered as a complete string. */
+        if (i == 0u && (stop == KSTR_STOP_FAULT || stop == KSTR_STOP_NONCANON))
+            fixed = PANIC_STR_UNREADABLE;
     }
 
     if (fixed)
@@ -1627,7 +1652,7 @@ static void panic_evidence_terminal_retry(struct interrupt_frame *frame,
                                           const uint64_t bugcheck_params[4],
                                           const char *desc, const char *file,
                                           uint32_t line, uint32_t me,
-                                          uint32_t token)
+                                          uint32_t token, uint32_t ctx)
 {
     if (!panic_evidence_takeover_pending_for(token))
         return;
@@ -1637,7 +1662,7 @@ static void panic_evidence_terminal_retry(struct interrupt_frame *frame,
      * again would only delay the honest "not recorded" report below. */
     panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc, file,
                            line, me, token, 1,
-                           PANIC_EVIDENCE_QUIESCE_SPINS_RETRY);
+                           PANIC_EVIDENCE_QUIESCE_SPINS_RETRY, ctx);
 
     if (panic_evidence_takeover_pending_for(token))
         serial_write_recoverable(
@@ -1681,18 +1706,23 @@ static void pe_copy(char *dst, uint32_t cap, const char *src, uint32_t ctx)
 {
     uint32_t i = 0u;
 
-    if (src) {
-        for (; i + 1u < cap; i++) {
-            char c;
+    if (!cap)
+        return;
 
-            if (serial_emerg_ctx_allows_guarded_read(ctx)) {
-                uint8_t b;
-                if (__kread_u8(&b, &src[i]))
-                    break;               /* unreadable -- keep what we have */
-                c = (char)b;
-            } else {
-                c = src[i];
-            }
+    if (src) {
+        if (serial_emerg_ctx_allows_guarded_read(ctx)) {
+            /* ONE protected loop for the whole field. The record has 26 of
+             * these (file, message, 16 stage messages, 8 klog subsystem +
+             * message pairs), and a per-byte call paid a canonical test and a
+             * fixup epilogue on each of ~2,900 bytes -- all of it inside the
+             * window between the fault and a durable record. The stop reason is
+             * discarded here on purpose: a truncated field in a forensic record
+             * IS the report, and the record has no room for a marker the reader
+             * would have to distinguish from real text. */
+            return (void)__kstr_read_guarded(dst, src, cap, (uint32_t *)0);
+        }
+        for (; i + 1u < cap; i++) {
+            char c = src[i];
             if (!c)
                 break;
             dst[i] = c;
@@ -1701,70 +1731,33 @@ static void pe_copy(char *dst, uint32_t cap, const char *src, uint32_t ctx)
     dst[i] = '\0';
 }
 
-uint32_t panic_crc32(const void *data, uint32_t len)
+/* Populate a crash record IN PLACE, from `version` through `crc32`.
+ *
+ * Split out of panic_collect_evidence so the record's CONTENT is testable
+ * against a fixture page: the collector's own body could only ever be exercised
+ * on the live 0x80000 page, through panic_evidence_take, which mutates
+ * boot-global ownership and would lock a later real panic out of the record.
+ * Everything that makes the page a SHARED, PUBLISHED object -- arbitration, the
+ * epoch, the un-publish, the zeroing, and the final publication word -- stays in
+ * the collector, so this function writes no publication state and establishes no
+ * ordering that a caller could get wrong.
+ *
+ * `ev` is a plain pointer, not volatile: every byte here is written exactly once
+ * and read back only after the collector's release store, so there is nothing
+ * for a volatile qualifier to protect. The live page is identity-mapped normal
+ * WB memory, so it takes ordinary stores exactly as a BSS fixture does.
+ *
+ * `ctx` is the panic context DERIVED ONCE at entry and passed down -- see the
+ * panic_collect_evidence contract in panic.h. */
+void panic_evidence_populate(struct panic_evidence *ev,
+                             struct interrupt_frame *frame,
+                             uint32_t bugcheck_code,
+                             const uint64_t bugcheck_params[4],
+                             const char *message, const char *file,
+                             uint32_t line, uint32_t me, uint32_t ctx)
 {
-    /* Standard reflected IEEE CRC-32 (poly 0xEDB88320, init/xorout 0xFFFFFFFF);
-     * crc32("123456789") == 0xCBF43926. Same constants as klog.c crash_crc32. */
-    const uint8_t *p = (const uint8_t *)data;
-    uint32_t crc = 0xFFFFFFFFu;
-    for (uint32_t i = 0u; i < len; i++) {
-        crc ^= (uint32_t)p[i];
-        for (int b = 0; b < 8; b++) {
-            if (crc & 1u)
-                crc = (crc >> 1) ^ 0xEDB88320u;
-            else
-                crc = (crc >> 1);
-        }
-    }
-    return crc ^ 0xFFFFFFFFu;
-}
-
-void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
-                            const uint64_t bugcheck_params[4],
-                            const char *message, const char *file, uint32_t line,
-                            uint32_t me, uint32_t token, int terminal,
-                            uint32_t spins_max)
-{
-    /* The page at PANIC_EVIDENCE_ADDR is identity-mapped and reserved by PMM.
-     * Raw physical writes only -- no kmalloc / VFS / printk / spinlock here. */
-    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
-    uint32_t ctx;
-    uint32_t epoch;
-
-    /* On an SMP double-panic two CPUs must not both write the fixed 0x80000
-     * page / shared scratch. panic_evidence_take arbitrates that, and also
-     * enforces the completion rule (a COMPLETE record is never overwritten
-     * except by a terminal invocation taking it from a survivable one). A caller
-     * that never took the page writes nothing, so this function is still correct
-     * standing alone.
-     *
-     * `terminal` is 0 for the EARLY capture, which runs before the panic path
-     * knows whether the machine dies, and 1 when the terminal invocation calls
-     * back in at arbitration to take the page from a survivable owner. */
-    if (!panic_evidence_take(me, token, terminal, spins_max))
+    if (!ev)
         return;
-
-    epoch = panic_evidence_alloc_epoch(
-                (volatile struct panic_evidence *)ev,
-                __atomic_load_n(&s_prev_crash_epoch, __ATOMIC_ACQUIRE));
-
-    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). This also
-     * clears the publication word: from here until the final store the page
-     * reads as "no record", which is exactly what a re-entering invocation must
-     * conclude. */
-    /* UN-PUBLISH ATOMICALLY, then zero the body.
-     *
-     * The zero loop below starts at index 1 because index 0 IS the publication
-     * word, and clearing it with a plain store would make the un-publish the one
-     * transition on that location that is not atomic -- mixed atomic and
-     * non-atomic access to a single object, against the contract in panic.h that
-     * every lifecycle transition on the word is a single atomic store or CAS.
-     * It happens to work on x86-64, where the compiler emits one aligned mov and
-     * TSO orders it, and would not survive the planned ARM64 port. */
-    __atomic_store_n(ev_pubword((volatile struct panic_evidence *)ev), 0ull,
-                     __ATOMIC_RELEASE);
-    for (uint32_t i = 1u; i < sizeof *ev / 8u; i++)
-        ((volatile uint64_t *)ev)[i] = 0u;
 
     ev->version  = PANIC_EVIDENCE_VERSION;
     ev->size     = (uint32_t)sizeof *ev;
@@ -1810,10 +1803,13 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
         ev->r11 = frame->r11; ev->r12 = frame->r12; ev->r13 = frame->r13;
         ev->r14 = frame->r14; ev->r15 = frame->r15;
     }
-    /* Panic context, DECLARED from hardware state rather than probed -- vector
-     * OR NMI nesting depth; see panic_declared_ctx. */
-    ctx = panic_declared_ctx(frame);
-
+    /* `ctx` is the panic context the ENTRY declared (panic_declared_ctx, from
+     * the vector OR the NMI nesting depth) and handed down. Re-deriving it here
+     * cost a second CPUID -- serializing, and a hypervisor exit under KVM/WHPX
+     * -- for a value that cannot legitimately differ: the invocation whose IST
+     * frames the guarded read must not trample is the one already on this
+     * stack, and its context was fixed the moment it was entered. This is the
+     * CONTEXT half of the rule the IDENTITY half (`me`) already follows. */
     pe_copy(ev->file, sizeof ev->file, file, ctx);
     pe_copy(ev->message, sizeof ev->message, message, ctx);
 
@@ -1860,8 +1856,65 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
      * panic_evidence_restore then discards for failing its checksum. */
     {
         uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
-        ev->crc32 = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+        ev->crc32 = kcrc32((const uint8_t *)ev + off, ev->size - off);
+    }
+}
 
+void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
+                            const uint64_t bugcheck_params[4],
+                            const char *message, const char *file, uint32_t line,
+                            uint32_t me, uint32_t token, int terminal,
+                            uint32_t spins_max, uint32_t ctx)
+{
+    /* The page at PANIC_EVIDENCE_ADDR is identity-mapped and reserved by PMM.
+     * Raw physical writes only -- no kmalloc / VFS / printk / spinlock here. */
+    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    uint32_t epoch;
+
+    /* On an SMP double-panic two CPUs must not both write the fixed 0x80000
+     * page / shared scratch. panic_evidence_take arbitrates that, and also
+     * enforces the completion rule (a COMPLETE record is never overwritten
+     * except by a terminal invocation taking it from a survivable one). A caller
+     * that never took the page writes nothing, so this function is still correct
+     * standing alone.
+     *
+     * `terminal` is 0 for the EARLY capture, which runs before the panic path
+     * knows whether the machine dies, and 1 when the terminal invocation calls
+     * back in at arbitration to take the page from a survivable owner. */
+    if (!panic_evidence_take(me, token, terminal, spins_max))
+        return;
+
+    epoch = panic_evidence_alloc_epoch(
+                (volatile struct panic_evidence *)ev,
+                __atomic_load_n(&s_prev_crash_epoch, __ATOMIC_ACQUIRE));
+
+    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). This also
+     * clears the publication word: from here until the final store the page
+     * reads as "no record", which is exactly what a re-entering invocation must
+     * conclude. */
+    /* UN-PUBLISH ATOMICALLY, then zero the body.
+     *
+     * The zero loop below starts at index 1 because index 0 IS the publication
+     * word, and clearing it with a plain store would make the un-publish the one
+     * transition on that location that is not atomic -- mixed atomic and
+     * non-atomic access to a single object, against the contract in panic.h that
+     * every lifecycle transition on the word is a single atomic store or CAS.
+     * It happens to work on x86-64, where the compiler emits one aligned mov and
+     * TSO orders it, and would not survive the planned ARM64 port. */
+    __atomic_store_n(ev_pubword((volatile struct panic_evidence *)ev), 0ull,
+                     __ATOMIC_RELEASE);
+    for (uint32_t i = 1u; i < sizeof *ev / 8u; i++)
+        ((volatile uint64_t *)ev)[i] = 0u;
+
+    /* CONTENT, including the CRC over it. Every CRC-covered byte is written
+     * exactly once, before the CRC: a record is never amended in place, because
+     * an abort between an amendment and its recomputed CRC would leave a
+     * magic-valid record that panic_evidence_restore then discards for failing
+     * its checksum. */
+    panic_evidence_populate(ev, frame, bugcheck_code, bugcheck_params,
+                            message, file, line, me, ctx);
+
+    {
         /* PUBLISH: the completion epoch first, then magic+epoch as ONE aligned
          * 64-bit release store. A single store is what removes the window the
          * old flag-then-magic pair had to reason so carefully about -- there is
@@ -1972,7 +2025,7 @@ static int panic_evidence_restore_body(volatile struct panic_evidence *ev,
          * read walking far past the evidence page -- before the publication-word
          * recheck downstream ever gets to reject the copy. Check-then-use on
          * untrusted shared memory has to use the checked value, not re-read it. */
-        if (panic_crc32(body, (uint32_t)sizeof *ev - off) != ev->crc32) {
+        if (kcrc32(body, sizeof *ev - off) != ev->crc32) {
             ev_drop(ev, observed);                 /* corrupt -> drop */
             return 0;
         }
@@ -2052,7 +2105,7 @@ int panic_evidence_publish_at(volatile struct panic_evidence *page, uint32_t epo
         return 0;
     page->version = PANIC_EVIDENCE_VERSION;
     page->size    = (uint32_t)sizeof *page;
-    page->crc32   = panic_crc32(body, (uint32_t)sizeof *page - off);
+    page->crc32   = kcrc32(body, sizeof *page - off);
     __atomic_store_n(ev_pubword(page), ev_pubword_val(epoch), __ATOMIC_RELEASE);
     return 1;
 }
@@ -2297,7 +2350,8 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * outer invocation never got to write. */
     panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc_snap,
                            have_file ? file_snap : (const char *)0, line,
-                           ev_cpu, ev_token, 0, PANIC_EVIDENCE_QUIESCE_SPINS);
+                           ev_cpu, ev_token, 0, PANIC_EVIDENCE_QUIESCE_SPINS,
+                           snap_ctx);
 
     /* NOTE: emergency serial is NOT armed here. Arming is a SYSTEM-TERMINAL
      * declaration and this function is not yet committed to one -- the async
@@ -2610,7 +2664,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc_snap,
                                have_file ? file_snap : (const char *)0, line,
                                ev_cpu, ev_token, 1,
-                               PANIC_EVIDENCE_QUIESCE_SPINS);
+                               PANIC_EVIDENCE_QUIESCE_SPINS, snap_ctx);
 
         panic_capture_fpu_state();
         panic_build_context(frame, &g_panic_context);
@@ -2662,7 +2716,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
                                       desc_snap,
                                       have_file ? file_snap : (const char *)0,
-                                      line, ev_cpu, ev_token);
+                                      line, ev_cpu, ev_token, snap_ctx);
         serial_write("System halted (no framebuffer for BSOD).\n");
         for (;;) __asm__ volatile ("hlt");
     }
@@ -2905,7 +2959,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
                                       desc_snap,
                                       have_file ? file_snap : (const char *)0,
-                                      line, ev_cpu, ev_token);
+                                      line, ev_cpu, ev_token, snap_ctx);
 
         /* Restart via ACPI reset or triple fault */
         {
@@ -2923,7 +2977,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
                                   desc_snap,
                                   have_file ? file_snap : (const char *)0,
-                                  line, ev_cpu, ev_token);
+                                  line, ev_cpu, ev_token, snap_ctx);
 
     /* No auto-restart -- halt permanently */
     fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);

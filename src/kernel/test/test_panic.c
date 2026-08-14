@@ -20,6 +20,8 @@
 #include "kernel/idt.h"
 #include "kernel/drivers/serial.h"   /* PANIC_CTX_* -- snapshot context table */
 #include "kernel/mm/vmm.h"           /* vmm_get_physical: find an unmapped VA safely */
+#include "kernel/mm/pmm.h"           /* two-frame fixture for the mid-copy fault */
+#include "kernel/cpu_security.h"     /* __kstr_read_guarded + KSTR_STOP_* */
 
 /* ---- Panic-entry string snapshot (single guarded copy for all renderers) ----
  *
@@ -441,6 +443,85 @@ static void test_panic_snap_recovers_real_fault(void)
                 "the same faulting address is never loaded in NMI context");
 }
 
+/* THE MID-COPY FAULT -- the invariant the bounded guarded string loop exists
+ * for, and the one no other case can reach.
+ *
+ * test_panic_snap_recovers_real_fault above faults on the FIRST byte, so it
+ * proves the fixup is wired but says nothing about the index: a clobbered
+ * counter, a misplaced increment, or an increment that ran BEFORE the store
+ * would all still produce an empty result there. What has to hold is that a
+ * fault after N successful bytes leaves exactly those N bytes, terminates at
+ * dst[N], and reports N -- because that prefix is the only crash evidence the
+ * machine gets when a panic description is itself corrupt.
+ *
+ * The fixture is a two-frame contiguous allocation with a guard page installed
+ * over the SECOND frame, so the walk starts on mapped memory the test owns and
+ * runs off the end of it. The guarded-load fixup is consulted ahead of
+ * guard_page_lookup in page_fault_handler, so this recovers rather than
+ * reporting a guard hit. Same technique as the guard cases in test_vmm.c. */
+static void test_kstr_read_guarded_mid_copy_fault(void)
+{
+    uintptr_t base = pmm_alloc_contiguous(2u);
+    char      dst[32];
+    uint32_t  stop = 0xFFu;
+    uint32_t  n;
+    char     *page1_end;
+    uint32_t  i;
+    int       rc;
+
+    TEST_ASSERT(base != 0, "two-frame fixture allocated");
+    if (!base)
+        return;
+
+    /* Five readable bytes ending exactly at the frame boundary, so byte six is
+     * the first address on the guarded page. No NUL: the walk must be stopped
+     * by the fault, not by a terminator. */
+    page1_end = (char *)(base + 4096u) - 5;
+    for (i = 0u; i < 5u; i++)
+        page1_end[i] = (char)('A' + i);
+
+    rc = vmm_install_guard_page(base + 4096u, "TEST: kstr mid-copy fault");
+    if (rc != VMM_GUARD_OK) {
+        /* Only UNAVAILABLE leaves the run PMM-safe. VMM_GUARD_VA_UNSAFE means
+         * the VA is not confirmed reusable (vmm.h:227), so the run is
+         * QUARANTINED rather than freed -- handing such a frame back would give
+         * the next owner an identity address that writes into nothing, into
+         * another frame, or into a read-only page. */
+        if (rc == VMM_GUARD_UNAVAILABLE)
+            pmm_free_contiguous(base, 2u);
+        TEST_SKIP("no guard slot available for the mid-copy fault fixture");
+        return;
+    }
+
+    for (i = 0u; i < sizeof dst; i++)
+        dst[i] = 'Z';
+
+    /* TEST-SIDE-EFFECT-ALLOWED: deliberately walks a readable prefix into a
+     * guarded page so the bounded guarded load takes a real #PF mid-copy and
+     * must be recovered by the fixup with its index intact -- the exact fault
+     * the panic collector's string copy exists to survive. */
+    n = __kstr_read_guarded(dst, page1_end, sizeof dst, &stop);
+
+    TEST_ASSERT_EQ(stop, KSTR_STOP_FAULT,
+                   "a mid-copy fault is reported as a fault, not a terminator");
+    TEST_ASSERT_EQ(n, 5u, "and reports exactly the bytes it stored");
+    TEST_ASSERT_EQ((uint32_t)dst[0], (uint32_t)'A', "prefix byte 0 preserved");
+    TEST_ASSERT_EQ((uint32_t)dst[4], (uint32_t)'E', "prefix byte 4 preserved");
+    TEST_ASSERT_EQ((uint32_t)dst[5], 0u, "the prefix is terminated at dst[n]");
+    TEST_ASSERT_EQ((uint32_t)dst[6], (uint32_t)'Z',
+                   "and nothing past the terminator was written");
+
+    /* TEST_ASSERT_EQ does not abort, so the free must be gated on the RESULT,
+     * not merely follow the assertion: vmm_uninstall_guard_page returns 0 only
+     * when the VA is confirmed to map itself Present+Writable, and the frame
+     * must not be freed on any other outcome (vmm.h:249). A refused uninstall
+     * fails this test AND quarantines the run, which is the safe pair. */
+    rc = vmm_uninstall_guard_page(base + 4096u);
+    TEST_ASSERT_EQ(rc, 0, "guard page removed after the fixture");
+    if (rc == 0)
+        pmm_free_contiguous(base, 2u);
+}
+
 static void test_panic_frames_recovers_real_fault(void)
 {
     uint64_t bad = td_find_unmapped_va();
@@ -531,6 +612,8 @@ void test_register_panic(void)
                             test_panic_frames_walks_chain, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: frame walk withheld in NMI",
                             test_panic_frames_nmi_returns_zero, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: guarded string keeps the prefix on a mid-copy fault",
+                            test_kstr_read_guarded_mid_copy_fault, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: snapshot recovers a real fault",
                             test_panic_snap_recovers_real_fault, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: frame walk recovers a real fault",
