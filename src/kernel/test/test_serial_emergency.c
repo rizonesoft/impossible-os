@@ -1130,8 +1130,12 @@ static void test_serial_emergency_ledger_override_restores(void)
     uint32_t fake = real ^ 1u;
     uint32_t token;
 
-    /* Registered BEFORE the overrides, so identity is restored even if an
-     * assertion below ends the test early. */
+    /* Registered BEFORE the overrides, and NOT because an assertion could end
+     * the test early -- TEST_ASSERT_EQ records a failure and returns, it does
+     * not unwind. The reason is ordering: a cleanup registered after the first
+     * override would not exist yet if this function were ever restructured to
+     * return between the two, and a fake ledger id surviving into later suites
+     * misattributes their charges silently. */
     test_add_action(test_serial_emergency_restore_ledger_identity, 0);
 
     serial_emerg_reset_for_test();
@@ -1279,9 +1283,10 @@ static void test_serial_emergency_walk_cuts_records_at_the_chunk_edge(void)
     TEST_ASSERT_EQ((uint32_t)(memcmp(g_walk.buf, "panic", 5u) == 0), 1u,
                    "and the bytes are the caller's, unaltered");
 
-    /* Exactly one chunk. The guarded read reports a CAPACITY stop here, and a
-     * walk that treated that as the end would still look correct -- so the next
-     * case is the one that actually pins it. */
+    /* Exactly one chunk. The guarded read reports a TERMINATOR stop here, not a
+     * capacity one: the walk passes cap = budget + 1 because the primitive
+     * reserves a byte for the terminator, so a 128-byte string is copied whole
+     * and its NUL is reached. The capacity path is what the next case drives. */
     test_walk_reset();
     serial_emerg_walk_for_test(test_walk_source(SERIAL_EMERG_CHUNK),
                                PANIC_CTX_NORMAL, test_walk_collect, 0);

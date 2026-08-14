@@ -382,11 +382,19 @@ static struct {
 
 #define s_emerg_claim (s_emerg_claim_cl.slot)
 
-/* One line, not merely aligned to one: a ninth allowance would split the array
- * across two lines and silently reintroduce the false sharing the padding
- * exists to remove, so raising the ceiling must fail the build here. */
+/* One line, not merely aligned to one: an array that spilled past the line would
+ * silently reintroduce the false sharing the padding exists to remove, so
+ * raising the ceiling far enough must fail the BUILD rather than the machine.
+ *
+ * Stated as "far enough" and not "a ninth allowance", because the honest bound
+ * is the line: at four bytes each, sixteen allowances still fit and are still
+ * correctly padded. The assert is placed here rather than left to the `_pad`
+ * expression above because that expression's own failure mode is a size_t
+ * underflow producing a multi-exabyte array, whose diagnostic names neither the
+ * ceiling nor the cache line. */
 _Static_assert(SERIAL_EMERG_STUCK_BYTES * sizeof(uint32_t) <= SERIAL_CACHELINE,
-               "emergency claims must fit inside one cache line");
+               "emergency claims must fit inside one cache line -- raising "
+               "SERIAL_EMERG_STUCK_BYTES past the line reintroduces false sharing");
 
 /* Test-only override of the LEDGER identity, so a single-CPU unit test can prove
  * that one CPU's refund cannot consume another CPU's charge -- the whole point of
@@ -412,12 +420,18 @@ static uint32_t serial_emerg_ledger_id(void);
  * predicate fails OPEN and keeps every write. */
 
 /* The terminal-epoch charge (timed-out waits paid for, plus reservations in
- * flight) is packed into the SAME word as the state and owner, so that
- * publishing an epoch and initializing its budget are ONE compare-exchange.
- * Held separately, the clear had to happen before the publishing CAS, and a
- * helper that lost the publication could still land its clear afterwards --
- * replenishing a live epoch by up to eight full waits per stale entrant. Packed,
- * a failed publication mutates nothing at all. */
+ * flight) does NOT live in this word. It is one composite claim per allowance in
+ * s_emerg_claim[] above, and the epoch is initialized by the generation bump
+ * that the publishing compare-exchange performs -- so publishing an epoch and
+ * invalidating every charge in the one before it remain ONE compare-exchange,
+ * which is the property this word was carrying a slot bitmap to get.
+ *
+ * The bitmap was here because a budget held in a SEPARATE word had to be cleared
+ * before the publishing CAS, and a helper that lost the publication could still
+ * land its clear afterwards, replenishing a live epoch by up to eight full waits
+ * per stale entrant. A generation has neither problem: it is one field of this
+ * word, so a failed publication mutates nothing at all, and no reader can
+ * observe a half-cleared budget because nothing is cleared. */
 
 /* Inline port I/O helpers */
 static inline void outb(uint16_t port, uint8_t val)
@@ -858,7 +872,7 @@ void serial_enter_emergency(void)
             cur = want;
         }
 
-        /* `cur` is INIT|owner(|slots|gen) -- ours, or one this CPU is HELPING to
+        /* `cur` is INIT|owner|gen -- ours, or one this CPU is HELPING to
          * finish. Helping is required, not optional: `cli` does not mask NMI or
          * #MC, so an initializer can be interrupted between claiming INIT and
          * publishing, and that nested event is itself terminal so it never
@@ -866,21 +880,23 @@ void serial_enter_emergency(void)
          * must be NO terminal path that returns while the latch is INIT.
          *
          * A helper completes the epoch WITHOUT adopting it -- the owner bits in
-         * `cur` are preserved -- and the SAME compare-exchange clears every slot
-         * and advances the generation, so publication and epoch-start are
-         * indivisible and a losing entrant mutates nothing at all. */
+         * `cur` are preserved -- and the SAME compare-exchange advances the
+         * generation, which is what invalidates every allowance the previous
+         * epoch had outstanding. Publication and epoch-start are therefore
+         * indivisible, and a losing entrant mutates nothing at all. */
         {
-            /* The generation advances in this SAME compare-exchange, for the
-             * same reason the budget clear lives here: publication, epoch start
-             * and epoch identity must be one indivisible act. A generation
-             * bumped separately could be observed by a reserve that had already
-             * read the old value, minting a token for an epoch that no longer
-             * exists. */
+            /* The generation advances in this SAME compare-exchange because
+             * publication, epoch start and epoch identity must be one
+             * indivisible act -- and since every allowance carries the epoch it
+             * was claimed under, this single bump IS the budget clear. A
+             * generation bumped separately could be observed by a reserve that
+             * had already read the old value, minting a token for an epoch that
+             * no longer exists. */
             uint32_t armed = serial_emerg_publish_word(cur);
             if (__atomic_compare_exchange_n(&s_emergency, &cur, armed, 0,
                                             __ATOMIC_RELEASE, __ATOMIC_ACQUIRE))
                 return;
-            /* Budget moved under us -- retry from a fresh observation. */
+            /* The latch moved under us -- retry from a fresh observation. */
         }
     }
 }
@@ -1026,6 +1042,25 @@ static inline void serial_emergency_restore_lcr(void)
 #define SERIAL_EMERG_TOK_SLOT   0x000000FFu
 #define SERIAL_EMERG_TOK_GSHIFT 8u
 
+/* THE THIRD COPY OF THE GENERATION, and the one that had no static net.
+ *
+ * The epoch number is encoded in three places with three different shifts: the
+ * latch (SERIAL_EMERG_GEN/GSHIFT), the claim word (SERIAL_CLAIM_GEN/GSHIFT) and
+ * this token. The first two are pinned to each other above; the token was
+ * coupled to them only by the convention that both sides happen to use
+ * SERIAL_EMERG_GEN_MAX. Widen the latch's generation and the token would
+ * silently truncate it, so a return would validate against a DIFFERENT epoch
+ * than the one its charge was taken in -- releasing a live charge, which is
+ * precisely the hole the generation exists to close. Pin all three. */
+_Static_assert((SERIAL_EMERG_GEN_MAX << SERIAL_EMERG_TOK_GSHIFT) <
+               SERIAL_EMERG_TOKEN_VALID,
+               "reservation token: the generation field runs into the VALID bit");
+_Static_assert((SERIAL_EMERG_TOK_SLOT &
+                (SERIAL_EMERG_GEN_MAX << SERIAL_EMERG_TOK_GSHIFT)) == 0u,
+               "reservation token: slot and generation fields overlap");
+_Static_assert(SERIAL_EMERG_STUCK_BYTES - 1u <= SERIAL_EMERG_TOK_SLOT,
+               "reservation token: slot field too narrow for the allowance ceiling");
+
 /* The identity a claim records. Test-overridable so one CPU can drive both sides
  * of an ownership property that a same-CPU fixture could not otherwise tell from
  * a global counter. */
@@ -1097,11 +1132,20 @@ static int serial_emerg_claim_is_live(uint32_t c, uint32_t gen)
     return (c & SERIAL_CLAIM_VALID) && serial_claim_gen(c) == gen;
 }
 
-uint32_t serial_emerg_reserve(void)
+/* `owner` is this CPU's recorded ledger identity, ALREADY DERIVED by the caller.
+ *
+ * It is a parameter rather than a lookup because resolving it costs a CPUID:
+ * serializing, and a VM exit under KVM/WHPX. This function runs once per
+ * terminal byte whose first status probe is not ready, inside
+ * serial_emergency_emit's interrupt-disabled region while it may hold
+ * g_serial_lock -- so the identity is hoisted once per chunk and threaded in,
+ * exactly as the ordinary writer hoists its own ownership test out of its
+ * per-byte loop. */
+static uint32_t serial_emerg_reserve_for(uint32_t owner)
 {
-    uint32_t attempts, idx, gen, owner, c;
+    uint32_t attempts, idx, gen, c;
 
-    owner = serial_emerg_ledger_id();
+    owner &= SERIAL_EMERG_CPU;
 
     for (attempts = 0; attempts < SERIAL_EMERG_CAS_TRIES; attempts++) {
         /* Read the epoch ONCE per sweep and bind the whole attempt to it. A
@@ -1182,7 +1226,12 @@ uint32_t serial_emerg_reserve(void)
     return SERIAL_EMERG_NO_TOKEN;
 }
 
-void serial_emerg_return(uint32_t token)
+uint32_t serial_emerg_reserve(void)
+{
+    return serial_emerg_reserve_for(serial_emerg_ledger_id());
+}
+
+static void serial_emerg_return_for(uint32_t token, uint32_t ledger)
 {
     uint32_t gen, idx, c;
 
@@ -1240,10 +1289,15 @@ void serial_emerg_return(uint32_t token)
      * to somebody else and put the ceiling back out by one wait. That is the
      * exact failure the composite claim exists to make impossible, so it is
      * enforced here rather than documented as a caller obligation. */
-    if (serial_claim_owner(c) != serial_emerg_ledger_id())
+    if (serial_claim_owner(c) != (ledger & SERIAL_EMERG_CPU))
         return;
 
     (void)serial_emerg_release_slot(idx, c);
+}
+
+void serial_emerg_return(uint32_t token)
+{
+    serial_emerg_return_for(token, serial_emerg_ledger_id());
 }
 
 uint32_t serial_emerg_charges_self(void)
@@ -1360,7 +1414,19 @@ void serial_emerg_reset_for_test(void)
  * reaches this function through both of them -- whole strings via
  * serial_write_emergency and single characters via serial_putchar_emergency
  * (panic.c's hex writer) -- so a caller-side counter cannot bound the dump. */
-static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov)
+/* `ledger` is this CPU's recorded identity, hoisted by the caller. The identity
+ * resolves to CPUID, which is serializing and VM-exits under KVM/WHPX, so it
+ * must not be derived here: this runs once per byte, inside an interrupt-
+ * disabled region that may hold g_serial_lock.
+ *
+ * Deriving it inside reserve and again inside return was NOT amortised behind
+ * the spin, which is the reasoning that had to be corrected: the wait loop tests
+ * THRE before its first `pause`, so a transmitter that is busy at the initial
+ * probe and ready immediately after executes no spin at all -- and then pays
+ * both exits for every byte of the record, with nothing capping it at the
+ * eight-wait ceiling the way a timeout would. */
+static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov,
+                                      uint32_t ledger)
 {
     uint32_t spins;
     uint32_t token = SERIAL_EMERG_NO_TOKEN;
@@ -1386,7 +1452,7 @@ static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov)
 
     /* Not ready: this byte is about to WAIT, which is what the budget bounds. */
     if (terminal) {
-        token    = serial_emerg_reserve();
+        token    = serial_emerg_reserve_for(ledger);
         may_wait = (token != SERIAL_EMERG_NO_TOKEN);
     } else {
         may_wait = (*recov < SERIAL_RECOV_STUCK_BYTES);
@@ -1417,7 +1483,8 @@ static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov)
 
     outb(s_serial_port + UART_REG_THR, (uint8_t)c);
     if (terminal)
-        serial_emerg_return(token);  /* drained -- hand back only OUR reservation,
+        serial_emerg_return_for(token, ledger);
+                                     /* drained -- hand back only OUR reservation,
                                       * and only while its epoch is still live */
     return 1;
 }
@@ -1441,6 +1508,13 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
      * inside the IRQ-disabled, lock-held region, once or twice for every byte of
      * every recoverable record. Only the latch is re-read per byte. */
     uint32_t me = (terminal ? 0u : (serial_emerg_self_cpu() & SERIAL_EMERG_CPU));
+    /* Hoisted for the SAME reason as `me`, and separately from it: `me` is
+     * deliberately 0 on a terminal record so the drop policy treats it as
+     * unowned, whereas the allowance ledger needs this CPU's real recorded
+     * identity. Derived once per chunk rather than per byte -- see
+     * serial_putchar_raw_bounded. Reads the ledger identity (not raw CPUID) so
+     * a unit test's override still governs the accounting it drives. */
+    uint32_t ledger = serial_emerg_ledger_id();
 
     /* local_irq_save rather than spin_lock_irqsave's machinery: trylock raises
      * no IRQL, so the release side must lower none (see spin_tryunlock). */
@@ -1483,11 +1557,11 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
         if (!terminal && serial_emerg_drop_for_writer(me))
             break;
         if (buf[i] == '\n') {
-            (void)serial_putchar_raw_bounded('\r', terminal, recov);
+            (void)serial_putchar_raw_bounded('\r', terminal, recov, ledger);
             if (!terminal && serial_emerg_reroute_should_drop())
                 break;
         }
-        (void)serial_putchar_raw_bounded(buf[i], terminal, recov);
+        (void)serial_putchar_raw_bounded(buf[i], terminal, recov, ledger);
     }
 
     /* ONE release: the store that frees the lock is the store that clears

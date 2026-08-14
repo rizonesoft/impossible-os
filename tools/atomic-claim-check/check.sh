@@ -132,6 +132,17 @@ ac_count_locks() {
         # prefix -- that would let the very shape this gate rejects go uncounted.
         if (mn ~ /^cmpxchg/)       { writes++; next }
 
+        # A STACK SPILL IS NOT A SHARED-STATE WRITE, and excluding it is what
+        # keeps this gate from failing a build over a codegen change. The
+        # audited words are statics or caller-supplied pointers; a destination
+        # relative to %rsp or %rbp is this frame, which no other CPU can see and
+        # no abort can observe across. Without this, clang spilling a by-value
+        # parameter at a different optimisation level or version turns a
+        # REQUIRED CI gate red with a diagnosis about two-step mutation that is
+        # simply wrong.
+        if (ops ~ /\((%rsp|%rbp|%esp|%ebp)[,)]/)
+            next
+
         # Any other instruction whose destination is memory, INCLUDING a locked
         # one: `lock orl %esi, (%rdi)` mutates the word without comparing it.
         if (ops ~ /\)$/ && mn !~ /^(nop|push|pop|lea|cmp|test|prefetch|ret|hlt|ud2)/)
@@ -189,6 +200,11 @@ if [ "${1:-}" = "--selftest" ]; then
        9: 5d                    	popq	%rbp
        a: c3                    	retq
        b: 66 0f 1f 84 00        	nopw	%cs:(%rax,%rax)" || rc=1
+    ac_expect "a stack spill is not a shared-state write" "1 1 0 0" \
+"       0: 89 74 24 fc           	movl	%esi, -0x4(%rsp)
+       4: 89 45 f8              	movl	%eax, -0x8(%rbp)
+       7: f0                    	lock
+       8: 0f b1 37              	cmpxchgl	%esi, (%rdi)" || rc=1
     ac_expect "two locked cmpxchg is counted as two" "2 2 0 0" \
 "       0: f0                    	lock
        1: 0f b1 37              	cmpxchgl	%esi, (%rdi)
