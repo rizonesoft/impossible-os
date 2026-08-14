@@ -184,7 +184,7 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 > - A failed stage rename returns the real size and leaves the live log AND every rotated generation untouched -- no truncate, no per-retry generation churn. `MaxSize`/`MaxRotated` from registry with `val_size`-validated REG_DWORD reads.
 > - Rotation unit test deferred (kernel image is at its BSS page budget); covered by 3-round adversarial review + the boot smoke test for now.
 > **Verified:** 2026-06-21 | ship `4879f6a3` + review fixes | 9/10 items | build OK | smoke PASS (TCG 2.58s); 3212 kernel + 16 user PASS
-> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 573)
+> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 581)
 > **Deferred:** [M] no-RTC serial-log rotation deletes by seq, not recency (filed 2026-06-27 from TODO-08 §5 review; cap bounds growth so not a leak) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 175)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+3M+1L fixed | scope: kernel-code-quality
 
@@ -289,6 +289,14 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 - [x] POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region allocated, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` done
 - [x] 3 unit tests: KLOG_CRASH_MAGIC value, header size bounds, POST code uniqueness
 - [/] Verified-persistence flag gating `POST16_KLOG_DISK_OK` on a real `kernel.log` write (not just buffer+mount) -- deferred: needs a verification-flush flow in `klog_disk_enable()`, a separable boot diagnostic (§1-review gap)
+- [/] PARKED: eviction-independent publication for the crash region -- the persist path overwrites a complete record in place, so a nested panic can lose it -> XREF: `01-boot-platform/TODO-10` §28 (item: "PARKED: the klog crash region overwrites").
+  - The panic owner is same-CPU re-entrant and CLI does not block NMI or machine-check entry, so a nested panic reaches `klog_crash_serialize_region` while a complete record from the outer invocation is already published. It clears the magic and rewrites the entries in place; if it then faults or resets before republishing, the outer record is gone.
+  - TODO-10 §28 narrowed this by NOT flushing the magic clear, so the zero is usually still only in cache. That is a narrowing, not a fix: ordinary cache replacement can write the line back at any point during serialization, and TODO-10 §28 does not own this region.
+  - The closure is a protocol that never overwrites a complete record in place -- two slots plus a generation to choose between them, or claim arbitration like the panic evidence page's. Both change the on-region format that `klog_crash_recover` and the NVRAM pointer contract describe, so this is a design, not a patch.
+- [/] PARKED: the previous boot crash region is never reserved in PMM before recovery reads it, and both `uefi_set_variable` results are discarded -> XREF: `01-boot-platform/TODO-10` §28 (item: "PARKED: the klog crash region overwrites").
+  - `klog_crash_recover` is called from `boot_hw.c` AFTER PMM, VMM and heap init, and PMM is first-fit, so a boot whose layout shifted can hand the previous run to another allocation before recovery dereferences it. The address check proves the range sits inside the boot identity map, never that it is unowned. The crash log is then silently lost, or read as whatever now occupies those pages.
+  - The NVRAM deletion at the top of recovery is what prevents a stale pointer being followed next boot, but its `uefi_set_variable` status is discarded (`klog.c:572`), as is the one publishing the new region's address (`klog.c:705`). A failed delete leaves a later boot chasing an address that may by then hold live allocations.
+  - Both halves are pre-existing and predate the cross-boot durability work: TODO-10 §28 made the region's CONTENTS durable, which is orthogonal to who owns the pages. The closure is to read and validate the pointer before any allocator consumer runs and reserve the whole run in PMM, then check both NVRAM results.
 - [x] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 
 > [!NOTE]
@@ -367,7 +375,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 360)
+> **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 368)
 > **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 297)
 
 ---
@@ -391,7 +399,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 **Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define a VERSIONED event-metadata wire ABI" at line 383)
+> **Deferred:** [H] §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define a VERSIONED event-metadata wire ABI" at line 391)
 
 ---
 
@@ -408,7 +416,7 @@ Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (us
 
 **Test checkpoint:** Enable stack capture on a provider; a logged event carries a non-empty frame array with at least one image+offset resolved. A registry-declared autologger session is active at first user-mode entry. A self-describing event decodes its field names without an external manifest. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] blocked on the §11 ETW provider model (stack-walk flag, autologger session, and self-describing schema all build on provider registration + per-session enablement) -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define `etw_provider_t`" at line 382)
+> **Deferred:** [H] blocked on the §11 ETW provider model (stack-walk flag, autologger session, and self-describing schema all build on provider registration + per-session enablement) -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define `etw_provider_t`" at line 390)
 
 ---
 

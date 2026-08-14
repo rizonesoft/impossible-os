@@ -104,7 +104,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  25   | GS-validated per-CPU identity cache (from §20)      | §20        |  [/]   |
 | 💎  |  26   | Attributable emergency-ledger claim (from §20)      | §17, §20   |  [x]   |
 | 💎  |  27   | Async worker quiescence + terminal bringup (§21)    | §21        |  [x]   |
-| 💎  |  28   | Cross-boot evidence durability across a reset (§23) | §23        |  [ ]   |
+| 💎  |  28   | Cross-boot evidence durability across a reset (§23) | §23        |  [x]   |
 | 💎  |  29   | Abandoned-reservation reclamation on park (§26)     | §26        |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
@@ -571,8 +571,8 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
 > **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 464)
-> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 1260)
-> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 1259)
+> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 1284)
+> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 1283)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
 
 ---
@@ -950,7 +950,7 @@ Two §19-review findings and one §19-consistency finding share one root: the ev
 > - Canonical contract: [`include/kernel/panic.h`](../../include/kernel/panic.h) "cross-boot evidence lifecycle" block.
 > - Scope boundary: does NOT close the bounded-quiescence residual (parked above, operator-gated), and collector publication latency stays with §24.
 > **Verified:** 2026-08-14 | commit `3a1723c3d` + review fixes | 3/5 items (2 parked) | build OK | 29534 kernel + 17 user PASS, 0 failures | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint 0 errors
-> **Accepted:** [M] publication is a plain store into the WB-mapped page and an x86 RESET invalidates caches without writing back, so on real hardware the record may never reach DRAM (reason: changes memory-type policy, not lifecycle logic; invisible under every emulator the repo gates on) -> XREF: `01-boot-platform/TODO-10` §28 (item: "Decide and implement the memory-type policy for the evidence page so a published record survives a hardware reset on real silicon")
+> **Accepted:** [M] RESOLVED 2026-08-15 in §28: publication was a plain store into the WB-mapped page and an x86 RESET invalidates caches without writing back, so the record could never reach DRAM on real hardware. §28 kept the page WB and made every lifecycle edge persist through `cache_writeback_range`; the bare-metal proof stays parked there -> XREF: `01-boot-platform/TODO-10` §28 (item: "Decide and implement the memory-type policy for the evidence page so a published record survives a hardware reset on real silicon")
 > **Quality reviewed:** 2026-08-14 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 6H+6M+5L fixed, 1 open | scope: kernel-code-quality
 
 ---
@@ -1111,17 +1111,39 @@ Both defects predate §21 and neither is created by it: the async timeout has fa
 > - **severity_trend:** falling. The §23 review rounds ran 4 high, then 3 high, then approve; the post-commit wave produced 1 high (collector running with interrupts enabled) plus 5 medium, ALL fixed in place. This is the only finding of that wave not fixable inside §23's surface, because it changes memory-type policy rather than lifecycle logic.
 > - **surface:** the publication path in `src/kernel/panic.c`, plus the PMM reservation and VMM mapping of the fixed `0x80000` page. `klog.c` crash persistence shares the assumption and must be decided with it, not after it.
 
-The §23 lifecycle work made a single release store the sole durability point for the whole cross-boot record, which is what turned a long-standing repo-wide assumption into a specific, testable defect. A `grep` for `clflush`/`wbinvd` across `src/kernel/**/*.c` returns no matches, so nothing on any path forces a writeback before the machine resets.
+The §23 lifecycle work made a single release store the sole durability point for the whole cross-boot record, which is what turned a long-standing repo-wide assumption into a specific, testable defect. When this section was filed, a `grep` for `clflush`/`wbinvd` across `src/kernel/**/*.c` returned no matches, so nothing on any path forced a writeback before the machine reset. `src/kernel/cache.c` is now the tree's only cache-maintenance code.
 
-- [ ] Decide and implement the memory-type policy for the evidence page so a published record survives a hardware reset on real silicon, not just under an emulator.
-  - Two candidate shapes, and they are not equivalent: map `0x80000` uncached (what Linux pstore/ramoops does for its equivalent region, and which removes the question entirely at the cost of every collector write going to DRAM on the panic path), or keep WB and flush the record's lines after the publication store. The second keeps the collector fast but has to get the flush ORDER right against the publication word, which is the same ordering problem §23 solved in RAM.
-  - `docs/infrastructure/bare-metal-gotchas.md` records that the bootloader identity-maps everything WB, which is the assumption this inherits. Whichever shape wins must also cover `klog_crash_persist` (`src/kernel/klog.c`), which persists across the same reset under the same assumption.
-  - The reset paths that expose it are both in the panic tail: the ACPI reset via port `0xCF9` and the deliberate triple fault that follows when that reset does not take.
-- [ ] Prove it on hardware: crash, reset, and confirm the record is restored on a machine with a real cache hierarchy -> XREF: `01-boot-platform/TODO-10` §14 (item: "4-platform bare-metal test matrix").
-  - A green VM run is NOT evidence here: QEMU, KVM and WHPX pass this sequence whether or not the bug exists, which is exactly why it survived until a section made the single store load-bearing.
-- [ ] Commit: `"kernel: evidence page memory type -- cross-boot durability across a hardware reset"`
+- [x] Decide and implement the memory-type policy for the evidence page so a published record survives a hardware reset on real silicon, not just under an emulator.
+  - DECIDED: keep the page write-back and make each writer persist its own record, rather than mapping `0x80000` uncached. UC was rejected on four specific grounds: `panic_evidence_restore_early` reads and copies the whole page in Phase 0 on EVERY boot, so UC taxes a path no crash ever touches; §24 exists because collector publication latency is tracked; retyping needs `vmm_split_huge_page` against the bootloader's 2 MiB identity map in Phase 0 before any panic can occur; and it does nothing for `klog_crash_persist`, whose region is allocated fresh each boot, so a second mechanism would be needed anyway.
+  - SHIPPED as `cache_line_size` / `cache_writeback_range` / `cache_writeback_all` (`include/kernel/cache.h`, `src/kernel/cache.c`): CLFLUSH bracketed by MFENCE, with a WBINVD fallback when CLFLUSH is unenumerated. CPUID is probed on the EXECUTING CPU every call, with no global state and no init step, so it is callable from an AP and before any feature table exists.
+  - The ordering rule is about WHEN THE PUBLICATION WORD IS STORED, not about sequencing flushes: un-publish, flush the whole body while the word reads zero, then store and flush the word. The reviewed-and-discarded alternative (publish, then flush body lines before the publication line) holds only where CLFLUSH gives line granularity and collapses on the WBINVD fallback, which commits many lines with no ordering boundary.
+  - A durable un-publish requires an OWNER. The evidence page has arbitration (`panic_evidence_take`) and flushes its clear; the klog region has none, so it stores the clear without flushing, because a nested panic that dies before republishing would otherwise destroy a complete record.
+  - Every lifecycle edge persists, not just publication: publish, un-publish, revoke, consume and validation-drop. A consume left in cache lets a reset resurrect the record it retired, so the next boot re-reports a crash the user already saw while that stale record holds the slot against the crash that actually killed the machine.
+  - `klog_crash_persist` was split into `klog_crash_serialize_region` so the publication order is reachable from a fixture; `klog_crash_recover` persists the cleared magic before the allocator can reuse that physical run, and the zeroed header of the new region before its address reaches NVRAM.
+  - Both reset paths carry a full writeback immediately before the reset write (the panic tail, and all three methods of `acpi_reset_now`), documented as defence in depth ONLY: it runs on the calling CPU, does not quiesce the others, and does not wait for external caches.
+  - Also repaired here because the review found it on this surface: recovered crash entries are copied into owned storage and force-terminated before any consumer reads them. They were handed to `serial_write` straight out of untrusted cross-boot memory with no terminator guaranteed, and the previous boot's run is never reserved by this boot, so sanitizing in place would have corrupted live allocations.
+- [/] PARKED, operator-gated: prove it on hardware -- crash, reset, and confirm the record is restored on a machine with a real cache hierarchy -> XREF: `01-boot-platform/TODO-10` BM Test 5 (item: "Cross-boot evidence survives a hardware reset").
+  - A green VM run is NOT evidence here: QEMU, KVM and WHPX pass this sequence whether or not the bug exists, which is exactly why it survived until a section made the single store load-bearing. The 4-leg smoke matrix passing 4/4 proves no regression, never the fix.
+  - No owning TODO can close this and no unit test can reach it: only a physical machine with a real cache hierarchy can, which is why it is parked against BM Test 5 rather than left as open work.
+- [/] PARKED: the klog crash region overwrites a complete record in place, so a nested panic can still lose it -> XREF: `02-kernel-core/TODO-04` §8 (item: "Eviction-independent publication for the crash region").
+  - Omitting the un-publish flush NARROWS this window and does not close it: not issuing a flush is not a guarantee the line stays dirty, so ordinary cache replacement can write the zeroed magic back while serialization is still running.
+  - Closing it needs a publication protocol that never overwrites a complete record in place -- two slots plus a generation, or real arbitration -- which is a mechanism the region does not have. The evidence page needed a whole section to get the equivalent right, so this is not a patch.
+- [/] PARKED: `panic_evidence_abandon` drops ownership before its durable pubword clear, so a successor can have its word committed ahead of its body -> XREF: `01-boot-platform/TODO-10 §23` (item: "PARKED, operator-gated: a terminal takeover").
+  - Fails CLOSED, which is why it is parked rather than blocking: the successor's word lands over an older body, the CRC rejects it, and the next boot reads no record instead of a wrong one. Not flushing at all is strictly worse -- memory would keep the previous valid record.
+  - Not closable inside this section's contract: the repair is a retiring state, or ownership extended through the durable clear, in the evidence ownership state machine that §23 owns and whose notes record it as needing design rather than a patch, two attempted patches there having raced.
+- [x] Commit: `"kernel: evidence page memory type -- cross-boot durability across a hardware reset"`
 
-**Test checkpoint:** On bare metal, a forced panic followed by a reset restores the record on the next boot with a valid CRC. Under a VM the same sequence passes both before and after the fix, which is the point: the acceptance evidence for this section is a physical machine, and a unit test can only assert that the chosen memory type is actually programmed for `0x80000`, never that the record survived.
+**Test checkpoint:** On bare metal, a forced panic followed by a reset restores the record on the next boot with a valid CRC -- parked above, because only a physical machine can produce that evidence. What IS asserted deterministically is everything the decision rests on: the line-size decoder rejects a missing leaf 1, a clear CLFSH bit, a zero size and a non-power-of-two size; the range planner is exact at a straddled line boundary, at both-ends-unaligned, on a wrapping range, and on the top-of-address-space partial line an end-bounded loop never terminates on; a published record still validates after its own persist and after a republish over a still-valid word; and the klog region publishes its magic last with a CRC covering exactly the entries it clamped to. The flush ORDER itself is not observable from a unit test, and nothing here pretends otherwise.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 7 cases added to `test_boot_diag.c` (line-size contract, decoder rejections, range writeback preserves contents, full writeback preserves contents, planner boundaries, evidence record survives its own persist, klog region publishes magic last); 29775 kernel + 17 user tests pass, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/cache.c` + `include/kernel/cache.h`, the tree's only cache maintenance: CLFLUSH+MFENCE with a WBINVD fallback, probing CPUID on the executing CPU per call so it is AP-safe and needs no init step.
+> - Chose per-writer flushing over mapping `0x80000` UC, because UC taxes every boot's Phase-0 restore and the collector latency §24 tracks, and would not have covered the klog region at all.
+> - Publication order is enforced by storing the publication word LAST rather than by sequencing flushes, which is what keeps it correct on the WBINVD fallback where no line-order boundary exists.
+> - Downstream: every evidence lifecycle edge now persists, `klog_crash_persist` split into `klog_crash_serialize_region`, `klog_crash_entry_t` moved to `klog.h`, and recovered crash strings are copied and terminated before use.
+> - Canonical contract: [`include/kernel/cache.h`](../../include/kernel/cache.h) header block, mirrored in [bare-metal-gotchas.md](../../docs/infrastructure/bare-metal-gotchas.md) "Cross-boot durability".
+> - Scope boundary: does NOT close the bare-metal proof, the klog in-place overwrite, or the evidence-ownership retiring state, all three parked above with owners.
 
 ---
 
@@ -1151,35 +1173,37 @@ The defect predates §26 and is not created by it: the refund was already a delt
 
 ## OS Comparison
 
-| ⭐  | Feature                        | 🪟 Win11                          | 🐧 Linux                          | 🚀 Impossible OS                                                     |
-| --- | ------------------------------ | --------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
-| 💎  | UC MMIO mapping                | ✅ MmMapIoSpace                   | ✅ ioremap_uc                     | ✅ §1 vmm_map_mmio_uc                                                |
-| 💎  | IST stacks                     | ✅ All critical exceptions        | ✅ IST1-4 DF/NMI/MCE              | ⚠️ §2 BSP IST1-3 (AP: T09 §10)                                       |
-| 💎  | ACPI FADT boot arch            | ✅ HAL checks all flags           | ✅ Gates PIT/RTC/PS2              | ✅ §4 IAPC_BOOT_ARCH parsed                                          |
-| 💎  | PS/2 ACPI detection            | ✅ HAL detects i8042              | ✅ i8042.nopnp                    | ✅ §5 FADT + GSI routing                                             |
-| 💎  | AHCI MSI fallback              | ✅ StorAHCI INTx fallback         | ✅ libahci polled fallback        | ✅ §6 MSI→INTx→polled                                                |
-| 💎  | Graceful degradation           | ✅ Safe Mode + Last Known         | ✅ systemd continues              | ✅ §7 BOOT_TRY + degraded_mask                                       |
-| 💎  | Per-process page tables        | ✅ Each process own CR3           | ✅ mm_struct per task             | ✅ §8 PML4 clone + CR3 switch                                        |
-| 💎  | CPU security verify            | ✅ HAL verifies CR4/EFER          | ✅ Checks feature enable          | ✅ §9 verify NX/SMEP/SMAP                                            |
-| 💎  | Boot order / UEFI-safe         | ✅ Ordered HAL + RT serialize     | ✅ setup_arch + efi_call wrap     | ✅ §10 timer-last + rt_call mask                                     |
-| 💎  | Logging on main FS             | ✅ C:\Windows\System32            | ✅ /var/log                       | ✅ §12 KLOG_DIR X:\ (T24)                                            |
-| 💎  | CPU feature minimums           | ✅ NX required since Vista        | ✅ verify_cpu required mask       | ✅ §13 NX+SSE2+LM+SYSCALL mask                                       |
-| ⭐  | Bare-metal test matrix         | ❌ Internal only (WHQL)           | ❌ Community-driven               | ✅ §14 4-platform matrix                                             |
-| ⭐  | Boot spinner liveness          | ✅ ISR-driven ring                | ⚠️ plymouth (optional)            | ✅ §15 timer ISR @10fps Fluent                                       |
-| 💎  | Abort-safe panic serial        | ✅ IPI-freezes CPUs before output | ✅ trylock UART + smp_send_stop   | ⚠️ §16 try-lock + bounded UART; freeze §18 deferred on VFS-free dump |
-| 💎  | Panic-string fault recovery    | ✅ Probes before dereferencing    | ✅ probe_kernel_read fixups       | ✅ §17 `__kread_u8` RIP-keyed fixup                                  |
-| 💎  | Panic serial-lock handoff      | ✅ Owner-tracked kernel spinlocks | ✅ Owner in `raw_spinlock` debug  | ✅ §20 owner-encoded word, one atomic transition                     |
-| 💎  | Nested-NMI panic context       | ✅ `KiNmiInProgress` per-PRCB     | ✅ `nmi_count` / `in_nmi()`       | ✅ §18 per-CPU NMI depth via `idt_in_nmi()`                          |
-| 💎  | NMI entry/exit marker site     | ✅ Dedicated `KiNmiInterrupt` IST | ✅ `asm_exc_nmi` raises in entry  | ✅ §22 dedicated `isr2`, raised before the shared prologue           |
-| 💎  | Offlining a dead CPU           | ✅ Live active-processor mask     | ✅ `cpu_online_mask` cleared      | ✅ §21 live online mask, publication point for bringup and reporting |
-| 💎  | Async worker dispatch claim    | ✅ DPC targets checked per-queue  | ✅ `cpu_online()` per work item   | ✅ §21 two-phase generation claim, reserve then arm                  |
-| 💎  | Crash-reason snapshot          | ⚠️ STOP text is a static table    | ⚠️ `vsnprintf` copy, no fault net | ✅ §19 one guarded copy, all renderers                               |
-| 💎  | Fault-safe stack unwind        | ✅ Bugchecks on invalid stack     | ✅ `copy_from_kernel_nofault`     | ✅ §19 `__kstack_read_u64`, ctx-gated                                |
-| 💎  | Survived fault vs real crash   | ✅ Dump only on KeBugCheck        | ✅ `panic()` only when terminal   | ✅ §23 terminal arbitration; the survivable path revokes its record  |
-| 💎  | Crash-record identity          | ⚠️ Single dump slot, overwritten  | ✅ pstore per-record ids          | ✅ §23 64-bit publication word, every transition one atomic op       |
-| 💎  | Crash-record checksum          | ✅ Table-driven CRC in ntoskrnl   | ✅ `crc32()` lib, table-driven    | ✅ §24 one shared `kcrc32`, panic and klog copies retired            |
-| 💎  | Bounded guarded string read    | ⚠️ Probe-then-copy, per-page      | ✅ `strncpy_from_kernel_nofault`  | ✅ §24 `__kstr_read_guarded`, one protected loop, prefix on fault    |
-| ⭐  | Attributable UART stall budget | ⚠️ KD transport retries, per call | ⚠️ `wait_for_xmitr` per character | ✅ §26 one composite claim per allowance, owner and epoch in one CAS |
+| ⭐  | Feature                        | 🪟 Win11                           | 🐧 Linux                           | 🚀 Impossible OS                                                     |
+| --- | ------------------------------ | ---------------------------------- | ---------------------------------- | -------------------------------------------------------------------- |
+| 💎  | UC MMIO mapping                | ✅ MmMapIoSpace                    | ✅ ioremap_uc                      | ✅ §1 vmm_map_mmio_uc                                                |
+| 💎  | IST stacks                     | ✅ All critical exceptions         | ✅ IST1-4 DF/NMI/MCE               | ⚠️ §2 BSP IST1-3 (AP: T09 §10)                                       |
+| 💎  | ACPI FADT boot arch            | ✅ HAL checks all flags            | ✅ Gates PIT/RTC/PS2               | ✅ §4 IAPC_BOOT_ARCH parsed                                          |
+| 💎  | PS/2 ACPI detection            | ✅ HAL detects i8042               | ✅ i8042.nopnp                     | ✅ §5 FADT + GSI routing                                             |
+| 💎  | AHCI MSI fallback              | ✅ StorAHCI INTx fallback          | ✅ libahci polled fallback         | ✅ §6 MSI→INTx→polled                                                |
+| 💎  | Graceful degradation           | ✅ Safe Mode + Last Known          | ✅ systemd continues               | ✅ §7 BOOT_TRY + degraded_mask                                       |
+| 💎  | Per-process page tables        | ✅ Each process own CR3            | ✅ mm_struct per task              | ✅ §8 PML4 clone + CR3 switch                                        |
+| 💎  | CPU security verify            | ✅ HAL verifies CR4/EFER           | ✅ Checks feature enable           | ✅ §9 verify NX/SMEP/SMAP                                            |
+| 💎  | Boot order / UEFI-safe         | ✅ Ordered HAL + RT serialize      | ✅ setup_arch + efi_call wrap      | ✅ §10 timer-last + rt_call mask                                     |
+| 💎  | Logging on main FS             | ✅ C:\Windows\System32             | ✅ /var/log                        | ✅ §12 KLOG_DIR X:\ (T24)                                            |
+| 💎  | CPU feature minimums           | ✅ NX required since Vista         | ✅ verify_cpu required mask        | ✅ §13 NX+SSE2+LM+SYSCALL mask                                       |
+| ⭐  | Bare-metal test matrix         | ❌ Internal only (WHQL)            | ❌ Community-driven                | ✅ §14 4-platform matrix                                             |
+| ⭐  | Boot spinner liveness          | ✅ ISR-driven ring                 | ⚠️ plymouth (optional)             | ✅ §15 timer ISR @10fps Fluent                                       |
+| 💎  | Abort-safe panic serial        | ✅ IPI-freezes CPUs before output  | ✅ trylock UART + smp_send_stop    | ⚠️ §16 try-lock + bounded UART; freeze §18 deferred on VFS-free dump |
+| 💎  | Panic-string fault recovery    | ✅ Probes before dereferencing     | ✅ probe_kernel_read fixups        | ✅ §17 `__kread_u8` RIP-keyed fixup                                  |
+| 💎  | Panic serial-lock handoff      | ✅ Owner-tracked kernel spinlocks  | ✅ Owner in `raw_spinlock` debug   | ✅ §20 owner-encoded word, one atomic transition                     |
+| 💎  | Nested-NMI panic context       | ✅ `KiNmiInProgress` per-PRCB      | ✅ `nmi_count` / `in_nmi()`        | ✅ §18 per-CPU NMI depth via `idt_in_nmi()`                          |
+| 💎  | NMI entry/exit marker site     | ✅ Dedicated `KiNmiInterrupt` IST  | ✅ `asm_exc_nmi` raises in entry   | ✅ §22 dedicated `isr2`, raised before the shared prologue           |
+| 💎  | Offlining a dead CPU           | ✅ Live active-processor mask      | ✅ `cpu_online_mask` cleared       | ✅ §21 live online mask, publication point for bringup and reporting |
+| 💎  | Async worker dispatch claim    | ✅ DPC targets checked per-queue   | ✅ `cpu_online()` per work item    | ✅ §21 two-phase generation claim, reserve then arm                  |
+| 💎  | Crash-reason snapshot          | ⚠️ STOP text is a static table     | ⚠️ `vsnprintf` copy, no fault net  | ✅ §19 one guarded copy, all renderers                               |
+| 💎  | Fault-safe stack unwind        | ✅ Bugchecks on invalid stack      | ✅ `copy_from_kernel_nofault`      | ✅ §19 `__kstack_read_u64`, ctx-gated                                |
+| 💎  | Survived fault vs real crash   | ✅ Dump only on KeBugCheck         | ✅ `panic()` only when terminal    | ✅ §23 terminal arbitration; the survivable path revokes its record  |
+| 💎  | Crash-record identity          | ⚠️ Single dump slot, overwritten   | ✅ pstore per-record ids           | ✅ §23 64-bit publication word, every transition one atomic op       |
+| 💎  | Crash-record checksum          | ✅ Table-driven CRC in ntoskrnl    | ✅ `crc32()` lib, table-driven     | ✅ §24 one shared `kcrc32`, panic and klog copies retired            |
+| 💎  | Bounded guarded string read    | ⚠️ Probe-then-copy, per-page       | ✅ `strncpy_from_kernel_nofault`   | ✅ §24 `__kstr_read_guarded`, one protected loop, prefix on fault    |
+| ⭐  | Attributable UART stall budget | ⚠️ KD transport retries, per call  | ⚠️ `wait_for_xmitr` per character  | ✅ §26 one composite claim per allowance, owner and epoch in one CAS |
+| 💎  | Crash record survives a reset  | ✅ Dump written to disk pre-reset  | ✅ pstore/ramoops region mapped UC | ✅ §28 WB + per-writer CLFLUSH, publication word stored last         |
+| 💎  | Cache maintenance primitives   | ✅ `KeInvalidateAllCaches`, WBINVD | ✅ `clflush_cache_range`, `wbinvd` | ✅ §28 `cache_writeback_range`, CPUID-probed per executing CPU       |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 
@@ -1259,6 +1283,9 @@ Full acceptance pass. All sections complete.
 - [ ] Boot time within thresholds for ALL phases (P0 <200ms, P1 <2s, P2 <10s, P3 <15s) -- capture the serial `PERF: --- Boot step durations (sorted by time) ---` table + any `BOOT-BUDGET` WARN/ERR lines as the per-phase artifact
 - [ ] Per-process PT on bare metal: cmd.exe in own PML4, CR3 switch, NX verify -- closes the §14 matrix `TBD (BM Test 5)` cell and the BM Test 4 bare-metal TBD row
 - [ ] Keyboard responsive, AHCI I/O works
+- [ ] Cross-boot evidence survives a hardware reset: force a panic, let it reset, confirm the next boot restores the record with a valid CRC -> XREF: `01-boot-platform/TODO-10` §28 (item: "Decide and implement the memory-type policy").
+  - The ONLY acceptance evidence for §28. Every VM passes this sequence whether or not the durability bug exists, because none of them models a cache hierarchy, so a machine with real caches is the only thing that can distinguish a fix from a no-op.
+  - Check both records: `X:\Crash\last-panic.txt` from the evidence page, and the `[CRASH-PREV]` serial replay from the klog crash region. They use separate mechanisms and can fail independently.
 
 **~20 minutes.** Full regression pass.
 

@@ -172,7 +172,7 @@ void klog_receipted(log_level_t level, const char *subsystem,
  *
  * The ring entry below stores the tag as a `const char *` and never copies
  * it, but two serialized records DO copy it into a fixed field: the
- * crash-region record (`klog_crash_entry_t` in src/kernel/klog.c, whose
+ * crash-region record (`klog_crash_entry_t`, declared below, whose
  * on-region layout the next boot reads back) and the panic evidence block
  * (`struct panic_klog_entry` in include/kernel/panic.h). A caller that BUILDS a tag at runtime -- rather
  * than passing a string literal -- must fit this bound, or its evidence is
@@ -358,9 +358,47 @@ typedef struct {
     uint64_t boot_timestamp;    /* 10 ms units since boot (KeQueryInterruptTimeCoarse) */
 } klog_crash_header_t;
 
+/* Serialized entry: no pointers, fixed-size for physical memory layout. Sits
+ * immediately after the header in the crash region, which is why the two are
+ * declared together -- a caller sizing a region needs both. */
+typedef struct {
+    uint32_t level;
+    uint32_t timestamp;
+    uint8_t  cpu_id;
+    uint8_t  _pad[3];
+    uint32_t pid;
+    uint32_t tid;
+    char     subsystem[KLOG_SUBSYSTEM_MAX];
+    char     message[128];
+} klog_crash_entry_t;  /* 164 bytes */
+/* Pin the serialized crash-entry layout: it is the physical-memory format read
+ * back by the next boot's klog_crash_recover, and the persist/recover capacity
+ * math divides the region size by this sizeof. A silent field add would change
+ * the on-region format and the entry count without warning. */
+_Static_assert(sizeof(klog_crash_entry_t) == 164,
+               "klog_crash_entry_t serialized layout must stay 164 bytes");
+
 /* Persist ring buffer to reserved physical memory (no kmalloc, no VFS).
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
+
+/* The serialize-and-publish half of klog_crash_persist(), against a
+ * CALLER-SUPPLIED region. Returns the number of entries written, clamped to
+ * what the region holds.
+ *
+ * Split out so the publication order can be exercised on a fixture buffer:
+ * klog_crash_persist() writes the live region and runs only in panic context,
+ * so a test may not call it, which left the ordering this function performs
+ * unassertable. The ring globals are READ here and never mutated, so a
+ * fixture call has no effect on the live crash region or on logging.
+ *
+ * PUBLICATION ORDER, which is the contract: the header magic is cleared and
+ * that clear is pushed to memory BEFORE any entry byte changes; the entries
+ * and the rest of the header are written and flushed while the magic still
+ * reads zero; the magic is stored and flushed LAST. A reset at any point
+ * therefore finds either no log or a complete one, never a valid header over
+ * entries from a previous crash. */
+uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size);
 
 /* Check reserved region for valid crash data from previous boot.
  * If found, replays to serial with [CRASH-PREV] prefix.

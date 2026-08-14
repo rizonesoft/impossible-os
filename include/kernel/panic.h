@@ -110,11 +110,31 @@ struct panic_klog_entry {
  *
  * `magic` and `epoch` are deliberately adjacent at offset 0 so the pair forms
  * ONE naturally-aligned 64-bit PUBLICATION WORD. Every lifecycle transition on
- * the page -- publish, revoke, consume -- is a single atomic store or CAS on
- * that word, which is what lets a reader and a concurrently-panicking writer
- * agree on what the page holds. Before the epoch existed, each consumer invented
- * its own ad-hoc identity check (compare boot_seq + crc, THEN clear the magic)
- * and none of them was atomic against a panic landing in between. */
+ * the page -- publish, UN-PUBLISH, revoke, consume and validation DROP -- is a
+ * single atomic store or CAS on that word, which is what lets a reader and a
+ * concurrently-panicking writer agree on what the page holds. Before the epoch
+ * existed, each consumer invented its own ad-hoc identity check (compare
+ * boot_seq + crc, THEN clear the magic) and none of them was atomic against a
+ * panic landing in between.
+ *
+ * DURABILITY IS PART OF THE CONTRACT, not an implementation detail. Atomic in
+ * RAM is not enough for a record whose whole purpose is to be read after a
+ * reset: the page is write-back memory and a reset invalidates caches without
+ * writing them back, so a transition left in cache did not happen as far as
+ * the next boot is concerned. Every SUCCESSFUL transition above is therefore
+ * pushed to memory before the next lifecycle step, using the panic-safe
+ * primitives in kernel/cache.h -- which the collector's "raw physical writes
+ * only, no kmalloc / VFS / printk / spinlock" rule permits, because those
+ * primitives allocate nothing, lock nothing and log nothing.
+ *
+ * The inverse edges matter as much as publication. A consume that never
+ * reaches memory lets a reset resurrect the record it retired, so the next
+ * boot re-reports a crash the user already saw -- and that stale record holds
+ * the single slot against the crash that actually killed the machine.
+ *
+ * PUBLICATION ORDER: un-publish durably, write and flush the whole body while
+ * the word reads zero, then store and flush the word. Ordering the flushes
+ * behind an already-stored word is NOT equivalent; see kernel/cache.h. */
 struct panic_evidence {
     /* --- header (validated before anything else is trusted) --- */
     uint32_t magic;            /* PANIC_EVIDENCE_MAGIC -- published LAST */

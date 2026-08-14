@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/klog.h"
+#include "kernel/cache.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
@@ -390,23 +391,10 @@ int klog_disk_enable(void)
 #include "kernel/mm/user_range.h"   /* USER_ELF_END (0x900000) crash-region floor */
 #include "kernel/kchecksum.h"       /* kcrc32 -- the tree's one table-driven CRC-32 */
 
-/* Serialized entry: no pointers, fixed-size for physical memory layout */
-typedef struct {
-    uint32_t level;
-    uint32_t timestamp;
-    uint8_t  cpu_id;
-    uint8_t  _pad[3];
-    uint32_t pid;
-    uint32_t tid;
-    char     subsystem[KLOG_SUBSYSTEM_MAX];
-    char     message[128];
-} klog_crash_entry_t;  /* 164 bytes */
-/* Pin the serialized crash-entry layout: it is the physical-memory format read
- * back by the next boot's klog_crash_recover, and the persist/recover capacity
- * math (region_max) divides the region size by this sizeof. A silent field add
- * would change the on-region format and the entry count without warning. */
-_Static_assert(sizeof(klog_crash_entry_t) == 164,
-               "klog_crash_entry_t serialized layout must stay 164 bytes");
+/* klog_crash_entry_t and its layout assert live in kernel/klog.h, beside the
+ * header type they are serialized next to -- the crash-region format is one
+ * contract and describing half of it here left the other half undiscoverable
+ * to a caller sizing a region. */
 
 /* Reserved physical memory region for crash log persistence */
 static uint8_t *s_crash_region;       /* phys addr, identity-mapped */
@@ -434,22 +422,55 @@ static void str_copy_n(char *dst, const char *src, uint32_t max)
     dst[i] = '\0';
 }
 
-void klog_crash_persist(void)
+uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
 {
-    /* Called from panic_screen() -- no kmalloc, no VFS, no locks.
-     * Direct physical memory write to pre-reserved region. */
-    if (!s_crash_region || s_crash_region_size == 0)
-        return;
+    /* Called from panic_screen() via klog_crash_persist() -- no kmalloc, no
+     * VFS, no locks. Direct memory write to a pre-reserved region.
+     *
+     * Takes the region as a PARAMETER rather than reading s_crash_region so
+     * the publish sequence below is reachable from a unit test on a
+     * caller-owned buffer. The live crash region and the ring globals are
+     * untouched by such a call: the ring is only read. */
+    if (!region || region_size < sizeof(klog_crash_header_t))
+        return 0u;
 
-    klog_crash_header_t *hdr = (klog_crash_header_t *)s_crash_region;
-    klog_crash_entry_t  *dst = (klog_crash_entry_t *)(s_crash_region + sizeof(klog_crash_header_t));
+    klog_crash_header_t *hdr = (klog_crash_header_t *)region;
+    klog_crash_entry_t  *dst = (klog_crash_entry_t *)(region + sizeof(klog_crash_header_t));
 
     /* How many entries fit after the header? */
-    uint32_t max_entries = (s_crash_region_size - sizeof(klog_crash_header_t)) /
+    uint32_t max_entries = (region_size - sizeof(klog_crash_header_t)) /
                            sizeof(klog_crash_entry_t);
     uint32_t count = klog_ring_count < KLOG_RING_SIZE ? klog_ring_count : KLOG_RING_SIZE;
     if (count > max_entries)
         count = max_entries;
+
+    /* UN-PUBLISH, but deliberately WITHOUT flushing the clear.
+     *
+     * The magic is what makes klog_crash_recover accept this region, so it
+     * must not stand while the entries under it are rewritten -- hence the
+     * store. What it must NOT be is DURABLE yet, because this region has no
+     * ownership arbitration and the panic owner is same-CPU re-entrant: a
+     * nested panic (or an NMI or machine check, which CLI does not block)
+     * reaches this function while a complete record from the outer invocation
+     * is already published. Pushing the zero to memory here would destroy that
+     * record before the replacement exists, and a nested writer that faults or
+     * resets before republishing would leave the boot with nothing.
+     *
+     * Unflushed, the clear still orders correctly in cache, and the body flush
+     * below is what makes it durable -- by which point the replacement content
+     * is durable with it. Entries that reach memory by ordinary eviction under
+     * the OLD magic fail the CRC and are rejected, which is fail-closed.
+     *
+     * This NARROWS the nested-erasure window; it does not close it. Not
+     * issuing a flush is not a guarantee that the line stays dirty: ordinary
+     * cache replacement can write the zeroed magic back at any point, and this
+     * function then serializes up to the whole region before republishing. A
+     * nested panic or reset inside that interval can still find memory holding
+     * a zero magic and lose the outer record. Closing it needs a publication
+     * protocol that does not overwrite a complete record in place -- two slots
+     * with a generation, or real arbitration -- which is a mechanism this
+     * region does not have and which is parked in TODO-10 with an owner. */
+    hdr->magic = 0u;
 
     /* Serialize ring entries (oldest first) */
     uint32_t start = 0;
@@ -471,8 +492,7 @@ void klog_crash_persist(void)
         str_copy_n(dst[i].message, klog_ring[idx].message, 128);
     }
 
-    /* Write header */
-    hdr->magic          = KLOG_CRASH_MAGIC;
+    /* Write header (every field except the magic, which publishes below) */
     hdr->entry_count    = count;
     hdr->ring_head      = klog_ring_head;
     /* 10 ms units from the coarse cached interrupt time -- lock-free (no
@@ -486,6 +506,30 @@ void klog_crash_persist(void)
 
     /* CRC32 over all serialized entries */
     hdr->crc32 = kcrc32(dst, count * sizeof(klog_crash_entry_t));
+
+    /* PUBLISH, in the only order a reset cannot turn into a lie. Everything
+     * the magic vouches for goes to memory first, while the region still reads
+     * as empty; only then is the magic stored and its own line committed. The
+     * two flushes cannot be merged and cannot be swapped: the entries start
+     * inside the header's cache line, so one flush of both would commit a
+     * valid magic alongside content that later lines have not caught up with.
+     * A reset between them costs the log, which is the honest outcome; a reset
+     * with the order reversed hands the next boot a CRC-valid header over
+     * entries from the previous crash. */
+    cache_writeback_range(region,
+                          sizeof *hdr + (uint64_t)count * sizeof(klog_crash_entry_t));
+    hdr->magic = KLOG_CRASH_MAGIC;
+    cache_writeback_range(hdr, sizeof *hdr);
+
+    return count;
+}
+
+void klog_crash_persist(void)
+{
+    if (!s_crash_region || s_crash_region_size == 0)
+        return;
+
+    (void)klog_crash_serialize_region(s_crash_region, s_crash_region_size);
 
     /* POST code: crash log persisted */
     POST16(POST16_CRASHLOG);
@@ -578,20 +622,56 @@ void klog_crash_recover(void)
                         serial_write(" entries from previous crash ===\n");
 
                         for (uint32_t i = 0; i < count; i++) {
+                            /* COPY FIRST, then force-terminate the COPY. Both
+                             * arrays are fixed-width fields out of untrusted
+                             * cross-boot memory, and serial_write scans to a
+                             * NUL -- an unterminated field walks off the end of
+                             * the entry and out of the region, leaking adjacent
+                             * memory over serial or faulting. A matching CRC
+                             * does not make the bytes safe: it proves the
+                             * entries are the ones that were written, not that
+                             * they contain a terminator. The evidence restore
+                             * path sanitizes the same class of field.
+                             *
+                             * The termination must NOT be written through
+                             * `src`. That points into the PREVIOUS boot's
+                             * physical run, named only by an NVRAM variable,
+                             * and this boot never reserved it -- recovery runs
+                             * after PMM, VMM and heap init, so those pages may
+                             * already be allocated to live structures. The
+                             * check upstream proves the address is mapped, not
+                             * that it is still ours. Sanitize an OWNED copy. */
+                            klog_crash_entry_t e = src[i];
+
+                            e.subsystem[sizeof e.subsystem - 1u] = '\0';
+                            e.message[sizeof e.message - 1u] = '\0';
+
                             serial_write("[CRASH-PREV] ");
-                            serial_write(src[i].subsystem);
+                            serial_write(e.subsystem);
                             serial_write(": ");
-                            serial_write(src[i].message);
+                            serial_write(e.message);
                             serial_write("\n");
                             if (s_recovered_count < KLOG_RING_SIZE)
-                                s_recovered[s_recovered_count++] = src[i];
+                                s_recovered[s_recovered_count++] = e;
                         }
                     } else {
                         serial_write("[CRASH-PREV] recovery failed: CRC32 mismatch\n");
                     }
                 }
-                /* Clear magic so it doesn't replay again */
-                prev_hdr->magic = 0;
+                /* The old header is deliberately NOT cleared here. This boot
+                 * does not own that memory: `prev_phys` names the PREVIOUS
+                 * boot's run, recovery runs after PMM, VMM and heap init, and
+                 * the check above proves only that the address is mapped, not
+                 * that it is still unallocated. A store there can land in a
+                 * live kernel structure.
+                 *
+                 * Nothing needs the clear. Replay is already prevented by
+                 * deleting the NVRAM variable above, which happens before this
+                 * region is read at all, so the next boot has no pointer to
+                 * find it with. And if the allocator happens to hand this same
+                 * run back as this boot's crash region, the full zeroing of
+                 * the new region below clears the magic through a pointer we
+                 * do own. */
             }
         }
     }
@@ -612,6 +692,14 @@ crash_alloc:
     /* Zero the new region */
     for (uint32_t i = 0; i < s_crash_region_size; i++)
         s_crash_region[i] = 0;
+
+    /* Persist the zeroed header BEFORE the address reaches NVRAM. The moment
+     * NVRAM names this run, the next boot will read whatever memory holds
+     * there -- and if the zero is still only in cache when a reset lands, that
+     * is the previous tenant's log, complete with a valid magic and a CRC that
+     * matches its own entries. Publishing the pointer first is what would make
+     * a stale log indistinguishable from this boot's. */
+    cache_writeback_range(s_crash_region, sizeof(klog_crash_header_t));
 
     /* Save this region's address to NVRAM so next boot can find it */
     uefi_set_variable(&s_crash_guid, s_crash_varname,

@@ -23,6 +23,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
+#include "kernel/cache.h"
 #include "kernel/printk.h"
 #include "kernel/fs/fat32.h"
 #include "kernel/irq.h"
@@ -992,11 +993,22 @@ void acpi_shutdown(void)
  * via sleep_ms()/hlt and so requires interrupts enabled; the degraded-boot
  * recovery screen reaches a reset with interrupts already disabled (the keypress
  * poll runs under cli), so it calls this directly. Everything below is port
- * writes + triple-fault -- all IF-off-safe. A dirty cache on a fatal-boot reset
- * is acceptable (A/B slot tries-counter + journaling recover). */
+ * writes + triple-fault -- all IF-off-safe. */
 void acpi_reset_now(void)
 {
     __asm__ volatile("cli");
+
+    /* Commit dirty lines before ANY of the three reset methods below, because
+     * a reset invalidates the caches without writing them back (kernel/cache.h)
+     * and every method here ends in one. Filesystem state does recover on its
+     * own -- the A/B slot tries-counter and the journal exist for that -- but
+     * the cross-boot crash record has no journal behind it, and losing it
+     * costs the user the explanation for the reboot they are about to see.
+     * Defence in depth only: this runs on the calling CPU, does not quiesce
+     * the others, and does not wait for external caches, so a writer that
+     * needs its own record durable persists it at publication time instead of
+     * relying on reaching here. */
+    cache_writeback_all();
 
     /* Method 1: ACPI reset register (FADT 2.0+).
      * revision >= 2 alone does not prove the table is long enough -- reset_reg

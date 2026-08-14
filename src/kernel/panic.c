@@ -44,6 +44,7 @@
 #include "kernel/quota/quota.h"     /* quota_dump_crash (resource exhaustion) */
 #include "kernel/smp.h"
 #include "kernel/barrier.h"
+#include "kernel/cache.h"
 
 /* --- Constants --- */
 
@@ -1262,6 +1263,38 @@ static inline uint64_t ev_pubword_val(uint32_t epoch)
     return (uint64_t)PANIC_EVIDENCE_MAGIC | ((uint64_t)epoch << 32);
 }
 
+/* DURABILITY. Every transition above is atomic in RAM and none of it is
+ * durable: the page is write-back memory, so a transition can sit dirty in
+ * cache while a reset invalidates it without writeback (kernel/cache.h). The
+ * two helpers below are what push a transition to DRAM, and they are called at
+ * every lifecycle edge -- publish, un-publish, revoke, consume and drop --
+ * because the inverse edges matter as much as publication: a consume that
+ * never reaches DRAM lets a reset resurrect the record it retired, and the
+ * next boot re-reports a crash the user already saw. */
+static void ev_persist_pubword(volatile struct panic_evidence *ev)
+{
+    cache_writeback_range((const void *)ev, sizeof(uint64_t));
+}
+
+/* Push a fully-written but NOT YET PUBLISHED record down. Call this while the
+ * publication word still reads zero, and store the word afterwards.
+ *
+ * The order is enforced by WHEN the publication word is stored, not by the
+ * sequence of flushes, and that distinction is the whole design. Flushing a
+ * published record body-lines-first and publication-line-last looks equivalent
+ * and is not: it holds only where CLFLUSH gives line granularity, and collapses
+ * on the WBINVD fallback, which commits many lines with no ordering boundary
+ * between them and can therefore land the new magic and CRC while later body
+ * lines are still stale. Publishing after the body is durable needs no
+ * granularity at all -- there is simply nothing valid in memory to find early.
+ * A reset before the publication store leaves no record, which is the honest
+ * answer; the alternative is a CRC-valid header over content it never
+ * described. */
+static void ev_persist_unpublished_body(volatile struct panic_evidence *ev)
+{
+    cache_writeback_range((const void *)ev, sizeof *ev);
+}
+
 uint32_t panic_evidence_next_epoch(uint32_t standing, uint32_t restored)
 {
     /* Equality-only generation token, NOT an arithmetic sequence. Numeric
@@ -1625,8 +1658,9 @@ void panic_evidence_abandon(uint32_t me)
         return;                              /* superseded -- the page is theirs */
 
     if (pub != 0u) {
-        (void)__sync_bool_compare_and_swap(ev_pubword(ev),
-                                           ev_pubword_val(pub), 0ull);
+        if (__sync_bool_compare_and_swap(ev_pubword(ev),
+                                         ev_pubword_val(pub), 0ull))
+            ev_persist_pubword(ev);   /* revocation is only real once in DRAM */
         (void)__sync_bool_compare_and_swap(&s_evidence_pub_epoch, pub, 0u);
         /* Keyed to OUR epoch. An unconditional clear here would strip the
          * classification off a terminal successor's record: it can take the page
@@ -1915,6 +1949,18 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
      * TSO orders it, and would not survive the planned ARM64 port. */
     __atomic_store_n(ev_pubword((volatile struct panic_evidence *)ev), 0ull,
                      __ATOMIC_RELEASE);
+    /* Make the un-publish DURABLE before a single body byte changes. Skipping
+     * this is the mirror of publishing in the wrong order: DRAM would still
+     * hold the previous record's valid publication word while the body under
+     * it is being overwritten, so a reset landing inside the zero loop leaves
+     * the next boot a valid header over a half-erased record. Ordered by the
+     * MFENCE that closes the range call, so no body store can pass it.
+     *
+     * Durably clearing is safe HERE, unlike the klog crash region, because
+     * panic_evidence_take has already arbitrated ownership of this page: a
+     * writer that dies mid-record was entitled to replace what it erased. The
+     * klog region has no such arbitration and therefore does not do this. */
+    ev_persist_pubword((volatile struct panic_evidence *)ev);
     for (uint32_t i = 1u; i < sizeof *ev / 8u; i++)
         ((volatile uint64_t *)ev)[i] = 0u;
 
@@ -1925,6 +1971,13 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
      * its checksum. */
     panic_evidence_populate(ev, frame, bugcheck_code, bugcheck_params,
                             message, file, line, me, ctx);
+
+    /* DURABLE BEFORE PUBLISHED. The record is complete and the publication
+     * word still reads zero, so this is the only point at which the body can
+     * be committed to memory with nothing valid standing over it. Doing it
+     * here rather than after the publication store is what makes the ordering
+     * hold without depending on cache-line granularity. */
+    ev_persist_unpublished_body(ev);
 
     {
         /* PUBLISH: the completion epoch first, then magic+epoch as ONE aligned
@@ -1950,6 +2003,15 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
         __atomic_store_n(ev_pubword((volatile struct panic_evidence *)ev),
                          ev_pubword_val(epoch), __ATOMIC_RELEASE);
 
+        /* The body is already in memory; this commits the word that makes it
+         * findable, and only that word's line is dirty. It happens HERE rather
+         * than at the reset tail because the machine may never reach that tail
+         * -- a spontaneous triple fault, a watchdog, or a second fault
+         * mid-BSOD all reset without running another instruction of ours. A
+         * record is restorable from the instant it is published, and this is
+         * what makes that true of memory and not just of cache. */
+        ev_persist_pubword((volatile struct panic_evidence *)ev);
+
         /* Quiescent again, and any takeover this invocation owed is discharged.
          * Both conditional on our own owner word, so an invocation that was
          * superseded mid-write clears neither. */
@@ -1964,7 +2026,8 @@ static int panic_evidence_restore_body(volatile struct panic_evidence *ev,
 /* Drop exactly the record the caller validated, never whatever stands now. */
 static void ev_drop(volatile struct panic_evidence *ev, uint64_t observed)
 {
-    (void)__sync_bool_compare_and_swap(ev_pubword(ev), observed, 0ull);
+    if (__sync_bool_compare_and_swap(ev_pubword(ev), observed, 0ull))
+        ev_persist_pubword(ev);
 }
 
 int panic_evidence_restore_at(volatile struct panic_evidence *page,
@@ -1989,7 +2052,11 @@ int panic_evidence_restore_at(volatile struct panic_evidence *page,
          * writing side -- stale contents with a plausible magic are exactly what
          * the header validation exists to reject. */
         if ((uint32_t)(before >> 32) == 0u) {
-            (void)__sync_bool_compare_and_swap(ev_pubword(page), before, 0ull);
+            /* Routed through ev_drop rather than an inline CAS so this
+             * rejection is persisted like every other one: an epoch-0 record
+             * that is cleared in cache only comes back after a reset and is
+             * rejected again on every subsequent boot, forever. */
+            ev_drop(page, before);
             return 0;
         }
 
@@ -2093,8 +2160,14 @@ void panic_evidence_consume_at(volatile struct panic_evidence *page, uint32_t ep
 {
     if (epoch == 0u)
         return;
-    (void)__sync_bool_compare_and_swap(ev_pubword(page),
-                                       ev_pubword_val(epoch), 0ull);
+    /* Persisted, because this is the transition that RETIRES a crash the user
+     * has already been shown. Cleared in cache only, a reset restores DRAM's
+     * still-valid word and the next boot reports the same crash again -- and
+     * that stale record holds the single slot against the crash that actually
+     * killed the machine, which is the failure the page epoch exists to end. */
+    if (__sync_bool_compare_and_swap(ev_pubword(page),
+                                     ev_pubword_val(epoch), 0ull))
+        ev_persist_pubword(page);
 }
 
 void panic_evidence_consume(void)
@@ -2115,10 +2188,25 @@ int panic_evidence_publish_at(volatile struct panic_evidence *page, uint32_t epo
 
     if (epoch == 0u)
         return 0;
+
+    /* UN-PUBLISH FIRST, exactly as the live collector does. Republishing a
+     * page that still carries a valid word would otherwise flush the new body
+     * out from under the OLD word: the full-writeback fallback commits both at
+     * once, and even the targeted path commits the old word alongside the new
+     * CRC, which share a line. Omitting this made the helper diverge from the
+     * live path it claims to be, so a fixture could pass a sequence the real
+     * collector would never perform. */
+    __atomic_store_n(ev_pubword(page), 0ull, __ATOMIC_RELEASE);
+    ev_persist_pubword(page);
+
     page->version = PANIC_EVIDENCE_VERSION;
     page->size    = (uint32_t)sizeof *page;
     page->crc32   = kcrc32(body, sizeof *page - off);
+    /* Same durable-before-published order as the live collector, because this
+     * IS the live path's publish operation on a caller-supplied page. */
+    ev_persist_unpublished_body(page);
     __atomic_store_n(ev_pubword(page), ev_pubword_val(epoch), __ATOMIC_RELEASE);
+    ev_persist_pubword(page);
     return 1;
 }
 
@@ -2126,8 +2214,11 @@ int panic_evidence_revoke_at(volatile struct panic_evidence *page, uint32_t epoc
 {
     if (epoch == 0u)
         return 0;
-    return __sync_bool_compare_and_swap(ev_pubword(page),
-                                        ev_pubword_val(epoch), 0ull) ? 1 : 0;
+    if (!__sync_bool_compare_and_swap(ev_pubword(page),
+                                      ev_pubword_val(epoch), 0ull))
+        return 0;
+    ev_persist_pubword(page);
+    return 1;
 }
 
 void panic_evidence_restore_early(void)
@@ -2983,6 +3074,17 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
 
         /* Restart via ACPI reset or triple fault */
         {
+            /* DEFENCE IN DEPTH, and nothing more. Each evidence writer has
+             * already persisted its own record at publication time, which is
+             * the mechanism that actually carries the guarantee -- this call
+             * cannot, because it runs on THIS CPU only, does not quiesce the
+             * others, and does not wait for external caches to finish. What
+             * it does buy is everything no writer knew to flush: the klog
+             * crash region if a later store dirtied it again, and any other
+             * state a post-mortem might want. Free at this point, since the
+             * next instruction resets the machine. */
+            cache_writeback_all();
+
             /* Try ACPI reset first (port 0xCF9) */
             __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x06), "Nd"((uint16_t)0xCF9));
             /* If that didn't work, triple fault by loading invalid IDT */

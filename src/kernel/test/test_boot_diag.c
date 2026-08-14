@@ -10,6 +10,7 @@
 #include "kernel/klog.h"
 #include "kernel/time_iso.h"
 #include "kernel/kchecksum.h"   /* kcrc32 -- the panic record's checksum */
+#include "kernel/cache.h"       /* cross-boot durability primitives */
 #include "kernel/drivers/serial.h"  /* PANIC_CTX_* -- the declared panic context */
 #include "kernel/cpu_security.h"    /* kstr_read_guarded_calls -- ctx gate probe */
 #include "libc/string.h"
@@ -738,6 +739,257 @@ static void test_panic_evidence_populate_honours_ctx(void)
     memset(ev, 0, sizeof *ev);
 }
 
+/* ---- Cross-boot durability primitives (cache writeback) ----
+ *
+ * What these CAN assert: the line-size contract every caller's ordering
+ * arithmetic depends on, and that flushing does not disturb the bytes it
+ * commits. What no unit test can assert is the property the primitives exist
+ * for -- that a record reaches DRAM before a reset -- because reaching it
+ * requires resetting a machine with a real cache hierarchy, which is the
+ * bare-metal item this section defers. */
+
+/* Deliberately larger than any plausible cache line so a range flush spans
+ * several, and static so the buffer is not on the test's stack. */
+static uint8_t s_cache_buf[1024];
+
+static void cache_buf_fill(void)
+{
+    for (uint32_t i = 0u; i < sizeof s_cache_buf; i++)
+        s_cache_buf[i] = (uint8_t)(i * 7u + 1u);
+}
+
+static uint32_t cache_buf_mismatches(void)
+{
+    uint32_t bad = 0u;
+    for (uint32_t i = 0u; i < sizeof s_cache_buf; i++)
+        if (s_cache_buf[i] != (uint8_t)(i * 7u + 1u))
+            bad++;
+    return bad;
+}
+
+static void test_cache_line_size_contract(void)
+{
+    uint32_t line = cache_line_size();
+
+    /* 0 is the honest "no targeted flush available" answer; any other value is
+     * used as a stride and to align an address down, so it MUST be a power of
+     * two inside the believable range. A non-power-of-two would corrupt the
+     * align-down mask and a too-large stride would skip lines outright. */
+    if (line != 0u) {
+        TEST_ASSERT(line >= CACHE_LINE_MIN, "reported line size below the floor");
+        TEST_ASSERT(line <= CACHE_LINE_MAX, "reported line size above the ceiling");
+        TEST_ASSERT_EQ(line & (line - 1u), 0u, "line size is a power of two");
+    }
+
+    /* Re-probed per call rather than cached, so two calls on the same CPU must
+     * still agree -- if they did not, the two-batch ordering in the evidence
+     * publish path could split the record on one stride and commit it on
+     * another, leaving a gap that neither batch covers. */
+    TEST_ASSERT_EQ(cache_line_size(), line, "line size is stable across calls");
+}
+
+static void test_cache_writeback_preserves_contents(void)
+{
+    cache_buf_fill();
+
+    /* Whole buffer, spanning several lines. */
+    cache_writeback_range(s_cache_buf, sizeof s_cache_buf);
+    TEST_ASSERT_EQ(cache_buf_mismatches(), 0u, "whole-range flush preserves bytes");
+
+    /* Deliberately unaligned at BOTH ends, which is the shape the evidence and
+     * klog callers actually pass: the start aligns down onto a line the caller
+     * did not name, and the tail ends mid-line. */
+    cache_writeback_range(s_cache_buf + 3, 101u);
+    TEST_ASSERT_EQ(cache_buf_mismatches(), 0u, "unaligned flush preserves bytes");
+
+    /* One byte, and a zero length that must do nothing at all rather than
+     * flush a line the caller did not ask for. */
+    cache_writeback_range(s_cache_buf + 511, 1u);
+    cache_writeback_range(s_cache_buf, 0u);
+    TEST_ASSERT_EQ(cache_buf_mismatches(), 0u, "single-byte and empty flush preserve bytes");
+}
+
+static void test_cache_writeback_all_preserves_contents(void)
+{
+    cache_buf_fill();
+    /* Also proves the instruction is legal in this context: an unsupported or
+     * mis-encoded WBINVD would fault rather than return. */
+    cache_writeback_all();
+    TEST_ASSERT_EQ(cache_buf_mismatches(), 0u, "full writeback preserves bytes");
+}
+
+static void test_cache_decode_line_size_rejections(void)
+{
+    /* Synthetic CPUID registers, so all three rejections are reachable. On
+     * real silicon none of them fires -- the host either enumerates CLFLUSH
+     * with a sane line size or it does not -- and they are what keep the panic
+     * path off an unsupported instruction and off a stride that skips lines. */
+    const uint32_t clfsh = 1u << 19;          /* CPUID.01H:EDX[19] */
+    const uint32_t ebx64 = 8u << 8;           /* EBX[15:8] = 8 units of 8 = 64 */
+
+    TEST_ASSERT_EQ(cache_decode_line_size(1u, ebx64, clfsh), 64u,
+                   "a 64-byte line with CLFSH set decodes");
+    TEST_ASSERT_EQ(cache_decode_line_size(0u, ebx64, clfsh), 0u,
+                   "max basic leaf below 1 rejects: leaf 1 was never valid");
+    TEST_ASSERT_EQ(cache_decode_line_size(1u, ebx64, 0u), 0u,
+                   "CLFSH clear rejects even with a plausible size");
+    TEST_ASSERT_EQ(cache_decode_line_size(1u, 0u, clfsh), 0u,
+                   "a zero size rejects, below the floor");
+    TEST_ASSERT_EQ(cache_decode_line_size(1u, 3u << 8, clfsh), 0u,
+                   "24 bytes rejects: not a power of two");
+    TEST_ASSERT_EQ(cache_decode_line_size(1u, 1u << 8, clfsh), 8u,
+                   "the floor itself is accepted");
+    /* EBX[15:8] is 8 bits and the unit is 8 bytes, so 255*8 = 2040 is the
+     * largest value the field can express -- under the ceiling, which is why
+     * the upper bound cannot be reached from real CPUID and is asserted here
+     * as a decoder property rather than pretended to be host coverage. */
+    TEST_ASSERT_EQ(cache_decode_line_size(1u, 0xFFu << 8, clfsh), 0u,
+                   "2040 rejects: representable but not a power of two");
+}
+
+static void test_cache_plan_range_boundaries(void)
+{
+    uintptr_t first = 0xAAu;
+    uint64_t  lines = 0xAAu;
+
+    /* Zero length must do nothing at all, not flush the line it points into. */
+    TEST_ASSERT_EQ(cache_plan_range(0x1000u, 0u, 64u, &first, &lines),
+                   CACHE_PLAN_NONE, "zero length plans nothing");
+    TEST_ASSERT_EQ((uint32_t)lines, 0u, "zero length plans no lines");
+
+    /* No line granularity routes to a full writeback rather than a no-op:
+     * degrading to nothing would silently drop the durability guarantee on
+     * exactly the processors that cannot make it any other way. */
+    TEST_ASSERT_EQ(cache_plan_range(0x1000u, 64u, 0u, &first, &lines),
+                   CACHE_PLAN_ALL, "no line granularity plans a full writeback");
+
+    /* Aligned, exactly one line. */
+    TEST_ASSERT_EQ(cache_plan_range(0x1000u, 64u, 64u, &first, &lines),
+                   CACHE_PLAN_RANGE, "an aligned single line is a range");
+    TEST_ASSERT_EQ((uint64_t)first, 0x1000u, "aligned start is unchanged");
+    TEST_ASSERT_EQ((uint32_t)lines, 1u, "one line covers one aligned line");
+
+    /* Two bytes straddling a line boundary must plan TWO lines. Getting this
+     * wrong leaves the tail of a record dirty with no symptom short of a
+     * reset on real hardware. */
+    TEST_ASSERT_EQ(cache_plan_range(0x103Fu, 2u, 64u, &first, &lines),
+                   CACHE_PLAN_RANGE, "a straddling range is a range");
+    TEST_ASSERT_EQ((uint64_t)first, 0x1000u, "start aligns down onto its line");
+    TEST_ASSERT_EQ((uint32_t)lines, 2u, "a straddling range spans two lines");
+
+    /* Unaligned at both ends, the shape the evidence and klog callers pass. */
+    TEST_ASSERT_EQ(cache_plan_range(0x1003u, 101u, 64u, &first, &lines),
+                   CACHE_PLAN_RANGE, "an unaligned range is a range");
+    TEST_ASSERT_EQ((uint64_t)first, 0x1000u, "unaligned start aligns down");
+    TEST_ASSERT_EQ((uint32_t)lines, 2u, "bytes 3..103 span two 64-byte lines");
+
+    /* A range whose end wraps describes memory that does not exist; planning
+     * a line walk over it would march the whole address space. */
+    TEST_ASSERT_EQ(cache_plan_range((uintptr_t)0xFFFFFFFFFFFFFF00ull, 0x200u,
+                                    64u, &first, &lines),
+                   CACHE_PLAN_ALL, "a wrapping range plans a full writeback");
+
+    /* The top-of-address-space partial line: a non-wrapping range ending at
+     * the last byte. This is the case an end-bounded loop gets wrong -- its
+     * `p += line` wraps to 0 and it restarts from the bottom forever. A COUNT
+     * makes it terminate, and the count must be exact. */
+    TEST_ASSERT_EQ(cache_plan_range((uintptr_t)0xFFFFFFFFFFFFFFC0ull, 64u,
+                                    64u, &first, &lines),
+                   CACHE_PLAN_RANGE, "the final line is a plain range");
+    TEST_ASSERT_EQ((uint32_t)lines, 1u, "the final line is exactly one line");
+    TEST_ASSERT_EQ(cache_plan_range((uintptr_t)0xFFFFFFFFFFFFFF80ull, 128u,
+                                    64u, &first, &lines),
+                   CACHE_PLAN_RANGE, "the final two lines are a plain range");
+    TEST_ASSERT_EQ((uint32_t)lines, 2u, "the final two lines count exactly two");
+}
+
+static void test_evidence_record_survives_its_own_persist(void)
+{
+    volatile struct panic_evidence *ev = &s_pe_fixture;
+    uint32_t restored;
+
+    /* The live publish path flushes the whole record while its publication
+     * word still reads zero, then stores and flushes that word. Publishing a
+     * fixture runs the identical sequence, so a planner stride or align-down
+     * error shows up as a record that no longer validates -- the CRC covers
+     * every byte the range flush is responsible for. */
+    memset((void *)ev, 0, sizeof *ev);
+    TEST_ASSERT_EQ(panic_evidence_publish_at(ev, 0x51DEu), 1,
+                   "fixture record publishes");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1,
+                   "record still validates after the two-batch persist");
+    restored = s_pe_out.epoch;
+    TEST_ASSERT_EQ(restored, 0x51DEu, "restored epoch is the published one");
+
+    /* An explicit whole-page flush on top must be equally harmless -- the
+     * reset tail issues a full writeback over already-persisted state. */
+    cache_writeback_range((const void *)ev, sizeof *ev);
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1,
+                   "record survives a redundant whole-page flush");
+
+    /* REPUBLISH over a still-valid word, without revoking first. This is the
+     * sequence that exposes a publisher which flushes a new body while an old
+     * publication word still stands -- the old word and the new CRC share a
+     * line, and the full-writeback fallback commits both at once. Publishing
+     * must un-publish durably first, so the result is a record that validates
+     * under the NEW epoch and not a mixture of the two. */
+    TEST_ASSERT_EQ(panic_evidence_publish_at(ev, 0x62EFu), 1,
+                   "republish over a valid word succeeds");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1,
+                   "republished record validates");
+    TEST_ASSERT_EQ(s_pe_out.epoch, 0x62EFu, "the republished epoch is the new one");
+    TEST_ASSERT_EQ(panic_evidence_revoke_at(ev, 0x51DEu), 0,
+                   "the superseded epoch can no longer revoke the record");
+
+    /* Revoke persists too, and must still be the transition it always was. */
+    TEST_ASSERT_EQ(panic_evidence_revoke_at(ev, 0x62EFu), 1, "fixture record revokes");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0,
+                   "revoked record no longer restores");
+
+    memset((void *)ev, 0, sizeof *ev);
+}
+
+/* Fixture crash region. Never s_crash_region: klog_crash_persist() writes the
+ * live one from panic context, so a test may not call it -- which is exactly
+ * why the serialize-and-publish half takes the region as a parameter. */
+static uint8_t s_klog_fixture[sizeof(klog_crash_header_t) +
+                              8u * sizeof(klog_crash_entry_t)];
+
+static void test_klog_crash_region_publishes_magic_last(void)
+{
+    klog_crash_header_t *hdr = (klog_crash_header_t *)s_klog_fixture;
+    klog_crash_entry_t  *dst = (klog_crash_entry_t *)(s_klog_fixture +
+                                                      sizeof(klog_crash_header_t));
+    const uint32_t max_entries =
+        (uint32_t)((sizeof s_klog_fixture - sizeof(klog_crash_header_t)) /
+                   sizeof(klog_crash_entry_t));
+    uint32_t count;
+
+    /* Poison the region the way a REUSED one arrives: a previous tenant's
+     * valid magic standing over its own entries. */
+    memset(s_klog_fixture, 0xA5, sizeof s_klog_fixture);
+    hdr->magic = KLOG_CRASH_MAGIC;
+
+    count = klog_crash_serialize_region(s_klog_fixture, sizeof s_klog_fixture);
+
+    TEST_ASSERT(count <= max_entries, "entry count is clamped to what fits");
+    TEST_ASSERT_EQ(hdr->magic, KLOG_CRASH_MAGIC, "magic is published at the end");
+    TEST_ASSERT_EQ(hdr->entry_count, count, "header count matches the return");
+    TEST_ASSERT_EQ(hdr->crc32, kcrc32(dst, count * sizeof(klog_crash_entry_t)),
+                   "published CRC covers exactly the serialized entries");
+
+    /* A region too small to hold even a header is refused outright rather
+     * than publishing a magic over bytes it never wrote. */
+    TEST_ASSERT_EQ(klog_crash_serialize_region(s_klog_fixture,
+                                               sizeof(klog_crash_header_t) - 1u),
+                   0u, "an undersized region serializes nothing");
+    TEST_ASSERT_EQ(klog_crash_serialize_region((uint8_t *)0,
+                                               sizeof s_klog_fixture),
+                   0u, "a NULL region serializes nothing");
+
+    memset(s_klog_fixture, 0, sizeof s_klog_fixture);
+}
+
 void test_register_boot_diag(void)
 {
     test_suite_register_cat("boot: panic forensic evidence",
@@ -760,4 +1012,18 @@ void test_register_boot_diag(void)
                             test_kdate_iso8601_fmt, TEST_CAT_BOOT);
     test_suite_register_cat("boot: load/status log (ntbtlog parity)",
                             test_boot_load_status, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: cache line size contract",
+                            test_cache_line_size_contract, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: cache range writeback preserves contents",
+                            test_cache_writeback_preserves_contents, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: full cache writeback preserves contents",
+                            test_cache_writeback_all_preserves_contents, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: evidence record survives its own persist",
+                            test_evidence_record_survives_its_own_persist, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: cache line size decoder rejections",
+                            test_cache_decode_line_size_rejections, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: cache range planner boundaries",
+                            test_cache_plan_range_boundaries, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: klog crash region publishes magic last",
+                            test_klog_crash_region_publishes_magic_last, TEST_CAT_BOOT);
 }
