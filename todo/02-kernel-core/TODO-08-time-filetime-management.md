@@ -426,7 +426,7 @@ Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed value
 > - Scope boundary: §13 wires the timestamps; rate-stable klog capture is TODO-04 §9; NTFS compressed-write stamping is 05-storage/TODO-02 §2.
 > **Verified:** 2026-06-27 | ship `2bf8ba15` + review fixes | 5/5 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.53s)
 > **Accepted:** [H] NTFS compressed-write path skips the `$STANDARD_INFORMATION` timestamp update -> XREF: 05-storage-filesystems/TODO-02-ntfs-readwrite.md §2 (item: "Compressed-write `$STANDARD_INFORMATION` timestamps" at line 84)
-> **Accepted:** [M] klog disk-log event-time reconstruction assumes 100 Hz (drifts after NtSetTimerResolution); needs a rate-stable capture -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Rate-stable `klog_entry_t.timestamp`" at line 456)
+> **Accepted:** [M] klog disk-log event-time reconstruction assumes 100 Hz (drifts after NtSetTimerResolution); needs a rate-stable capture -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Rate-stable `klog_entry_t.timestamp`" at line 464)
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 1H+1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
