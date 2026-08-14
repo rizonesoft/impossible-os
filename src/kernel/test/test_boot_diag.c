@@ -14,6 +14,13 @@
 /* Off-stack restore target (struct panic_evidence is one 4 KiB page). */
 static struct panic_evidence s_pe_out;
 
+/* Off-stack FIXTURE page for the evidence-lifecycle cases (section 23). Never
+ * the live 0x80000 page and never the live collector: panic_evidence_take
+ * mutates boot-global ownership, so exercising it from a test would lock a later
+ * REAL panic out of the record. The _at() helpers run the identical publish /
+ * revoke / consume / restore logic against this page instead. */
+static struct panic_evidence s_pe_fixture;
+
 /* Off-stack fixture: the formatter buffer is 512 bytes. */
 static char s_fmt[512];
 
@@ -262,6 +269,7 @@ static void test_panic_evidence(void)
      * so the same crash is never reported twice. (Built manually -- not via the
      * live collector -- to avoid mutating its first-caller-wins guard.) */
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version       = PANIC_EVIDENCE_VERSION;
     ev->size          = (uint32_t)sizeof *ev;
     ev->bugcheck_code = 0xABCDu;
@@ -287,6 +295,7 @@ static void test_panic_evidence(void)
 
     /* Bad crc32 is rejected (stale 0x80000 never misread as a valid crash). */
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev;
     ev->crc32   = 0x0BADBAD0u;
@@ -296,6 +305,7 @@ static void test_panic_evidence(void)
 
     /* Wrong version is rejected even with a self-consistent crc. */
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION + 99u;
     ev->size    = (uint32_t)sizeof *ev;
     ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
@@ -305,6 +315,7 @@ static void test_panic_evidence(void)
     /* Right version, WRONG size -> rejected (an old-layout record must never be
      * misread; the size gate fires before the crc check). */
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev - 8u;
     ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
@@ -316,6 +327,7 @@ static void test_panic_evidence(void)
      * untrusted, so an in-range count is required before any consumer iterates
      * stages[]/klogs[] (else an OOB read in the artifact writer). */
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version     = PANIC_EVIDENCE_VERSION;
     ev->size        = (uint32_t)sizeof *ev;
     ev->stage_count = PANIC_EVIDENCE_STAGES + 1u;
@@ -324,6 +336,7 @@ static void test_panic_evidence(void)
     TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "over-cap stage_count rejected");
     TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "over-cap stage_count record dropped");
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version    = PANIC_EVIDENCE_VERSION;
     ev->size       = (uint32_t)sizeof *ev;
     ev->klog_count = PANIC_EVIDENCE_KLOGS + 1u;
@@ -335,6 +348,7 @@ static void test_panic_evidence(void)
      * lack a NUL must be force-terminated on restore so no downstream reader
      * over-reads. */
     memset(ev, 0, sizeof *ev);
+    ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev;
     memset(ev->message, 'A', sizeof ev->message);   /* no NUL anywhere */
@@ -348,6 +362,153 @@ static void test_panic_evidence(void)
     /* No magic -> not a record. Leaves 0x80000 clean for a real panic. */
     ev->magic = 0u;
     TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "absent magic -> no record");
+}
+
+/* Section 23: the publication epoch, and the lifecycle transitions keyed by it.
+ * All over a FIXTURE page -- see s_pe_fixture. */
+static void test_panic_evidence_epoch(void)
+{
+    volatile struct panic_evidence *fx = &s_pe_fixture;
+
+    /* --- epoch allocation: never 0, never either observed epoch ---
+     * The interesting inputs are the wrapping ones. A plain max()+1 gets
+     * standing=UINT32_MAX wrong (wraps to 0), and "wrap then skip 0" then lands
+     * on 1 -- which collides when the restored epoch IS 1, and a consume keyed
+     * by that value would erase the newly published record instead of the old
+     * one it was aiming at. */
+    TEST_ASSERT_EQ(panic_evidence_next_epoch(0u, 0u), 1u, "first epoch of a clean boot is 1");
+    TEST_ASSERT_EQ(panic_evidence_next_epoch(7u, 3u), 8u, "epoch advances past the standing record");
+    TEST_ASSERT_EQ(panic_evidence_next_epoch(3u, 9u), 10u, "epoch advances past the restored record");
+    TEST_ASSERT_EQ(panic_evidence_next_epoch(0xFFFFFFFFu, 0u), 1u, "wrap past UINT32_MAX yields a live epoch");
+    TEST_ASSERT_EQ(panic_evidence_next_epoch(0xFFFFFFFFu, 1u), 2u,
+                   "wrap skips the restored epoch, not just zero");
+    TEST_ASSERT_EQ(panic_evidence_next_epoch(0xFFFFFFFFu, 2u), 1u,
+                   "wrap skips a colliding restored epoch either way");
+    {
+        /* The property the three cases above are instances of, asserted
+         * directly over every adversarial pair the wrap can produce. */
+        uint32_t standing[4] = { 0u, 1u, 2u, 0xFFFFFFFFu };
+        for (uint32_t i = 0u; i < 4u; i++) {
+            for (uint32_t j = 0u; j < 4u; j++) {
+                uint32_t e = panic_evidence_next_epoch(standing[i], standing[j]);
+                TEST_ASSERT(e != 0u, "allocated epoch is never the no-record sentinel");
+                TEST_ASSERT(e != standing[i], "allocated epoch never equals the standing epoch");
+                TEST_ASSERT(e != standing[j], "allocated epoch never equals the restored epoch");
+            }
+        }
+    }
+
+    /* --- publish makes a record restorable, and carries its epoch --- */
+    memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+    s_pe_fixture.bugcheck_code = 0x5150u;
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 0u), 0, "epoch 0 is not publishable");
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 42u), 1, "record published at epoch 42");
+    TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC, "publication set the magic");
+    TEST_ASSERT_EQ((uint32_t)fx->epoch, 42u, "publication word carries the epoch");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 1, "published record restores");
+    TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0x5150u, "restored payload matches");
+    TEST_ASSERT_EQ(s_pe_out.epoch, 42u, "restore copies the epoch out for consume");
+
+    /* --- revoke is generation-conditional --- */
+    TEST_ASSERT_EQ(panic_evidence_revoke_at(fx, 41u), 0, "revoke of a different epoch is refused");
+    TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC, "refused revoke left the record");
+    TEST_ASSERT_EQ(panic_evidence_revoke_at(fx, 42u), 1, "revoke of the standing epoch succeeds");
+    TEST_ASSERT_EQ((uint32_t)fx->magic, 0u, "revoked record is gone");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 0, "revoked record does not restore");
+
+    /* --- THE SECTION-23 DEFECT, asserted directly ---
+     * A survivable fault publishes, then revokes on its way to parking; the
+     * terminal fault that follows takes the slot rather than being refused it,
+     * and the next boot restores the TERMINAL record, not the survived one. */
+    memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+    s_pe_fixture.bugcheck_code = 0xA55Eu;                 /* survivable async fault */
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 7u), 1, "survivable fault published");
+    TEST_ASSERT_EQ(panic_evidence_revoke_at(fx, 7u), 1, "survivable fault revoked at park");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 0,
+                   "a fault the machine SURVIVED leaves no cross-boot record");
+    memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+    s_pe_fixture.bugcheck_code = 0xDEADu;                 /* the fault that killed it */
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 8u), 1, "terminal fault takes the slot");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 1, "terminal record restores");
+    TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0xDEADu,
+                   "the restored record describes the fault that killed the machine");
+
+    /* --- consume is keyed by epoch, so a concurrent fresh crash survives ---
+     * This is the case the old compare-then-clear could not express: it compared
+     * boot_seq + crc and cleared the magic as a separate store, so a panic
+     * publishing in the gap lost its record. */
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 9u), 1, "republished at a newer epoch");
+    panic_evidence_consume_at(fx, 8u);                    /* consume the OLD record */
+    TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC,
+                   "consume of a superseded epoch does NOT erase the newer record");
+    panic_evidence_consume_at(fx, 0u);
+    TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC, "consume of epoch 0 is inert");
+    panic_evidence_consume_at(fx, 9u);                    /* consume the standing one */
+    TEST_ASSERT_EQ((uint32_t)fx->magic, 0u, "consume of the standing epoch clears the page");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 0, "consumed record does not restore");
+
+    /* --- epoch 0 is the no-record sentinel on EVERY path ---
+     * A CRC-valid record carrying magic with epoch 0 must not restore. It would
+     * otherwise be unconsumable -- publish refuses epoch 0 and consume is inert
+     * for it -- so the same crash would be re-reported on every boot forever.
+     * The page is untrusted cross-boot RAM, so this needs no bug on the writing
+     * side to occur; stale contents with a plausible magic are exactly what the
+     * header validation exists to reject. */
+    {
+        uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+        memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+        s_pe_fixture.version = PANIC_EVIDENCE_VERSION;
+        s_pe_fixture.size    = (uint32_t)sizeof s_pe_fixture;
+        s_pe_fixture.crc32   = panic_crc32((const uint8_t *)&s_pe_fixture + off,
+                                           s_pe_fixture.size - off);
+        s_pe_fixture.magic   = PANIC_EVIDENCE_MAGIC;    /* magic set, epoch 0 */
+        TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 0,
+                       "a valid-looking record with epoch 0 is rejected");
+        TEST_ASSERT_EQ((uint32_t)fx->magic, 0u,
+                       "the unconsumable epoch-0 record is dropped, not left to re-report");
+    }
+
+    /* --- a rejected record is dropped through the PUBLICATION WORD ---
+     * Both halves are cleared, because the drop is one CAS on the 64-bit word
+     * rather than a plain store to the magic. That is what stops a rejection
+     * decided about an OLD record from erasing a newer one republished
+     * underneath it: the CAS names the exact record that failed validation. */
+    memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+    s_pe_fixture.epoch   = 21u;
+    s_pe_fixture.version = PANIC_EVIDENCE_VERSION;
+    s_pe_fixture.size    = (uint32_t)sizeof s_pe_fixture;
+    s_pe_fixture.crc32   = 0x0BADBAD0u;                 /* deliberately wrong */
+    s_pe_fixture.magic   = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 0, "bad crc rejected on the fixture");
+    TEST_ASSERT_EQ((uint32_t)fx->magic, 0u, "rejected record cleared its magic");
+    TEST_ASSERT_EQ((uint32_t)fx->epoch, 0u, "rejected record cleared its epoch too");
+
+    /* --- and the drop is GENERATION-CONDITIONAL, not an unconditional clear ---
+     * The two assertions above would pass just as well if the reject path stored
+     * zero over whatever happened to be on the page. What distinguishes the two
+     * implementations is a drop aimed at a generation that is no longer the one
+     * standing: a CAS keyed on the observed word does nothing, a blind clear
+     * erases the newer record. That is the difference between a rejection
+     * decided about an old record and the loss of the terminal crash that
+     * replaced it, so it is asserted directly rather than inferred. */
+    memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+    s_pe_fixture.bugcheck_code = 0xFA7Au;
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 31u), 1, "newer record published at epoch 31");
+    TEST_ASSERT_EQ(panic_evidence_revoke_at(fx, 30u), 0,
+                   "a drop aimed at the superseded generation is refused");
+    TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC,
+                   "the newer record survives a stale drop");
+    TEST_ASSERT_EQ((uint32_t)fx->epoch, 31u, "and keeps its own generation");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 1, "newer record still restores");
+    TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0xFA7Au, "with its own payload intact");
+
+    /* --- restore still RETAINS, which is what the header now promises --- */
+    memset(&s_pe_fixture, 0, sizeof s_pe_fixture);
+    TEST_ASSERT_EQ(panic_evidence_publish_at(fx, 11u), 1, "record for the retain check");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 1, "first restore succeeds");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(fx, &s_pe_out), 1,
+                   "restore is repeatable -- it does not consume");
+    TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC, "restore retained the page");
 }
 
 static void test_klog_panic_snapshot(void)
@@ -380,6 +541,8 @@ void test_register_boot_diag(void)
 {
     test_suite_register_cat("boot: panic forensic evidence",
                             test_panic_evidence, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: panic evidence epoch lifecycle",
+                            test_panic_evidence_epoch, TEST_CAT_BOOT);
     test_suite_register_cat("boot: klog panic snapshot",
                             test_klog_panic_snapshot, TEST_CAT_BOOT);
     test_suite_register_cat("boot: loader identity format",

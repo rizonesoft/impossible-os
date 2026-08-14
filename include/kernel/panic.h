@@ -80,7 +80,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
  * ========================================================================== */
 
 #define PANIC_EVIDENCE_MAGIC    0xDEADBEEFu
-#define PANIC_EVIDENCE_VERSION  2u   /* v2: klog entries carry pid/tid */
+#define PANIC_EVIDENCE_VERSION  3u   /* v3: publication word carries an epoch */
 #define PANIC_EVIDENCE_ADDR     0x80000u   /* fixed physical page; reserved by PMM */
 #define PANIC_EVIDENCE_STAGES   16u        /* last N boot-stage entries captured */
 #define PANIC_EVIDENCE_KLOGS    8u         /* last N klog ring entries captured */
@@ -106,10 +106,19 @@ struct panic_klog_entry {
 
 /* The cross-boot evidence record. A versioned header (magic+version+size+crc32
  * +boot_seq) lets Phase-0 reject stale 0x80000 contents: only magic + matching
- * version + size + a valid crc32 over everything-after-crc32 is trusted. */
+ * version + size + a valid crc32 over everything-after-crc32 is trusted.
+ *
+ * `magic` and `epoch` are deliberately adjacent at offset 0 so the pair forms
+ * ONE naturally-aligned 64-bit PUBLICATION WORD. Every lifecycle transition on
+ * the page -- publish, revoke, consume -- is a single atomic store or CAS on
+ * that word, which is what lets a reader and a concurrently-panicking writer
+ * agree on what the page holds. Before the epoch existed, each consumer invented
+ * its own ad-hoc identity check (compare boot_seq + crc, THEN clear the magic)
+ * and none of them was atomic against a panic landing in between. */
 struct panic_evidence {
     /* --- header (validated before anything else is trusted) --- */
-    uint32_t magic;            /* PANIC_EVIDENCE_MAGIC */
+    uint32_t magic;            /* PANIC_EVIDENCE_MAGIC -- published LAST */
+    uint32_t epoch;            /* publication generation; see panic.c epoch rules */
     uint32_t version;          /* PANIC_EVIDENCE_VERSION */
     uint32_t size;             /* sizeof(struct panic_evidence) */
     uint32_t crc32;            /* IEEE CRC32 over all bytes AFTER this field */
@@ -146,6 +155,23 @@ _Static_assert(sizeof(struct panic_evidence) <= 4096,
                "panic_evidence must fit one 4 KiB page (0x80000)");
 _Static_assert(sizeof(struct panic_evidence) % 8u == 0u,
                "panic_evidence size must be a multiple of 8 (uint64 zero/copy loops)");
+/* The publication word. magic and epoch must be the FIRST two dwords and must
+ * be contiguous, because publish/revoke/consume each act on them as one aligned
+ * 64-bit location. Split them and every one of those transitions silently
+ * degrades back into the non-atomic compare-then-clear this format replaced. */
+_Static_assert(__builtin_offsetof(struct panic_evidence, magic) == 0u,
+               "magic must start the publication word at page offset 0");
+_Static_assert(__builtin_offsetof(struct panic_evidence, epoch) == 4u,
+               "epoch must be the high half of the 64-bit publication word");
+_Static_assert(PANIC_EVIDENCE_ADDR % 8u == 0u,
+               "the evidence page must be 8-byte aligned for the publication word");
+/* The CRC covers everything from boot_seq on, so every field the checksum is
+ * meant to protect must sit AFTER it -- and the publication word must sit
+ * outside that range, since publish and revoke rewrite it without touching the
+ * CRC. */
+_Static_assert(__builtin_offsetof(struct panic_evidence, boot_seq) >
+               __builtin_offsetof(struct panic_evidence, crc32),
+               "crc32 must precede the region it covers");
 
 /* IEEE CRC-32 (self-contained; shared by collector + Phase-0 restore so both
  * sides compute identical checksums). */
@@ -165,11 +191,19 @@ uint32_t panic_crc32(const void *data, uint32_t len);
  * protected, deliberately: the invocation that was writing it has been
  * interrupted by something terminal and is not coming back, so a later
  * invocation finishing a whole record is the only remaining way to leave any
- * evidence at all. Cross-CPU, the record belongs to the first CPU to reach the
- * panic path this boot; a loser writes nothing. */
+ * evidence at all.
+ *
+ * `token` is this invocation's identity from panic_evidence_begin(). `terminal`
+ * is 0 for the early capture (which runs before the panic path knows whether the
+ * machine dies) and 1 only once panic_try_claim_owner() has declared this
+ * invocation system-terminal -- which is what licenses it to take the page from
+ * a survivable owner. An invocation that does not win the page writes nothing.
+ * Calling with the SAME token over a record that invocation already published is
+ * a no-op: the standing record already describes that fault. */
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
                             const uint64_t bugcheck_params[4],
-                            const char *message, const char *file, uint32_t line);
+                            const char *message, const char *file, uint32_t line,
+                            uint32_t token, int terminal);
 
 /* The declared panic context for this entry: PANIC_CTX_NMI when the
  * fault-suppressed kernel read must NOT be used, PANIC_CTX_NORMAL otherwise.
@@ -225,9 +259,37 @@ uint32_t panic_capture_frames(struct interrupt_frame *frame, uint32_t ctx,
                               uint64_t *out, uint32_t count);
 
 /* Phase-0 restore: if the evidence page holds a valid record, copy it into the
- * caller-provided buffer, clear the page magic, and return 1; else 0. Pre-heap
- * safe -- copies into caller storage, never allocates. */
+ * caller-provided buffer and return 1; else 0. Pre-heap safe -- copies into
+ * caller storage, never allocates.
+ *
+ * RESTORE DOES NOT CONSUME. The record is durable only once last-panic.txt has
+ * been written, so restore RETAINS the page and is repeatable; only
+ * panic_evidence_consume() clears it. The header used to promise the opposite
+ * ("clear the page magic") while the code deliberately retained -- the same
+ * class of defect as the non-atomic consume one layer down, and fixed with it.
+ *
+ * Reads are epoch-guarded: a record being rewritten by a concurrent panic on
+ * another CPU is never returned half-copied. The copy is retried a bounded
+ * number of times and then reported as no-record rather than as a torn one. */
 int panic_evidence_restore(struct panic_evidence *out);
+
+/* Fixture-page variants. Identical logic against a caller-supplied page, so the
+ * lifecycle can be asserted in unit tests WITHOUT touching the live 0x80000 page
+ * or the boot-global ownership words -- calling the live reserve/collect from a
+ * test would lock a later real panic out of the record. */
+int panic_evidence_restore_at(volatile struct panic_evidence *page,
+                              struct panic_evidence *out);
+void panic_evidence_consume_at(volatile struct panic_evidence *page, uint32_t epoch);
+int panic_evidence_publish_at(volatile struct panic_evidence *page, uint32_t epoch);
+int panic_evidence_revoke_at(volatile struct panic_evidence *page, uint32_t epoch);
+
+/* Next publication generation, given the epoch standing on the page and the one
+ * this boot restored. Never 0, and never equal to EITHER input, so a record
+ * published now can never be mistaken for -- or erased in place of -- the record
+ * that stood before it. Exposed for unit tests: the wraparound cases (a standing
+ * epoch of UINT32_MAX from untrusted cross-boot RAM) are exactly the ones a
+ * naive max()+1 gets wrong. */
+uint32_t panic_evidence_next_epoch(uint32_t standing, uint32_t restored);
 
 /* Phase-0 hook: restore the evidence page into kernel-side storage and log if a
  * prior crash was found. Call early in boot_hw_init, before heap is up. */
@@ -245,5 +307,46 @@ void panic_evidence_write_blackbox(void);
 
 /* Clear the evidence page magic. Called after a successful last-panic.txt write
  * (the record is only consumed once durably persisted, so a boot that dies
- * before the write retries on the next boot). */
+ * before the write retries on the next boot).
+ *
+ * ONE compare-and-swap on the publication word, keyed by the epoch this boot
+ * restored: a record published by a concurrent panic between the check and the
+ * clear carries a different epoch, so the CAS fails and that fresh crash
+ * survives. The previous compare-then-clear could not express that -- it
+ * compared boot_seq + crc and then cleared the magic as a separate store, and a
+ * panic landing in the gap lost its record. */
 void panic_evidence_consume(void);
+
+/* --- cross-boot evidence lifecycle ----------------------------------------
+ *
+ * The page holds ONE record and a boot can produce several panics, only some of
+ * which kill the machine. Ownership is therefore decided at TERMINAL
+ * arbitration, not at panic entry, and the polarity is DEMOTE-ON-SURVIVAL: a
+ * record is restorable from the instant it is published, and only the async
+ * survival path revokes it. That way a machine that dies between collection and
+ * arbitration still leaves the record it collected -- which is the whole reason
+ * collection runs before the variable-latency panic work. */
+
+/* Allocate this panic invocation's identity. Never 0, and distinct for a NESTED
+ * invocation on the same CPU -- panic_try_claim_owner() is same-CPU re-entrant,
+ * so an APIC id names a CPU, never the invocation that published a record. */
+uint32_t panic_evidence_begin(void);
+
+/* Try to become the invocation that owns the page. `terminal` is 1 only once
+ * panic_try_claim_owner() has declared this invocation system-terminal, which is
+ * what licenses it to TAKE the page from a survivable owner. Returns 1 when the
+ * caller may write the page. */
+int panic_evidence_take(uint32_t token, int terminal);
+
+/* Revoke this CPU's published record on the survivable async-park path, and
+ * release the page. Every mutation is generation-conditional, so a terminal
+ * invocation that already took the page and republished is never disturbed. */
+void panic_evidence_abandon(void);
+
+/* True when THIS invocation's terminal takeover could not establish writer
+ * quiescence and the page still owes it a record; the terminal path retries
+ * later and, if that also fails, says so on serial rather than losing the record
+ * silently. Scoped to the token because the obligation belongs to one
+ * invocation: a bare flag would be cleared by whatever unrelated panic next
+ * acquires the page, cancelling a retry that had not happened. */
+int panic_evidence_takeover_pending_for(uint32_t token);

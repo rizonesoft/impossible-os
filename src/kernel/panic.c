@@ -1109,56 +1109,377 @@ static int write_crash_dump(struct interrupt_frame *frame, uint32_t ctx,
  * Owner identity is the panic-safe APIC id -- the same identity the serial
  * owner word and the evidence record's own cpu_id field use, and readable
  * without GS. */
-#define PANIC_EVIDENCE_NO_OWNER  0xFFFFFFFFu
-_Static_assert(PANIC_EVIDENCE_NO_OWNER > CPU_PANIC_SAFE_ID_MASK,
-               "the no-owner sentinel must not alias a real CPU identity");
-static volatile uint32_t s_evidence_owner    = PANIC_EVIDENCE_NO_OWNER;
+/* Owner = ONE aligned 64-bit word {cpu:32 low, token:32 high}; 0 = free.
+ *
+ * The token, not the CPU id, is the OWNER identity. panic_try_claim_owner() is
+ * same-CPU re-entrant by design (see its comment), so a nested invocation on the
+ * owner CPU is a DIFFERENT panic that can legitimately become terminal while an
+ * earlier invocation's record still stands -- an APIC id cannot tell those two
+ * apart, and treating them as one is how a nested terminal fault would keep the
+ * earlier survivable record instead of the fault that actually killed the box.
+ *
+ * The CPU id is still carried, because it answers a different question:
+ * CONCURRENCY. An invocation on THIS CPU interrupted us and is not running in
+ * parallel with us, so taking the page from it needs no quiescence wait; an
+ * invocation on ANOTHER CPU may be inside the collector right now, and does. */
+#define PANIC_EVIDENCE_NO_OWNER  0ull
+static volatile uint64_t s_evidence_owner = PANIC_EVIDENCE_NO_OWNER;
 
-/* Set only AFTER a COMPLETE record has been published, never on entry.
+/* Bit 63 marks the owner as ACTIVELY WRITING the page.
  *
- * The difference is the whole guarantee. A one-shot claimed on entry makes
- * population irrevocable before anything durable exists, so an abort between
- * the claim and the magic store -- and `cli` masks neither NMI nor #MC -- locks
- * every later invocation out of a page that was never finished, and the boot
- * ends with no record at all. Claimed on completion instead, a nested abort
- * that interrupted an unfinished record simply writes its own complete one:
- * the outer invocation is never coming back, so the nested crash is the best
- * evidence still obtainable. A record that DID complete is never overwritten,
- * which is the original nested-fault-during-BSOD guarantee, unchanged.
+ * It lives IN the owner word rather than beside it because ownership and write
+ * permission must change in ONE transition. Held apart, there is a window
+ * between "I am the owner" and "I am writing" in which a terminal CPU sees a
+ * fresh owner that has not yet declared activity, reads that as quiescent, takes
+ * the page, and starts populating it while the first owner -- which never
+ * revalidates -- populates it too. Two CPUs then zero, fill and CRC the same
+ * page and the same klog scratch, which is corruption rather than a merely wrong
+ * record. Fused into the CAS the window cannot exist: an invocation acquires
+ * ownership and the right to write together, or acquires neither.
  *
- * Kept in RAM rather than read back from the page's magic so a record left by a
- * PREVIOUS boot can never suppress this boot's collection -- the flag says
- * "THIS boot published one" and the magic says "the page holds a restorable
- * record"; completion needs both, and neither alone is the question. */
-static volatile int      s_evidence_published = 0;
+ * This also subsumes what a separate activity flag was for. A nested invocation
+ * takes the page by CAS, so it can never clear an ACTIVE state belonging to a
+ * different writer -- it replaces the whole word, and the invocation it
+ * displaced can no longer match on its own value to clear anything. */
+#define EV_ACTIVE_BIT  (1ull << 63)
+#define EV_TOKEN_MASK  0x7FFFFFFFu        /* bit 63 is the active flag, not token */
 
-/* Claim the single evidence record. Returns 1 to the FIRST panic invocation of
- * this boot and 0 to every other one -- another CPU's, and this CPU's own
- * nested re-entry alike, which is what keeps the record describing the crash
- * that started the cascade.
- *
- * ONE compare-and-swap, not a flag plus an owner store: `cli` does not mask NMI
- * or #MC, so any gap between "reserved" and "owner published" is a window an
- * abort can land in -- and a nested abort that lands there would find a
- * reservation belonging to nobody, decline to write, and (being terminal) never
- * let the outer invocation resume, leaving the boot with no record at all. */
-static int panic_evidence_reserve(void)
+static inline uint64_t ev_owner_word(uint32_t cpu, uint32_t token)
 {
-    uint32_t me = cpu_panic_safe_apic_id();
-    uint32_t prev = __sync_val_compare_and_swap(&s_evidence_owner,
-                                                PANIC_EVIDENCE_NO_OWNER, me);
-    return prev == PANIC_EVIDENCE_NO_OWNER;
+    return (uint64_t)cpu | ((uint64_t)(token & EV_TOKEN_MASK) << 32);
+}
+static inline uint32_t ev_owner_cpu(uint64_t w)    { return (uint32_t)w; }
+static inline int      ev_owner_active(uint64_t w) { return (w & EV_ACTIVE_BIT) != 0ull; }
+
+/* Per-INVOCATION identity allocator. Never 0 (0 is the free sentinel). */
+static volatile uint32_t s_evidence_token_next = 0;
+
+/* Epoch of the record THIS boot published, 0 if none. An epoch-valued completion
+ * token rather than a boolean: every revoke keys on it, so a mutation aimed at
+ * an older record can never land on a newer one. */
+static volatile uint32_t s_evidence_pub_epoch = 0;
+
+/* Next epoch to hand out; 0 = not yet seeded for this boot. */
+static volatile uint32_t s_evidence_epoch_next = 0;
+
+/* Epoch of the record this boot RESTORED at Phase 0, 0 if none. Seeding reads it
+ * so a record published now can never collide with the one still on the page
+ * awaiting emission -- consume is keyed by epoch, and a collision would let this
+ * boot's fresh crash be erased in place of the older record. Held separately
+ * from s_prev_crash because the collector runs long before that buffer is
+ * declared, and it is the only field of it the panic path needs. */
+static volatile uint32_t s_prev_crash_epoch = 0;
+
+/* TOKEN of the terminal invocation whose takeover could not establish quiescence
+ * in its bounded wait; 0 when nothing is owed. The terminal path retries later
+ * (the whole BSOD render has run by then) and reports on serial if even that
+ * fails.
+ *
+ * A token rather than a flag, because the obligation belongs to ONE invocation.
+ * A bare flag is cleared by whoever next acquires the page, and the acquirer is
+ * routinely somebody else: while the terminal CPU renders the BSOD, the
+ * survivable writer releases the slot and an unrelated non-terminal panic can
+ * take it, clearing the flag before the terminal exit ever checks it. The retry
+ * would then skip silently and the boot would keep a non-terminal record, or
+ * none, in place of the crash that actually killed the machine. */
+static volatile uint32_t s_evidence_takeover_token = 0;
+
+/* Bound on the quiescence spin. The only writer we can be waiting for is an
+ * invocation inside panic_collect_evidence, whose work is finite (a fixed-size
+ * page zero plus fixed-count string copies) but whose per-byte cost is a fault
+ * fixup when memory is corrupt -- so the bound is generous rather than tight. */
+#define PANIC_EVIDENCE_QUIESCE_SPINS  2000000u
+
+/* The 64-bit publication word {magic, epoch} living at page offset 0. Publish,
+ * revoke and consume are each ONE atomic operation on it. */
+static inline volatile uint64_t *ev_pubword(volatile struct panic_evidence *ev)
+{
+    return (volatile uint64_t *)(void *)ev;
+}
+static inline uint64_t ev_pubword_val(uint32_t epoch)
+{
+    return (uint64_t)PANIC_EVIDENCE_MAGIC | ((uint64_t)epoch << 32);
 }
 
-/* Whether the record belongs to `me` -- the backstop for a caller that reaches
- * panic_collect_evidence without having reserved. The identity is passed IN
- * rather than re-derived: cpu_panic_safe_apic_id executes CPUID, which
- * serializes and exits to the hypervisor under KVM/WHPX, and the collector would
- * otherwise pay for it four times on a path whose whole cost function is
- * instructions-between-fault-and-durable-record. */
-static int panic_evidence_owned_by(uint32_t me)
+uint32_t panic_evidence_next_epoch(uint32_t standing, uint32_t restored)
 {
-    return __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE) == me;
+    /* Equality-only generation token, NOT an arithmetic sequence. Numeric
+     * monotonicity cannot be promised: `standing` is untrusted cross-boot RAM
+     * and may be UINT32_MAX, so a plain max()+1 wraps to 0, and skipping 0 then
+     * lands back on a value one of the inputs may already hold (standing
+     * 0xFFFFFFFF with restored 1 yields exactly 1). All that is actually
+     * required is a value that is nonzero and equal to NEITHER observed epoch,
+     * so the walk below advances until it is -- at most three steps. */
+    uint32_t e = (standing > restored) ? standing : restored;
+
+    for (uint32_t i = 0u; i < 4u; i++) {
+        e++;                                   /* wraps to 0, handled below */
+        if (e != 0u && e != standing && e != restored)
+            return e;
+    }
+    return 1u;   /* unreachable: 4 distinct candidates cannot all collide with 2 */
+}
+
+/* Seed-on-first-use epoch allocator for this boot. */
+static uint32_t panic_evidence_alloc_epoch(volatile struct panic_evidence *ev,
+                                           uint32_t restored)
+{
+    uint32_t e = s_evidence_epoch_next;
+
+    if (e == 0u)
+        e = panic_evidence_next_epoch(ev->epoch, restored);
+
+    s_evidence_epoch_next = (e + 1u) ? (e + 1u) : 1u;
+    return e;
+}
+
+/* Allocate this invocation's identity: always within EV_TOKEN_MASK and never 0.
+ *
+ * Both bounds are load-bearing. Bit 63 of the owner word is the ACTIVE flag, so
+ * a token wider than the mask would corrupt it; and a token whose masked value
+ * is 0 makes ev_owner_word(0, token) equal PANIC_EVIDENCE_NO_OWNER, so an
+ * invocation on CPU 0 would publish "the page is free" as its own ownership and
+ * any other CPU could take the page out from under it mid-write. */
+uint32_t panic_evidence_begin(void)
+{
+    for (;;) {
+        uint32_t t = __sync_add_and_fetch(&s_evidence_token_next, 1u)
+                     & EV_TOKEN_MASK;
+        if (t != 0u)
+            return t;
+    }
+}
+
+/* Whether the page currently holds a COMPLETE record published by this boot.
+ *
+ * Both halves, because completion cannot be published in one place: the RAM-side
+ * epoch says "this boot published a record" and the page word says "the page
+ * still holds it". A record left by a PREVIOUS boot must never suppress this
+ * boot's collection, and a record this boot published and a terminal invocation
+ * then replaced must not be mistaken for the standing one. */
+static int panic_evidence_standing_complete(volatile struct panic_evidence *ev)
+{
+    uint32_t pub = __atomic_load_n(&s_evidence_pub_epoch, __ATOMIC_ACQUIRE);
+
+    return pub != 0u && __atomic_load_n(ev_pubword(ev), __ATOMIC_ACQUIRE)
+                            == ev_pubword_val(pub);
+}
+
+
+/* Become the invocation that owns the page. See the header for the contract.
+ *
+ * `terminal` is what licenses a takeover: only an invocation panic_try_claim_owner
+ * has declared system-terminal may take the page away from a survivable owner,
+ * and only one CPU per boot can ever hold that claim -- so there is no
+ * terminal-versus-terminal contention across CPUs to arbitrate here. */
+int panic_evidence_take(uint32_t token, int terminal)
+{
+    volatile struct panic_evidence *ev =
+        (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    uint32_t me = cpu_panic_safe_apic_id();
+    uint64_t mine = ev_owner_word(me, token);
+
+    for (;;) {
+        uint64_t cur = __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE);
+
+        if (cur == mine) {
+            /* Ours already. If the standing record is complete, THIS invocation
+             * published it and it therefore already describes this exact fault
+             * -- re-collecting would repeat the guarded string walks on the most
+             * latency-sensitive path in the kernel to produce the same bytes.
+             * The nested-terminal case is NOT this case: a nested invocation
+             * carries a different token, so it falls through to the same-CPU
+             * branch below and correctly replaces its predecessor's record. */
+            if (panic_evidence_standing_complete(ev))
+                return 0;
+            goto took;                       /* ours but unfinished -- finish it */
+        }
+
+        if (cur == PANIC_EVIDENCE_NO_OWNER) {
+            if (__sync_bool_compare_and_swap(&s_evidence_owner,
+                                             PANIC_EVIDENCE_NO_OWNER,
+                                             mine | EV_ACTIVE_BIT))
+                goto took;
+            continue;
+        }
+
+        if (ev_owner_cpu(cur) == me) {
+            /* A different invocation on THIS CPU. It cannot be running in
+             * parallel with us -- we interrupted it and panic never returns --
+             * so no quiescence wait is needed. A COMPLETE record still stands
+             * unless we are the terminal invocation: an ordinary nested fault
+             * during BSOD render must not restate its own crash over the
+             * original, while a nested invocation that has become terminal is
+             * exactly the fault that killed the machine and must replace a
+             * merely-survivable predecessor. */
+            if (!terminal && panic_evidence_standing_complete(ev)) {
+                /* RETIRE THE PREDECESSOR'S ACTIVE BIT BEFORE LEAVING.
+                 *
+                 * We are a nested invocation that has decided not to write, and
+                 * the invocation we interrupted may have published its record
+                 * and been interrupted before it could clear ACTIVE. It is never
+                 * coming back, and we are about to park, so nobody else would
+                 * ever clear it -- leaving a terminal CPU on another core to time
+                 * out on every takeover attempt and lose its evidence to a record
+                 * that merely got there first. Clearing it is sound precisely
+                 * because the record is COMPLETE: the predecessor had finished
+                 * writing the page and only its bookkeeping store was
+                 * interrupted. Conditional on the exact word, and re-read on
+                 * failure, so we can never retire a DIFFERENT writer's
+                 * activity. */
+                if (ev_owner_active(cur) &&
+                    !__sync_bool_compare_and_swap(&s_evidence_owner, cur,
+                                                  cur & ~EV_ACTIVE_BIT))
+                    continue;
+                return 0;
+            }
+            if (__sync_bool_compare_and_swap(&s_evidence_owner, cur,
+                                             mine | EV_ACTIVE_BIT))
+                goto took;
+            continue;
+        }
+
+        /* Another CPU owns the page. */
+        if (!terminal)
+            return 0;
+
+        if (ev_owner_active(cur)) {
+            /* That CPU is inside the collector RIGHT NOW. Wait for it to publish
+             * -- taking the page from a live writer is the corruption case. */
+            uint32_t spins = 0u;
+
+            while (ev_owner_active(
+                       __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE))) {
+                if (++spins >= PANIC_EVIDENCE_QUIESCE_SPINS) {
+                    /* FAIL CLOSED. A bounded wait cannot PROVE another live CPU
+                     * is quiescent, and writing anyway would put two CPUs into
+                     * the same page and the same klog scratch -- corruption in
+                     * place of a wrong record. The obligation is recorded
+                     * against THIS invocation's token and retried at the
+                     * terminal exits, so the loss is bounded and, if it still
+                     * happens, stated on serial rather than silent. */
+                    __atomic_store_n(&s_evidence_takeover_token,
+                                     token & EV_TOKEN_MASK, __ATOMIC_RELEASE);
+                    return 0;
+                }
+                __asm__ volatile ("pause");
+            }
+            continue;                        /* re-read: ownership may have moved */
+        }
+
+        if (__sync_bool_compare_and_swap(&s_evidence_owner, cur,
+                                         mine | EV_ACTIVE_BIT))
+            goto took;
+        continue;
+    }
+
+took:
+    /* Ownership and write permission were acquired in the SAME compare-and-swap,
+     * so there is nothing left to assert here and no window in which a superseded
+     * claimant could still believe it may write: any other invocation that took
+     * the page replaced this whole word, and this invocation's later
+     * publish/release CASes are keyed on its own value and simply fail. */
+    return 1;
+}
+
+/* Release the ACTIVE bit, keeping ownership, once this invocation has published.
+ * Conditional on our exact word: an invocation that was superseded mid-write
+ * must not clear the successor's activity. */
+static void panic_evidence_write_done(uint32_t token)
+{
+    uint64_t mine = ev_owner_word(cpu_panic_safe_apic_id(), token);
+
+    if (__sync_bool_compare_and_swap(&s_evidence_owner, mine | EV_ACTIVE_BIT,
+                                     mine)) {
+        /* Our own takeover obligation, if any, is now discharged. Keyed by
+         * token, so a different invocation's pending retry is never cancelled. */
+        (void)__sync_bool_compare_and_swap(&s_evidence_takeover_token,
+                                           token & EV_TOKEN_MASK, 0u);
+    }
+}
+
+int panic_evidence_takeover_pending_for(uint32_t token)
+{
+    return __atomic_load_n(&s_evidence_takeover_token, __ATOMIC_ACQUIRE)
+           == (token & EV_TOKEN_MASK)
+           && (token & EV_TOKEN_MASK) != 0u;
+}
+
+void panic_evidence_abandon(void)
+{
+    volatile struct panic_evidence *ev =
+        (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    uint32_t me = cpu_panic_safe_apic_id();
+    uint64_t cur = __atomic_load_n(&s_evidence_owner, __ATOMIC_ACQUIRE);
+    uint32_t pub;
+
+    /* Keyed on the CPU, not on an invocation token, and NOT on an epoch this
+     * frame remembers. The invocation that publishes a record is not always the
+     * one that reaches the park: a nested fault can arrive after the record is
+     * published and before the park, and that nested invocation is the one that
+     * parks. Keying on a remembered epoch would leave the published record
+     * standing, which is precisely the misleading-record defect this section
+     * exists to remove. Every mutation below is still generation-conditional, so
+     * a terminal invocation that already took the page is never disturbed. */
+    if (cur == PANIC_EVIDENCE_NO_OWNER || ev_owner_cpu(cur) != me)
+        return;
+
+    /* ORDER IS LOAD-BEARING: capture the epoch, RELINQUISH, then revoke exactly
+     * the captured epoch.
+     *
+     * Selecting the epoch after ownership may have transferred is the bug this
+     * ordering exists to prevent. Reading the live publication epoch late lets
+     * this sequence through: we observe ourselves as owner, a terminal
+     * invocation then takes the page and publishes ITS record, we read that
+     * newer epoch, and our generation-conditional CAS -- perfectly valid against
+     * the value we just read -- erases the terminal record. The takeover had
+     * already succeeded, so nothing retries, and the boot loses the crash that
+     * killed it. Capturing first makes the CAS name OUR record and no other; if
+     * the page moved on, the CAS simply fails.
+     *
+     * The owner CAS goes BEFORE the revoke so a successful relinquish is the
+     * proof that no takeover happened in between: if a terminal invocation did
+     * take the page, this CAS fails against its word and we touch nothing at
+     * all. */
+    pub = __atomic_load_n(&s_evidence_pub_epoch, __ATOMIC_ACQUIRE);
+
+    if (!__sync_bool_compare_and_swap(&s_evidence_owner, cur,
+                                      PANIC_EVIDENCE_NO_OWNER))
+        return;                              /* superseded -- the page is theirs */
+
+    if (pub != 0u) {
+        (void)__sync_bool_compare_and_swap(ev_pubword(ev),
+                                           ev_pubword_val(pub), 0ull);
+        (void)__sync_bool_compare_and_swap(&s_evidence_pub_epoch, pub, 0u);
+    }
+}
+
+/* Second attempt at a terminal takeover that could not establish quiescence the
+ * first time, run at the terminal path's exits.
+ *
+ * A bounded wait cannot PROVE another live CPU is quiescent, so the first
+ * attempt fails closed rather than risk two writers on one page. That alone
+ * would lose the record silently, which is the failure this section exists to
+ * remove -- so the attempt is repeated here, by which point the whole BSOD
+ * render has run and any competing collector has had orders of magnitude more
+ * time to finish. If even this fails, the loss is stated on serial: an operator
+ * reading the log learns the next boot has no record, instead of finding one
+ * missing with no explanation. No-op unless a takeover is actually pending. */
+static void panic_evidence_terminal_retry(struct interrupt_frame *frame,
+                                          uint32_t bugcheck_code,
+                                          const uint64_t bugcheck_params[4],
+                                          const char *desc, const char *file,
+                                          uint32_t line, uint32_t token)
+{
+    if (!panic_evidence_takeover_pending_for(token))
+        return;
+
+    panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc, file,
+                           line, token, 1);
+
+    if (panic_evidence_takeover_pending_for(token))
+        serial_write_recoverable(
+            "\n[PANIC] cross-boot evidence NOT recorded: evidence page stayed busy\n");
 }
 
 /* Off-stack klog scratch: the collector may run on a small IST stack (#DF), so
@@ -1232,45 +1553,35 @@ uint32_t panic_crc32(const void *data, uint32_t len)
 
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
                             const uint64_t bugcheck_params[4],
-                            const char *message, const char *file, uint32_t line)
+                            const char *message, const char *file, uint32_t line,
+                            uint32_t token, int terminal)
 {
     /* The page at PANIC_EVIDENCE_ADDR is identity-mapped and reserved by PMM.
      * Raw physical writes only -- no kmalloc / VFS / printk / spinlock here. */
     struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
     uint32_t ctx;
-    uint32_t me;
+    uint32_t epoch;
 
     /* On an SMP double-panic two CPUs must not both write the fixed 0x80000
-     * page / shared scratch. Ownership is normally decided at panic entry by
-     * panic_evidence_reserve, which admits exactly ONE invocation per boot; a
-     * caller that skipped that step claims here instead, so this function is
-     * still correct standing alone. Non-owners return untouched. */
-    me = cpu_panic_safe_apic_id();
-    if (!panic_evidence_owned_by(me))
-        (void)panic_evidence_reserve();
-    if (!panic_evidence_owned_by(me))
-        return;
-
-    /* A COMPLETE record already stands -- a nested fault during BSOD render must
-     * not restate its own crash over the original. An INCOMPLETE one does not
-     * stop us: see s_evidence_published.
+     * page / shared scratch. panic_evidence_take arbitrates that, and also
+     * enforces the completion rule (a COMPLETE record is never overwritten
+     * except by a terminal invocation taking it from a survivable one). A caller
+     * that never took the page writes nothing, so this function is still correct
+     * standing alone.
      *
-     * BOTH conditions, because completion cannot be published in one store. The
-     * flag is written FIRST and the magic LAST, and the magic is zeroed at the
-     * start of population below, so the pair is true only over a record that
-     * reached its final instruction: re-entry between the two stores sees the
-     * flag set with the magic still zero, correctly reads that as unfinished,
-     * and rewrites the record rather than leaving the boot with an unrestorable
-     * page. Ordering the stores the other way round would leave exactly one
-     * instruction at which a nested abort erases a valid record. */
-    if (__atomic_load_n(&s_evidence_published, __ATOMIC_ACQUIRE) &&
-        ev->magic == PANIC_EVIDENCE_MAGIC)
+     * `terminal` is 0 for the EARLY capture, which runs before the panic path
+     * knows whether the machine dies, and 1 when the terminal invocation calls
+     * back in at arbitration to take the page from a survivable owner. */
+    if (!panic_evidence_take(token, terminal))
         return;
 
-    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). This is
-     * also what clears the magic for the completion gate above: from here until
-     * the final store the page reads as "no record", which is exactly what a
-     * re-entering invocation must conclude. */
+    epoch = panic_evidence_alloc_epoch((volatile struct panic_evidence *)ev,
+                                       s_prev_crash_epoch);
+
+    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). This also
+     * clears the publication word: from here until the final store the page
+     * reads as "no record", which is exactly what a re-entering invocation must
+     * conclude. */
     for (uint32_t i = 0u; i < sizeof *ev / 8u; i++)
         ((volatile uint64_t *)ev)[i] = 0u;
 
@@ -1302,7 +1613,7 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
 
     /* Same panic-safe identity the serial owner word and the NMI depth use, so a
      * crash record names the CPU those two are keyed by. */
-    ev->cpu_id = me;
+    ev->cpu_id = cpu_panic_safe_apic_id();
     ev->line           = line;
     ev->pmm_free_pages = pmm_get_free_frames();
     /* Legacy PIC mask via port I/O (fault-safe); best-effort IRQ-state proxy. */
@@ -1369,34 +1680,111 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
     {
         uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
         ev->crc32 = panic_crc32((const uint8_t *)ev + off, ev->size - off);
-        /* Flag first, magic last -- see the completion gate at the top. BOTH
-         * stores are atomic, because the ordering is the guarantee: a RELEASE
-         * store is a one-way barrier that stops earlier accesses sinking below
-         * it and says nothing about a LATER plain store being hoisted above it.
-         * Written that way the compiler could legally emit magic-then-flag,
-         * which is precisely the arrangement the gate's comment says leaves one
-         * instruction where a nested abort erases a valid record. */
-        __atomic_store_n(&s_evidence_published, 1, __ATOMIC_RELEASE);
-        __atomic_store_n(&ev->magic, PANIC_EVIDENCE_MAGIC, __ATOMIC_RELEASE);
+
+        /* PUBLISH: the completion epoch first, then magic+epoch as ONE aligned
+         * 64-bit release store. A single store is what removes the window the
+         * old flag-then-magic pair had to reason so carefully about -- there is
+         * no longer an instruction at which the page reads as half-published,
+         * because {magic, epoch} become visible together or not at all.
+         *
+         * The RAM-side epoch is written FIRST for the same reason the flag used
+         * to be: it says "this boot has a record", the page word says "the page
+         * still holds it", and a re-entering invocation that sees the first
+         * without the second correctly reads the record as unfinished and writes
+         * a whole one rather than leaving the boot unrestorable. */
+        __atomic_store_n(&s_evidence_pub_epoch, epoch, __ATOMIC_RELEASE);
+        __atomic_store_n(ev_pubword((volatile struct panic_evidence *)ev),
+                         ev_pubword_val(epoch), __ATOMIC_RELEASE);
+
+        /* Quiescent again, and any takeover this invocation owed is discharged.
+         * Both conditional on our own owner word, so an invocation that was
+         * superseded mid-write clears neither. */
+        panic_evidence_write_done(token);
     }
+}
+
+static int panic_evidence_restore_body(volatile struct panic_evidence *ev,
+                                       struct panic_evidence *out,
+                                       uint64_t observed);
+
+/* Drop exactly the record the caller validated, never whatever stands now. */
+static void ev_drop(volatile struct panic_evidence *ev, uint64_t observed)
+{
+    (void)__sync_bool_compare_and_swap(ev_pubword(ev), observed, 0ull);
+}
+
+int panic_evidence_restore_at(volatile struct panic_evidence *page,
+                              struct panic_evidence *out)
+{
+    /* Epoch-guarded read. The page can be rewritten by a panic on another CPU
+     * while we copy it, so the publication word is sampled before and after and
+     * the copy is discarded if it moved -- a torn record is reported as NO
+     * record, never as a valid one. Bounded, because the competing writer is a
+     * panicking CPU: retrying forever would hang the survivor. */
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++) {
+        uint64_t before = __atomic_load_n(ev_pubword(page), __ATOMIC_ACQUIRE);
+
+        if ((uint32_t)before != PANIC_EVIDENCE_MAGIC)
+            return 0;                              /* no record */
+
+        /* Epoch 0 is the no-record sentinel EVERYWHERE else in the lifecycle:
+         * publish refuses it and consume is inert for it. Accepting it here
+         * would restore a record that can never be consumed, so the same crash
+         * would be re-reported on every subsequent boot forever. The page is
+         * untrusted cross-boot RAM, so this is reachable without any bug on the
+         * writing side -- stale contents with a plausible magic are exactly what
+         * the header validation exists to reject. */
+        if ((uint32_t)(before >> 32) == 0u) {
+            (void)__sync_bool_compare_and_swap(ev_pubword(page), before, 0ull);
+            return 0;
+        }
+
+        if (!panic_evidence_restore_body(page, out, before))
+            return 0;
+        if (__atomic_load_n(ev_pubword(page), __ATOMIC_ACQUIRE) == before)
+            return 1;                              /* stable across the copy */
+    }
+    return 0;
 }
 
 int panic_evidence_restore(struct panic_evidence *out)
 {
-    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    return panic_evidence_restore_at(
+        (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR, out);
+}
+
+/* Validate + copy one record. Split out so the live page and a test fixture
+ * share exactly one implementation of the trust rules.
+ *
+ * `observed` is the publication word the caller sampled before validation. Every
+ * rejection below DROPS the record, and that drop is generation-conditional
+ * against `observed` rather than a plain store to the magic: the page can be
+ * republished by a panicking CPU while we validate, and a blind `magic = 0`
+ * would then erase a brand-new terminal record on the strength of the OLD one
+ * having failed its checks. */
+static int panic_evidence_restore_body(volatile struct panic_evidence *ev,
+                                       struct panic_evidence *out,
+                                       uint64_t observed)
+{
     if (!out)
         return 0;
-    if (ev->magic != PANIC_EVIDENCE_MAGIC)
-        return 0;                                  /* no record */
     if (ev->version != PANIC_EVIDENCE_VERSION ||
         ev->size != (uint32_t)sizeof *ev) {
-        ev->magic = 0u;                            /* stale/incompatible -> drop */
+        ev_drop(ev, observed);                     /* stale/incompatible -> drop */
         return 0;
     }
     {
         uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
-        if (panic_crc32((const uint8_t *)ev + off, ev->size - off) != ev->crc32) {
-            ev->magic = 0u;                        /* corrupt -> drop */
+        const uint8_t *body = (const uint8_t *)(uintptr_t)ev + off;
+        /* Length from the CONSTANT, never a second read of the volatile size
+         * field. The size was validated equal to sizeof *ev above, but a
+         * concurrent writer zeroing the page between the check and the use would
+         * make the reload 0, and the unsigned `0 - off` underflows into a ~4 GiB
+         * read walking far past the evidence page -- before the publication-word
+         * recheck downstream ever gets to reject the copy. Check-then-use on
+         * untrusted shared memory has to use the checked value, not re-read it. */
+        if (panic_crc32(body, (uint32_t)sizeof *ev - off) != ev->crc32) {
+            ev_drop(ev, observed);                 /* corrupt -> drop */
             return 0;
         }
     }
@@ -1405,10 +1793,10 @@ int panic_evidence_restore(struct panic_evidence *out)
      * bogus page cannot drive an out-of-bounds read in the artifact writer. */
     if (ev->stage_count > PANIC_EVIDENCE_STAGES ||
         ev->klog_count  > PANIC_EVIDENCE_KLOGS) {
-        ev->magic = 0u;
+        ev_drop(ev, observed);
         return 0;
     }
-    /* Copy out, then clear the magic so the same crash is not re-reported. */
+    /* Copy out. The page is RETAINED -- see the header contract. */
     for (uint32_t i = 0u; i < sizeof *out / 8u; i++)
         ((uint64_t *)out)[i] = ((volatile uint64_t *)ev)[i];
     /* Force-terminate every fixed-size string from the untrusted page so a
@@ -1438,24 +1826,61 @@ static struct panic_evidence s_prev_crash;
 static int s_had_prev_crash = 0;
 
 /* Clear the evidence page once the record has been durably emitted, so the same
- * crash is not re-reported next boot. Conditional: only clear if the page STILL
- * holds the record we restored (boot_seq + crc identity) -- by Phase 3 the APs
- * are up, and a new panic on another CPU may have overwritten 0x80000 with a
- * fresh crash; that one must survive, not be erased here. */
+ * crash is not re-reported next boot. Conditional on the EPOCH we restored -- by
+ * Phase 3 the APs are up and a new panic on another CPU may have replaced
+ * 0x80000 with a fresh crash; that one must survive, not be erased here.
+ *
+ * ONE compare-and-swap. The old form compared boot_seq + crc and then cleared
+ * the magic as a separate store, so a panic publishing between the two lost its
+ * record -- the check knew about the race and the implementation could not
+ * express it. A CAS keyed by the publication word says exactly the intended
+ * thing: clear this record, or nothing. */
+void panic_evidence_consume_at(volatile struct panic_evidence *page, uint32_t epoch)
+{
+    if (epoch == 0u)
+        return;
+    (void)__sync_bool_compare_and_swap(ev_pubword(page),
+                                       ev_pubword_val(epoch), 0ull);
+}
+
 void panic_evidence_consume(void)
 {
-    volatile struct panic_evidence *ev =
-        (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
-    if (ev->magic == PANIC_EVIDENCE_MAGIC &&
-        ev->boot_seq == s_prev_crash.boot_seq &&
-        ev->crc32 == s_prev_crash.crc32)
-        ev->magic = 0u;
+    panic_evidence_consume_at(
+        (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR,
+        s_prev_crash.epoch);
+}
+
+/* Fixture-page publish/revoke, so the lifecycle transitions can be asserted in a
+ * unit test without the live page or the boot-global ownership words. They carry
+ * the same atomicity as the live path because they ARE the live path's
+ * operations on a caller-supplied page. */
+int panic_evidence_publish_at(volatile struct panic_evidence *page, uint32_t epoch)
+{
+    uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+    const uint8_t *body = (const uint8_t *)(uintptr_t)page + off;
+
+    if (epoch == 0u)
+        return 0;
+    page->version = PANIC_EVIDENCE_VERSION;
+    page->size    = (uint32_t)sizeof *page;
+    page->crc32   = panic_crc32(body, (uint32_t)sizeof *page - off);
+    __atomic_store_n(ev_pubword(page), ev_pubword_val(epoch), __ATOMIC_RELEASE);
+    return 1;
+}
+
+int panic_evidence_revoke_at(volatile struct panic_evidence *page, uint32_t epoch)
+{
+    if (epoch == 0u)
+        return 0;
+    return __sync_bool_compare_and_swap(ev_pubword(page),
+                                        ev_pubword_val(epoch), 0ull) ? 1 : 0;
 }
 
 void panic_evidence_restore_early(void)
 {
     if (panic_evidence_restore(&s_prev_crash)) {
         s_had_prev_crash = 1;
+        s_prev_crash_epoch = s_prev_crash.epoch;
         klog(LOG_ERROR, "panic",
              "[PANIC] Previous crash evidence found (STOP 0x%x rip=0x%lx)",
              (uint64_t)s_prev_crash.bugcheck_code, s_prev_crash.rip);
@@ -1635,7 +2060,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * CPU's later panic from becoming the recorded one. It is deliberately the
      * FIRST thing that happens: everything below, starting with the snapshot,
      * takes time proportional to how corrupt memory is. */
-    (void)panic_evidence_reserve();
+    const uint32_t ev_token = panic_evidence_begin();
 
     /* THE panic-string snapshot. Every consumer below -- the evidence record,
      * the emergency serial dump, the async diagnostic, the no-framebuffer
@@ -1668,7 +2093,8 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * `if (owns_record)` would stop a nested abort from finishing a record its
      * outer invocation never got to write. */
     panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc_snap,
-                           have_file ? file_snap : (const char *)0, line);
+                           have_file ? file_snap : (const char *)0, line,
+                           ev_token, 0);
 
     /* NOTE: emergency serial is NOT armed here. Arming is a SYSTEM-TERMINAL
      * declaration and this function is not yet committed to one -- the async
@@ -1896,6 +2322,21 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * and releasing first would let another CPU interleave into it. */
             serial_lock_release_if_owner();
 
+            /* REVOKE THE CROSS-BOOT RECORD. This branch is the one place in the
+             * panic path that KNOWS the machine survives: the BSP falls back to
+             * sequential init and keeps booting. A record left standing here is
+             * restored by the next boot and written to last-panic.txt as an
+             * unexpected shutdown that never happened -- and, holding the only
+             * slot, it refuses that slot to the crash that eventually does kill
+             * the machine. Both halves of that were the section-23 defect.
+             *
+             * AFTER the diagnostic and the UART hand-back, not before: those two
+             * are what make the surviving system usable, and the revoke must not
+             * be able to leave the page owned by a CPU that then faults on its
+             * way to the park. Generation-conditional throughout, so a terminal
+             * invocation that already took the page is untouched. */
+            panic_evidence_abandon();
+
             /* Park this AP permanently -- BSP will handle the failure */
             for (;;) __asm__ volatile("hlt");
         }
@@ -1922,6 +2363,26 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
          * register dump above are emitted before this point precisely so they
          * survive regardless. */
         serial_enter_emergency();
+
+        /* TERMINAL ARBITRATION OF THE CROSS-BOOT RECORD.
+         *
+         * This is the first point at which the panic path knows the machine
+         * dies, and therefore the only honest point at which to decide who owns
+         * the one evidence slot. The early capture above ran before that was
+         * known, so the standing record may belong to a survivable fault that
+         * has since parked its AP -- which used to hold the slot forever and
+         * leave the fatal crash unrecorded.
+         *
+         * Ownership is TAKEN rather than waited for. Waiting on the survivable
+         * path to release was tried and races the other way: the terminal CPU
+         * checks ownership before the release lands, declines, and never
+         * retries, so the boot ends with neither record. Taking is safe because
+         * exactly one CPU per boot holds the panic-owner claim, so no second
+         * terminal invocation can contend for the page, and because
+         * panic_evidence_take establishes writer quiescence before it writes. */
+        panic_collect_evidence(frame, bugcheck_code, bugcheck_params, desc_snap,
+                               have_file ? file_snap : (const char *)0, line,
+                               ev_token, 1);
 
         panic_capture_fpu_state();
         panic_build_context(frame, &g_panic_context);
@@ -1970,6 +2431,10 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
             serial_write(file_snap);
             serial_write("\n");
         }
+        panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
+                                      desc_snap,
+                                      have_file ? file_snap : (const char *)0,
+                                      line, ev_token);
         serial_write("System halted (no framebuffer for BSOD).\n");
         for (;;) __asm__ volatile ("hlt");
     }
@@ -2198,6 +2663,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
             __asm__ volatile ("hlt");
         }
 
+        panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
+                                      desc_snap,
+                                      have_file ? file_snap : (const char *)0,
+                                      line, ev_token);
+
         /* Restart via ACPI reset or triple fault */
         {
             /* Try ACPI reset first (port 0xCF9) */
@@ -2210,6 +2680,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
             }
         }
     }
+
+    panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
+                                  desc_snap,
+                                  have_file ? file_snap : (const char *)0,
+                                  line, ev_token);
 
     /* No auto-restart -- halt permanently */
     fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
