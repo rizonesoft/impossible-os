@@ -271,6 +271,16 @@ static int klog_tag_is(const char *tag, const char *name)
     return tag[i] == '\0' || tag[i] == ':';
 }
 
+#ifdef KERNEL_TESTS
+/* Test seam -- see the contract in include/kernel/klog.h. Deliberately a thin
+ * forwarder: the fixture must exercise the SAME function the renderer calls,
+ * not a copy that could drift away from it. */
+int klog_probe_tag_is(const char *tag, const char *name)
+{
+    return klog_tag_is(tag, name);
+}
+#endif
+
 /* ---- Level prefixes, ANSI serial colors, and framebuffer colors ---- */
 
 static const char *level_prefix[] = {

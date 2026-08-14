@@ -85,6 +85,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | ⭐  |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
 | 💎  |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
 | ⭐  |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [ ]   |
+| ⭐  |  19   | Compile the EXCEPT_TELEMETRY=off flavor in a gate, not by hand     | §16                        |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -221,9 +222,9 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and, for the recoverable paths, 
 > - **Scope boundary** -- general fault vectors only; #PF stays with the VMM triage (section 2), #NM with lazy-FPU, NMI/#DF/#MC keep dedicated handlers. Ring-3 delivery is §5; kernel SEH §8/§14; three refinements stay open above (#CP SHSTK/IBT decode, cause-aware #GP, #MF/#XM).
 > **Verified:** 2026-07-18 | commit `bfdfe36e` + review fixes | 5/8 items | build OK | smoke PASS (TCG 2.54s)
 > **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 223)
-> **Deferred:** [M] #CP delivers the SHSTK subcode for IBT violations too (dormant until CET enables) -> XREF: 02-kernel-core/TODO-23 §3 (item: "`#CP` error-code decode" at line 203)
-> **Deferred:** [M] cause-aware #GP decode (privileged-instruction / invalid-LOCK sub-cases) -> XREF: 02-kernel-core/TODO-23 §3 (item: "Cause-aware `#GP`" at line 207)
-> **Deferred:** [M] #MF/#XM FP-exception delivery is ownerless -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 208)
+> **Deferred:** [M] #CP delivers the SHSTK subcode for IBT violations too (dormant until CET enables) -> XREF: 02-kernel-core/TODO-23 §3 (item: "`#CP` error-code decode" at line 204)
+> **Deferred:** [M] cause-aware #GP decode (privileged-instruction / invalid-LOCK sub-cases) -> XREF: 02-kernel-core/TODO-23 §3 (item: "Cause-aware `#GP`" at line 208)
+> **Deferred:** [M] #MF/#XM FP-exception delivery is ownerless -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 209)
 > **Quality reviewed:** 2026-07-18 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 15M+2L fixed, 3M deferred-XREF, 1M accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: map CPU exceptions to EXCEPTION_RECORD dispatch (#DE/#DB/#BP/#GP/#UD/#SS/#CP)"`
@@ -354,9 +355,9 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > - Canonical doc: `include/kernel/rtl/unwind.h` header block (ownership split + SMP/lifetime + bounds-safety contract).
 > - Scope boundary: engine-internal (consumed by §7 stack walk, §12 crash reporting, the debugger); NOT yet exported to user-mode ntdll (`pe.c` export tables unchanged).
 > **Verified:** 2026-07-18 | ship `a63dd05b` + review fixes | 7/13 items | build OK | tests 21887+16 PASS; smoke PASS (TCG 2.57s)
-> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 375)
+> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 376)
 > **Accepted:** [H] loader-side `.pdata`/`.xdata` mapped-section validation + production kernel-mode unwind metadata (ELF `.eh_frame`) -> XREF: 02-kernel-core/TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`" at line 132)
-> **Deferred:** [M] SMP-epoch lookup, UWOP_EPILOG v2 metadata, indirect-fragment support, exact winnt.h ABI types, combined lookup+unwind path -> XREF: 02-kernel-core/TODO-23 §6 (item: "SMP-epoch dynamic-table lookup" at line 340)
+> **Deferred:** [M] SMP-epoch lookup, UWOP_EPILOG v2 metadata, indirect-fragment support, exact winnt.h ABI types, combined lookup+unwind path -> XREF: 02-kernel-core/TODO-23 §6 (item: "SMP-epoch dynamic-table lookup" at line 341)
 > **Quality reviewed:** 2026-07-18 | Codex 42x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor + concurrency-mapper | 40H+11M+3L fixed, 0 open, 8 accepted/deferred-XREF, 2 rejected | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
@@ -456,11 +457,11 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- the RtlUnwindEx / dispatch-ABI block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §9 owns the kernel unwind-to-target + terminal resume ENGINE; ring-3 `RtlDispatchException` is ntdll (TODO-04); the kernel-driver walker + full collided recovery are §14; NtContinue IRET restore is §5.
 > **Verified:** 2026-07-19 | ship `377c693f` + review fixes | 4/8 items | build OK | tests 377+16 PASS; smoke PASS (2.71s)
-> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 446)
-> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 444)
-> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 343)
+> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 447)
+> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 445)
+> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 344)
 > **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
-> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 445)
+> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 446)
 > **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
@@ -564,7 +565,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > **Verified:** 2026-07-19 | commit `eaf3b4c1` | 3/5 items | build OK | except 393+16 PASS, smoke PASS (KVM 2.66s)
 > **Accepted:** [H] `panic_screen`'s `serial_write` can self-deadlock on `g_serial_lock` in a #DF/#MC/NMI abort context (pre-existing; §12 removed its own idt.c abort-path serial) -- RESOLVED 2026-08-13 by the try-lock + bounded-UART emergency writer -> XREF: 01-boot-platform/TODO-10 §16 (item: "Abort-safe serial")
 > **Accepted:** [M] serial-first WER ordering: `serial_write` (no UART timeout) runs before the VFS report, so a stuck UART could stall it -- RESOLVED 2026-08-13: `WerpReportFault` now emits via `serial_write_recoverable` (short bounded wait, call-local budget) -> XREF: 01-boot-platform/TODO-10 §16 (item: "Abort-safe serial")
-> **Accepted:** [M] unregistered ring-3 #MF/#XM reaching the idt.c panic fallback get no persistent WER report (the fallback is `panic_screen`-only: IF=0 interrupt-gate + abort-context make serial/VFS unsafe there); they gain WER once mapped into the recoverable terminal -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 208)
+> **Accepted:** [M] unregistered ring-3 #MF/#XM reaching the idt.c panic fallback get no persistent WER report (the fallback is `panic_screen`-only: IF=0 interrupt-gate + abort-context make serial/VFS unsafe there); they gain WER once mapped into the recoverable terminal -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 209)
 > **Deferred:** [H] terminal PROCESS-TERMINATION (items 1-2) needs the §5 `KI_EXCEPTION_TERMINATE` primitive (per-CPU current-thread cursor + per-CPU idle frame + caller-owned scratch release); the terminal action stays `panic_screen` until then -> XREF: TODO-23 §5 (item: "Delivery failure ... returns a new `KI_EXCEPTION_TERMINATE` disposition"); `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 119)
 > **Quality reviewed:** 2026-07-19 | Codex 16x (design, adversarial, consistency, perf, re-adversarial) | 3H+9M+1L fixed, 1H+2M accepted-XREF | scope: kernel-code-quality
 
@@ -644,8 +645,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
 > **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 129)
-> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 630)
-> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 631)
+> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 631)
+> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 632)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement kernel-mode __try/__except via KI_EXCEPTION_REGISTRATION"`
@@ -749,7 +750,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 > **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 121)
 > **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 124)
-> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 310)
+> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 311)
 > **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 129)
 
 
@@ -771,6 +772,27 @@ The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic
 
 **Test checkpoint:** every RtlUnwindEx fixture produces the same verdict after an unrelated translation unit grows by several KB; a lookup on the stop-sentinel returns NULL by construction rather than by luck. Test on: QEMU TCG, QEMU KVM.
 
+---
+
+## 19. Nothing Compiles the EXCEPT_TELEMETRY=off Flavor
+
+> **Spawned-by:** root
+> **User impact:** a change that compiles cleanly by default can break the telemetry-off kernel outright, and nobody finds out until someone builds that flavor -- which today means a human, by hand, after the fact.
+
+`EXCEPT_TELEMETRY=off` is a supported, declared flavor (`make print-abi-config` advertises `EXCEPT_TELEMETRY=on,off`, and §16 shipped the `#if CONFIG_EXCEPT_TELEMETRY` region against it), but no gate ever COMPILES it. `scripts/gen-user-abi.py` sweeps the flavor axis for ABI extraction and `scripts/test-tooling.sh` mentions the flag, yet neither is a kernel compile gate: a `-Werror` failure inside the conditional region reaches nobody.
+
+> [!NOTE]
+> Filed 2026-08-14 from `00-infrastructure/TODO-03 §11`, which hit it live. That section added two static fault-address selectors to `src/kernel/except.c` and placed them inside the `#if CONFIG_EXCEPT_TELEMETRY` block while their callers (kernel SEH's filter and handler paths) sat outside it. The default build and the full 29,415-test suite were green; `EXCEPT_TELEMETRY=off` failed with `call to undeclared function` at `except.c:750` and `:1018`. Found by an adversarial reviewer reading the preprocessor regions, not by any gate. Fixed at source by moving the selectors above the conditional -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` §11 (item: "Fixed while proving the fixture: kernel SEH published the faulting RIP where its contract promises the DATA address").
+
+- [ ] Compile every declared flavor of the kernel in one gate, not just the default
+      - The flavor axes already exist in `make print-abi-config` (`KERNEL_TESTS`, `EXCEPT_TELEMETRY`, `BUILD_ALT_BOOT`); read them from there rather than hardcoding a second list that can drift from the first.
+      - A full cross-product is not required and would be slow. Compiling each axis's NON-default value once against the default of the others catches the whole "definition inside a conditional, caller outside it" class, which is the failure this section was filed for.
+- [ ] Decide where the gate runs, and say why in the commit
+      - CI is the honest home (it already builds on push); the pre-push tooling pack is the alternative but it is already past the tool wall on tooling-touching pushes.
+      - This touches `Makefile` / `scripts/build.sh` (the receipt surface) so it is operator work: an unattended run may not edit those.
+- [ ] Commit: `"ci: compile every declared kernel flavor, not just the default"`
+
+**Test checkpoint:** deliberately moving a function used outside a `#if CONFIG_*` region to inside it makes the new gate FAIL, and moving it back makes it pass; the default build time is unchanged.
 
 ---
 

@@ -11,6 +11,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/except.h"
+#include "kernel/test/poison_tail.h"  /* shared kernel-SEH stack-window bracket */
 #include "kernel/idt.h"
 #include "kernel/vectors.h"  /* VECTOR_* -- general fault-to-exception mapping */
 #include "kernel/mm/vmm.h"   /* pf_build_access_violation -- #PF triage record builder */
@@ -440,8 +441,9 @@ static void test_pf_build_access_violation_zeroes_context(void)
 }
 
 /* Section 4: a user exception with no debug port declines (ring-3 delivery is a
- * later stage, so the caller performs the terminal), and the kernel SEH walk
- * stub still declines. NOTE: only the UserMode leg is safe to drive here -- a
+ * later stage, so the caller performs the terminal). The kernel SEH walk is
+ * implemented and declines here only because this record has no registered
+ * handler on the chain. NOTE: only the UserMode leg is safe to drive here -- a
  * KernelMode dispatch with no handler ends in KeBugCheckExFrame (noreturn), which
  * a unit test must never invoke; the kernel path is covered via the debugger-
  * handled case below, which returns before the terminal. */
@@ -971,13 +973,10 @@ static void test_wer_format_fault_line(void)
 static uintptr_t ki_seh_test_open_window(struct thread *t, uint8_t **saved_base,
                                          uint32_t *saved_size)
 {
-    volatile uint8_t probe = 0;
-    uintptr_t sp = (uintptr_t)&probe;
-    *saved_base = t->stack_base;
-    *saved_size = t->stack_size;
-    t->stack_base = (uint8_t *)(sp - 0x4000);   /* 16 KiB below current SP */
-    t->stack_size = 0x8000;                     /* 32 KiB window around SP */
-    return sp;
+    /* Forwards to the shared implementation so this suite and the
+     * poisoned-boundary fixture cannot drift apart on the one detail that
+     * decides whether KI_TRY protects anything at all. */
+    return test_seh_open_window(t, saved_base, saved_size);
 }
 
 /* The initial return of ki_seh_setjmp is 0, with a plausible RSP/RIP captured
@@ -1220,6 +1219,108 @@ static void test_ki_raise_filter_dispositions(void)
     t->kernel_exception_list = saved_head;
 }
 
+/* ---- Fault-address selection policy -------------------------------------
+ *
+ * The live #PF test below reaches exactly ONE branch of this policy: an access
+ * violation carrying a nonzero data address. The policy has five more, and it
+ * has already regressed once -- publishing the faulting RIP where the contract
+ * promises the DATA address, so an address-selective filter declined the very
+ * fault its handler was written for. A table gets every branch, with no faults
+ * and no boot infrastructure: these are pure functions over a record.
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+
+#define TU_FAKE_RIP   0x00000000CAFE1000ULL
+#define TU_FAKE_ADDR  0x00000000DEAD2000ULL
+#define TU_POISON_P1  0x00000000BADD3000ULL
+
+static void tu_make_record(EXCEPTION_RECORD *rec, uint32_t code,
+                           uint32_t nparams, uint64_t param1)
+{
+    uint32_t i;
+
+    for (i = 0; i < (uint32_t)sizeof(*rec); i++)
+        ((uint8_t *)rec)[i] = 0;
+    rec->ExceptionCode    = code;
+    rec->ExceptionAddress = (void *)(uintptr_t)TU_FAKE_RIP;
+    rec->NumberParameters = nparams;
+    if (nparams > EXCEPTION_INFO_FAULT_ADDR)
+        rec->ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR] = param1;
+}
+
+/* Every memory-fault code carries a data address; the handler-facing selector
+ * must deliver it rather than the instruction. */
+static void test_ki_fault_address_memory_codes(void)
+{
+    static const uint32_t codes[] = {
+        EXCEPTION_ACCESS_VIOLATION,
+        EXCEPTION_IN_PAGE_ERROR,
+        EXCEPTION_GUARD_PAGE,
+    };
+    EXCEPTION_RECORD rec;
+    uint64_t got;
+    uint32_t i;
+
+    for (i = 0; i < (uint32_t)(sizeof(codes) / sizeof(codes[0])); i++) {
+        tu_make_record(&rec, codes[i], 2, TU_FAKE_ADDR);
+        got = 0;
+        TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 1u,
+                       "a memory-fault record reports a data address");
+        TEST_ASSERT_EQ(got, TU_FAKE_ADDR, "the reported data address is parameter 1");
+        TEST_ASSERT_EQ(ki_probe_exception_fault_address(&rec), TU_FAKE_ADDR,
+                       "the handler-facing address is the data address, not the RIP");
+    }
+}
+
+/* A NULL dereference is an access violation AT address 0 and is the commonest
+ * fault there is. Presence must be reported through the return value, or this
+ * case is indistinguishable from a record carrying no address. */
+static void test_ki_fault_address_zero_is_a_real_address(void)
+{
+    EXCEPTION_RECORD rec;
+    uint64_t got = 0xFFFFFFFFFFFFFFFFULL;
+
+    tu_make_record(&rec, EXCEPTION_ACCESS_VIOLATION, 2, 0);
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 1u,
+                   "a NULL-deref access violation still HAS a data address");
+    TEST_ASSERT_EQ(got, 0u, "the reported data address is 0");
+    TEST_ASSERT_EQ(ki_probe_exception_fault_address(&rec), 0u,
+                   "address 0 is delivered as 0, not replaced by the RIP");
+}
+
+/* A memory code without parameter 1, and a NON-memory code that happens to
+ * carry two parameters: neither may yield a data address. The second is the
+ * regression a bare NumberParameters test would reintroduce -- it would publish
+ * an unrelated parameter as a fault address. */
+static void test_ki_fault_address_rejects_non_addresses(void)
+{
+    EXCEPTION_RECORD rec;
+    uint64_t got = 0xFFFFFFFFFFFFFFFFULL;
+
+    tu_make_record(&rec, EXCEPTION_ACCESS_VIOLATION, 1, 0);
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 0u,
+                   "a memory record without parameter 1 reports no data address");
+    TEST_ASSERT_EQ(ki_probe_exception_fault_address(&rec), TU_FAKE_RIP,
+                   "with no data address the handler gets the faulting instruction");
+
+    tu_make_record(&rec, EXCEPTION_INT_DIVIDE_BY_ZERO, 2, TU_POISON_P1);
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 0u,
+                   "a non-memory record's parameter 1 is NOT a fault address");
+    TEST_ASSERT_EQ(ki_probe_exception_fault_address(&rec), TU_FAKE_RIP,
+                   "a divide-by-zero delivers its RIP, never the stray parameter");
+
+    tu_make_record(&rec, EXCEPTION_BREAKPOINT, 2, TU_POISON_P1);
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 0u,
+                   "a breakpoint record's parameter 1 is NOT a fault address");
+
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address((EXCEPTION_RECORD *)0, &got),
+                   0u, "a NULL record reports no data address");
+    TEST_ASSERT_EQ(ki_probe_exception_fault_address((EXCEPTION_RECORD *)0), 0u,
+                   "a NULL record yields address 0");
+    tu_make_record(&rec, EXCEPTION_ACCESS_VIOLATION, 2, TU_FAKE_ADDR);
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, (uint64_t *)0), 0u,
+                   "a NULL out pointer is refused rather than written through");
+}
+
 /* Live end-to-end: KI_TRY around a write to an unmapped VA takes a real kernel
  * #PF; ki_raise resumes into the KI_EXCEPT body -- reaching the assert IS the
  * proof the fault was caught, not fatal. Runs on the boot thread, so a stack
@@ -1259,6 +1360,12 @@ static void test_ki_try_recovers_live_kernel_fault(void)
                        "KI_TRY recovered a live kernel #PF (handler fired, kernel continued)");
         TEST_ASSERT_EQ((uint32_t)KI_EXCEPTION_CODE(reg), (uint32_t)STATUS_ACCESS_VIOLATION,
                        "delivered exception code is STATUS_ACCESS_VIOLATION");
+        /* The DATA address that faulted, not the instruction that touched it.
+         * A handler deciding whether the fault is "its" address needs the
+         * former; publishing the RIP here silently defeated every such filter.
+         * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)KI_EXCEPTION_ADDR(reg), (uint64_t)va,
+                       "delivered fault address is the faulting DATA address");
     }
 }
 
@@ -1590,6 +1697,14 @@ void test_register_except(void)
                             test_ki_raise_matches_and_rewrites, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: ki_raise filter dispositions (s14)",
                             test_ki_raise_filter_dispositions, TEST_CAT_EXCEPT);
+    /* Fault-address selection policy. The live #PF suite below covers one
+     * branch; these cover the rest, which is where the policy regressed. */
+    test_suite_register_cat("Except: fault address is the data address for memory codes",
+                            test_ki_fault_address_memory_codes, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: a NULL-deref data address of 0 is a real address",
+                            test_ki_fault_address_zero_is_a_real_address, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: a non-memory record's parameter is not a fault address",
+                            test_ki_fault_address_rejects_non_addresses, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: KI_TRY recovers live kernel #PF (s14)",
                             test_ki_try_recovers_live_kernel_fault, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: KI_TRY non-local exit pops node (s14)",

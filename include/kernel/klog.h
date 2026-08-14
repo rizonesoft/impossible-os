@@ -267,6 +267,22 @@ log_level_t klog_get_level(const char *subsystem);
  * override (when none existed) or restore its value (when it did). */
 int klog_has_override(const char *subsystem);
 
+#ifdef KERNEL_TESTS
+/* Test seam over the internal tag classifier `klog_tag_is()`. Returns 1 when
+ * `tag` is exactly `name`, optionally followed by ':'.
+ *
+ * The classifier is static because nothing outside the renderer should call
+ * it, but it is the exact helper whose fixed-offset predecessor read past the
+ * end of every short tag -- and proving it stays inside its argument needs a
+ * direct call under the poisoned-boundary fixture. Routing that proof through
+ * klog() itself is not an option: the renderer runs under s_klog_lock with
+ * interrupts disabled, and kernel SEH declines to unwind with RFLAGS.IF clear
+ * (src/kernel/except.c:649), so the fault would be terminal instead of caught.
+ *
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+int klog_probe_tag_is(const char *tag, const char *name);
+#endif
+
 /* Remove the explicit override for `subsystem`, making the tag follow
  * the global default again. No-op if no override exists. NULL / "" is
  * a no-op (the global default cannot be removed).

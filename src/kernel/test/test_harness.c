@@ -20,6 +20,8 @@
 #include "kernel/test/test.h"
 #include "kernel/test/scratch.h" /* TEST_SCRATCH_KBUF for scratch-buffer tests */
 #include "kernel/test/klog_suppress.h" /* TEST_KLOG_SUPPRESS for klog-demotion tests */
+#include "kernel/test/poison_tail.h"   /* poisoned-boundary fixture under test */
+#include "kernel/mm/vmm.h"      /* vmm_get_physical to prove the boundary is absent */
 #include "kernel/types.h"
 #include "kernel/sched/irql.h"  /* KeGetCurrentIrql / KeRaiseIrql for IRQL recovery test */
 #include "kernel/mm/heap.h"     /* heap_get_used for delta checks */
@@ -933,6 +935,419 @@ static void test_harness_fail_detail_format(void)
                    "NULL destination is refused");
 }
 
+/* ---------------------------------------------------------------------------
+ * Poisoned-boundary fixture (kernel test harness roadmap section 11)
+ *
+ * A fixture that reports "no overread" is worthless unless it can be shown to
+ * report an overread when one really happens, so the suite below leads with
+ * that positive control: a probe that deliberately steps one byte past the NUL
+ * MUST come back TEST_POISON_OVERREAD. If that control ever stops firing, the
+ * clean-helper assertions underneath it are proving nothing.
+ * ------------------------------------------------------------------------- */
+
+/* A page inside the fixture's own reservation that is neither the data page
+ * nor the boundary page -- unmapped by construction, so it is a fault the
+ * fixture must classify as "somewhere else" rather than as an overread. */
+#define TEST_POISON_ELSEWHERE_VA \
+    (TEST_POISON_WINDOW_BASE + 3ULL * (uint64_t)VMM_PAGE_SIZE)
+
+/* Walk to the NUL and stop -- the shape a correct string helper has. */
+static void poison_probe_bounded(void *ctx)
+{
+    const char *s = (const char *)ctx;
+    volatile uint32_t n = 0;
+    while (s[n])
+        n++;
+    (void)n;
+}
+
+/* Walk to the NUL and then read ONE byte further: the overread this whole
+ * fixture exists to catch. That byte is the first byte of the boundary page. */
+static void poison_probe_past_nul(void *ctx)
+{
+    const char *s = (const char *)ctx;
+    volatile char sink;
+    uint32_t n = 0;
+    while (s[n])
+        n++;
+    sink = s[n + 1u];
+    (void)sink;
+}
+
+/* Fault well away from the boundary, to prove the fixture does not report
+ * every fault as an overread. */
+static void poison_probe_elsewhere(void *ctx)
+{
+    volatile char sink;
+    (void)ctx;
+    sink = *(volatile const char *)(uintptr_t)TEST_POISON_ELSEWHERE_VA;
+    (void)sink;
+}
+
+/* The NUL must land on the last readable byte, with nothing mapped after it.
+ * Everything else in this group depends on that placement being exact. */
+static void test_harness_poison_placement(void)
+{
+    struct test_poison_tail pt;
+
+    if (test_poison_tail_arm(&pt, "ob") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)pt.len, 2u, "the armed string keeps its length");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)&pt.str[pt.len],
+                   (uint64_t)(TEST_POISON_BOUNDARY_VA - 1u),
+                   "the NUL sits on the last readable byte before the boundary");
+    TEST_ASSERT_EQ((uint64_t)pt.str[pt.len], 0u, "the placed string is terminated");
+    TEST_ASSERT_EQ((uint64_t)strcmp(pt.str, "ob"), 0, "the placed string reads back intact");
+    TEST_ASSERT_EQ((uint64_t)vmm_get_physical(TEST_POISON_BOUNDARY_VA), 0u,
+                   "the boundary page is not mapped");
+
+    test_poison_tail_disarm(&pt);
+    TEST_ASSERT_EQ((uint64_t)pt.armed, 0u, "disarm clears the fixture");
+}
+
+/* Losing the detector FAILS; it never skips.
+ *
+ * Every arm below is made with valid arguments, so a refusal can only mean the
+ * detector itself is gone -- no frame, a refused mapping, or a boundary page
+ * that turned out PRESENT. TEST_SKIP would only bump the skipped counter, and
+ * scripts/test.sh does not fold kernel skips into FAILED, so the whole overread
+ * capability could disappear and the run would still exit green. A detector
+ * that can vanish silently is the exact disease this section was written to
+ * cure, so it must not be the cure's own failure mode. (The action-list suite
+ * below still skips, because "the list did not fill" is a genuine
+ * environmental condition rather than lost capability.) */
+
+/* THE CONTROL. A deliberate one-byte overread must be detected and named.
+ * TEST-SIDE-EFFECT-ALLOWED: triggers one controlled kernel #PF that kernel SEH
+ * catches and the fixture reports; no persistent state changes. */
+static void test_harness_poison_detects_overread(void)
+{
+    struct test_poison_tail pt;
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "ob") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    rc = test_poison_tail_probe(&pt, poison_probe_past_nul, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OVERREAD,
+                   "reading one byte past the NUL is reported as an overread");
+
+    test_poison_tail_disarm(&pt);
+}
+
+/* A helper that respects the NUL must come back clean, so the control above is
+ * detecting the overread rather than merely detecting the fixture. */
+static void test_harness_poison_bounded_is_clean(void)
+{
+    struct test_poison_tail pt;
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "irq") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    rc = test_poison_tail_probe(&pt, poison_probe_bounded, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_NO_FAULT,
+                   "a helper that stops at the NUL does not fault");
+
+    test_poison_tail_disarm(&pt);
+}
+
+/* An unrelated fault must NOT be laundered into an overread verdict.
+ * TEST-SIDE-EFFECT-ALLOWED: one controlled kernel #PF, caught by kernel SEH. */
+static void test_harness_poison_other_fault_not_overread(void)
+{
+    struct test_poison_tail pt;
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "ob") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    rc = test_poison_tail_probe(&pt, poison_probe_elsewhere, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OTHER_FAULT,
+                   "a fault away from the boundary is not called an overread");
+
+    test_poison_tail_disarm(&pt);
+}
+
+/* Misuse is refused rather than silently producing a green probe. */
+static void test_harness_poison_refuses_misuse(void)
+{
+    struct test_poison_tail pt = { 0 };
+    static char oversized[VMM_PAGE_SIZE + 1];
+    uint32_t i;
+
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&pt, (const char *)0),
+                   (uint64_t)TEST_POISON_UNAVAILABLE, "arm refuses a NULL string");
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm((struct test_poison_tail *)0, "ob"),
+                   (uint64_t)TEST_POISON_UNAVAILABLE, "arm refuses a NULL fixture");
+
+    for (i = 0; i < (uint32_t)VMM_PAGE_SIZE; i++)
+        oversized[i] = 'x';
+    oversized[VMM_PAGE_SIZE] = '\0';
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&pt, oversized),
+                   (uint64_t)TEST_POISON_UNAVAILABLE,
+                   "arm refuses a string that cannot end at the boundary");
+
+    pt.armed = 0;
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_probe(&pt, poison_probe_bounded, "ob"),
+                   (uint64_t)TEST_POISON_UNAVAILABLE, "probing an unarmed fixture is refused");
+
+    if (test_poison_tail_arm(&pt, "ob") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_probe(&pt, (void (*)(void *))0, pt.str),
+                   (uint64_t)TEST_POISON_UNAVAILABLE, "probing with a NULL callback is refused");
+    test_poison_tail_disarm(&pt);
+}
+
+/* Only one fixture owns the shared page at a time. An overlapping arm must be
+ * REFUSED, not merged: merging would leave the first fixture's string pointing
+ * at zeros, and a helper reading past that early NUL would stay in the page and
+ * be called clean -- a false green, the one result this fixture may not give. */
+static void test_harness_poison_single_owner(void)
+{
+    /* Zero-initialised because a REFUSED arm leaves the fixture untouched by
+     * contract, so "still unarmed after the refusal" is only a meaningful
+     * assertion against a known starting state. */
+    struct test_poison_tail first = { 0 };
+    struct test_poison_tail second = { 0 };
+    int rc;
+
+    if (test_poison_tail_arm(&first, "abcd") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&second, "z"),
+                   (uint64_t)TEST_POISON_UNAVAILABLE,
+                   "a second fixture cannot arm while one is armed");
+    TEST_ASSERT_EQ((uint64_t)second.armed, 0u, "the refused fixture is left unarmed");
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&first, "wxyz"),
+                   (uint64_t)TEST_POISON_UNAVAILABLE,
+                   "re-arming the owner without disarming is refused");
+
+    /* The refusals must not have disturbed the live arm. */
+    TEST_ASSERT_EQ((uint64_t)strcmp(first.str, "abcd"), 0,
+                   "the armed string survives a refused overlapping arm");
+
+    /* A superseded fixture disarming must not clear the live owner's page. */
+    second.armed = 1;
+    second.generation = first.generation - 1u;
+    test_poison_tail_disarm(&second);
+    TEST_ASSERT_EQ((uint64_t)strcmp(first.str, "abcd"), 0,
+                   "a stale disarm leaves the live arm intact");
+
+    rc = test_poison_tail_probe(&first, poison_probe_past_nul, first.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OVERREAD,
+                   "detection still works after the refused arms");
+
+    test_poison_tail_disarm(&first);
+
+    /* Ownership is genuinely released, so the next suite can arm. */
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&second, "ok"), 0,
+                   "disarming releases ownership for the next fixture");
+    test_poison_tail_disarm(&second);
+}
+
+/* A full action list must refuse the arm BEFORE claiming ownership, never hand
+ * out an arm whose cleanup can never fire. Stranding ownership would make every
+ * later arm refuse, and callers turn a refusal into TEST_SKIP -- so the overread
+ * coverage would vanish silently instead of failing. That is the exact shape
+ * this fixture exists to prevent, so it must not be the fixture's own failure
+ * mode. The suite after this one proves the refusal left nothing behind. */
+static void poison_noop_action(void *ctx) { (void)ctx; }
+
+static void test_harness_poison_arm_is_transactional(void)
+{
+    struct test_poison_tail pt = { 0 };
+    struct test_poison_tail after = { 0 };
+    uint32_t i;
+    int filled = 0;
+
+    /* Fill the 32-slot action list so registration inside arm() must fail. */
+    for (i = 0; i < 64u; i++) {
+        if (test_add_action(poison_noop_action, (void *)0) != 0) {
+            filled = 1;
+            break;
+        }
+    }
+    if (!filled) {
+        TEST_SKIP("action list did not fill -- cannot exercise the rollback");
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&pt, "ob"),
+                   (uint64_t)TEST_POISON_UNAVAILABLE,
+                   "an arm with no cleanup slot is refused, not stranded");
+    TEST_ASSERT_EQ((uint64_t)pt.armed, 0u, "the refused arm is not left armed");
+
+    /* Refusing must be repeatable. If the first refusal had claimed ownership
+     * on its way out, this one would fail for the WRONG reason -- and every
+     * poisoned-boundary test after it would silently SKIP. */
+    TEST_ASSERT_EQ((uint64_t)test_poison_tail_arm(&after, "ob"),
+                   (uint64_t)TEST_POISON_UNAVAILABLE,
+                   "a second arm is still refused while the list stays full");
+    TEST_ASSERT_EQ((uint64_t)after.armed, 0u, "the second refused arm is not armed");
+}
+
+/* Runs AFTER the drain of the suite above, when the action list is empty
+ * again: the refusals must have left no ownership behind. */
+static void test_harness_poison_recovers_after_rollback(void)
+{
+    struct test_poison_tail pt = { 0 };
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "ob") != 0) {
+        TEST_ASSERT(0, "the fixture is stranded after a refused arm");
+        return;
+    }
+
+    rc = test_poison_tail_probe(&pt, poison_probe_past_nul, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OVERREAD,
+                   "detection still works after a refused arm");
+    test_poison_tail_disarm(&pt);
+}
+
+/* A probe callback that disarms its own fixture. Teardown must DEFER while the
+ * pin is held rather than wait for it -- waiting would block on a pin the
+ * caller itself owns and hang the boot -- and the deferred teardown must then
+ * actually happen when the pin drops, or the fixture is stranded OWNED and the
+ * detector silently disappears. Reaching the end of this suite at all IS the
+ * proof it did not hang; the assertions prove the deferral completed. */
+static struct test_poison_tail *s_reentrant_pt;
+
+static void poison_probe_disarms_itself(void *ctx)
+{
+    const char *s = (const char *)ctx;
+    volatile uint32_t n = 0;
+
+    if (s_reentrant_pt)
+        test_poison_tail_disarm(s_reentrant_pt);   /* must not hang */
+
+    while (s[n])                                    /* string still intact */
+        n++;
+    (void)n;
+}
+
+static void test_harness_poison_reentrant_disarm(void)
+{
+    struct test_poison_tail pt = { 0 };
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "abcd") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- "
+                       "coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    s_reentrant_pt = &pt;
+    rc = test_poison_tail_probe(&pt, poison_probe_disarms_itself, pt.str);
+    s_reentrant_pt = (struct test_poison_tail *)0;
+
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_NO_FAULT,
+                   "a callback that disarms mid-probe neither hangs nor faults");
+    TEST_ASSERT_EQ((uint64_t)pt.armed, 0u, "the deferred disarm took effect");
+
+    /* The decisive assertion: the deferred teardown must have COMPLETED when
+     * the pin dropped. If it were dropped instead, ownership would still be
+     * held and this arm would fail -- the detector gone for the rest of the
+     * boot, with nothing left to turn that loss into a failure. */
+    if (test_poison_tail_arm(&pt, "abcd") != 0) {
+        TEST_ASSERT(0, "a deferred teardown was lost -- the fixture is stranded OWNED");
+        return;
+    }
+    rc = test_poison_tail_probe(&pt, poison_probe_past_nul, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OVERREAD,
+                   "detection still works after a deferred mid-probe disarm");
+
+    test_poison_tail_disarm(&pt);
+    TEST_ASSERT_EQ((uint64_t)pt.armed, 0u, "the post-probe disarm succeeds");
+}
+
+/* Nested probes reach the branch a single mid-probe disarm cannot: a deferred
+ * teardown must be completed by the LAST pin to drop, not the first. With two
+ * pins held, the inner probe's unpin must NOT clear the page -- the outer
+ * callback is still reading the string, and clearing under it would hand it an
+ * early NUL and turn a real overread into a clean verdict. Runs entirely on the
+ * boot thread; no second CPU is required to reach s_probes > 1. */
+static struct test_poison_tail *s_nested_pt;
+static int s_nested_inner_rc;
+static int s_nested_outer_saw_intact;
+
+static void poison_probe_inner_disarms(void *ctx)
+{
+    const char *s = (const char *)ctx;
+    volatile uint32_t n = 0;
+
+    if (s_nested_pt)
+        test_poison_tail_disarm(s_nested_pt);   /* deferred: two pins are held */
+    while (s[n])
+        n++;
+    (void)n;
+}
+
+static void poison_probe_outer_nests(void *ctx)
+{
+    const char *s = (const char *)ctx;
+    uint32_t n = 0;
+
+    /* Inner probe pins a SECOND time, then its callback requests teardown. */
+    s_nested_inner_rc = test_poison_tail_probe(s_nested_pt,
+                                               poison_probe_inner_disarms, (void *)s);
+
+    /* Still inside the outer pin: the string must be untouched. If the inner
+     * unpin had completed the teardown, this would read an early NUL. */
+    while (s[n])
+        n++;
+    s_nested_outer_saw_intact = (n == 4u);
+}
+
+static void test_harness_poison_nested_probe_defers_to_last_pin(void)
+{
+    struct test_poison_tail pt = { 0 };
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "abcd") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- "
+                       "coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    s_nested_pt = &pt;
+    s_nested_inner_rc = TEST_POISON_UNAVAILABLE;
+    s_nested_outer_saw_intact = 0;
+    rc = test_poison_tail_probe(&pt, poison_probe_outer_nests, pt.str);
+    s_nested_pt = (struct test_poison_tail *)0;
+
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_NO_FAULT,
+                   "a nested probe neither hangs nor faults");
+    TEST_ASSERT_EQ((uint64_t)s_nested_inner_rc, (uint64_t)TEST_POISON_NO_FAULT,
+                   "the inner probe pinned successfully while the outer held a pin");
+    TEST_ASSERT_EQ((uint64_t)s_nested_outer_saw_intact, 1u,
+                   "the inner unpin did NOT clear the page under the outer probe");
+
+    /* The deferred teardown must land once the OUTER pin drops: re-arming can
+     * only succeed if ownership was released. */
+    if (test_poison_tail_arm(&pt, "abcd") != 0) {
+        TEST_ASSERT(0, "the last unpin did not complete the deferred teardown");
+        return;
+    }
+    rc = test_poison_tail_probe(&pt, poison_probe_past_nul, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OVERREAD,
+                   "detection still works after a nested deferred teardown");
+    test_poison_tail_disarm(&pt);
+}
+
 /* Registration */
 void test_register_harness(void)
 {
@@ -1010,6 +1425,32 @@ void test_register_harness(void)
                             test_harness_fail_record_suffix_ladder, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: failure-record diagnostic field format",
                             test_harness_fail_detail_format, TEST_CAT_BOOT);
+
+    /* Poisoned-boundary fixture. The control suite runs FIRST on purpose: if a
+     * deliberate overread stops being detected, that is the finding, and the
+     * clean-helper suites after it are only meaningful while it holds. */
+    test_suite_register_cat("Harness: poisoned tail places the NUL on the last readable byte",
+                            test_harness_poison_placement, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail detects a one-byte overread",
+                            test_harness_poison_detects_overread, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail passes a NUL-respecting helper",
+                            test_harness_poison_bounded_is_clean, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail does not call a stray fault an overread",
+                            test_harness_poison_other_fault_not_overread, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail refuses misuse",
+                            test_harness_poison_refuses_misuse, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail enforces a single owner",
+                            test_harness_poison_single_owner, TEST_CAT_BOOT);
+    /* Ordered pair: the rollback suite fills the action list, and the recovery
+     * suite after its drain proves ownership was not stranded. Do not reorder. */
+    test_suite_register_cat("Harness: poisoned tail arm is transactional",
+                            test_harness_poison_arm_is_transactional, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail recovers after a rolled-back arm",
+                            test_harness_poison_recovers_after_rollback, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail refuses a mid-probe disarm without hanging",
+                            test_harness_poison_reentrant_disarm, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: poisoned tail defers teardown to the LAST pin",
+                            test_harness_poison_nested_probe_defers_to_last_pin, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

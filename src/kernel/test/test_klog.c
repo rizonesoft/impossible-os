@@ -3,7 +3,7 @@
  *
  * Tests ring buffer, per-subsystem filtering, rate limiting, and drop counts.
  *
- * XREF: 02-kernel-core/TODO-04-system-logging.md §Unit Tests
+ * XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests section
  * ============================================================================ */
 
 #ifdef KERNEL_TESTS
@@ -16,6 +16,7 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "libc/string.h"        /* strcmp for the rendered-record assertions */
+#include "kernel/test/poison_tail.h"  /* boundary fixture for the short-tag overread check */
 
 /* Room for a full 255-character entry plus its NUL. */
 #define TEST_KLOG_PROBE_CAP  260u
@@ -373,6 +374,103 @@ static void test_klog_short_tag_classification(void)
     TEST_ASSERT(!klog_has_override("zz") && !klog_has_override("zq3") &&
                 !klog_has_override("ZZTESTING"),
                 "every short-tag probe removed its override");
+}
+
+/* ---- The same classifier, now VERIFIED rather than pinned -----------------
+ *
+ * The suite above states plainly that it cannot see the out-of-bounds read it
+ * was written alongside. This one can: the poisoned-boundary fixture places
+ * the tag so its NUL is the last readable byte, so any index past the NUL
+ * faults, kernel SEH catches it, and the fixture reports it as one failed
+ * assertion instead of a halted boot.
+ *
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+
+/* The shipped bounded classifier, called for real. */
+static void klog_tag_probe_bounded(void *ctx)
+{
+    const char *tag = (const char *)ctx;
+    volatile int r = 0;
+    r |= klog_probe_tag_is(tag, "TEST");
+    r |= klog_probe_tag_is(tag, "UTEST");
+    r |= klog_probe_tag_is(tag, "DTEST");
+    (void)r;
+}
+
+/* The fixed-offset form the bounded classifier REPLACED, reproduced here as a
+ * regression control. It computes both terminator checks before testing any
+ * character, so it reads tag[4] and tag[5] for every tag -- including a
+ * two-character one. Under the fixture that read is a fault, which is exactly
+ * the detection the old suite could not perform. This copy exists to prove the
+ * detector works; it is never called by the kernel. */
+static void klog_tag_probe_fixed_offset(void *ctx)
+{
+    const char *tag = (const char *)ctx;
+    volatile int r;
+    int term4 = (tag[4] == '\0' || tag[4] == ':');
+    int term5 = (tag[5] == '\0' || tag[5] == ':');
+
+    r = (tag[0] == 'T' && term4) || (tag[0] == 'U' && term5);
+    (void)r;
+}
+
+/* TEST-SIDE-EFFECT-ALLOWED: the control probe triggers one controlled kernel
+ * #PF that kernel SEH catches and the fixture reports; nothing persists. */
+static void test_klog_short_tag_no_overread(void)
+{
+    struct test_poison_tail pt;
+    int rc;
+
+    if (test_poison_tail_arm(&pt, "zz") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+
+    /* The answer must still be right, not merely fault-free: a classifier that
+     * returned 0 for everything would also never overread. */
+    TEST_ASSERT_EQ((uint64_t)klog_probe_tag_is(pt.str, "TEST"), 0u,
+                   "a two-character tag is not classified as TEST");
+    TEST_ASSERT_EQ((uint64_t)klog_probe_tag_is("TEST", "TEST"), 1u,
+                   "the classifier still matches an exact tag");
+    TEST_ASSERT_EQ((uint64_t)klog_probe_tag_is("TEST:mm", "TEST"), 1u,
+                   "the classifier still accepts a ':'-suffixed tag");
+
+    TEST_POISON_TAIL_ASSERT_NO_OVERREAD(&pt, klog_tag_probe_bounded, pt.str,
+        "klog_tag_is stays inside a two-character tag");
+
+    /* The control: the implementation this replaced MUST be caught. A green
+     * assertion above means nothing if this one does not fire. */
+    rc = test_poison_tail_probe(&pt, klog_tag_probe_fixed_offset, pt.str);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)TEST_POISON_OVERREAD,
+                   "the fixed-offset classifier this replaced is caught overreading");
+
+    test_poison_tail_disarm(&pt);
+
+    /* "zz" mismatches "TEST" at byte 0, so the walk above never actually
+     * REACHES the poisoned NUL -- it proves the classifier bails early, not
+     * that it stops at the terminator. These two do reach it: a matching
+     * prefix that runs out of tag, and an exact match whose terminator check
+     * lands on the last readable byte. Those are the indices a regression
+     * would step past. */
+    if (test_poison_tail_arm(&pt, "TE") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+    TEST_ASSERT_EQ((uint64_t)klog_probe_tag_is(pt.str, "TEST"), 0u,
+                   "a tag that runs out mid-name does not match");
+    TEST_POISON_TAIL_ASSERT_NO_OVERREAD(&pt, klog_tag_probe_bounded, pt.str,
+        "klog_tag_is stops at the NUL of a matching prefix");
+    test_poison_tail_disarm(&pt);
+
+    if (test_poison_tail_arm(&pt, "TEST") != 0) {
+        TEST_ASSERT(0, "the poisoned-boundary detector could not arm -- coverage lost, which must FAIL not skip");
+        return;
+    }
+    TEST_ASSERT_EQ((uint64_t)klog_probe_tag_is(pt.str, "TEST"), 1u,
+                   "an exact tag ending at the boundary still matches");
+    TEST_POISON_TAIL_ASSERT_NO_OVERREAD(&pt, klog_tag_probe_bounded, pt.str,
+        "klog_tag_is reads the terminator but not past it");
+    test_poison_tail_disarm(&pt);
 }
 
 /* ---- Per-subsystem level filtering: dropped below threshold ---- */
@@ -1196,8 +1294,13 @@ void test_register_klog(void)
                             test_klog_truncation_boundary, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: INT64_MIN renders its full magnitude",
                             test_klog_int64_min_renders, TEST_CAT_BOOT);
-    test_suite_register_cat("Klog: short subsystem tags classify without overreading",
+    /* The pin states behavior; the fixture-backed suite after it states memory
+     * safety. The names say which is which, because the old name claimed the
+     * overread coverage that only the second one actually has. */
+    test_suite_register_cat("Klog: short subsystem tags keep their classification",
                             test_klog_short_tag_classification, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: short subsystem tags classify without overreading",
+                            test_klog_short_tag_no_overread, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: receipt acknowledges a delivered record",

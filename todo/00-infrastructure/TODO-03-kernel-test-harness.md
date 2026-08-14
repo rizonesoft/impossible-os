@@ -65,7 +65,7 @@ title: "TODO-03 -- Kernel Test Harness"
 | 💎  |   8   |   §4    | Retrofit existing "Test gaps" stamps across `todo/`      | §1-§3, §5-§8 |  [x]   |
 | 💎  |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced     | §8           |  [/]   |
 | 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [x]   |
-| 💎  |  11   |   §11   | Poisoned-boundary fixture so an overread fails a test    | §10          |  [ ]   |
+| 💎  |  11   |   §11   | Poisoned-boundary fixture so an overread fails a test    | §10          |  [x]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -396,7 +396,7 @@ Found while negative-controlling the emitted-code probes in `01-boot-platform/TO
 
 > **Verified:** 2026-08-14 | commit `24097d9db` | 3/3 items | build OK | tests 29373 kernel + 17 user-mode PASS, 0 failed, 0 leaked; smoke matrix 4/4 legs (KVM+TCG x 1+2 CPU); lint 0 errors
 > **Accepted:** [M] klog reads every numeric conversion as a full 64-bit vararg, so a caller passing a 32-bit value into a stack vararg slot renders garbage; 3 verified-corrupting sites were cast at source, but the class needs an engine + call-site migration (reason: kernel-wide sweep with real truncation risk, not a section-scope change) -> XREF: 01-boot-platform/TODO-14 §13 (item: "Move `%d`/`%u`/`%x` to standard C width semantics (32-bit by default, 64-bit only under `l`/`ll`)" at line 382)
-> **Accepted:** [L] an out-of-bounds READ that still returns the right answer is undetectable by any C-level assertion this harness can write, so the short-tag suite pins behavior rather than memory safety (reason: needs a fault-catching fixture the harness does not have) -> XREF: 00-infrastructure/TODO-03 §11 (item: "A `TEST_POISON_TAIL(buf, n)` fixture that places a string so its NUL is the last byte before a poisoned or unmapped boundary" at line 406)
+> **Accepted:** [L] an out-of-bounds READ that still returns the right answer is undetectable by any C-level assertion this harness can write, so the short-tag suite pins behavior rather than memory safety (reason: needs a fault-catching fixture the harness does not have) -- RESOLVED 2026-08-14 by §11 -> XREF: 00-infrastructure/TODO-03 §11 (item: "A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page" at line 411)
 > **Quality reviewed:** 2026-08-14 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1M+6L fixed, 0 open | scope: kernel-code-quality
 
 ---
@@ -408,35 +408,60 @@ Found while negative-controlling the emitted-code probes in `01-boot-platform/TO
 
 Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]`/`subsystem[5]`, read for every record under an ordinary short tag like `ob` or `irq`) with a bounded comparison. The behavior-preservation test that shipped with it passes against BOTH implementations, because the comparisons consuming those bytes short-circuit first and the classification answer never differed. That test says so in its own comment rather than implying a coverage it does not have -> XREF: `00-infrastructure/TODO-03 §10` (item: "A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot").
 
-- [ ] A `TEST_POISON_TAIL(buf, n)` fixture that places a string so its NUL is the last byte before a poisoned or unmapped boundary, so a helper that reads one byte past it is detected rather than merely suspected.
-  - The existing `vmm_install_guard_page()` gives the unmapped-boundary half, but a raw guard page turns the detection into a #PF that kills the boot instead of failing one assertion, which is worse than no test. The fixture needs a way to CATCH that fault and attribute it to the running suite.
-  - Kernel SEH (`__try`/`__except`) shipped in `02-kernel-core/TODO-23 §14` and is the obvious catcher; confirm it is usable from a test suite body before designing around it.
-  - A poison-byte variant (fill the tail with a sentinel and check it afterwards) detects a WRITE but not a READ, so it is a weaker fallback, not the design.
-- [ ] Retrofit the §10 short-tag suite onto the fixture once it exists, so `klog_tag_is` is verified rather than merely pinned.
-- [ ] Commit: `"test: poisoned-boundary fixture so an overread fails a test instead of a boot"`
+- [x] A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page, so a one-byte overread faults, is caught, and fails one assertion instead of the boot.
+  - Shipped in `include/kernel/test/poison_tail.h` + `src/kernel/test/poison_tail.c` as `test_poison_tail_arm/probe/disarm` plus `TEST_POISON_TAIL_ASSERT_NO_OVERREAD`.
+  - Not the drafted `TEST_POISON_TAIL(buf, n)` macro: the probe must run the suspect helper INSIDE a kernel-SEH bracket, which a placement-only macro cannot express.
+  - `vmm_install_guard_page()` was rejected as the boundary. `guard_page_lookup()` panics unconditionally at `src/kernel/mm/vmm.c:934-940`, BEFORE `ki_dispatch_exception`, so a guard hit can never reach SEH. Only a plain unmapped VA can.
+  - Kernel SEH works from a suite body given one precondition: `ki_seh_register()` refuses a node outside the thread's tracked stack window (`src/kernel/except.c:555`) and the boot thread tracks none, so an unbracketed `KI_TRY` there protects nothing.
+  - `test_seh_open_window()`/`test_seh_close_window()` own that bracket; `test_except.c` forwards to them so the fixture and the SEH suite cannot drift apart.
+  - The boundary is a 2 MiB carve from the top of the MMIO/fixmap window whose first page is mapped once and never unmapped, with `_Static_assert` containment against the window.
+  - A `pmm_alloc_contiguous()` pair in the low identity map was rejected: it needs `vmm_split_huge_page()` on a live identity PDE, which republishes it as PRESENT|WRITABLE only (`src/kernel/mm/vmm.c:1652`), dropping User for 512 pages, unlocked and never reversed.
+  - Neither VA is ever recycled, which is what makes it immune to a stale-TLB false GREEN: `vmm_flush_tlb()` is a local invlpg with no shootdown.
+  - Fails CLOSED: boundary absence is read from the PTE Present bit via `vmm_query_flags()` (`vmm_get_physical()` cannot tell absent from mapped-to-frame-0), re-checked every arm, latched permanently on conflict.
+  - One global page means one owner, so an overlapping arm is refused rather than merged, and a refused arm leaves the caller's fixture untouched.
+- [x] Retrofit of the §10 short-tag suite onto the fixture: `klog_tag_is` is verified rather than pinned, with the fixed-offset form it replaced running as a regression control that must be caught.
+  - `klog_probe_tag_is()` is a `KERNEL_TESTS`-only forwarder to the static `klog_tag_is`, so the fixture exercises the same function the renderer calls rather than a copy.
+  - Poisoned tags cover a first-byte mismatch, a matching prefix that runs out, and an exact match whose terminator check lands on the last readable byte.
+  - The full `klog()` path cannot be probed: it renders under `s_klog_lock` with interrupts disabled, and SEH declines to unwind with RFLAGS.IF clear (`src/kernel/except.c:649`).
+- [x] Fixed while proving the fixture: kernel SEH published the faulting RIP where its contract promises the DATA address -> XREF: `02-kernel-core/TODO-23 §14`.
+  - An address-selective filter therefore declined the very fault its handler was written to take, and the fixture could not tell an overread from an unrelated fault.
+  - Two selectors, split by question: `ki_exception_data_address()` reports PRESENCE (so a NULL-deref at address 0 stays distinguishable from "no address"), and `ki_exception_fault_address()` falls back to the instruction. Filters, handler bodies, telemetry and bugcheck now agree, replacing three divergent inline idioms.
+  - Filed the gap that let this ship green: nothing compiles the `EXCEPT_TELEMETRY=off` flavor -> XREF: `02-kernel-core/TODO-23` §19 (item: "Compile every declared flavor of the kernel in one gate, not just the default")
+- [x] Commit: `"test: poisoned-boundary fixture so an overread fails a test instead of a boot"`
 
 **Test checkpoint:** a deliberately reintroduced fixed-offset read of `subsystem[4]` fails the short-tag suite with a named assertion, on the same boot, without halting the run; the suite stays green against the bounded implementation.
+
+> **Test runner:** `make test-boot` + `make test-except` (or `scripts/debug/kernel/run-boot-tests.bat`) -- 9 `Harness: poisoned tail ...` suites, `Klog: short subsystem tags classify without overreading`, and 3 `Except: ... fault address ...` selector suites; expect 0 failed, with the two positive controls (`detects a one-byte overread`, `the fixed-offset classifier this replaced is caught overreading`) passing and NO poisoned-tail skips.
+
+> **Notes:**
+> Shipped a poisoned-boundary fixture (`poison_tail.h`/`.c`) that turns a one-byte kernel overread into one failed assertion instead of a dead boot, by placing the NUL against a never-mapped page and catching the #PF with kernel SEH.
+> Integrates through `test_seh_open_window()`, now shared with `test_except.c`, because `ki_seh_register()` silently no-ops on the boot thread's untracked stack and an unbracketed `KI_TRY` there protects nothing.
+> Retrofitted §10's short-tag suite onto it via the `klog_probe_tag_is()` seam, so `klog_tag_is` is verified rather than pinned, with the fixed-offset predecessor kept as a control that must be caught.
+> Fixed kernel SEH publishing the faulting RIP where its contract promises the DATA address, unifying filters, handler bodies, telemetry and bugcheck on one code-aware selector.
+> Boundary detection fails closed: PTE-Present-based, re-checked every arm, latched on conflict, single-owner, and never recycling a VA so no stale TLB entry can fake a clean result.
+> Scope boundary: the fixture is for NUL-terminated-string helpers only; APIs that legitimately require readable tail padding or documented SIMD overreads are out of scope by contract.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                                       | 🪟 Win11                       | 🐧 Linux                                            | 🚀 Impossible OS                            |
-| --- | --------------------------------------------- | ------------------------------ | --------------------------------------------------- | ------------------------------------------- |
-| 💎  | Slab/kmalloc fault injection                  | ⚠️ DV Low-Resources (heavy)    | ✅ `failslab` + fail-nth                            | ✅ §1 `kmalloc_fail_countdown`              |
-| 💎  | Multi-allocator fault injection               | ⚠️ DV LRS (coarse)             | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ✅ §6 pmm/vmm/copy_user countdowns          |
-| 💎  | Task-scoped fault injection                   | ❌ Rare                        | ✅ `task_filter` (fault-inject)                     | ✅ §6 `kmalloc_fail_task_filter`            |
-| 💎  | Deterministic concurrency testing             | ⚠️ TAEF with effort            | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered) |
-| 💎  | Test-scoped cleanup registry                  | ❌ Manual in TAEF              | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped) |
-| 💎  | Test-scoped scratch allocation                | ⚠️ Manual in TAEF              | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)   |
-| 💎  | Per-test leak detection                       | ⚠️ DV verifier pool checks     | ✅ `kmemleak` (kernel-wide)                         | ✅ §8 heap_used delta (per-test, built-in)  |
-| ⭐  | Test-scoped klog level demotion               | ❌ None                        | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                  |
-| ⭐  | Single-boot 436-suite runner                  | ❌ WDK run per-driver          | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure         |
-| ⭐  | CI-gated unannotated-leak counter             | ❌ DV advisory, not CI-gate    | ⚠️ kmemleak is kernel-wide, not per-test CI-gate    | ✅ §9 `L leaked` folds into FAILED          |
-| 💎  | Over-long log line cannot hang the kernel     | ✅ `DbgPrint` truncates at 512 | ✅ `printk` truncates at 1024                       | ✅ §10 truncates + marks, never spins       |
-| ⭐  | Failure record keeps its `file:line` when cut | ❌ tail cut first              | ❌ tail cut first                                   | ✅ §10 suffix reserved before author text   |
+| ⭐  | Feature                                       | 🪟 Win11                                            | 🐧 Linux                                            | 🚀 Impossible OS                            |
+| --- | --------------------------------------------- | --------------------------------------------------- | --------------------------------------------------- | ------------------------------------------- |
+| 💎  | Slab/kmalloc fault injection                  | ⚠️ DV Low-Resources (heavy)                         | ✅ `failslab` + fail-nth                            | ✅ §1 `kmalloc_fail_countdown`              |
+| 💎  | Multi-allocator fault injection               | ⚠️ DV LRS (coarse)                                  | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ✅ §6 pmm/vmm/copy_user countdowns          |
+| 💎  | Task-scoped fault injection                   | ❌ Rare                                             | ✅ `task_filter` (fault-inject)                     | ✅ §6 `kmalloc_fail_task_filter`            |
+| 💎  | Deterministic concurrency testing             | ⚠️ TAEF with effort                                 | ⚠️ KCSAN (probabilistic)                            | ✅ §2 `test_race_barrier_t` (yield-ordered) |
+| 💎  | Test-scoped cleanup registry                  | ❌ Manual in TAEF                                   | ✅ `kunit_add_action`                               | ✅ §7 `test_add_action` (primitive shipped) |
+| 💎  | Test-scoped scratch allocation                | ⚠️ Manual in TAEF                                   | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)   |
+| 💎  | Per-test leak detection                       | ⚠️ DV verifier pool checks                          | ✅ `kmemleak` (kernel-wide)                         | ✅ §8 heap_used delta (per-test, built-in)  |
+| ⭐  | Test-scoped klog level demotion               | ❌ None                                             | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                  |
+| ⭐  | Single-boot 436-suite runner                  | ❌ WDK run per-driver                               | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure         |
+| ⭐  | CI-gated unannotated-leak counter             | ❌ DV advisory, not CI-gate                         | ⚠️ kmemleak is kernel-wide, not per-test CI-gate    | ✅ §9 `L leaked` folds into FAILED          |
+| 💎  | Over-long log line cannot hang the kernel     | ✅ `DbgPrint` truncates at 512                      | ✅ `printk` truncates at 1024                       | ✅ §10 truncates + marks, never spins       |
+| ⭐  | Failure record keeps its `file:line` when cut | ❌ tail cut first                                   | ❌ tail cut first                                   | ✅ §10 suffix reserved before author text   |
+| 💎  | Buffer OVERREAD fails a test, not the boot    | ⚠️ DV special pool (per-driver, no in-test verdict) | ⚠️ KASAN (whole-kernel build flavor)                | ✅ §11 `TEST_POISON_TAIL` per-assertion     |
 
-After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model. §9 (shipped 2026-04-22) promoted the §8 advisory L column into a CI-failing gate by closing all 56 [LEAK] lines (root-cause fixes in OB namespace locking, ETW IDLE state, and ALPC disconnect ordering; two `test_*_cleanup_named` helpers) and hardening `scripts/test.sh` to fail-closed on unparseable summaries -- a third edge neither Win11's Driver Verifier nor Linux's kernel-wide kmemleak delivers at the per-test, CI-gated layer.
+After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model. §9 (shipped 2026-04-22) promoted the §8 advisory L column into a CI-failing gate by closing all 56 [LEAK] lines (root-cause fixes in OB namespace locking, ETW IDLE state, and ALPC disconnect ordering; two `test_*_cleanup_named` helpers) and hardening `scripts/test.sh` to fail-closed on unparseable summaries -- a third edge neither Win11's Driver Verifier nor Linux's kernel-wide kmemleak delivers at the per-test, CI-gated layer. §11 (shipped 2026-08-14) adds a fourth: a one-byte out-of-bounds READ becomes one failed assertion on the same boot, where Driver Verifier's special pool is a per-driver mode with no in-test verdict and KASAN is a whole-kernel build flavor rather than something an individual suite can point at a single helper.
 
 ---
 
@@ -451,6 +476,8 @@ After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Lin
 - [x] `src/kernel/test/test_heap.c` + `test_pmm.c` + `test_vmm.c` + `test_cpu_security.c` cover §6 multi-allocator fault injection: task-filter, max-injections cap, PMM + VMM-map + copy_user countdowns (7 new TEST_CAT_MM + TEST_CAT_X86 suites)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §7 `test_add_action` (9 TEST_CAT_BOOT suites: LIFO drain, overflow, NULL-fn reject, re-entrant-during-drain reject, IRQL recovery)
 - [x] `src/kernel/test/test_harness.c` sanity tests for §8 heap-leak detection (6 TEST_CAT_BOOT suites: kmalloc unfreed + TEST_EXPECT_LEAK pair, TEST_SCRATCH_KBUF drain pair, TEST_LEAK_IGNORE bypass pair; verify suites consume `test_runner_last_leak_delta()` and `g_test_state.leaked` to confirm classification without polluting the summary L counter)
+- [x] `src/kernel/test/test_harness.c` covers §11 poisoned-boundary fixture (9 TEST_CAT_BOOT suites incl. the detects-a-one-byte-overread control); `test_klog.c` retrofits the §10 short-tag suite onto it
+- [x] `src/kernel/test/test_except.c` adds a §11 fault-address selector matrix (3 TEST_CAT_EXCEPT suites: all three memory codes, a NULL-deref address of 0, and non-address rejection)
 - [x] `src/kernel/test/test_alpc.c` adds 3 §4 retrofit suites in TEST_CAT_IPC (`alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes`, `alpc: ReplyBodyCap clamps recv_buf_len > 65528`, `alpc: two-port lock-order stress`) consuming TODO-03 §1 + §2 + §3 + §5 primitives to close the TODO-24 §4 deferred test gaps block
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | ~23 new test-harness + allocator + alpc-retrofit suites, 0 failures, summary shows `L=0` on green tree

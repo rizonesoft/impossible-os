@@ -184,7 +184,7 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 > - A failed stage rename returns the real size and leaves the live log AND every rotated generation untouched -- no truncate, no per-retry generation churn. `MaxSize`/`MaxRotated` from registry with `val_size`-validated REG_DWORD reads.
 > - Rotation unit test deferred (kernel image is at its BSS page budget); covered by 3-round adversarial review + the boot smoke test for now.
 > **Verified:** 2026-06-21 | ship `4879f6a3` + review fixes | 9/10 items | build OK | smoke PASS (TCG 2.58s); 3212 kernel + 16 user PASS
-> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 568)
+> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 573)
 > **Deferred:** [M] no-RTC serial-log rotation deletes by seq, not recency (filed 2026-06-27 from TODO-08 §5 review; cap bounds growth so not a leak) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 175)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+3M+1L fixed | scope: kernel-code-quality
 
@@ -483,6 +483,11 @@ Two related defects in how this subsystem's own tests read the ring. First, `tes
       - `test_klog_ctx_tid_populated` and `test_klog_ctx_subsystem_populated` read a fixed `head - 1` offset, which is the same defect in its sharpest form -- they assert against whatever entry happens to sit there.
 - [ ] Prove the negative case cannot be satisfied by an unrelated line
       - A fixture that logs an unrelated entry inside the measured window must leave every drop verdict unchanged; under the current head comparison it would flip them.
+- [ ] Give the two registered klog/ETW magic tests an assertion, or delete them
+      - `test_klog_crash_magic` (`src/kernel/test/test_klog.c:750`) and `test_etw_session_magic` (same file, line 826) have EMPTY bodies and are registered at lines 1318 and 1338, so the runner counts two passes that verify nothing. This is the sharpest form of the defect this section already owns: not an assertion that can be satisfied by an unrelated line, but an assertion that is not there at all.
+      - Both immediate neighbours (`test_klog_crash_header_size`, `test_etw_event_header_size`) carry real size assertions, so these two read as unfinished rather than deliberately empty. The magic values they were named for are `KLOG_CRASH_MAGIC` (`include/kernel/klog.h:333`) and the ETW session equivalent.
+      - Assert the value against the header constant if that is meaningful, or delete the suite. A registered test that asserts nothing is worse than an absent one, because the count says it is covered.
+      - Found 2026-08-14 during the `00-infrastructure/TODO-03` section 11 loose-ends scan (a pre-existing defect in a file that section was editing for another reason) -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` section 11 (item: "A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page")
 - [ ] Commit: `"kernel: bound klog suite assertions by content in a locked window snapshot"`
 
 **Test checkpoint:** every klog delivery and suppression verdict is unchanged when an unrelated entry lands inside the measured window, the converted scans read an immutable copy rather than the live ring, and the drop tests stay green on a 2-CPU boot. Test on: QEMU TCG, QEMU KVM (2 CPUs).

@@ -786,3 +786,19 @@ void ki_seh_auto_pop_ptr(KI_EXCEPTION_REGISTRATION *const *reg);
 /* NTSTATUS + address delivered to the handler body (valid in a KI_EXCEPT block). */
 #define KI_EXCEPTION_CODE(reg)  ((reg).code)
 #define KI_EXCEPTION_ADDR(reg)  ((reg).fault_addr)
+
+#ifdef KERNEL_TESTS
+/* Test seams over the internal fault-address selectors. See the contract at
+ * their definitions in src/kernel/except.c.
+ *
+ * ki_probe_exception_data_address() reports PRESENCE via its return value and
+ * writes the address through `out`, so a genuine access violation AT address 0
+ * (a NULL dereference, the commonest fault there is) stays distinguishable from
+ * a record that carries no address at all. ki_probe_exception_fault_address()
+ * is the handler-facing form: the data address when there is one, the faulting
+ * instruction otherwise.
+ *
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+int      ki_probe_exception_data_address(const EXCEPTION_RECORD *rec, uint64_t *out);
+uint64_t ki_probe_exception_fault_address(const EXCEPTION_RECORD *rec);
+#endif

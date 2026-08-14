@@ -170,11 +170,13 @@ uint32_t frame_from_context(const CONTEXT *ctx, struct interrupt_frame *frame)
  *                dispatcher stage) -> second-chance -> terminate
  *   kernel-mode: KiDebugRoutine first-chance -> kernel SEH walk -> KiDebugRoutine
  *                second-chance -> KeBugCheckEx
- * Ring-3 delivery (KiUserExceptionDispatcher) and the kernel SEH chain walk are
- * owned by the ring-3-delivery and kernel-__try/__except stages; both are stubs
- * here (DbgkForwardException -> FALSE, ki_raise_kernel_exception -> UNHANDLED), so
- * an undebugged fault takes the existing terminal. Everything on this path runs
- * in fault context: lock-free, allocation-free. */
+ * Ring-3 delivery (KiUserExceptionDispatcher) is owned by the ring-3-delivery
+ * stage and is still a stub here (DbgkForwardException -> FALSE), so an
+ * undebugged USER fault takes the existing terminal. The kernel SEH chain walk
+ * is NOT a stub: ki_raise_kernel_exception below is fully implemented (IRQL and
+ * IF gates, collided-exception guard, chain walk, frame rewrite) and can return
+ * HANDLED. Everything on this path runs in fault context: lock-free,
+ * allocation-free. */
 
 /* Kernel-debugger callback. Permanently resident once KD attaches; a single
  * aligned pointer read/write is atomic on x86-64, but use explicit acquire/
@@ -306,6 +308,82 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
  * VEH -> SEH -> VCH chain runs in ntdll (no ring-0 walker); its per-handler
  * telemetry is owned by 12-user-platform-sdk/TODO-04 s5, sharing this schema.
  * ------------------------------------------------------------------------- */
+/* ---- Fault-address selection (NOT telemetry-conditional) -----------------
+ *
+ * Deliberately ABOVE the CONFIG_EXCEPT_TELEMETRY block. Kernel SEH calls these
+ * on the filter and handler paths, which exist in every flavor; defining them
+ * inside the telemetry region compiles fine by default and breaks the
+ * supported EXCEPT_TELEMETRY=off build, where the callers survive and the
+ * definitions do not.
+ *
+ * Two selectors because two questions are being asked, and answering both with
+ * one function is what made the crash report disagree with the handler:
+ *   - ki_exception_data_address(): does this record carry a DATA fault address?
+ *   - ki_exception_fault_address(): what address must a handler decide about?
+ *
+ * The first reports PRESENCE via its return value rather than a sentinel,
+ * because a NULL dereference is an access violation AT address 0 and is the
+ * most common one there is. "0 means no address" would make the commonest real
+ * fault indistinguishable from an exception carrying no address at all.
+ *
+ * Code-aware on purpose: ExceptionInformation[] only means {access type,
+ * address} for the memory-fault codes (include/kernel/except.h:263-266). A bare
+ * NumberParameters test would publish an unrelated parameter as an address.
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11
+ * ------------------------------------------------------------------------- */
+static int ki_exception_data_address(const EXCEPTION_RECORD *rec, uint64_t *out)
+{
+    if (!rec || !out)
+        return 0;
+
+    switch ((uint32_t)rec->ExceptionCode) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_IN_PAGE_ERROR:
+    case EXCEPTION_GUARD_PAGE:
+        if (rec->NumberParameters > EXCEPTION_INFO_FAULT_ADDR) {
+            *out = (uint64_t)rec->ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR];
+            return 1;
+        }
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
+/* The address a handler must decide ABOUT: the data address when the record
+ * carries one, the faulting instruction otherwise (a handler with no data
+ * address still needs somewhere meaningful to reason from). */
+static uint64_t ki_exception_fault_address(const EXCEPTION_RECORD *rec)
+{
+    uint64_t data;
+
+    if (!rec)
+        return 0;
+    if (ki_exception_data_address(rec, &data))
+        return data;
+    return (uint64_t)(uintptr_t)rec->ExceptionAddress;
+}
+
+#ifdef KERNEL_TESTS
+/* Test seams over the two selectors. They are static because nothing outside
+ * this file should choose a fault address, but the POLICY is what regressed
+ * once already, and a live #PF can only reach one branch of it. These let a
+ * suite drive synthetic records through every code path -- all three memory
+ * codes, a genuine address 0, a record with too few parameters, and a
+ * non-memory record carrying unrelated parameters -- without faulting.
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+int ki_probe_exception_data_address(const EXCEPTION_RECORD *rec, uint64_t *out)
+{
+    return ki_exception_data_address(rec, out);
+}
+
+uint64_t ki_probe_exception_fault_address(const EXCEPTION_RECORD *rec)
+{
+    return ki_exception_fault_address(rec);
+}
+#endif
+
 #if CONFIG_EXCEPT_TELEMETRY
 
 /* Packing for the per-process rate state: window ms in the high bits, event count
@@ -426,6 +504,20 @@ int except_telem_rate_gate(volatile uint64_t *state, uint32_t now_ms, uint32_t m
  * EXCEPT_TELEM_GLOBAL_MAX events/window in total. Lock-free CAS -- no lock. */
 static volatile uint64_t s_except_telem_global;
 
+/* The address a handler must decide ABOUT: the data address for the memory
+ * faults that carry one, and the faulting instruction for everything else.
+ *
+ * Code-aware on purpose. ExceptionInformation[] only means {access type,
+ * address} for the memory-fault codes (include/kernel/except.h:263-266); a
+ * generic record may carry two parameters that mean something else entirely,
+ * and reading [1] from one of those would publish an arbitrary parameter as an
+ * address. A bare `NumberParameters >= 2` test cannot tell those apart.
+ *
+ * Single selector by design: filters, handler bodies, dispatch telemetry and
+ * the bugcheck path must all agree on what "the faulting address" means, and
+ * they previously did not -- a filter received the faulting RIP while the
+ * handler body that ran after it received the data address.
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
 void except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int disposition)
 {
     struct task   *t;
@@ -458,9 +550,7 @@ void except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int di
     pid = t  ? (uint32_t)t->pid : 0;
     tid = th ? (uint32_t)th->id : 0;
     code = (uint32_t)rec->ExceptionCode;
-    fault_addr = (rec->NumberParameters >= 2)
-        ? rec->ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR]
-        : (uint64_t)(uintptr_t)rec->ExceptionAddress;
+    fault_addr = ki_exception_fault_address(rec);
 
     if (except_format_dispatch_json(line, (uint32_t)sizeof(line), code, fault_addr,
                                     handler_name, disposition, pid, tid) == 0)
@@ -695,8 +785,13 @@ KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEX
             break;
         }
 
+        /* The filter and the handler body it gates MUST be told the same
+         * address, or an address-selective filter declines the very fault its
+         * handler was written to take. */
         disp = reg->filter
-                   ? reg->filter(rec->ExceptionCode, rec->ExceptionAddress, reg->filter_ctx)
+                   ? reg->filter(rec->ExceptionCode,
+                                 (void *)(uintptr_t)ki_exception_fault_address(rec),
+                                 reg->filter_ctx)
                    : EXCEPTION_EXECUTE_HANDLER;
 
         if (disp == EXCEPTION_CONTINUE_EXECUTION) {
@@ -712,7 +807,16 @@ KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEX
             KI_EXCEPTION_REGISTRATION *p;
             uint32_t g = 0;
             reg->code = rec->ExceptionCode;
-            reg->fault_addr = rec->ExceptionAddress;
+            /* The DATA address the access violated, not the instruction that
+             * did it. Both the field's contract ("faulting address") and the
+             * KI_EXCEPTION_FILTER signature promise the address a handler must
+             * decide about, and the faulting RIP is already reachable through
+             * the trap frame. Publishing ExceptionAddress here made every
+             * handler that inspected the address see a code pointer instead --
+             * found by the poisoned-boundary fixture, which could not tell an
+             * overread apart from an unrelated fault until this was corrected.
+             * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
+            reg->fault_addr = (void *)(uintptr_t)ki_exception_fault_address(rec);
             for (p = t->kernel_exception_list; p && g < KI_SEH_MAX_WALK; p = p->prev, g++) {
                 p->linked = 0;
                 if (p == reg)
@@ -928,8 +1032,9 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
         }
 
         /* Both modes route through the master dispatcher (kernel-mode is handled
-         * internally via ki_raise_kernel_exception). The stub declines until the
-         * debugger / ring-3 delivery / kernel-SEH stages land. */
+         * internally via ki_raise_kernel_exception, which is implemented and can
+         * return HANDLED). Ring-3 delivery still declines until that stage
+         * lands, so a user fault falls through to the terminal below. */
         disp = ki_dispatch_exception(&s->rec, &s->ctx, frame, mode, 1 /*first_chance*/);
         if (disp == KI_EXCEPTION_HANDLED) {
             s->in_use = 0;           /* resolved -- release the slot */
@@ -946,10 +1051,15 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
          * contract ever changes. Ring-3 delivery + per-process termination land
          * with the ring-3-delivery stage. */
         if (mode == UserMode) {
-            /* Faulting linear address if the record carries one (AV records set
-             * ExceptionInformation[1]); 0 otherwise. */
-            uint64_t fault_addr = (s->rec.NumberParameters >= 2)
-                ? s->rec.ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR] : 0;
+            /* WER's field is a DATA fault address, and the report already
+             * carries RIP separately -- so a code fault reports 0 here rather
+             * than duplicating RIP, which would erase the known-vs-unknown
+             * distinction a responder reads this field for. Deliberately the
+             * data-only selector, NOT the handler-facing one above: a handler
+             * with no data address still needs somewhere to resume, a crash
+             * report does not. */
+            uint64_t fault_addr = 0;
+            (void)ki_exception_data_address(&s->rec, &fault_addr);
             /* Serial-safe hook FIRST, so the lightweight crash evidence is on the
              * wire before the fallible VFS report (which can block/fault on
              * degraded media -- the filed TODO-24 reentrancy risk, the likelier
