@@ -86,6 +86,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎  |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
 | ⭐  |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [ ]   |
 | ⭐  |  19   | Compile the EXCEPT_TELEMETRY=off flavor in a gate, not by hand     | §16                        |  [ ]   |
+| 💎  |  20   | Owner-stable SEH stack bounds + fault-address provenance           | §14                        |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -793,6 +794,33 @@ The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic
 - [ ] Commit: `"ci: compile every declared kernel flavor, not just the default"`
 
 **Test checkpoint:** deliberately moving a function used outside a `#if CONFIG_*` region to inside it makes the new gate FAIL, and moving it back makes it pass; the default build time is unchanged.
+
+---
+
+## 20. Kernel SEH Cannot Be Armed Without Rewriting Scheduler Thread Metadata
+
+> **Spawned-by:** root
+> **User impact:** two correctness problems reach a user. A kernel component that wants to survive a fault has to mutate scheduler state to do it, which is unsound the moment threads migrate. And an SEH filter that asks "did this fault touch MY address?" can match an unrelated #GP, because #GP records claim a fault address of 0 they do not have.
+
+TWO findings from the `00-infrastructure/TODO-03` section 11 review that belong to this TODO's surface rather than to the test harness that surfaced them. That review produced a third, kernel-VA reservation, which is NOT owned here -- see the routing note below the checklist.
+
+> [!NOTE]
+> Filed 2026-08-14. Section 11 shipped a poisoned-boundary fixture that runs a suspect helper under `KI_TRY` so an out-of-bounds READ fails one assertion instead of halting the boot. Building it required the fixture to reproduce a pattern this TODO's own suite established, and reviewing it surfaced two gaps in exception-dispatch territory rather than in the test harness: the two checklist items below. A third finding from the same review, kernel-VA RESERVATION, is deliberately NOT owned here -- it belongs to the existing central-VA-allocator item in `03-memory-concurrency/TODO-01-vmm-memory-protection.md` and is routed there by the note under the checklist -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` section 11 (item: "A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page")
+
+- [ ] Give `ki_seh_register()` a way to protect the running thread without rewriting `stack_base`/`stack_size`
+      - `ki_seh_register()` refuses to publish a node outside the current thread's tracked stack window (`src/kernel/except.c:667`), and the boot thread tracks none, so every existing caller brackets the window by ASSIGNING to `thread_current()->stack_base` and `->stack_size` and restoring afterwards (`src/kernel/test/poison_tail.c:test_seh_open_window`, used by `test_except.c`).
+      - That is unsound on SMP: `thread_current()` (`src/kernel/sched/task.c:5996`) reads the GLOBAL `current_task`/`current_thread` indices, not per-CPU state, so scheduling on another CPU can change which thread the cursor names between the save, the set and the restore -- leaving a foreign thread carrying a temporary window, or the registration unlinked so the fault it was meant to catch stays terminal.
+      - The window is also a fixed 32 KiB centred on the caller's SP while a kernel thread stack is 8 KiB, so on any thread with tracked bounds it covers ~24 KiB that is not the stack, including past its guard page -- and `ki_seh_addr_on_kstack()` and the unwinder trust those bounds while it is open.
+      - Shape: either support the boot stack explicitly, or make registration validate against per-CPU/owner-stable bounds, so no caller needs to touch scheduler metadata at all. The two test-side helpers then collapse to nothing.
+- [ ] Distinguish an UNKNOWN fault address from a real fault at address 0
+      - `except_common_handler` builds `STATUS_ACCESS_VIOLATION` records for #GP/#NP with `NumberParameters = 2` and `ExceptionInformation[1] = 0` (`src/kernel/except.c:1022-1026`) precisely because those vectors carry no CR2 and the address is not known; the record must still be well-formed.
+      - Downstream cannot tell that fabricated 0 from a genuine NULL dereference. `ki_exception_data_address()` reports it as a present data address, so an SEH filter keyed on address 0 can claim an unrelated protection fault, and diagnostics cannot separate "unknown" from "NULL".
+      - Shape: address-known PROVENANCE in the record -- a flag, a distinct status, or a discriminator both selectors consume. This is an exception-ABI decision, which is why section 11 documented the limitation at both the producer and the selector rather than inventing a bit.
+- [ ] Commit: `"kernel: owner-stable SEH stack bounds and fault-address provenance"`
+
+**Not owned here:** kernel-VA RESERVATION. Section 11 also added an unregistered VA carve and could only defend it by verifying its own mapping on every use, but that work already has an owner and creating a second one here would split it -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md` §MMIO mapping (item: "Implement `vmm_map_mmio(phys_base, size)` -- 4 KiB PTEs, `PCD=1`+`PWT=1` (UC), return VA via a central kernel VA allocator with reserved non-overlapping ranges" at line 240). `src/kernel/mm/vmm.c:1490` already points at that TODO, and its sibling item covers the unlocked `get_or_create_table()` this fixture's first arm also exercises.
+
+**Test checkpoint:** a `KI_TRY` region protects a fault on a thread whose scheduling changed during the region, with no scheduler metadata written by the caller; and an SEH filter keyed on address 0 does NOT match a #GP with no known address. Test on: QEMU TCG, QEMU KVM (2 CPUs).
 
 ---
 

@@ -14,6 +14,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/irql.h"   /* KeGetCurrentIrql / APC_LEVEL: the SEH precondition */
 #include "kernel/sched/task.h"
 #include "kernel/except.h"
 #include "kernel/klog.h"
@@ -48,6 +49,12 @@
 #define POISON_STATE_FREE      0
 #define POISON_STATE_OWNED     1
 #define POISON_STATE_CLEANING  2
+
+/* RFLAGS.IF -- the interrupt-enable bit kernel SEH requires before it will
+ * unwind a kernel fault (src/kernel/except.c:761 reads the same bit off the
+ * trap frame). Named here rather than open-coded so the probe's precondition
+ * check reads as the SEH contract it mirrors. */
+#define POISON_RFLAGS_IF  0x00000200ULL
 
 static DEFINE_SPINLOCK(s_poison_lock);
 static uintptr_t s_poison_frame;    /* 0 until the data page is mapped */
@@ -99,11 +106,16 @@ static int poison_tail_reserve_owned(void)
     uintptr_t frame;
 
     if (!s_poison_frame) {
+        /* TRANSIENT failures do NOT latch. An out-of-frames moment, or a test
+         * that deliberately injected an allocation failure, says nothing about
+         * whether this fixture can detect an overread -- and every caller turns
+         * a refusal into a hard assertion failure, so latching here would
+         * convert one unlucky suite into a failure in every poisoned-boundary
+         * suite for the rest of the boot. Only the boundary-PRESENT case below
+         * is a permanent correctness latch. */
         frame = pmm_alloc_frame();
-        if (!frame) {
-            poison_tail_fail_permanently();
+        if (!frame)
             return -1;
-        }
 
         /* Kernel-only, writable, NX: a data page that is never executed and
          * never reachable from ring 3. The page AFTER it is deliberately left
@@ -111,7 +123,6 @@ static int poison_tail_reserve_owned(void)
         if (vmm_map_page(TEST_POISON_DATA_VA, frame,
                          VMM_KERNEL_RW | VMM_FLAG_NX) != 0) {
             pmm_free_frame(frame);
-            poison_tail_fail_permanently();
             return -1;
         }
         s_poison_frame = frame;
@@ -121,6 +132,18 @@ static int poison_tail_reserve_owned(void)
      * read ordinary memory and be reported clean, so the fixture must never
      * hand out another arm once it has seen this. */
     if (!poison_boundary_is_absent()) {
+        poison_tail_fail_permanently();
+        return -1;
+    }
+
+    /* The DATA page must still be OUR frame. Checking only the boundary leaves
+     * the other half open: the carve is asserted to lie inside the MMIO/fixmap
+     * window but nothing RESERVES it from a future VA allocator, and
+     * vmm_map_page() overwrites PTEs unconditionally (src/kernel/mm/vmm.c:1487).
+     * If another owner had remapped this VA, the arm below would memset THEIR
+     * mapping. Verifying the recorded frame is the cheap half of that problem;
+     * the reservation half is filed -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md (central kernel VA allocator). */
+    if (vmm_get_physical(TEST_POISON_DATA_VA) != s_poison_frame) {
         poison_tail_fail_permanently();
         return -1;
     }
@@ -327,6 +350,25 @@ int test_poison_tail_probe(struct test_poison_tail *pt,
     t = thread_current();
     if (!t)
         return TEST_POISON_UNAVAILABLE;
+
+    /* REFUSE unless kernel SEH can actually catch the fault we are about to
+     * provoke. ki_raise_kernel_exception declines above APC_LEVEL
+     * (src/kernel/except.c:755) and with RFLAGS.IF clear (src/kernel/except.c:761),
+     * and a declined kernel fault is terminal -- so running the callback in
+     * either state would turn this fixture's deliberate overread into a dead
+     * boot, which is precisely the outcome it exists to prevent. Checking that
+     * a current thread exists while ignoring the condition that decides
+     * catchability was gating the wrong precondition. Interrupt state is read
+     * directly because the caller may have disabled interrupts without raising
+     * IRQL. */
+    if (KeGetCurrentIrql() > APC_LEVEL)
+        return TEST_POISON_UNAVAILABLE;
+    {
+        uint64_t rflags;
+        __asm__ volatile("pushfq; popq %0" : "=r"(rflags));   /* ARCH: x86-64 */
+        if (!(rflags & POISON_RFLAGS_IF))
+            return TEST_POISON_UNAVAILABLE;
+    }
 
     /* PIN the arm for the whole callback. `pt->armed` alone is not enough: it
      * is cleared only after teardown returns, so a probe could start (or keep

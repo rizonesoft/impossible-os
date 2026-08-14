@@ -298,16 +298,6 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
     return KI_EXCEPTION_UNHANDLED;
 }
 
-/* --- Section 16: Exception Dispatch Telemetry -------------------------------
- *
- * A flat JSON structured-log event recording each exception-dispatch decision the
- * kernel can observe at the ring-3 boundary. Emitted ONLY from klog-safe legs (a
- * ring-3 fault holds no kernel spinlock); never from ki_raise_kernel_exception
- * (lock-free). Per-process rate-limited via a packed-atomic CAS and routed through
- * klog_unrated() so one process's flood cannot clip another's events. The full
- * VEH -> SEH -> VCH chain runs in ntdll (no ring-0 walker); its per-handler
- * telemetry is owned by 12-user-platform-sdk/TODO-04 s5, sharing this schema.
- * ------------------------------------------------------------------------- */
 /* ---- Fault-address selection (NOT telemetry-conditional) -----------------
  *
  * Deliberately ABOVE the CONFIG_EXCEPT_TELEMETRY block. Kernel SEH calls these
@@ -326,9 +316,29 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
  * most common one there is. "0 means no address" would make the commonest real
  * fault indistinguishable from an exception carrying no address at all.
  *
- * Code-aware on purpose: ExceptionInformation[] only means {access type,
- * address} for the memory-fault codes (include/kernel/except.h:263-266). A bare
- * NumberParameters test would publish an unrelated parameter as an address.
+ * Code-aware on purpose, and the code list is exactly the one this project has
+ * DOCUMENTED: include/kernel/except.h:263-264 defines the {access type,
+ * address} layout for STATUS_ACCESS_VIOLATION and STATUS_IN_PAGE_ERROR and no
+ * others. A bare NumberParameters test would publish an unrelated parameter as
+ * an address for every other code.
+ *
+ * STATUS_GUARD_PAGE_VIOLATION is deliberately NOT here. Real Windows gives it
+ * the same layout, but this project has never documented that and no producer
+ * builds such a record: a guard-page hit is terminal long before the
+ * dispatcher, because guard_page_lookup() panics at src/kernel/mm/vmm.c:934-940
+ * ahead of ki_dispatch_exception. Including it would be an undocumented ABI
+ * assumption about a path that cannot currently occur. Whoever makes guard-page
+ * faults recoverable writes that contract into except.h first, then adds it.
+ *
+ * KNOWN LIMITATION -- an AV record can claim address 0 without meaning it.
+ * The #GP/#NP leg of except_common_handler fabricates
+ * ExceptionInformation[1] = 0 (below, ~line 1022) precisely BECAUSE those
+ * vectors carry no CR2 and the address is unknown; the record must still be
+ * well-formed. This selector cannot tell that apart from a genuine NULL
+ * dereference, so a filter keyed on address 0 can match an unrelated
+ * protection fault. Distinguishing them needs address-known PROVENANCE in the
+ * record, which is an exception-ABI change and is filed rather than invented
+ * here -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md section 20.
  * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11
  * ------------------------------------------------------------------------- */
 static int ki_exception_data_address(const EXCEPTION_RECORD *rec, uint64_t *out)
@@ -339,7 +349,6 @@ static int ki_exception_data_address(const EXCEPTION_RECORD *rec, uint64_t *out)
     switch ((uint32_t)rec->ExceptionCode) {
     case EXCEPTION_ACCESS_VIOLATION:
     case EXCEPTION_IN_PAGE_ERROR:
-    case EXCEPTION_GUARD_PAGE:
         if (rec->NumberParameters > EXCEPTION_INFO_FAULT_ADDR) {
             *out = (uint64_t)rec->ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR];
             return 1;
@@ -369,9 +378,10 @@ static uint64_t ki_exception_fault_address(const EXCEPTION_RECORD *rec)
 /* Test seams over the two selectors. They are static because nothing outside
  * this file should choose a fault address, but the POLICY is what regressed
  * once already, and a live #PF can only reach one branch of it. These let a
- * suite drive synthetic records through every code path -- all three memory
- * codes, a genuine address 0, a record with too few parameters, and a
- * non-memory record carrying unrelated parameters -- without faulting.
+ * suite drive synthetic records through every code path -- both documented
+ * data-address codes, an explicit guard-page REJECTION, a genuine address 0, a
+ * record with too few parameters, and a non-memory record carrying unrelated
+ * parameters -- without faulting.
  * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
 int ki_probe_exception_data_address(const EXCEPTION_RECORD *rec, uint64_t *out)
 {
@@ -384,6 +394,17 @@ uint64_t ki_probe_exception_fault_address(const EXCEPTION_RECORD *rec)
 }
 #endif
 
+
+/* --- Section 16: Exception Dispatch Telemetry -------------------------------
+ *
+ * A flat JSON structured-log event recording each exception-dispatch decision the
+ * kernel can observe at the ring-3 boundary. Emitted ONLY from klog-safe legs (a
+ * ring-3 fault holds no kernel spinlock); never from ki_raise_kernel_exception
+ * (lock-free). Per-process rate-limited via a packed-atomic CAS and routed through
+ * klog_unrated() so one process's flood cannot clip another's events. The full
+ * VEH -> SEH -> VCH chain runs in ntdll (no ring-0 walker); its per-handler
+ * telemetry is owned by 12-user-platform-sdk/TODO-04 s5, sharing this schema.
+ * ------------------------------------------------------------------------- */
 #if CONFIG_EXCEPT_TELEMETRY
 
 /* Packing for the per-process rate state: window ms in the high bits, event count
@@ -507,16 +528,18 @@ static volatile uint64_t s_except_telem_global;
 /* The address a handler must decide ABOUT: the data address for the memory
  * faults that carry one, and the faulting instruction for everything else.
  *
- * Code-aware on purpose. ExceptionInformation[] only means {access type,
- * address} for the memory-fault codes (include/kernel/except.h:263-266); a
- * generic record may carry two parameters that mean something else entirely,
- * and reading [1] from one of those would publish an arbitrary parameter as an
- * address. A bare `NumberParameters >= 2` test cannot tell those apart.
+ * Three consumers share ki_exception_fault_address(): the SEH filter argument,
+ * the handler body's reg->fault_addr, and this telemetry event. They must agree
+ * on what "the faulting address" means, and they previously did not -- a filter
+ * received the faulting RIP while the handler body that ran after it received
+ * the data address.
  *
- * Single selector by design: filters, handler bodies, dispatch telemetry and
- * the bugcheck path must all agree on what "the faulting address" means, and
- * they previously did not -- a filter received the faulting RIP while the
- * handler body that ran after it received the data address.
+ * Two consumers deliberately do NOT use it, and that is not an oversight:
+ * WerpReportFault takes the DATA-ONLY selector (a crash report's field means a
+ * data address, and RIP is reported separately), and ki_kernel_bugcheck_params
+ * (line ~229) keeps ExceptionAddress for the STOP instruction-address parameter
+ * and forwards raw ExceptionInformation alongside it, because those are the
+ * adjacent STOP contracts. Do not "unify" those two onto this selector.
  * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
 void except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int disposition)
 {
@@ -1017,7 +1040,14 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
          * 0 so the record is WELL-FORMED (NumberParameters must be 2) rather
          * than left at 0 which a consumer would read as a malformed AV. A finer
          * cause decode (#GP privileged-instruction / invalid-LOCK) is the filed
-         * cause-aware refinement. */
+         * cause-aware refinement.
+         *
+         * CONSEQUENCE, stated here because the producer is where it originates:
+         * downstream cannot tell this fabricated 0 from a real NULL-dereference
+         * AV. ki_exception_data_address() reports it as a present data address,
+         * so an SEH filter keyed on address 0 can match an unrelated #GP. The
+         * cure is address-known provenance in the record, an exception-ABI
+         * change -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md section 20. */
         if (m->code == STATUS_ACCESS_VIOLATION) {
             s->rec.NumberParameters = 2;
             s->rec.ExceptionInformation[EXCEPTION_INFO_ACCESS_TYPE] = EXCEPTION_ACCESS_READ;

@@ -1,6 +1,6 @@
 {
   "total_suites": 2872,
-  "total_assertions": 11749,
+  "total_assertions": 11751,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -37,7 +37,7 @@
     {"file": "test_entropy.c", "suites": 15, "assertions": 172},
     {"file": "test_env.c", "suites": 171, "assertions": 736},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
-    {"file": "test_except.c", "suites": 63, "assertions": 267},
+    {"file": "test_except.c", "suites": 63, "assertions": 269},
     {"file": "test_exec.c", "suites": 60, "assertions": 111},
     {"file": "test_fastpath_hardening.c", "suites": 6, "assertions": 15},
     {"file": "test_firmware_advisor.c", "suites": 5, "assertions": 17},

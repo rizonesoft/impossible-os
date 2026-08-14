@@ -36,10 +36,21 @@ struct thread;
 
 /* ---- Reserved VA ---------------------------------------------------------
  *
- * A 2 MiB reservation carved from the TOP of the MMIO/fixmap window, so a
- * future MMIO allocator growing from MM_MMIO_BASE never reaches it. Only the
+ * A 2 MiB reservation carved from the TOP of the MMIO/fixmap window. Only the
  * FIRST 4 KiB page of the reservation is ever mapped; every other page in it,
  * the boundary page included, stays absent for the life of the boot.
+ *
+ * CONTAINED, NOT RESERVED -- say it plainly, because the asserts below can be
+ * misread as a reservation. They prove the range lies inside the MMIO/fixmap
+ * window; nothing registers it with a VA allocator or stops another owner
+ * mapping it, and vmm_map_page() overwrites PTEs unconditionally. The top of
+ * the window is chosen to be as far as possible from where an allocator would
+ * start, but that is distance, not exclusion: today's MMIO bump allocator does
+ * not even use this window (it runs at 9-10 GiB, src/kernel/mm/vmm.c:1491).
+ * The fixture therefore VERIFIES rather than assumes on every arm -- boundary
+ * still absent, data page still mapped to the frame it recorded -- and fails
+ * closed otherwise. A real kernel-VA reservation mechanism is the proper cure
+ * and is filed -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md (central kernel VA allocator).
  *
  * The carve is deliberate, and the alternative was measured and rejected:
  * building the boundary out of a pmm_alloc_contiguous() pair in the low
@@ -146,7 +157,7 @@ int test_poison_tail_probe(struct test_poison_tail *pt,
 /* ---- Kernel-SEH stack window --------------------------------------------
  *
  * ki_seh_register() only publishes a registration node that lies inside the
- * current thread's tracked stack window (src/kernel/except.c:555), and the
+ * current thread's tracked stack window (src/kernel/except.c:667), and the
  * boot thread the test runner uses does not track one -- so an unbracketed
  * KI_TRY on it silently provides ZERO protection and the fault stays terminal.
  * These bracket the caller's frame and restore the previous window. Shared so

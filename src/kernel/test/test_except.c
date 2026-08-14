@@ -1251,10 +1251,12 @@ static void tu_make_record(EXCEPTION_RECORD *rec, uint32_t code,
  * must deliver it rather than the instruction. */
 static void test_ki_fault_address_memory_codes(void)
 {
+    /* Exactly the codes include/kernel/except.h:263-264 documents as carrying
+     * {access type, address}. GUARD_PAGE is deliberately absent -- see the
+     * rejection suite below. */
     static const uint32_t codes[] = {
         EXCEPTION_ACCESS_VIOLATION,
         EXCEPTION_IN_PAGE_ERROR,
-        EXCEPTION_GUARD_PAGE,
     };
     EXCEPTION_RECORD rec;
     uint64_t got;
@@ -1312,6 +1314,18 @@ static void test_ki_fault_address_rejects_non_addresses(void)
     TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 0u,
                    "a breakpoint record's parameter 1 is NOT a fault address");
 
+    /* GUARD_PAGE is excluded ON PURPOSE. Real Windows gives it the AV layout,
+     * but this project documents that layout for ACCESS_VIOLATION and
+     * IN_PAGE_ERROR only (include/kernel/except.h:263-264) and no producer
+     * builds a guard-page record -- guard_page_lookup() panics ahead of the
+     * dispatcher. Pinning the exclusion keeps a future reader from "restoring"
+     * it without first writing the contract. */
+    tu_make_record(&rec, EXCEPTION_GUARD_PAGE, 2, TU_POISON_P1);
+    TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address(&rec, &got), 0u,
+                   "a guard-page record is not given an undocumented address layout");
+    TEST_ASSERT_EQ(ki_probe_exception_fault_address(&rec), TU_FAKE_RIP,
+                   "a guard-page record delivers its RIP, not parameter 1");
+
     TEST_ASSERT_EQ((uint64_t)ki_probe_exception_data_address((EXCEPTION_RECORD *)0, &got),
                    0u, "a NULL record reports no data address");
     TEST_ASSERT_EQ(ki_probe_exception_fault_address((EXCEPTION_RECORD *)0), 0u,
@@ -1340,10 +1354,10 @@ static void test_ki_try_recovers_live_kernel_fault(void)
     if (!t) { TEST_SKIP("no current thread"); return; }
     if (vmm_get_physical(va) != 0) { TEST_SKIP("scratch VA unexpectedly mapped"); return; }
 
-    saved_base = t->stack_base;
-    saved_size = t->stack_size;
-    t->stack_base = (uint8_t *)(sp - 0x4000);
-    t->stack_size = 0x8000;
+    /* Shared helper, like the other window sites in this file -- an open-coded
+     * copy here is exactly the drift the helper exists to prevent. */
+    (void)sp;
+    test_seh_open_window(t, &saved_base, &saved_size);
 
     {
         KI_EXCEPTION_FRAME(reg);

@@ -277,7 +277,7 @@ int klog_has_override(const char *subsystem);
  * direct call under the poisoned-boundary fixture. Routing that proof through
  * klog() itself is not an option: the renderer runs under s_klog_lock with
  * interrupts disabled, and kernel SEH declines to unwind with RFLAGS.IF clear
- * (src/kernel/except.c:649), so the fault would be terminal instead of caught.
+ * (src/kernel/except.c:761), so the fault would be terminal instead of caught.
  *
  * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
 int klog_probe_tag_is(const char *tag, const char *name);
