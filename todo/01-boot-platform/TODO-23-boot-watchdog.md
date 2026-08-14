@@ -68,6 +68,9 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 - [ ] If LAPIC not available: fall back to PIT-based software watchdog (less reliable, maskable)
 - [ ] Nested-NMI safety prerequisite: per-CPU latch/replay (or drop) so a watchdog NMI during an existing NMI/MCE path cannot corrupt the shared IST2 stack (Linux `repeat_nmi` model); must land before enabling the watchdog NMI. → XREF: `D01 T10 §2`
 - [ ] AP-IST safety: arm the LAPIC NMI watchdog on the BSP ONLY until per-CPU AP TSS/IST lands -- the IST is BSP-only today, so a watchdog NMI reaching an AP post-SMP corrupts the shared IST. Add an AP-NMI boot test when it lands. → XREF: `T09 §10`
+- [ ] When this lands, close the NMI return-tail residual it makes reachable and re-weigh the depth-marker cost.
+  - A returning watchdog NMI is the first handler to execute the vector-2 epilogue, where one register restore, the CS test, the conditional VERW block, the `swapgs` and `IRETQ` all run with the NMI depth already lowered.
+  - Also re-weigh two costs that are nil for a terminal NMI: a serializing CPUID and a `lock`-prefixed RMW on each of the raise and the lower. At ~1 Hz they are unmeasurable; confirm that before relying on it -> XREF: `01-boot-platform/TODO-10 §22` (item: "PARKED, blocked on a returning NMI handler existing")
 - [ ] Commit: `"boot: software watchdog via LAPIC NMI -- detect hung boot phases"`
 
 **Test checkpoint:** Add `for(;;){}` in boot_phase2 (debug build only). Watchdog fires → serial shows `"WATCHDOG: boot hung at POST 0xNNNN, RIP=0xNNNN"` → system reboots.

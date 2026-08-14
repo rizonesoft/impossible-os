@@ -1,5 +1,8 @@
 /* ============================================================================
- * test_idt.c -- IDT and ISR entry-stub structure (x86-64)
+ * test_idt.c -- IDT and ISR entry-stub structure
+ *
+ * ARCH: x86-64 -- will move to arch/ (inline SIDT, IDT descriptor layout, and
+ * x86 instruction templates; none of this survives an ARM64 port unchanged).
  *
  * These assert the SHAPE of the emitted interrupt entry code, which is a
  * different question from the behaviour its C helpers implement: the depth
@@ -79,7 +82,9 @@ static const uint8_t ISR2_TAIL[] = {
 };
 
 /* The NMI lower, from the counter's own address computation through the return,
- * as ONE contiguous 25-byte span with the displacement as its only hole.
+ * as ONE contiguous span with the displacement as its only hole, extended at
+ * both ends: it starts at the FIRST register save and runs through the opening
+ * of the RETURN BLOCK that must follow it.
  *
  * Every part of it is load-bearing. The second LEA carries the scale and index,
  * so asserting it is what rejects a stub that lowers the WRONG CPU's slot -- a
@@ -89,9 +94,9 @@ static const uint8_t ISR2_TAIL[] = {
  * `je +3` skips exactly the 3-byte decrement and lands on the `pop`, so a
  * saturation test rewritten to `cmp $1` would skip the decrement at the ordinary
  * depth of one while every byte of a shorter match stayed identical. */
-#define NMI_LOWER_SEQ_LEN  41u   /* first save .. IRETQ, displacement included */
+#define NMI_LOWER_SEQ_LEN  45u   /* first save .. the return block's je opcode */
 #define NMI_LOWER_HEAD_LEN 19u
-#define NMI_LOWER_TAIL_LEN 18u
+#define NMI_LOWER_TAIL_LEN 22u
 #define NMI_LOWER_LEA_OFF  16u   /* the LEA opcode, within the head */
 
 /* The span starts at the FIRST register save, not at the LEA, because the id
@@ -115,7 +120,13 @@ static const uint8_t NMI_LOWER_TAIL[] = {
     0x74u, 0x03u,                      /* je   +3 -> the pop below   */
     0xF0u, 0xFFu, 0x09u,               /* lock decl (rcx)            */
     0x59u,                             /* pop  rcx                   */
-    0x48u, 0xCFu                       /* iretq                      */
+    /* The RETURN BLOCK must follow immediately, and that is the placement
+     * claim. Without these bytes the test validates the lower's content but
+     * not WHERE it sits, so moving it back below VERW/swapgs -- the exact
+     * regression this ordering fixes -- would leave every assertion green.
+     * The je displacement that follows is a hole (it spans the VERW block). */
+    0xF6u, 0x44u, 0x24u, 0x08u, 0x03u, /* testb $3, 8(rsp)  (CS RPL)  */
+    0x74u                              /* je    -> no_swapgs_exit ... */
 };
 
 static int test_bytes_match(const uint8_t *code, uint32_t len, uint32_t at,
@@ -327,12 +338,24 @@ static void test_nmi_stub_lowers_immediately_before_return(void)
     const uint8_t *code = test_sym_bytes(isr_nmi_stub);
     uint32_t len = test_sym_len(isr_nmi_stub, isr_nmi_stub_end);
     uint32_t head_at, lea_at;
+    int lea_off;
 
     TEST_ASSERT(len > NMI_LOWER_SEQ_LEN, "the NMI body is symbol-bounded");
     if (len <= NMI_LOWER_SEQ_LEN)
         return;
-    head_at = len - NMI_LOWER_SEQ_LEN;
-    lea_at  = head_at + NMI_LOWER_LEA_OFF;
+
+    /* Anchored by LOCATING the counter's address, not by offset from the end of
+     * the body: the lower sits before the return block rather than last, so
+     * there is no fixed distance to the symbol's end to anchor on. Placing it
+     * last refilled the buffers VERW exists to clear and put a serializing
+     * CPUID inside the user-GS window, which is why it moved. */
+    lea_off = test_find_lea_to(code, len, (uintptr_t)&g_nmi_depth[0]);
+    TEST_ASSERT(lea_off >= (int)NMI_LOWER_LEA_OFF,
+                "the NMI body addresses the depth counter");
+    if (lea_off < (int)NMI_LOWER_LEA_OFF)
+        return;
+    lea_at  = (uint32_t)lea_off;
+    head_at = lea_at - NMI_LOWER_LEA_OFF;
 
     /* One contiguous span from the first register save to the return, anchored
      * at the END of the body, so nothing can sit between the id it derives, the
@@ -341,10 +364,10 @@ static void test_nmi_stub_lowers_immediately_before_return(void)
                                  NMI_LOWER_HEAD, NMI_LOWER_HEAD_LEN),
                 "the NMI body saves rcx first, derives its id, and addresses the "
                 "counter before returning");
-    TEST_ASSERT(test_bytes_match(code, len, len - NMI_LOWER_TAIL_LEN,
+    TEST_ASSERT(test_bytes_match(code, len, head_at + NMI_LOWER_HEAD_LEN + 4u,
                                  NMI_LOWER_TAIL, NMI_LOWER_TAIL_LEN),
-                "it indexes its OWN slot, restores three, then lock-dec, one "
-                "restore, iretq");
+                "it indexes its OWN slot, restores three, then lock-dec, "
+                "one restore");
 
     /* And the address it computes is the counter, not another symbol. */
     TEST_ASSERT_EQ((uint64_t)test_rip_target_bounded(code, len, lea_at, X86_LEA_RIP_LEN),
@@ -449,7 +472,7 @@ void test_register_idt(void)
     test_suite_register_cat("nmi_stub: shared stub pays nothing for the depth",
                             test_nmi_stub_leaves_shared_stub_uncharged,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("nmi_stub: depth is lowered immediately before IRETQ",
+    test_suite_register_cat("nmi_stub: depth is lowered before the return block",
                             test_nmi_stub_lowers_immediately_before_return,
                             TEST_CAT_BOOT);
 }

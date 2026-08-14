@@ -378,6 +378,11 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [ ] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI
 - [ ] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API
 - [ ] Future: wire to a profiler GUI in `11-apps`
+- [ ] Before enabling the returning IBS NMI, re-weigh the vector-2 NMI depth-marker cost this handler is the first to pay at rate, and close the return-tail residual it makes reachable.
+  - The cost: the entry stub executes a serializing CPUID and a `lock`-prefixed RMW on BOTH the raise and the lower, and `g_nmi_depth` packs 4-byte per-CPU slots so per-core sampling shares cache lines. Nil for a terminal NMI, not nil at ~100K-op sample rates. Benchmark before deciding.
+  - An RDPID fast path is possible but is NOT a drop-in, and needs a gate proving every ONLINE-OR-COMMITTED-ONLINE CPU supports RDPID and has a recorded successful `IA32_TSC_AUX` write published BEFORE its `AP_BRINGUP_ONLINE` CAS. Online-only is insufficient: an AP commits to coming online before publishing its mask bit and the bounded BSP wait can finish while it is unpublished, so use `cpu_slot_committed_online()`.
+  - Three existing signals are each insufficient alone: `g_tsc_aux_available` is set by the BSP probe only, `per_cpu_data.tsc_aux` is recorded as the cpu id even when the write was skipped, and RDPID is absent from `CPU_FEATURES_AP_PROBE_MASK` so `cpu_has(CPU_FEATURE_RDPID)` proves only the BSP. Without such a latch keep the CPUID-derived path.
+  - And converge the identities first: `TSC_AUX` holds a LOGICAL CPU INDEX while the depth counter is keyed by APIC ID, and the C helper's derivation is pinned to the assembly's by static assert -> XREF: `01-boot-platform/TODO-10 §22` (item: "PARKED, blocked on a returning NMI handler existing: close the last return-tail residual so no instruction after the lower runs with the depth clear")
 - [ ] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"`
 
 **Test checkpoint:** With `CPU_FEATURE_IBS`, NMI handler fills ring without nested NMI deadlock; `ibs_read_samples` returns monotonic sequence numbers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (AMD).

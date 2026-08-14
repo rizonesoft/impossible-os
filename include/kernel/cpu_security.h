@@ -292,15 +292,28 @@ void cpu_audit_populate_registry(void);
 #define CPU_PANIC_SAFE_ID_MASK  0xFFu
 #define CPU_PANIC_SAFE_ID_COUNT (CPU_PANIC_SAFE_ID_MASK + 1u)
 
+/* The DERIVATION, not just its result width. isr_stubs.asm computes this same
+ * id inline -- `mov eax,1; xor ecx,ecx; cpuid; shr ebx,24` -- because the NMI
+ * entry stub must index the depth counter before any C runs. Naming the leaf,
+ * subleaf and shift here means the two encodings are pinned to one another:
+ * idt.c static-asserts these three against the values the assembly hardcodes,
+ * so changing the derivation on either side breaks the build. Pinning only the
+ * 8-bit result width would not: a different leaf that still yields 8 bits would
+ * leave the assembly incrementing one CPU's slot while idt_in_nmi() reads
+ * another's, and every existing assertion would stay green. */
+#define CPU_PANIC_SAFE_ID_LEAF    1u
+#define CPU_PANIC_SAFE_ID_SUBLEAF 0u
+#define CPU_PANIC_SAFE_ID_SHIFT   24u
+
 static inline uint32_t cpu_panic_safe_apic_id(void)
 {
     uint32_t eax, ebx, ecx, edx;
 
     __asm__ volatile ("cpuid"
                       : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                      : "a"(1u), "c"(0u));
+                      : "a"(CPU_PANIC_SAFE_ID_LEAF), "c"(CPU_PANIC_SAFE_ID_SUBLEAF));
     (void)eax; (void)ecx; (void)edx;
-    return (ebx >> 24) & CPU_PANIC_SAFE_ID_MASK;
+    return (ebx >> CPU_PANIC_SAFE_ID_SHIFT) & CPU_PANIC_SAFE_ID_MASK;
 }
 
 /* ---- SMAP user-space access brackets ---- */

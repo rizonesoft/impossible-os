@@ -252,8 +252,11 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
  *
  * NOT static, and the counter's PRODUCTION mutator is not in this file: the
  * dedicated vector-2 stub in isr_stubs.asm (S22) raises the depth before its
- * own error-code push and lowers it after the register pops, which is the only
- * way to cover the asm prologue and epilogue that S18 had to leave open. The
+ * own error-code push and lowers it after the frame pop, which is the only
+ * way to cover the asm prologue S18 had to leave open. It covers MOST of the
+ * epilogue, not all of it: one register restore and the complete return
+ * block -- CS test, conditional VERW, swapgs, IRETQ -- run with the depth
+ * already down, deliberately, so VERW stays the last memory touch. The
  * helpers below are the same arithmetic in C, kept because they are what a unit
  * test can drive; the static asserts underneath pin every assumption the
  * assembly makes about this array, so the two encodings cannot drift silently. */
@@ -275,6 +278,21 @@ _Static_assert(CPU_PANIC_SAFE_ID_MASK == 0xFFu,
                "isr_stubs.asm derives the NMI depth index with `shr ebx, 24`");
 _Static_assert(sizeof(g_nmi_depth[0]) == 4u,
                "isr_stubs.asm indexes g_nmi_depth with NMI_DEPTH_ENTRY_SIZE = 4");
+
+/* Layer 1, the DERIVATION itself. The three above pin the result width, the
+ * element size and the array extent -- none of them pins HOW the id is computed,
+ * so a helper rewritten to a different CPUID leaf that still yielded 8 bits
+ * would leave all of them green while the assembly kept indexing by leaf 1. The
+ * two would then disagree about which CPU is in an NMI, silently, on the abort
+ * path. These pin the leaf, subleaf and shift that isr_stubs.asm hardcodes as
+ * `mov eax,1; xor ecx,ecx; cpuid; shr ebx,24`, so either side moving is a build
+ * break rather than a divergence. */
+_Static_assert(CPU_PANIC_SAFE_ID_LEAF == 1u,
+               "isr_stubs.asm hardcodes `mov eax, 1` for the NMI depth index");
+_Static_assert(CPU_PANIC_SAFE_ID_SUBLEAF == 0u,
+               "isr_stubs.asm hardcodes `xor ecx, ecx` for the NMI depth index");
+_Static_assert(CPU_PANIC_SAFE_ID_SHIFT == 24u,
+               "isr_stubs.asm hardcodes `shr ebx, 24` for the NMI depth index");
 
 int idt_in_nmi(void)
 {
@@ -314,15 +332,17 @@ uint64_t isr_handler(struct interrupt_frame *frame)
      * vector-2 stub (isr_stubs.asm), which raises it ahead of its own error-code
      * push -- so by the time this function is entered the depth is already up,
      * and the `frame->int_no` load above, the frame-integrity and GS checks
-     * below, and the whole asm prologue are all covered. Raising it again here
+     * below, and the shared prologue AFTER the marker are all covered. Raising
+     * it again here
      * would give the counter two owners for one transition; the stub is the one
      * that can cover the windows this function cannot see.
      *
      * WHAT IS STILL NOT COVERED, stated precisely because an earlier revision of
      * this comment claimed "first action" and was wrong: four stack writes (the
-     * CPUID clobber set) precede the marker in the stub, and IRETQ itself runs
-     * with it already lowered. Both residuals are argued at their site in
-     * isr_stubs.asm rather than restated here. */
+     * CPUID clobber set) precede the marker in the stub, and the whole return
+     * block -- one register restore, the CS test, the conditional VERW, the
+     * swapgs and IRETQ -- runs with it already lowered. Both residuals are
+     * argued at their site in isr_stubs.asm rather than restated here. */
 
     /* ---- Interrupt frame integrity check ----
      * CS must be kernel (0x08) or user (0x23 = GDT_USER_CODE|RPL3).
@@ -562,11 +582,20 @@ irql_restore:
     }
 
     /* The NMI depth is NOT lowered here either. S22 moved the lower into the NMI
-     * copy of the stub body, past the register pops, the frame pop, the CS test,
-     * VERW and swapgs -- so the epilogue this comment used to name as an open
-     * residual is now covered too. The build-time-parameterized body is what
-     * made that affordable: the shared path pays no per-interrupt branch for a
-     * counter only the NMI path reads. */
+     * copy of the stub body, past the register pops and the frame pop, so the
+     * part of the epilogue that dereferences the outgoing frame is covered
+     * where it previously was not.
+     *
+     * It stops SHORT of the return block, and that boundary is the contract, not
+     * an approximation: one register restore, the CS test, the conditional VERW,
+     * the swapgs and IRETQ all run with the depth already DOWN. That is
+     * deliberate -- VERW must stay the last instruction to touch memory before
+     * returning -- so a returning NMI path must treat those instructions as
+     * unprotected rather than assuming the epilogue as a whole is covered.
+     *
+     * The build-time-parameterized body is what made covering the earlier part
+     * affordable: the shared path pays no per-interrupt branch for a counter
+     * only the NMI path reads. */
 
     return result;
 }

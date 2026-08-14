@@ -83,9 +83,18 @@ extern g_nmi_depth            ; per-CPU NMI nesting depth (idt.c, TODO-10 S22)
     pop rax
     ; Saturate at zero, mirroring idt_nmi_exit(). An unbalanced lower would wrap
     ; to 0xFFFFFFFF and pin this CPU in "inside NMI" for the rest of the boot,
-    ; disabling the guarded read on a CPU that is not in an NMI at all. Only this
-    ; CPU writes its own entry, and no NMI can nest here (hardware NMI blocking
-    ; holds until IRETQ), so the test needs no atomicity of its own.
+    ; disabling the guarded read on a CPU that is not in an NMI at all.
+    ;
+    ; The test needs no atomicity of its own, but NOT for the reason first
+    ; written here. "No NMI can nest, because hardware NMI blocking holds until
+    ; IRETQ" is FALSE on the exit path: per Intel SDM Vol 3A 6.7.1 that blocking
+    ; is cleared by ANY IRET executed in NMI context, not only the handler's own
+    ; -- which is the very mechanism this counter defends against, since the
+    ; guarded read's fault fixup IRETQs (see idt.h and panic.c). The conclusion
+    ; survives on different grounds: only the owning CPU writes this entry, and a
+    ; nested NMI is increment-then-decrement balanced, so a slot observed nonzero
+    ; here is still nonzero at the decrement. The RAISE side's identical claim IS
+    ; sound, because no IRET can have run before NMI entry.
     cmp dword [rcx], 0
     je %%depth_already_zero
     lock dec dword [rcx]
@@ -197,6 +206,35 @@ extern g_nmi_depth            ; per-CPU NMI nesting depth (idt.c, TODO-10 S22)
     ;   [rsp+16] = RFLAGS
     ;   [rsp+24] = RSP  (user on ring-3 return, kernel on ring-0 return)
     ;   [rsp+32] = SS   (user on ring-3 return, kernel on ring-0 return)
+%if %1
+    ; ---- NMI epilogue: lower the depth, BEFORE the return block below ----
+    ; Placed here, not after the swapgs, and the reason is that the two things
+    ; downstream of this point are both contracts of their own:
+    ;
+    ;  - S19 requires VERW to be the LAST thing that touches memory before the
+    ;    return, because its whole purpose is to leave the store and fill buffers
+    ;    clear. Lowering the depth after it refilled them with IST-stack addresses
+    ;    and g_nmi_depth, undoing the mitigation on a ring-3 return.
+    ;  - The comment below keeps the post-swapgs user-GS CPL0 window minimal.
+    ;    Lowering after the swapgs put a serializing CPUID -- a VM exit under
+    ;    KVM/WHPX -- inside that window, where an MCE arriving would see a kernel
+    ;    CS, skip the entry swapgs, and run with the user GS base.
+    ;
+    ; Both were introduced by placing the lower last, both were caught by the
+    ; post-ship kernel audit, and neither is reachable today (every NMI handler
+    ; here is terminal), which is exactly why they were easy to miss.
+    ;
+    ; RESIDUAL, stated exactly rather than claimed away: the CS test, the VERW
+    ; block, the swapgs and the IRETQ all run with the depth already lowered.
+    ; That is a wider window than lowering last would give, and it is the right
+    ; trade: those instructions perform no guarded reads -- they test a byte of
+    ; the frame, execute VERW on RIP-relative RO data, swap a segment base and
+    ; return -- whereas the buffers VERW clears and the GS window it protects are
+    ; live security properties. S18 made the same argument about the same
+    ; instructions when it could not cover them at all.
+    NMI_DEPTH_LOWER
+%endif
+
     test byte [rsp+8], 3      ; check RPL bits of return CS
     jz %%no_swapgs_exit       ; returning to ring 0 → skip VERW + swapgs
 
@@ -212,30 +250,6 @@ extern g_nmi_depth            ; per-CPU NMI nesting depth (idt.c, TODO-10 S22)
 %%skip_mds_verw:
     swapgs                    ; ring 0 → ring 3: swap per-CPU ↔ TEB
 %%no_swapgs_exit:
-
-%if %1
-    ; ---- NMI epilogue: lower the depth as late as it can be lowered ----
-    ; AFTER the register pops, the frame pop, the CS test, VERW and swapgs, so
-    ; every one of them is still covered -- the epilogue window S18 named. The
-    ; four saves below land under the IRET frame on the same IST stack this
-    ; interrupt already owns, and no NMI can nest to overwrite them because
-    ; hardware NMI blocking holds until IRETQ.
-    ;
-    ; RESIDUAL, stated exactly rather than claimed away: ONE register restore
-    ; (`pop rcx`) and the IRETQ itself run with the depth already lowered, so a
-    ; fault on either -- a corrupt CS or SS in the popped frame, or a debug
-    ; watchpoint -- classifies as ordinary. It is one restore rather than four
-    ; only because NMI_DEPTH_LOWER folds the index into rcx; see its comment.
-    ;
-    ; Zero is not reachable from here. Clearing the marker only after a
-    ; successful architectural return is not expressible on x86-64 without a
-    ; per-CPU return tail holding a hardcoded absolute operand -- 256 of them, to
-    ; cover the id space, for a window on a path that no NMI reaches today
-    ; because every NMI handler in this kernel is terminal. Never lowering at all
-    ; would pin the CPU "inside NMI" for the rest of the boot. Lowering here is
-    ; the tightest boundary that stays balanced.
-    NMI_DEPTH_LOWER
-%endif
 
     ; Return from interrupt
     iretq
@@ -272,16 +286,21 @@ isr_nmi_stub_end:
 ; kernel read over a live IST2 frame: the nested-abort hang S18 removed, back at
 ; a lower rate. Closing it needs an NMI-specific asm site, which is this stub.
 ;
-; The raise is FIRST, ahead of even the error-code and vector pushes.
+; The raise is as early as it can be: ahead of the error-code and vector pushes
+; and everything downstream of them. It is NOT the first instruction -- four
+; stack writes precede it, for the reason given below.
 ;
 ; RESIDUAL, measured rather than claimed: four stack writes precede the marker
 ; -- the CPUID clobber set saved by NMI_DEPTH_INDEX. That is the floor, not an
 ; oversight. A per-CPU counter update needs either a scratch register (so, a
 ; save) or GS, and this counter is deliberately GS-independent because gs:0 is
 ; exactly what an abort cannot trust. RDPID would need one register instead of
-; four, but it would introduce a SECOND derivation of CPU identity, which is the
-; silent-drift failure cpu_panic_safe_apic_id() exists to prevent, and it needs
-; IA32_TSC_AUX programmed per CPU, which this kernel does not do. Those four
+; four, and IA32_TSC_AUX IS programmed (BSP and APs, each gated on a successful
+; probe) -- but it would introduce a SECOND derivation of CPU identity, which is
+; the silent-drift failure cpu_panic_safe_apic_id() exists to prevent, and the
+; two do not even name the same thing: TSC_AUX holds a LOGICAL CPU INDEX while
+; this counter is keyed by APIC ID, so adopting it means converging the two
+; identities rather than swapping an instruction. Those four
 ; writes land on an IST2 stack the CPU has just written five qwords to, and on a
 ; real NMI nothing can nest into that window because NMI delivery stays blocked
 ; until IRETQ -- only a fault can enter it.

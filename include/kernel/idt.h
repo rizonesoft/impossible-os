@@ -114,13 +114,20 @@ interrupt_handler_t idt_get_handler(uint8_t n);
  * idt_in_nmi() is nonzero while THIS CPU is inside an NMI handler. The counter
  * is moved by the DEDICATED vector-2 stub in isr_stubs.asm (S22), not by C: the
  * stub raises it ahead of its own error-code push and lowers it after the
- * register pops, the frame pop, the CS test, VERW and swapgs. Prologue, body and
- * epilogue are therefore all covered, which is what isr_handler could not do
- * from inside C.
+ * register pops and the frame pop. That covers the error-code and vector
+ * pushes, the shared prologue, the frame load, and the integrity and GS checks
+ * -- the entry sequence isr_handler could not reach from inside C. It is not
+ * the WHOLE entry: see the exact boundary below.
  *
- * Two residuals remain, both argued at their site in isr_stubs.asm: four stack
- * writes (the CPUID clobber set the marker needs to index itself) precede the
- * raise, and one register restore plus the IRETQ execute after the lower.
+ * The exact boundary, stated precisely because a looser wording invites a
+ * reader to assume more coverage than exists: the raise is PRECEDED by four
+ * stack writes (the CPUID clobber set the marker needs to index itself), and
+ * the lower is FOLLOWED by one register restore, the CS test, the conditional
+ * VERW block, the swapgs and the IRETQ -- all of which run with the depth
+ * already down. The lower sits before that return block deliberately, so VERW
+ * stays the last instruction to touch memory before returning and no
+ * serializing CPUID lands in the post-swapgs user-GS window. Both residuals are
+ * argued at their site in isr_stubs.asm.
  *
  * The panic path is the consumer: a fault taken inside the NMI handler re-enters
  * panic with an INNER vector, so a context predicate reading only frame->int_no
