@@ -198,12 +198,14 @@ Detect USB keyboard/mouse plugged in after boot.
 > [!WARNING]
 > **Blocked on `04-drivers-hardware/TODO-10 §8` (Hot-Plug Interrupt Handling).** The "port-change event -> enumerate new device" core requires the serialized-worker enumeration that TODO-10 §8 owns (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker"). TODO-18 §1/§2 accepted exactly this ISR-context-enumeration hazard to TODO-10 §8; doing hot-plug enumeration here before §8 ships would re-introduce the in-ISR-enumerate bare-metal danger. Implement after TODO-10 §8. The per-USB-device button-slots item below is independent and can ship earlier.
 
-- [ ] xHCI Port Status Change Events (already in Event Ring) trigger port scan
-- [ ] New device on port: enumerate → if HID, configure interrupt endpoint → start polling
-- [ ] Device removed: stop polling, clean up endpoint ring
-- [ ] Per-USB-device button slots in `mouse.c` (aggregate USB buttons per device via a source id threaded through `mouse_update_relative`) so two USB mice don't cross-release a held button -- today `s_usb` is one shared USB-class slot (-> XREF: §5)
-- [ ] Log: `"[USB] Hot-plug: %s on port %u"` / `"[USB] Removed: port %u"`
-- [ ] Commit: `"drivers: USB HID hot-plug detection -- keyboard/mouse plug-and-play"`
+- [/] xHCI Port Status Change Events (already in Event Ring) trigger port scan -- blocked on 04-drivers-hardware/TODO-10 §8 (serialized-worker event-ring ownership), re-checked 2026-08-14 and still fully open
+- [/] New device on port: enumerate → if HID, configure interrupt endpoint → start polling -- blocked on 04-drivers-hardware/TODO-10 §8 (serialized-worker enumeration; enumerating in-ISR here is the accepted bare-metal hazard)
+- [/] Device removed: stop polling, clean up endpoint ring -- blocked on 04-drivers-hardware/TODO-10 §8, which owns `usb_device_detach(slot)` and the Stop Endpoint / Disable Slot teardown
+- [/] Per-USB-device button slots in `mouse.c` so two USB mice don't cross-release a held button -- parked with this section, NOT blocked by TODO-10 §8
+  - The work is to aggregate USB buttons per device via a source id threaded through `mouse_update_relative`. Confirmed unshipped 2026-08-14: `src/kernel/drivers/mouse.c:165` still declares a single shared `s_usb_buttons`, and `mouse_update_relative` writes it at line 587 with no source id.
+  - It has an owner and is reachable from the other side: §5's `Accepted:` stamp routes this finding here (-> XREF: §5), so the §5 sweep finds it even while §6 is deferred as a whole. Only the section's deferral parks it; the hot-plug blocker does not apply.
+- [/] Log: `"[USB] Hot-plug: %s on port %u"` / `"[USB] Removed: port %u"` -- blocked on 04-drivers-hardware/TODO-10 §8; the events these lines report do not exist until hot-plug enumeration ships
+- [/] Commit: `"drivers: USB HID hot-plug detection -- keyboard/mouse plug-and-play"` -- blocked on 04-drivers-hardware/TODO-10 §8, with the rest of the section
 
 **Test checkpoint:** Boot without USB keyboard. Plug in USB keyboard after desktop appears -- typing works within 1 second.
 > **Test runner:** N/A (deferred -- blocked on the usb-stack hot-plug-interrupt section) | validation: deferred with the implementation.
