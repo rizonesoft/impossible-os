@@ -165,6 +165,19 @@ _Static_assert(__builtin_offsetof(struct panic_evidence, epoch) == 4u,
                "epoch must be the high half of the 64-bit publication word");
 _Static_assert(PANIC_EVIDENCE_ADDR % 8u == 0u,
                "the evidence page must be 8-byte aligned for the publication word");
+/* The _at() variants run the SAME 64-bit atomics against a caller-supplied page
+ * (a test fixture in BSS, not 0x80000), so the TYPE must carry the alignment the
+ * fixed address gives the live page. It holds today only implicitly, via the
+ * uint64_t members. */
+_Static_assert(_Alignof(struct panic_evidence) >= 8u,
+               "any panic_evidence storage must be 8-byte aligned: the _at() "
+               "helpers run 64-bit atomics on a caller-supplied page");
+/* ARCH: x86-64 -- the publication word packs magic in the LOW half and epoch in
+ * the HIGH half, which is the little-endian aliasing of the two leading uint32_t
+ * fields. A big-endian port must swap the halves in ev_pubword_val, not just
+ * recompile. */
+_Static_assert((uint8_t)((uint16_t)1u) == 1u,
+               "publication-word packing assumes a little-endian layout");
 /* The CRC covers everything from boot_seq on, so every field the checksum is
  * meant to protect must sit AFTER it -- and the publication word must sit
  * outside that range, since publish and revoke rewrite it without touching the
@@ -203,7 +216,8 @@ uint32_t panic_crc32(const void *data, uint32_t len);
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
                             const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line,
-                            uint32_t token, int terminal);
+                            uint32_t me, uint32_t token, int terminal,
+                            uint32_t spins_max);
 
 /* The declared panic context for this entry: PANIC_CTX_NMI when the
  * fault-suppressed kernel read must NOT be used, PANIC_CTX_NORMAL otherwise.
@@ -336,12 +350,13 @@ uint32_t panic_evidence_begin(void);
  * panic_try_claim_owner() has declared this invocation system-terminal, which is
  * what licenses it to TAKE the page from a survivable owner. Returns 1 when the
  * caller may write the page. */
-int panic_evidence_take(uint32_t token, int terminal);
+int panic_evidence_take(uint32_t me, uint32_t token, int terminal,
+                        uint32_t spins_max);
 
 /* Revoke this CPU's published record on the survivable async-park path, and
  * release the page. Every mutation is generation-conditional, so a terminal
  * invocation that already took the page and republished is never disturbed. */
-void panic_evidence_abandon(void);
+void panic_evidence_abandon(uint32_t me);
 
 /* True when THIS invocation's terminal takeover could not establish writer
  * quiescence and the page still owes it a record; the terminal path retries

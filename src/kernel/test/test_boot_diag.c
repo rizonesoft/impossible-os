@@ -257,7 +257,15 @@ static void test_boot_load_status(void)
 
 static void test_panic_evidence(void)
 {
-    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    /* THE FIXTURE PAGE, never the live 0x80000 one.
+     *
+     * These cases memset the page they are given. Boot tests run from
+     * boot_desktop.c BEFORE panic_evidence_write_blackbox(), so aliasing the
+     * real evidence page meant a test-enabled boot following a crash destroyed
+     * the retained record before it was durably emitted -- and the retained copy
+     * is precisely the next-boot retry the lifecycle promises when that write
+     * fails. */
+    volatile struct panic_evidence *ev = &s_pe_fixture;
     uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
 
     /* Canonical IEEE CRC-32 check value: crc32("123456789") == 0xCBF43926. */
@@ -268,100 +276,100 @@ static void test_panic_evidence(void)
     /* Well-formed record built in place is restored, then the magic is cleared
      * so the same crash is never reported twice. (Built manually -- not via the
      * live collector -- to avoid mutating its first-caller-wins guard.) */
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version       = PANIC_EVIDENCE_VERSION;
     ev->size          = (uint32_t)sizeof *ev;
     ev->bugcheck_code = 0xABCDu;
     ev->rip           = 0x1234u;
-    ev->crc32         = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->crc32         = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic         = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "valid record restored");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1, "valid record restored");
     TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0xABCDu, "restored bugcheck_code matches");
     TEST_ASSERT_EQ((uint32_t)s_pe_out.rip, 0x1234u, "restored rip matches");
     /* Restore RETAINS the page (the record is durable only after the file
      * write) so a boot that dies before emission retries; it is repeatable
      * until panic_evidence_consume() clears it. */
     TEST_ASSERT_EQ((uint32_t)ev->magic, PANIC_EVIDENCE_MAGIC, "magic retained after restore (retry)");
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "restore is repeatable until consumed");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1, "restore is repeatable until consumed");
     /* consume is conditional: it must NOT erase a page record that does not
      * match the boot-restored s_prev_crash (a fresh crash from another CPU).
      * This hand-built record does not match, so consume is a safe no-op. The
      * matching-record clear is exercised by the crash_test smoke path. */
-    panic_evidence_consume();
+    panic_evidence_consume_at(ev, 0xDEADu);   /* an epoch this record does not carry */
     TEST_ASSERT_EQ((uint32_t)ev->magic, PANIC_EVIDENCE_MAGIC, "consume does NOT erase a non-matching record");
     ev->magic = 0u;   /* manual cleanup of the test record */
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "after manual clear -> nothing");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "after manual clear -> nothing");
 
     /* Bad crc32 is rejected (stale 0x80000 never misread as a valid crash). */
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev;
     ev->crc32   = 0x0BADBAD0u;
     ev->magic   = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "bad crc32 rejected");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "bad crc32 rejected");
     TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "bad-crc record dropped");
 
     /* Wrong version is rejected even with a self-consistent crc. */
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION + 99u;
     ev->size    = (uint32_t)sizeof *ev;
-    ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->crc32   = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic   = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "wrong version rejected");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "wrong version rejected");
 
     /* Right version, WRONG size -> rejected (an old-layout record must never be
      * misread; the size gate fires before the crc check). */
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev - 8u;
-    ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->crc32   = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic   = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "size mismatch rejected");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "size mismatch rejected");
     TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "size-mismatch record dropped");
 
     /* Over-cap counts with a VALID crc -> rejected: the cross-boot page is
      * untrusted, so an in-range count is required before any consumer iterates
      * stages[]/klogs[] (else an OOB read in the artifact writer). */
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version     = PANIC_EVIDENCE_VERSION;
     ev->size        = (uint32_t)sizeof *ev;
     ev->stage_count = PANIC_EVIDENCE_STAGES + 1u;
-    ev->crc32       = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->crc32       = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic       = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "over-cap stage_count rejected");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "over-cap stage_count rejected");
     TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "over-cap stage_count record dropped");
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version    = PANIC_EVIDENCE_VERSION;
     ev->size       = (uint32_t)sizeof *ev;
     ev->klog_count = PANIC_EVIDENCE_KLOGS + 1u;
-    ev->crc32      = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->crc32      = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic      = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "over-cap klog_count rejected");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "over-cap klog_count rejected");
 
     /* Untrusted unterminated strings: a valid-crc record whose message/file
      * lack a NUL must be force-terminated on restore so no downstream reader
      * over-reads. */
-    memset(ev, 0, sizeof *ev);
+    memset((void *)(uintptr_t)ev, 0, sizeof *ev);
     ev->epoch   = 1u;      /* epoch 0 is the no-record sentinel; see below */
     ev->version = PANIC_EVIDENCE_VERSION;
     ev->size    = (uint32_t)sizeof *ev;
-    memset(ev->message, 'A', sizeof ev->message);   /* no NUL anywhere */
-    memset(ev->file,    'B', sizeof ev->file);
-    ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    memset((void *)(uintptr_t)ev->message, 'A', sizeof ev->message);   /* no NUL anywhere */
+    memset((void *)(uintptr_t)ev->file,    'B', sizeof ev->file);
+    ev->crc32   = panic_crc32((const uint8_t *)(uintptr_t)ev + off, ev->size - off);
     ev->magic   = PANIC_EVIDENCE_MAGIC;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "valid record with unterminated strings restored");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 1, "valid record with unterminated strings restored");
     TEST_ASSERT_EQ((uint32_t)s_pe_out.message[sizeof s_pe_out.message - 1u], 0u, "message force-terminated");
     TEST_ASSERT_EQ((uint32_t)s_pe_out.file[sizeof s_pe_out.file - 1u], 0u, "file force-terminated");
 
     /* No magic -> not a record. Leaves 0x80000 clean for a real panic. */
     ev->magic = 0u;
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "absent magic -> no record");
+    TEST_ASSERT_EQ(panic_evidence_restore_at(ev, &s_pe_out), 0, "absent magic -> no record");
 }
 
 /* Section 23: the publication epoch, and the lifecycle transitions keyed by it.

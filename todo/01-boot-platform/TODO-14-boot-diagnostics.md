@@ -180,12 +180,15 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 > [!NOTE]
 > The `0x80000` page is kept out of the allocator by the existing `pmm_init()` first-1-MiB low-memory reservation (verified). Coordinate with `02-kernel-core/TODO-27-crash-dump-generation.md` to avoid reusing that fixed address for the minidump workspace.
 
-- [x] `struct panic_evidence` versioned header `{magic, version, size, crc32, boot_seq}` (`panic.h`); `panic_evidence_restore` validates magic+version+size+crc32 so stale `0x80000` is never misread. `_Static_assert`: fits 4 KiB, multiple-of-8.
+- [x] `struct panic_evidence` versioned header (`panic.h`); `panic_evidence_restore` validates magic+version+size+crc32 so stale `0x80000` is never misread. `_Static_assert`: fits 4 KiB, multiple-of-8.
+  - Header RESHAPED to v3 by the evidence-lifecycle rework: `magic`+`epoch` now lead the struct as one 64-bit publication word -> XREF: `01-boot-platform/TODO-10` §23.
 - [x] Crash identity: bugcheck code + params (params only when KeBugCheckEx-sourced), fault vector + err_code, cr0/cr2/cr3/cr4, cpu_id (CPUID APIC id), GPRs from `interrupt_frame`, irq_mask (PIC), pmm_free_pages, file:line.
 - [x] Payload: last 16 `boot_stage_history` + last 8 klog entries (both serialized INLINE / pointer-free), last POST code (RAM shadow `boot_post_last_shadow`, not NVRAM), `message[256]`.
-- [x] `panic_collect_evidence(frame, code, msg, file, line)`: raw physical writes to `0x80000`, no kmalloc/VFS/printk/lock; atomic first-caller-wins; hooked at the top of `panic_screen` after `cli`.
+- [x] `panic_collect_evidence(...)`: raw physical writes to `0x80000`, no kmalloc/VFS/printk/lock; hooked at the top of `panic_screen` after `cli`.
+  - The entry-time first-caller-wins claim was REPLACED by per-invocation ownership arbitrated at terminal declaration -> XREF: `01-boot-platform/TODO-10` §23.
 - [x] `0x80000` kept out of the allocator by the existing pmm_init first-1-MiB reservation (identity-mapped, verified). -> XREF: D02 T27 crash-dump (minidump-addr coordination).
-- [x] `panic_evidence_restore_early()` (`kernel_main` after `boot_phase0`) restores/clears magic/logs; `panic_evidence_write_blackbox()` -> `X:\Crash\last-panic.txt` at desktop-ready. -> XREF: D01 T24 §7.
+- [x] `panic_evidence_restore_early()` (`kernel_main` after `boot_phase0`) restores and logs; `panic_evidence_write_blackbox()` -> `X:\Crash\last-panic.txt` at desktop-ready. -> XREF: D01 T24 §7.
+  - Restore RETAINS the page (it does NOT clear the magic), so a boot that dies before the write retries next boot; only `panic_evidence_consume()` clears it, after a successful write plus flush.
 - [x] Unexpected-shutdown notice: kernel-side `panic_had_previous_crash()` flag (NOT `g_boot_info` -- avoids the boot ABI change) -> `boot_splash_diag` + klog before `boot_splash_finish`.
 - [x] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
 
@@ -194,7 +197,7 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 > **Notes:**
 > - Shipped: `panic_evidence` record + `panic_collect_evidence`/`_restore`/`_write_blackbox` (`panic.c`/`.h`), lock-free `klog_panic_snapshot` (`klog.c`), fault-safe `boot_post_last_shadow` (`boot_init.c`); cross-boot page at `0x80000`.
 > - Integration: collector hooked at the top of `panic_screen` (after `cli`); restore in `kernel_main` after `boot_phase0`; `X:\Crash\last-panic.txt` write + unexpected-shutdown notice at desktop-ready (Codex adoptions in commit message).
-> - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- crc32 canonical vector + restore magic/crc/version rejection + clear-after-read; full suite 2633 kernel + 16 user-mode 0 failures; smoke PASS.
+> - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- crc32 canonical vector + restore magic/crc/version rejection + retain-until-consumed; run over a fixture page, never the live `0x80000` one; full suite 2633 kernel + 16 user-mode 0 failures; smoke PASS.
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` + `X:\Crash\` artifact index).
 > - Scope boundary: §5 is the warm-reboot evidence page; full minidump (MEMORY.DMP) generation is `02-kernel-core/TODO-27`; the `X:\Crash\` path is owned by TODO-24 §7.
 > **Verified:** 2026-06-14 | ship `a59b8f64` (+ this review commit) | 7/9 items | build OK | smoke PASS + tests 2633

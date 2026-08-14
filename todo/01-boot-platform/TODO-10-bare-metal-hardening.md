@@ -75,35 +75,36 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                        | Depends On | Status |
-| --- | :---: | -------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)        | --         |  [x]   |
-| 💎  |   2   | IST stacks for critical exceptions                 | --         |  [/]   |
-| 💎  |   3   | Hardware interrupt root cause investigation        | §2         |  [x]   |
-| 💎  |   4   | ACPI FADT boot architecture flags                  | --         |  [x]   |
-| 💎  |   5   | PS/2 controller detection and safe init            | §4         |  [x]   |
-| 💎  |   6   | AHCI interrupt hardening                           | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation           | --         |  [/]   |
-| 💎  |   8   | Per-process page tables (minimal base)             | §1         |  [/]   |
-| 💎  |   9   | CPU security activation and verification           | §4, §8     |  [x]   |
-| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)       | §3         |  [x]   |
-| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                | --         |  [x]   |
-| 💎  |  12   | Logging and diagnostic storage moved to TODO-24    | §7         |  [x]   |
-| 💎  |  13   | CPU feature minimum requirements and verification  | §4, §9     |  [x]   |
-| 💎  |  14   | Bare-metal test matrix and validation plan         | §3         |  [x]   |
-| 💎  |  15   | Boot splash spinner bare-metal fix                 | §3, §10    |  [x]   |
-| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)   | --         |  [x]   |
-| 💎  |  17   | Emergency-writer robustness residuals (§16 review) | §16        |  [x]   |
-| 💎  |  18   | Panic-path cross-CPU ownership residuals           | §16, §17   |  [/]   |
-| 💎  |  19   | Panic-path caller-string snapshot (§17 review)     | §17        |  [x]   |
-| 💎  |  20   | Panic-path serial ownership atomicity (§18 review) | §18        |  [x]   |
-| 💎  |  21   | Live CPU online lifecycle (split from §20)         | §18        |  [x]   |
-| 💎  |  22   | Dedicated NMI entry stub (split from §20)          | §18        |  [x]   |
-| 💎  |  23   | Cross-boot evidence lifecycle + epoch (from §20)   | §19        |  [x]   |
-| 💎  |  24   | Panic collector publication latency (from §20)     | §19, §23   |  [ ]   |
-| 💎  |  25   | GS-validated per-CPU identity cache (from §20)     | §20        |  [ ]   |
-| 💎  |  26   | Attributable emergency-ledger claim (from §20)     | §17, §20   |  [ ]   |
-| 💎  |  27   | Async worker quiescence + terminal bringup (§21)   | §21        |  [ ]   |
+| ⭐  | Order | Deliverable                                         | Depends On | Status |
+| --- | :---: | --------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)         | --         |  [x]   |
+| 💎  |   2   | IST stacks for critical exceptions                  | --         |  [/]   |
+| 💎  |   3   | Hardware interrupt root cause investigation         | §2         |  [x]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                   | --         |  [x]   |
+| 💎  |   5   | PS/2 controller detection and safe init             | §4         |  [x]   |
+| 💎  |   6   | AHCI interrupt hardening                            | §1, §3     |  [x]   |
+| 💎  |   7   | Resilient boot with graceful degradation            | --         |  [/]   |
+| 💎  |   8   | Per-process page tables (minimal base)              | §1         |  [/]   |
+| 💎  |   9   | CPU security activation and verification            | §4, §8     |  [x]   |
+| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)        | §3         |  [x]   |
+| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                 | --         |  [x]   |
+| 💎  |  12   | Logging and diagnostic storage moved to TODO-24     | §7         |  [x]   |
+| 💎  |  13   | CPU feature minimum requirements and verification   | §4, §9     |  [x]   |
+| 💎  |  14   | Bare-metal test matrix and validation plan          | §3         |  [x]   |
+| 💎  |  15   | Boot splash spinner bare-metal fix                  | §3, §10    |  [x]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)    | --         |  [x]   |
+| 💎  |  17   | Emergency-writer robustness residuals (§16 review)  | §16        |  [x]   |
+| 💎  |  18   | Panic-path cross-CPU ownership residuals            | §16, §17   |  [/]   |
+| 💎  |  19   | Panic-path caller-string snapshot (§17 review)      | §17        |  [x]   |
+| 💎  |  20   | Panic-path serial ownership atomicity (§18 review)  | §18        |  [x]   |
+| 💎  |  21   | Live CPU online lifecycle (split from §20)          | §18        |  [x]   |
+| 💎  |  22   | Dedicated NMI entry stub (split from §20)           | §18        |  [x]   |
+| 💎  |  23   | Cross-boot evidence lifecycle + epoch (from §20)    | §19        |  [x]   |
+| 💎  |  24   | Panic collector publication latency (from §20)      | §19, §23   |  [ ]   |
+| 💎  |  25   | GS-validated per-CPU identity cache (from §20)      | §20        |  [ ]   |
+| 💎  |  26   | Attributable emergency-ledger claim (from §20)      | §17, §20   |  [ ]   |
+| 💎  |  27   | Async worker quiescence + terminal bringup (§21)    | §21        |  [ ]   |
+| 💎  |  28   | Cross-boot evidence durability across a reset (§23) | §23        |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -399,10 +400,10 @@ Implement the minimal per-process page table infrastructure so each task has its
 > - Full per-process VM (COW fork, mmap, arbitrary-VA user mapping) is out of scope here -- owned by `03-memory-concurrency/TODO-05` and `TODO-01 §12`.
 > - Status `[/]`: 2 items deferred (remove `pmm_mark_region_used`; external bare-metal SMEP/SMAP unblock).
 > **Verified:** 2026-06-08 | commit `0ee5aa32` | 6/8 items | build OK | mm 102+16 PASS (14 new §8 assertions), smoke PASS (KVM 2.4s)
-> **Accepted:** [Critical] `map_user_page_impl` splits the shared kernel PD (PDPT[1]) for `uthread_create` stacks, breaking per-process isolation -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Privatize cloned kernel PDs before splitting a huge page outside PD[4]" at line 272)
-> **Accepted:** [Critical] `task_exec` continues into `exec_load` after partial OOM remap, corrupting the parent image -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Make `task_exec` fork+exec private-frame remap atomic under OOM" at line 273)
+> **Accepted:** [Critical] `map_user_page_impl` splits the shared kernel PD (PDPT[1]) for `uthread_create` stacks, breaking per-process isolation -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Privatize cloned kernel PDs before splitting a huge page outside PD[4]" at line 273)
+> **Accepted:** [Critical] `task_exec` continues into `exec_load` after partial OOM remap, corrupting the parent image -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Make `task_exec` fork+exec private-frame remap atomic under OOM" at line 274)
 > **Accepted:** [M] scheduler reads CR3 on every context switch instead of a per-CPU cache -> XREF: 02-kernel-core/TODO-10 §6 (item: "Context switch (`task_switch`): update `smp_this_cpu()->user_cr3`" at line 182)
-> **Accepted:** [M] `task_exec` remap zeros 1 MiB scalar + per-page INVLPG -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "In the `task_exec` private-frame remap loop, zero via `zero_page`" at line 274)
+> **Accepted:** [M] `task_exec` remap zeros 1 MiB scalar + per-page INVLPG -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "In the `task_exec` private-frame remap loop, zero via `zero_page`" at line 275)
 > **Accepted:** [H] `task_cleanup` PML4 teardown only guards the local CPU CR3 -- an SMP reaper on another CPU could free a still-loaded page table (pre-existing reap assumption, same as the per-thread unmap path; not reachable on today's single-CPU scheduler) -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 122)
 > **Quality reviewed:** 2026-06-08 | Codex 5x (adversarial x2, consistency, perf, re-adversarial) | 1H+1M fixed, 2Crit+1H+2M accepted-XREF | scope: kernel-code-quality
 
@@ -476,7 +477,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** N/A -- `boot.conf` skip list removed 2026-03-29; use `BOOT_TRY` / `degraded_mask` (§7) for intentional subsystem failure tests instead.
 
-> **Deferred:** [L] `boot.conf` subsystem skip-list removed 2026-03-29 (code deleted, absent from `src/`), superseded by `BOOT_TRY` / `degraded_mask` -> XREF: 01-boot-platform/TODO-10 §7 (item: "`BOOT_TRY(subsys, fn_call, name)` macro" at line 334)
+> **Deferred:** [L] `boot.conf` subsystem skip-list removed 2026-03-29 (code deleted, absent from `src/`), superseded by `BOOT_TRY` / `degraded_mask` -> XREF: 01-boot-platform/TODO-10 §7 (item: "`BOOT_TRY(subsys, fn_call, name)` macro" at line 335)
 
 ---
 
@@ -569,8 +570,8 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
 > **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 464)
-> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 1115)
-> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 1114)
+> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 1166)
+> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 1165)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
 
 ---
@@ -773,9 +774,9 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
 > - Scope boundary: the guarded-read primitives themselves are §17 and `cpu_security.h`; cross-CPU panic ownership is §18 and its residuals §20--§24; the panic-safe emitter stays `02-kernel-core/TODO-27 §7`. Three residuals are parked in the checklist above with named owners: stack-slot residency (shared with `TODO-23 §7`) and two operator-gated live-panic checkpoints.
 
 > **Verified:** 2026-08-13 | commit `418604911` + review fixes | 4/7 items (3 parked) | build OK | 28591 kernel + 17 user PASS, 0 skipped | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint 0 errors
-> **Accepted:** [H] a recovered async fault publishes a surviving cross-boot record, so the next boot reports a crash that never happened -- and while it holds the slot it refuses the record to the crash that does kill the machine (reason: pre-existing, not introduced here; two repairs were attempted during this review and BOTH raced, so it needs an evidence-lifecycle design rather than a patch) -> XREF: 01-boot-platform/TODO-10 §23 (item: "Rework the cross-boot evidence lifecycle so ownership is decided at TERMINAL arbitration" at line 913)
-> **Accepted:** [H] the evidence page has no epoch, so consume/restore/collect each check identity ad hoc and none is atomic against a concurrent panic (reason: pre-existing and shared with the lifecycle rework; four independent patches would not fix it) -> XREF: 01-boot-platform/TODO-10 §23 (item: "Make the evidence page's readers and writers agree on an epoch" at line 919)
-> **Accepted:** [H] the collector spends ~170k instructions of bitwise CRC plus ~2,900 guarded byte-read calls before the record is durable, while a table-driven CRC already linked in this kernel would cut ~88% of the first part (reason: the checksum must be proven byte-identical to Phase-0 restore first, and the byte-read cost needs a new guarded primitive) -> XREF: 01-boot-platform/TODO-10 §24 (item: "Cut the pre-publication latency of the panic collector" at line 936)
+> **Accepted:** [H] a recovered async fault publishes a surviving cross-boot record, so the next boot reports a crash that never happened -- and while it holds the slot it refuses the record to the crash that does kill the machine (reason: pre-existing, not introduced here; two repairs were attempted during this review and BOTH raced, so it needs an evidence-lifecycle design rather than a patch) -> XREF: 01-boot-platform/TODO-10 §23 (item: "Rework the cross-boot evidence lifecycle so ownership is decided at TERMINAL arbitration" at line 916)
+> **Accepted:** [H] the evidence page has no epoch, so consume/restore/collect each check identity ad hoc and none is atomic against a concurrent panic (reason: pre-existing and shared with the lifecycle rework; four independent patches would not fix it) -> XREF: 01-boot-platform/TODO-10 §23 (item: "Make the evidence page's readers and writers agree on an epoch" at line 924)
+> **Accepted:** [H] the collector spends ~170k instructions of bitwise CRC plus ~2,900 guarded byte-read calls before the record is durable, while a table-driven CRC already linked in this kernel would cut ~88% of the first part (reason: the checksum must be proven byte-identical to Phase-0 restore first, and the byte-read cost needs a new guarded primitive) -> XREF: 01-boot-platform/TODO-10 §24 (item: "Cut the pre-publication latency of the panic collector" at line 961)
 > **Quality reviewed:** 2026-08-13 | Codex 8x (adversarial, consistency x2, perf x2, re-adversarial x3) | 3H+6M+3L fixed, 3 open | scope: kernel-code-quality
 
 ---
@@ -814,9 +815,9 @@ Split 2026-08-13 (9 work items, over the one-worker-context threshold): the work
 > - Review additions: the acquire spin became PAUSE-backed test-and-test-and-set and the lock was given its own cache line (the latch shared it, measured on the linked artifact).
 
 > **Verified:** 2026-08-14 | commit `9ab784b35` + review fixes | 1/3 items (2 parked with owners) | build OK | 29132 kernel + 17 user PASS, 0 failed | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint exit 0
-> **Accepted:** [H] the per-CPU panic-safe id cache is not shipped -- reading it via `smp_this_cpu()` would let a GS-less AP record the BSP as owner, so the BSP could force-release the AP's live lock (reason: needs a GS-validated no-fallback accessor and a populate-before-GS-observable ordering proof; the stated harm, CPUID inside the lock, is closed here by hoisting it out of the held region) -> XREF: 01-boot-platform/TODO-10 §25 (item: "GS-validated no-fallback per-CPU accessor" at line 953)
-> **Accepted:** [H] a reservation aborted between the emergency slot publish and the per-CPU ledger entry is still unattributable (reason: an owner-only per-slot entry cannot carry the token generation, which is read from the latch word the winning CAS installs, and ARMED publication clears the bitmap but would not clear a separate array; needs one reviewed state machine) -> XREF: 01-boot-platform/TODO-10 §26 (item: "Composite owner-plus-generation slot claim" at line 972)
-> **Accepted:** [H] no test can observe the single-transition property -- post-state assertions pass equally against a two-mutation implementation (reason: the reviewer's mutation-hook alternative needs test scaffolding inside the production atomic path on the panic path, which Gate 10 forbids; an object-code gate is the right shape and has no tooling owner here) -> XREF: 01-boot-platform/TODO-10 §26 (item: "Build gate over the generated object proving a claim is ONE lock-prefixed transition" at line 978)
+> **Accepted:** [H] the per-CPU panic-safe id cache is not shipped -- reading it via `smp_this_cpu()` would let a GS-less AP record the BSP as owner, so the BSP could force-release the AP's live lock (reason: needs a GS-validated no-fallback accessor and a populate-before-GS-observable ordering proof; the stated harm, CPUID inside the lock, is closed here by hoisting it out of the held region) -> XREF: 01-boot-platform/TODO-10 §25 (item: "GS-validated no-fallback per-CPU accessor" at line 978)
+> **Accepted:** [H] a reservation aborted between the emergency slot publish and the per-CPU ledger entry is still unattributable (reason: an owner-only per-slot entry cannot carry the token generation, which is read from the latch word the winning CAS installs, and ARMED publication clears the bitmap but would not clear a separate array; needs one reviewed state machine) -> XREF: 01-boot-platform/TODO-10 §26 (item: "Composite owner-plus-generation slot claim" at line 997)
+> **Accepted:** [H] no test can observe the single-transition property -- post-state assertions pass equally against a two-mutation implementation (reason: the reviewer's mutation-hook alternative needs test scaffolding inside the production atomic path on the panic path, which Gate 10 forbids; an object-code gate is the right shape and has no tooling owner here) -> XREF: 01-boot-platform/TODO-10 §26 (item: "Build gate over the generated object proving a claim is ONE lock-prefixed transition" at line 1003)
 > **Quality reviewed:** 2026-08-14 | Codex 8x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 3H+5M fixed, 3 accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -852,9 +853,9 @@ Both residuals are the same disagreement between a snapshot taken once and a set
 > - Review additions: the two-phase RESERVED state, the mask-last publication order, the publish-idle refusal to overwrite an in-flight slot, and the PEB processor-count conversion all came from review rounds.
 
 > **Verified:** 2026-08-14 | commit `8ba6495b7` + review fixes | 3/3 items | build OK | 29296 kernel + 17 user PASS, 0 failed | smoke matrix 4/4 (KVM/TCG x 1/2 CPU), 2-CPU legs report `2 of 2 CPUs online` | lint exit 0
-> **Accepted:** [M] a worker that overruns the 10-second async deadline is declared complete while still running, and the BSP then re-runs every storage initializer sequentially, so two CPUs can reset the same controller (reason: pre-existing since the barrier was written; the repair is an ownership transfer or cooperative cancellation agreed with the driver owners, not a change to the claim word this section shipped) -> XREF: 01-boot-platform/TODO-10 §27 (item: "Make the async timeout an ownership TRANSFER rather than a fabricated completion, so the BSP never re-runs an initializer a worker is still inside" at line 996)
-> **Accepted:** [L] an AP that commits to going live and is then delayed past the bounded bringup wait joins the live set after `smp_init` has finalized, with default topology and outside the consistency verdict (reason: pre-existing in the TODO-09 handshake; closing it needs a decision between a fatal expiry and an AP rollback path, which is a handshake redesign) -> XREF: 01-boot-platform/TODO-10 §27 (item: "Make the AP bringup handshake terminal, so no discovered AP can join the live set after `smp_init` returns" at line 1000)
-> **Accepted:** [L] no automated leg boots a configuration where the live count differs from the present count, so the two-count split has coverage only over synthetic words (reason: the smoke matrix cannot produce an abandoned AP or a parked CPU on demand; it needs a fault-injection hook) -> XREF: 01-boot-platform/TODO-10 §27 (item: "Cover the degraded configurations no automated leg reaches today, so live-versus-present divergence is tested rather than reasoned about" at line 1003)
+> **Accepted:** [M] a worker that overruns the 10-second async deadline is declared complete while still running, and the BSP then re-runs every storage initializer sequentially, so two CPUs can reset the same controller (reason: pre-existing since the barrier was written; the repair is an ownership transfer or cooperative cancellation agreed with the driver owners, not a change to the claim word this section shipped) -> XREF: 01-boot-platform/TODO-10 §27 (item: "Make the async timeout an ownership TRANSFER rather than a fabricated completion, so the BSP never re-runs an initializer a worker is still inside" at line 1021)
+> **Accepted:** [L] an AP that commits to going live and is then delayed past the bounded bringup wait joins the live set after `smp_init` has finalized, with default topology and outside the consistency verdict (reason: pre-existing in the TODO-09 handshake; closing it needs a decision between a fatal expiry and an AP rollback path, which is a handshake redesign) -> XREF: 01-boot-platform/TODO-10 §27 (item: "Make the AP bringup handshake terminal, so no discovered AP can join the live set after `smp_init` returns" at line 1025)
+> **Accepted:** [L] no automated leg boots a configuration where the live count differs from the present count, so the two-count split has coverage only over synthetic words (reason: the smoke matrix cannot produce an abandoned AP or a parked CPU on demand; it needs a fault-injection hook) -> XREF: 01-boot-platform/TODO-10 §27 (item: "Cover the degraded configurations no automated leg reaches today, so live-versus-present divergence is tested rather than reasoned about" at line 1028)
 > **Quality reviewed:** 2026-08-14 | Codex 7x (design, adversarial x2, test-coverage, re-adversarial, consistency, perf) + kernel-quality-auditor + concurrency-evidence-mapper | 3H+5M+4L fixed, 3 accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -929,6 +930,8 @@ Two §19-review findings and one §19-consistency finding share one root: the ev
 - [/] PARKED, operator-gated: a terminal takeover that cannot prove writer quiescence declines to write, so a terminal record can be lost -- narrowed, not closed -> XREF: `01-boot-platform/TODO-10 §19` (item: "PARKED: live double-panic checkpoint").
   - The obligation is recorded against the terminal invocation's TOKEN (not a shared flag, which any later panic would clear) and retried at all three terminal exits, by which point the whole BSOD render has run. An unrecoverable case prints `cross-boot evidence NOT recorded` on serial rather than failing silently.
   - Not closable within this section's contract: a bounded wait cannot PROVE another live CPU is quiescent, and writing anyway puts two CPUs on one page and one shared klog scratch, which is corruption in place of a wrong record. The real closures are a stop-and-ack handoff or a second page, and both change the fixed 0x80000 page contract.
+  - The SAME live double panic also exercises the other end of this window: a nested abort landing between the terminal-ownership claim and the evidence terminal promotion can still replace the first fatal record. Narrowed to two adjacent compare-and-swaps by moving the promotion to the FIRST statement after `panic_try_claim_owner()` succeeds, which takes `serial_enter_emergency` and the whole call transition out of it.
+  - Closing that end entirely means fusing two ownership words keyed by DIFFERENT CPU-id spaces -- `panic_try_claim_owner` uses the logical `cpu_id`, the evidence state uses the panic-safe APIC id -- a design change this section does not own.
 - [/] PARKED: the interleaving where a republish lands INSIDE `panic_evidence_restore_at` is unasserted -- blocked on a deterministic fixture hook that does not exist -> XREF: `01-boot-platform/TODO-10 §19` (item: "PARKED: live double-panic").
   - What IS asserted deterministically: the generation-conditional drop (a revoke aimed at a superseded generation is refused and the newer record survives with its payload), which is the property an unconditional clear would fail. What is not is the post-copy recheck and the 3-attempt retry bound INSIDE restore, because reaching them needs the page to change mid-call.
   - A concurrent kthread racing the fixture page was proposed by the coverage review and REJECTED: its assertion would depend on scheduling, which is the test-accepts-two-answers shape this repo forbids, and it would make the boot suite intermittently red. The honest closure is a fixture hook that republishes at a chosen point, or the live double panic.
@@ -944,6 +947,9 @@ Two §19-review findings and one §19-consistency finding share one root: the ev
 > - Downstream: `panic_collect_evidence` gained a token + terminal flag, and `PANIC_EVIDENCE_VERSION` is 3 so a v2 record is rejected by the existing version/size gate.
 > - Canonical contract: [`include/kernel/panic.h`](../../include/kernel/panic.h) "cross-boot evidence lifecycle" block.
 > - Scope boundary: does NOT close the bounded-quiescence residual (parked above, operator-gated), and collector publication latency stays with §24.
+> **Verified:** 2026-08-14 | commit `3a1723c3d` + review fixes | 3/5 items (2 parked) | build OK | 29534 kernel + 17 user PASS, 0 failures | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint 0 errors
+> **Accepted:** [M] publication is a plain store into the WB-mapped page and an x86 RESET invalidates caches without writing back, so on real hardware the record may never reach DRAM (reason: changes memory-type policy, not lifecycle logic; invisible under every emulator the repo gates on) -> XREF: `01-boot-platform/TODO-10` §28 (item: "Decide and implement the memory-type policy for the evidence page so a published record survives a hardware reset on real silicon")
+> **Quality reviewed:** 2026-08-14 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 6H+6M+5L fixed, 1 open | scope: kernel-code-quality
 
 ---
 
@@ -956,7 +962,7 @@ The three costs the §19 perf review measured, kept together because they are al
 
 - [ ] Cut the pre-publication latency of the panic collector, measured at roughly 170k instructions of CRC plus ~2,900 guarded byte-read calls before the record is durable or the first serial byte is out.
   - `panic_crc32` is a bit-at-a-time CRC over the whole ~3.2 KiB record: about 53 instructions per byte at -O2. `kcrc32` (`src/kernel/kchecksum.c:99`) is a table-driven IEEE CRC-32 already linked into this kernel, at about 13 instructions per two bytes -- roughly an 88% reduction for no incremental table cost. Sharing it must be proven byte-identical first, because Phase-0 restore and the collector have to compute the same checksum or every saved record is discarded.
-  - The identity and context derivations are still executed four times on a normal panic (`panic_evidence_take`, `panic_declared_ctx` for the snapshot, the collector entry, and the collector's own `panic_declared_ctx`), each a serializing CPUID and a VM exit under KVM/WHPX. Derive both once after `cli` and pass them down, keeping a standalone wrapper that derives its own for callers outside the panic path.
+  - The IDENTITY half of this shipped in §23: `cpu_panic_safe_apic_id` is now derived ONCE after `cli` (`ev_cpu`) and passed down through take / collect / write_done / abandon, after the §23 perf review measured the new lifecycle adding two more CPUIDs per panic. The CONTEXT half is still open: `panic_declared_ctx` is called for the snapshot and again inside the collector.
   - The per-byte guarded copy is the largest single cost and the least trivial to fix: it needs a bounded guarded C-string primitive with ONE protected assembly loop, a static fault/fixup label and a residual count, so a fault still preserves the exact readable prefix without a call per byte. The guarded `rep movsb` already in tree shows the shape. All three were measured by the §19 perf review.
 - [ ] Commit: `"kernel: table-driven panic CRC, single identity derivation, bounded guarded string copy"`
 
@@ -1027,6 +1033,30 @@ Both defects predate §21 and neither is created by it: the async timeout has fa
 - [ ] Commit: `"kernel: async worker quiescence and terminal AP bringup handshake"`
 
 **Test checkpoint:** A worker stalled inside a storage initializer past the 10-second deadline leaves that driver degraded and NOT re-entered on the BSP, proven by a fault-injection hook that holds the worker and asserts the initializer's entry count stays at one; an AP stalled between its ONLINE CAS and its mask publication either fails the boot deterministically or parks dark, and never appears in the live set after `smp_init` returns; and with a CPU parked by injection, `smp_cpu_count()` falls while `smp_cpu_present_count()`, `g_topo_cpu_count` and `MaximumProcessors` hold.
+
+---
+
+## 28. Cross-Boot Evidence Durability Across a Hardware Reset (from the §23 review)
+
+> **Spawned-by:** §23 (review)
+> **User impact:** On real hardware the crash record can be silently lost. Publication is a plain release store into the WB-mapped `0x80000` page, and an x86 RESET invalidates caches WITHOUT writing back modified lines, so the record may never reach DRAM. The user reboots after a crash and finds no `last-panic.txt` and no unexpected-shutdown notice. Invisible under QEMU/KVM/WHPX, which model no cache hierarchy -- so every gate the repo runs today reports success on a mechanism that does not work on the target platform.
+
+> **Continuation waiver (review-chain depth 3):**
+> - **not_parkable:** parking would misreport ready work as blocked. The repair (map the page UC, or flush the published line) is implementable now, and what is at stake is the subsystem's own acceptance criterion -- this repo's bar is "Verified on bare metal", and this is the defect that makes cross-boot evidence a no-op on exactly that platform while passing every VM gate.
+> - **severity_trend:** falling. The §23 review rounds ran 4 high, then 3 high, then approve; the post-commit wave produced 1 high (collector running with interrupts enabled) plus 5 medium, ALL fixed in place. This is the only finding of that wave not fixable inside §23's surface, because it changes memory-type policy rather than lifecycle logic.
+> - **surface:** the publication path in `src/kernel/panic.c`, plus the PMM reservation and VMM mapping of the fixed `0x80000` page. `klog.c` crash persistence shares the assumption and must be decided with it, not after it.
+
+The §23 lifecycle work made a single release store the sole durability point for the whole cross-boot record, which is what turned a long-standing repo-wide assumption into a specific, testable defect. A `grep` for `clflush`/`wbinvd` across `src/kernel/**/*.c` returns no matches, so nothing on any path forces a writeback before the machine resets.
+
+- [ ] Decide and implement the memory-type policy for the evidence page so a published record survives a hardware reset on real silicon, not just under an emulator.
+  - Two candidate shapes, and they are not equivalent: map `0x80000` uncached (what Linux pstore/ramoops does for its equivalent region, and which removes the question entirely at the cost of every collector write going to DRAM on the panic path), or keep WB and flush the record's lines after the publication store. The second keeps the collector fast but has to get the flush ORDER right against the publication word, which is the same ordering problem §23 solved in RAM.
+  - `docs/infrastructure/bare-metal-gotchas.md` records that the bootloader identity-maps everything WB, which is the assumption this inherits. Whichever shape wins must also cover `klog_crash_persist` (`src/kernel/klog.c`), which persists across the same reset under the same assumption.
+  - The reset paths that expose it are both in the panic tail: the ACPI reset via port `0xCF9` and the deliberate triple fault that follows when that reset does not take.
+- [ ] Prove it on hardware: crash, reset, and confirm the record is restored on a machine with a real cache hierarchy -> XREF: `01-boot-platform/TODO-10` §14 (item: "4-platform bare-metal test matrix").
+  - A green VM run is NOT evidence here: QEMU, KVM and WHPX pass this sequence whether or not the bug exists, which is exactly why it survived until a section made the single store load-bearing.
+- [ ] Commit: `"kernel: evidence page memory type -- cross-boot durability across a hardware reset"`
+
+**Test checkpoint:** On bare metal, a forced panic followed by a reset restores the record on the next boot with a valid CRC. Under a VM the same sequence passes both before and after the fix, which is the point: the acceptance evidence for this section is a physical machine, and a unit test can only assert that the chosen memory type is actually programmed for `0x80000`, never that the record survived.
 
 ---
 
