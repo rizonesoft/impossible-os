@@ -105,10 +105,11 @@ ORDERED=(
 # into one line.
 #
 # NOT CHECKED, deliberately, and stated so that its absence is a decision rather
-# than an oversight: WHICH WORD the compare-exchange targets. Two of the four
-# audited helpers compare-exchange through a caller-supplied pointer
+# than an oversight: WHICH WORD the compare-exchange targets. The two serial-lock
+# helpers compare-exchange through a caller-supplied pointer
 # (`cmpxchgl %esi, (%rdi)`), so there is no target to pin -- it is whatever the
-# caller passed, which the C signature already fixes. The other two relocate as
+# caller passed, which the C signature already fixes. The three claim helpers
+# (claim, release, mark-timeout) relocate as
 # `R_X86_64_32S .bss+<offset>`, a section-relative relocation carrying no symbol
 # name for an assertion to compare against. Target exactness is carried by the
 # signatures and the unit tests; this gate carries atomicity.

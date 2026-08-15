@@ -256,18 +256,31 @@ void     serial_emerg_reset_for_test(void);
  * serial_emerg_mark_timeout records that the wait this token paid for was never
  * answered by the transmitter, which is what keeps a later reclamation from
  * handing the charge back. Returns 1 when the claim is (or already was) marked,
- * 0 when the token authorises nothing -- malformed, a dead epoch, or reserved on
- * another CPU.
+ * and 0 when the token authorises nothing. It authorises nothing when ANY of
+ * these hold, and the shared validator rejects them in this order:
+ *   - the VALID bit is clear;
+ *   - any bit outside the minted token fields is set (most plausibly a claim
+ *     word passed where a token belongs, since the two layouts disagree about
+ *     bit 16);
+ *   - the token's generation is not the LIVE latch generation;
+ *   - its slot index is not below SERIAL_EMERG_STUCK_BYTES;
+ *   - the claim there is not live in that generation;
+ *   - the claim is owned by a different CPU.
+ * serial_emerg_return rejects exactly the same six, plus a claim already marked.
  *
- * REPEATABLE ONLY WHILE THE CALLER STILL HOLDS THE RESERVATION, which is the
- * same contract serial_emerg_return carries and for the same reason: a token is
- * {generation, slot} and nothing more, so once a slot is returned, the next
- * reserve reissues a byte-identical token for a DIFFERENT reservation. Marking
- * through a token whose reservation was already given back therefore charges its
- * replacement, making an untouched allowance permanently unreclaimable. Telling
+ * THE TWO ARE NOT THE SAME CONTRACT, and the difference matters:
+ *   - mark is IDEMPOTENT while the reservation is held: it is a transition to a
+ *     state, so marking twice reports the same result and changes nothing.
+ *   - return is SINGLE-USE and never repeatable: it consumes the reservation,
+ *     and a second return releases whatever now occupies that slot.
+ * What they share is only the outer bound: a token is {generation, slot} and
+ * nothing more, so once a reservation is returned or reclaimed, the next reserve
+ * reissues a BYTE-IDENTICAL token for a different one. Past that point neither
+ * call is safe -- a late mark charges the replacement, making an untouched
+ * allowance permanently unreclaimable, and a late return frees it. Telling
  * incarnations apart needs a per-slot counter, and the latch word has six free
- * bits against the sixteen that would take -- so this is a caller contract here
- * exactly as it is there, and every in-tree caller satisfies it by holding one
+ * bits against the sixteen that would take, so this is a caller contract rather
+ * than an enforced invariant. Every in-tree caller satisfies it by holding one
  * local token across one interrupt-disabled region.
  *
  * serial_emerg_reclaim_self hands back every allowance this CPU still holds that
@@ -282,8 +295,16 @@ void     serial_emerg_reset_for_test(void);
  * CALL RECLAIM ONLY WHERE THE CALLER NEVER RETURNS. An outer writer frame
  * interrupted mid-wait still holds a token, and freeing its slot lets the next
  * reservation take the same one -- so a frame that resumed would return a charge
- * it no longer owns. panic.c's async-isolation branch parks permanently within a
- * few instructions of calling it, which is what makes it sound there. */
+ * it no longer owns.
+ *
+ * WHAT MAKES IT SOUND IN panic.c IS NOT PROXIMITY TO THE PARK. The
+ * async-isolation branch calls this well before it parks, and in between it
+ * stops identifying itself as async, publishes completion, emits a diagnostic
+ * and hands back the UART lock -- so across most of that tail a nested abort
+ * does NOT re-enter the branch, it takes the terminal path. The invariant is
+ * that EVERY disposition reachable from the call is non-returning, so none
+ * unwinds to the interrupted writer. A future caller must satisfy THAT, not
+ * merely sit close to a halt. */
 int      serial_emerg_mark_timeout(uint32_t token);
 uint32_t serial_emerg_reclaim_self(void);
 
@@ -294,13 +315,22 @@ uint32_t serial_emerg_reclaim_self(void);
  * the locked compare-exchange precedes the port write. */
 void     serial_emerg_timeout_byte(uint32_t token, uint32_t ledger, uint8_t byte);
 
-/* Test-only override of the ledger identity, so one CPU can prove that a refund
- * cannot consume another CPU's charge -- the defining property of the per-CPU
- * ledger, and one a same-CPU test cannot tell apart from a global counter. Pass
- * SERIAL_EMERG_NO_OWNER to restore the real CPUID identity; a test that sets it
- * MUST restore it. Affects ONLY the ledger: the panic owner claim and the
- * rerouted-write routing predicate keep reading real CPUID. */
+/* Test-only override of the ledger identity, so one CPU can prove that a parking
+ * CPU's reclamation cannot consume another CPU's charge -- the defining property
+ * of the per-CPU ledger, and one a same-CPU test cannot tell apart from a global
+ * counter. Pass SERIAL_EMERG_NO_OWNER to restore the real CPUID identity; a test
+ * that sets it MUST restore it. Affects ONLY the ledger: the panic owner claim
+ * and the rerouted-write routing predicate keep reading real CPUID.
+ *
+ * DECLARED ONLY IN A TEST BUILD. The override is a single global, so while it is
+ * set every CPU resolves to the same ledger identity and a panic on any AP could
+ * reclaim another CPU's allowances -- the exact isolation this ledger promises.
+ * It is therefore compiled out under KERNEL_TESTS=off rather than merely left
+ * unused, and the declaration is gated so a production caller fails to build
+ * instead of linking against a seam that is not there. */
+#ifdef KERNEL_TESTS
 void     serial_emerg_set_ledger_id_for_test(uint32_t id);
+#endif
 
 /* The live accounting epoch, exposed so a test can assert that a granted token
  * names it. The generation and the claim are separate words, so a publication

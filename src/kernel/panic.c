@@ -2607,8 +2607,10 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * that point is observable: once async_done is visible the BSP
              * proceeds, and a terminal NMI/#MC landing on this AP in the
              * meantime would no longer be classified survivable -- and would
-             * find the allowance still spent. The refund touches only the
-             * packed serial word, so it is safe this early.
+             * find the allowance still spent. The reclamation reads the packed
+             * serial word only for the live generation and writes nothing but
+             * the separate, cacheline-isolated claim array, so it is safe this
+             * early.
              *
              * ATTRIBUTABLE, AND IT COVERS EVERY INVOCATION ON THIS CPU. The
              * reclamation reads this CPU's own claims -- which no other CPU
@@ -2624,11 +2626,28 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * pre-arm budget on the CPU that is about to park as its sole
              * recorded owner (TODO-10 S29).
              *
-             * SAFE ONLY BECAUSE THIS BRANCH NEVER RETURNS. An outer writer frame
-             * interrupted mid-wait still holds a token whose slot this frees; it
-             * never runs again to return it, because the park below is
-             * unconditional and a nested panic before it re-enters this same
-             * branch. */
+             * SAFE ONLY BECAUSE THIS CPU NEVER RETURNS TO THE FRAME IT
+             * INTERRUPTED. An outer writer frame stopped mid-wait still holds a
+             * token whose slot this frees, and freeing it lets the next reserve
+             * hand the same slot out; if that frame ever resumed, its return
+             * would clear the new holder's charge.
+             *
+             * It never resumes, and the reason is NOT that every later abort
+             * re-enters this branch -- it does not. There are THREE intervals,
+             * and the boundary is the `in_async_work` clear rather than the
+             * `async_done` publication that follows it two stores later:
+             *   - up to the clear, a nested abort passes the async test at the
+             *     top of this branch, re-enters it, and parks;
+             *   - between the clear and the publication, it already FAILS that
+             *     test and takes the terminal path, while the BSP has not yet
+             *     been told anything;
+             *   - after the publication, it takes the terminal path while the
+             *     BSP is proceeding with sequential init.
+             * The invariant that actually holds is weaker than "it re-enters
+             * this branch" and is sufficient for the reclaim: every one of
+             * those paths is non-returning, so none unwinds to the interrupted
+             * writer. Which of them is the CORRECT disposition is a separate
+             * question, filed as TODO-10 S30. */
             (void)serial_emerg_reclaim_self();
 
             /* PUBLISH. The BSP barrier waits on async_done to run the sequential

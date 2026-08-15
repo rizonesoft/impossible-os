@@ -895,6 +895,46 @@ static void test_kstr_read_fixup_lookup_routes_reads_only(void)
                    "the byte-load lookup does not claim the string-loop label");
 }
 
+/* A TOKEN CARRYING BITS THIS LEDGER NEVER MINTS AUTHORISES NOTHING.
+ *
+ * The validator used to extract its fields by mask and ignore everything else,
+ * so a word with stray bits set validated and went on to release or charge a
+ * live allowance. Bit 16 is the one that matters: it is reserved in the token
+ * and it is SERIAL_CLAIM_TIMEDOUT in the claim word, so the two layouts collide
+ * exactly there -- a claim word passed where a token belongs is the plausible
+ * way this arrives, not a random corruption. */
+static void test_serial_emergency_non_canonical_token_is_refused(void)
+{
+    uint32_t token;
+
+    serial_emerg_reset_for_test();
+
+    token = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(token, SERIAL_EMERG_NO_TOKEN, "a reservation is taken");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "and is outstanding");
+
+    /* Bit 16: reserved in the token, the timed-out flag in the claim word. */
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token | 0x00010000u), 0u,
+                   "a token with the claim's timed-out bit set marks nothing");
+    serial_emerg_return(token | 0x00010000u);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u,
+                   "and releases nothing: the charge still stands");
+
+    /* Any other reserved bit is refused on the same rule, not by enumeration. */
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token | 0x40000000u), 0u,
+                   "nor does a token with a high reserved bit set");
+    serial_emerg_return(token | 0x00800000u);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "nor one with a middle reserved bit");
+
+    /* The canonical token still works, so the check rejects strays rather than
+     * everything -- the control that makes the assertions above mean something. */
+    serial_emerg_return(token);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "while the token as minted releases its own charge");
+
+    serial_emerg_reset_for_test();
+}
+
 /* A CHARGED RESERVATION CANNOT BE GIVEN BACK THROUGH THE RETURN PATH EITHER.
  *
  * The reclamation is not the only way a charge could leak back into the budget:
@@ -1946,6 +1986,9 @@ void test_register_serial_emergency(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: __kread_u8 rejects #GP operands",
                             test_serial_emergency_kread_u8_rejects_bad_operands,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: a non-canonical token is refused",
+                            test_serial_emergency_non_canonical_token_is_refused,
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: return cannot erase a charged timeout",
                             test_serial_emergency_return_cannot_erase_a_charged_timeout,

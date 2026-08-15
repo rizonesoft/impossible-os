@@ -134,6 +134,14 @@ _Static_assert(SERIAL_EMERG_CHUNK <= SERIAL_EMERG_MAX_CHARS,
  * serial_emerg_reserve. Contention losers degrade to a single status probe. */
 #define SERIAL_EMERG_CAS_TRIES    64u
 
+/* How many times a reservation sweep may restart because it LOST a
+ * compare-exchange on a slot it had observed non-live, as opposed to because
+ * the epoch moved. Deliberately tiny and deliberately NOT SERIAL_EMERG_CAS_TRIES:
+ * a lost CAS is the ordinary outcome of contention, so sharing the epoch budget
+ * would allow that budget times the slot count in locked operations on one
+ * shared cache line, for a single byte, on the interrupt-disabled panic path. */
+#define SERIAL_EMERG_LOSS_RESWEEPS 2u
+
 /* Serial port I/O base -- read from boot_info at serial_init().
  * Default to COM1 (0x3F8) for safety during early klog before init. */
 static uint16_t s_serial_port = 0x3F8;
@@ -421,16 +429,23 @@ _Static_assert(SERIAL_EMERG_STUCK_BYTES * sizeof(uint32_t) <= SERIAL_CACHELINE,
                "SERIAL_EMERG_STUCK_BYTES past the line reintroduces false sharing");
 
 /* Test-only override of the LEDGER identity, so a single-CPU unit test can prove
- * that one CPU's refund cannot consume another CPU's charge -- the whole point of
- * the per-CPU ledger, and something no same-CPU test can distinguish from a
- * global counter.
+ * that one CPU's reclamation cannot consume another CPU's charge -- the whole
+ * point of the per-CPU ledger, and something no same-CPU test can distinguish
+ * from a global counter.
  *
  * Deliberately scoped to the ledger ONLY. The owner claim in
  * serial_enter_emergency and the routing predicate both keep reading real CPUID,
  * because those decide whose crash evidence survives and must never be
- * influenced by test state. SERIAL_EMERG_NO_OWNER means "use the real id", which
- * is the value it holds in production for the life of the boot. */
+ * influenced by test state. SERIAL_EMERG_NO_OWNER means "use the real id".
+ *
+ * COMPILED OUT of a shipping image. It is one GLOBAL rather than per-CPU, so
+ * while a fixture holds it set every CPU resolves to the same ledger identity --
+ * and a panic on any AP in that window would let a parking CPU reclaim another
+ * CPU's live allowances, inverting the isolation this ledger guarantees. Under
+ * KERNEL_TESTS=off the word, its read and its setter all vanish. */
+#ifdef KERNEL_TESTS
 static volatile uint32_t s_emerg_ledger_id_override = SERIAL_EMERG_NO_OWNER;
+#endif
 
 static uint32_t serial_emerg_ledger_id(void);
 
@@ -671,12 +686,18 @@ void serial_init(void)
     uint16_t divisor;
     uint64_t flags;
 
-    /* Read the serial port probed by the bootloader (S4/S10).
-     * 0 = no UART detected; serial output becomes a no-op.
-     * Non-zero overrides the COM1 default used for early klog before
-     * serial_init runs.  Keep COM1 default if bootloader reports 0 --
-     * early serial output needs a working port during the window between
-     * kernel entry and serial_init(). */
+    /* Read the serial port probed by the bootloader (S4/S10). Non-zero overrides
+     * the COM1 default used for early klog before serial_init runs; a reported 0
+     * KEEPS COM1, because early serial output needs a working port during the
+     * window between kernel entry and serial_init().
+     *
+     * SO THERE IS NO no-UART NO-OP STATE, and this comment used to claim there
+     * was ("0 = no UART detected; serial output becomes a no-op"). Nothing ever
+     * stores 0 into s_serial_port, so every `if (!s_serial_port)` test in this
+     * file -- including the one below -- is unreachable, and the compiler
+     * deletes them. The claim is corrected here rather than made true, because
+     * making it true means going silent on a machine whose bootloader reported
+     * no port, which is a boot-behaviour decision and is filed as one. */
     if (g_boot_info.serial_port)
         s_serial_port = g_boot_info.serial_port;
 
@@ -1085,22 +1106,65 @@ _Static_assert((SERIAL_EMERG_TOK_SLOT &
 _Static_assert(SERIAL_EMERG_STUCK_BYTES - 1u <= SERIAL_EMERG_TOK_SLOT,
                "reservation token: slot field too narrow for the allowance ceiling");
 
-/* The identity a claim records. Test-overridable so one CPU can drive both sides
- * of an ownership property that a same-CPU fixture could not otherwise tell from
- * a global counter. */
+/* EVERY BIT A TOKEN IS ALLOWED TO CARRY. Reserve mints exactly these, so a token
+ * with anything else set was not minted by this ledger, and the validator refuses
+ * it rather than masking the extra bits away and proceeding.
+ *
+ * The masking-and-proceeding version is what this replaces, and it was not merely
+ * untidy. The claim word and the token are DIFFERENT layouts over the same width,
+ * and bit 16 is SERIAL_CLAIM_TIMEDOUT in one and reserved in the other -- so a
+ * claim word passed where a token belongs, or a token that picked up a stray bit,
+ * validated and then released or charged a live allowance. The documented
+ * malformed-token rejection is now actually implemented rather than only
+ * promised, and the two layouts are pinned to each other below so the collision
+ * cannot be reintroduced by widening either one. */
+#define SERIAL_EMERG_TOK_MASK                                                  \
+    (SERIAL_EMERG_TOKEN_VALID |                                                \
+     (SERIAL_EMERG_GEN_MAX << SERIAL_EMERG_TOK_GSHIFT) |                       \
+     SERIAL_EMERG_TOK_SLOT)
+
+/* The claim word's timed-out flag must not fall inside any token field. It is
+ * the one bit the two layouts disagree about, so it is the one an ABI confusion
+ * would ride in on. */
+_Static_assert((SERIAL_CLAIM_TIMEDOUT & SERIAL_EMERG_TOK_MASK) == 0u,
+               "reservation token: the claim's timed-out flag overlaps a token field");
+_Static_assert(SERIAL_EMERG_TOK_SLOT == SERIAL_CLAIM_OWNER,
+               "reservation token: slot and claim-owner fields must share a width");
+_Static_assert(SERIAL_EMERG_TOK_GSHIFT == SERIAL_CLAIM_GSHIFT,
+               "reservation token: generation shift must match the claim word's");
+
+/* The identity a claim records.
+ *
+ * TEST-BUILD ONLY for the override, and the gate is not hygiene. The override is
+ * ONE GLOBAL, not per-CPU, so while it is set every CPU resolves to the same
+ * ledger identity -- and a panic landing on any AP in that window would let
+ * serial_emerg_reclaim_self free another CPU's live allowances, which is exactly
+ * the property this ledger asserts is impossible. A seam that can invert a
+ * safety invariant does not belong in an image that ships, and the same
+ * reasoning already put the section-24 derivation counter behind this flag
+ * (panic.c). Under KERNEL_TESTS=off the branch, the word and the setter all
+ * vanish, so the live panic path resolves identity one way only.
+ *
+ * The fixture it exists for is still worth the seam under KERNEL_TESTS=on: one
+ * CPU has to drive both sides of an ownership property that a same-CPU test
+ * could not otherwise tell apart from a global counter. */
 static uint32_t serial_emerg_ledger_id(void)
 {
+#ifdef KERNEL_TESTS
     uint32_t o = __atomic_load_n(&s_emerg_ledger_id_override, __ATOMIC_RELAXED);
 
     if (o != SERIAL_EMERG_NO_OWNER)
         return o & SERIAL_EMERG_CPU;
+#endif
     return serial_emerg_self_cpu() & SERIAL_EMERG_CPU;
 }
 
+#ifdef KERNEL_TESTS
 void serial_emerg_set_ledger_id_for_test(uint32_t id)
 {
     __atomic_store_n(&s_emerg_ledger_id_override, id, __ATOMIC_RELAXED);
 }
+#endif
 
 /* The live accounting epoch. Exposed because a granted token carries the epoch
  * it was claimed under, and "the token never names a dead epoch" is otherwise
@@ -1168,6 +1232,7 @@ static int serial_emerg_claim_is_live(uint32_t c, uint32_t gen)
 static uint32_t serial_emerg_reserve_for(uint32_t owner)
 {
     uint32_t attempts, idx, gen, c;
+    uint32_t resweeps = 0;
     int      lost;
 
     owner &= SERIAL_EMERG_CPU;
@@ -1188,7 +1253,9 @@ static uint32_t serial_emerg_reserve_for(uint32_t owner)
          * at the first. Stopping was the flaw in the claim-then-publish design
          * this replaces: an allowance that could not be taken made every later
          * one unreachable, so the budget could read as exhausted with most of it
-         * idle. Here a slot is skipped only because it is genuinely charged. */
+         * idle. Here the `continue` below skips a slot only when it is genuinely
+         * charged; a slot whose compare-exchange is LOST is a different outcome
+         * and is recorded as one, because it is not evidence of a spent budget. */
         for (idx = 0; idx < SERIAL_EMERG_STUCK_BYTES; idx++) {
             c = __atomic_load_n(&s_emerg_claim[idx], __ATOMIC_RELAXED);
             if (serial_emerg_claim_is_live(c, gen))
@@ -1269,11 +1336,57 @@ static uint32_t serial_emerg_reserve_for(uint32_t owner)
          * side -- it is absorbed here instead, where losing a race is already
          * the normal case.
          *
-         * Bounded by SERIAL_EMERG_CAS_TRIES exactly as before, so this is a
-         * retry and never a spin: a genuinely saturated budget still returns
-         * promptly, which is the blocking this path must never do. */
-        if (lost)
+         * BOUNDED SEPARATELY AND TIGHTLY, because reusing the epoch budget for
+         * this multiplies it. SERIAL_EMERG_CAS_TRIES bounds SWEEPS, and an
+         * epoch retry is rare (it needs a publication), so 64 of them was a
+         * ceiling nothing approached. A lost compare-exchange is the opposite:
+         * it is the ordinary outcome of contention, so gating the re-sweep on
+         * the same counter allowed 64 sweeps x 8 slots = 512 locked operations
+         * on one shared cache line for a SINGLE byte, inside an
+         * interrupt-disabled region that may hold g_serial_lock, for every byte
+         * of a record. That is a worse panic-path stall than the spurious
+         * status-probe degradation the re-sweep exists to prevent.
+         *
+         * WHAT THIS DOES AND DOES NOT BOUND, stated precisely because an earlier
+         * draft of this comment claimed a three-sweep maximum and that is not
+         * what the code does. `resweeps` bounds only the LOSS-driven restarts.
+         * The epoch-mismatch restart below is independent and BYPASSES this cap
+         * entirely, bounded by `attempts` alone. So the conservative ceiling
+         * under sustained epoch churn is what it always was: SERIAL_EMERG_CAS_TRIES
+         * sweeps, each able to attempt a compare-exchange on every one of the
+         * SERIAL_EMERG_STUCK_BYTES slots, plus a stale-claim release and the
+         * eventual mark or return. Counted against the generated code that is
+         * 63 x (8 claim attempts + 1 stale release) + 8 + 1 = 576 lock-prefixed
+         * operations on the claim line, not the few dozen an earlier draft of
+         * this comment claimed. That number is
+         * UNCHANGED by this loop and is not a regression introduced here: epoch
+         * churn always restarted the sweep, and a publication is a one-shot
+         * arming event rather than a steady state. What the counter changes is
+         * the CONTENDED case, which is the common one, and there it adds at
+         * most two sweeps.
+         *
+         * Two is the whole benefit. A loss means another writer changed that
+         * slot, so one fresh look is enough to see what it became; the second
+         * covers a slot changing again underneath the first.
+         *
+         * PAST THAT, EXHAUSTED CONTENTION IS REPORTED THE SAME WAY AS A SPENT
+         * BUDGET, AND THAT IS THE DESIGN RATHER THAN A REMAINING BUG. Review
+         * observed that three CPUs claiming and returning one slot in turn can
+         * still drive this to NO_TOKEN with an allowance free, and that is true:
+         * no finite retry count makes an unsynchronised observation stable, and
+         * the only fixes are a distinct contention result with its own bounded
+         * caller path, or a saturation state derived from some stable atomic --
+         * both of which put more machinery on the panic path than the outcome
+         * justifies. The outcome is that the byte takes ONE status probe instead
+         * of a full-length wait, which is exactly the degradation this path
+         * specifies for "other CPUs are already spending the budget", and three
+         * consecutive losses mean precisely that. What was actually wrong before
+         * was reaching that conclusion from a SINGLE loss, which happens under
+         * almost no contention at all. */
+        if (lost && resweeps < SERIAL_EMERG_LOSS_RESWEEPS) {
+            resweeps++;
             continue;
+        }
         if (serial_emerg_gen(__atomic_load_n(&s_emergency, __ATOMIC_RELAXED)) == gen)
             return SERIAL_EMERG_NO_TOKEN;   /* every allowance is outstanding */
     }
@@ -1290,8 +1403,11 @@ uint32_t serial_emerg_reserve(void)
  *
  * Shared by the two transitions a token authorises -- the return that frees a
  * reservation and the mark that converts one into a charge -- because both must
- * reject exactly the same four things, and a second copy of that list is a
- * second place for the two to drift apart.
+ * reject exactly the same things -- a token that is not valid, not canonical,
+ * not of the live epoch, not a slot this array has, not a live claim, or not
+ * this CPU's -- and a second copy of that list is a second place for the two to
+ * drift apart. The body below is the authoritative enumeration; the header
+ * mirrors it in prose and nothing else should carry a count.
  *
  * Returns 0 when the token authorises nothing. The word is reported rather than
  * re-read by the caller so that the transition which follows can compare-exchange
@@ -1304,6 +1420,15 @@ static int serial_emerg_token_claim(uint32_t token, uint32_t ledger,
 
     if (!(token & SERIAL_EMERG_TOKEN_VALID))
         return 0;
+
+    /* CANONICAL FORM, checked before any field is extracted. Reserve mints only
+     * the bits in SERIAL_EMERG_TOK_MASK, so anything else set means this word
+     * did not come from this ledger -- most plausibly a claim word passed where
+     * a token belongs, which carries SERIAL_CLAIM_TIMEDOUT in a bit the token
+     * reserves. Masking the strays away and proceeding would let such a word
+     * release or charge a live allowance. */
+    if (token & ~SERIAL_EMERG_TOK_MASK)
+        return 0;                           /* not a token this ledger minted */
 
     /* EPOCH-VALIDATED: a token minted under generation G touches a slot only
      * while the latch still reads G. That closes the stale hole -- a reservation
@@ -1413,6 +1538,19 @@ int serial_emerg_mark_timeout(uint32_t token)
 void serial_emerg_timeout_byte(uint32_t token, uint32_t ledger, uint8_t byte)
 {
     (void)serial_emerg_mark_timeout_for(token, ledger);
+
+    /* NO ZERO-PORT GUARD HERE, and its absence is deliberate rather than
+     * overlooked. A guard was added in review on the premise that a zero
+     * s_serial_port is the documented "no UART detected" state, and that premise
+     * is false: the word is initialised to COM1 where s_serial_port is defined,
+     * and serial_init OVERWRITES it only when g_boot_info.serial_port is
+     * non-zero, deliberately keeping COM1 otherwise. It is therefore
+     * never zero, the compiler proves the branch unreachable and deletes it, and
+     * what remains is a comment claiming a protection the object does not carry.
+     * The file's other zero-port tests are dead for the same reason.
+     *
+     * The mismatch between that documented state and the code is real and is
+     * filed; it is not repaired by adding a test the optimiser removes. */
     outb(s_serial_port + UART_REG_THR, byte);
 }
 
@@ -1515,25 +1653,38 @@ uint32_t serial_emerg_charges_self(void)
  * budget out by exactly the waits the UART has proven it cannot afford.
  *
  * AN INTERRUPTED WAIT COUNTS AS TAKEN, NOT SPENT, and that boundary is chosen
- * rather than inherited. A claim is unmarked for the whole of its spin loop, so
- * an abort landing mid-wait leaves a reservation this reclaims. Committing the
- * charge BEFORE the wait instead -- marking at reserve and rolling back on a
- * drain -- would close that window, and was rejected: it turns every interrupted
- * wait into a permanent charge on a machine that SURVIVES this branch, and the
- * two errors are not symmetric. Reclaiming one costs a later panic at most one
- * extra bounded wait. Keeping it walks the budget toward zero, and a panic with
- * no allowance left emits through single status probes on a wedged UART and may
- * emit nothing at all, which is the evidence loss this whole path exists to
+ * rather than inherited. A claim is unmarked from the moment it is reserved
+ * until the mark lands, which covers the whole spin loop AND the few
+ * instructions after the final failed probe has already exhausted the wait, so
+ * an abort anywhere in that span leaves a reservation this reclaims. The tail of
+ * that span is the least comfortable part, because there the wait genuinely WAS
+ * spent -- it is called out rather than glossed, and it is not separately
+ * closable: the decrement that establishes the timeout is a local, so nothing
+ * makes it and the mark one transition.
+ *
+ * Committing the charge BEFORE the wait instead -- marking at reserve, or just
+ * before the last probe, and rolling back on a drain -- would close the window,
+ * and was rejected twice in review: it turns every interrupted wait into a
+ * permanent charge on a machine that SURVIVES this branch, and it needs a
+ * rollback path that reopens the marked-claim return this ledger now refuses.
+ * The two errors are not symmetric. Reclaiming one costs a later panic at most
+ * one extra bounded wait. Keeping it walks the budget toward zero, and a panic
+ * with no allowance left emits through single status probes on a wedged UART and
+ * may emit nothing at all, which is the evidence loss this whole path exists to
  * prevent.
  *
  * SOUND ONLY ON A NON-RETURNING PATH, and the caller is what guarantees that.
  * An outer serial_putchar_raw_bounded frame interrupted mid-wait still holds a
  * token, and freeing its slot here lets the next reserve hand the same slot out
  * again -- so if that frame ever resumed, its return would clear the new
- * holder's live charge. panic.c calls this only in the async-isolation branch,
- * which parks this CPU permanently a few instructions later; a nested panic
- * before that point re-enters the same branch, and one after it takes the
- * terminal path, neither of which returns either. */
+ * holder's live charge. panic.c calls this only in the async-isolation branch.
+ *
+ * NOT because the park is close -- it is roughly a hundred lines later, and in
+ * between the branch stops identifying itself as async, publishes completion,
+ * diagnoses and hands back the UART lock, so across most of that tail a nested
+ * abort takes the TERMINAL path rather than re-entering. The guarantee is that
+ * every disposition reachable from this call is non-returning, so none unwinds
+ * to the interrupted writer. */
 uint32_t serial_emerg_reclaim_self(void)
 {
     uint32_t gen = serial_emerg_gen(__atomic_load_n(&s_emergency, __ATOMIC_RELAXED));
