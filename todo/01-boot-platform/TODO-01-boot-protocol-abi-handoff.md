@@ -93,7 +93,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  20   | Bootloader build identity in handoff               | §1, §2, §17                        |  [x]   |
 | 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [x]   |
 | ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
-| 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [ ]   |
+| 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
 
 ---
 
@@ -825,14 +825,25 @@ From the stamped section 1:
 
 That is a coverage gap rather than a live exploit, and it was surfaced by a consumer that had to work around it. `serial_select_port` adopts an ACPI SPCR-reported I/O base and programs offsets 1 through 4 at that base during Phase 0; an SPCR entry is architecturally allowed to name a vendor-custom base, but the kernel refuses all of them and accepts only the four legacy COM bases, because a numeric range would let a corrupted `serial_source`/`serial_port` pair name 0xCF8 (PCI CONFIG_ADDRESS) and have the earliest boot path write to it. The narrowing is correct as a local defence and it costs real hardware support, which is the shape of every consumer that will hit this next.
 
-- [ ] Decide what integrity means for the payload body: a bootloader-produced checksum or MAC over `header.size` bytes validated before any field is read, or a per-field validity discipline the consumers apply themselves.
+- [/] Decide what integrity means for the payload body: a bootloader-produced checksum or MAC over `header.size` bytes validated before any field is read, or a per-field validity discipline the consumers apply themselves.
+  - **Blocker (operator-gated):** every viable shape of this decision lands on a surface an unattended run may not touch. Reachable the moment an operator takes the two calls below; the analysis is done.
   - The envelope validators are in [`src/kernel/main/boot_version.c`](../../src/kernel/main/boot_version.c) and `boot_info_validate_addr`/`_validate_header`; the copy they gate is at `boot_hw.c:160`. A body check belongs between those two, before the first consumer runs.
-  - A checksum needs a `BOOT_INFO_VERSION` bump and a matching producer change in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), so both halves must ship together -- the kernel would otherwise halt on every boot with a mismatched loader.
-  - The payload-descriptor blocks already carry a `checksum` field, so decide whether this extends that mechanism to the scalar body or is a separate header-level digest.
-- [ ] Once the body is checked, revisit the consumers that narrowed themselves to compensate, starting with the SPCR base -> XREF: `01-boot-platform/TODO-10 §30` (item: "Decide whether a bootloader-reported serial port of 0 means \"no UART\"").
-- [ ] Commit: `"boot: integrity coverage for the handoff payload body"`
+  - A checksum needs a `BOOT_INFO_VERSION` bump and a matching producer change in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), so both halves must ship together -- the kernel would otherwise halt on every boot with a mismatched loader. CLAUDE.md Safety Gates reserve ABI changes to the operator.
+  - A named body-digest field in `struct boot_info` also needs an `F()` row in `tools/boot-info-manifest/dump-fields.inc`, because `check-doc-coverage.py:462` `check_manifest_completeness` FAILS on any header field with no manifest row. That file is receipt-surface machinery and `receipt_surface_guard.py` BLOCKs it unattended (probed 2026-08-15: exit 2 on `dump-fields.inc`, exit 0 on `boot_info.h` as the control).
+  - Hiding the digest inside an existing `_reserved` array would dodge that row and is REFUSED as a workaround, not adopted: an unnamed field is undetected drift, which is the exact failure `§2`/`§3` exist to prevent.
+  - The payload-descriptor blocks already carry a `checksum` field, so decide whether this extends that mechanism to the scalar body or is a separate header-level digest. A new `BOOT_PAYLOAD_TYPE_*` needs no manifest row, but still needs the version bump: without one, a stale loader emitting no body descriptor gets an opaque refusal instead of the `§7`/`§17` mismatch screen.
+- [/] Once the body is checked, revisit the consumers that narrowed themselves to compensate, starting with the SPCR base -> XREF: `01-boot-platform/TODO-10 §30` (item: "Decide whether a bootloader-reported serial port of 0 means \"no UART\"").
+  - **Blocker:** strictly downstream of the item above -- there is nothing to revisit until the body is actually checked. The `§30` half shipped 2026-08-15 (that item is now `[x]`), so this side is the only one still open.
+- [/] Commit: `"boot: integrity coverage for the handoff payload body"` -- blocked with the two items above; nothing to commit until the operator takes the ABI-bump and manifest-row calls.
 
 **Test checkpoint:** A fixture handoff whose header is valid and whose body has one flipped byte is REFUSED before any consumer reads a field, and the refusal names the body rather than the header; an unmodified handoff is accepted unchanged. The existing `test_boot_info.c` payload-descriptor tests still pass, and a bootloader built from the same tree boots on all four smoke-matrix legs.
+
+> **Deferred:** 2026-08-15 | operator-gated in full -- the design was taken to the point where the remaining work is two operator calls, and every shape of it lands on a reserved surface, so the section is parked rather than half-built.
+> - ABI decision: any body check that a stale loader cannot silently bypass needs a `BOOT_INFO_VERSION` bump (23 -> 24) plus the matching producer in `src/boot/uefi/bootx64.c`. CLAUDE.md Safety Gates reserve ABI changes to the operator, and `§22` is already parked on the same call.
+> - Receipt surface: a named digest field needs an `F()` row in `tools/boot-info-manifest/dump-fields.inc` or `check-doc-coverage.py` manifest completeness fails. `receipt_surface_guard.py` BLOCKs that path unattended (probed with a passing control, 2026-08-15).
+> - Not half-built on purpose: a kernel-side `boot_info_validate_body()` with no producer would be dead code that no gate can exercise, and burying the digest in a `_reserved` array to dodge the manifest row is a workaround, not a design.
+> - Reachable when unparked: the crypto exists already (`kcrc32c` in `src/kernel/kchecksum.c`, `bl_crc32c` at `bootx64.c:10132`), the insertion point is fixed (between `boot_info_validate_header` and the copy at `boot_hw.c:160`), and the test checkpoint above is unchanged.
+> -> XREF: [§22](#22-handoff-base-in-the-deploy-time-abi-fingerprint) -- parked on the same operator ABI/receipt-surface calls; unparking one unparks both.
 
 ---
 
