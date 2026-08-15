@@ -251,7 +251,8 @@ Lighter-weight shared/exclusive lock than ERESOURCE (`EX_PUSH_LOCK`), used by Wi
 - [/] Define pointer-sized `EX_PUSH_LOCK` + `ExInitializePushLock`/Acquire/Release Shared+Exclusive. BLOCKED on an address-keyed park (see Deferred stamp); yield-poll deadlocks the priority scheduler.
 - [/] Enforce the contract: caller in a critical region (`KeEnterCriticalRegion`) before acquire; not recursive. UNBLOCKED: `KeEnterCriticalRegion` shipped in T07 §11 (`sched/apc.{c,h}`); wire the acquire-contract assert.
 - [/] Paged-or-nonpaged storage; no owner-query API (matches Windows); pointer-sized so it fits inline in objects.
-- [ ] Commit: `"kernel: ex -- push locks"`
+- [/] Commit: `"kernel: ex -- push locks"` -- blocked: nothing to commit until the address-keyed park lands
+  - Blocker: `EX_PUSH_LOCK` needs an address-keyed park because yield-polling deadlocks on the priority scheduler. Owner: `03-memory-concurrency/TODO-08` §10 (`NtWaitForKeyedEvent`), the keyed-event block a pointer-sized pushlock waits on.
 
 **Test checkpoint:** N concurrent shared acquires proceed in parallel; an exclusive acquire waits until all shared holders release and blocks new shared acquires; acquiring outside a critical region asserts in verifier mode; release ordering is FIFO-fair enough to avoid writer starvation under steady read load. Verify on bare metal -- SMP contention and APC delivery differ from VMs.
 
@@ -272,7 +273,8 @@ Exclusive-only fast mutexes (`FAST_MUTEX`, `KGUARDED_MUTEX`) for the common sing
 - [/] Implement `FAST_MUTEX` set (`ExInitializeFastMutex`/Acquire/Release/Try); raises IRQL to APC_LEVEL while held; not recursive. BLOCKED: per-CPU IRQL leaks APC_LEVEL across a yield (see Deferred stamp); needs per-thread APC-disable.
 - [/] Implement the guarded-mutex set (`KeInitialize/Acquire/Release/TryToAcquireGuardedMutex`); acquire enters a guarded region. UNBLOCKED: `KeEnterGuardedRegion` shipped in T07 §11 (`sched/apc.{c,h}`); wire the acquire.
 - [/] Document wait legality: holders run at APC_LEVEL/guarded and must not perform alertable or PASSIVE-only waits.
-- [ ] Commit: `"kernel: ex -- fast and guarded mutexes"`
+- [/] Commit: `"kernel: ex -- fast and guarded mutexes"` -- blocked: nothing to commit until APC suppression is per-thread
+  - Blocker: fast/guarded mutex APC suppression needs a per-thread APC-disable that survives a context switch; today's per-CPU IRQL leaks across yields. Owner: `02-kernel-core/TODO-07` §11 (`KeEnterCriticalRegion()`/`KeLeaveCriticalRegion()`).
 
 **Test checkpoint:** Exclusive acquire blocks a second acquirer until release; `ExTryToAcquireFastMutex` returns FALSE without blocking when held; fast-mutex acquire observes IRQL == APC_LEVEL while held; guarded-mutex hold blocks APC delivery (a queued normal APC does not fire until release). Verify on bare metal -- IRQL/APC behavior differs from VMs.
 
@@ -291,8 +293,10 @@ Exclusive-only fast mutexes (`FAST_MUTEX`, `KGUARDED_MUTEX`) for the common sing
 - [/] Support recursive exclusive acquisition only when explicitly initialized with that flag.
 - [/] Add owner tracking in verifier mode; document the `ExInitializeResourceLite` vs `ExReinitializeResource` vs `ExDeleteResourceLite` lifecycle.
 - [/] Add a writer-preference / anti-starvation policy so a continuous read stream (e.g. registry hive lock) cannot starve an exclusive acquirer indefinitely; record the policy in the header.
-- [ ] Consumers: registry hive locks, NLS table reload locks, image registry lock.
-- [ ] Commit: `"kernel: ex -- executive resource wrapper"`
+- [/] Consumers: registry hive locks, NLS table reload locks, image registry lock -- blocked on the ERESOURCE primitive itself
+  - Blocker: wiring a consumer onto a lock that is not SMP-linearizable would spread the defect rather than use the feature. ERESOURCE needs a shared/exclusive lock that cannot admit concurrent reader+writer or two writers, which today's `rwlock_t` does. Owner: `03-memory-concurrency/TODO-08` §11 (`rwlock_t` acquire linearizability).
+- [/] Commit: `"kernel: ex -- executive resource wrapper"` -- blocked: nothing to commit until `rwlock_t` is linearizable
+  - Blocker: same as the consumers item above. Owner: `03-memory-concurrency/TODO-08` §11 (`rwlock_t` acquire linearizability -- gate the state transition with a spinlock/CAS).
 
 **Test checkpoint:** N concurrent shared acquires succeed; an exclusive acquire blocks until all readers release; recursive exclusive succeeds only when initialized with the recursion flag; under a continuous reader stream a pending exclusive acquirer is granted within a bounded number of subsequent shared acquisitions (no indefinite starvation); verifier mode records the owning thread. Verify on bare metal -- SMP reader/writer contention differs.
 
@@ -313,7 +317,8 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 - [/] Define `RTL_RUN_ONCE` + `RtlRunOnceInitialize`/`ExecuteOnce` (sync)/`BeginInitialize`+`Complete` (async), IRQL <= APC_LEVEL. BLOCKED: the RUNNING-state loser-wait (sync AND async) needs a per-once address-keyed wait object (see Deferred stamp).
 - [/] Guarantee the init routine runs exactly once even under concurrent first-callers on multiple CPUs; losers wait for the winner's completion.
 - [/] Support the failure path: a failed init lets the next caller retry (state returns to uninitialized).
-- [ ] Commit: `"kernel: ex -- run-once initialization"`
+- [/] Commit: `"kernel: ex -- run-once initialization"` -- blocked: nothing to commit until the per-once wait object exists
+  - Blocker: `RTL_RUN_ONCE` sync + async loser-wait needs a per-once address-keyed wait object. Owner: `03-memory-concurrency/TODO-08` §10 (`NtWaitForKeyedEvent`, keyed on the once address).
 
 **Test checkpoint:** Concurrent `RtlRunOnceExecuteOnce` from N CPUs invokes the init routine exactly once and all callers observe the same context; a failing init routine leaves the once-block retryable (next caller re-runs it); async begin/complete serializes a single initializer. Verify on bare metal -- SMP first-caller race differs from VMs.
 
@@ -332,7 +337,8 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 - [x] Route immediate work to the existing workqueue (`sys_wq`). `ExQueueDelayedWorkItem` deferred -- no multi-deadline timer queue (see Deferred stamp).
 - [/] Expose the `EX_TIMER` object API (`ExAllocateTimer`/`ExSetTimer`/`ExCancelTimer`/`ExDeleteTimer`). DEFERRED: needs a KTIMER/timer-queue (the timer layer is a singleton one-shot).
 - [x] Honor the cancel-vs-fire contract: `ExCancelWorkItem` wins only while QUEUED; once the worker flips to RUNNING it returns false ("already running"), no double-free. Tested deterministically (blocker occupies the single worker).
-- [ ] Use in config tunable callbacks, notification fanout, and health probes.
+- [/] Use in config tunable callbacks, notification fanout, and health probes -- blocked on the cancellable timer queue
+  - Blocker: these consumers need delayed work (`ExQueueDelayedWorkItem`) and the `EX_TIMER` object set, which in turn need a multi-deadline cancellable timer queue; the timer layer today is a singleton one-shot. Owner: `02-kernel-core/TODO-07` §6 (timer/APIC scheduling path for DPC dispatch).
 - [x] Commit: `"kernel: ex -- worker items, delayed work, ex timers"`
 
 **Test checkpoint:** Immediate work runs on the workqueue at PASSIVE_LEVEL; `ExCancelWorkItem` before dispatch prevents the routine from running AND the in-flight case (worker already flipped to RUNNING) returns "already running" without double-free; a DONE work item re-queues. (Delayed work / `ExSetTimer` / `ExDeleteTimer` deferred -- see stamp.)
@@ -357,7 +363,8 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 - [/] Callback classes: add-pages, secondary dump data, log snapshot, blackbox data.
 - [/] Integrate with TODO-27 dump writer and TODO-28 panic UI. BLOCKED: T27 §5 / T28 §13 are the consumers; without them the dump-data contract cannot be validated.
 - [/] Ensure callbacks cannot allocate or take locks in the panic path unless marked panic-safe. BLOCKED: a registration flag is not enforcement; needs panic-context instrumentation.
-- [ ] Commit: `"kernel: ex -- bugcheck reason callbacks"`
+- [/] Commit: `"kernel: ex -- bugcheck reason callbacks"` -- blocked: nothing to commit without a dump consumer
+  - Blocker: the panic-time callback walk needs a global CPU-freeze and a real dump consumer to write into. Owner: `02-kernel-core/TODO-27` §5 (minidump writer, stream serialisation, CRC32C, memory page selection).
 
 **Test checkpoint:** A registered reason callback is invoked during panic with the correct class; the panic-safe gate rejects a callback that attempts allocation or a non-panic-safe lock; `KeDeregisterBugCheckReasonCallback` removes the record so an unloaded-driver callback is never invoked; the dump writer receives secondary data. Verify on bare metal -- panic path differs from VMs.
 
@@ -379,7 +386,8 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 - [/] Track callback leaks, rundown misuse, lookaside misuse, fast-ref alignment, push-lock/guarded-mutex acquire-outside-region, resource lock order, run-once misuse. BLOCKED: most misuse modes target deferred §8-§11 primitives.
 - [/] Emit violations through TODO-27 and optionally bugcheck on fatal corruption. BLOCKED: the TODO-27 dump/violation sink is deferred.
 - [/] Unit tests cover every primitive (§2-§13) under normal and verifier mode. BLOCKED: §8-§11/§13 primitives do not exist to test.
-- [ ] Commit: `"kernel: ex -- verifier hooks"`
+- [/] Commit: `"kernel: ex -- verifier hooks"` -- blocked: the verifier instruments primitives that are themselves deferred
+  - Blocker: a central verifier needs the §8-§13 primitives it instruments (mostly still deferred) plus a violation sink. Owner: `02-kernel-core/TODO-27` §5 (minidump writer, stream serialisation, CRC32C, memory page selection).
 
 **Test checkpoint:** With `EX_VERIFIER=1`, injected rundown misuse, lookaside double-free, fast-ref misalignment, and push-lock-outside-critical-region each emit a distinct violation record; a clean run emits none; fatal corruption optionally raises bugcheck.
 
