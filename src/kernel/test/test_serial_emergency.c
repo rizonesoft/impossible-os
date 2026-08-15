@@ -42,6 +42,7 @@
 #include "kernel/vectors.h"        /* VECTOR_NMI */
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/serial_emergency.h"
+#include "kernel/boot_info.h"      /* BOOT_SERIAL_SOURCE_* -- port-selection rows */
 #include "kernel/sched/spinlock.h"
 #include "kernel/cpu_security.h"   /* __kread_u8 + __kstr_read_guarded (under test) */
 #include "libc/string.h"           /* memset -- fixture buffer prefill */
@@ -1883,8 +1884,189 @@ static void test_panic_nested_nmi_denies_guarded_read(void)
                    1, "the guarded read is available again once unwound");
 }
 
+/* ---- Boot port-selection policy (S30) ----
+ *
+ * The rows below are the whole answer to "does a bootloader-reported port of 0
+ * mean no UART". The load-bearing one is the NONE row: it must keep the
+ * caller's default rather than return 0, because zeroing the port from
+ * boot_info is the 2026-04-11 incident, where a machine whose COM1 worked lost
+ * all kernel serial output to a scratch-register probe that false-negatived on
+ * its firmware. The no-UART finding is carried by serial_uart_probed_absent()
+ * and spends its effect on the emergency wait budget instead. */
+
+static void test_serial_select_port_adopts_a_positive_probe(void)
+{
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x2F8u, BOOT_SERIAL_SOURCE_PROBE,
+                                                0x3F8u),
+                   0x2F8u, "an I/O-probe result overrides the COM1 default");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x3E8u, BOOT_SERIAL_SOURCE_SPCR,
+                                                0x3F8u),
+                   0x3E8u, "an SPCR base overrides the COM1 default");
+}
+
+static void test_serial_select_port_keeps_default_on_no_uart(void)
+{
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0u, BOOT_SERIAL_SOURCE_NONE,
+                                                0x3F8u),
+                   0x3F8u,
+                   "a no-UART probe keeps the default rather than silencing output");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x2F8u, BOOT_SERIAL_SOURCE_NONE,
+                                                0x3F8u),
+                   0x3F8u,
+                   "the source governs: a base reported alongside NONE is not adopted");
+}
+
+static void test_serial_select_port_is_an_allowlist(void)
+{
+    /* NOT an anything-but-NONE test. This value decides which I/O port Phase 0
+     * programs and the panic path writes to forever after, and boot_info's
+     * header validation covers the envelope rather than this field -- so an
+     * undefined source byte must not reach a default-positive branch and let
+     * corrupted provenance pick a base. */
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x2F8u, 3u, 0x3F8u), 0x3F8u,
+                   "an undefined source byte is refused, not treated as positive");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x2F8u, 0xFFu, 0x3F8u), 0x3F8u,
+                   "and so is 0xFF, which corruption is likeliest to produce");
+
+    /* The scratch-register probe tries exactly COM1 and COM2, so a PROBE source
+     * naming anything else did not come from that probe whatever it claims. */
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x3E8u, BOOT_SERIAL_SOURCE_PROBE,
+                                                0x3F8u),
+                   0x3F8u, "a PROBE source naming COM3 is refused");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(SERIAL_PORT_COM1,
+                                                BOOT_SERIAL_SOURCE_PROBE, 0x2F8u),
+                   (uint32_t)SERIAL_PORT_COM1, "a PROBE source naming COM1 is adopted");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(SERIAL_PORT_COM3,
+                                                BOOT_SERIAL_SOURCE_SPCR, 0x3F8u),
+                   (uint32_t)SERIAL_PORT_COM3,
+                   "the same base IS adopted from SPCR, which may name COM3");
+}
+
+static void test_serial_select_port_refuses_a_non_legacy_base(void)
+{
+    /* A NUMERIC RANGE IS NOT A VALIDATION. These two fields sit outside
+     * boot_info's header check, so an in-range base that merely looks like SPCR
+     * would have Phase 0 write offsets 1 through 4 into whatever device lives
+     * there. 0xCF8 is PCI CONFIG_ADDRESS -- the concrete reason the acceptance
+     * test is the four legacy bases and not `<= SERIAL_PORT_BASE_MAX`. */
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0x0CF8u, BOOT_SERIAL_SOURCE_SPCR,
+                                                0x3F8u),
+                   0x3F8u, "an in-range non-UART base such as PCI CONFIG_ADDRESS is refused");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(SERIAL_PORT_BASE_MAX,
+                                                BOOT_SERIAL_SOURCE_SPCR, 0x3F8u),
+                   0x3F8u, "and so is the arithmetic ceiling itself");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(SERIAL_PORT_COM4,
+                                                BOOT_SERIAL_SOURCE_SPCR, 0x3F8u),
+                   (uint32_t)SERIAL_PORT_COM4, "while COM4 from SPCR is adopted");
+}
+
+static void test_serial_select_port_keeps_default_on_a_contradiction(void)
+{
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0u, BOOT_SERIAL_SOURCE_SPCR,
+                                                0x3F8u),
+                   0x3F8u,
+                   "a positive source naming no base is a contradiction: keep the default");
+    TEST_ASSERT_EQ((uint32_t)serial_select_port(0u, BOOT_SERIAL_SOURCE_PROBE,
+                                                0x3F8u),
+                   0x3F8u,
+                   "and the same holds for the I/O-probe source");
+}
+
+static void test_serial_select_port_never_returns_zero(void)
+{
+    /* THE INVARIANT THE DRIVER'S ABSENT ZERO-PORT GUARDS REST ON. s_serial_port
+     * starts non-zero and this is its only other writer, so sweeping every
+     * source across a present and an absent reported base must never produce a
+     * base the driver would then outb() to. */
+    static const uint8_t sources[] = {
+        (uint8_t)BOOT_SERIAL_SOURCE_NONE, (uint8_t)BOOT_SERIAL_SOURCE_SPCR,
+        (uint8_t)BOOT_SERIAL_SOURCE_PROBE, 0xFFu,
+    };
+    static const uint16_t ports[] = { 0u, 0x2F8u, 0xFFF8u };
+    uint32_t s, p;
+
+    for (s = 0u; s < (uint32_t)(sizeof sources / sizeof sources[0]); s++)
+        for (p = 0u; p < (uint32_t)(sizeof ports / sizeof ports[0]); p++)
+            TEST_ASSERT(serial_select_port(ports[p], sources[s], 0x3F8u) != 0u,
+                        "no source and port pair can zero a non-zero default");
+}
+
+static void test_serial_first_probe_ready_always_sends(void)
+{
+    /* THE ROW THAT MAKES BELIEVING A NEGATIVE PROBE SAFE. A machine whose
+     * scratch-register probe false-negatived still has a working transmitter,
+     * and it answers the readiness check -- so the byte goes out before the
+     * probed-absent state is ever consulted. Reversing these two tests is the
+     * regression this assertion exists to catch. */
+    TEST_ASSERT_EQ(serial_emerg_first_probe(1, 1), SERIAL_PROBE_SEND_NOW,
+                   "a ready transmitter sends even when the boot probe found no UART");
+    TEST_ASSERT_EQ(serial_emerg_first_probe(1, 0), SERIAL_PROBE_SEND_NOW,
+                   "a ready transmitter sends without taking an allowance");
+}
+
+static void test_serial_probe_absent_retires_on_first_liveness(void)
+{
+    /* THE MULTI-BYTE SEQUENCE THE TRUTH TABLE ALONE DOES NOT COVER. On a
+     * machine whose scratch probe false-negatived, byte 1 finds THRE set and
+     * goes out; byte 2 is issued while byte 1 is still draining, finds THRE
+     * CLEAR, and would take SKIP_WAIT -- emitting roughly one character of the
+     * record and dropping the rest. One observed readiness therefore retires
+     * the boot verdict permanently. */
+    TEST_ASSERT_EQ(serial_emerg_probe_absent_next(1, 1), 0,
+                   "a transmitter that answers retires the absent verdict");
+    TEST_ASSERT_EQ(serial_emerg_first_probe(0, 0), SERIAL_PROBE_MAY_WAIT,
+                   "so the NEXT busy byte waits instead of being dropped");
+    TEST_ASSERT_EQ(serial_emerg_probe_absent_next(0, 1), 1,
+                   "a transmitter that never answers keeps the verdict");
+    TEST_ASSERT_EQ(serial_emerg_probe_absent_next(0, 0), 0,
+                   "and the state never moves back from present to absent");
+}
+
+static void test_serial_first_probe_absent_never_waits(void)
+{
+    TEST_ASSERT_EQ(serial_emerg_first_probe(0, 1), SERIAL_PROBE_SKIP_WAIT,
+                   "no UART plus no readiness drops the byte without reserving");
+}
+
+static void test_serial_first_probe_present_may_wait(void)
+{
+    TEST_ASSERT_EQ(serial_emerg_first_probe(0, 0), SERIAL_PROBE_MAY_WAIT,
+                   "a real but busy transmitter takes the ordinary budget path");
+}
+
 void test_register_serial_emergency(void)
 {
+    test_suite_register_cat("serial_emergency: a ready transmitter always sends",
+                            test_serial_first_probe_ready_always_sends,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: probe-absent retires on first liveness",
+                            test_serial_probe_absent_retires_on_first_liveness,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: absent UART never spends a wait",
+                            test_serial_first_probe_absent_never_waits,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: a busy present UART may wait",
+                            test_serial_first_probe_present_may_wait,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: port selection adopts a positive probe",
+                            test_serial_select_port_adopts_a_positive_probe,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: no-UART probe keeps the default port",
+                            test_serial_select_port_keeps_default_on_no_uart,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: port selection is an allowlist",
+                            test_serial_select_port_is_an_allowlist,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: a non-legacy base is refused",
+                            test_serial_select_port_refuses_a_non_legacy_base,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: a self-contradicting report keeps the default",
+                            test_serial_select_port_keeps_default_on_a_contradiction,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: port selection never returns zero",
+                            test_serial_select_port_never_returns_zero,
+                            TEST_CAT_BOOT);
+
     test_suite_register_cat("serial_lock: owner handoff releases for owner",
                             test_serial_lock_handoff_releases_for_owner,
                             TEST_CAT_BOOT);

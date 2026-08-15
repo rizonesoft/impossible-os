@@ -190,6 +190,98 @@ int serial_lock_try_release_owned(serial_lock_t *lock, uint32_t owner);
  * allowance emits its reason through single status probes on a wedged UART and
  * may emit nothing at all -- the exact evidence loss this path exists to
  * prevent. See serial.c. */
+/* Pure port-selection policy: which I/O base serial_init adopts, given what the
+ * bootloader reported and the default already in place. Exposed here so the
+ * three rows are unit-testable without a UART.
+ *
+ *   source == NONE           -> current. The probe found nothing and therefore
+ *     names no base. It does NOT return 0: zeroing the port from boot_info is
+ *     the 2026-04-11 incident (boot-code-quality Gate 8), where a machine whose
+ *     COM1 worked lost all kernel serial output because the scratch-register
+ *     probe false-negatived on its firmware. The no-UART finding is carried by
+ *     serial_uart_probed_absent() instead, which gates the emergency WAIT
+ *     BUDGET rather than the output.
+ *   PROBE, port COM1 or COM2 -> port. The scratch-register probe tries exactly
+ *     those two and can report nothing else, so a PROBE source naming any other
+ *     base did not come from that probe whatever it claims -> current.
+ *   SPCR, port one of the four legacy COM bases -> port. Firmware-authoritative
+ *     and the only source permitted to name COM3 or COM4. A vendor-custom base
+ *     is REFUSED: these two fields are outside the header validation, so a
+ *     numeric range would let corrupted provenance name 0xCF8 (PCI
+ *     CONFIG_ADDRESS) and have Phase 0 program it -> current.
+ *   any other source byte -> current. An ALLOWLIST rather than an
+ *     anything-but-NONE test: this value decides which I/O port Phase 0
+ *     programs and the panic path writes to forever after, and boot_info's
+ *     header validation covers the envelope, not this field.
+ *
+ * NEVER RETURNS 0 FOR A NON-ZERO `current`, which is what keeps `s_serial_port`
+ * provably non-zero for the whole boot: it is initialised to COM1 and this is
+ * its only other writer. That invariant is why the driver carries no zero-port
+ * guards -- an unreachable test the optimiser deletes is a comment claiming a
+ * protection the object does not have.
+ *
+ * `current` is the caller's existing setting, passed in rather than read from
+ * the file's static so the policy is a pure function of its inputs. */
+/* The four legacy 16550 bases. COM1 and COM2 are the only two the bootloader's
+ * scratch-register probe tries; all four are what an ACPI SPCR entry is allowed
+ * to name and be adopted. SERIAL_PORT_BASE_MAX is the arithmetic ceiling the
+ * register block imposes (base..base+7 must stay inside 16-bit I/O space); it
+ * is a sanity bound, NOT the acceptance test -- see serial_select_port. */
+#define SERIAL_PORT_COM1      0x3F8u
+#define SERIAL_PORT_COM2      0x2F8u
+#define SERIAL_PORT_COM3      0x3E8u
+#define SERIAL_PORT_COM4      0x2E8u
+#define SERIAL_PORT_BASE_MAX  0xFFF8u
+_Static_assert(SERIAL_PORT_COM1 <= SERIAL_PORT_BASE_MAX &&
+               SERIAL_PORT_COM2 <= SERIAL_PORT_BASE_MAX &&
+               SERIAL_PORT_COM3 <= SERIAL_PORT_BASE_MAX &&
+               SERIAL_PORT_COM4 <= SERIAL_PORT_BASE_MAX,
+               "every adoptable base must leave its register block in I/O space");
+uint16_t serial_select_port(uint16_t boot_port, uint8_t boot_source,
+                            uint16_t current);
+
+/* Pure first-probe policy for the bounded emergency writer: what a byte does
+ * having read the transmitter-ready bit once, given whether the bootloader
+ * found a UART at all. Exposed for the same reason the routing predicate below
+ * is -- the decision is the interesting part and it sits between two raw port
+ * reads, where no fixture can reach it.
+ *
+ *   thre_ready              -> SEND_NOW. Checked FIRST, and that order is the
+ *     whole safety argument for believing a negative probe at all: on a machine
+ *     whose scratch-register probe false-negatived, the transmitter answers
+ *     here and the byte goes out before `probed_absent` is ever consulted, so
+ *     the no-UART finding costs such a machine nothing.
+ *   !thre_ready, probed_absent -> SKIP_WAIT. Drop the byte WITHOUT reserving.
+ *     Reserving and then declining to wait would still walk the contended claim
+ *     word once per byte of the record, which is the cost this removes; and
+ *     waiting would spend the SERIAL_EMERG_STUCK_BYTES ceiling on hardware that
+ *     was never going to drain a byte.
+ *   !thre_ready, !probed_absent -> MAY_WAIT. The ordinary path: this byte is
+ *     about to wait, which is exactly what the budget bounds. */
+#define SERIAL_PROBE_SEND_NOW   0u
+#define SERIAL_PROBE_SKIP_WAIT  1u
+#define SERIAL_PROBE_MAY_WAIT   2u
+uint32_t serial_emerg_first_probe(int thre_ready, int probed_absent);
+
+/* The probed-absent state AFTER observing this byte's readiness: 1 = still
+ * believed absent, 0 = a transmitter answered, so the boot-time verdict is
+ * retired for the rest of the boot.
+ *
+ * WITHOUT THIS, THE FIRST-PROBE POLICY IS ONLY SAFE FOR THE FIRST BYTE, which
+ * is a trap the ordering argument walks straight into. On a machine whose
+ * scratch probe false-negatived, byte 1 finds THRE set and goes out -- and byte
+ * 2, issued immediately while the shift register is still draining byte 1,
+ * finds THRE CLEAR and takes SKIP_WAIT. The record would emit roughly one
+ * character and drop the rest, which is a worse silencing than the one the
+ * refusal to zero s_serial_port was protecting against.
+ *
+ * A transmitter that asserts THRE exists, whatever the boot probe concluded, so
+ * one observation is enough to retire the verdict permanently. A genuinely
+ * absent UART never asserts it and never clears the flag, so it keeps the
+ * budget saving this was added for. Monotonic in the safe direction: the state
+ * only ever moves from absent to present. */
+int serial_emerg_probe_absent_next(int thre_ready, int probed_absent);
+
 /* Pure routing predicate: given the CPU attempting a REROUTED ordinary write
  * and the recorded arming CPU, must the write be discarded? Exposed so the
  * owner / non-owner / unknown cases are testable without arming the one-way

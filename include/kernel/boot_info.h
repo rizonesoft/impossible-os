@@ -607,6 +607,17 @@ enum boot_path_type {
 };
 #define BOOT_PATH_TYPE_MAX  BOOT_PATH_DIAGNOSTIC
 
+/* How `serial_source` was determined, and therefore how much the paired
+ * `serial_port` is worth. NONE is a RESULT, not an absence: the bootloader
+ * reaches it only after ACPI SPCR yields nothing AND the scratch-register probe
+ * fails on both COM1 and COM2, so the kernel adopts it and disables serial
+ * rather than falling back to a COM1 that has already been shown not to answer
+ * (serial_select_port, TODO-10 S30). These names are mirrored verbatim in
+ * src/boot/uefi/boot_info_mirror.h; the values are the ABI. */
+#define BOOT_SERIAL_SOURCE_NONE   0u  /* no UART found by any probe */
+#define BOOT_SERIAL_SOURCE_SPCR   1u  /* ACPI SPCR, firmware-authoritative */
+#define BOOT_SERIAL_SOURCE_PROBE  2u  /* scratch-register I/O probe of COM1/COM2 */
+
 enum boot_reason_code {
     BOOT_REASON_UNSET               = 0,  /* sentinel: producer must overwrite */
     BOOT_REASON_NORMAL              = 1,  /* primary path, no policy trigger */
@@ -1516,7 +1527,7 @@ struct boot_info {
                                      * Upper bound 0xFFF8 keeps the 16550
                                      * register block (base..base+7) in
                                      * the 16-bit I/O port space. */
-    uint8_t  serial_source;         /* 0=none, 1=SPCR, 2=I/O-probe */
+    uint8_t  serial_source;         /* BOOT_SERIAL_SOURCE_* below */
     uint8_t  _serial_pad;
     uint32_t serial_baud;           /* baud rate from SPCR (0 = use default 38400) */
 

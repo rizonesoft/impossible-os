@@ -143,8 +143,27 @@ _Static_assert(SERIAL_EMERG_CHUNK <= SERIAL_EMERG_MAX_CHARS,
 #define SERIAL_EMERG_LOSS_RESWEEPS 2u
 
 /* Serial port I/O base -- read from boot_info at serial_init().
- * Default to COM1 (0x3F8) for safety during early klog before init. */
-static uint16_t s_serial_port = 0x3F8;
+ * Default to COM1 (0x3F8) for safety during early klog before init.
+ *
+ * NEVER ZERO, for the whole boot, and that is an enforced property rather than
+ * an observation. This initialiser is non-zero and serial_select_port is the
+ * only other writer; it never returns 0 for a non-zero `current`, which is the
+ * one thing it is passed. That is why this file carries no `if (!s_serial_port)`
+ * guards: such a test is unreachable, the optimiser deletes it, and what is left
+ * on the page is a comment claiming a protection the object does not carry.
+ *
+ * The state those guards used to pretend to cover is real and lives in
+ * s_uart_probed_absent below, where it gates the emergency WAIT BUDGET. It
+ * deliberately does not gate output: see serial_init. */
+static uint16_t s_serial_port = SERIAL_PORT_COM1;
+
+/* 1 = the bootloader's SPCR + COM1 + COM2 probe found no UART at all.
+ *
+ * Written once by serial_init on the BSP before any AP is running and read-only
+ * afterwards, so it needs no lock and no atomic. It does NOT disable output;
+ * it tells the emergency writer not to spend full-length waits on a transmitter
+ * that has already been shown not to answer. */
+static uint8_t s_uart_probed_absent;
 
 /* Protects UART register access from concurrent threads and IRQ handlers, and
  * records WHO holds it in the SAME word (serial_emergency.h).
@@ -661,8 +680,6 @@ static int  serial_emerg_reroute_should_drop(void);
  * elsewhere exists to prevent. */
 static inline int serial_putchar_raw(char c)
 {
-    if (!s_serial_port) return 1;
-
     /* Check BEFORE the wait, not only inside it. On a healthy UART THRE is
      * already set, so the loop body never runs -- and an in-loop-only check
      * would let an ordinary writer put its ENTIRE remaining string on the wire
@@ -681,42 +698,95 @@ static inline int serial_putchar_raw(char c)
     return 1;
 }
 
-void serial_init(void)
+uint16_t serial_select_port(uint16_t boot_port, uint8_t boot_source,
+                            uint16_t current)
 {
-    uint16_t divisor;
-    uint64_t flags;
-
-    /* Read the serial port probed by the bootloader (S4/S10). Non-zero overrides
-     * the COM1 default used for early klog before serial_init runs; a reported 0
-     * KEEPS COM1, because early serial output needs a working port during the
-     * window between kernel entry and serial_init().
+    /* AN ALLOWLIST, NOT AN "ANYTHING BUT NONE" TEST, because this value decides
+     * which I/O port the kernel programs during Phase 0 and then writes to from
+     * the panic path forever after. boot_info's header validation covers the
+     * envelope -- magic, version, size -- and says nothing about this field, so
+     * an unknown source byte reaching a default-positive branch would let
+     * corrupted provenance pick a base and have serial_program_uart write
+     * offsets 1 through 4 into some unrelated device's registers.
      *
-     * SO THERE IS NO no-UART NO-OP STATE, and this comment used to claim there
-     * was ("0 = no UART detected; serial output becomes a no-op"). Nothing ever
-     * stores 0 into s_serial_port, so every `if (!s_serial_port)` test in this
-     * file -- including the one below -- is unreachable, and the compiler
-     * deletes them. The claim is corrected here rather than made true, because
-     * making it true means going silent on a machine whose bootloader reported
-     * no port, which is a boot-behaviour decision and is filed as one. */
-    if (g_boot_info.serial_port)
-        s_serial_port = g_boot_info.serial_port;
+     * Every row keeps `current` on refusal. There is no failure of this report
+     * that is better answered by silence than by the default that is already
+     * working. */
+    switch (boot_source) {
+    case BOOT_SERIAL_SOURCE_NONE:
+        /* Names no base. Deliberately NOT a zero return: see the false-negative
+         * argument in serial_adopt_boot_info. */
+        return current;
 
-    if (!s_serial_port) return;
+    case BOOT_SERIAL_SOURCE_PROBE:
+        /* The scratch-register probe tries exactly COM1 and COM2 and can report
+         * nothing else. A PROBE source naming any other base did not come from
+         * that probe, whatever it claims. */
+        if (boot_port == SERIAL_PORT_COM1 || boot_port == SERIAL_PORT_COM2)
+            return boot_port;
+        return current;
 
-    /* Honor SPCR baud rate if available.
-     * 0 = firmware-configured (SPCR baud code 0), preserve existing divisor.
-     * Only accept known standard rates; anything else keeps existing divisor. */
-    {
-        uint32_t baud = g_boot_info.serial_baud;
-        if (baud == 9600 || baud == 19200 || baud == 38400 ||
-            baud == 57600 || baud == 115200) {
-            divisor = (uint16_t)(UART_BASE_CLOCK / baud);
-        } else if (baud == 0) {
-            divisor = 0;  /* preserve firmware-configured divisor */
-        } else {
-            divisor = UART_DIV_38400;  /* unknown rate -- fall back to 38400 */
-        }
+    case BOOT_SERIAL_SOURCE_SPCR:
+        /* THE FOUR LEGACY BASES ONLY, and a numeric range is deliberately NOT
+         * enough here. `boot_info`'s header validation covers magic, version
+         * and size -- the envelope -- and says nothing about these two fields,
+         * so corrupted provenance that merely looks like SPCR could otherwise
+         * name any base up to the register-block cap and serial_program_uart
+         * would write base+1 through base+4 into it during Phase 0. 0xCF8 is
+         * PCI CONFIG_ADDRESS; a bound that admits it is not a validation.
+         *
+         * ACPI SPCR is architecturally allowed to name a vendor-custom base,
+         * and this refuses those. That is a deliberate narrowing rather than a
+         * regression: the kernel adopted NO reported base at all until this
+         * work, so four is strictly more than yesterday, and the machines a
+         * vendor base would serve are exactly the ones where being wrong means
+         * programming unrelated hardware from the panic path. Widening it needs
+         * the handoff payload to be integrity-checked, which is a boot_info
+         * question rather than a serial one; it is filed against the boot
+         * protocol TODO under handoff payload integrity. */
+        if (boot_port == SERIAL_PORT_COM1 || boot_port == SERIAL_PORT_COM2 ||
+            boot_port == SERIAL_PORT_COM3 || boot_port == SERIAL_PORT_COM4)
+            return boot_port;
+        return current;
+
+    default:
+        /* Not a value this ABI defines. */
+        return current;
     }
+}
+
+int serial_uart_probed_absent(void)
+{
+    return s_uart_probed_absent != 0u;
+}
+
+int serial_emerg_probe_absent_next(int thre_ready, int probed_absent)
+{
+    /* Readiness is proof of a transmitter and outranks the boot verdict. The
+     * state only ever moves absent -> present, never back. */
+    if (thre_ready)
+        return 0;
+    return probed_absent ? 1 : 0;
+}
+
+uint32_t serial_emerg_first_probe(int thre_ready, int probed_absent)
+{
+    /* Readiness is decided FIRST and unconditionally. A machine whose probe
+     * false-negatived still gets its byte out here, which is what makes
+     * believing the negative probe below safe rather than a silencing risk. */
+    if (thre_ready)
+        return SERIAL_PROBE_SEND_NOW;
+
+    return probed_absent ? SERIAL_PROBE_SKIP_WAIT : SERIAL_PROBE_MAY_WAIT;
+}
+
+/* PROGRAM THE UART. `divisor` of 0 preserves whatever the firmware configured.
+ *
+ * Split out because serial_init and serial_adopt_boot_info both need it and
+ * they run at opposite ends of the handoff validation -- see serial_init. */
+static void serial_program_uart(uint16_t divisor)
+{
+    uint64_t flags;
 
     /* Hold the lock across the WHOLE programming sequence, not just the writes.
      * The DLAB window below re-purposes the base port from the transmit holding
@@ -750,6 +820,76 @@ void serial_init(void)
     outb(s_serial_port + UART_REG_MCR, UART_MCR_INIT);
 
     serial_lock_release(flags);
+}
+
+void serial_init(void)
+{
+    /* EARLY BRING-UP ONLY. THIS FUNCTION MUST NOT READ g_boot_info, AND THAT IS
+     * A CORRECTION (TODO-10 S30).
+     *
+     * It used to, and the reads were dead: boot_hw.c calls serial_init at line
+     * 96 and does not COPY the validated handoff into g_boot_info until line
+     * 160, sixty lines later -- its own comment at line 124 states the struct is
+     * still zero-initialised there. So `if (g_boot_info.serial_port)` never
+     * fired, the SPCR baud arm never fired, and the kernel has always run on the
+     * compiled-in COM1 default at the firmware's divisor.
+     *
+     * THIS ALSO RE-EXPLAINS THE 2026-04-11 INCIDENT, whose recorded diagnosis
+     * (boot-code-quality Gate 8) blamed the pre-serial_init early-klog window.
+     * Making the assignment unconditional stored 0 because the SOURCE STRUCT WAS
+     * ZERO, not because a probe had failed on that machine. The gate's rule --
+     * never zero s_serial_port from boot_info here -- is still exactly right;
+     * only its reason was wrong.
+     *
+     * Everything that depends on the handoff therefore lives in
+     * serial_adopt_boot_info, which boot_hw.c calls after the copy. Ordering
+     * constraint that has NOT changed: serial_lock_acquire dereferences per-CPU
+     * data, so this must still run after smp_early_bsp_init(). */
+    serial_program_uart(0);
+}
+
+void serial_adopt_boot_info(void)
+{
+    /* THE NEGATIVE PROBE IS BELIEVED FOR THE BUDGET AND NOT FOR THE OUTPUT.
+     *
+     * The bootloader's report can say "none": serial_early_init tries ACPI SPCR
+     * and then scratch-register-probes COM1 and COM2, and when all of that fails
+     * it stores port 0 with source BOOT_SERIAL_SOURCE_NONE. Section 30 asked
+     * whether the kernel should adopt that wholesale by storing 0.
+     *
+     * IT MUST NOT. The probe is a scratch-register test, and a 16450 or a
+     * vendor UART that does not implement that register fails it while
+     * transmitting perfectly well -- so a false negative is a real outcome on
+     * real firmware, and believing it about OUTPUT costs the entire diagnostic
+     * channel on this project's target platform, undetectably from inside the
+     * machine. Believing it about the WAIT BUDGET costs at most an emergency
+     * record that dribbles instead of blocking: the byte is still written, and
+     * only the full-length wait for a transmitter already shown not to answer
+     * is skipped. The costs are not symmetric, so the answers are not the same.
+     *
+     * That split retires exactly the cost section 30 named: a port-less machine
+     * no longer spends its SERIAL_EMERG_STUCK_BYTES ceiling on a UART that
+     * could never have drained a byte. */
+    s_uart_probed_absent =
+        (g_boot_info.serial_source == BOOT_SERIAL_SOURCE_NONE) ? 1u : 0u;
+
+    /* ADOPT THE REPORTED BASE. This is the first boot on which it can take
+     * effect at all, so it can only help: a machine whose console is COM2, or an
+     * SPCR-declared base, has until now received nothing from the kernel while
+     * the bootloader talked to it happily. A machine whose probe found COM1 --
+     * every emulator and the reference bare-metal box -- sees no change. */
+    s_serial_port = serial_select_port(g_boot_info.serial_port,
+                                       g_boot_info.serial_source,
+                                       s_serial_port);
+
+    /* Re-program at the adopted base, preserving the firmware's divisor. The
+     * reported BAUD is deliberately NOT adopted here: switching a working
+     * console's rate is the one part of this handoff that can make a machine
+     * WORSE than the silence it has today, and the I/O-probe path reports a
+     * synthesised 38400 rather than a measured rate. The baud line belongs to
+     * the kernel-debugger KD protocol work, whose serial-line setup owns the
+     * rate; it is filed there with its risk argument. */
+    serial_program_uart(0);
 }
 
 void serial_putchar(char c)
@@ -863,7 +1003,6 @@ void serial_write(const char *str)
 char serial_trygetchar(void)
 {
     /* Check Line Status Register bit 0 (Data Ready) */
-    if (!s_serial_port) return 0;
     if ((inb(s_serial_port + UART_REG_LSR) & UART_LSR_DR) == 0)
         return 0;
     return (char)inb(s_serial_port + UART_REG_RBR);
@@ -1066,7 +1205,6 @@ void serial_emergency_release(serial_lock_t *lock, int acquired)
  * to Phase 0 serial_init and is a few port writes wide. */
 static inline void serial_emergency_restore_lcr(void)
 {
-    if (!s_serial_port) return;
     outb(s_serial_port + UART_REG_LCR, UART_LCR_8N1);
 }
 
@@ -1539,18 +1677,22 @@ void serial_emerg_timeout_byte(uint32_t token, uint32_t ledger, uint8_t byte)
 {
     (void)serial_emerg_mark_timeout_for(token, ledger);
 
-    /* NO ZERO-PORT GUARD HERE, and its absence is deliberate rather than
-     * overlooked. A guard was added in review on the premise that a zero
-     * s_serial_port is the documented "no UART detected" state, and that premise
-     * is false: the word is initialised to COM1 where s_serial_port is defined,
-     * and serial_init OVERWRITES it only when g_boot_info.serial_port is
-     * non-zero, deliberately keeping COM1 otherwise. It is therefore
-     * never zero, the compiler proves the branch unreachable and deletes it, and
-     * what remains is a comment claiming a protection the object does not carry.
-     * The file's other zero-port tests are dead for the same reason.
+    /* NO ZERO-PORT GUARD HERE, and section 30 settled why. A guard was added in
+     * review on the premise that a zero s_serial_port is the documented "no UART
+     * detected" state; the premise was false then and is false by construction
+     * now. s_serial_port is initialised to COM1 and serial_select_port is its
+     * only other writer, and that helper never returns 0 for the non-zero
+     * `current` it is handed -- deliberately, because zeroing the port from
+     * boot_info silenced a machine whose COM1 worked (the 2026-04-11 incident,
+     * boot-code-quality Gate 8). So the branch would be unreachable, the
+     * compiler would delete it, and what would remain on the page is a comment
+     * claiming a protection the object does not carry. This file's other
+     * zero-port tests were removed for that reason rather than kept.
      *
-     * The mismatch between that documented state and the code is real and is
-     * filed; it is not repaired by adding a test the optimiser removes. */
+     * The no-UART finding itself is not discarded: it lives in
+     * s_uart_probed_absent, which stops serial_putchar_raw_bounded spending
+     * waits, and never reaches this function -- a timeout can only have been
+     * recorded by a byte that was allowed to wait in the first place. */
     outb(s_serial_port + UART_REG_THR, byte);
 }
 
@@ -1785,8 +1927,6 @@ static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov,
     uint32_t token = SERIAL_EMERG_NO_TOKEN;
     int      may_wait;
 
-    if (!s_serial_port) return 0;
-
     /* PROBE BEFORE RESERVING. A byte that finds the transmitter already ready
      * never waits, and the budget counts WAITS -- so reserving for it was both
      * wasted work and a misreading of what the allowance is for. The old order
@@ -1798,9 +1938,42 @@ static int serial_putchar_raw_bounded(char c, int terminal, uint32_t *recov,
      * Observable behaviour is unchanged: the byte goes out either way, and the
      * budget ends where it did. What changes is that a healthy transmitter no
      * longer pays the contended reservation protocol at all. */
-    if ((inb(s_serial_port + UART_REG_LSR) & UART_LSR_THRE) != 0) {
-        outb(s_serial_port + UART_REG_THR, (uint8_t)c);
-        return 1;
+    /* ONE status read, then the whole decision in serial_emerg_first_probe --
+     * which is a pure helper precisely because it sits between two raw port
+     * reads where no fixture can reach it. Its three answers, and why the
+     * ready-check has to come before the probed-absent one, are argued at its
+     * declaration in serial_emergency.h. */
+    {
+        int ready  = (inb(s_serial_port + UART_REG_LSR) & UART_LSR_THRE) != 0;
+        int absent = (int)(__atomic_load_n(&s_uart_probed_absent,
+                                           __ATOMIC_RELAXED) != 0u);
+
+        /* RETIRE THE BOOT VERDICT ON THE FIRST BYTE A TRANSMITTER ACCEPTS.
+         * Without this the policy protects only the FIRST byte of a record on a
+         * machine whose probe false-negatived: byte 2 is issued while byte 1 is
+         * still draining, finds THRE clear, and is dropped. Relaxed and
+         * racy-by-design across CPUs -- every writer computes the same one-way
+         * transition, so a lost store costs at most one more byte before the
+         * next observation makes it again. */
+        if (absent && !serial_emerg_probe_absent_next(ready, absent)) {
+            __atomic_store_n(&s_uart_probed_absent, 0u, __ATOMIC_RELAXED);
+            absent = 0;
+        }
+
+        switch (serial_emerg_first_probe(ready, absent)) {
+        case SERIAL_PROBE_SEND_NOW:
+            outb(s_serial_port + UART_REG_THR, (uint8_t)c);
+            return 1;
+        case SERIAL_PROBE_SKIP_WAIT:
+            /* Believed absent AND not ready: drop the byte BEFORE reserving.
+             * Taking a slot and then declining to use it would still walk the
+             * contended claim word once per byte of the record, which is the
+             * cost this removes. A machine that ever answers has already
+             * cleared the flag above and can never reach this. */
+            return 0;
+        default:
+            break;
+        }
     }
 
     /* Not ready: this byte is about to WAIT, which is what the budget bounds. */

@@ -101,6 +101,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "========================================================================");
     klog(LOG_DEBUG, "", "  Impossible OS -- Boot Log");
     klog(LOG_DEBUG, "", "========================================================================");
+
     version_print();
 
     /* --- Boot info parse: UEFI or Multiboot2 --- */
@@ -161,6 +162,25 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         boot_halt("Unknown bootloader magic (UEFI is the only supported boot path)");
     }
     boot_progress(0, "BOOT_INFO", 0x0026);
+
+    /* SERIAL POLICY LANDS HERE, NOT AT serial_init -- the handoff only exists
+     * from this point on (TODO-10 S30). serial_init ran sixty lines up on the
+     * compiled-in COM1 default so that everything above had a port; it must not
+     * read g_boot_info, which was still zero-initialised for all of it. This is
+     * the first instruction at which the bootloader's reported base and its
+     * UART probe result are real, so it is where they are adopted. */
+    serial_adopt_boot_info();
+
+    /* A NEGATIVE UART PROBE IS STATED, NOT INFERRED. Output still goes to the
+     * adopted base regardless -- the bootloader's scratch-register probe
+     * false-negatives on firmware that does not implement that register, and
+     * silencing such a machine is the 2026-04-11 incident -- but the emergency
+     * path stops spending its wait budget on it, and a reader of a short crash
+     * record should be able to see that decision rather than deduce it. */
+    if (serial_uart_probed_absent())
+        klog(LOG_WARN, "SERIAL",
+             "bootloader found no UART (source=none) -- output still attempted, "
+             "emergency transmit waits disabled");
 
     /* Defense in depth: verify boot_config.cmdline begins with ASCII.
      * The bootloader fills boot_config at a fixed layout and the S16

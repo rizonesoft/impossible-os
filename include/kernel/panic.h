@@ -326,6 +326,98 @@ void     panic_declared_ctx_calls_reset(void);
 void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
                         uint32_t ctx, const char *if_null);
 
+/* ---- Async-worker park: disposition and staged, at-most-once cleanup ----
+ *
+ * An AP that faults inside an async boot-init step is NOT terminal: the panic
+ * path hands its emergency-serial allowances back, retracts the CPU from the
+ * online mask, publishes the step failure so the BSP's barrier can fall back to
+ * sequential init, emits one diagnostic, hands back the UART lock, revokes the
+ * cross-boot crash record, and parks the CPU forever. The BSP keeps booting.
+ *
+ * THE TAIL IS RE-ENTRANT, because `cli` masks neither NMI nor #MC and every
+ * step of it can itself fault. Two separate properties make that survivable.
+ *
+ * IDENTITY IS GS-INDEPENDENT. The stage lives in an array keyed by
+ * cpu_panic_safe_apic_id(), the same CPUID-derived id the serial owner word,
+ * the NMI depth and the crash evidence record already use, NOT in per_cpu_data.
+ * smp_this_cpu() reads gs:0 and SUBSTITUTES the BSP slot when that read yields
+ * 0, so it never reports failure: on a CPU whose GS is exactly what cannot be
+ * trusted, a per-CPU flag would be read from, and written to, CPU 0's state,
+ * and the parking CPU would still reach terminal arbitration.
+ *
+ * ONLY THE UNBOUNDED STEP IS CLAIMED, and which steps those are is the whole
+ * cleanup-safety argument. Claiming a stage BEFORE a step means an abort in the
+ * gap SKIPS that step forever, so it is right only where re-running is worse
+ * than skipping. Exactly one step qualifies: the diagnostic, which walks a
+ * caller-supplied string and drives the UART, and could therefore fault in the
+ * same place on every entry and never reach the park. Every other step of the
+ * tail -- the allowance reclaim, the online-mask retract, the UART hand-back,
+ * the evidence revoke -- is a handful of compare-exchanges over kernel-owned
+ * static state reached through a GS-independent slot. None can fault, all are
+ * idempotent, and gating them would be strictly worse: an abort landing in
+ * front of the UART hand-back would park this CPU still holding the serial lock
+ * and hang every surviving CPU on its next write.
+ *
+ * The recursion is bounded by that split rather than by a depth counter: the
+ * one step that could loop runs at most once, and nothing else in the tail can
+ * fault twice in the same place. */
+#define PANIC_PARK_NONE         0u  /* not parking: ordinary terminal arbitration */
+#define PANIC_PARK_ENTERED      1u  /* the branch is committed to parking this CPU */
+#define PANIC_PARK_PUBLISHED    2u  /* completion settled: published, or not owed */
+#define PANIC_PARK_DIAGNOSED    3u  /* the one-record diagnostic was attempted */
+
+/* What a panic entry on this CPU owes, given the async-worker state. The three
+ * answers correspond exactly to the three intervals the park tail passes
+ * through, which is why a boolean "am I parking" cannot express it:
+ *
+ *   TERMINAL  not an async worker and not parking: ordinary arbitration.
+ *   ISOLATE   run the park tail INCLUDING the completion publication. The first
+ *             entry, and any nested abort landing before the publication, where
+ *             the BSP has been told nothing and would otherwise wait out its
+ *             whole barrier deadline.
+ *   PARK      run the park tail but SKIP the publication, because it already
+ *             happened and the BSP is proceeding on the strength of it.
+ *
+ * `in_async_work` is checked FIRST and on its own: a CPU still identifying as
+ * an async worker has not published, whatever else is true, so that reading can
+ * never be talked out of publishing by a stale word.
+ *
+ * "Already published" is read off the STAGE and not off `pcpu->async_done`,
+ * deliberately. The stage is the GS-independent copy, and taking both readings
+ * would reintroduce through the back door exactly the per-CPU dependency the
+ * stage exists to remove. Pure over its arguments, so all four rows are
+ * unit-testable without a fault. */
+#define PANIC_ASYNC_TERMINAL  0u
+#define PANIC_ASYNC_ISOLATE   1u
+#define PANIC_ASYNC_PARK      2u
+uint32_t panic_async_disposition(int in_async_work, uint32_t park_stage);
+
+/* Claim `step` in a monotonic park-stage slot: 1 = the caller now owns the step
+ * and must perform it, 0 = some earlier entry already claimed it, skip it.
+ *
+ * Takes a CALLER-SUPPLIED slot, exactly as the serial lock-policy helpers take
+ * a caller-supplied lock, so the at-most-once and monotonicity properties are
+ * testable without touching the live per-CPU array or arming anything. A slot
+ * only ever moves forward: an out-of-order claim of an already-passed step is
+ * refused and leaves the slot unchanged. A NULL slot is refused rather than
+ * dereferenced, because the panic path is the worst place to fault out of a
+ * bookkeeping helper. */
+int panic_park_claim_step(volatile uint8_t *slot, uint32_t step);
+
+/* Append a CALLER-SUPPLIED string to a panic record buffer without ever
+ * dereferencing it raw. Appends `(null)` for a NULL source, PANIC_STR_NO_GUARD
+ * when `ctx` forbids the fault-suppressed read, and otherwise the guarded copy,
+ * keeping the prefix and marking it when the pointer faults mid-walk.
+ *
+ * Public so the forbidden-context row is assertable. That row is the one that
+ * regressed: it used to fall through to the RAW appender, whose `while (*s)`
+ * is exactly the dereference this helper exists to replace -- and the entries
+ * that take it are NMI and #DF, where a bad pointer is a triple fault and a
+ * machine reset rather than a recoverable page fault. Pure over its arguments;
+ * touches no lock and no boot state. */
+void panic_append_guarded(char *buf, uint32_t cap, uint32_t *pos,
+                          const char *s, uint32_t ctx);
+
 /* Walk the frame-pointer chain with fault-suppressed reads, writing up to
  * `count` return addresses to out[] and returning how many were recorded.
  *

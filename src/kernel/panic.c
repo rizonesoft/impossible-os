@@ -169,11 +169,50 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
                               const char *description_in, const char *file_in,
                               uint32_t line);
 
+static __attribute__((noreturn)) void panic_async_park(
+        uint32_t ev_cpu, struct interrupt_frame *frame, uint64_t error_code,
+        const char *desc, uint32_t ctx);
+static int panic_async_is_parking(uint32_t ev_cpu);
+
 static __attribute__((noreturn)) void ke_bugcheck_emit(
         struct interrupt_frame *frame, BUGCHECK_CODE code,
         uint64_t p1, uint64_t p2, uint64_t p3, uint64_t p4, int persist_registry)
 {
     extern uint64_t KeQueryInterruptTimeCoarse(void);
+
+    /* A CPU ALREADY PARKING LEAVES BY THE SHORT PATH, AS THE FIRST ACT OF THIS
+     * INGRESS (TODO-10 S30).
+     *
+     * This is the common ingress for KeBugCheckEx and KeBugCheckExFrame, and it
+     * is ABOVE panic_screen_impl, so the guard inside that function is not
+     * enough on its own: NMI and #MC pierce `cli`, nmi_crash_handler arrives
+     * through here, and everything between this line and there is work a CPU
+     * that has already committed to parking must not repeat. It overwrites the
+     * shared g_last_bugcheck record -- which can clobber a TERMINAL panic's
+     * description mid-flight on another CPU -- and, on the persist_registry
+     * path, calls into the registry, which takes locks and the heap. A nested
+     * abort landing in any of that would re-enter it on every pass instead of
+     * reaching the park.
+     *
+     * The test is GS-independent and dereferences nothing to reach it. Does not
+     * return. A NULL description because no snapshot has been taken at this
+     * point, and PANIC_CTX_UNKNOWN so nothing caller-supplied is walked.
+     *
+     * THE ERROR CODE IS CARRIED THROUGH RATHER THAN ZEROED. The one diagnostic
+     * this path emits can be the ONLY surviving record of the nested fault --
+     * the tail revokes the durable evidence on the grounds that the machine
+     * survives -- so an `err=0` line would actively lie, describing a page fault
+     * or a protection fault as having had no error. A framed entry carries the
+     * hardware code; a frame-less software bugcheck carries its STOP code, which
+     * is the identifying value there. The tail already reads frame->rip, so this
+     * adds no new dependency on the frame. */
+    {
+        uint32_t me = cpu_panic_safe_apic_id();
+        if (panic_async_is_parking(me))
+            panic_async_park(me, frame,
+                             frame ? frame->err_code : (uint64_t)code,
+                             (const char *)0, PANIC_CTX_UNKNOWN);
+    }
 
     /* POST16 renders to the framebuffer (post_display16 -> fb_fill_rect/put_pixel).
      * The frame-aware fault terminal (KeBugCheckExFrame, frame != NULL) runs in an
@@ -409,6 +448,109 @@ static int panic_try_claim_owner(void)
      * - other:      another CPU owns it */
     uint32_t prev = __sync_val_compare_and_swap(&s_panic_owner, 0xFFFFFFFF, my_id);
     return (prev == 0xFFFFFFFF || prev == my_id);
+}
+
+/* ---- Async-worker park stage, keyed GS-INDEPENDENTLY (S30) ----
+ *
+ * ARCH: x86-64 -- the index is the CPUID-derived local APIC id.
+ *
+ * Indexed by cpu_panic_safe_apic_id() rather than held in per_cpu_data, for the
+ * reason the NMI depth array in idt.c is: the readers are panic-path code that
+ * must work when gs:0 is precisely what cannot be trusted. smp_this_cpu() does
+ * not report that failure -- it reads gs:0 and substitutes cpu_data[0] when the
+ * read yields 0 -- so a per-CPU flag on a corrupt-GS AP would be read from, and
+ * written to, the BSP's slot, and the parking CPU would still fall through to
+ * terminal arbitration. That helper is SHARED with the serial owner word and
+ * the crash evidence record, so all of them mean the same CPU by construction.
+ *
+ * Each entry is written only by the CPU that owns it, so there is no lock and
+ * nothing here can block. A stage is never lowered and never cleared: the CPU
+ * it describes stops executing at the end of the tail, so "still parking" is
+ * the permanently correct answer for it. */
+#define PANIC_PARK_IDS  CPU_PANIC_SAFE_ID_COUNT
+static volatile uint8_t s_async_park_stage[PANIC_PARK_IDS];
+
+/* Layer 1: the array must cover the FULL id space the index can produce, or a
+ * widened id would write past the end of a BSS array from inside a fault
+ * handler. Derived from the mask rather than hardcoded so the two cannot
+ * drift -- the same pairing g_nmi_depth carries in idt.c. */
+_Static_assert(PANIC_PARK_IDS == (size_t)CPU_PANIC_SAFE_ID_MASK + 1u,
+               "s_async_park_stage must cover every value "
+               "cpu_panic_safe_apic_id can return");
+
+/* Layer 1: the stage constants are a dense monotonic ladder, and the tail below
+ * walks them in this order. A reordering that left a gap would let a nested
+ * entry claim a later step and silently skip an earlier one. NONE must stay 0
+ * because a zeroed BSS slot is what "this CPU is not parking" means. */
+_Static_assert(PANIC_PARK_NONE == 0u &&
+               PANIC_PARK_ENTERED   == PANIC_PARK_NONE      + 1u &&
+               PANIC_PARK_PUBLISHED == PANIC_PARK_ENTERED   + 1u &&
+               PANIC_PARK_DIAGNOSED == PANIC_PARK_PUBLISHED + 1u,
+               "park stages must be a dense ladder in tail order");
+
+/* Layer 1: the whole ladder must fit the slot the array stores it in. */
+_Static_assert(PANIC_PARK_DIAGNOSED <= 0xFFu,
+               "park stage must fit the uint8_t slot");
+
+uint32_t panic_async_disposition(int in_async_work, uint32_t park_stage)
+{
+    /* Checked first and alone: a CPU still identifying as an async worker has
+     * not published its completion, whatever the stage happens to read, so this
+     * answer can never be talked out of publishing by a stale word. */
+    if (in_async_work)
+        return PANIC_ASYNC_ISOLATE;
+
+    if (park_stage == PANIC_PARK_NONE)
+        return PANIC_ASYNC_TERMINAL;
+
+    /* Parking, and no longer identifying as async. The publication is the only
+     * thing that separates the two remaining intervals: before it the BSP has
+     * been told nothing and is still inside its barrier, after it the BSP is
+     * already running sequential init on the strength of it. */
+    return (park_stage >= PANIC_PARK_PUBLISHED) ? PANIC_ASYNC_PARK
+                                                : PANIC_ASYNC_ISOLATE;
+}
+
+/* Has this CPU already committed to parking? The ONE question every panic
+ * ingress asks before it does anything else, so it is a named predicate rather
+ * than an open-coded array read repeated at each site: a new ingress that
+ * forgets the guard is a missing call, which is greppable, instead of a subtly
+ * different inline test. Reads the GS-independent array and dereferences
+ * nothing. */
+static int panic_async_is_parking(uint32_t ev_cpu)
+{
+    return __atomic_load_n(&s_async_park_stage[ev_cpu & CPU_PANIC_SAFE_ID_MASK],
+                           __ATOMIC_RELAXED) != PANIC_PARK_NONE;
+}
+
+int panic_park_claim_step(volatile uint8_t *slot, uint32_t step)
+{
+    uint32_t cur;
+
+    if (!slot)
+        return 0;
+
+    /* BOUNDED BEFORE THE NARROWING STORE. The comparison below is 32-bit and
+     * the slot is 8, so a step above 255 would pass `cur >= step` and then store
+     * its low byte -- a step of 256 writing 0 and moving a fully-advanced stage
+     * BACK to "not parking", which is the one transition this helper exists to
+     * make impossible. Every caller passes a ladder constant today; the check is
+     * here so an extension of the ladder cannot reopen terminal arbitration in
+     * the middle of a park. */
+    if (step == PANIC_PARK_NONE || step > PANIC_PARK_DIAGNOSED)
+        return 0;
+
+    cur = __atomic_load_n(slot, __ATOMIC_RELAXED);
+    if (cur >= step)
+        return 0;
+
+    /* RELAXED is sufficient and a fence is not. The only reader that matters is
+     * a nested abort on THIS core, and a same-core exception observes this
+     * core's stores in program order by construction -- what is required is that
+     * the compiler EMIT the store before the step it guards, which the atomic
+     * store on a volatile slot does. Nothing on another CPU reads this word. */
+    __atomic_store_n(slot, (uint8_t)step, __ATOMIC_RELAXED);
+    return 1;
 }
 
 #ifdef KERNEL_TESTS
@@ -694,6 +836,19 @@ static void serial_write_hex(uint64_t v)
  * call-local budget, so a wedged UART could pay a full-length wait per fragment. */
 static void panic_append(char *buf, uint32_t cap, uint32_t *pos, const char *s)
 {
+    /* PRECONDITIONS CHECKED, not assumed. Every in-tree caller passes a real
+     * buffer with `sizeof rec` and a position that started at 0, so none of
+     * these fire today -- but the terminator store below is UNCONDITIONAL, so a
+     * cap of 0 or a position already at the end writes one byte past the buffer,
+     * and `*pos + 1u` wraps at UINT32_MAX and turns the bound into a pass. This
+     * became worth enforcing rather than documenting when panic_append_guarded
+     * was made public: the panic path is the worst place to corrupt a stack
+     * frame out of a formatting helper, and the cost is three compares. */
+    if (!buf || !pos || cap == 0u)
+        return;
+    if (*pos >= cap)
+        return;
+
     while (*s && *pos + 1u < cap)
         buf[(*pos)++] = *s++;
     buf[*pos] = '\0';
@@ -711,15 +866,28 @@ static void panic_append(char *buf, uint32_t cap, uint32_t *pos, const char *s)
  * which is precisely where a nested fault turns an isolated failure into a
  * system-terminal panic. A guarantee about a pointer holds only when every site
  * that dereferences it honours it. */
-static void panic_append_guarded(char *buf, uint32_t cap, uint32_t *pos,
-                                 const char *s, uint32_t ctx)
+void panic_append_guarded(char *buf, uint32_t cap, uint32_t *pos,
+                          const char *s, uint32_t ctx)
 {
     if (!s) {
         panic_append(buf, cap, pos, "(null)");
         return;
     }
     if (!serial_emerg_ctx_allows_guarded_read(ctx)) {
-        panic_append(buf, cap, pos, s);
+        /* A PLACEHOLDER, NOT THE POINTER. This is the case the whole helper
+         * exists for: the context forbids the fault-suppressed read, so there is
+         * no safe way to look at `s` at all -- and handing it to panic_append
+         * walks it with a bare `while (*s)`, which is the raw dereference the
+         * guard was supposed to replace. It reached here because the earlier fix
+         * changed the callers rather than this fallback, and the NMI and
+         * double-fault entries are exactly the ones that take it: a corrupt
+         * pointer would fault while handling the abort, and in a #DF context
+         * that is a triple fault and a machine reset, before the UART is handed
+         * back or the crash record revoked.
+         *
+         * Renders the same text panic_snapshot_str renders for the same reason,
+         * so a reader sees one vocabulary for "this could not be looked at". */
+        panic_append(buf, cap, pos, PANIC_STR_NO_GUARD);
         return;
     }
     {
@@ -2408,6 +2576,310 @@ void panic_evidence_write_blackbox(void)
         pmm_free_frame(phys + p * 4096u);
 }
 
+/* --- Async init fault isolation: the park tail ---
+ *
+ * An AP that faults inside an async boot-init step is NOT terminal. This hands
+ * its emergency-serial allowances back, retracts it from the online mask,
+ * publishes the step failure so the BSP's barrier can fall back to sequential
+ * init, emits one diagnostic, hands back the UART lock, revokes the cross-boot
+ * crash record, and parks the CPU forever. The BSP keeps booting.
+ *
+ * A FUNCTION, AND REACHED FROM TWO PLACES, which is section 30's answer to a
+ * fault taken while this tail is already running. The late call site is the
+ * ordinary one: a first fault, discovered through in_async_work with a full
+ * panic entry behind it. The EARLY one fires at the top of panic(), before the
+ * caller-string snapshot, the evidence collection and the pre-arbitration
+ * register dump -- because a CPU whose park stage is already non-zero must not
+ * repeat any of that. Those are the genuinely faultable parts of a panic entry:
+ * the snapshot walks a caller pointer and the collector writes the evidence page
+ * and flushes cache lines, so a nested abort landing in them would re-enter at
+ * the same instruction on every pass and never reach the park at all.
+ *
+ * `desc` is NULL on the early path, where no snapshot has been taken yet, and
+ * `ctx` is then the restrictive PANIC_CTX_UNKNOWN so nothing caller-supplied is
+ * walked. Never returns. */
+static __attribute__((noreturn)) void panic_async_park(
+        uint32_t ev_cpu, struct interrupt_frame *frame, uint64_t error_code,
+        const char *desc, uint32_t ctx)
+{
+    volatile uint8_t *park =
+        &s_async_park_stage[ev_cpu & CPU_PANIC_SAFE_ID_MASK];
+    uint32_t stage = __atomic_load_n(park, __ATOMIC_RELAXED);
+    /* THE SLOT COMES FROM THE SAME CPUID-DERIVED ID AS THE STAGE, not from GS.
+     * smp_this_cpu() hands a corrupt-GS CPU the BSP's slot and reports no
+     * error, so reading lifecycle fields through it could classify a real async
+     * AP as terminal, or let a nested entry mutate the BSP's state -- in exactly
+     * the failure mode this path exists to survive. */
+    struct per_cpu_data *pcpu = smp_cpu_by_apic_id(ev_cpu);
+    uint32_t disp = (stage != PANIC_PARK_NONE)
+                        ? panic_async_disposition(0, stage)
+                        : PANIC_ASYNC_ISOLATE;
+
+        /* NESTED means "some earlier entry on this CPU already committed to
+         * parking", which is exactly what a non-zero stage records. Only the
+         * diagnostic reads it; every step below is gated on its own claim. */
+        const int nested = (stage != PANIC_PARK_NONE);
+
+        /* Snapshot the identifying fields BEFORE publishing below. Once
+         * async_done is observed the BSP's barrier exits, and the next async
+         * group clears async_name and re-arms the slot for a DIFFERENT step
+         * -- so reading it afterwards can misattribute the crash, or print
+         * "?", which destroys the value of this diagnostic. */
+        const char *step_name =
+            (pcpu && pcpu->async_name) ? pcpu->async_name : "?";
+        /* THE ENTRY context, not a fresh derivation. Same declared-context
+         * rule as the pre-arbitration dump, and the same reason the
+         * collector stopped re-deriving it: panic_declared_ctx reads the
+         * NMI depth through cpu_panic_safe_apic_id(), i.e. a CPUID, which
+         * serializes and exits to the hypervisor under KVM/WHPX. This
+         * branch runs inside the SAME panic entry that already computed
+         * snap_ctx, so a second derivation could not legitimately differ
+         * from it -- it would only cost another exit on the path whose
+         * whole budget is instructions-before-the-record-is-durable. */
+        uint32_t    async_ctx = ctx;
+        /* THE GS-INDEPENDENT IDENTITY, not pcpu->cpu_id, and the label in
+         * the record below says APIC for that reason. A nested abort is
+         * precisely the entry whose GS may be untrustworthy, and
+         * smp_this_cpu() answers such a CPU with the BSP's slot rather than
+         * with a failure -- so a logical cpu_id read through it would name
+         * the wrong processor in the one record that explains the fault.
+         * ev_cpu is the same CPUID-derived id the park stage, the serial
+         * owner word and the evidence record are all keyed on, so the four
+         * of them name one CPU by construction. */
+        uint32_t    step_cpu  = ev_cpu;
+
+        /* COMMIT, as the first store of the branch. From here on the stage
+         * is non-zero, so this CPU re-enters this branch on any later abort
+         * however far the tail has progressed and whatever happens to the
+         * per-CPU word. Claiming it separately rather than letting the
+         * reclaim below be the de-facto commitment keeps the invariant
+         * "stage != NONE means committed to parking" true from the first
+         * instruction, instead of true only once a step that can itself
+         * fault has been reached. */
+        (void)panic_park_claim_step(park, PANIC_PARK_ENTERED);
+
+        /* REFUND FIRST, then publish, then diagnose.
+         *
+         * The refund gives back what the GS-independent pre-arbitration
+         * dump above charged: this CPU turns out to be survivable, so it
+         * must not leave the shared terminal allowance spent, or a later
+         * REAL panic would emit its reason and registers on a saturated
+         * budget. It goes BEFORE the publication because everything after
+         * that point is observable: once async_done is visible the BSP
+         * proceeds, and a terminal NMI/#MC landing on this AP in the
+         * meantime would no longer be classified survivable -- and would
+         * find the allowance still spent. The reclamation reads the packed
+         * serial word only for the live generation and writes nothing but
+         * the separate, cacheline-isolated claim array, so it is safe this
+         * early.
+         *
+         * ATTRIBUTABLE, AND IT COVERS EVERY INVOCATION ON THIS CPU. The
+         * reclamation reads this CPU's own claims -- which no other CPU
+         * writes -- and hands back each one that was taken but never charged
+         * by a timeout, so it can neither absorb another CPU's charge nor
+         * credit an epoch that has since been published.
+         *
+         * A DELTA CANNOT DO THIS, which is why it no longer is one. The
+         * previous shape refunded `charges_self() - charges_before` against
+         * a count sampled at panic entry, so a nested abort inside an outer
+         * dump on this CPU carried the OUTER dump's reservations inside its
+         * own baseline and refunded none of them -- leaking up to the whole
+         * pre-arm budget on the CPU that is about to park as its sole
+         * recorded owner (TODO-10 S29).
+         *
+         * SAFE ONLY BECAUSE THIS CPU NEVER RETURNS TO THE FRAME IT
+         * INTERRUPTED. An outer writer frame stopped mid-wait still holds a
+         * token whose slot this frees, and freeing it lets the next reserve
+         * hand the same slot out; if that frame ever resumed, its return
+         * would clear the new holder's charge.
+         *
+         * It never resumes, and since section 30 that holds for a STRONGER
+         * reason than it used to. Every later abort on this CPU now
+         * re-enters this branch, at every point of the tail, because the
+         * entry test is the park stage and not the `in_async_work` word
+         * that gets cleared in the middle of it. The three intervals the
+         * comment here used to enumerate collapse to two dispositions,
+         * ISOLATE and PARK, and neither of them returns.
+         *
+         * NOT GATED ON A STAGE CLAIM, and the distinction between this step
+         * and the diagnostic below is the whole cleanup-safety argument.
+         * Only the DIAGNOSTIC is claim-before-perform, because only it can
+         * fault repeatedly: it walks a caller-supplied string and drives the
+         * UART. Every other step of this tail is a handful of compare-
+         * exchanges over kernel-owned static state, cannot fault, and is
+         * idempotent -- so a nested entry simply re-runs them, and gating
+         * them would be strictly worse. A claim taken BEFORE such a step
+         * would let an abort landing in the gap skip it permanently,
+         * stranding g_serial_lock held by a CPU that never runs again, or
+         * leaving this CPU in the online mask, which is the hang this branch
+         * exists to remove. */
+        (void)serial_emerg_reclaim_self();
+
+        /* PUBLISH. The BSP barrier waits on async_done to run the sequential
+         * fallback (the loop lives in boot_init.c), so the completion signal
+         * must not depend on the diagnostic below surviving. This ordering
+         * used to be reversed, and the diagnostic was a klog() -- which
+         * takes s_klog_lock and sinks to the ordinary locked serial_write.
+         * An async worker that faulted while holding either lock therefore
+         * self-deadlocked HERE, never published async_done, and hung the BSP
+         * forever on a failure it was designed to recover from. */
+        /* GO OFFLINE BEFORE PUBLISHING. boot_async_group selects its workers
+         * on live online membership plus a lifecycle-claim CAS
+         * (boot_init.c, TODO-10 S21), and this CPU is about to park with
+         * interrupts masked, so it can never take the wake IPI again.
+         * Leaving the flag set means every LATER async group assigns it a
+         * step and then eats the group's whole 10-second barrier deadline
+         * waiting for a CPU that will never answer -- turning one recovered
+         * async fault into a visibly stalled boot.
+         *
+         * ORDERING, attributed precisely: what stops a BSP observing
+         * async_done=1 while still seeing this CPU online is the smp_mb()
+         * below plus x86 TSO -- NOT the RELEASE annotation on this store. A
+         * release store orders EARLIER accesses before ITSELF; it says
+         * nothing about the later async_done store. The annotation is kept
+         * because it correctly publishes this write to the ACQUIRE loads in
+         * boot_init.c and smp.c, but an ARM64 port must keep the fence.
+         *
+         * SCOPE, closed by TODO-10 S21: this CPU is now retired from the
+         * SYSTEM's view of itself, not just from async dispatch. The
+         * retract clears the live online-mask bit (which is what
+         * smp_cpu_count(), NT processor reporting and IRQ affinity read),
+         * parks the async claim word so no later group can dispatch to this
+         * CPU even if it already selected it, and clears is_online last.
+         * All three are atomics -- no lock, no allocation, panic-path
+         * safe.
+         *
+         * RE-RUN UNCONDITIONALLY ON A NESTED ENTRY, never gated. Three
+         * atomics over the per-CPU block cannot fault now that the slot is
+         * resolved by APIC id rather than through GS, and leaving this CPU
+         * in the online mask because an abort landed just before a gate
+         * would cost every later async group its whole barrier deadline. */
+        if (pcpu)
+            smp_retract_cpu_online(pcpu);
+
+        /* PUBLISH ONLY WHEN IT IS STILL OWED, and record that it happened
+         * AFTER the stores, not before. The stores are the thing the BSP
+         * waits on, so marking them done first would let an abort landing
+         * between the mark and the stores leave the BSP waiting out its
+         * whole barrier on a completion that was recorded and never
+         * written. They are plain writes to a slot resolved without GS, so
+         * there is no fault to loop on here and nothing to protect against
+         * by claiming early. */
+        if (disp == PANIC_ASYNC_ISOLATE && pcpu) {
+            pcpu->async_result = (uint8_t)BOOT_FATAL;
+            pcpu->in_async_work = 0;
+            smp_mb();
+            pcpu->async_done = 1;
+            smp_mb();
+        }
+        (void)panic_park_claim_step(park, PANIC_PARK_PUBLISHED);
+
+        /* DIAGNOSE, as ONE record. Built in a stack buffer and emitted with
+         * a single recoverable call: separate fragments would each start a
+         * fresh call-local budget, so a wedged UART could pay a full-length
+         * wait per fragment. Not klog -- this runs before the emergency
+         * latch is armed (the system survives this branch), and no
+         * formatting machinery is trustworthy in a fault context.
+         *
+         * A NESTED entry says so in the record. It is the one line that
+         * tells a reader the recovery path itself faulted, and it carries
+         * the nested fault's own vector-derived description, error code and
+         * RIP -- which is where the evidence for a fault-during-recovery
+         * lives, since the cross-boot record is revoked below on the
+         * grounds that the machine survives. */
+        if (panic_park_claim_step(park, PANIC_PARK_DIAGNOSED)) {
+            char     rec[224];
+            uint32_t rp = 0;
+
+            panic_append(rec, sizeof rec, &rp,
+                         nested ? "\n[ASYNC] NESTED FAULT while parking APIC"
+                                : "\n[ASYNC] FAULT on APIC");
+            panic_append_hex(rec, sizeof rec, &rp, step_cpu);
+            panic_append(rec, sizeof rec, &rp, " during '");
+            /* step_name is still CALLER-SUPPLIED and may be the corruption
+             * being reported, so it keeps the guarded append. The panic
+             * description does not: it was snapshotted at entry, so it is
+             * kernel-owned memory here like every literal beside it. */
+            panic_append_guarded(rec, sizeof rec, &rp, step_name, async_ctx);
+            panic_append(rec, sizeof rec, &rp, "': ");
+            panic_append(rec, sizeof rec, &rp,
+                         desc ? desc : "(nested fault during async recovery)");
+            panic_append(rec, sizeof rec, &rp, " (err=");
+            panic_append_hex(rec, sizeof rec, &rp, error_code);
+            panic_append(rec, sizeof rec, &rp, " RIP=");
+            panic_append_hex(rec, sizeof rec, &rp, frame ? frame->rip : 0);
+            panic_append(rec, sizeof rec, &rp, ")\n");
+            serial_write_recoverable(rec);
+        }
+
+        /* HAND BACK THE UART BEFORE PARKING.
+         *
+         * The step that faulted may have been holding g_serial_lock -- an
+         * ordinary klog from inside an async init step is enough. This CPU
+         * never runs again, so nothing else can ever release it, and the
+         * surviving BSP would block forever on its next ordinary serial
+         * write: a silent hang instead of the recovered boot this branch
+         * exists to deliver. Owner-scoped, so a CPU that does not hold the
+         * lock changes nothing.
+         *
+         * After the diagnostic above, not before: that record is emitted
+         * through the bounded try-lock writer, which may itself be the holder,
+         * and releasing first would let another CPU interleave into it.
+         *
+         * UNGATED, deliberately. This is one exact-owner compare-exchange on
+         * a static word: it cannot fault and it cannot loop, so re-running
+         * it on a nested entry is free. Putting a claim in front of it would
+         * create the one window that actually matters -- an abort between
+         * the claim and the CAS would skip the release forever and park this
+         * CPU still holding g_serial_lock, and every surviving CPU would
+         * block on its next ordinary write. */
+        serial_lock_release_if_owner();
+
+        /* REVOKE THE CROSS-BOOT RECORD. This branch is the one place in the
+         * panic path that KNOWS the machine survives: the BSP falls back to
+         * sequential init and keeps booting. A record left standing here is
+         * restored by the next boot and written to last-panic.txt as an
+         * unexpected shutdown that never happened -- and, holding the only
+         * slot, it refuses that slot to the crash that eventually does kill
+         * the machine. Both halves of that were the section-23 defect.
+         *
+         * AFTER the diagnostic and the UART hand-back, not before: those two
+         * are what make the surviving system usable, and the revoke must not
+         * be able to leave the page owned by a CPU that then faults on its
+         * way to the park. Generation-conditional throughout, so a terminal
+         * invocation that already took the page is untouched.
+         *
+         * REVOKED ON THE NESTED PATH TOO, and that is a decision rather than
+         * an omission. A fault taken WHILE recovering is still a fault on a
+         * machine that goes on to boot: the BSP falls back to sequential
+         * init exactly as it does for the first fault, so a record left
+         * standing is the same false unexpected-shutdown, holding the same
+         * single slot against the crash that eventually does kill the box.
+         * The argument for keeping it -- that a fault during recovery is
+         * evidence worth more than a later crash -- is answered by the
+         * NESTED diagnostic above, which puts that fault's vector, error
+         * code and RIP on the wire without spending the durable slot.
+         *
+         * UNGATED for the same reason as the hand-back above: it is
+         * generation-conditional and self-limiting, so a nested entry that
+         * re-runs it finds the page already relinquished and returns at its
+         * first test. A claim in front would risk leaving the record
+         * standing, which is the section-23 defect. */
+        panic_evidence_abandon(ev_cpu);
+
+        /* Park this AP permanently -- BSP will handle the failure.
+         *
+         * THE RECURSION IS BOUNDED, and by this point every step above has
+         * paid for that claim in a different way. The one step that could
+         * fault repeatedly is the diagnostic, and it alone is claimed before
+         * it runs, so it executes at most once per CPU. Everything else is
+         * compare-exchanges over kernel-owned static state reached through a
+         * GS-independent slot: no page walk, no caller-supplied pointer,
+         * nothing that can fault twice in the same place. */
+        for (;;) __asm__ volatile("hlt");
+}
+
+
 /* Core panic path. `bugcheck_code` is the authoritative STOP code recorded in the
  * cross-boot evidence, decoupled from frame presence: a raw exception passes 0
  * (identity is the fault vector), while a framed bugcheck (KeBugCheckExFrame)
@@ -2441,6 +2913,31 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * instructions-between-fault-and-durable-record. */
     const uint32_t ev_cpu   = cpu_panic_safe_apic_id();
     const uint32_t ev_token = panic_evidence_begin();
+
+    /* A CPU ALREADY PARKING TAKES THE SHORT PATH, HERE, BEFORE ANYTHING ELSE
+     * (TODO-10 S30).
+     *
+     * Everything below this point is work a first fault needs and a nested one
+     * must not repeat: the caller-string snapshot walks a pointer that may be
+     * the corruption being reported, the evidence collector writes the crash
+     * page and flushes its cache lines, and the pre-arbitration dump drives the
+     * UART. Each can fault. A CPU that already committed to parking and then
+     * took another abort would re-enter at the same instruction on every pass
+     * and never reach the park at all -- so the stage is tested first, on the
+     * GS-independent array alone, with nothing dereferenced to reach it.
+     *
+     * The test is deliberately the RAW stage rather than a disposition: this is
+     * the "am I already parking" question, and the ISOLATE-or-PARK refinement
+     * belongs to the tail that acts on it.
+     *
+     * A SECOND GUARD, not a redundant one. ke_bugcheck_emit carries the same
+     * test because it is a HIGHER ingress that mutates shared state before
+     * reaching here; this one covers the direct caller of this function, the
+     * frame-aware fault terminal, which does not pass through that ingress at
+     * all. Neither subsumes the other. Does not return. */
+    if (panic_async_is_parking(ev_cpu))
+        panic_async_park(ev_cpu, frame, error_code, (const char *)0,
+                         PANIC_CTX_UNKNOWN);
 
     /* THE panic-string snapshot. Every consumer below -- the evidence record,
      * the emergency serial dump, the async diagnostic, the no-framebuffer
@@ -2572,186 +3069,16 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         }
     }
 
-    /* --- Async init fault isolation ---
-     * If this CPU is executing an async boot init step, don't crash the
-     * whole system. Record BOOT_FATAL for this step and park the AP.
-     * The BSP's barrier will detect the failure via async_done/async_result. */
+    /* --- Async init fault isolation, FIRST-FAULT entry ---
+     * A CPU already committed to parking never reaches here: panic() takes the
+     * early exit above, before the snapshot and the evidence collection. So the
+     * only question left at this point is whether this CPU is an async worker,
+     * and the answer is read from the GS-independent slot for the same reason
+     * the early check is. */
     {
-        struct per_cpu_data *pcpu = smp_this_cpu();
-        if (pcpu && pcpu->in_async_work) {
-            /* Snapshot the identifying fields BEFORE publishing below. Once
-             * async_done is observed the BSP's barrier exits, and the next async
-             * group clears async_name and re-arms the slot for a DIFFERENT step
-             * -- so reading it afterwards can misattribute the crash, or print
-             * "?", which destroys the value of this diagnostic. */
-            const char *step_name = pcpu->async_name ? pcpu->async_name : "?";
-            /* THE ENTRY context, not a fresh derivation. Same declared-context
-             * rule as the pre-arbitration dump, and the same reason the
-             * collector stopped re-deriving it: panic_declared_ctx reads the
-             * NMI depth through cpu_panic_safe_apic_id(), i.e. a CPUID, which
-             * serializes and exits to the hypervisor under KVM/WHPX. This
-             * branch runs inside the SAME panic entry that already computed
-             * snap_ctx, so a second derivation could not legitimately differ
-             * from it -- it would only cost another exit on the path whose
-             * whole budget is instructions-before-the-record-is-durable. */
-            uint32_t    async_ctx = snap_ctx;
-            uint32_t    step_cpu  = pcpu->cpu_id;
-
-            /* REFUND FIRST, then publish, then diagnose.
-             *
-             * The refund gives back what the GS-independent pre-arbitration
-             * dump above charged: this CPU turns out to be survivable, so it
-             * must not leave the shared terminal allowance spent, or a later
-             * REAL panic would emit its reason and registers on a saturated
-             * budget. It goes BEFORE the publication because everything after
-             * that point is observable: once async_done is visible the BSP
-             * proceeds, and a terminal NMI/#MC landing on this AP in the
-             * meantime would no longer be classified survivable -- and would
-             * find the allowance still spent. The reclamation reads the packed
-             * serial word only for the live generation and writes nothing but
-             * the separate, cacheline-isolated claim array, so it is safe this
-             * early.
-             *
-             * ATTRIBUTABLE, AND IT COVERS EVERY INVOCATION ON THIS CPU. The
-             * reclamation reads this CPU's own claims -- which no other CPU
-             * writes -- and hands back each one that was taken but never charged
-             * by a timeout, so it can neither absorb another CPU's charge nor
-             * credit an epoch that has since been published.
-             *
-             * A DELTA CANNOT DO THIS, which is why it no longer is one. The
-             * previous shape refunded `charges_self() - charges_before` against
-             * a count sampled at panic entry, so a nested abort inside an outer
-             * dump on this CPU carried the OUTER dump's reservations inside its
-             * own baseline and refunded none of them -- leaking up to the whole
-             * pre-arm budget on the CPU that is about to park as its sole
-             * recorded owner (TODO-10 S29).
-             *
-             * SAFE ONLY BECAUSE THIS CPU NEVER RETURNS TO THE FRAME IT
-             * INTERRUPTED. An outer writer frame stopped mid-wait still holds a
-             * token whose slot this frees, and freeing it lets the next reserve
-             * hand the same slot out; if that frame ever resumed, its return
-             * would clear the new holder's charge.
-             *
-             * It never resumes, and the reason is NOT that every later abort
-             * re-enters this branch -- it does not. There are THREE intervals,
-             * and the boundary is the `in_async_work` clear rather than the
-             * `async_done` publication that follows it two stores later:
-             *   - up to the clear, a nested abort passes the async test at the
-             *     top of this branch, re-enters it, and parks;
-             *   - between the clear and the publication, it already FAILS that
-             *     test and takes the terminal path, while the BSP has not yet
-             *     been told anything;
-             *   - after the publication, it takes the terminal path while the
-             *     BSP is proceeding with sequential init.
-             * The invariant that actually holds is weaker than "it re-enters
-             * this branch" and is sufficient for the reclaim: every one of
-             * those paths is non-returning, so none unwinds to the interrupted
-             * writer. Which of them is the CORRECT disposition is a separate
-             * question, filed as TODO-10 S30. */
-            (void)serial_emerg_reclaim_self();
-
-            /* PUBLISH. The BSP barrier waits on async_done to run the sequential
-             * fallback (the loop lives in boot_init.c), so the completion signal
-             * must not depend on the diagnostic below surviving. This ordering
-             * used to be reversed, and the diagnostic was a klog() -- which
-             * takes s_klog_lock and sinks to the ordinary locked serial_write.
-             * An async worker that faulted while holding either lock therefore
-             * self-deadlocked HERE, never published async_done, and hung the BSP
-             * forever on a failure it was designed to recover from. */
-            /* GO OFFLINE BEFORE PUBLISHING. boot_async_group selects its workers
-             * on live online membership plus a lifecycle-claim CAS
-             * (boot_init.c, TODO-10 S21), and this CPU is about to park with
-             * interrupts masked, so it can never take the wake IPI again.
-             * Leaving the flag set means every LATER async group assigns it a
-             * step and then eats the group's whole 10-second barrier deadline
-             * waiting for a CPU that will never answer -- turning one recovered
-             * async fault into a visibly stalled boot.
-             *
-             * ORDERING, attributed precisely: what stops a BSP observing
-             * async_done=1 while still seeing this CPU online is the smp_mb()
-             * below plus x86 TSO -- NOT the RELEASE annotation on this store. A
-             * release store orders EARLIER accesses before ITSELF; it says
-             * nothing about the later async_done store. The annotation is kept
-             * because it correctly publishes this write to the ACQUIRE loads in
-             * boot_init.c and smp.c, but an ARM64 port must keep the fence.
-             *
-             * SCOPE, closed by TODO-10 S21: this CPU is now retired from the
-             * SYSTEM's view of itself, not just from async dispatch. The
-             * retract clears the live online-mask bit (which is what
-             * smp_cpu_count(), NT processor reporting and IRQ affinity read),
-             * parks the async claim word so no later group can dispatch to this
-             * CPU even if it already selected it, and clears is_online last.
-             * All three are atomics -- no lock, no allocation, panic-path
-             * safe. */
-            smp_retract_cpu_online(pcpu);
-
-            pcpu->async_result = (uint8_t)BOOT_FATAL;
-            pcpu->in_async_work = 0;
-            smp_mb();
-            pcpu->async_done = 1;
-            smp_mb();
-
-            /* DIAGNOSE, as ONE record. Built in a stack buffer and emitted with
-             * a single recoverable call: separate fragments would each start a
-             * fresh call-local budget, so a wedged UART could pay a full-length
-             * wait per fragment. Not klog -- this runs before the emergency
-             * latch is armed (the system survives this branch), and no
-             * formatting machinery is trustworthy in a fault context. */
-            {
-                char     rec[224];
-                uint32_t rp = 0;
-
-                panic_append(rec, sizeof rec, &rp, "\n[ASYNC] FAULT on CPU");
-                panic_append_hex(rec, sizeof rec, &rp, step_cpu);
-                panic_append(rec, sizeof rec, &rp, " during '");
-                /* step_name is still CALLER-SUPPLIED and may be the corruption
-                 * being reported, so it keeps the guarded append. The panic
-                 * description does not: it was snapshotted at entry, so it is
-                 * kernel-owned memory here like every literal beside it. */
-                panic_append_guarded(rec, sizeof rec, &rp, step_name, async_ctx);
-                panic_append(rec, sizeof rec, &rp, "': ");
-                panic_append(rec, sizeof rec, &rp, desc_snap);
-                panic_append(rec, sizeof rec, &rp, " (err=");
-                panic_append_hex(rec, sizeof rec, &rp, error_code);
-                panic_append(rec, sizeof rec, &rp, " RIP=");
-                panic_append_hex(rec, sizeof rec, &rp, frame ? frame->rip : 0);
-                panic_append(rec, sizeof rec, &rp, ")\n");
-                serial_write_recoverable(rec);
-            }
-
-            /* HAND BACK THE UART BEFORE PARKING.
-             *
-             * The step that faulted may have been holding g_serial_lock -- an
-             * ordinary klog from inside an async init step is enough. This CPU
-             * never runs again, so nothing else can ever release it, and the
-             * surviving BSP would block forever on its next ordinary serial
-             * write: a silent hang instead of the recovered boot this branch
-             * exists to deliver. Owner-scoped, so a CPU that does not hold the
-             * lock changes nothing.
-             *
-             * After the diagnostic above, not before: that record is emitted
-             * through the bounded try-lock writer, which may itself be the holder,
-             * and releasing first would let another CPU interleave into it. */
-            serial_lock_release_if_owner();
-
-            /* REVOKE THE CROSS-BOOT RECORD. This branch is the one place in the
-             * panic path that KNOWS the machine survives: the BSP falls back to
-             * sequential init and keeps booting. A record left standing here is
-             * restored by the next boot and written to last-panic.txt as an
-             * unexpected shutdown that never happened -- and, holding the only
-             * slot, it refuses that slot to the crash that eventually does kill
-             * the machine. Both halves of that were the section-23 defect.
-             *
-             * AFTER the diagnostic and the UART hand-back, not before: those two
-             * are what make the surviving system usable, and the revoke must not
-             * be able to leave the page owned by a CPU that then faults on its
-             * way to the park. Generation-conditional throughout, so a terminal
-             * invocation that already took the page is untouched. */
-            panic_evidence_abandon(ev_cpu);
-
-            /* Park this AP permanently -- BSP will handle the failure */
-            for (;;) __asm__ volatile("hlt");
-        }
+        struct per_cpu_data *async_pcpu = smp_cpu_by_apic_id(ev_cpu);
+        if (async_pcpu && async_pcpu->in_async_work)
+            panic_async_park(ev_cpu, frame, error_code, desc_snap, snap_ctx);
     }
 
     /* Atomic panic ownership: only the first CPU to panic captures FPU state

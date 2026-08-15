@@ -364,6 +364,20 @@ struct per_cpu_data {
      * always encodes IDLE, which is never 0. */
     uint32_t          async_retired;       /* SMP_ASYNC_CLAIM(IDLE, gen), or 0 */
 
+    /* This CPU's cpu_panic_safe_apic_id(), PLUS ONE, or 0 when never published.
+     * The +1 is the encoding the serial lock owner word uses, for the same
+     * reason: APIC id 0 is legitimate, so a bare field could not distinguish
+     * "the BSP" from "this slot was never brought up", and a lookup scanning for
+     * id 0 would match the first unused slot. Written once by the CPU it
+     * describes (smp_publish_panic_safe_id) and read-only after, so a fault
+     * handler can resolve its own slot with no lock and no GS.
+     *
+     * PLACED AT THE TAIL, not beside the other identity fields where it reads
+     * more naturally: gs:104 through gs:136 are pinned by _Static_assert below
+     * because the KPTI trampoline indexes them from assembly, and inserting
+     * ahead of those shifts every one of them. */
+    volatile uint32_t panic_safe_id_plus1;
+
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
      * On each kmalloc() call, a non-zero value decrements; when the
@@ -671,6 +685,51 @@ struct per_cpu_data *smp_this_cpu(void);
 
 /* Get per-CPU data for a specific CPU */
 struct per_cpu_data *smp_get_cpu(uint32_t cpu_id);
+
+/* Publish THIS CPU's panic-safe identity into its own slot, so a fault handler
+ * can find the slot again without GS. Call once per CPU, from that CPU, before
+ * it can run any work a panic would have to clean up after.
+ *
+ * A SEPARATE FIELD FROM lapic_id, and the separation is the point.
+ * cpu_security.h states that a cpu_panic_safe_apic_id() value is only ever
+ * compared against another value from THAT helper: it is the CPUID leaf-1
+ * INITIAL apic id, while lapic_id carries the MADT/LAPIC-register id. The two
+ * agree on every machine this repo supports and are permitted to diverge in
+ * principle, so a lookup that matched one against the other would fail silently
+ * and exactly once -- on the firmware that remaps them -- by returning the
+ * wrong slot or none at all. */
+void smp_publish_panic_safe_id(struct per_cpu_data *pcpu);
+
+/* May a CPU observing `observed_panic_id` clear the SHARED online-mask bit of a
+ * slot publishing `slot_panic_id_plus1`? 1 = identities agree, 0 = refuse.
+ *
+ * Pure, and split out precisely because the answer is otherwise unobservable on
+ * the machines that run the tests. The gate used to compare the slot's
+ * `lapic_id` against a CPUID-derived id -- two different derivations that agree
+ * on every supported machine and are permitted to diverge on firmware that
+ * remaps the LAPIC id. A regression back to that comparison would pass every
+ * live assertion and, on the one firmware where it matters, refuse the clear and
+ * leave a permanently parked CPU set in the mask for later async groups to
+ * select and wait out. Here both sides are panic-safe ids, and a fixture can
+ * hand it a deliberate mismatch. An unpublished slot reads 0 and is refused. */
+int smp_retract_may_clear_mask(uint32_t slot_panic_id_plus1,
+                               uint32_t observed_panic_id);
+
+/* Resolve a per-CPU slot from a CPUID-derived local APIC id, WITHOUT reading GS.
+ *
+ * The panic path's identity rule, completed. smp_this_cpu() reads gs:0 and
+ * silently substitutes &cpu_data[0] when that read yields 0, so on the corrupt-
+ * GS CPU that most needs an answer it returns the BSP's slot and reports no
+ * error -- which is why smp_retract_cpu_online has to re-check the identity
+ * itself before touching the shared mask. Pair this with cpu_panic_safe_apic_id()
+ * and the slot and the id name the same CPU by construction, so a fault handler
+ * can mutate its own lifecycle state without trusting a segment base.
+ *
+ * Returns NULL when no slot carries that id. Reads only the per-CPU array, so
+ * it cannot fault and needs no lock; the values it reads are written once at
+ * bringup. Matching is on the low 8 bits, the same width every panic-path
+ * identity consumer uses. */
+struct per_cpu_data *smp_cpu_by_apic_id(uint32_t apic_id);
 
 /* Convenience macro */
 #define this_cpu()    smp_this_cpu()

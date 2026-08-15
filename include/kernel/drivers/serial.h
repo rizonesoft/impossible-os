@@ -6,8 +6,30 @@
 
 #include "kernel/types.h"
 
-/* Initialize COM1 serial port */
+/* Early bring-up on the compiled-in COM1 default. Reads NO boot_info: it runs
+ * before boot_hw.c has validated and copied the handoff, so every field would
+ * read zero (TODO-10 S30). Must run after smp_early_bsp_init(). */
 void serial_init(void);
+
+/* Apply the bootloader's serial findings. Call ONCE, after the boot_info
+ * handoff has been validated and copied -- until then the struct is zeroed and
+ * this would read an all-zero report as a genuine one. Adopts the reported I/O
+ * base and records whether the probe found a UART at all. */
+void serial_adopt_boot_info(void);
+
+/* 1 = the bootloader probed ACPI SPCR, COM1 and COM2 and found no UART.
+ *
+ * Output is NOT disabled by this: the port stays COM1, because the probe
+ * false-negatives on firmware without a scratch register and silencing such a
+ * machine costs the whole diagnostic channel (boot-code-quality Gate 8, the
+ * 2026-04-11 incident). What it disables is the emergency path's full-length
+ * WAITS, whose entire budget would otherwise be spent on a transmitter already
+ * shown not to answer -- a bounded cost either way round.
+ *
+ * Meaningful only AFTER serial_init; reads 0 before it. Exposed so boot_hw.c
+ * can ANNOUNCE the state through klog, which the driver cannot do itself
+ * without calling up into its own consumer. */
+int serial_uart_probed_absent(void);
 
 /* Write a single character to serial */
 void serial_putchar(char c);

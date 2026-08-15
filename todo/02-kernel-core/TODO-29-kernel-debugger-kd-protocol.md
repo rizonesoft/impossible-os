@@ -94,6 +94,11 @@ title: "TODO-29 -- Kernel Debugger (KD Protocol)"
   outb(SERIAL_PORT + 4, 0x0B);  /* RTS+DTR+OUT2 (OUT2 enables IRQ to PIC) */
   ```
 - [ ] After init, enable RX interrupts: `outb(SERIAL_PORT + 1, 0x01)` (IER bit 0 = Received Data Available Interrupt; KD uses same line when IRQ path is primary)
+- [ ] Decide whether the bootloader-reported `g_boot_info.serial_baud` is adopted, now that the handoff is readable at all -> XREF: `01-boot-platform/TODO-10 §30` (item: "Decide whether a bootloader-reported serial port of 0 means \"no UART\"").
+  - IT HAS NEVER RUN, which is why the decision is open rather than already made. `serial_init` read `g_boot_info` at `boot_hw.c:96`, sixty lines before the handoff is validated and copied at `boot_hw.c:160` -- `boot_hw.c:124` says outright the struct is still zero-initialised there -- so the SPCR baud arm always saw 0 and preserved the firmware divisor.
+  - TODO-10 §30 split the driver into `serial_init` (early, reads no boot_info) and `serial_adopt_boot_info` (post-copy), so a baud arm placed in the latter would take effect for the first time. It adopts the reported BASE already; the rate was deliberately left out.
+  - THE RISK IS ASYMMETRIC WITH THE PORT. Adopting a reported base can only help: a machine whose console is COM2 or an SPCR-declared base currently receives nothing from the kernel. Adopting a reported RATE can make a working console worse -- the I/O-probe path reports a synthesised 38400 rather than a measured rate, so honouring it would reprogram a machine whose firmware left the line at 115200 and garble every byte after that point.
+  - The conservative shape, if this section keeps 115200 as its own baseline: adopt the reported rate only for `BOOT_SERIAL_SOURCE_SPCR` (firmware-authoritative) and keep preserving the firmware divisor for `BOOT_SERIAL_SOURCE_PROBE`, whose 38400 is an assumption rather than a reading. `serial_adopt_boot_info` already calls `serial_program_uart(divisor)` with 0, so the change is the argument plus its source test.
 - [ ] Commit: `"kernel/serial: 115200 baud 8N1 FIFO COM1 baseline"`
 
 **Test checkpoint:** Serial log readable at 115200; line control matches divisor 1 for 115200 with 8N1. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

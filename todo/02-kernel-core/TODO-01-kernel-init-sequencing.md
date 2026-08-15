@@ -201,7 +201,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 > - Scope: §3 owns Phase 1 init order + `sti` placement; per-subsystem typed fatal/degraded propagation is §2/§4, deferred PS/2 mouse is §11.
 >
 > **Verified:** 2026-06-20 | commit `840d0ea8` | 23/25 items | build OK | smoke PASS (KVM 2.66s)
-> **Accepted:** [M] `kd_init()` Phase-1 wiring blocked -- callee absent from tree -> XREF: 02-kernel-core/TODO-29 §4 (item: "`kd_init()` -- called from Phase 1 kernel init" at line 186)
+> **Accepted:** [M] `kd_init()` Phase-1 wiring blocked -- callee absent from tree -> XREF: 02-kernel-core/TODO-29 §4 (item: "`kd_init()` -- called from Phase 1 kernel init" at line 191)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed | scope: kernel-code-quality
 
 ---

@@ -111,6 +111,10 @@ void smp_early_bsp_init(void)
      * garbage instead of NULL -- crashing the IRQL code. */
     cpu_data[0].self          = &cpu_data[0];
     cpu_data[0].cpu_id        = 0;
+    /* BEFORE anything that could fault. The panic park path resolves its slot
+     * through this field and nothing else, so a BSP that faulted between here
+     * and a later publish point would be unable to find its own block. */
+    smp_publish_panic_safe_id(&cpu_data[0]);
     /* Publishes is_online, the claim word (IDLE) and online-mask bit 0 in one
      * place, so smp_cpu_count() reports the BSP from Phase 0 onward rather
      * than depending on smp_init() having run. */
@@ -229,6 +233,10 @@ void ap_entry(uint32_t cpu_index)
         }
         pcpu->lapic_id = live;
     }
+    /* Published immediately after the identity guard above accepted this slot,
+     * and long before any async init step can be dispatched here -- the panic
+     * park path has no other way to find this block without GS. */
+    smp_publish_panic_safe_id(pcpu);
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
     pcpu->current_irql  = PASSIVE_LEVEL;
@@ -864,7 +872,23 @@ void smp_retract_cpu_online(struct per_cpu_data *pcpu)
      * Mask bit FIRST, so no window exists in which a consumer still counts a
      * CPU that has already stopped answering. Panic-path safe: three atomics,
      * no lock, no allocation, no klog. */
-    if ((pcpu->lapic_id & CPU_PANIC_SAFE_ID_MASK) == cpu_panic_safe_apic_id())
+    /* MATCHED IN THE PANIC-SAFE DOMAIN, not against lapic_id. This test used to
+     * compare `pcpu->lapic_id` with cpu_panic_safe_apic_id(), which are
+     * different derivations -- the MADT/LAPIC-register id against the CPUID
+     * leaf-1 initial apic id -- and cpu_security.h is explicit that a panic-safe
+     * id is only ever compared with another panic-safe id. They agree on every
+     * machine this repo supports, which is what would have made the failure
+     * silent and confined to the firmware that remaps them: the caller resolves
+     * its slot in the panic-safe domain and succeeds, this test then refuses,
+     * and the CPU halts while still set in the online mask. Every later async
+     * group would select it and wait out the full barrier deadline for a CPU
+     * that can never answer, which is the stall the retract exists to prevent.
+     *
+     * A slot whose id was never published reads 0 and matches nothing, so the
+     * mask clear is refused there too. That is the conservative direction: an
+     * unidentifiable CPU must not edit shared state. */
+    if (smp_retract_may_clear_mask(pcpu->panic_safe_id_plus1,
+                                   cpu_panic_safe_apic_id()))
         smp_mask_clear(&online_mask, pcpu->cpu_id);
     smp_async_claim_park(&pcpu->async_claim);
     __atomic_store_n(&pcpu->is_online, 0u, __ATOMIC_RELEASE);
@@ -1169,4 +1193,82 @@ struct per_cpu_data *smp_get_cpu(uint32_t cpu_id)
     if (cpu_id >= MAX_CPUS)
         return (struct per_cpu_data *)0;
     return &cpu_data[cpu_id];
+}
+
+int smp_retract_may_clear_mask(uint32_t slot_panic_id_plus1,
+                               uint32_t observed_panic_id)
+{
+    /* An unpublished slot encodes 0 and matches nothing, so it falls out here
+     * without a special case: 0 can never equal a masked id plus one. */
+    return slot_panic_id_plus1 ==
+           (observed_panic_id & CPU_PANIC_SAFE_ID_MASK) + 1u;
+}
+
+void smp_publish_panic_safe_id(struct per_cpu_data *pcpu)
+{
+    if (!pcpu)
+        return;
+
+    /* Derived HERE, on the CPU being described, rather than passed in: the
+     * whole guarantee is that the value came from this CPU's own CPUID, so a
+     * caller cannot publish an identity it merely believes. */
+    {
+        uint32_t want = (cpu_panic_safe_apic_id() & CPU_PANIC_SAFE_ID_MASK) + 1u;
+        struct per_cpu_data *held = smp_cpu_by_apic_id(want - 1u);
+
+        /* AMBIGUITY IS REFUSED RATHER THAN PUBLISHED. Two CPUs cannot report the
+         * same CPUID leaf-1 initial apic id on any configuration this repo
+         * supports -- cpu_security.h states outright that the 8-bit id aliases
+         * only above 255 logical CPUs, and x2APIC systems that large are
+         * unsupported repo-wide -- so this branch is a net for a broken or
+         * lying platform, not an expected path.
+         *
+         * It matters because the failure is otherwise SILENT and asymmetric: a
+         * second CPU publishing a duplicate would make every lookup for that id
+         * resolve to the FIRST slot, so a fault on the second CPU would retract
+         * and publish completion into another CPU's lifecycle fields and leave
+         * the genuinely dead CPU online and schedulable. Declining to publish
+         * costs the impostor its own park bookkeeping -- the panic path finds no
+         * slot and skips the steps that need one -- which is a degraded outcome
+         * confined to the CPU that is already dying, instead of corruption of a
+         * live one. */
+        if (held && held != pcpu) {
+            klog(LOG_ERROR, "SMP",
+                 "panic-safe id %u already claimed by cpu %u -- cpu %u not published",
+                 (uint64_t)(want - 1u), (uint64_t)held->cpu_id,
+                 (uint64_t)pcpu->cpu_id);
+            return;
+        }
+
+        __atomic_store_n(&pcpu->panic_safe_id_plus1, want, __ATOMIC_RELEASE);
+    }
+}
+
+struct per_cpu_data *smp_cpu_by_apic_id(uint32_t apic_id)
+{
+    const uint32_t want = (apic_id & CPU_PANIC_SAFE_ID_MASK) + 1u;
+    uint32_t i;
+
+    /* A LINEAR SCAN, and the linearity is the point: the whole value of this
+     * function is that it touches nothing but this file's own BSS array, so it
+     * cannot fault however corrupt the executing CPU's GS is. An index derived
+     * from the id would be faster and would be a lookup through the very data
+     * the caller is trying to avoid trusting. MAX_CPUS is small and the only
+     * caller is the panic park path, which runs at most once per CPU per boot.
+     *
+     * MATCHED AGAINST panic_safe_id_plus1 AND NOT lapic_id. Those are different
+     * identity domains -- CPUID leaf-1 initial apic id against the MADT/LAPIC
+     * register id -- and cpu_security.h is explicit that a panic-safe id is only
+     * ever compared with another panic-safe id. They agree on every machine this
+     * repo supports, which is exactly what would make a cross-domain compare
+     * fail silently and only on the firmware that remaps them.
+     *
+     * The +1 encoding removes the unpublished-slot case rather than reasoning
+     * about it: a slot that never ran reads 0 and matches no id at all. */
+    for (i = 0u; i < MAX_CPUS; i++) {
+        if (__atomic_load_n(&cpu_data[i].panic_safe_id_plus1,
+                            __ATOMIC_ACQUIRE) == want)
+            return &cpu_data[i];
+    }
+    return (struct per_cpu_data *)0;
 }

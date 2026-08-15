@@ -18,6 +18,7 @@
 #include "kernel/test/test.h"
 #include "kernel/panic.h"
 #include "kernel/idt.h"
+#include "kernel/smp.h"           /* smp_cpu_by_apic_id -- GS-independent slot lookup */
 #include "kernel/drivers/serial.h"   /* PANIC_CTX_* -- snapshot context table */
 #include "kernel/mm/vmm.h"           /* vmm_get_physical: find an unmapped VA safely */
 #include "kernel/mm/pmm.h"           /* two-frame fixture for the mid-copy fault */
@@ -584,10 +585,376 @@ static void test_panic_frames_null_frame_walks_live(void)
                 "and records a real return address in the first slot");
 }
 
+/* ---- Async-worker park: disposition table and staged cleanup (S30) ----
+ *
+ * Both helpers are pure over their arguments, which is why they exist as
+ * helpers: the behaviour they encode is what a second fault on a parking CPU
+ * does, and there is no way to schedule a real nested abort into the middle of
+ * the panic tail from a unit test. The live branch in panic.c is verified by
+ * the multi-platform boot matrix; the DECISIONS it makes are verified here. */
+
+static void test_park_async_worker_always_isolates(void)
+{
+    /* A CPU still identifying as an async worker has not published, so it owes
+     * the publication no matter how far a stage word claims to have got. This
+     * is the row that stops a stale stage talking the branch out of telling the
+     * BSP anything -- the BSP would otherwise sit out its whole barrier. */
+    TEST_ASSERT_EQ(panic_async_disposition(1, PANIC_PARK_NONE),
+                   PANIC_ASYNC_ISOLATE,
+                   "first entry on an async worker isolates and publishes");
+    TEST_ASSERT_EQ(panic_async_disposition(1, PANIC_PARK_DIAGNOSED),
+                   PANIC_ASYNC_ISOLATE,
+                   "in_async_work outranks even a fully advanced stage");
+}
+
+static void test_park_not_parking_is_terminal(void)
+{
+    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_NONE),
+                   PANIC_ASYNC_TERMINAL,
+                   "an ordinary CPU with no park stage takes terminal arbitration");
+}
+
+static void test_park_pre_publication_still_isolates(void)
+{
+    /* THE INTERVAL THE SECTION EXISTS FOR. in_async_work has been cleared but
+     * the completion is not out yet, so a nested abort here must still run the
+     * publishing tail rather than reboot a machine that is recovering. */
+    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_ENTERED),
+                   PANIC_ASYNC_ISOLATE,
+                   "nested abort before the publication settles still owes it");
+}
+
+static void test_park_post_publication_parks_quietly(void)
+{
+    /* The boundary is the PUBLISHED stage exactly, not the park: once the BSP
+     * has been told, re-running the publication would write a completion into a
+     * slot this CPU has given up. */
+    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_PUBLISHED),
+                   PANIC_ASYNC_PARK,
+                   "the publication stage is the boundary between isolate and park");
+    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_DIAGNOSED),
+                   PANIC_ASYNC_PARK,
+                   "and every later stage parks without republishing");
+}
+
+static void test_park_claim_is_at_most_once(void)
+{
+    volatile uint8_t slot = PANIC_PARK_NONE;
+
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_ENTERED), 1,
+                   "a fresh slot grants the first step");
+    TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_ENTERED,
+                   "and records it before the caller performs it");
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_ENTERED), 0,
+                   "the same step is never granted twice");
+    TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_ENTERED,
+                   "and a refused claim leaves the slot untouched");
+}
+
+static void test_park_claim_never_moves_backwards(void)
+{
+    volatile uint8_t slot = PANIC_PARK_NONE;
+
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_PUBLISHED), 1,
+                   "a nested entry may resume at a later step");
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_ENTERED), 0,
+                   "an already-passed step is refused, never re-run");
+    TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_PUBLISHED,
+                   "and the stage does not regress");
+}
+
+static void test_park_second_pass_claims_nothing(void)
+{
+    /* THE PROPERTY THAT BOUNDS THE RECURSION. Walk the whole ladder as the
+     * first entry does, then walk it again as a nested abort would: the second
+     * pass must perform no step at all, so a fault inside any step cannot make
+     * the tail restart it, and the park is reached in a bounded number of
+     * entries however many aborts land on the CPU. */
+    static const uint32_t ladder[] = {
+        PANIC_PARK_ENTERED, PANIC_PARK_PUBLISHED, PANIC_PARK_DIAGNOSED,
+    };
+    volatile uint8_t slot = PANIC_PARK_NONE;
+    uint32_t granted = 0u;
+    uint32_t i;
+
+    for (i = 0u; i < (uint32_t)(sizeof ladder / sizeof ladder[0]); i++)
+        granted += (uint32_t)panic_park_claim_step(&slot, ladder[i]);
+    TEST_ASSERT_EQ(granted, (uint32_t)(sizeof ladder / sizeof ladder[0]),
+                   "the first entry performs every step of the tail exactly once");
+
+    granted = 0u;
+    for (i = 0u; i < (uint32_t)(sizeof ladder / sizeof ladder[0]); i++)
+        granted += (uint32_t)panic_park_claim_step(&slot, ladder[i]);
+    TEST_ASSERT_EQ(granted, 0u,
+                   "a nested entry re-walking the tail performs no step again");
+    TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_DIAGNOSED,
+                   "and the stage rests at the end of the ladder");
+}
+
+static void test_park_claim_interrupted_at_every_stage(void)
+{
+    /* THE ORDERING A REAL NESTED ABORT PRODUCES, which the full-ladder replay
+     * above does NOT cover: the fault lands after some INTERMEDIATE step was
+     * claimed and before its action finished, and the nested entry then re-walks
+     * the tail from the top. For every such interruption point the already-
+     * claimed prefix must stay refused (so no step is ever performed twice, and
+     * a step that faulted is never retried) and the whole unclaimed suffix must
+     * still be granted exactly once (so the cleanup is not abandoned and the
+     * park is still reached). Both halves are needed: refusing everything would
+     * strand the UART lock and the crash record, and granting the prefix again
+     * would restore the unbounded fault loop the stage exists to prevent. */
+    static const uint32_t ladder[] = {
+        PANIC_PARK_ENTERED, PANIC_PARK_PUBLISHED, PANIC_PARK_DIAGNOSED,
+    };
+    const uint32_t n = (uint32_t)(sizeof ladder / sizeof ladder[0]);
+    uint32_t cut, i;
+
+    for (cut = 0u; cut < n; cut++) {
+        volatile uint8_t slot = PANIC_PARK_NONE;
+        uint32_t granted = 0u;
+
+        /* Interrupt exactly here: the first entry got as far as claiming
+         * ladder[cut] and never returned from performing it. */
+        for (i = 0u; i <= cut; i++)
+            (void)panic_park_claim_step(&slot, ladder[i]);
+        TEST_ASSERT_EQ((uint32_t)slot, ladder[cut],
+                       "the interrupted entry leaves the stage at the step it claimed");
+
+        /* The nested abort re-walks the whole tail from the top. */
+        for (i = 0u; i < n; i++) {
+            int got = panic_park_claim_step(&slot, ladder[i]);
+            if (i <= cut)
+                TEST_ASSERT_EQ(got, 0,
+                               "a step the interrupted entry already claimed is never re-run");
+            else
+                TEST_ASSERT_EQ(got, 1,
+                               "every step it had not reached is still performed once");
+            granted += (uint32_t)got;
+        }
+
+        TEST_ASSERT_EQ(granted, n - cut - 1u,
+                       "the nested entry performs exactly the unfinished suffix");
+        TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_DIAGNOSED,
+                       "and the tail still completes, so the CPU reaches the park");
+    }
+}
+
+static void test_park_publication_settles_after_its_stores(void)
+{
+    /* THE PUBLICATION IS RECORDED AFTER ITS STORES, NOT BEFORE, and this pins
+     * the direction the error leans. An abort landing between the stores and
+     * the claim leaves the stage at ENTERED, so the nested entry recomputes
+     * ISOLATE and writes the completion again -- idempotent, and the BSP is told
+     * either way. The opposite order would let the same abort leave a completion
+     * RECORDED and never WRITTEN, and the BSP would wait out its whole barrier
+     * deadline on a signal that was never sent. */
+    volatile uint8_t slot = PANIC_PARK_NONE;
+
+    (void)panic_park_claim_step(&slot, PANIC_PARK_ENTERED);
+    TEST_ASSERT_EQ(panic_async_disposition(0, (uint32_t)slot),
+                   PANIC_ASYNC_ISOLATE,
+                   "an abort before the stores settle still owes the publication");
+
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_PUBLISHED), 1,
+                   "the stores having run, the publication is recorded settled");
+    TEST_ASSERT_EQ(panic_async_disposition(0, (uint32_t)slot),
+                   PANIC_ASYNC_PARK,
+                   "and every later entry parks instead of republishing");
+}
+
+static void test_guarded_append_never_walks_in_a_forbidden_context(void)
+{
+    /* THE FALLBACK IS A PLACEHOLDER, NOT THE POINTER. The park path's early
+     * guards enter with PANIC_CTX_UNKNOWN and still render the async step name,
+     * which is BSP-supplied; if the forbidden-context branch handed that pointer
+     * to the raw appender, a corrupt one would fault while handling an NMI or a
+     * double fault -- a triple fault and a machine reset before the UART is
+     * handed back. The probe is the same non-canonical address the snapshot
+     * tests use, so a regression FAULTS rather than quietly rendering. */
+    char     buf[96];
+    uint32_t pos = 0u;
+
+    panic_append_guarded(buf, sizeof buf, &pos, TD_UNREADABLE_SRC,
+                         PANIC_CTX_UNKNOWN);
+    buf[pos] = '\0';
+    TEST_ASSERT(td_streq(buf, PANIC_STR_NO_GUARD),
+                "UNKNOWN context renders the placeholder, never walking the pointer");
+
+    pos = 0u;
+    panic_append_guarded(buf, sizeof buf, &pos, TD_UNREADABLE_SRC,
+                         PANIC_CTX_NMI);
+    buf[pos] = '\0';
+    TEST_ASSERT(td_streq(buf, PANIC_STR_NO_GUARD),
+                "and so does NMI context, which the park path also enters with");
+}
+
+static void test_guarded_append_placeholder_for_a_readable_pointer(void)
+{
+    /* THE GENERAL PROPERTY, not just the old regression. The non-canonical
+     * probe above proves the direct raw-appender fallback would fault, but an
+     * implementation that special-cased non-canonical addresses and raw-walked
+     * everything else would pass it -- and a corrupt panic pointer is very often
+     * canonical and merely unmapped. A perfectly READABLE literal in a forbidden
+     * context must still render the placeholder, which no pointer-classifying
+     * implementation can satisfy. */
+    char     buf[96];
+    uint32_t pos = 0u;
+
+    panic_append_guarded(buf, sizeof buf, &pos, "definitely-readable",
+                         PANIC_CTX_UNKNOWN);
+    buf[pos] = '\0';
+    TEST_ASSERT(td_streq(buf, PANIC_STR_NO_GUARD),
+                "a readable string still renders the placeholder in UNKNOWN context");
+
+    pos = 0u;
+    panic_append_guarded(buf, sizeof buf, &pos, "definitely-readable",
+                         PANIC_CTX_NORMAL);
+    buf[pos] = '\0';
+    TEST_ASSERT(td_streq(buf, "definitely-readable"),
+                "and the same string IS copied where the guarded read is allowed");
+}
+
+static void test_guarded_append_holds_its_buffer_contract(void)
+{
+    char     buf[8];
+    uint32_t pos;
+
+    /* cap 0 must write NOTHING: the underlying appender's terminator store is
+     * unconditional, so a zero cap used to put a byte past the buffer. */
+    buf[0] = 0x5A;
+    pos    = 0u;
+    panic_append_guarded(buf, 0u, &pos, "x", PANIC_CTX_NORMAL);
+    TEST_ASSERT_EQ((uint64_t)(uint8_t)buf[0], 0x5Au, "cap 0 leaves the buffer untouched");
+    TEST_ASSERT_EQ((uint64_t)pos, 0u, "and does not advance the position");
+
+    /* A position already at the end is the same hazard wearing a different
+     * hat -- the terminator would land on buf[cap]. */
+    buf[7] = 0x5A;
+    pos    = 8u;
+    panic_append_guarded(buf, 8u, &pos, "x", PANIC_CTX_NORMAL);
+    TEST_ASSERT_EQ((uint64_t)pos, 8u, "a full buffer refuses to advance");
+    TEST_ASSERT_EQ((uint64_t)(uint8_t)buf[7], 0x5Au, "and writes nothing");
+
+    /* A cap smaller than the placeholder truncates inside the buffer. */
+    pos = 0u;
+    panic_append_guarded(buf, sizeof buf, &pos, "x", PANIC_CTX_UNKNOWN);
+    TEST_ASSERT(pos < sizeof buf, "a short buffer truncates the placeholder");
+    TEST_ASSERT_EQ((uint64_t)buf[pos], 0u, "and still terminates inside the buffer");
+}
+
+static void test_park_claim_rejects_a_step_outside_the_ladder(void)
+{
+    /* THE NARROWING THE 32-BIT COMPARE HIDES. The slot is 8 bits, so a step of
+     * 256 passes `cur >= step` and then stores its low byte -- moving a fully
+     * advanced stage back to NONE, which reads as "not parking" and would
+     * reopen terminal arbitration in the middle of a park. */
+    volatile uint8_t slot = PANIC_PARK_DIAGNOSED;
+
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, 256u), 0,
+                   "a step above the 8-bit slot is refused, not truncated");
+    TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_DIAGNOSED,
+                   "and the stage does not fall back to NONE");
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_NONE), 0,
+                   "claiming NONE is refused: it is the absence of a stage");
+    TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_DIAGNOSED + 1u), 0,
+                   "and so is one past the end of the ladder");
+    TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_DIAGNOSED,
+                   "the slot is byte-identical after every refusal");
+}
+
+static void test_retract_mask_gate_is_panic_safe_domain(void)
+{
+    /* THE DECISIVE NEGATIVE, which live state cannot show: the two identity
+     * derivations agree on every machine that runs this suite, so only a
+     * fixture can prove the gate reads the panic-safe field rather than
+     * lapic_id. A regression to the old comparison would pass everything else
+     * and then, on firmware that remaps the LAPIC id, refuse the mask clear and
+     * leave a parked CPU online for later async groups to select. */
+    TEST_ASSERT_EQ(smp_retract_may_clear_mask(0x0Au + 1u, 0x0Au), 1,
+                   "matching panic-safe identities permit the mask clear");
+    TEST_ASSERT_EQ(smp_retract_may_clear_mask(0x0Bu + 1u, 0x0Au), 0,
+                   "a slot publishing a different id is refused");
+    TEST_ASSERT_EQ(smp_retract_may_clear_mask(0u, 0x0Au), 0,
+                   "an unpublished slot is refused");
+    TEST_ASSERT_EQ(smp_retract_may_clear_mask(0u, 0u), 0,
+                   "including against APIC id 0, which the +1 encoding separates");
+    TEST_ASSERT_EQ(smp_retract_may_clear_mask(1u, 0u), 1,
+                   "while APIC id 0 published as 1 does permit it");
+    TEST_ASSERT_EQ(smp_retract_may_clear_mask(0x0Au + 1u, 0x10Au), 1,
+                   "the observed id is masked to 8 bits before comparison");
+}
+
+static void test_park_slot_resolves_without_gs(void)
+{
+    /* THE ROUND TRIP THE PARK PATH DEPENDS ON. Read-only over live per-CPU
+     * state: the executing CPU derives its own panic-safe id from CPUID and must
+     * find the slot that published that same id, with no GS involved. If this
+     * fails, a nested abort cannot retract its CPU or publish its completion.
+     *
+     * Matched on panic_safe_id_plus1 rather than lapic_id deliberately: those
+     * are different identity domains (CPUID leaf-1 initial apic id against the
+     * MADT/LAPIC register id) and cpu_security.h is explicit that a panic-safe
+     * id is only ever compared with another panic-safe id. */
+    uint32_t             me   = cpu_panic_safe_apic_id();
+    struct per_cpu_data *slot = smp_cpu_by_apic_id(me);
+
+    TEST_ASSERT(slot != (struct per_cpu_data *)0,
+                "the executing CPU resolves its own slot from its CPUID id");
+    TEST_ASSERT_EQ(slot->panic_safe_id_plus1,
+                   (me & CPU_PANIC_SAFE_ID_MASK) + 1u,
+                   "and the slot carries exactly the id that was looked up");
+    TEST_ASSERT(slot->panic_safe_id_plus1 != 0u,
+                "a published slot is never 0, so an unpublished one cannot alias it");
+}
+
+static void test_park_claim_rejects_null_slot(void)
+{
+    /* The panic path is the worst place to fault out of a bookkeeping helper,
+     * so a NULL slot is refused rather than dereferenced. */
+    TEST_ASSERT_EQ(panic_park_claim_step((volatile uint8_t *)0,
+                                         PANIC_PARK_ENTERED), 0,
+                   "a NULL stage slot is refused, not dereferenced");
+}
+
 /* ---- Registration ---- */
 
 void test_register_panic(void)
 {
+    test_suite_register_cat("Crash: async worker always isolates",
+                            test_park_async_worker_always_isolates, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: no park stage means terminal arbitration",
+                            test_park_not_parking_is_terminal, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: nested abort before publication isolates",
+                            test_park_pre_publication_still_isolates, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: nested abort after publication parks",
+                            test_park_post_publication_parks_quietly, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: park step is claimed at most once",
+                            test_park_claim_is_at_most_once, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: park stage never moves backwards",
+                            test_park_claim_never_moves_backwards, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: nested park pass performs no step again",
+                            test_park_second_pass_claims_nothing, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: park resumes correctly from every interruption point",
+                            test_park_claim_interrupted_at_every_stage, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: publication settles after its stores",
+                            test_park_publication_settles_after_its_stores, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: guarded append never walks in a forbidden context",
+                            test_guarded_append_never_walks_in_a_forbidden_context,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: guarded append renders a placeholder for a readable pointer",
+                            test_guarded_append_placeholder_for_a_readable_pointer,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: guarded append holds its buffer contract",
+                            test_guarded_append_holds_its_buffer_contract, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: park claim rejects a step outside the ladder",
+                            test_park_claim_rejects_a_step_outside_the_ladder, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: retract mask gate uses the panic-safe domain",
+                            test_retract_mask_gate_is_panic_safe_domain, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: park slot resolves without GS",
+                            test_park_slot_resolves_without_gs, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: park claim rejects a NULL slot",
+                            test_park_claim_rejects_null_slot, TEST_CAT_BOOT);
+
     test_suite_register_cat("Crash: snapshot copies in NORMAL ctx",
                             test_panic_snap_copies_normal, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: snapshot NULL uses fallback",

@@ -93,6 +93,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  20   | Bootloader build identity in handoff               | §1, §2, §17                        |  [x]   |
 | 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [x]   |
 | ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
+| 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [ ]   |
 
 ---
 
@@ -813,6 +814,25 @@ From the stamped section 1:
 > - Operator decisions: whether `boot_phase0` should FAIL CLOSED on a handoff pointer that disagrees with the compiled base (a new refusal in the earliest boot path, which would reject any third-party or experimental loader), and whether moving the base warrants a `BOOT_INFO_VERSION` bump.
 > - Reachable when unparked: the items are concrete and independently checkable; the blocker is authority, not analysis. Filed and re-raised by §21's review -- the [H] gap is live today, so this park is a scheduling decision, not a judgement that the gap is minor.
 > -> XREF: [§21](#21-post-ship-follow-up-backfill-orphan-cohort-2026-07-31) -- four Deferred stamps there name the individual findings that fill this section.
+
+---
+
+## 23. Integrity Coverage for the Handoff Payload Body
+
+> **Spawned-by:** root
+>
+> Validation today covers the ENVELOPE and not the CONTENTS. `boot_info_validate_addr` proves the pointer is non-NULL, aligned and inside the bootloader's identity map, and `boot_info_validate_header` proves magic, version and size. Nothing checks the several hundred bytes behind that header, so every scalar the kernel consumes -- device bases, framebuffer address and pitch, memory-map counts, capability words -- is trusted on the strength of a correct 8-byte header alone.
+
+That is a coverage gap rather than a live exploit, and it was surfaced by a consumer that had to work around it. `serial_select_port` adopts an ACPI SPCR-reported I/O base and programs offsets 1 through 4 at that base during Phase 0; an SPCR entry is architecturally allowed to name a vendor-custom base, but the kernel refuses all of them and accepts only the four legacy COM bases, because a numeric range would let a corrupted `serial_source`/`serial_port` pair name 0xCF8 (PCI CONFIG_ADDRESS) and have the earliest boot path write to it. The narrowing is correct as a local defence and it costs real hardware support, which is the shape of every consumer that will hit this next.
+
+- [ ] Decide what integrity means for the payload body: a bootloader-produced checksum or MAC over `header.size` bytes validated before any field is read, or a per-field validity discipline the consumers apply themselves.
+  - The envelope validators are in [`src/kernel/main/boot_version.c`](../../src/kernel/main/boot_version.c) and `boot_info_validate_addr`/`_validate_header`; the copy they gate is at `boot_hw.c:160`. A body check belongs between those two, before the first consumer runs.
+  - A checksum needs a `BOOT_INFO_VERSION` bump and a matching producer change in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), so both halves must ship together -- the kernel would otherwise halt on every boot with a mismatched loader.
+  - The payload-descriptor blocks already carry a `checksum` field, so decide whether this extends that mechanism to the scalar body or is a separate header-level digest.
+- [ ] Once the body is checked, revisit the consumers that narrowed themselves to compensate, starting with the SPCR base -> XREF: `01-boot-platform/TODO-10 §30` (item: "Decide whether a bootloader-reported serial port of 0 means \"no UART\"").
+- [ ] Commit: `"boot: integrity coverage for the handoff payload body"`
+
+**Test checkpoint:** A fixture handoff whose header is valid and whose body has one flipped byte is REFUSED before any consumer reads a field, and the refusal names the body rather than the header; an unmodified handoff is accepted unchanged. The existing `test_boot_info.c` payload-descriptor tests still pass, and a bootloader built from the same tree boots on all four smoke-matrix legs.
 
 ---
 
