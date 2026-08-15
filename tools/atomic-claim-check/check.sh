@@ -46,6 +46,31 @@ AUDITED=(
     serial_lock_try_release_owned   # its exact-owner inverse
     serial_emerg_claim_slot         # a wedged-UART allowance: {generation, owner}
     serial_emerg_release_slot       # its exact inverse
+    serial_emerg_mark_timeout       # marking one spent: {..., timed-out}
+)
+
+# ORDERED transitions: functions where the audited compare-exchange must PRECEDE
+# a port write, because the compare-exchange is the linearization point of an
+# event the port write makes externally visible.
+#
+# WHY THIS IS A SECOND CHECK AND NOT A THIRD AUDITED ENTRY. Everything in
+# AUDITED asserts a transition is indivisible; this asserts that two divisible
+# things happen in a particular ORDER. serial_emerg_timeout_byte marks a wedged
+# UART reservation as spent and then pushes the byte, and reversing those two
+# lines still yields exactly one locked cmpxchg and zero other memory writes --
+# so AUDITED passes the reversed function without complaint.
+#
+# The reversed order is not hypothetical: it was the originally proposed design
+# for abandoned-reservation reclamation and was rejected in design review. An
+# NMI or #MC landing
+# between the port write and the mark enters the nested async-isolation panic,
+# finds an unmarked claim, reclaims it on the way to parking forever, and erases
+# a timeout that really happened -- which hands the next real panic an extra
+# full-length wait on a UART already known to be wedged. No fixture can assert
+# it: both orders reach the same post-state, and no fixture can schedule the
+# abort into the gap either. The order is only visible in the instruction stream.
+ORDERED=(
+    serial_emerg_timeout_byte       # mark the charge, THEN emit the byte
 )
 
 # ac_count_locks -- read a disassembly on stdin, print
@@ -151,6 +176,62 @@ ac_count_locks() {
     END { printf "%d %d %d %d\n", locks + 0, bound + 0, writes + 0, badwidth + 0 }'
 }
 
+# ac_order_lock_vs_out -- read a disassembly on stdin, print "<cx> <cxlast> <out>":
+#   cx     = position of the FIRST locked compare-exchange, 0 if absent
+#   cxlast = position of the LAST locked compare-exchange, 0 if absent
+#   out    = position of the FIRST port write, 0 if absent
+#
+# Positions rather than a verdict so the caller can report WHICH way round a
+# violation is, and so the absent cases (a mark that vanished, a byte that is no
+# longer emitted here) are distinguishable from a mere reordering. Deliberately
+# a separate matcher from ac_count_locks: that one answers "is this transition
+# indivisible", a property of a single instruction, and this one answers "did
+# these two land in this order", a property of the sequence.
+#
+# LAST as well as FIRST, because "the first cmpxchg precedes the first out" is
+# satisfied by a function that marks, emits, and then marks AGAIN -- and the
+# second mark is a charge recorded after the byte it accounts for, which is the
+# very window this gate exists to close. Checking both ends means no locked
+# compare-exchange may follow the port write, in any shape.
+#
+# WHAT THIS GATE DOES NOT PROVE, stated so its absence is a decision rather than
+# an oversight: DOMINANCE. These are textual positions in one symbol's
+# disassembly, not a control-flow analysis, so a branch that jumps forward over
+# the compare-exchange and lands on the port write is NOT rejected. That shape is
+# expected and correct in the audited function: the branches are the inlined
+# validator's early exits -- a malformed token, a slot the array does not have, a
+# claim from a dead epoch, one owned by another CPU, or one already marked -- and
+# on every one of them this CPU provably holds no live unmarked claim, so there
+# is nothing to record before the byte goes out. That those exits are the only
+# unmarked paths is carried by the unit tests, which drive each of them through
+# the public API; what is carried HERE is that no mark is ever emitted after its
+# byte, which no fixture can observe at all.
+ac_order_lock_vs_out() {
+    awk '
+    {
+        line = $0
+        sub(/^[ \t]+/, "", line)
+        sub(/^[0-9a-f]+:[ \t]*/, "", line)          # address
+        sub(/^([0-9a-f][0-9a-f][ ]+)+/, "", line)   # raw bytes
+        sub(/^[ \t]+/, "", line)
+        sub(/[ \t]+$/, "", line)
+        if (line == "")            next
+
+        n++
+        if (line == "lock")        { pending = 1; next }
+
+        locked = 0
+        if (pending)               { pending = 0; locked = 1 }
+        if (line ~ /^lock[ \t]+/)  { locked = 1; sub(/^lock[ \t]+/, "", line) }
+
+        mn = line; sub(/[ \t].*$/, "", mn)
+
+        if (locked && mn ~ /^cmpxchg/) { if (!cx) cx = n; cxlast = n }
+        if (mn ~ /^out/ && !ot)          ot = n
+    }
+    END { printf "%d %d %d\n", cx + 0, cxlast + 0, ot + 0 }'
+}
+
 # Negative controls for the matcher itself. A gate whose own logic is untested
 # is a gate that reports "ok" for reasons nobody has checked.
 if [ "${1:-}" = "--selftest" ]; then
@@ -213,6 +294,57 @@ if [ "${1:-}" = "--selftest" ]; then
     ac_expect "no atomics at all" "0 0 0 0" \
 "       0: 55                    	pushq	%rbp
        1: c3                    	retq" || rc=1
+
+    # The ORDER matcher, with the rejected design as its negative control.
+    ac_expect_order() {
+        local desc="$1" want="$2" got
+        got="$(printf '%s\n' "$3" | ac_order_lock_vs_out)"
+        if [ "$got" = "$want" ]; then
+            echo "ok   selftest: $desc"
+        else
+            echo "FAIL selftest: $desc -- expected '$want', got '$got'"
+            return 1
+        fi
+    }
+    ac_expect_order "mark BEFORE the byte (llvm split prefix)" "3 3 5" \
+"       0: 55                    	pushq	%rbp
+       1: f0                    	lock
+       2: 0f b1 37              	cmpxchgl	%esi, (%rdi)
+       9: 89 d0                 	movl	%edx, %eax
+       b: ee                    	outb	%al, %dx" || rc=1
+    # THE REJECTED DESIGN. Same instructions, same atomicity counts, opposite
+    # order -- and an NMI in the gap erases a real timeout.
+    ac_expect_order "byte BEFORE the mark is DETECTED" "3 3 1" \
+"       0: ee                    	outb	%al, %dx
+       1: f0                    	lock
+       2: 0f b1 37              	cmpxchgl	%esi, (%rdi)" || rc=1
+    # A mark on BOTH sides of the byte. The first-cmpxchg test alone passes this,
+    # and the trailing mark is still a charge recorded after its byte.
+    ac_expect_order "a mark AFTER the byte is DETECTED even when one precedes it" "2 5 3" \
+"       0: f0                    	lock
+       1: 0f b1 37              	cmpxchgl	%esi, (%rdi)
+       8: ee                    	outb	%al, %dx
+       9: f0                    	lock
+       a: 0f b1 37              	cmpxchgl	%esi, (%rdi)" || rc=1
+    ac_expect_order "GNU folded rendering is ordered too" "1 1 2" \
+"  17:	f0 0f b1 37          	lock cmpxchgl %esi,(%rdi)
+  1b:	ee                   	out    %al,(%dx)" || rc=1
+    ac_expect_order "a missing mark is not silently ordered" "0 0 1" \
+"       0: ee                    	outb	%al, %dx" || rc=1
+    ac_expect_order "a missing port write is not silently ordered" "2 2 0" \
+"       0: f0                    	lock
+       1: 0f b1 37              	cmpxchgl	%esi, (%rdi)" || rc=1
+    # A forward branch OVER the mark, landing on the byte. Accepted BY DESIGN and
+    # kept as a control so the limit is visible rather than assumed: this gate is
+    # positional, not a dominance analysis, and in the audited function these
+    # branches are the inlined validator's early exits, on which no live unmarked
+    # claim exists to record. The unit tests carry that; this carries ordering.
+    ac_expect_order "a branch around the mark is NOT rejected (stated limit)" "3 3 4" \
+"       0: 79 05                 	jns	0x8
+       2: f0                    	lock
+       3: 0f b1 37              	cmpxchgl	%esi, (%rdi)
+       8: ee                    	outb	%al, %dx" || rc=1
+
     [ "$rc" = "0" ] && echo "atomic-claim-check: selftest passed"
     exit "$rc"
 fi
@@ -324,9 +456,59 @@ for sym in "${AUDITED[@]}"; do
     echo "ok   $sym: one lock cmpxchgl, and it is the only memory write"
 done
 
+for sym in "${ORDERED[@]}"; do
+    dis="$("$OBJDUMP" -d --disassemble-symbols="$sym" "$OBJ" 2>&1)"
+
+    if printf '%s' "$dis" | grep -q "failed to disassemble missing symbol"; then
+        echo "FAIL $sym: no such symbol in $OBJ."
+        echo "     The ordered transition must keep external linkage -- inlined into"
+        echo "     its caller there is no symbol whose instruction order can be read,"
+        echo "     and the ordering is the entire property. Do not delete this entry"
+        echo "     to make the gate pass."
+        fail=1
+        continue
+    fi
+
+    read -r cx cxlast ot <<<"$(printf '%s\n' "$dis" | ac_order_lock_vs_out)"
+
+    if [ "$cx" -eq 0 ]; then
+        echo "FAIL $sym: no locked compare-exchange in the ordered transition."
+        echo "     The mark is what records the charge; without it the reservation"
+        echo "     reads as merely taken and a parking CPU reclaims it."
+        printf '%s\n' "$dis" | sed 's/^/     | /'
+        fail=1
+        continue
+    fi
+
+    if [ "$ot" -eq 0 ]; then
+        echo "FAIL $sym: no port write in the ordered transition."
+        echo "     This function exists to pair the mark with the byte it accounts"
+        echo "     for. With the write gone, the pairing this gate checks is not"
+        echo "     what the code does any more."
+        printf '%s\n' "$dis" | sed 's/^/     | /'
+        fail=1
+        continue
+    fi
+
+    if [ "$cxlast" -gt "$ot" ]; then
+        echo "FAIL $sym: the byte is written BEFORE the charge is marked."
+        echo "     An NMI or #MC in that gap enters the nested async-isolation"
+        echo "     panic, finds an unmarked claim, reclaims it on the way to"
+        echo "     parking forever, and erases a timeout that really happened --"
+        echo "     handing the next real panic an extra full-length wait on a UART"
+        echo "     already known to be wedged. Mark first, then emit."
+        printf '%s\n' "$dis" | sed 's/^/     | /'
+        fail=1
+        continue
+    fi
+
+    echo "ok   $sym: the locked cmpxchgl precedes the port write"
+done
+
 if [ "$fail" -ne 0 ]; then
     echo "atomic-claim-check: FAILED" >&2
     exit 1
 fi
-echo "atomic-claim-check: ${#AUDITED[@]} transitions verified in $(basename "$OBJ")"
+echo "atomic-claim-check: ${#AUDITED[@]} atomic + ${#ORDERED[@]} ordered transitions" \
+     "verified in $(basename "$OBJ")"
 exit 0

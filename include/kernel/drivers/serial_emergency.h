@@ -162,20 +162,34 @@ int serial_lock_try_release_owned(serial_lock_t *lock, uint32_t owner);
  *                              this: a delta across two reads of a shared
  *                              counter attributes another CPU's concurrent
  *                              charge to whoever measured last.
- *   serial_emerg_refund_self(n) -- hand back up to n charges this CPU is
- *                              recorded as holding. Bounded by that record, so
- *                              it can never absorb another CPU's charge or one
- *                              from a dead epoch. Used by the async-isolation
- *                              refund on a CPU that turns out to survive.
+ *   serial_emerg_mark_timeout(t) -- record that this reservation's wait was
+ *                              never answered, so a reclamation leaves it.
+ *   serial_emerg_reclaim_self() -- hand back every allowance this CPU holds
+ *                              that carries no such mark, and report how many.
+ *                              Bounded by this CPU's own claims, so it can
+ *                              never absorb another CPU's charge or one from a
+ *                              dead epoch. Used by the async-isolation branch
+ *                              on a CPU that is about to park forever.
  *   serial_emerg_reset_for_test() -- restore the pristine state. Starts a NEW
  *                              accounting epoch (it clears the budget), so it
  *                              advances the generation and invalidates tokens.
  * The budget is MONOTONIC IN TIMEOUTS: a reservation that times out is never
- * handed back, and no ordinary success path lowers the count for another
- * caller's charge. It is NOT monotonic outright -- three things lower it, all
- * deliberate: a byte that drains returns its own reservation, the async refund
- * hands back the charges its own CPU made on a machine that turns out to
- * survive, and publishing an epoch clears every slot. See serial.c. */
+ * handed back -- not by a return, which refuses a marked claim, and not by a
+ * reclamation, which skips one. It is NOT monotonic outright: a byte that
+ * drains returns its own reservation, a parking CPU reclaims what it took and
+ * never spent, and publishing an epoch clears every slot.
+ *
+ * WHERE THAT LINE FALLS, stated because it is a policy choice rather than an
+ * oversight. A wait that was INTERRUPTED -- an abort landing while the spin
+ * loop is still running, before the timeout is established -- counts as taken
+ * and never spent, so a parking CPU reclaims it. Committing the charge before
+ * the wait begins was considered and rejected: it makes an interrupted wait a
+ * PERMANENT charge on a machine that SURVIVES, and the two errors are not
+ * symmetric. Over-refunding costs a later panic at most one extra bounded wait;
+ * under-refunding walks the budget down to nothing, and a panic with no
+ * allowance emits its reason through single status probes on a wedged UART and
+ * may emit nothing at all -- the exact evidence loss this path exists to
+ * prevent. See serial.c. */
 /* Pure routing predicate: given the CPU attempting a REROUTED ordinary write
  * and the recorded arming CPU, must the write be discarded? Exposed so the
  * owner / non-owner / unknown cases are testable without arming the one-way
@@ -235,8 +249,50 @@ uint32_t serial_emerg_reserve(void);
 void     serial_emerg_return(uint32_t token);
 uint32_t serial_emerg_waits(void);
 uint32_t serial_emerg_charges_self(void);
-void     serial_emerg_refund_self(uint32_t n);
 void     serial_emerg_reset_for_test(void);
+
+/* A RESERVATION THAT WAS SPENT, versus one that was merely TAKEN.
+ *
+ * serial_emerg_mark_timeout records that the wait this token paid for was never
+ * answered by the transmitter, which is what keeps a later reclamation from
+ * handing the charge back. Returns 1 when the claim is (or already was) marked,
+ * 0 when the token authorises nothing -- malformed, a dead epoch, or reserved on
+ * another CPU.
+ *
+ * REPEATABLE ONLY WHILE THE CALLER STILL HOLDS THE RESERVATION, which is the
+ * same contract serial_emerg_return carries and for the same reason: a token is
+ * {generation, slot} and nothing more, so once a slot is returned, the next
+ * reserve reissues a byte-identical token for a DIFFERENT reservation. Marking
+ * through a token whose reservation was already given back therefore charges its
+ * replacement, making an untouched allowance permanently unreclaimable. Telling
+ * incarnations apart needs a per-slot counter, and the latch word has six free
+ * bits against the sixteen that would take -- so this is a caller contract here
+ * exactly as it is there, and every in-tree caller satisfies it by holding one
+ * local token across one interrupt-disabled region.
+ *
+ * serial_emerg_reclaim_self hands back every allowance this CPU still holds that
+ * carries no such mark, and returns how many it freed. It is the refund a CPU
+ * about to PARK FOREVER owes the rest of the machine: every panic invocation
+ * recorded against it -- an outer dump and any nested abort inside it -- left
+ * reservations that no surviving frame will ever return, and an unreturned
+ * reservation is a full-length wait subtracted from the next real panic's
+ * budget. Genuine timeouts are left standing, so the ceiling stays monotonic in
+ * the waits the machine actually paid.
+ *
+ * CALL RECLAIM ONLY WHERE THE CALLER NEVER RETURNS. An outer writer frame
+ * interrupted mid-wait still holds a token, and freeing its slot lets the next
+ * reservation take the same one -- so a frame that resumed would return a charge
+ * it no longer owns. panic.c's async-isolation branch parks permanently within a
+ * few instructions of calling it, which is what makes it sound there. */
+int      serial_emerg_mark_timeout(uint32_t token);
+uint32_t serial_emerg_reclaim_self(void);
+
+/* The timeout transition as ONE named function: mark the reservation, THEN push
+ * the byte. Internal to the driver, but external linkage deliberately -- the
+ * ordering is the property, no post-state distinguishes it from the reverse, and
+ * tools/atomic-claim-check asserts against the disassembly of this symbol that
+ * the locked compare-exchange precedes the port write. */
+void     serial_emerg_timeout_byte(uint32_t token, uint32_t ledger, uint8_t byte);
 
 /* Test-only override of the ledger identity, so one CPU can prove that a refund
  * cannot consume another CPU's charge -- the defining property of the per-CPU

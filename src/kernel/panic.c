@@ -2486,16 +2486,12 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * made abort-safe by calling the emergency writers DIRECTLY instead, which
      * needs no global state; the latch is armed once ownership is claimed. */
 
-    /* Charges THIS CPU already holds before the unconditional dump below.
-     * The dump must be GS-independent, so it cannot ask whether this CPU is
-     * survivable before spending; it spends first, and the async-isolation
-     * branch refunds what it spent if the machine turns out to keep running.
-     *
-     * Per-CPU, not the global charge: both reads must describe the SAME writer
-     * or the difference between them is not this CPU's spending. The global
-     * counter cannot provide that -- a concurrent panic charging between the two
-     * reads is indistinguishable from this dump charging. */
-    uint32_t charges_before = serial_emerg_charges_self();
+    /* NOTE the wedged-UART accounting: the dump below must be GS-independent, so
+     * it cannot ask whether this CPU is survivable before spending; it spends
+     * first, and the async-isolation branch below hands back what is owed if the
+     * machine turns out to keep running. Nothing is sampled here -- what is owed
+     * is read from this CPU's own claims at the point of parking, not inferred
+     * from a delta against an entry snapshot (TODO-10 S29). */
     uint32_t screen_w;
     uint32_t screen_h;
     uint64_t cr2_val;
@@ -2614,18 +2610,26 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * find the allowance still spent. The refund touches only the
              * packed serial word, so it is safe this early.
              *
-             * ATTRIBUTABLE. Both readings come from this CPU's own charge slot,
-             * which no other CPU writes, so the difference is exactly what this
-             * dump spent -- a concurrent panic charging in between changes the
-             * global counter but not this slot. `serial_emerg_refund_self` then
-             * bounds the refund by what this CPU is still recorded as holding in
-             * the LIVE epoch, so it can neither absorb another CPU's charge nor
-             * credit an epoch that has since been published. */
-            {
-                uint32_t now   = serial_emerg_charges_self();
-                uint32_t spent = (now > charges_before) ? (now - charges_before) : 0u;
-                serial_emerg_refund_self(spent);
-            }
+             * ATTRIBUTABLE, AND IT COVERS EVERY INVOCATION ON THIS CPU. The
+             * reclamation reads this CPU's own claims -- which no other CPU
+             * writes -- and hands back each one that was taken but never charged
+             * by a timeout, so it can neither absorb another CPU's charge nor
+             * credit an epoch that has since been published.
+             *
+             * A DELTA CANNOT DO THIS, which is why it no longer is one. The
+             * previous shape refunded `charges_self() - charges_before` against
+             * a count sampled at panic entry, so a nested abort inside an outer
+             * dump on this CPU carried the OUTER dump's reservations inside its
+             * own baseline and refunded none of them -- leaking up to the whole
+             * pre-arm budget on the CPU that is about to park as its sole
+             * recorded owner (TODO-10 S29).
+             *
+             * SAFE ONLY BECAUSE THIS BRANCH NEVER RETURNS. An outer writer frame
+             * interrupted mid-wait still holds a token whose slot this frees; it
+             * never runs again to return it, because the park below is
+             * unconditional and a nested panic before it re-enters this same
+             * branch. */
+            (void)serial_emerg_reclaim_self();
 
             /* PUBLISH. The BSP barrier waits on async_done to run the sequential
              * fallback (the loop lives in boot_init.c), so the completion signal

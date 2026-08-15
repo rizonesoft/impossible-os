@@ -105,7 +105,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  26   | Attributable emergency-ledger claim (from §20)      | §17, §20   |  [x]   |
 | 💎  |  27   | Async worker quiescence + terminal bringup (§21)    | §21        |  [x]   |
 | 💎  |  28   | Cross-boot evidence durability across a reset (§23) | §23        |  [x]   |
-| 💎  |  29   | Abandoned-reservation reclamation on park (§26)     | §26        |  [ ]   |
+| 💎  |  29   | Abandoned-reservation reclamation on park (§26)     | §26        |  [x]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -571,8 +571,8 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
 > **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 464)
-> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 1296)
-> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 1295)
+> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 1282)
+> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 1281)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
 
 ---
@@ -1029,7 +1029,7 @@ The per-slot owner records §17 parked against §18 and §18 did not cover, kept
 
 - [x] Composite owner-plus-generation slot claim, so claiming a wedged-UART allowance and recording who owns it is ONE atomic transition.
   - Allowances left the latch word entirely. Each one is now a composite claim word of its own in `s_emerg_claim[SERIAL_EMERG_STUCK_BYTES]` (`serial.c:344`), encoded `VALID | generation | owner`, and `serial_emerg_claim_slot` (`serial.c:1062`) takes the allowance and records its owner in the SAME compare-exchange. There is no second step, so no abort window: a charge exists if and only if a live claim exists.
-  - The per-CPU advisory ledger this replaces (`s_emerg_slot_mask` + `s_emerg_charge_gen`) is DELETED, not kept alongside. It was the second word an NMI or `#MC` could land in front of, and `serial_emerg_waits` / `charges_self` / `refund_self` now read the claims directly instead of reconstructing a count from two sources that could disagree -> XREF: `01-boot-platform/TODO-10 §17` (item: "Epoch-tokened, attributable wedged-UART accounting").
+  - The per-CPU advisory ledger this replaces (`s_emerg_slot_mask` + `s_emerg_charge_gen`) is DELETED, not kept alongside. It was the second word an NMI or `#MC` could land in front of, and `serial_emerg_waits` / `charges_self` / the refund path now read the claims directly instead of reconstructing a count from two sources that could disagree (the refund itself became `serial_emerg_reclaim_self` in §29) -> XREF: `01-boot-platform/TODO-10 §17` (item: "Epoch-tokened, attributable wedged-UART accounting").
 - [x] Define claim, publish, return, refund, stale reclamation and epoch rollover as ONE reviewed state machine rather than six independent edits.
   - SHIPPED WITHOUT A PUBLISH STEP, which is a deliberate change from the drafted claim-then-publish design: the Codex design review showed that publishing a latch bit after a composite claim only converts an anonymous charge into an equally uncounted CLAIM leak, since an abort in the new window leaves a same-generation claim no contender can tell from a live publisher. Two words and one abort window, in either order. Making the per-slot word authoritative removes the window instead of narrowing it.
   - Epoch rollover is the generation bump alone: `serial_emerg_publish_word` advances it in the same compare-exchange that publishes ARMED, which invalidates every outstanding claim at once with no second pass and no interval where two epochs coexist. Stale claims are reclaimed only by exact CAS against the observed word, so reclaiming can never overwrite a live holder. `serial_emerg_return` validates generation AND owner before releasing, so a token that crossed CPUs releases nothing -> XREF: `01-boot-platform/TODO-10 §20` (item: "PARKED: per-slot owner records for the emergency terminal-charge ledger").
@@ -1051,7 +1051,7 @@ The per-slot owner records §17 parked against §18 and §18 did not cover, kept
 > **Notes:**
 > - Allowances moved out of the latch into one composite `VALID | generation | owner` word each (`s_emerg_claim[]`), so taking an allowance and recording its owner are one compare-exchange; the per-CPU advisory ledger they replaced is deleted.
 > - Epoch publication invalidates every outstanding claim by advancing one generation field, replacing an explicit slot clear that only worked while the allowances lived in the word being published.
-> - `serial_emerg_waits` / `charges_self` / `refund_self` read the claims directly, and `serial_emerg_return` now checks owner as well as generation, so a token cannot release another CPU's charge; that identity is hoisted once per chunk rather than resolved per byte, because it costs a serializing CPUID.
+> - `serial_emerg_waits` / `charges_self` / the refund path (`serial_emerg_reclaim_self` since §29) read the claims directly, and `serial_emerg_return` now checks owner as well as generation, so a token cannot release another CPU's charge; that identity is hoisted once per chunk rather than resolved per byte, because it costs a serializing CPUID.
 > - `serial_emergency_write_str` split into `serial_emergency_walk` with the output as a parameter; `SERIAL_EMERG_CHUNK` / `MAX_CHARS` / `STUCK_BYTES` moved to `serial_emergency.h`.
 > - Canonical doc: `include/kernel/drivers/serial_emergency.h` carries the allowance contract, the single-transition rule, and the walk seam.
 > - Scope boundary: the compare-exchange TARGET word is not verified by the object gate (two helpers take it by pointer, two relocate section-relative with no symbol name); that exactness is carried by the signatures and the fixtures.
@@ -1154,18 +1154,32 @@ The §23 lifecycle work made a single release store the sole durability point fo
 
 The defect predates §26 and is not created by it: the refund was already a delta against a count sampled at panic entry, so an outer dump's charges were already inside the baseline. §26 is what makes it nameable -- each allowance now records its owner and epoch, so "this CPU holds a charge" is a fact the code can read rather than infer from two snapshots.
 
-- [ ] Distinguish a reservation that TIMED OUT from one that was merely taken, so a parking CPU can return the second without erasing the first.
-  - The two are indistinguishable today: `serial_emerg_claim_slot` records `{generation, owner}` and nothing more, so a claim that was abandoned mid-wait reads exactly like a wait that completed and paid. That is why the parking path cannot simply hand everything back -- doing so would erase a real timeout and break the monotonic-in-timeouts property the ceiling rests on (`serial.c:75-92`).
-  - The claim word has room: `SERIAL_CLAIM_VALID | gen<<8 | owner` leaves bits 16..30 free, so a TIMED-OUT flag set by `serial_putchar_raw_bounded` at the point it gives up (`serial.c`, the `--spins == 0` branch) costs no widening -> XREF: `01-boot-platform/TODO-10 §26` (item: "Composite owner-plus-generation slot claim, so claiming a wedged-UART allowance and recording who owns it is ONE atomic transition.").
-- [ ] Reclaim the abandoned reservations of every panic invocation on a CPU that is about to park forever, instead of only what the innermost dump spent.
-  - `panic_screen_impl` samples `charges_before = serial_emerg_charges_self()` at entry (`panic.c:2386`) and later refunds `now - charges_before` (`panic.c:2513-2515`). A nested abort inside an outer dump on the same CPU therefore carries the outer dump's claims inside its own baseline, refunds none of them, and parks at `panic.c:2617-2618` as the sole recorded owner.
-  - With the flag above the parking path can hand back exactly the claims that were taken and never charged, leaving genuine timeouts standing. Do NOT approximate this by refunding everything on park -> XREF: `01-boot-platform/TODO-10 §26` (item: "Define claim, publish, return, refund, stale reclamation and epoch rollover as ONE reviewed state machine rather than six independent edits.").
-- [ ] Fixtures for the abort schedules that produce the leak, which no current test drives.
-  - Needed: an abort immediately after the claim compare-exchange, an abort after a timeout has been charged, and an abort between a drained byte and its `serial_emerg_return`. Each asserts the parking CPU's abandoned reservations are reclaimed and its timed-out charges are not.
-  - A single-CPU fixture can drive all three by calling the claim and release primitives directly, in the shape `test_serial_emergency_claim_is_exact` already uses -- none of them needs a real fault or a second CPU.
-- [ ] Commit: `"kernel: reclaim abandoned wedged-UART reservations on a parking CPU"`
+- [x] Distinguish a reservation that TIMED OUT from one that was merely taken, so a parking CPU can return the second without erasing the first.
+  - `SERIAL_CLAIM_TIMEDOUT` (bit 16, `serial.c:377`) rides in the bits the composite claim left free above the generation, so the claim word is not widened and no second location exists for an abort to land in front of. Static asserts pin it clear of VALID/GEN/OWNER and inside that free range.
+  - `serial_emerg_mark_timeout` sets it in ONE exact compare-exchange over the word the shared token validator observed; a failed CAS means the exact claim changed (reclaimed, replaced, or a republished epoch), on which this CPU holds nothing and owes nothing -> XREF: `01-boot-platform/TODO-10 §26` (item: "Composite owner-plus-generation slot claim, so claiming a wedged-UART allowance and recording who owns it is ONE atomic transition.").
+  - The mark is the timeout's LINEARIZATION POINT and lands BEFORE the byte, in `serial_emerg_timeout_byte`. Write-then-mark was the original design and was rejected in design review: an NMI between the write and the mark enters the nested panic, finds an unmarked claim, and reclaims a timeout that really happened.
+- [x] Reclaim the abandoned reservations of every panic invocation on a CPU that is about to park forever, instead of only what the innermost dump spent.
+  - `serial_emerg_reclaim_self` frees every live claim this CPU owns that carries no timed-out mark and returns the count; the async-isolation branch calls it in place of the delta (`panic.c`), and `charges_before` is gone rather than left computed-but-unused.
+  - `serial_emerg_refund_self` is DELETED, not kept beside it: replacing its sole production caller left a kernel API with no callers, and two refund mechanisms with different bounds is exactly the drift the one-state-machine rule exists to stop -> XREF: `01-boot-platform/TODO-10 §26` (item: "Define claim, publish, return, refund, stale reclamation and epoch rollover as ONE reviewed state machine rather than six independent edits.").
+  - Soundness is the caller's park, not the function's: an outer writer frame interrupted mid-wait still holds a token, so reclaiming is only safe because the branch parks permanently a few instructions later. Stated in both the header contract and the call site.
+  - `serial_emerg_return` now REFUSES a charged reservation. The exact compare does not prevent it (the marked word compares exactly as well as an unmarked one), and the earlier draft claimed in a comment that it did -- a property of the single caller written down as a property of the ledger.
+- [x] Fixtures for the abort schedules that produce the leak, which no current test drives.
+  - Nine `serial_emergency:` cases under `TEST_CAT_BOOT`: untouched reservation reclaimed, charged timeout preserved, nested invocation covered (both reservations, against the entry sample the broken arithmetic was built from), whole-budget sweep at the ceiling with the final slot untouched and then charged, per-CPU isolation, foreign-owner refusal, mark idempotence and ownership, mark cannot reach a later epoch, and return cannot erase a charge.
+  - The mark-before-write ORDERING is not fixture-observable, so it is carried by `tools/atomic-claim-check` instead: `serial_emerg_timeout_byte` joins a new ORDERED audit asserting the locked compare-exchange precedes the port write and that none follows it, with negative controls for the reversed order, a mark on both sides of the byte, and the branch-around shape the gate deliberately does NOT reject.
+- [x] Commit: `"kernel: reclaim abandoned wedged-UART reservations on a parking CPU"`
 
 **Test checkpoint:** With a claim taken and no timeout recorded, the parking path returns it and `serial_emerg_waits()` falls; with a timeout recorded, the same path leaves that charge standing and the count holds. A nested invocation on one CPU reclaims the outer invocation's abandoned reservation rather than counting it as its own baseline, proven by a fixture that takes a claim, samples `charges_self`, takes a second, and asserts the reclamation covers both.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (or `make test-boot`) -- expect 0 failures; the nine new cases are the `serial_emergency:` reclaim/mark entries under `TEST_CAT_BOOT`. The ordering property runs separately: `bash tools/atomic-claim-check/check.sh --required` after a build, and `--selftest` for the matcher's own 17 controls.
+
+> **Notes:**
+> - Shipped `SERIAL_CLAIM_TIMEDOUT` plus `serial_emerg_mark_timeout` / `serial_emerg_reclaim_self` / `serial_emerg_timeout_byte`, and deleted `serial_emerg_refund_self` once its sole production caller moved.
+> - The panic async-isolation branch reclaims by reading this CPU's own claims instead of a delta against a panic-entry sample, so a nested abort no longer buries the outer dump's reservations inside its own baseline.
+> - A shared token validator now backs both the return and the mark, so the four rejections (malformed, out-of-range slot, dead epoch, foreign owner) cannot drift apart between them.
+> - Ordering that no fixture can observe is carried by `tools/atomic-claim-check`'s new ORDERED audit, which is already wired into `scripts/test-tooling.sh` and the CI build.
+> - Scope boundary: the claim word still carries no per-slot incarnation counter, so mark and return keep the same caller contract -- a token is valid only while its reservation is held.
+> - Deliberate policy boundary: an INTERRUPTED wait counts as taken and is reclaimed, because committing the charge before the wait would leave a permanent charge on a surviving machine, and an exhausted budget loses evidence outright while an over-refund costs one bounded wait.
+> - Review round also fixed the reserve sweep, which inferred a saturated budget from a LOST compare-exchange on a slot it had observed non-live -- so N panicking CPUs could talk each other into a budget that was not spent; it now re-sweeps (still bounded by the existing try count) rather than reporting saturation.
 
 ---
 
@@ -1202,6 +1216,7 @@ The defect predates §26 and is not created by it: the refund was already a delt
 | ⭐  | Attributable UART stall budget | ⚠️ KD transport retries, per call  | ⚠️ `wait_for_xmitr` per character  | ✅ §26 one composite claim per allowance, owner and epoch in one CAS |
 | 💎  | Crash record survives a reset  | ✅ Dump written to disk pre-reset  | ✅ pstore/ramoops region mapped UC | ✅ §28 WB + per-writer CLFLUSH, publication word stored last         |
 | 💎  | Cache maintenance primitives   | ✅ `KeInvalidateAllCaches`, WBINVD | ✅ `clflush_cache_range`, `wbinvd` | ✅ §28 `cache_writeback_range`, CPUID-probed per executing CPU       |
+| ⭐  | Stall budget returned on park  | ❌ No per-CPU UART stall ledger    | ❌ Budget is per call, not owned   | ✅ §29 parking CPU reclaims untouched allowances, timeouts stand     |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 

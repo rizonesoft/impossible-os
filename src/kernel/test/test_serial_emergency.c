@@ -539,23 +539,155 @@ static void test_serial_emergency_charges_reset_across_epoch(void)
                    "a new epoch voids this CPU's old charges");
 }
 
-/* The refund is BOUNDED by what this CPU actually holds, so asking for more than
- * it took cannot drain a concurrent writer's charge out of the shared budget. */
-static void test_serial_emergency_refund_self_is_bounded(void)
+/* The reclamation is BOUNDED by what this CPU actually holds, and it REPORTS
+ * what it freed, so a parking CPU cannot drain a concurrent writer's charge out
+ * of the shared budget nor credit one that was never there. */
+static void test_serial_emergency_reclaim_self_is_bounded(void)
 {
     serial_emerg_reset_for_test();
 
     TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN, "one charge taken");
     TEST_ASSERT_EQ(serial_emerg_waits(), 1, "budget shows the one charge");
 
-    serial_emerg_refund_self(8u);           /* ask for far more than held */
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 1u,
+                   "the reclamation reports the one reservation it freed");
     TEST_ASSERT_EQ(serial_emerg_waits(), 0,
-                   "the refund gave back exactly the charge this CPU held");
-    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0, "and holds nothing after");
+                   "and gave back exactly the reservation this CPU held");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0, "so it holds nothing after");
 
-    /* Refunding again must not go negative or credit the budget. */
-    serial_emerg_refund_self(8u);
-    TEST_ASSERT_EQ(serial_emerg_waits(), 0, "a second refund credits nothing");
+    /* Reclaiming again must not go negative or credit the budget. */
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 0u,
+                   "a second reclamation finds nothing to free");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0, "and credits nothing");
+
+    serial_emerg_reset_for_test();
+}
+
+/* ABORT SCHEDULE 1: an abort immediately after the claim compare-exchange, with
+ * no wait charged. The reservation was TAKEN and never spent, so a CPU parking
+ * forever owes it back -- this is the leak in its simplest form. */
+static void test_serial_emergency_reclaim_returns_an_untouched_reservation(void)
+{
+    serial_emerg_reset_for_test();
+
+    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN,
+                    "a reservation is taken and the abort lands here");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "it is outstanding against the budget");
+
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 1u, "parking hands it back");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "so the next panic gets the full budget, not a short one");
+
+    serial_emerg_reset_for_test();
+}
+
+/* ABORT SCHEDULE 2: an abort after a timeout has been charged. A wait the
+ * transmitter never answered is a charge the machine has already paid, and the
+ * ceiling is monotonic in those -- so the parking path must leave it standing.
+ *
+ * This is the property that makes the whole design more than "refund
+ * everything": without the TIMED-OUT mark the two schedules are byte-identical
+ * and no reclamation can tell them apart. */
+static void test_serial_emergency_reclaim_preserves_a_charged_timeout(void)
+{
+    uint32_t timed_out, untouched;
+
+    serial_emerg_reset_for_test();
+
+    timed_out = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(timed_out, SERIAL_EMERG_NO_TOKEN, "a reservation that will wait");
+    untouched = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(untouched, SERIAL_EMERG_NO_TOKEN, "and one that never does");
+
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(timed_out), 1u,
+                   "the wait times out and the charge is recorded");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 2u, "both are outstanding");
+
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 1u,
+                   "parking reclaims ONLY the reservation that never waited");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "the real timeout still stands");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u,
+                   "and is still attributed to the CPU that spent it");
+
+    serial_emerg_reset_for_test();
+}
+
+/* Marking is a transition to a STATE, not the consumption of a one-shot token,
+ * so a second mark is inert rather than corrupting -- and a mark from another
+ * CPU's identity cannot charge a reservation it does not own. The second half is
+ * the ceiling-integrity property: a foreign mark that stuck would let one CPU
+ * make another CPU's reservation permanently unreclaimable. */
+static void test_serial_emergency_mark_timeout_is_idempotent_and_owned(void)
+{
+    uint32_t token;
+
+    serial_emerg_reset_for_test();
+    serial_emerg_set_ledger_id_for_test(1u);
+
+    token = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(token, SERIAL_EMERG_NO_TOKEN, "CPU 1 reserves");
+
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token), 1u, "and charges it");
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token), 1u,
+                   "a second mark reports the same state and changes nothing");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "still exactly one charge");
+
+    serial_emerg_set_ledger_id_for_test(2u);
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token), 0u,
+                   "another CPU cannot charge a reservation it does not own");
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_reclaim_self(), 0u,
+                   "nor reclaim it");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "CPU 1's charge is untouched");
+
+    serial_emerg_set_ledger_id_for_test(1u);
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 0u,
+                   "and its owner leaves it standing too, because it really waited");
+
+    serial_emerg_set_ledger_id_for_test(SERIAL_EMERG_NO_OWNER);
+    serial_emerg_reset_for_test();
+}
+
+/* A STALE TOKEN CANNOT MAKE A NEW EPOCH'S RESERVATION UNRECLAIMABLE.
+ *
+ * The mark validates the claim word against the token's OWN generation, exactly
+ * as the return does, so what it cannot do is reach a claim minted under a
+ * later epoch. That is the property with teeth: a reservation belonging to the
+ * new epoch, marked by an old token that happened to name the same slot, would
+ * look like a genuine timeout forever -- permanently unreclaimable, and
+ * subtracted from every later panic's budget.
+ *
+ * Marking the token's own DEAD claim is deliberately NOT asserted to fail. The
+ * bump already retired that word: waits, charges_self and the reclamation all
+ * gate on the live generation, so nothing counts it either way, and the next
+ * reserve takes the slot by exact compare-exchange over whatever it holds. */
+static void test_serial_emergency_mark_timeout_cannot_reach_a_new_epoch(void)
+{
+    uint32_t token;
+
+    serial_emerg_reset_for_test();
+
+    token = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(token, SERIAL_EMERG_NO_TOKEN, "a reservation in the old epoch");
+
+    serial_emerg_reset_for_test();          /* publishes a new accounting epoch */
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "the bump retired it: nothing counts the dead claim");
+
+    /* BEFORE the slot is reused. The publication leaves the old word in place,
+     * so the stale token still matches the claim it minted -- and marking it
+     * would be a write that can lose a concurrent reserve its exact
+     * compare-exchange and make a sweep report a saturated budget with
+     * allowances free. Rejected on the LIVE latch, not on the slot word. */
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token), 0u,
+                   "a token from the retired epoch marks nothing");
+
+    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN,
+                    "a fresh reservation takes the slot in the new epoch");
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token), 0u,
+                   "and the stale token cannot charge THAT one");
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 1u,
+                   "so the fresh reservation is still reclaimable on a park");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u, "and the budget comes back whole");
 
     serial_emerg_reset_for_test();
 }
@@ -763,37 +895,130 @@ static void test_kstr_read_fixup_lookup_routes_reads_only(void)
                    "the byte-load lookup does not claim the string-loop label");
 }
 
-/* The refund must leave charges it was NOT asked for standing. Production passes
- * only the delta its own dump spent, so a refund that discarded everything this
- * CPU held would silently replenish the terminal wait allowance on a survivable
- * panic -- and the "ask for more than held" test alone cannot see that, because
- * it would pass for a function that simply dropped all charges. */
-static void test_serial_emergency_refund_self_preserves_unrequested(void)
+/* A CHARGED RESERVATION CANNOT BE GIVEN BACK THROUGH THE RETURN PATH EITHER.
+ *
+ * The reclamation is not the only way a charge could leak back into the budget:
+ * serial_emerg_return reloads the claim word and releases it by exact compare,
+ * and a marked word compares exactly as well as an unmarked one -- so without an
+ * explicit refusal, returning a token after its wait timed out replenishes the
+ * ceiling by one full-length wait on a UART already known to be wedged.
+ *
+ * Not reachable from serial_putchar_raw_bounded today, where a drain and a
+ * timeout are mutually exclusive. Asserted anyway, because that is a property of
+ * the single caller and this is a property of the ledger. */
+static void test_serial_emergency_return_cannot_erase_a_charged_timeout(void)
 {
+    uint32_t token;
+
     serial_emerg_reset_for_test();
 
-    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN, "charge 1");
-    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN, "charge 2");
-    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN, "charge 3");
-    TEST_ASSERT_EQ(serial_emerg_waits(), 3, "three charges outstanding");
-    TEST_ASSERT_EQ(serial_emerg_charges_self(), 3, "all three held by this CPU");
+    token = serial_emerg_reserve();
+    TEST_ASSERT_NEQ(token, SERIAL_EMERG_NO_TOKEN, "a reservation is taken");
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(token), 1u,
+                   "and its wait times out");
 
-    serial_emerg_refund_self(0u);
-    TEST_ASSERT_EQ(serial_emerg_waits(), 3, "refunding zero gives nothing back");
-    TEST_ASSERT_EQ(serial_emerg_charges_self(), 3, "and holds all three still");
+    serial_emerg_return(token);
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u,
+                   "returning the charged token gives nothing back");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u,
+                   "the charge is still attributed to the CPU that spent it");
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 0u,
+                   "and a park does not free it either");
 
-    serial_emerg_refund_self(1u);
-    TEST_ASSERT_EQ(serial_emerg_waits(), 2, "a partial refund returns exactly one");
-    TEST_ASSERT_EQ(serial_emerg_charges_self(), 2,
-                   "the other two charges survive the partial refund");
+    serial_emerg_reset_for_test();
+}
+
+/* THE WHOLE BUDGET, AND ITS LAST SLOT. Every other reclaim test holds two or
+ * three allowances, so a sweep that stopped one short -- the classic off-by-one
+ * on SERIAL_EMERG_STUCK_BYTES -- would pass all of them while leaking one
+ * full-length wait from every saturated parking CPU.
+ *
+ * Driven at exactly the ceiling, twice: once with the final allowance untouched
+ * (it must come back) and once with only the final allowance charged (it must
+ * stand while all the others come back). The pair pins both ends of the sweep. */
+static void test_serial_emergency_reclaim_sweeps_the_whole_budget(void)
+{
+    uint32_t tokens[SERIAL_EMERG_STUCK_BYTES];
+    uint32_t i;
+
+    serial_emerg_reset_for_test();
+
+    for (i = 0; i < SERIAL_EMERG_STUCK_BYTES; i++) {
+        tokens[i] = serial_emerg_reserve();
+        TEST_ASSERT_NEQ(tokens[i], SERIAL_EMERG_NO_TOKEN,
+                        "the whole ceiling is reservable");
+    }
+    TEST_ASSERT_EQ(serial_emerg_waits(), SERIAL_EMERG_STUCK_BYTES,
+                   "the budget is saturated");
+
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), SERIAL_EMERG_STUCK_BYTES,
+                   "a park reclaims every allowance, including the last slot");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u, "so the budget comes back whole");
+
+    /* Again, with ONLY the final allowance charged. */
+    serial_emerg_reset_for_test();
+    for (i = 0; i < SERIAL_EMERG_STUCK_BYTES; i++) {
+        tokens[i] = serial_emerg_reserve();
+        TEST_ASSERT_NEQ(tokens[i], SERIAL_EMERG_NO_TOKEN, "saturated again");
+    }
+    TEST_ASSERT_EQ((uint32_t)serial_emerg_mark_timeout(
+                       tokens[SERIAL_EMERG_STUCK_BYTES - 1u]), 1u,
+                   "the LAST allowance is the one that really waited");
+
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), SERIAL_EMERG_STUCK_BYTES - 1u,
+                   "the park reclaims every allowance except that one");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "which still stands");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 1u, "and is still attributed");
+
+    serial_emerg_reset_for_test();
+}
+
+/* THE DEFECT SECTION 29 EXISTS TO FIX, written as the schedule that produced it.
+ *
+ * An outer panic invocation takes a reservation. A nested abort lands inside its
+ * dump and samples what this CPU holds -- which ALREADY INCLUDES the outer one --
+ * then takes a reservation of its own and parks the CPU forever. The old refund
+ * gave back `charges_self() - charges_before`, which is 1, so the outer
+ * reservation stayed charged with nobody alive to return it.
+ *
+ * The reclamation is not a delta and therefore covers both. The entry sample is
+ * still taken here, deliberately, because it is what makes the fixture a
+ * regression test rather than a restatement: it is the exact quantity the broken
+ * arithmetic was built from, and asserting the reclamation EXCEEDS it is what a
+ * reintroduced delta would fail. */
+static void test_serial_emergency_reclaim_covers_a_nested_invocation(void)
+{
+    uint32_t charges_before;
+
+    serial_emerg_reset_for_test();
+
+    /* The outer invocation's dump. */
+    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN,
+                    "the outer dump takes a reservation");
+
+    /* The nested abort's entry snapshot: the outer charge is already inside it. */
+    charges_before = serial_emerg_charges_self();
+    TEST_ASSERT_EQ(charges_before, 1u,
+                   "the nested invocation's baseline already contains the outer charge");
+
+    TEST_ASSERT_NEQ(serial_emerg_reserve(), SERIAL_EMERG_NO_TOKEN,
+                    "the nested dump takes one of its own");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 2u, "so this CPU now holds two");
+
+    /* What the delta refund would have handed back: 2 - 1 = 1, leaving the outer
+     * reservation leaked for the rest of the epoch. */
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 2u,
+                   "the parking CPU reclaims BOTH, not just what the nested dump spent");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 0u,
+                   "so a later real panic finds the whole budget, not a short one");
 
     serial_emerg_reset_for_test();
 }
 
 /* THE per-CPU isolation property, proved on one CPU via the ledger-identity
- * seam. Without this every reserve/refund in the suite runs under one identity,
+ * seam. Without this every reserve/reclaim in the suite runs under one identity,
  * so a global counter would pass every other test in this file. */
-static void test_serial_emergency_refund_isolated_between_cpu_ids(void)
+static void test_serial_emergency_reclaim_isolated_between_cpu_ids(void)
 {
     serial_emerg_reset_for_test();
 
@@ -807,11 +1032,12 @@ static void test_serial_emergency_refund_isolated_between_cpu_ids(void)
                    "CPU 2 holds only its own charge, not CPU 1's");
     TEST_ASSERT_EQ(serial_emerg_waits(), 2, "the global budget shows both");
 
-    /* CPU 2 refunds generously. CPU 1's charge must not be touched. */
-    serial_emerg_refund_self(8u);
-    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0, "CPU 2 gave back its own charge");
+    /* CPU 2 parks and reclaims. CPU 1's reservation must not be touched. */
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 1u,
+                   "CPU 2 reclaims exactly its own reservation");
+    TEST_ASSERT_EQ(serial_emerg_charges_self(), 0, "and holds nothing after");
     TEST_ASSERT_EQ(serial_emerg_waits(), 1,
-                   "CPU 1's charge survived another CPU's refund");
+                   "CPU 1's charge survived another CPU's reclamation");
 
     serial_emerg_set_ledger_id_for_test(1u);
     TEST_ASSERT_EQ(serial_emerg_charges_self(), 1,
@@ -1094,9 +1320,9 @@ static void test_serial_emergency_return_rejects_a_foreign_owner(void)
     serial_emerg_return(token);
     TEST_ASSERT_EQ(serial_emerg_waits(), 1u,
                    "and returning CPU 3's token releases nothing");
-    serial_emerg_refund_self(SERIAL_EMERG_STUCK_BYTES);
-    TEST_ASSERT_EQ(serial_emerg_waits(), 1u,
-                   "nor can a refund absorb a charge it does not own");
+    TEST_ASSERT_EQ(serial_emerg_reclaim_self(), 0u,
+                   "nor can a parking CPU reclaim a charge it does not own");
+    TEST_ASSERT_EQ(serial_emerg_waits(), 1u, "so the charge still stands");
 
     serial_emerg_set_ledger_id_for_test(3u);
     serial_emerg_return(token);
@@ -1700,8 +1926,20 @@ void test_register_serial_emergency(void)
     test_suite_register_cat("serial_emergency: a new epoch voids held charges",
                             test_serial_emergency_charges_reset_across_epoch,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("serial_emergency: refund is bounded by charges held",
-                            test_serial_emergency_refund_self_is_bounded,
+    test_suite_register_cat("serial_emergency: reclaim is bounded by charges held",
+                            test_serial_emergency_reclaim_self_is_bounded,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: reclaim returns an untouched reservation",
+                            test_serial_emergency_reclaim_returns_an_untouched_reservation,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: reclaim preserves a charged timeout",
+                            test_serial_emergency_reclaim_preserves_a_charged_timeout,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: mark timeout is idempotent and owned",
+                            test_serial_emergency_mark_timeout_is_idempotent_and_owned,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: mark timeout cannot reach a new epoch",
+                            test_serial_emergency_mark_timeout_cannot_reach_a_new_epoch,
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: __kread_u8 reads valid kernel bytes",
                             test_serial_emergency_kread_u8_reads_valid_bytes,
@@ -1709,11 +1947,17 @@ void test_register_serial_emergency(void)
     test_suite_register_cat("serial_emergency: __kread_u8 rejects #GP operands",
                             test_serial_emergency_kread_u8_rejects_bad_operands,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("serial_emergency: partial refund preserves the rest",
-                            test_serial_emergency_refund_self_preserves_unrequested,
+    test_suite_register_cat("serial_emergency: return cannot erase a charged timeout",
+                            test_serial_emergency_return_cannot_erase_a_charged_timeout,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("serial_emergency: refund is isolated between CPU ids",
-                            test_serial_emergency_refund_isolated_between_cpu_ids,
+    test_suite_register_cat("serial_emergency: reclaim sweeps the whole budget",
+                            test_serial_emergency_reclaim_sweeps_the_whole_budget,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: reclaim covers a nested invocation",
+                            test_serial_emergency_reclaim_covers_a_nested_invocation,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: reclaim is isolated between CPU ids",
+                            test_serial_emergency_reclaim_isolated_between_cpu_ids,
                             TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: guarded read context is opt-in",
                             test_serial_emergency_guarded_read_context_is_opt_in,
