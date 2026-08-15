@@ -233,6 +233,30 @@ jobs:
       - name: Stale-ABI fixtures
         run: make stale-abi-fixtures
 
+      # Anti-rollback NVRAM fixtures: four sequenced boots over ONE
+      # persistent OVMF_VARS.fd proving the compositor-steady gate on
+      # the IPOSRequiredSecVersion floor through the live UEFI Runtime
+      # Services SetVariable path -- the last mile a kernel unit test
+      # cannot reach. Regression gate: detects a raise that fires on a
+      # boot which never reached its first composited frame, which
+      # advances the security floor on a machine that could not
+      # actually complete its boot and strands it on a broken image.
+      #
+      # Invoked BY PATH rather than through a `make` target: the root
+      # Makefile is receipt surface (the build/test/smoke receipts are
+      # computed over it), so an unattended run may not add a target
+      # there. A `make rollback-fixtures` wrapper is tracked as an
+      # operator-gated item in the boot-protocol ABI handoff roadmap,
+      # under "Scripted anti-rollback NVRAM fixture harness".
+      #
+      # Same env contract as the stale-ABI step above: the harness
+      # env-probes OVMF/mtools/QEMU and SKIPs cleanly when any are
+      # missing, and upgrades a full-SKIP to FAIL under GITHUB_ACTIONS
+      # so a silent no-op cannot satisfy the gate. Runners have no
+      # /dev/kvm, so this is the TCG leg.
+      - name: Anti-rollback NVRAM fixtures
+        run: bash scripts/debug/rollback-fixtures/run-fixtures.sh
+
       # ── Optional disk-image artifact (manual runs only) ────────────────────
       # The raw disk image is by far the largest CI artifact and quickly burns
       # through GitHub's shared artifact quota. Keep normal push/PR runs

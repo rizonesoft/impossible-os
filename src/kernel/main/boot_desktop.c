@@ -396,8 +396,11 @@ void boot_phase3(void)
     boot_splash_status("Flushing boot log...");
     klog_disk_flush();
 
-    /* Runtime crash test -- triggered by crash_test=1 in boot.conf */
-    if (g_boot_info.config.crash_test) {
+    /* Runtime crash test -- crash_test=1 in boot.conf. Matched exactly, not
+     * for truthiness: crash_test=2 selects the LATE pre-compositor site
+     * further down, and a truthy test here would fire first and never let
+     * that boot reach it. */
+    if (g_boot_info.config.crash_test == 1) {
         extern void panic_screen(struct interrupt_frame *frame,
                                  uint64_t error_code,
                                  const char *description,
@@ -834,6 +837,12 @@ void boot_phase3(void)
         if (cfg_snap && cfg_snap->debug_enabled)
             config_dump();
     }
+
+    /* crash_test=2 does NOT fire here. Its site is inside the compositor
+     * loop, immediately before the first composite -- see compositor.c.
+     * Stopping the boot ahead of compositor_run() would leave the entry
+     * into the compositor untested, and that is precisely where a
+     * relocated anti-rollback raise would hide. */
 
     /* --- Compositor event loop (never returns) --- */
     POST16(POST16_COMPOSITOR);  /* attribute a crash/hang entering the compositor */

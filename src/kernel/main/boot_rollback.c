@@ -28,6 +28,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/uefi_runtime.h"
+#include "kernel/uefi_vars.h"
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/spinlock.h"
 
@@ -203,6 +204,15 @@ void boot_rollback_mark_steady(void)
      * visible to the worker thread that consumes s_steady via
      * raise_if_steady. */
     __atomic_store_n(&s_steady, 1, __ATOMIC_RELEASE);
+    /* Publish the latch on serial. The raise runs asynchronously on
+     * sys_wq, so its success log says WHETHER the floor moved but never
+     * WHEN the gate opened, and those are different questions. Without
+     * this line the only evidence of ordering is wall-clock timing,
+     * which cannot separate "raised after the first frame" from "raised
+     * before it and logged late". The rollback fixture harness asserts
+     * steady -> enqueued -> raised as an ORDER; on bare metal this is
+     * also the marker that says the compositor reached a real frame. */
+    klog(LOG_INFO, "boot", "anti-rollback: compositor steady latched");
 }
 
 int boot_rollback_is_steady(void)
@@ -242,12 +252,15 @@ int boot_rollback_raise_if_steady(void)
         return 0;
     }
 
-    /* IPOSRequiredSecVersion GUID; name is UCS-2 NUL-terminated.
-     * Attributes: NV | BS | RT = 0x7. */
-    static struct boot_uefi_guid ipos_guid = {
-        0x6f35d3a4, 0xc0e6, 0x4a82,
-        { 0xb5, 0xd8, 0x7c, 0x9d, 0x2e, 0x4f, 0x8a, 0x13 }
-    };
+    /* IPOSRequiredSecVersion namespace + attributes come from the
+     * canonical definitions in kernel/uefi_vars.h, NOT a local copy.
+     * The bootloader reads this variable back pre-jump through its own
+     * mirror of the same GUID (bootx64.c g_impossible_os_guid) and
+     * fail-closes when the attribute set does not carry NV|BS|RT, so a
+     * private duplicate here could drift out of the pair silently.
+     * Name is UCS-2 NUL-terminated. */
+    static const struct boot_uefi_guid ipos_guid =
+        IMPOSSIBLE_OS_VENDOR_GUID_INIT;
     static const uint16_t req_name[] = {
         'I','P','O','S','R','e','q','u','i','r','e','d',
         'S','e','c','V','e','r','s','i','o','n', 0
@@ -255,7 +268,7 @@ int boot_rollback_raise_if_steady(void)
 
     uint64_t status = uefi_set_variable(
         &ipos_guid, req_name,
-        0x7u,
+        UEFI_VAR_NV_BOOT_RUNTIME,
         sizeof(new_value), &new_value);
 
     if (status == 0) {
@@ -329,6 +342,14 @@ int boot_rollback_request_raise(void)
         s_enqueued = 1;
         spin_unlock_irqrestore(&s_state_lock, flags);
     }
+
+    /* Second half of the ordering evidence described in mark_steady:
+     * this fires exactly once per boot, on the caller's thread, at the
+     * moment the raise is claimed -- before either the workqueue or the
+     * synchronous fallback runs. A regression that requests the raise
+     * from anywhere other than the compositor first-frame path shows up
+     * here immediately, even when the write itself lands later or never. */
+    klog(LOG_INFO, "boot", "anti-rollback: raise request enqueued");
 
     /* Try the deferred path first. sys_wq might be NULL during early
      * boot or if creation failed; the workqueue pool can also fill

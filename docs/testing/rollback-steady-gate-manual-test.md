@@ -2,6 +2,22 @@
 
 Owner: [Anti-Rollback Raise Timing Hardening](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#16-anti-rollback-raise-timing-hardening) in `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md`.
 
+> [!IMPORTANT]
+> **This procedure is no longer the verification path. Run the scripted harness instead:**
+>
+> ```bash
+> bash scripts/debug/rollback-fixtures/run-fixtures.sh
+> ```
+>
+> It drives four sequenced boots over one persistent `OVMF_VARS.fd` (cold opt-out, opt-in stopped before the first composited frame, opt-in run to steady, and a read-back boot), asserts each outcome from the serial log, and runs on every push as the "Anti-rollback NVRAM fixtures" step in [`.github/workflows/build.yml`](../../.github/workflows/build.yml). It needs no `virt-fw-vars` and exits non-zero on a real regression, on a forced QEMU teardown, and on a silent skip under CI.
+>
+> The steps below are retained as the DEBUGGING FALLBACK: use them when a fixture fails and you want to drive the boots by hand, or when inspecting the variable store directly. Two things in them are known-stale and are corrected by the harness:
+>
+> - The kill trigger `[BOOT] POST 0xFF00` is not emitted on serial. `POST16_BOOT_OK` is written to NVRAM and the POST display by `boot_post_nvram_write16()`; the bootloader's `[BOOT] POST 0xNNNN` print path only covers its own pre-jump codes. The harness stops on the `Heap:` klog instead, which is emitted after the same point and is reachable on serial.
+> - Reading the result from the SAME boot that raises the floor cannot work: `boot_rollback: security version shipped=X required=Y` comes from `boot_rollback_validate()` in Phase 0, before the steady worker calls `SetVariable`. Only a later boot can observe the write, which is why the harness has a fourth boot.
+>
+> Setting `anti_rollback_raise=1` in `boot.conf` had no effect until 2026-08-15: the bootloader's `parse_conf_kv()` had no branch for the key, so the field stayed 0 and the raise never fired. If you are running this procedure against an older tree, that is why nothing advances.
+
 ## Purpose
 
 Prove that the `boot_rollback_raise_if_steady()` gate correctly withholds the `IPOSRequiredSecVersion` NVRAM advance when the boot dies before the compositor produces its first stable frame. The unit tests in `src/kernel/test/test_boot_rollback.c` cover the pure-kernel state machine (mark_steady latch, opt-out guard, reset) but cannot exercise the live UEFI Runtime Services `SetVariable` path. This procedure drives that path end-to-end on QEMU with persistent OVMF NVRAM.

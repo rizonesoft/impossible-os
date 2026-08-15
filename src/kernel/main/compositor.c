@@ -281,6 +281,29 @@ void compositor_run(void)
             wm_process_pending_closes();
             wm_mark_dirty_internal();
 
+            /* Late crash test -- crash_test=2 dies HERE, inside the
+             * compositor loop, after everything Phase 3 does AND after
+             * entering compositor_run(), but before the first composite
+             * and flip. This is the deepest pre-presentation point in
+             * the boot, and it is deliberately inside the loop rather
+             * than ahead of the call: a raise placed at the top of
+             * compositor_run() would execute on a boot stopped earlier,
+             * and the anti-rollback fixture harness would then certify a
+             * floor that advanced before anything was ever shown. Fires
+             * only on the first iteration -- the boot cannot reach a
+             * second one. */
+            if (first_frame && g_boot_info.config.crash_test == 2) {
+                extern void panic_screen(struct interrupt_frame *frame,
+                                         uint64_t error_code,
+                                         const char *description,
+                                         const char *file, uint32_t line);
+                klog(LOG_WARN, "boot",
+                     "crash_test=2 -- triggering deliberate BSOD before compositor");
+                panic_screen((struct interrupt_frame *)0, 0xDEAD,
+                             "CRASH_TEST: Deliberate pre-presentation panic",
+                             __FILE__, __LINE__);
+            }
+
             /* Restore cursor, full composite, draw cursor, flip */
             cursor_restore();
             wm_composite();

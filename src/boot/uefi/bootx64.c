@@ -2927,6 +2927,21 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "on"))  cfg->tpm_enroll = 1;
         else                              cfg->tpm_enroll = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "anti_rollback_raise")) {
+        /* Anti-rollback opt-in: when set, a boot that reaches the
+         * compositor's first stable frame advances the
+         * IPOSRequiredSecVersion NVRAM floor to the shipped version.
+         * Default 0 (memset by boot_config_defaults) is the safe
+         * state -- the floor never moves, so every older signed image
+         * stays bootable. Consumed by the kernel at
+         * boot_rollback_raise_if_steady() in
+         * src/kernel/main/boot_rollback.c; without this branch the
+         * field stayed 0 forever and the steady-gated raise was
+         * unreachable in production. */
+        if      (ascii_streq(val, "off")) cfg->anti_rollback_raise = 0;
+        else if (ascii_streq(val, "on"))  cfg->anti_rollback_raise = 1;
+        else                              cfg->anti_rollback_raise = (UINT8)ascii_atoi(val);
+    }
     else if (ascii_streq(key, "compositor")) {
         /* Desktop UI test framework, headless compositor section. */
         if      (ascii_streq(val, "headless")) cfg->compositor = 1;

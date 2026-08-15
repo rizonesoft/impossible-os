@@ -94,7 +94,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [x]   |
 | ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
 | 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
-| ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [ ]   |
+| ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [x]   |
 
 ---
 
@@ -587,7 +587,7 @@ The capability negotiation ABI shipped in §11 advertises what the bootloader po
 > - **Signal source:** [`src/kernel/main/compositor.c`](../../src/kernel/main/compositor.c) calls `boot_rollback_mark_steady()` + `boot_rollback_request_raise()` immediately after the first successful full-composite frame (the `first_frame` branch); `request_raise` schedules the NVRAM write on `sys_wq` so the compositor thread does not block on UEFI Runtime Services. The 5-second timer fallback from the original spec was removed during review: `first_frame=1` forces `need_full=1` on iteration 1, so the first-frame path always fires if the composite returns; a hang inside `wm_composite` correctly withholds the raise (that IS the safety goal). Headless mode (`compositor=headless`) enters `sti; hlt` and never reaches the loop -- if a shipped `boot.conf` enables `anti_rollback_raise=1` AND shipped > required under headless, raise is intentionally skipped with `LOG_WARN("anti-rollback: raise skipped in headless mode")` so the policy mismatch is loud (headless is test-only; release should never see the combined config but the log makes accidents obvious).
 > - **Move:** the old raise block at `boot_desktop.c:~278-304` was deleted. `boot_post_nvram_write16(POST16_BOOT_OK)` stays where it was (other telemetry consumers need the early Phase-3 marker); only the anti-rollback counter advance moves behind the steady gate.
 > - **Tests:** [`test_boot_rollback.c`](../../src/kernel/test/test_boot_rollback.c) registers 18 `boot_rollback:` cases under `TEST_CAT_BOOT`, including the steady gate (withhold without mark_steady; mark_steady latches + reset clears; raise one-shot on opt-out; was_raised stays 0 on opt-out; reset clears all four latches), the deferred-raise paths (request_raise sync fallback when sys_wq is null; request_raise pre-steady is no-latch no-op so a later post-steady caller still owns the raise), and the existing policy-decision/validate cases. All stage `g_boot_info` with opt-out so no live `uefi_set_variable` fires (honors "no live boot infrastructure calls from tests"); live NVRAM round-trip stays on the manual QEMU path.
-> - **Manual QEMU procedure:** the "kill the VM 1s after POST16_BOOT_OK and reboot" test (item 6) is documented as a 3-run procedure in [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md). Operator executes on a release-candidate kernel and appends the result to `build/fixtures/rollback-timing/results.txt` (audit trail; not checked in).
+> - **Manual QEMU procedure:** SUPERSEDED by the scripted harness in [§24](#24-scripted-anti-rollback-nvram-fixture-harness) -- `bash scripts/debug/rollback-fixtures/run-fixtures.sh`, wired into CI, 4/4 fixtures. [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) is retained as the debugging fallback; §24 also corrected two stale claims in it and wired the `anti_rollback_raise` opt-in, which no bootloader parser branch had ever set, so this gate was unreachable in production until then.
 > - **Scope boundary:** §16 owns the timing gate only. `should_raise()` policy (opt-in + shipped > required) stays in §13. Retry-on-failure, multi-tier steady signals (shell-input-driven, first-disk-write-driven), and bounded-retry on `SetVariable` failure are future work -- the `s_attempted`/`s_raised` split leaves that door open. Per-finding evidence in commit `c2602171`.
 
 > **Verified:** 2026-04-24 | commit `c2602171` + manual-test doc | 6/6 items | build OK | tests 612/612 kernel + 16/16 user-mode PASS + manual procedure documented
@@ -857,40 +857,79 @@ That is a coverage gap rather than a live exploit, and it was surfaced by a cons
 
 The gap is narrow and the shape of the fix already exists in this file: §19 built exactly this kind of harness for the stale-ABI path (disposable disk image, persistent OVMF_VARS, QEMU PID tracking, per-fixture fault-class assertion) and it now runs on every push, under TCG in CI and KVM locally. This section is that harness applied to the rollback gate. It is NOT a re-implementation of §19 and does not re-cover the stale-ABI fixtures.
 
-- [ ] Add `scripts/debug/rollback-fixtures/run-fixtures.sh` driving the three sequenced boots over one persistent `OVMF_VARS.fd`, modelled on the `stale-abi-fixtures` harness (env-probe, QEMU PID tracking, per-fixture assertion, cleanup traps).
-- [ ] Assert run A (cold, no opt-in) leaves `IPOSRequiredSecVersion` absent; run B (opt-in, killed before the compositor steady latch) leaves it UNCHANGED; run C (opt-in, allowed to reach steady) raises it exactly once.
-- [ ] Read the NVRAM value without depending on `virt-fw-vars`, absent on the dev host: grep the run-C serial log for `boot_rollback: security version shipped=X required=Y`, and use `virt-fw-vars --print` only when present.
-- [ ] Wire the harness into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) beside the "Stale-ABI fixtures" step so the TCG leg runs on every push, the way §19 gets its TCG coverage.
+- [x] Wire `anti_rollback_raise` into the bootloader's `parse_conf_kv()` and document the key in [`resources/boot/boot.conf`](../../resources/boot/boot.conf), default 0.
+  - The field existed in both ABI mirrors and the kernel read it at `boot_rollback.c:238`, but no parser branch ever set it, so the opt-in was unreachable and §16's steady-gated raise was dead code in production.
+  - Accepts `on`/`off`/numeric like the neighbouring policy knobs; `boot_config_defaults()` memsets it to the safe 0.
+  - -> XREF: [§16](#16-anti-rollback-raise-timing-hardening) -- this is the missing producer for the policy §16 gates.
+- [x] Add `scripts/debug/rollback-fixtures/run-fixtures.sh` driving FOUR sequenced boots over one persistent `OVMF_VARS.fd`, modelled on the `stale-abi-fixtures` harness.
+  - Carries over its env-probe, QEMU PID tracking, cleanup traps, and the `GITHUB_ACTIONS` SKIP-to-FAIL upgrade so a silent no-op cannot satisfy the gate.
+- [x] Assert A (cold, opt-out) reports `required=0` and no raise; B (opt-in, dies pre-frame) leaves the floor unchanged; B2 independently re-reads the store; C (opt-in, reaches first frame) raises once; D reads it back.
+- [x] Add fixture B2: an independent readback boot after B, asserting the store still says `required=0`.
+  - Everything B asserts comes from markers the rollback code emits about itself, so relocating the whole `steady` -> `enqueued` -> `raised` sequence to an earlier site still produces one correctly ordered triplet and slips past every log-based check.
+  - B2 asks the only question those markers cannot answer -- what the NVRAM actually holds -- so it holds against any route, including a direct `uefi_set_variable()` that never touches the helpers.
+  - It reads only its OWN Phase-0 validator record, excluding `[CRASH-PREV]` lines: B panics deliberately, so `klog_crash_recover()` replays B's pre-crash `required=0` into B2's log, where it would otherwise mask a floor that really had moved.
+- [x] Add a `crash_test=2` site INSIDE the compositor loop, guarded on the first iteration and placed before the first composite and flip; match the existing `crash_test=1` site exactly rather than for truthiness.
+  - `crash_test=1` panics early in Phase 3, ahead of the pre-§16 raise site, so a boot stopped there could not see a raise moved to that site at all.
+  - Stopping merely BEFORE `compositor_run()` was also not enough: a raise relocated to the top of that function would run on no fixture's boot, and all five would still pass. The hook sits at the deepest pre-presentation point instead.
+- [x] Rebuild when any build input is newer than `system-disk.img`, not merely when the image is absent.
+  - Booting a stale image can report all-PASS for code no longer in the tree, which is the worst failure a regression gate has: a green verdict about something that was never tested.
+- [x] Add synchronous `anti-rollback: compositor steady latched` and `anti-rollback: raise request enqueued` klogs so the gate can be asserted as an ORDER rather than a timing coincidence.
+  - The raise itself runs on `sys_wq`, so the absence of its success log proves nothing: a pre-frame request that has not been scheduled yet looks identical to no request at all. Both new markers fire on the caller's thread.
+  - Run C asserts `steady` -> `enqueued` -> `raised` and exactly one of each; that is what catches a raise moved anywhere earlier in the boot.
+- [x] Stop run B with the shipped `crash_test=1` boot.conf knob rather than by racing a serial marker, so the pre-frame death is deterministic on any accelerator.
+  - Two marker-based stops were measured and rejected: `Boot complete in` sits ahead of the pre-§16 raise site and would mask the regression, and the `heap:` stats line clears that site but leads the first frame by only ~260 ms under KVM, so a 0.2s poll routinely stopped the guest too late.
+  - The masking objection that ruled the knob out initially is answered by run C's ordering and exactly-once assertions, which catch a raise moved to the old site.
+- [x] Read the NVRAM value from run D without depending on `virt-fw-vars`, which is absent on the dev host; use `virt-fw-vars --print` only as corroboration when installed.
+  - Run C cannot be the source: `boot_rollback: security version shipped=X required=Y` is emitted by `boot_rollback_validate()` in Phase 0, before the steady worker calls `SetVariable`, so it reports the value C started with.
+- [x] Stop every boot with SIGTERM and wait for an orderly QEMU exit, escalating to SIGKILL only after a bound and treating that escalation as a fixture FAILURE.
+  - A forced teardown can drop an NVRAM write the firmware already acknowledged, and the very next boot reuses that same variable store.
+- [x] Use the canonical `IMPOSSIBLE_OS_VENDOR_GUID_INIT` + `UEFI_VAR_NV_BOOT_RUNTIME` from [`include/kernel/uefi_vars.h`](../../include/kernel/uefi_vars.h) in `boot_rollback.c`.
+  - It was the last kernel writer still carrying a byte-identical private copy of the GUID and a bare `0x7u` attribute literal.
+- [x] Wire the harness into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) beside the "Stale-ABI fixtures" step so the TCG leg runs on every push, invoked by path rather than via `make`.
 - [/] Add a `make rollback-fixtures` wrapper target -- operator-gated: the root `Makefile` is receipt surface that an unattended run may not edit, so the harness is invoked by path until an operator adds the target.
-- [ ] Replace the prose procedure in [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) with a pointer to the harness, keeping the manual steps only as the debugging fallback.
-- [ ] Commit: `"test: scripted anti-rollback NVRAM fixture harness"`
+- [x] Replace the prose procedure in [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) with a pointer to the harness, keeping the manual steps as the debugging fallback.
+  - Also corrects two stale claims in them: the `POST 0xFF00` kill trigger is not emitted on serial, and a same-boot readback cannot observe the write.
+- [ ] Seed a fixture store written under a historical GUID or a wider attribute set, so a coordinated drift of BOTH the kernel writer and the bootloader reader is caught.
+  - A fresh current-writer/current-reader round trip passes either way; only a captured store from a released image can pin the compatibility contract, and no current build produces one.
+  - -> XREF: [§13](#13-anti-rollback-and-security-version-binding) -- §13 owns the `IPOSRequiredSecVersion` variable contract.
+- [x] Commit: `"test: scripted anti-rollback NVRAM fixture harness"`
 
-**Test checkpoint:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` reports 3/3 fixtures PASS on KVM locally, and the same step passes under TCG in a CI run whose log shows the TCG accelerator line. Deliberately inverting the steady latch (return true unconditionally) makes fixture B FAIL, and reverting restores 3/3 -- the harness must be able to catch the regression it exists for, not merely pass.
+**Test checkpoint:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` reports 5/5 fixtures PASS on KVM locally, and the same step passes under TCG in a CI run whose log shows the TCG accelerator line. Sensitivity control: restoring the pre-§16 behavior (calling `boot_rollback_mark_steady()` + `boot_rollback_request_raise()` immediately after `boot_post_nvram_write16(POST16_BOOT_OK)` in `boot_desktop.c`) must make the harness FAIL on BOTH run B (its markers appear on a boot with no first frame) and run B2 (the store no longer reads required=0), and reverting must restore 5/5 -- the harness must be able to catch the regression it exists for, not merely pass. The failure must be SEMANTIC: an earlier revision of this harness failed that injection only because the interrupted NVRAM write happened to corrupt the variable store, which is a timing side effect and not a gate assertion. Inverting `boot_rollback_is_steady()` is NOT a valid control either: that accessor is observer-only, and both `raise_if_steady()` and `request_raise()` load `s_steady` directly.
+
+> **Test runner:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` | 5/5 fixtures PASS (KVM local) | kernel-side state machine stays covered by the 18 `boot_rollback:` cases in `test_boot_rollback.c` (SUITE=boot). **Note:** the bootloader `parse_conf_kv()` branch has no kernel test surface -- it is UEFI-side code the kernel test binary does not link. Fixtures B and C are its validation: both boot a disk whose `boot.conf` carries `anti_rollback_raise=1`, so a parser regression makes C fail.
+
+> **Notes:**
+> - **Shipped:** the five-boot harness, its CI step in `build.yml`, the `anti_rollback_raise` parser branch in `bootx64.c`, the documented key in `boot.conf`, and the canonical-GUID cleanup in `boot_rollback.c`.
+> - **Integration:** patches `::/EFI/ImpossibleOS/boot.conf` in a disposable disk copy via the same `mcopy @@EFI_OFFSET` mechanism as `scripts/patch-boot-conf.sh`, and boots with the smoke gate's QEMU flags.
+> - **Downstream:** the opt-in policy §13 defines and §16 gates is reachable for the first time; the config field was never written before, so the raise could not fire on any real boot.
+> - **Canonical doc:** [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) now points at the harness and keeps the manual steps as the debugging fallback.
+> - **Scope boundary:** §24 owns the harness and the opt-in wiring; the variable contract stays §13's and the steady-latch design stays §16's.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                         | 🪟 Win11                    | 🐧 Linux                        | 🚀 Impossible OS                                  |
-| --- | ------------------------------- | --------------------------- | ------------------------------- | ------------------------------------------------- |
-| 💎  | Versioned loader/kernel ABI     | ✅ LPB + extensions         | ✅ boot_params + kernel_info    | ✅ §1-§8 full: contract + manifest + drift detect |
-| 💎  | Typed initrd and module handoff | ✅ ramdisk + boot drivers   | ✅ initrd + initramfs           | ✅ §4 ABI + §5 producer/consumer shipped          |
-| ⭐  | Generated ABI manifest          | ⚠️ internal only            | ⚠️ docs + CI                    | ✅ §2 + §3 manifest + drift detector shipped      |
-| ⭐  | Field-level ownership map       | ⚠️ internal ownership       | ⚠️ scattered docs               | ✅ §1 matrix + §10 audit shipped                  |
-| 💎  | Capability negotiation          | ✅ loader extensions        | ✅ version + flags              | ✅ §11 required/present/degraded + validator      |
-| 💎  | Boot provenance decision record | ✅ boot status + resume     | ⚠️ cmdline + logs               | ✅ §12 path/reason + validator + Registry         |
-| ⭐  | Friendly stale-loader mismatch  | ✅ recovery codes           | ⚠️ log-driven failures          | ✅ §7 classifier + §17 pre-jump UCS-2 + NVRAM     |
-| 💎  | Anti-rollback security version  | ✅ OsLoaderSecurityVersion  | ⚠️ shim SBAT revocation only    | ✅ §13 NVRAM counter + pre-jump refuse            |
-| ⭐  | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover          | ⚠️ §14 ABI shipped; runtime owned by TODO-11      |
-| 💎  | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions     | ✅ §6 single table + overlap check + JSON dump    |
-| ⭐  | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers          | ✅ §15 consumer retrofit to caps_present shipped  |
-| ⭐  | Compositor-steady rollback gate | ❌                          | ❌                              | ✅ §16 withholds raise until first frame          |
-| ⭐  | Pre-jump ABI mismatch UI screen | ⚠️ BSOD after kernel load   | ⚠️ kernel panic text            | ✅ §17 UEFI console + ImpossibleBootProtoFault    |
-| ⭐  | Rollback vs ABI drift split UX  | ❌                          | ❌                              | ✅ §18 hint helper + halt-preserve screen         |
-| ⭐  | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression    | ⚠️ kunit / kselftests partial   | ✅ §19 KVM+TCG harness wired to CI                |
-| ⭐  | TPM-bound kernel ABI manifest   | ⚠️ Measured Boot generic    | ⚠️ shim+SBAT only (no manifest) | ⬜ §11 cap bit + TODO-13 §9 PCR extend            |
-| 💎  | Bootloader build identity       | ⚠️ HAL-internal             | ⚠️ kernel CONFIG only           | ✅ §20 git-sha + build-time in boot_info          |
-| ⭐  | Handoff-base drift protection   | ⚠️ internal constant        | ✅ shared asm/bootparam.h       | ✅ §21 one definition; ⬜ §22 deploy-time gate    |
+| ⭐  | Feature                         | 🪟 Win11                     | 🐧 Linux                        | 🚀 Impossible OS                                  |
+| --- | ------------------------------- | ---------------------------- | ------------------------------- | ------------------------------------------------- |
+| 💎  | Versioned loader/kernel ABI     | ✅ LPB + extensions          | ✅ boot_params + kernel_info    | ✅ §1-§8 full: contract + manifest + drift detect |
+| 💎  | Typed initrd and module handoff | ✅ ramdisk + boot drivers    | ✅ initrd + initramfs           | ✅ §4 ABI + §5 producer/consumer shipped          |
+| ⭐  | Generated ABI manifest          | ⚠️ internal only             | ⚠️ docs + CI                    | ✅ §2 + §3 manifest + drift detector shipped      |
+| ⭐  | Field-level ownership map       | ⚠️ internal ownership        | ⚠️ scattered docs               | ✅ §1 matrix + §10 audit shipped                  |
+| 💎  | Capability negotiation          | ✅ loader extensions         | ✅ version + flags              | ✅ §11 required/present/degraded + validator      |
+| 💎  | Boot provenance decision record | ✅ boot status + resume      | ⚠️ cmdline + logs               | ✅ §12 path/reason + validator + Registry         |
+| ⭐  | Friendly stale-loader mismatch  | ✅ recovery codes            | ⚠️ log-driven failures          | ✅ §7 classifier + §17 pre-jump UCS-2 + NVRAM     |
+| 💎  | Anti-rollback security version  | ✅ OsLoaderSecurityVersion   | ⚠️ shim SBAT revocation only    | ✅ §13 NVRAM counter + pre-jump refuse            |
+| ⭐  | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)        | ✅ 6.16 Kexec Handover          | ⚠️ §14 ABI shipped; runtime owned by TODO-11      |
+| 💎  | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock  | ⚠️ memblock + NOMAP regions     | ✅ §6 single table + overlap check + JSON dump    |
+| ⭐  | Authoritative capability gates  | ⚠️ advisory to drivers       | ⚠️ advisory to drivers          | ✅ §15 consumer retrofit to caps_present shipped  |
+| ⭐  | Compositor-steady rollback gate | ❌                           | ❌                              | ✅ §16 withholds raise until first frame          |
+| ⭐  | Pre-jump ABI mismatch UI screen | ⚠️ BSOD after kernel load    | ⚠️ kernel panic text            | ✅ §17 UEFI console + ImpossibleBootProtoFault    |
+| ⭐  | Rollback vs ABI drift split UX  | ❌                           | ❌                              | ✅ §18 hint helper + halt-preserve screen         |
+| ⭐  | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression     | ⚠️ kunit / kselftests partial   | ✅ §19 KVM+TCG harness wired to CI                |
+| ⭐  | Anti-rollback raise CI gate     | ❌ no public regression test | ❌ no equivalent gate           | ✅ §24 4-boot NVRAM harness wired to CI           |
+| ⭐  | TPM-bound kernel ABI manifest   | ⚠️ Measured Boot generic     | ⚠️ shim+SBAT only (no manifest) | ⬜ §11 cap bit + TODO-13 §9 PCR extend            |
+| 💎  | Bootloader build identity       | ⚠️ HAL-internal              | ⚠️ kernel CONFIG only           | ✅ §20 git-sha + build-time in boot_info          |
+| ⭐  | Handoff-base drift protection   | ⚠️ internal constant         | ✅ shared asm/bootparam.h       | ✅ §21 one definition; ⬜ §22 deploy-time gate    |
 
 > Parity covers the contract itself (§1-§8), mirror drift detection (§2-§3), typed payload handoff (§4-§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Explicit capability negotiation (§11), a shared boot decision record (§12), anti-rollback security-version binding (§13), and capability-gated consumer retrofit (§15) collectively make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. §14 warm-kernel-update handoff ABI positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as [warm-kernel-update runtime (03-memory-concurrency/TODO-11)](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md). §16 + §18 together split the rollback UX from structural ABI drift (no Windows or Linux equivalent): a boot that dies before its first frame cannot strand the machine on a broken image, and a rollback refusal produces operator-actionable "boot a newer kernel" guidance distinct from "rebuild both halves". §17 pre-jump `.bootproto` screen + §19 stale-ABI KVM+TCG CI harness close the regression-gate loop end-to-end (Win11 has manual HCK tests; Linux has kunit/kselftests partial -- neither ships an automated stale-image fail-closed gate).
 
