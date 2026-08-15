@@ -290,6 +290,13 @@ void panic_evidence_populate(struct panic_evidence *ev,
  * unit-testable without invoking any panic infrastructure. */
 uint32_t panic_declared_ctx(struct interrupt_frame *frame);
 
+/* The same classification with the panic-safe id SUPPLIED rather than derived.
+ * panic_declared_ctx is this with cpu_panic_safe_apic_id() folded in; every
+ * panic ingress already holds that id for its park guard, and the NMI depth
+ * this consults is indexed by it, so re-deriving would cost a second
+ * serializing CPUID in the durability-critical prefix of a crash. */
+uint32_t panic_declared_ctx_for(struct interrupt_frame *frame, uint32_t apic_id);
+
 #ifdef KERNEL_TESTS
 /* Derivation counter for the section-24 assertion that a panic pays for the
  * context ONCE and hands it down. "Once" is not a property a signature can
@@ -345,52 +352,68 @@ void panic_snapshot_str(char *dst, uint32_t cap, const char *src,
  * trusted, a per-CPU flag would be read from, and written to, CPU 0's state,
  * and the parking CPU would still reach terminal arbitration.
  *
- * ONLY THE UNBOUNDED STEP IS CLAIMED, and which steps those are is the whole
- * cleanup-safety argument. Claiming a stage BEFORE a step means an abort in the
- * gap SKIPS that step forever, so it is right only where re-running is worse
- * than skipping. Exactly one step qualifies: the diagnostic, which walks a
- * caller-supplied string and drives the UART, and could therefore fault in the
- * same place on every entry and never reach the park. Every other step of the
- * tail -- the allowance reclaim, the online-mask retract, the UART hand-back,
- * the evidence revoke -- is a handful of compare-exchanges over kernel-owned
- * static state reached through a GS-independent slot. None can fault, all are
- * idempotent, and gating them would be strictly worse: an abort landing in
- * front of the UART hand-back would park this CPU still holding the serial lock
- * and hang every surviving CPU on its next write.
+ * ONLY THE UNBOUNDED STEP GATES AN ACTION, and which one that is carries the
+ * whole cleanup-safety argument. Claiming a stage BEFORE a step means an abort
+ * in the gap SKIPS that step forever, so it is right only where re-running is
+ * worse than skipping. Exactly ONE step qualifies: the diagnostic, which walks
+ * a caller-supplied string and drives the UART and could otherwise fault in the
+ * same place on every entry and never reach the park.
  *
- * The recursion is bounded by that split rather than by a depth counter: the
- * one step that could loop runs at most once, and nothing else in the tail can
- * fault twice in the same place. */
+ * EVERY OTHER STEP RE-RUNS UNCONDITIONALLY on a nested entry and is not gated
+ * at all -- the allowance reclaim, the online-mask retract, the completion
+ * stores, the UART hand-back and the evidence revoke. Gating them would be
+ * strictly worse: an abort landing in front of the UART hand-back would park
+ * this CPU still holding the serial lock and hang every surviving CPU on its
+ * next write. So ENTERED and PUBLISHED are RECORDS of how far the tail has got,
+ * read by the entry guards and by the publication-owed question. They are not
+ * permissions, and the tail ignores their claim results.
+ *
+ * Bounded by that split rather than by a depth counter: the one step that could
+ * loop runs at most once, and every other step is a small number of compare-
+ * exchanges over kernel-owned static state reached through a GS-independent
+ * slot -- with ONE exception worth naming rather than glossing. The evidence
+ * revoke touches a mapped page, not BSS, and a panic may have corrupted the
+ * tables that reach it. What bounds that step is its own shape: it relinquishes
+ * the owner word BEFORE writing the page, so a re-entry returns at its first
+ * test instead of repeating the write. Reordering those two would remove the
+ * protection while this comment still vouched for it. */
 #define PANIC_PARK_NONE         0u  /* not parking: ordinary terminal arbitration */
 #define PANIC_PARK_ENTERED      1u  /* the branch is committed to parking this CPU */
 #define PANIC_PARK_PUBLISHED    2u  /* completion settled: published, or not owed */
 #define PANIC_PARK_DIAGNOSED    3u  /* the one-record diagnostic was attempted */
 
-/* What a panic entry on this CPU owes, given the async-worker state. The three
- * answers correspond exactly to the three intervals the park tail passes
- * through, which is why a boolean "am I parking" cannot express it:
+/* What a CPU ALREADY IN THE PARK TAIL owes, given how far that tail has got.
  *
- *   TERMINAL  not an async worker and not parking: ordinary arbitration.
- *   ISOLATE   run the park tail INCLUDING the completion publication. The first
+ *   ISOLATE   run the tail INCLUDING the completion publication. The first
  *             entry, and any nested abort landing before the publication, where
  *             the BSP has been told nothing and would otherwise wait out its
  *             whole barrier deadline.
- *   PARK      run the park tail but SKIP the publication, because it already
+ *   PARK      run the tail but SKIP the publication, because it already
  *             happened and the BSP is proceeding on the strength of it.
  *
- * `in_async_work` is checked FIRST and on its own: a CPU still identifying as
- * an async worker has not published, whatever else is true, so that reading can
- * never be talked out of publishing by a stale word.
+ * ELIGIBILITY IS THE CALLER'S QUESTION, NOT THIS ONE'S. Whether a CPU belongs
+ * in the tail at all is settled before entry -- panic_async_is_parking() for a
+ * nested entry, `in_async_work` for a first fault -- so there is no "terminal"
+ * answer here to select. There used to be, together with an `in_async_work`
+ * parameter every production call site passed as 0, which made two of three
+ * rows unreachable in a shipped kernel while this header described the
+ * protection as live.
+ *
+ * TWO ANSWERS, NOT THREE, and the stage is the only input. Whether this CPU
+ * belongs in the tail at all is settled by the CALLERS before they enter it --
+ * panic_async_is_parking() for a nested entry, `in_async_work` for a first
+ * fault -- so a "terminal" answer here would be unreachable. It used to exist,
+ * along with an `in_async_work` parameter every production call site passed as
+ * 0: a header documenting a protection the shipped path could not reach, with
+ * unit-test rows standing in for it.
  *
  * "Already published" is read off the STAGE and not off `pcpu->async_done`,
  * deliberately. The stage is the GS-independent copy, and taking both readings
  * would reintroduce through the back door exactly the per-CPU dependency the
- * stage exists to remove. Pure over its arguments, so all four rows are
- * unit-testable without a fault. */
-#define PANIC_ASYNC_TERMINAL  0u
+ * stage exists to remove. Pure over its argument. */
 #define PANIC_ASYNC_ISOLATE   1u
 #define PANIC_ASYNC_PARK      2u
-uint32_t panic_async_disposition(int in_async_work, uint32_t park_stage);
+uint32_t panic_async_disposition(uint32_t park_stage);
 
 /* Claim `step` in a monotonic park-stage slot: 1 = the caller now owns the step
  * and must perform it, 0 = some earlier entry already claimed it, skip it.

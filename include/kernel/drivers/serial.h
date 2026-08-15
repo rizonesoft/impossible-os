@@ -14,7 +14,8 @@ void serial_init(void);
 /* Apply the bootloader's serial findings. Call ONCE, after the boot_info
  * handoff has been validated and copied -- until then the struct is zeroed and
  * this would read an all-zero report as a genuine one. Adopts the reported I/O
- * base and records whether the probe found a UART at all. */
+ * base and records whether the probe found a UART at all, the latter only for a
+ * COHERENT (source NONE, port 0) pair. */
 void serial_adopt_boot_info(void);
 
 /* 1 = the bootloader probed ACPI SPCR, COM1 and COM2 and found no UART.
@@ -26,7 +27,10 @@ void serial_adopt_boot_info(void);
  * WAITS, whose entire budget would otherwise be spent on a transmitter already
  * shown not to answer -- a bounded cost either way round.
  *
- * Meaningful only AFTER serial_init; reads 0 before it. Exposed so boot_hw.c
+ * Meaningful only after serial_adopt_boot_info -- NOT after serial_init, which
+ * runs before the handoff exists and reads none of it. Reads 0 for the whole
+ * window in between. Also returns 0 again once a transmitter has answered, so
+ * this is "believed absent now", not a boot-time verdict. Exposed so boot_hw.c
  * can ANNOUNCE the state through klog, which the driver cannot do itself
  * without calling up into its own consumer. */
 int serial_uart_probed_absent(void);

@@ -164,10 +164,20 @@ const BUGCHECK_INFO *bugcheck_get_last(void)
  * touches the heap, either of which the interrupted thread may already hold or
  * have corrupted): the frame-aware fault terminal skips it and relies on the
  * in-memory g_last_bugcheck + dump pipeline for persistence instead. */
+/* `ev_cpu_in` is this CPU's panic-safe id, ALREADY DERIVED by the caller.
+ * Passed rather than re-derived because cpu_panic_safe_apic_id() executes
+ * CPUID, which serializes and exits to the hypervisor under KVM/WHPX -- and
+ * every ingress above this function has had to compute it for its own park
+ * guard. Two CPUIDs on the first instructions of a crash is pure latency on
+ * the one path whose budget is instructions-before-the-record-is-durable.
+ * CPU_PANIC_SAFE_ID_INVALID means "derive it yourself". */
 static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code,
                               uint32_t bugcheck_code, const uint64_t bugcheck_params[4],
                               const char *description_in, const char *file_in,
-                              uint32_t line);
+                              uint32_t line, uint32_t ev_cpu_in);
+
+/* Not a valid 8-bit APIC id, so it can never collide with a real one. */
+#define PANIC_EV_CPU_DERIVE  0xFFFFFFFFu
 
 static __attribute__((noreturn)) void panic_async_park(
         uint32_t ev_cpu, struct interrupt_frame *frame, uint64_t error_code,
@@ -179,6 +189,11 @@ static __attribute__((noreturn)) void ke_bugcheck_emit(
         uint64_t p1, uint64_t p2, uint64_t p3, uint64_t p4, int persist_registry)
 {
     extern uint64_t KeQueryInterruptTimeCoarse(void);
+
+    /* Derived ONCE for this whole ingress: the park guard below tests it, and
+     * panic_screen_impl takes it rather than executing a second CPUID on the
+     * first instructions of a crash. */
+    const uint32_t me = cpu_panic_safe_apic_id();
 
     /* A CPU ALREADY PARKING LEAVES BY THE SHORT PATH, AS THE FIRST ACT OF THIS
      * INGRESS (TODO-10 S30).
@@ -206,13 +221,9 @@ static __attribute__((noreturn)) void ke_bugcheck_emit(
      * hardware code; a frame-less software bugcheck carries its STOP code, which
      * is the identifying value there. The tail already reads frame->rip, so this
      * adds no new dependency on the frame. */
-    {
-        uint32_t me = cpu_panic_safe_apic_id();
-        if (panic_async_is_parking(me))
-            panic_async_park(me, frame,
-                             frame ? frame->err_code : (uint64_t)code,
-                             (const char *)0, PANIC_CTX_UNKNOWN);
-    }
+    if (panic_async_is_parking(me))
+        panic_async_park(me, frame, frame ? frame->err_code : (uint64_t)code,
+                         (const char *)0, PANIC_CTX_UNKNOWN);
 
     /* POST16 renders to the framebuffer (post_display16 -> fb_fill_rect/put_pixel).
      * The frame-aware fault terminal (KeBugCheckExFrame, frame != NULL) runs in an
@@ -327,7 +338,7 @@ static __attribute__((noreturn)) void ke_bugcheck_emit(
         const uint64_t params[4] = { p1, p2, p3, p4 };
         uint64_t error_code = frame ? frame->err_code : (uint64_t)code;
         panic_screen_impl(frame, error_code, (uint32_t)code, params,
-                          desc, __FILE__, __LINE__);
+                          desc, __FILE__, __LINE__, me);
     }
 
     /* panic_screen should never return, but just in case */
@@ -492,21 +503,13 @@ _Static_assert(PANIC_PARK_NONE == 0u &&
 _Static_assert(PANIC_PARK_DIAGNOSED <= 0xFFu,
                "park stage must fit the uint8_t slot");
 
-uint32_t panic_async_disposition(int in_async_work, uint32_t park_stage)
+uint32_t panic_async_disposition(uint32_t park_stage)
 {
-    /* Checked first and alone: a CPU still identifying as an async worker has
-     * not published its completion, whatever the stage happens to read, so this
-     * answer can never be talked out of publishing by a stale word. */
-    if (in_async_work)
-        return PANIC_ASYNC_ISOLATE;
-
-    if (park_stage == PANIC_PARK_NONE)
-        return PANIC_ASYNC_TERMINAL;
-
-    /* Parking, and no longer identifying as async. The publication is the only
-     * thing that separates the two remaining intervals: before it the BSP has
-     * been told nothing and is still inside its barrier, after it the BSP is
-     * already running sequential init on the strength of it. */
+    /* The publication is the only thing separating the two intervals: before it
+     * the BSP has been told nothing and is still inside its barrier; after it
+     * the BSP is already running sequential init on the strength of it. A stage
+     * of NONE is a FIRST fault, which owes the publication like any other
+     * pre-publication entry. */
     return (park_stage >= PANIC_PARK_PUBLISHED) ? PANIC_ASYNC_PARK
                                                 : PANIC_ASYNC_ISOLATE;
 }
@@ -581,7 +584,7 @@ static uint32_t s_panic_declared_ctx_calls;
  *
  * A NULL frame means a software panic, which is never NMI context BY VECTOR --
  * but may still be nested inside one, so the depth test applies there too. */
-uint32_t panic_declared_ctx(struct interrupt_frame *frame)
+uint32_t panic_declared_ctx_for(struct interrupt_frame *frame, uint32_t apic_id)
 {
 #ifdef KERNEL_TESTS
     /* Derivation counter. The point of passing `ctx` down (section 24) is that
@@ -594,9 +597,14 @@ uint32_t panic_declared_ctx(struct interrupt_frame *frame)
 #endif
     if (frame && frame->int_no == VECTOR_NMI)
         return PANIC_CTX_NMI;
-    if (idt_in_nmi())
+    if (idt_in_nmi_for(apic_id))
         return PANIC_CTX_NMI;
     return PANIC_CTX_NORMAL;
+}
+
+uint32_t panic_declared_ctx(struct interrupt_frame *frame)
+{
+    return panic_declared_ctx_for(frame, cpu_panic_safe_apic_id());
 }
 
 #ifdef KERNEL_TESTS
@@ -2611,9 +2619,7 @@ static __attribute__((noreturn)) void panic_async_park(
      * AP as terminal, or let a nested entry mutate the BSP's state -- in exactly
      * the failure mode this path exists to survive. */
     struct per_cpu_data *pcpu = smp_cpu_by_apic_id(ev_cpu);
-    uint32_t disp = (stage != PANIC_PARK_NONE)
-                        ? panic_async_disposition(0, stage)
-                        : PANIC_ASYNC_ISOLATE;
+    uint32_t disp = panic_async_disposition(stage);
 
         /* NESTED means "some earlier entry on this CPU already committed to
          * parking", which is exactly what a non-zero stage records. Only the
@@ -2704,15 +2710,21 @@ static __attribute__((noreturn)) void panic_async_park(
          * NOT GATED ON A STAGE CLAIM, and the distinction between this step
          * and the diagnostic below is the whole cleanup-safety argument.
          * Only the DIAGNOSTIC is claim-before-perform, because only it can
-         * fault repeatedly: it walks a caller-supplied string and drives the
-         * UART. Every other step of this tail is a handful of compare-
-         * exchanges over kernel-owned static state, cannot fault, and is
-         * idempotent -- so a nested entry simply re-runs them, and gating
-         * them would be strictly worse. A claim taken BEFORE such a step
-         * would let an abort landing in the gap skip it permanently,
-         * stranding g_serial_lock held by a CPU that never runs again, or
-         * leaving this CPU in the online mask, which is the hang this branch
-         * exists to remove. */
+         * fault REPEATEDLY: it walks a caller-supplied string and drives the
+         * UART. A claim taken before any other step would let an abort landing
+         * in the gap skip it permanently -- stranding g_serial_lock held by a
+         * CPU that never runs again, or leaving this CPU in the online mask,
+         * which is the hang this branch exists to remove.
+         *
+         * The rest are idempotent and re-run on every entry. Most are
+         * compare-exchanges over kernel-owned static state and cannot fault at
+         * all; the EXCEPTION is the evidence revoke at the end of this tail,
+         * which touches the mapped evidence page and flushes cache lines. What
+         * bounds THAT one is its own ordering rather than an inability to
+         * fault -- it relinquishes the owner word before writing the page, so a
+         * re-entry returns at its first test. Reordering those two would remove
+         * the protection silently, which is why it is named here beside the
+         * code and not only in the header. */
         (void)serial_emerg_reclaim_self();
 
         /* PUBLISH. The BSP barrier waits on async_done to run the sequential
@@ -2781,12 +2793,18 @@ static __attribute__((noreturn)) void panic_async_park(
          * latch is armed (the system survives this branch), and no
          * formatting machinery is trustworthy in a fault context.
          *
-         * A NESTED entry says so in the record. It is the one line that
-         * tells a reader the recovery path itself faulted, and it carries
-         * the nested fault's own vector-derived description, error code and
-         * RIP -- which is where the evidence for a fault-during-recovery
-         * lives, since the cross-boot record is revoked below on the
-         * grounds that the machine survives. */
+         * A NESTED entry says so in the record, and carries that fault's own
+         * description, error code and RIP -- which is where the evidence for a
+         * fault-during-recovery lives, since the cross-boot record is revoked
+         * below on the grounds that the machine survives.
+         *
+         * ONE RECORD PER CPU, though, and the limit is stated rather than left
+         * for a reader to infer coverage this does not have. The claim is the
+         * LAST rung, so the FIRST nested fault gets its line and a second one
+         * arrives past DIAGNOSED and emits nothing. That is the price of the
+         * at-most-once rule that bounds the recursion: a second diagnostic
+         * would mean a second walk of a caller-supplied string on a CPU that
+         * has already proved it can fault there. */
         if (panic_park_claim_step(park, PANIC_PARK_DIAGNOSED)) {
             char     rec[224];
             uint32_t rp = 0;
@@ -2875,8 +2893,16 @@ static __attribute__((noreturn)) void panic_async_park(
          * it runs, so it executes at most once per CPU. Everything else is
          * compare-exchanges over kernel-owned static state reached through a
          * GS-independent slot: no page walk, no caller-supplied pointer,
-         * nothing that can fault twice in the same place. */
-        for (;;) __asm__ volatile("hlt");
+         * nothing that can fault twice in the same place.
+         *
+         * `cli` HERE rather than inherited. Two of the three guards run behind
+         * panic_screen_impl's own `cli`, but the ke_bugcheck_emit ingress
+         * executes none, so this park would otherwise rely on every reachable
+         * exception vector being an interrupt gate. That holds today and is not
+         * a property a permanent park should depend on from a distance -- a CPU
+         * already retracted from the online mask must not take a timer
+         * interrupt. Every other park site in the tree masks locally too. */
+        for (;;) __asm__ volatile("cli; hlt");
 }
 
 
@@ -2888,7 +2914,7 @@ static __attribute__((noreturn)) void panic_async_park(
 static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code,
                               uint32_t bugcheck_code, const uint64_t bugcheck_params[4],
                               const char *description_in, const char *file_in,
-                              uint32_t line)
+                              uint32_t line, uint32_t ev_cpu_in)
 {
     /* Mask interrupts FIRST -- nothing may re-enter the panic path while the
      * collector touches the fixed 0x80000 evidence page and shared log state.
@@ -2911,7 +2937,9 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * and re-deriving it in each added two exits to every ordinary panic --
      * pure latency on the one path whose entire cost function is
      * instructions-between-fault-and-durable-record. */
-    const uint32_t ev_cpu   = cpu_panic_safe_apic_id();
+    const uint32_t ev_cpu   = (ev_cpu_in == PANIC_EV_CPU_DERIVE)
+                                  ? cpu_panic_safe_apic_id()
+                                  : ev_cpu_in;
     const uint32_t ev_token = panic_evidence_begin();
 
     /* A CPU ALREADY PARKING TAKES THE SHORT PATH, HERE, BEFORE ANYTHING ELSE
@@ -2950,7 +2978,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * record still has to render its own bugcheck, and a shared buffer would
      * make it paint the winner's reason. Per-invocation storage also needs no
      * GS and no lock, which the pre-arbitration dump below requires. */
-    const uint32_t snap_ctx = panic_declared_ctx(frame);
+    /* The id this entry ALREADY has, not a fresh derivation. The classifier
+     * reads the NMI depth, which is indexed by the panic-safe id -- deriving it
+     * again here would put a second serializing CPUID, and a second VM exit
+     * under KVM or WHPX, in front of the evidence capture. */
+    const uint32_t snap_ctx = panic_declared_ctx_for(frame, ev_cpu);
     const int have_file = (file_in != (const char *)0);
     char desc_snap[PANIC_DESC_SNAP_MAX];
     char file_snap[PANIC_FILE_SNAP_MAX];
@@ -3491,5 +3523,6 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
      * fault vector. (KeBugCheckEx / KeBugCheckExFrame call panic_screen_impl
      * directly with an explicit bugcheck code + call-local params.) */
     panic_screen_impl(frame, error_code, frame ? 0u : (uint32_t)error_code,
-                      (const uint64_t *)0, description, file, line);
+                      (const uint64_t *)0, description, file, line,
+                      PANIC_EV_CPU_DERIVE);
 }

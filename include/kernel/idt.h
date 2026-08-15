@@ -141,6 +141,18 @@ interrupt_handler_t idt_get_handler(uint8_t n);
  * the semantics the assembly implements; production code reads idt_in_nmi() and
  * never moves the counter itself. */
 int      idt_in_nmi(void);
+
+/* The same question keyed on an ALREADY-DERIVED panic-safe id, so a caller that
+ * has one does not pay a second serializing CPUID for it. idt_in_nmi() is this
+ * with the derivation folded in.
+ *
+ * It exists for the panic prefix. cpu_panic_safe_apic_id() executes CPUID,
+ * which serializes and exits to the hypervisor under KVM and WHPX, and every
+ * panic ingress already derives the id for its own park guard -- so deriving it
+ * again inside the context classifier put a second VM exit in front of the
+ * evidence capture, on the one path whose whole budget is
+ * instructions-before-the-record-is-durable. */
+int      idt_in_nmi_for(uint32_t apic_id);
 uint32_t idt_nmi_depth_raw(void);
 void     idt_nmi_enter(void);
 void     idt_nmi_exit(void);

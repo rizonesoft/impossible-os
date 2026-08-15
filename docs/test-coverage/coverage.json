@@ -1,5 +1,5 @@
 {
-  "total_suites": 2945,
+  "total_suites": 2943,
   "total_assertions": 12160,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
@@ -66,7 +66,7 @@
     {"file": "test_nt_types.c", "suites": 52, "assertions": 198},
     {"file": "test_nvme.c", "suites": 1, "assertions": 2},
     {"file": "test_ob.c", "suites": 53, "assertions": 292},
-    {"file": "test_panic.c", "suites": 41, "assertions": 99},
+    {"file": "test_panic.c", "suites": 39, "assertions": 99},
     {"file": "test_peb_teb.c", "suites": 25, "assertions": 93},
     {"file": "test_pmm.c", "suites": 16, "assertions": 58},
     {"file": "test_proc_ext.c", "suites": 83, "assertions": 191},

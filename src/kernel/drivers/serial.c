@@ -157,13 +157,21 @@ _Static_assert(SERIAL_EMERG_CHUNK <= SERIAL_EMERG_MAX_CHARS,
  * deliberately does not gate output: see serial_init. */
 static uint16_t s_serial_port = SERIAL_PORT_COM1;
 
-/* 1 = the bootloader's SPCR + COM1 + COM2 probe found no UART at all.
+/* 1 = the bootloader's SPCR + COM1 + COM2 probe found no UART at all, AND no
+ * transmitter has answered since.
  *
- * Written once by serial_init on the BSP before any AP is running and read-only
- * afterwards, so it needs no lock and no atomic. It does NOT disable output;
- * it tells the emergency writer not to spend full-length waits on a transmitter
- * that has already been shown not to answer. */
-static uint8_t s_uart_probed_absent;
+ * NOT write-once, which an earlier comment here claimed. It is set by
+ * serial_adopt_boot_info on the BSP at Phase 0, and CLEARED at runtime from
+ * serial_putchar_raw_bounded by whichever CPU first sees the transmitter ready
+ * -- the one-way retirement that stops a false-negative probe truncating a
+ * panic record after its first byte. So it is concurrently mutable shared
+ * state, and every access is atomic and the object is volatile; the transition
+ * is idempotent and one-way, so a lost relaxed store costs at most one more
+ * dropped byte before the next observation makes it again.
+ *
+ * It does NOT disable output. It tells the emergency writer not to spend
+ * full-length waits on a transmitter that has not answered. */
+static volatile uint8_t s_uart_probed_absent;
 
 /* Protects UART register access from concurrent threads and IRQ handlers, and
  * records WHO holds it in the SAME word (serial_emergency.h).
@@ -757,7 +765,7 @@ uint16_t serial_select_port(uint16_t boot_port, uint8_t boot_source,
 
 int serial_uart_probed_absent(void)
 {
-    return s_uart_probed_absent != 0u;
+    return __atomic_load_n(&s_uart_probed_absent, __ATOMIC_RELAXED) != 0u;
 }
 
 int serial_emerg_probe_absent_next(int thre_ready, int probed_absent)
@@ -870,8 +878,16 @@ void serial_adopt_boot_info(void)
      * That split retires exactly the cost section 30 named: a port-less machine
      * no longer spends its SERIAL_EMERG_STUCK_BYTES ceiling on a UART that
      * could never have drained a byte. */
-    s_uart_probed_absent =
-        (g_boot_info.serial_source == BOOT_SERIAL_SOURCE_NONE) ? 1u : 0u;
+    /* THE COHERENT PAIR ONLY. A source of NONE alongside a NON-ZERO port is a
+     * report that disagrees with itself, and the port selector already refuses
+     * such a pair -- so believing the same report here would suppress the
+     * emergency transmit waits on the strength of a record the selector just
+     * rejected as invalid. Only (NONE, 0), which is exactly what
+     * serial_early_init writes when every probe fails, marks the UART absent. */
+    __atomic_store_n(&s_uart_probed_absent,
+                     (g_boot_info.serial_source == BOOT_SERIAL_SOURCE_NONE &&
+                      g_boot_info.serial_port == 0u) ? 1u : 0u,
+                     __ATOMIC_RELAXED);
 
     /* ADOPT THE REPORTED BASE. This is the first boot on which it can take
      * effect at all, so it can only help: a machine whose console is COM2, or an

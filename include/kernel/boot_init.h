@@ -156,6 +156,11 @@ _Static_assert(SUBSYS_COUNT <= 32,
 /* Phase 0 -- Critical Init (0x0000-0x0FFF) */
 #define POST16_SERIAL           0x0010
 #define POST16_SERIAL_OK        0x0011
+/* Adoption of the bootloader's serial findings, which happens far later than
+ * serial_init: it reprograms the UART at a firmware-supplied base, so it gets
+ * its own bracket rather than sharing SERIAL's (TODO-10 S30). */
+#define POST16_SERIAL_ADOPT     0x001A
+#define POST16_SERIAL_ADOPT_OK  0x001B
 #define POST16_UEFI_RT          0x0012  /* UEFI runtime services init */
 #define POST16_UEFI_RT_OK       0x0013
 #define POST16_UEFI_VARS        0x0014  /* UEFI variable enumeration */

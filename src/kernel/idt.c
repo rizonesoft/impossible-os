@@ -294,10 +294,15 @@ _Static_assert(CPU_PANIC_SAFE_ID_SUBLEAF == 0u,
 _Static_assert(CPU_PANIC_SAFE_ID_SHIFT == 24u,
                "isr_stubs.asm hardcodes `shr ebx, 24` for the NMI depth index");
 
+int idt_in_nmi_for(uint32_t apic_id)
+{
+    return __atomic_load_n(&g_nmi_depth[apic_id & CPU_PANIC_SAFE_ID_MASK],
+                           __ATOMIC_ACQUIRE) != 0u;
+}
+
 int idt_in_nmi(void)
 {
-    return __atomic_load_n(&g_nmi_depth[cpu_panic_safe_apic_id()],
-                           __ATOMIC_ACQUIRE) != 0u;
+    return idt_in_nmi_for(cpu_panic_safe_apic_id());
 }
 
 uint32_t idt_nmi_depth_raw(void)

@@ -690,6 +690,14 @@ struct per_cpu_data *smp_get_cpu(uint32_t cpu_id);
  * can find the slot again without GS. Call once per CPU, from that CPU, before
  * it can run any work a panic would have to clean up after.
  *
+ * RETURNS 0 WHEN IT REFUSES, and the caller must act on that rather than
+ * carry on. A CPU that could not publish is not merely missing bookkeeping: a
+ * later lookup for its id resolves to whichever slot DID publish it, so a fault
+ * on the unpublished CPU would retract and publish completion into a LIVE CPU's
+ * lifecycle fields and leave the dying one online. An AP that cannot publish
+ * therefore parks instead of reaching READY, exactly as the live-LAPIC identity
+ * guard beside it parks an impostor.
+ *
  * A SEPARATE FIELD FROM lapic_id, and the separation is the point.
  * cpu_security.h states that a cpu_panic_safe_apic_id() value is only ever
  * compared against another value from THAT helper: it is the CPUID leaf-1
@@ -698,7 +706,7 @@ struct per_cpu_data *smp_get_cpu(uint32_t cpu_id);
  * principle, so a lookup that matched one against the other would fail silently
  * and exactly once -- on the firmware that remaps them -- by returning the
  * wrong slot or none at all. */
-void smp_publish_panic_safe_id(struct per_cpu_data *pcpu);
+int smp_publish_panic_safe_id(struct per_cpu_data *pcpu);
 
 /* May a CPU observing `observed_panic_id` clear the SHARED online-mask bit of a
  * slot publishing `slot_panic_id_plus1`? 1 = identities agree, 0 = refuse.
@@ -725,10 +733,19 @@ int smp_retract_may_clear_mask(uint32_t slot_panic_id_plus1,
  * and the slot and the id name the same CPU by construction, so a fault handler
  * can mutate its own lifecycle state without trusting a segment base.
  *
- * Returns NULL when no slot carries that id. Reads only the per-CPU array, so
- * it cannot fault and needs no lock; the values it reads are written once at
- * bringup. Matching is on the low 8 bits, the same width every panic-path
- * identity consumer uses. */
+ * ONE INDEXED LOAD into an owner table keyed by the 8-bit id, whose entries
+ * hold the owning logical CPU index PLUS ONE (0 = unclaimed), followed by the
+ * bounds-checked smp_get_cpu(). It reads no per-CPU block to find one, which is
+ * what lets it answer on a CPU whose GS cannot be trusted, and it cannot fault:
+ * the table is this file's own BSS and the extent is CPU_PANIC_SAFE_ID_COUNT,
+ * exactly the id space the mask can produce.
+ *
+ * An unclaimed id returns NULL. It is NOT a scan over cpu_data[] any more --
+ * that shape could not detect two slots claiming one id, it just returned
+ * whichever came first, and ownership is now taken by compare-exchange on the
+ * table so a duplicate is refused rather than silently aliased.
+ * per_cpu_data.panic_safe_id_plus1 is no longer the lookup source; it remains
+ * as the value smp_retract_may_clear_mask() gates the online-mask clear on. */
 struct per_cpu_data *smp_cpu_by_apic_id(uint32_t apic_id);
 
 /* Convenience macro */

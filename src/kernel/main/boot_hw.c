@@ -169,7 +169,14 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      * read g_boot_info, which was still zero-initialised for all of it. This is
      * the first instruction at which the bootloader's reported base and its
      * UART probe result are real, so it is where they are adopted. */
+    /* POST16-bracketed like every other Phase 0 step in this file, and this one
+     * earns it more than most: it reprograms the UART through a DLAB window at
+     * a base taken from firmware-supplied boot_info, holding g_serial_lock. A
+     * hang or fault inside it destroys the very channel that would report it,
+     * so port 0x80 is the only diagnostic left. */
+    POST16(POST16_SERIAL_ADOPT);
     serial_adopt_boot_info();
+    POST16(POST16_SERIAL_ADOPT_OK);
 
     /* A NEGATIVE UART PROBE IS STATED, NOT INFERRED. Output still goes to the
      * adopted base regardless -- the bootloader's scratch-register probe

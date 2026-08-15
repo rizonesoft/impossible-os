@@ -610,10 +610,21 @@ enum boot_path_type {
 /* How `serial_source` was determined, and therefore how much the paired
  * `serial_port` is worth. NONE is a RESULT, not an absence: the bootloader
  * reaches it only after ACPI SPCR yields nothing AND the scratch-register probe
- * fails on both COM1 and COM2, so the kernel adopts it and disables serial
- * rather than falling back to a COM1 that has already been shown not to answer
- * (serial_select_port, TODO-10 S30). These names are mirrored verbatim in
- * src/boot/uefi/boot_info_mirror.h; the values are the ABI. */
+ * fails on both COM1 and COM2.
+ *
+ * THE KERNEL DOES NOT DISABLE OUTPUT ON IT, and an earlier version of this
+ * comment said it did -- on the ABI header the bootloader mirror pairs with,
+ * which is the most durable place to be wrong. `serial_select_port` KEEPS the
+ * compiled-in COM1 default for a NONE report, because the scratch-register
+ * probe false-negatives on firmware that does not implement that register and
+ * silencing such a machine is a recorded incident. What NONE actually buys is
+ * narrower: paired with a zero port it suppresses the emergency path's
+ * full-length transmit waits, and even that is retired the first time a
+ * transmitter answers.
+ *
+ * The VALUES are the ABI and the bootloader writes them as raw literals; these
+ * names exist kernel-side only, and boot_info_mirror.h carries the same values
+ * with a comment rather than the symbols. */
 #define BOOT_SERIAL_SOURCE_NONE   0u  /* no UART found by any probe */
 #define BOOT_SERIAL_SOURCE_SPCR   1u  /* ACPI SPCR, firmware-authoritative */
 #define BOOT_SERIAL_SOURCE_PROBE  2u  /* scratch-register I/O probe of COM1/COM2 */

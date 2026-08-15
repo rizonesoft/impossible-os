@@ -235,8 +235,27 @@ void ap_entry(uint32_t cpu_index)
     }
     /* Published immediately after the identity guard above accepted this slot,
      * and long before any async init step can be dispatched here -- the panic
-     * park path has no other way to find this block without GS. */
-    smp_publish_panic_safe_id(pcpu);
+     * park path has no other way to find this block without GS.
+     *
+     * A REFUSAL PARKS THIS AP, exactly as the live-LAPIC guard above parks an
+     * impostor, and for a sharper reason than missing bookkeeping. If this CPU
+     * carried on unpublished, a later lookup for its id would resolve to the
+     * slot that DID publish it -- so a fault here would retract a LIVE CPU and
+     * publish failure into ITS async fields while leaving this one online.
+     * Parking dark costs one CPU on a platform that is already reporting
+     * duplicate CPUID identities; continuing costs a running one. */
+    if (!smp_publish_panic_safe_id(pcpu)) {
+        for (;;)
+            __asm__ volatile("cli; hlt");
+    }
+    /* PLACED AFTER THE GUARD, not before the hardening above, and the residual
+     * window that leaves is filed rather than papered over. Claiming earlier
+     * would shrink the interval in which a faulting AP resolves to another
+     * CPU's slot -- but it would also let a slow AP that latched a reassigned
+     * cpu_index stamp its id into a slot another CPU is already live on, which
+     * is the failure the guard immediately above exists to prevent. The two
+     * constraints genuinely conflict; the resolution belongs to the per-CPU
+     * identity-authentication work, where both are already written down. */
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
     pcpu->current_irql  = PASSIVE_LEVEL;
@@ -854,12 +873,17 @@ void smp_retract_cpu_online(struct per_cpu_data *pcpu)
         return;
 
     /* The GLOBAL word is gated on a GS-INDEPENDENT identity check; the per-CPU
-     * words are not. The only caller is the panic async-fault branch, which
-     * reaches its pcpu through smp_this_cpu() -- and that SILENTLY substitutes
-     * &cpu_data[0] when GS reads zero. Before this section a wrong pcpu was
-     * self-damage confined to that block's own fields; the mask clear is
-     * indexed by pcpu->cpu_id, so the same fallback would clear the BSP's bit
-     * and drop a RUNNING BSP out of every membership consumer.
+     * words are not. The gate was added when the panic async-fault branch
+     * reached its pcpu through smp_this_cpu(), which SILENTLY substitutes
+     * &cpu_data[0] when GS reads zero -- and the mask clear is indexed by
+     * pcpu->cpu_id, so that fallback would clear the BSP's bit and drop a
+     * RUNNING BSP out of every membership consumer.
+     *
+     * THAT CALLER NO LONGER TOUCHES GS: it resolves its slot through
+     * smp_cpu_by_apic_id(). The gate stays anyway, and the reason is now a
+     * different and better one -- it makes the guarantee LOCAL to this function
+     * instead of inherited from one caller's discipline, and a future caller
+     * arriving with a GS-derived pointer is exactly what it must keep refusing.
      * cpu_panic_safe_apic_id() derives the id from CPUID, which no GS state can
      * corrupt -- the identity rule section 20 adopted for the serial lock.
      *
@@ -1195,6 +1219,25 @@ struct per_cpu_data *smp_get_cpu(uint32_t cpu_id)
     return &cpu_data[cpu_id];
 }
 
+/* OWNER TABLE FOR THE PANIC-SAFE ID SPACE: index = the 8-bit id, value = the
+ * owning logical CPU index PLUS ONE, 0 = unclaimed.
+ *
+ * A TABLE RATHER THAN A SCAN, and a compare-exchange rather than check-then-act,
+ * because AP bringup is NOT serialised the way an earlier version of this code
+ * asserted. The BSP waits a bounded time for READY and then ABANDONS that AP and
+ * sends the next SIPI (see the bringup loop), so a late AP can still be executing
+ * ap_entry while its successor starts. Two APs reporting the same CPUID id could
+ * therefore both scan, both find the id free, and both publish -- after which a
+ * lookup resolves to whichever slot the scan reached first, and a fault on the
+ * other one retracts and publishes completion into a CPU that is not it.
+ *
+ * The claim is for the slot's lifetime and is never released: the id space is a
+ * hardware property, and a CPU that owned an id does not stop owning it. */
+static volatile uint32_t s_panic_id_owner[CPU_PANIC_SAFE_ID_COUNT];
+
+_Static_assert(MAX_CPUS < 0xFFFFFFFFu,
+               "cpu index plus one must not overflow the owner encoding");
+
 int smp_retract_may_clear_mask(uint32_t slot_panic_id_plus1,
                                uint32_t observed_panic_id)
 {
@@ -1204,17 +1247,19 @@ int smp_retract_may_clear_mask(uint32_t slot_panic_id_plus1,
            (observed_panic_id & CPU_PANIC_SAFE_ID_MASK) + 1u;
 }
 
-void smp_publish_panic_safe_id(struct per_cpu_data *pcpu)
+int smp_publish_panic_safe_id(struct per_cpu_data *pcpu)
 {
     if (!pcpu)
-        return;
+        return 0;
 
     /* Derived HERE, on the CPU being described, rather than passed in: the
      * whole guarantee is that the value came from this CPU's own CPUID, so a
      * caller cannot publish an identity it merely believes. */
     {
-        uint32_t want = (cpu_panic_safe_apic_id() & CPU_PANIC_SAFE_ID_MASK) + 1u;
-        struct per_cpu_data *held = smp_cpu_by_apic_id(want - 1u);
+        uint32_t id    = cpu_panic_safe_apic_id() & CPU_PANIC_SAFE_ID_MASK;
+        uint32_t want  = id + 1u;
+        uint32_t mine  = pcpu->cpu_id + 1u;
+        uint32_t owner = 0u;
 
         /* AMBIGUITY IS REFUSED RATHER THAN PUBLISHED. Two CPUs cannot report the
          * same CPUID leaf-1 initial apic id on any configuration this repo
@@ -1223,52 +1268,64 @@ void smp_publish_panic_safe_id(struct per_cpu_data *pcpu)
          * unsupported repo-wide -- so this branch is a net for a broken or
          * lying platform, not an expected path.
          *
-         * It matters because the failure is otherwise SILENT and asymmetric: a
-         * second CPU publishing a duplicate would make every lookup for that id
-         * resolve to the FIRST slot, so a fault on the second CPU would retract
-         * and publish completion into another CPU's lifecycle fields and leave
-         * the genuinely dead CPU online and schedulable. Declining to publish
-         * costs the impostor its own park bookkeeping -- the panic path finds no
-         * slot and skips the steps that need one -- which is a degraded outcome
-         * confined to the CPU that is already dying, instead of corruption of a
-         * live one. */
-        if (held && held != pcpu) {
-            klog(LOG_ERROR, "SMP",
-                 "panic-safe id %u already claimed by cpu %u -- cpu %u not published",
-                 (uint64_t)(want - 1u), (uint64_t)held->cpu_id,
-                 (uint64_t)pcpu->cpu_id);
-            return;
+         * DECLINING TO PUBLISH IS NOT ON ITS OWN A SAFE OUTCOME: a lookup for
+         * the duplicate id does not return NULL, it returns the CPU that DID
+         * claim it. So an unpublished CPU that went on to run async work would,
+         * on faulting, retract and publish completion into a LIVE CPU's
+         * lifecycle fields and leave itself online. The refusal is half the fix;
+         * the caller parking the AP is the other half, and that is why this
+         * reports rather than failing quietly.
+         *
+         * AND THE CLAIM MUST BE ATOMIC, which a scan-then-store was not. An
+         * earlier version argued a scan was sufficient because AP bringup is
+         * serialised. IT IS NOT, on the path that matters: the BSP waits a
+         * bounded time for READY and then ABANDONS that AP and sends the next
+         * SIPI, so a late AP can still be executing ap_entry while its successor
+         * starts. Two APs reporting the same id could both scan, both find it
+         * free, and both publish. */
+        /* ONE compare-exchange decides ownership of the id across ALL slots.
+         * A CAS on this CPU's own field could not: the conflict is with a
+         * DIFFERENT slot, which no operation on this one can observe. */
+        if (!__atomic_compare_exchange_n(&s_panic_id_owner[id], &owner, mine, 0,
+                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            if (owner != mine) {
+                klog(LOG_ERROR, "SMP",
+                     "panic-safe id %u already owned by cpu %u -- cpu %u refused",
+                     (uint64_t)id, (uint64_t)(owner - 1u),
+                     (uint64_t)pcpu->cpu_id);
+                return 0;
+            }
+            /* Already ours: publishing twice for the same CPU is idempotent. */
         }
 
         __atomic_store_n(&pcpu->panic_safe_id_plus1, want, __ATOMIC_RELEASE);
     }
+    return 1;
 }
 
 struct per_cpu_data *smp_cpu_by_apic_id(uint32_t apic_id)
 {
-    const uint32_t want = (apic_id & CPU_PANIC_SAFE_ID_MASK) + 1u;
-    uint32_t i;
+    uint32_t owner = __atomic_load_n(&s_panic_id_owner[apic_id &
+                                                       CPU_PANIC_SAFE_ID_MASK],
+                                     __ATOMIC_ACQUIRE);
 
-    /* A LINEAR SCAN, and the linearity is the point: the whole value of this
-     * function is that it touches nothing but this file's own BSS array, so it
-     * cannot fault however corrupt the executing CPU's GS is. An index derived
-     * from the id would be faster and would be a lookup through the very data
-     * the caller is trying to avoid trusting. MAX_CPUS is small and the only
-     * caller is the panic park path, which runs at most once per CPU per boot.
+    /* ONE INDEXED LOAD, into this file's own BSS. That is the whole value of
+     * this function: it can answer however corrupt the executing CPU's GS is,
+     * because it touches no per-CPU block to find one. It replaced a linear
+     * scan over cpu_data[], which was both slower and unable to detect two
+     * slots claiming the same id -- it simply returned whichever came first.
      *
-     * MATCHED AGAINST panic_safe_id_plus1 AND NOT lapic_id. Those are different
-     * identity domains -- CPUID leaf-1 initial apic id against the MADT/LAPIC
-     * register id -- and cpu_security.h is explicit that a panic-safe id is only
-     * ever compared with another panic-safe id. They agree on every machine this
-     * repo supports, which is exactly what would make a cross-domain compare
-     * fail silently and only on the firmware that remaps them.
+     * KEYED ON THE PANIC-SAFE DOMAIN AND NOT ON lapic_id. Those are different
+     * derivations -- CPUID leaf-1 initial apic id against the MADT/LAPIC
+     * register id -- and cpu_security.h is explicit that a panic-safe id is
+     * only ever compared with another panic-safe id. They agree on every
+     * machine this repo supports, which is exactly what would make a
+     * cross-domain compare fail silently and only on the firmware that remaps
+     * them.
      *
-     * The +1 encoding removes the unpublished-slot case rather than reasoning
-     * about it: a slot that never ran reads 0 and matches no id at all. */
-    for (i = 0u; i < MAX_CPUS; i++) {
-        if (__atomic_load_n(&cpu_data[i].panic_safe_id_plus1,
-                            __ATOMIC_ACQUIRE) == want)
-            return &cpu_data[i];
-    }
-    return (struct per_cpu_data *)0;
+     * 0 means unclaimed, so an id no CPU published resolves to NULL rather
+     * than to slot 0. */
+    if (owner == 0u)
+        return (struct per_cpu_data *)0;
+    return smp_get_cpu(owner - 1u);
 }

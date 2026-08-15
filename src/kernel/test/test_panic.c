@@ -593,46 +593,29 @@ static void test_panic_frames_null_frame_walks_live(void)
  * the panic tail from a unit test. The live branch in panic.c is verified by
  * the multi-platform boot matrix; the DECISIONS it makes are verified here. */
 
-static void test_park_async_worker_always_isolates(void)
+static void test_park_publication_owed_before_it_is_recorded(void)
 {
-    /* A CPU still identifying as an async worker has not published, so it owes
-     * the publication no matter how far a stage word claims to have got. This
-     * is the row that stops a stale stage talking the branch out of telling the
-     * BSP anything -- the BSP would otherwise sit out its whole barrier. */
-    TEST_ASSERT_EQ(panic_async_disposition(1, PANIC_PARK_NONE),
+    /* THE INTERVAL THE SECTION EXISTS FOR. A first fault (stage NONE) and any
+     * nested abort landing before the completion is recorded both still owe the
+     * publication -- a nested abort here must run the publishing tail, not
+     * reboot a machine the BSP is recovering. */
+    TEST_ASSERT_EQ(panic_async_disposition(PANIC_PARK_NONE),
                    PANIC_ASYNC_ISOLATE,
-                   "first entry on an async worker isolates and publishes");
-    TEST_ASSERT_EQ(panic_async_disposition(1, PANIC_PARK_DIAGNOSED),
+                   "a first fault owes the completion publication");
+    TEST_ASSERT_EQ(panic_async_disposition(PANIC_PARK_ENTERED),
                    PANIC_ASYNC_ISOLATE,
-                   "in_async_work outranks even a fully advanced stage");
+                   "and so does a nested abort before the publication settles");
 }
 
-static void test_park_not_parking_is_terminal(void)
+static void test_park_publication_not_owed_once_recorded(void)
 {
-    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_NONE),
-                   PANIC_ASYNC_TERMINAL,
-                   "an ordinary CPU with no park stage takes terminal arbitration");
-}
-
-static void test_park_pre_publication_still_isolates(void)
-{
-    /* THE INTERVAL THE SECTION EXISTS FOR. in_async_work has been cleared but
-     * the completion is not out yet, so a nested abort here must still run the
-     * publishing tail rather than reboot a machine that is recovering. */
-    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_ENTERED),
-                   PANIC_ASYNC_ISOLATE,
-                   "nested abort before the publication settles still owes it");
-}
-
-static void test_park_post_publication_parks_quietly(void)
-{
-    /* The boundary is the PUBLISHED stage exactly, not the park: once the BSP
-     * has been told, re-running the publication would write a completion into a
-     * slot this CPU has given up. */
-    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_PUBLISHED),
+    /* The boundary is the PUBLISHED stage exactly. Once the BSP has been told,
+     * re-running the stores would write a completion into a slot this CPU has
+     * given up. */
+    TEST_ASSERT_EQ(panic_async_disposition(PANIC_PARK_PUBLISHED),
                    PANIC_ASYNC_PARK,
                    "the publication stage is the boundary between isolate and park");
-    TEST_ASSERT_EQ(panic_async_disposition(0, PANIC_PARK_DIAGNOSED),
+    TEST_ASSERT_EQ(panic_async_disposition(PANIC_PARK_DIAGNOSED),
                    PANIC_ASYNC_PARK,
                    "and every later stage parks without republishing");
 }
@@ -665,11 +648,13 @@ static void test_park_claim_never_moves_backwards(void)
 
 static void test_park_second_pass_claims_nothing(void)
 {
-    /* THE PROPERTY THAT BOUNDS THE RECURSION. Walk the whole ladder as the
-     * first entry does, then walk it again as a nested abort would: the second
-     * pass must perform no step at all, so a fault inside any step cannot make
-     * the tail restart it, and the park is reached in a bounded number of
-     * entries however many aborts land on the CPU. */
+    /* THE PROPERTY THAT BOUNDS THE RECURSION, at the level of the CLAIM
+     * PRIMITIVE. Note what is being modelled: the live tail gates exactly ONE
+     * action on a claim (the diagnostic) and re-runs every other step
+     * unconditionally, so this is not a claim-every-step tail. What the ladder
+     * proves is the primitive those records rest on -- a stage is granted at
+     * most once and never regresses -- which is what makes "the diagnostic runs
+     * at most once" and "the publication is recorded exactly once" true. */
     static const uint32_t ladder[] = {
         PANIC_PARK_ENTERED, PANIC_PARK_PUBLISHED, PANIC_PARK_DIAGNOSED,
     };
@@ -680,13 +665,13 @@ static void test_park_second_pass_claims_nothing(void)
     for (i = 0u; i < (uint32_t)(sizeof ladder / sizeof ladder[0]); i++)
         granted += (uint32_t)panic_park_claim_step(&slot, ladder[i]);
     TEST_ASSERT_EQ(granted, (uint32_t)(sizeof ladder / sizeof ladder[0]),
-                   "the first entry performs every step of the tail exactly once");
+                   "the first entry is granted every rung of the ladder exactly once");
 
     granted = 0u;
     for (i = 0u; i < (uint32_t)(sizeof ladder / sizeof ladder[0]); i++)
         granted += (uint32_t)panic_park_claim_step(&slot, ladder[i]);
     TEST_ASSERT_EQ(granted, 0u,
-                   "a nested entry re-walking the tail performs no step again");
+                   "a nested entry re-walking the ladder is granted nothing again");
     TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_DIAGNOSED,
                    "and the stage rests at the end of the ladder");
 }
@@ -694,15 +679,15 @@ static void test_park_second_pass_claims_nothing(void)
 static void test_park_claim_interrupted_at_every_stage(void)
 {
     /* THE ORDERING A REAL NESTED ABORT PRODUCES, which the full-ladder replay
-     * above does NOT cover: the fault lands after some INTERMEDIATE step was
-     * claimed and before its action finished, and the nested entry then re-walks
-     * the tail from the top. For every such interruption point the already-
-     * claimed prefix must stay refused (so no step is ever performed twice, and
-     * a step that faulted is never retried) and the whole unclaimed suffix must
-     * still be granted exactly once (so the cleanup is not abandoned and the
-     * park is still reached). Both halves are needed: refusing everything would
-     * strand the UART lock and the crash record, and granting the prefix again
-     * would restore the unbounded fault loop the stage exists to prevent. */
+     * above does not cover: the fault lands after some INTERMEDIATE rung was
+     * claimed, and the nested entry then re-walks from the top. The claimed
+     * prefix must stay refused and the unclaimed suffix must still be granted
+     * exactly once. Read at the level the live tail actually uses this: the
+     * refused prefix is why the diagnostic cannot run twice and the publication
+     * cannot be recorded twice, and the granted suffix is why a tail
+     * interrupted early still reaches DIAGNOSED rather than stalling. The
+     * BOUNDED cleanup steps are not modelled here at all -- they are ungated by
+     * design and re-run on every entry. */
     static const uint32_t ladder[] = {
         PANIC_PARK_ENTERED, PANIC_PARK_PUBLISHED, PANIC_PARK_DIAGNOSED,
     };
@@ -725,15 +710,15 @@ static void test_park_claim_interrupted_at_every_stage(void)
             int got = panic_park_claim_step(&slot, ladder[i]);
             if (i <= cut)
                 TEST_ASSERT_EQ(got, 0,
-                               "a step the interrupted entry already claimed is never re-run");
+                               "a rung the interrupted entry already claimed is never re-granted");
             else
                 TEST_ASSERT_EQ(got, 1,
-                               "every step it had not reached is still performed once");
+                               "every rung it had not reached is still granted once");
             granted += (uint32_t)got;
         }
 
         TEST_ASSERT_EQ(granted, n - cut - 1u,
-                       "the nested entry performs exactly the unfinished suffix");
+                       "the nested entry is granted exactly the unfinished suffix");
         TEST_ASSERT_EQ((uint32_t)slot, PANIC_PARK_DIAGNOSED,
                        "and the tail still completes, so the CPU reaches the park");
     }
@@ -751,13 +736,13 @@ static void test_park_publication_settles_after_its_stores(void)
     volatile uint8_t slot = PANIC_PARK_NONE;
 
     (void)panic_park_claim_step(&slot, PANIC_PARK_ENTERED);
-    TEST_ASSERT_EQ(panic_async_disposition(0, (uint32_t)slot),
+    TEST_ASSERT_EQ(panic_async_disposition((uint32_t)slot),
                    PANIC_ASYNC_ISOLATE,
                    "an abort before the stores settle still owes the publication");
 
     TEST_ASSERT_EQ(panic_park_claim_step(&slot, PANIC_PARK_PUBLISHED), 1,
                    "the stores having run, the publication is recorded settled");
-    TEST_ASSERT_EQ(panic_async_disposition(0, (uint32_t)slot),
+    TEST_ASSERT_EQ(panic_async_disposition((uint32_t)slot),
                    PANIC_ASYNC_PARK,
                    "and every later entry parks instead of republishing");
 }
@@ -905,6 +890,25 @@ static void test_park_slot_resolves_without_gs(void)
                    "and the slot carries exactly the id that was looked up");
     TEST_ASSERT(slot->panic_safe_id_plus1 != 0u,
                 "a published slot is never 0, so an unpublished one cannot alias it");
+
+    /* THE NEGATIVE, which the old linear scan could not express. Ownership now
+     * lives in a per-id table, so an id nobody claimed resolves to NULL instead
+     * of to whichever slot the scan happened to reach first. MAX_CPUS is far
+     * below the 256-entry id space, so an unclaimed id is guaranteed to exist
+     * and this cannot pass vacuously. */
+    {
+        uint32_t unclaimed = 0u;
+        uint32_t id;
+
+        for (id = 0u; id <= CPU_PANIC_SAFE_ID_MASK; id++) {
+            if (smp_cpu_by_apic_id(id) == (struct per_cpu_data *)0)
+                unclaimed++;
+        }
+        TEST_ASSERT(unclaimed > 0u,
+                    "the id space is larger than MAX_CPUS, so some id is unclaimed");
+        TEST_ASSERT(unclaimed <= CPU_PANIC_SAFE_ID_MASK,
+                    "and at least one id resolves, since this CPU published one");
+    }
 }
 
 static void test_park_claim_rejects_null_slot(void)
@@ -920,14 +924,12 @@ static void test_park_claim_rejects_null_slot(void)
 
 void test_register_panic(void)
 {
-    test_suite_register_cat("Crash: async worker always isolates",
-                            test_park_async_worker_always_isolates, TEST_CAT_BOOT);
-    test_suite_register_cat("Crash: no park stage means terminal arbitration",
-                            test_park_not_parking_is_terminal, TEST_CAT_BOOT);
-    test_suite_register_cat("Crash: nested abort before publication isolates",
-                            test_park_pre_publication_still_isolates, TEST_CAT_BOOT);
-    test_suite_register_cat("Crash: nested abort after publication parks",
-                            test_park_post_publication_parks_quietly, TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: publication owed before it is recorded",
+                            test_park_publication_owed_before_it_is_recorded,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: publication not owed once recorded",
+                            test_park_publication_not_owed_once_recorded,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("Crash: park step is claimed at most once",
                             test_park_claim_is_at_most_once, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: park stage never moves backwards",
