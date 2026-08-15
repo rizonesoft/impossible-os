@@ -94,6 +94,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [x]   |
 | ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
 | 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
+| ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [ ]   |
 
 ---
 
@@ -118,7 +119,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > **Verified:** 2026-04-17 | commit `8aae7a1b` | 5/5 items | build OK | full nested-struct matrix
 > **Re-verified:** 2026-04-23 | matrix refreshed for 14 `boot_config` fields added by TODO-04 + TODO-05 after original ship; `_reserved[12]` -> `_reserved[10]`, `_pad[223]` -> `_pad[142]` corrected; `test_suite` validation column updated for `9`=exec, `10`=x86, `11`=desktop; `test_monitors_count` row downgraded to "parsed/stored; no runtime consumer today" matching current code-truth. `BOOT_INFO_VERSION` remains 6 (layout unchanged; only doc coverage).
 > **Re-reviewed:** 2026-04-30 | matrix refreshed again: `flags` row enumerates all 4 BOOT_FLAG_MASK_KNOWN bits (was stale at 2 bits, missing WARM_UPDATE + INVOKED_VIA_UKI); `gop_mode_selected` validation rule loosened to `<= gop_mode_count` to match the bootloader's off-table sentinel (`bootx64.c` line 1955); `module_start/end/available` producer corrected from `bootx64 / mb2` to `mb2 only (zero on native UEFI)` matching the only live writer at `src/kernel/multiboot2_parse.c:110-113`; hard-coded `225 fields` mentions in §10 prose replaced with dynamic `make boot-info-doc-coverage` reference (gate now reports 241 fields).
-> **Accepted:** [M] USB scratchpad count field unclamped against `BOOT_USB_MAX_SCRATCHPADS` (reason: not-functional-today -- all target HW reports <= 16) -> XREF: 01-boot-platform/TODO-20 §1 (item: "USB scratchpad clamp" at line 51 -- clamp in `src/boot/uefi/bootx64.c` near HCSParams2 read, log serial warning on clamp, update canonical matrix `max_scratchpads` row) -- [TODO-20 §1 anchor](../../todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md#1-bootloader-allocates-xhci-dma-structures)
+> **Accepted:** [M] USB scratchpad count field unclamped against `BOOT_USB_MAX_SCRATCHPADS` (reason: not-functional-today -- all target HW reports <= 16) -> XREF: 01-boot-platform/TODO-20 §1 (item: "USB scratchpad clamp" at line 62 -- clamp in `src/boot/uefi/bootx64.c` near HCSParams2 read, log serial warning on clamp, update canonical matrix `max_scratchpads` row) -- [TODO-20 §1 anchor](../../todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md#1-bootloader-allocates-xhci-dma-structures)
 > **Resolved:** [H] Drift-prevention gate (originally Deferred 2026-04-23) shipped via §10 commit `d6ea16a9`: `tools/boot-info-manifest/check-doc-coverage.sh` + `check-doc-coverage.py` wired into Makefile target `boot-info-doc-coverage`, runs every build under `make boot-info-abi`. Gate reports `PASS boot_info doc coverage: 241 manifest fields, every non-sentinel field has an owning matrix row` on 2026-04-30; row-level negative tests verified the gate trips on missing rows.
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + consistency) | 5M fixed, 0 open | scope: N/A (docs + one header comment)
 > **Quality re-reviewed:** 2026-04-23 | Codex 2x (adversarial + quality post-commit) | 1H+2M fixed, 1H deferred (drift gate -> §10) | scope: N/A (docs refresh)
@@ -151,7 +152,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 1H+1M+2L fixed, 0 open | scope: N/A (host tools + layout-preserving refactor)
 > **Quality re-reviewed:** 2026-04-23 | Codex 2x (adversarial pass 3 + quality pass 3) | 1H+1M fixed, 0 open | scope: N/A (host tools -- hash canonicalization + test harness)
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 1H+1M fixed, 0 open | scope: N/A (host tools -- canonical-sha consumer fix + stale-count refresh)
-> **Test runner:** `make test-boot-info-abi` | 7/7 scenarios PASS (5 mutations + control + sha256 canonicality invariant); `bash scripts/build.sh` runs the compare step every build as the first-line gate
+> **Test runner:** `make test-boot-info-abi` | 8/8 scenarios PASS 2026-08-15 (5 mutations + unmutated control + sha256 canonicality invariant + the duplicate-row trust-root check §3 added 2026-04-30; the stamp read 7/7 until that eighth scenario landed); `bash scripts/build.sh` runs the compare step every build as the first-line gate
 
 ---
 
@@ -184,7 +185,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > **Re-verified:** 2026-04-23 | commit `cef7233d` | 5/5 items | build OK | drift harness 7/7 (5 mutations + control + sha256 canonicality invariant), test-tooling 82/82; host-arch gate added to dumper recipes + phony entry points + harness startup
 > **Re-reviewed:** 2026-04-30 | 4/6 items | build OK | drift harness 8/8 (added duplicate-row trust-root fixture); compare.sh now refuses duplicated F() names BEFORE the row-for-row diff so a typo cannot silently shrink coverage
 > **Deferred:** [H] header -> manifest coverage gate -- omission half of trust-root (an F() row missing from dump-fields.inc silently shrinks coverage; today's row-for-row diff + canonical-sha cannot detect a row that never existed) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Header -> manifest coverage gate" at line 164) (RESOLVED 2026-08-13 by commit `a197fa2ad`: `check_manifest_completeness()` in `tools/boot-info-manifest/check-doc-coverage.py` parses `boot_info.h` and fails on any struct member with no `F()` row; runs every build under `boot-info-abi`.)
-> **Deferred:** [M] parallelize fixture compiles (reason: perf scaling, today 32s/8 fixtures within budget) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Parallelize fixture compiles in test-drift-detection.sh" at line 180)
+> **Deferred:** [M] parallelize fixture compiles (reason: perf scaling, today 32s/8 fixtures within budget) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Parallelize fixture compiles in the drift-detection harness" at line 168)
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 3M fixed, 0 open | scope: N/A (host shell tooling)
 > **Quality re-reviewed:** 2026-04-23 | Codex 4x (adversarial + 3 quality rounds for iterative hardening) | 1H fixed, 0 open | scope: N/A (host tools -- Makefile + shell)
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 1H+1M fixed, 1H+1M deferred | scope: N/A (host tools)
@@ -357,7 +358,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 > **Verified:** 2026-04-23 | commit `3ec06bb3` + §19 closures | 6/6 items | build OK | 472 kernel + 16 user-mode PASS on KVM (2 new fuzz suites: addr sweep 256 iters, header perturb 32 iters); end-to-end stale-image harness PASS on KVM in 32s via `make stale-abi-fixtures`
 > **Re-reviewed:** 2026-04-30 | 6/6 items | build OK | lint clean | fuzz tests still wired in test_register_boot_info() under TEST_CAT_BOOT; harness scripts present; CI step still gated on §19 follow-up
-> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "three consecutive CI runs have shown clean [PASS] for both fixtures" at line 351)
+> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "Flip the stale-ABI CI step from `continue-on-error: true` to mandatory" at line 685) (RESOLVED 2026-05-01 by §19: `continue-on-error` was removed from the "Stale-ABI fixtures" step, which is a plain `run: make stale-abi-fixtures` at [`.github/workflows/build.yml:233`](../../.github/workflows/build.yml) today, so a fixture failure now fails the job.)
 > **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2M fixed, 0 open | scope: kernel-code-quality
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 0 fixed, 1H accepted-XREF | scope: kernel-code-quality
 
@@ -847,6 +848,27 @@ That is a coverage gap rather than a live exploit, and it was surfaced by a cons
 
 ---
 
+## 24. Scripted Anti-Rollback NVRAM Fixture Harness
+
+> **Spawned-by:** §19 (review)
+> **User impact:** the only proof that `boot_rollback_raise_if_steady()` withholds the `IPOSRequiredSecVersion` advance on a boot that dies before its first frame is a prose procedure that nobody runs, so a regression there ships green. The user-visible failure is the one §16 exists to prevent: a machine that raises its security floor on a boot it could not actually complete, then refuses every older kernel, leaving it stranded on a broken image with no downgrade path.
+>
+> §13 ships the counter and the pre-jump refusal, §16 ships the steady-state gate, and `src/kernel/test/test_boot_rollback.c` covers the pure state machine. What none of them cover is the live UEFI Runtime Services `SetVariable` path, because a kernel unit test may not call it. That last mile is documented as a three-boot manual procedure and has therefore been executed by a human, occasionally, and by CI never.
+
+The gap is narrow and the shape of the fix already exists in this file: §19 built exactly this kind of harness for the stale-ABI path (disposable disk image, persistent OVMF_VARS, QEMU PID tracking, per-fixture fault-class assertion) and it now runs on every push, under TCG in CI and KVM locally. This section is that harness applied to the rollback gate. It is NOT a re-implementation of §19 and does not re-cover the stale-ABI fixtures.
+
+- [ ] Add `scripts/debug/rollback-fixtures/run-fixtures.sh` driving the three sequenced boots over one persistent `OVMF_VARS.fd`, modelled on the `stale-abi-fixtures` harness (env-probe, QEMU PID tracking, per-fixture assertion, cleanup traps).
+- [ ] Assert run A (cold, no opt-in) leaves `IPOSRequiredSecVersion` absent; run B (opt-in, killed before the compositor steady latch) leaves it UNCHANGED; run C (opt-in, allowed to reach steady) raises it exactly once.
+- [ ] Read the NVRAM value without depending on `virt-fw-vars`, absent on the dev host: grep the run-C serial log for `boot_rollback: security version shipped=X required=Y`, and use `virt-fw-vars --print` only when present.
+- [ ] Wire the harness into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) beside the "Stale-ABI fixtures" step so the TCG leg runs on every push, the way §19 gets its TCG coverage.
+- [/] Add a `make rollback-fixtures` wrapper target -- operator-gated: the root `Makefile` is receipt surface that an unattended run may not edit, so the harness is invoked by path until an operator adds the target.
+- [ ] Replace the prose procedure in [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) with a pointer to the harness, keeping the manual steps only as the debugging fallback.
+- [ ] Commit: `"test: scripted anti-rollback NVRAM fixture harness"`
+
+**Test checkpoint:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` reports 3/3 fixtures PASS on KVM locally, and the same step passes under TCG in a CI run whose log shows the TCG accelerator line. Deliberately inverting the steady latch (return true unconditionally) makes fixture B FAIL, and reverting restores 3/3 -- the harness must be able to catch the regression it exists for, not merely pass.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                         | 🪟 Win11                    | 🐧 Linux                        | 🚀 Impossible OS                                  |
@@ -900,17 +922,24 @@ That is a coverage gap rather than a live exploit, and it was surfaced by a cons
 ## Verification
 
 - [x] `bash scripts/build.sh` completes and the ABI manifest/drift tooling reports no differences for the real kernel and bootloader pair.
-  - Re-verified 2026-08-13 at close-out: `=== BUILD OK ===` + `PASS boot_info ABI manifest: 345 fields, size=28664, version=23, kernel-sha256=518855a02055..., mirror-sha256=518855a02055...` (identical sha) + `PASS boot_info doc coverage: 345 manifest fields ... manifest completeness OK (299 struct fields across 17 structs all enumerated by F())`. Counts were last recorded 2026-04-24 at 236 fields / size 23752 / version 9.
+  - Re-verified 2026-08-15 at close-out, unchanged from the 2026-08-13 reading: `=== BUILD OK ===` + `PASS boot_info ABI manifest: 345 fields, size=28664, version=23, kernel-sha256=518855a02055..., mirror-sha256=518855a02055...` (identical sha) + `PASS boot_info doc coverage: 345 manifest fields ... manifest completeness OK (299 struct fields across 17 structs all enumerated by F())`. Counts were last recorded 2026-04-24 at 236 fields / size 23752 / version 9.
 - [x] `bash scripts/test.sh SUITE=boot` passes with `test_register_boot_info()` and the new boot-protocol cases enabled.
-  - Re-verified 2026-08-13 at close-out: `SUITE=boot` 3267 kernel + 17 user-mode tests PASS; full `scripts/test.sh QUIET=1` 28326 kernel + 17 user-mode tests PASS (exit 0). Last recorded 2026-04-24 at 625 kernel + 16 user-mode.
-  - SUITE=boot covers the 9 boot-suite test files: test_boot_info.c + test_boot_caps.c + test_boot_decision.c + test_boot_rollback.c + test_boot_version.c + test_boot_warm_update.c + test_boot_reserved.c + test_boot_init.c + test_boot_device.c.
-- [/] QEMU WHPX and QEMU TCG both reject a stale `BOOTX64.EFI` with observed/expected version, size, and manifest-hash diagnostics. KVM leg covered 2026-04-24 via [Stale-ABI QEMU Fixture Harness](#19-stale-abi-qemu-fixture-harness): `make stale-abi-fixtures` -> `[PASS] stale-bootloader (fault banner + class BAD_VERSION|BAD_SIZE)`. TCG leg also covered by the same harness via its KVM-with-TCG-fallback auto-detect. WHPX leg is user-rig (no WSL WHPX access).
-- [/] QEMU WHPX and QEMU TCG both reject a stale `kernel.exe` with the same friendly mismatch path. KVM+TCG legs covered 2026-04-24 via [Stale-ABI QEMU Fixture Harness](#19-stale-abi-qemu-fixture-harness): `make stale-abi-fixtures` -> `[PASS] stale-kernel (fault banner + class BAD_VERSION|BAD_SIZE|BAD_SHA|BAD_PARSE)`. WHPX leg is user-rig.
+  - Re-verified 2026-08-15 at close-out: `SUITE=boot` 4904 kernel + 17 user-mode tests PASS; full `scripts/test.sh QUIET=1` 30009 kernel + 17 user-mode tests PASS (exit 0). Previously recorded 2026-08-13 at 3267 / 28326, and 2026-04-24 at 625 kernel + 16 user-mode.
+  - The nine test files this TODO owns are still the ABI core: test_boot_info.c + test_boot_caps.c + test_boot_decision.c + test_boot_rollback.c + test_boot_version.c + test_boot_warm_update.c + test_boot_reserved.c + test_boot_init.c + test_boot_device.c. `SUITE=boot` itself is wider than that and grows with every domain that registers `TEST_CAT_BOOT` -- 44 files as of 2026-08-15 (`grep -rln TEST_CAT_BOOT src/kernel/test/*.c` minus the runner), so the suite total above is not a count of this TODO's own coverage.
+- [/] QEMU WHPX and QEMU TCG both reject a stale `BOOTX64.EFI` with observed/expected version, size, and manifest-hash diagnostics. KVM + TCG covered by the [stale-ABI fixture harness](#19-stale-abi-qemu-fixture-harness); WHPX is user-rig.
+  - Local runs are always the KVM leg: `run-fixtures.sh:100-102` selects KVM whenever `/dev/kvm` is writable and has no force-TCG knob. Re-run 2026-08-15 on this host: `executed=3 failed=0` / `STALE-ABI HARNESS PASSED`, including `[PASS] stale-bootloader (fault banner + class BAD_VERSION|BAD_SIZE)`.
+  - The TCG leg is real but comes from CI, not from a local run -- the earlier wording credited it to a fallback that never fires on a KVM host. GitHub runners have no `/dev/kvm`, so the same harness takes its TCG branch on every push.
+  - CI evidence, build.yml run `31866427154` (sha `8b0a3b6e5`, 2026-08-15 05:32 UTC): `accelerator: TCG (KVM unavailable; using software emulation)`, then all three `[PASS]` lines and `STALE-ABI HARNESS PASSED`.
+- [/] QEMU WHPX and QEMU TCG both reject a stale `kernel.exe` with the same friendly mismatch path. Same harness, same two engines as the item above (re-established 2026-08-15); WHPX is user-rig.
+  - `[PASS] stale-kernel (fault banner + class BAD_VERSION|BAD_SIZE|BAD_SHA|BAD_PARSE)` on both legs: locally under KVM 2026-08-15, and in CI under TCG in the run cited above.
 - [ ] QEMU GRUB/Multiboot2 adapter path either populates capability bits and degraded flags correctly or fails with an explicit unsupported-protocol message. (manual -- blocked on [alternate boot protocols (TODO-08)](TODO-08-alternate-boot-protocols.md); GRUB/Multiboot2 adapter has not shipped yet).
 - [ ] Recovery, network, installer, and resume fixtures all produce the same `HKLM\SYSTEM\Boot\Decision` / BlackBox schema for selected path and reason. (manual -- blocked on producer implementations: recovery in TODO-22, network boot in TODO-25, hibernation/resume in TODO-26; §12 already covers the common decision-record validator in the kernel test suite).
 - [ ] VirtualBox boots a matching image and logs the retained boot reservations plus typed payload descriptors without overlap warnings. (manual -- run on user rig with VirtualBox).
 - [ ] Bare metal boots a matching image with USB handoff and TPM log payloads present, and PMM retains those regions exactly once. (manual -- run on bare-metal hardware; `scripts/debug/kernel/run-all-kernel-tests.bat` on native Windows covers the WHPX side).
 - [ ] Anti-rollback fixtures pass on QEMU: downgrade attempt (shipped < required) halts pre-jump; upgrade + opt-in raises `IPOSRequiredSecVersion` via `efivar -l` post-boot inspection. (manual -- procedure documented in [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md); 3-run procedure with persistent OVMF_VARS + `virt-fw-vars` NVRAM inspection).
+  - Runnability re-checked 2026-08-15: this is NOT a rig item. It needs only `qemu-system-x86_64` + OVMF, both present on the Linux dev host, so it is unlike the VirtualBox / bare-metal / native-Windows items around it. What keeps it `[ ]` is that it is hand-driven -- three sequenced boots sharing one OVMF_VARS file, with run B killed at a specific point in Phase 3 to prove the gate withholds the raise. There is no script to run.
+  - `virt-fw-vars` is absent on this host, which is not a blocker: the doc's Troubleshooting section documents grepping a fresh run-C serial log for `boot_rollback: security version shipped=X required=Y` as the substitute reading.
+  - Closing this wants a `scripts/debug/` harness in the shape of `stale-abi-fixtures/run-fixtures.sh` rather than a person following prose -> that is unowned work today, not part of any shipped section here.
 - [ ] Warm-kernel-update synthetic payload descriptor is consumed by `boot_warm_update_consume()` under QEMU with the continuation region retained; an unknown-flag variant triggers the fail-closed cold fallback with the expected diagnostic. (manual -- blocked on [warm-kernel-update runtime (03-memory-concurrency/TODO-11)](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md) producing a real warm-update descriptor; §14 ships the ABI + validator with 13 kernel test cases that cover the consume contract end-to-end from synthetic fixtures).
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
