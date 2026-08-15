@@ -146,6 +146,16 @@ BOOT_REQUIRED_STRING_SIGNALS=(
     "[PHASE0] BOOT_INFO"
     "Boot complete in"
     'C:\>'
+    # Bare-metal hardening signals (TODO-10 Unit Tests). Each is the serial
+    # evidence for a gate whose absence is silent: an unparsed FADT probes
+    # legacy ports that may not exist, an unallocated IST turns a #DF into a
+    # triple fault, and a failed NX enable runs with no no-execute enforcement
+    # after the page tables were already marked NX. None of the three is
+    # visible from a unit test -- the values are platform state, not API
+    # behavior -- so the boot log is where they are asserted.
+    "IAPC_BOOT_ARCH:"
+    "IST stacks:"
+    "Verify: NX enabled"
 )
 
 # Fallback layer: legacy string-pattern list kept in place until POST16 path

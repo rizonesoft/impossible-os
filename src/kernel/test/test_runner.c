@@ -982,6 +982,7 @@ extern void test_register_tpm_seal(void);
 extern void test_register_tpm_attest(void);
 extern void test_register_tpm_attest_report(void);
 extern void test_register_boot_device(void);
+extern void test_register_bare_metal(void);
 extern void test_register_x86(void);
 extern void test_register_cpu_seq(void);
 extern void test_register_ob(void);
@@ -1110,6 +1111,7 @@ void test_runner_init(void)
     test_register_tpm_attest();
     test_register_tpm_attest_report();
     test_register_boot_device();
+    test_register_bare_metal();
     test_register_harness();
 
     /* x86-64 Architecture (CPUID, MSR, KPTI, CPU security) */

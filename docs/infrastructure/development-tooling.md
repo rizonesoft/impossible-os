@@ -676,7 +676,9 @@ graph LR
 
 ### Automated QEMU Smoke Test
 
-`scripts/test-smoke.sh` -- headless boot verification (legacy; superseded by `bash scripts/test.sh`). Boots `build/system-disk.img` via AHCI, scans the serial log for the `Boot complete in` sentinel, and fails on panic/fault patterns.
+`scripts/test-smoke.sh` -- headless boot verification. Boots `build/system-disk.img` via AHCI and asserts in layers: the POST16 core codes from the build-generated manifest, then the `BOOT_REQUIRED_STRING_SIGNALS` list of user-visible serial signals, then a set of patterns that must NOT appear, and finally log cleanliness (any unexpected `[FAIL]` line fails the run). It complements `bash scripts/test.sh` rather than being superseded by it: the unit suites cover individual behaviors against in-memory fixtures, the smoke test proves the image actually boots to userspace.
+
+`BOOT_REQUIRED_STRING_SIGNALS` is where a subsystem whose health is only observable from the boot log gets its assertion. Alongside the end-to-end markers (`[BOOT] ExitBootServices OK`, `[PHASE0] BOOT_INFO`, `Boot complete in`, `C:\>`) it carries the bare-metal hardening signals added when TODO-10 closed: `IAPC_BOOT_ARCH:` (the FADT capability flags were parsed), `IST stacks:` (the #DF/NMI/MCE stacks were allocated), and `Verify: NX enabled` (CPU hardening ran and the EFER.NXE readback stuck). Each is a FAILING assertion, not an advisory line -- the separate `BOOT_FALLBACK_STRINGS` list is the advisory one. None of the three is reachable from a unit test: they report platform state established during Phase 0/1, not API behavior.
 
 ```mermaid
 graph LR
@@ -1189,7 +1191,7 @@ scripts/
 | `.githooks/pre-commit`            | Active pre-commit lint hook                          |
 | `.githooks/post-commit`           | Active `COUNT.md` refresh hook                       |
 | `src/kernel/test/test_runner.c`   | Unit test framework runner                           |
-| `src/kernel/test/test_*.c`        | 28 test files covering 10 `TEST_CAT_*` categories    |
+| `src/kernel/test/test_*.c`        | Kernel test files; live per-file counts in the generated coverage report below (a hand-kept number here goes stale on every new suite) |
 | `docs/test-coverage/coverage.md`  | Auto-generated test coverage report                  |
 
 ---

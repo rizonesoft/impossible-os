@@ -1223,18 +1223,28 @@ uint32_t acpi_pmtimer_read_value(void)
     return pmtimer_median3(a, b, c);
 }
 
-int acpi_hw_reduced(void)
+const struct acpi_fadt *acpi_get_fadt(void)
 {
-    if (!fadt_ptr)
+    return fadt_ptr;
+}
+
+int acpi_fadt_hw_reduced(const struct acpi_fadt *fadt)
+{
+    if (!fadt)
         return 0;
     /* flags is at FADT offset 112 (4 bytes) -- reading it needs length >= 116
      * (ACPI 1.0 minimum FADT). A truncated/malformed table cannot be declared
      * hardware-reduced; treat it as legacy so the bounds check is not bypassed
      * by the capability accessors that call this first. */
-    if (fadt_ptr->header.length < 116)
+    if (fadt->header.length < ACPI_FADT_LEN_FLAGS)
         return 0;
     /* FADT flags bit 20: HW_REDUCED_ACPI -- legacy devices absent */
-    return (fadt_ptr->flags & (1u << 20)) ? 1 : 0;
+    return (fadt->flags & (1u << 20)) ? 1 : 0;
+}
+
+int acpi_hw_reduced(void)
+{
+    return acpi_fadt_hw_reduced(fadt_ptr);
 }
 
 /* ---- FADT IAPC_BOOT_ARCH flags (offset 109, 16-bit) ----
@@ -1245,32 +1255,42 @@ int acpi_hw_reduced(void)
  * Bit 4: PCIe_ASPM -- PCIe ASPM must not be disabled
  * Bit 5: CMOS_RTC_NOT_PRESENT -- do not access CMOS RTC */
 
-int acpi_has_8042(void)
+int acpi_fadt_has_8042(const struct acpi_fadt *fadt)
 {
     /* Hardware-reduced ACPI platforms have no legacy fixed hardware (no
      * i8042/CMOS/VGA legacy ports), regardless of the IAPC_BOOT_ARCH bits,
      * which are reserved/ignored under the hardware-reduced model. Override
      * to absent so the PS/2 path is never probed there. */
-    if (acpi_hw_reduced())
+    if (acpi_fadt_hw_reduced(fadt))
         return 0;
-    if (!fadt_ptr)
+    if (!fadt)
         return 1;  /* assume present if no FADT */
-    /* FADT length must be >= 113 for boot_arch_flags to be valid */
-    if (fadt_ptr->header.length < 113)
+    /* FADT length must reach boot_arch_flags for the bits to be valid */
+    if (fadt->header.length < ACPI_FADT_LEN_BOOT_ARCH)
         return 1;  /* too short -- assume present */
-    return (fadt_ptr->boot_arch_flags & (1u << 1)) ? 1 : 0;
+    return (fadt->boot_arch_flags & (1u << 1)) ? 1 : 0;
+}
+
+int acpi_has_8042(void)
+{
+    return acpi_fadt_has_8042(fadt_ptr);
+}
+
+int acpi_fadt_has_cmos_rtc(const struct acpi_fadt *fadt)
+{
+    if (acpi_fadt_hw_reduced(fadt))
+        return 0;  /* hardware-reduced: no CMOS RTC */
+    if (!fadt)
+        return 1;
+    if (fadt->header.length < ACPI_FADT_LEN_BOOT_ARCH)
+        return 1;
+    /* Bit 5: CMOS_RTC_NOT_PRESENT -- inverted: 0=present, 1=absent */
+    return (fadt->boot_arch_flags & (1u << 5)) ? 0 : 1;
 }
 
 int acpi_has_cmos_rtc(void)
 {
-    if (acpi_hw_reduced())
-        return 0;  /* hardware-reduced: no CMOS RTC */
-    if (!fadt_ptr)
-        return 1;
-    if (fadt_ptr->header.length < 113)
-        return 1;
-    /* Bit 5: CMOS_RTC_NOT_PRESENT -- inverted: 0=present, 1=absent */
-    return (fadt_ptr->boot_arch_flags & (1u << 5)) ? 0 : 1;
+    return acpi_fadt_has_cmos_rtc(fadt_ptr);
 }
 
 uint8_t acpi_rtc_century_index(void)
@@ -1289,26 +1309,40 @@ uint8_t acpi_rtc_century_index(void)
     return fadt_ptr->century;
 }
 
-int acpi_msi_supported(void)
+int acpi_fadt_msi_supported(const struct acpi_fadt *fadt)
 {
-    if (!fadt_ptr)
+    /* No hardware-reduced override here, deliberately: MSI is a PCI/PCIe
+     * capability, not legacy fixed hardware, and a hardware-reduced platform
+     * is the LAST place to conclude MSI is unavailable. Only the explicit
+     * MSI_NOT_SUPPORTED bit turns it off. */
+    if (!fadt)
         return 1;
-    if (fadt_ptr->header.length < 113)
+    if (fadt->header.length < ACPI_FADT_LEN_BOOT_ARCH)
         return 1;
     /* Bit 3: MSI_NOT_SUPPORTED -- inverted: 0=supported, 1=not supported */
-    return (fadt_ptr->boot_arch_flags & (1u << 3)) ? 0 : 1;
+    return (fadt->boot_arch_flags & (1u << 3)) ? 0 : 1;
+}
+
+int acpi_msi_supported(void)
+{
+    return acpi_fadt_msi_supported(fadt_ptr);
+}
+
+int acpi_fadt_has_vga(const struct acpi_fadt *fadt)
+{
+    if (acpi_fadt_hw_reduced(fadt))
+        return 0;  /* hardware-reduced: no legacy VGA */
+    if (!fadt)
+        return 1;
+    if (fadt->header.length < ACPI_FADT_LEN_BOOT_ARCH)
+        return 1;
+    /* Bit 2: VGA_NOT_PRESENT -- inverted: 0=present, 1=absent */
+    return (fadt->boot_arch_flags & (1u << 2)) ? 0 : 1;
 }
 
 int acpi_has_vga(void)
 {
-    if (acpi_hw_reduced())
-        return 0;  /* hardware-reduced: no legacy VGA */
-    if (!fadt_ptr)
-        return 1;
-    if (fadt_ptr->header.length < 113)
-        return 1;
-    /* Bit 2: VGA_NOT_PRESENT -- inverted: 0=present, 1=absent */
-    return (fadt_ptr->boot_arch_flags & (1u << 2)) ? 0 : 1;
+    return acpi_fadt_has_vga(fadt_ptr);
 }
 
 /* ---- Win32 GetSystemFirmwareTable surface ---------------------------------

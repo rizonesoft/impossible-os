@@ -1,10 +1,11 @@
 {
-  "total_suites": 2943,
-  "total_assertions": 12160,
+  "total_suites": 2955,
+  "total_assertions": 12224,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
     {"file": "test_alpc.c", "suites": 66, "assertions": 270},
+    {"file": "test_bare_metal.c", "suites": 12, "assertions": 64},
     {"file": "test_blackbox.c", "suites": 12, "assertions": 10},
     {"file": "test_boot_audit.c", "suites": 22, "assertions": 41},
     {"file": "test_boot_caps.c", "suites": 15, "assertions": 32},

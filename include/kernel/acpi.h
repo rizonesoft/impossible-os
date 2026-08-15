@@ -111,6 +111,29 @@ struct acpi_fadt {
     uint8_t  fadt_minor_version;
 } __attribute__((packed));
 
+/* Minimum `header.length` a FADT must report before a given field may be read.
+ * Firmware is free to publish a table shorter than the struct above (older
+ * revisions genuinely are), so every accessor gates on these before touching
+ * the field -- a short table is treated as "capability unknown", never read
+ * past its end.
+ *
+ * ACPI_FADT_LEN_FLAGS is exactly the structural minimum: flags is the last
+ * byte-range either bound covers. ACPI_FADT_LEN_BOOT_ARCH is deliberately two
+ * bytes MORE conservative than boot_arch_flags itself needs (the field ends at
+ * offset 111); that floor is the one the accessors have always enforced and it
+ * is kept as-is, with the assert below pinning it to never drop BELOW the
+ * structural minimum if the layout moves. */
+#define ACPI_FADT_LEN_BOOT_ARCH  113
+#define ACPI_FADT_LEN_FLAGS \
+    (__builtin_offsetof(struct acpi_fadt, flags) + 4)
+
+_Static_assert(ACPI_FADT_LEN_BOOT_ARCH
+                   >= __builtin_offsetof(struct acpi_fadt, boot_arch_flags) + 2,
+               "ACPI_FADT_LEN_BOOT_ARCH would allow a read past a short FADT");
+_Static_assert(ACPI_FADT_LEN_FLAGS
+                   >= __builtin_offsetof(struct acpi_fadt, flags) + 4,
+               "ACPI_FADT_LEN_FLAGS would allow a read past a short FADT");
+
 /* ---- MADT (Multiple APIC Description Table) -- for SMP ---- */
 
 #define MAX_CPUS  16   /* maximum supported CPUs */
@@ -318,6 +341,33 @@ int acpi_msi_supported(void);
 
 /* Returns 1 if VGA is present (bit 2 NOT set). */
 int acpi_has_vga(void);
+
+/* ---- Pure evaluators over an explicit FADT ----
+ *
+ * Each accessor above is a one-line wrapper that passes the FADT the ACPI
+ * parse latched at init. These take the table explicitly and hold ALL of the
+ * decision logic: the hardware-reduced override, the short-table bounds, and
+ * the inverted-bit conventions. Every one is a pure function of its argument
+ * with no global reads, so a caller (notably the bare-metal test suite) can
+ * evaluate the policy against a synthetic FADT -- a hardware-reduced table, a
+ * truncated table -- which is otherwise unreachable, because the real table
+ * pointer is latched only inside acpi_init() and no platform this runs on
+ * publishes a hardware-reduced FADT.
+ *
+ * A NULL `fadt` means "no FADT was found" and yields the same legacy-present
+ * defaults the accessors return before ACPI parsing. */
+/* The FADT the ACPI parse latched at init, or NULL when none was accepted.
+ * Read-only: the returned table is firmware memory the kernel never writes.
+ * Exists so a caller can evaluate the pure predicates below against exactly
+ * the table the public accessors use -- notably to pin that each accessor
+ * still forwards to ITS OWN evaluator. */
+const struct acpi_fadt *acpi_get_fadt(void);
+
+int acpi_fadt_hw_reduced(const struct acpi_fadt *fadt);
+int acpi_fadt_has_8042(const struct acpi_fadt *fadt);
+int acpi_fadt_has_cmos_rtc(const struct acpi_fadt *fadt);
+int acpi_fadt_msi_supported(const struct acpi_fadt *fadt);
+int acpi_fadt_has_vga(const struct acpi_fadt *fadt);
 
 /* ---- Win32 GetSystemFirmwareTable / EnumSystemFirmwareTables surface ----
  *

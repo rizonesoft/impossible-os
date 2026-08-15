@@ -72,5 +72,48 @@ struct tss {
 /* Initialize the GDT with kernel/user segments and TSS */
 void gdt_init(void);
 
+/* Number of Interrupt Stack Table slots the x86-64 TSS defines (ist1..ist7).
+ * The IDT encodes the slot as a 1-based index, so 0 means "no IST". */
+#define TSS_IST_COUNT  7
+
+/* gdt_get_ist() dispatches one switch case per slot, so a struct that grew an
+ * ist8 would silently read as "no such slot". The IST fields are contiguous
+ * 8-byte entries, so their span pins the count against the layout itself. */
+_Static_assert(__builtin_offsetof(struct tss, ist7)
+                   - __builtin_offsetof(struct tss, ist1)
+               == (TSS_IST_COUNT - 1) * 8,
+               "TSS_IST_COUNT does not match the ist1..ist7 span in struct tss");
+
 /* Set the kernel stack pointer in the TSS (called during task switches) */
 void tss_set_kernel_stack(uint64_t stack_top);
+
+/* Read-only accessor for a TSS Interrupt Stack Table entry: the stack TOP the
+ * CPU loads when it delivers a vector whose IDT descriptor names IST slot
+ * `index`. `index` is that 1-based IDT encoding, so 1..TSS_IST_COUNT are the
+ * only valid values and anything else returns 0. Returns 0 for a slot
+ * gdt_init() has not populated.
+ *
+ * The TSS instance stays file-local to gdt.c. The only legitimate outside need
+ * is a read-only query -- diagnostics, and the bare-metal test that proves
+ * #DF/NMI/MCE actually received guarded stacks instead of triple-faulting on
+ * delivery -- and handing out a writable TSS pointer for that would let any
+ * caller repoint a critical-exception stack.
+ *
+ * SMP: the IST fields are written once by gdt_init() on the BSP in Phase 1,
+ * before any AP is started, and are never rewritten (tss_set_kernel_stack
+ * touches rsp0 only). The read is a single naturally-aligned 8-byte load, so
+ * no lock is required and none is taken -- which also keeps this callable from
+ * a panic or fault path, where taking a lock is forbidden. */
+uint64_t gdt_get_ist(unsigned index);
+
+/* Pure field-selection half of gdt_get_ist(): maps the 1-based IST index onto
+ * the matching ist1..ist7 field of an explicitly-supplied TSS. Returns 0 for
+ * index 0, for anything past TSS_IST_COUNT, and for a NULL tss.
+ *
+ * Split out from the accessor so the index-to-field mapping can be pinned
+ * against a TSS carrying a distinct sentinel per slot. Against the LIVE TSS
+ * that mapping is unfalsifiable: this kernel assigns only ist1..ist3 and the
+ * remaining four read as 0, which is the same answer an out-of-range index
+ * gives, so a mapping that dropped or misrouted a case would look identical to
+ * a correct one. */
+uint64_t tss_get_ist(const struct tss *tss, unsigned index);

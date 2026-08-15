@@ -219,6 +219,32 @@ void tss_set_kernel_stack(uint64_t stack_top)
     kernel_tss.rsp0 = stack_top;
 }
 
+uint64_t tss_get_ist(const struct tss *tss, unsigned index)
+{
+    /* Contract in gdt.h: `index` is the 1-based IST number an IDT descriptor
+     * encodes, so 0 ("no IST") and anything past ist7 are not slots and read
+     * as 0 rather than walking off the struct. */
+    if (!tss)
+        return 0;
+
+    switch (index) {
+    case 1:  return tss->ist1;
+    case 2:  return tss->ist2;
+    case 3:  return tss->ist3;
+    case 4:  return tss->ist4;
+    case 5:  return tss->ist5;
+    case 6:  return tss->ist6;
+    case 7:  return tss->ist7;
+    default: return 0;
+    }
+}
+
+uint64_t gdt_get_ist(unsigned index)
+{
+    /* Lock-free by design -- see the SMP note on the declaration in gdt.h. */
+    return tss_get_ist(&kernel_tss, index);
+}
+
 void gdt_get_gdtr(void *out_gdtr)
 {
     uint8_t *dst = (uint8_t *)out_gdtr;
