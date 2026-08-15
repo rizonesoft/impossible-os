@@ -610,7 +610,7 @@ Mirror struct in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). `cm
 | `diag_splash`       | bootx64 | P0 | boot diagnostics | runtime | bootloader-error-recovery | `0 | 1`. |
 | `deferred`          | bootx64 | P0 | init-sequencing strategy | runtime | kernel-init-sequencing | `0 | 1`; default `1`. |
 | `async_init`        | bootx64 | P0 | parallel subsystem init on APs | runtime | kernel-init-sequencing | `0 | 1`. |
-| `crash_test`        | bootx64 | P0 | deliberate BSOD after desktop init | boot | bsod-ux-enhancements | `0 | 1`. |
+| `crash_test`        | bootx64 | P0 | deliberate BSOD: early Phase 3, or pre-first-composite | boot | bsod-ux-enhancements | `0` off, `1` early Phase 3, `2` inside the compositor loop before the first composite. |
 | `ob_handle_trace`   | bootx64 | P0 | Object Manager tracing | runtime | object-manager | `0 | 1`. |
 | `config_version`    | bootx64 | P0 | parser metadata | runtime | boot-entry-store-menu-policy | `0` unversioned (legacy), `1+` versioned. |
 | `error_screen_test` | bootx64 | P0 | deliberate `boot_fatal` before kernel load | boot | bootloader-error-recovery | `0 | 1`. |

@@ -2938,9 +2938,25 @@ static void parse_conf_kv(struct boot_config *cfg,
          * src/kernel/main/boot_rollback.c; without this branch the
          * field stayed 0 forever and the steady-gated raise was
          * unreachable in production. */
-        if      (ascii_streq(val, "off")) cfg->anti_rollback_raise = 0;
-        else if (ascii_streq(val, "on"))  cfg->anti_rollback_raise = 1;
-        else                              cfg->anti_rollback_raise = (UINT8)ascii_atoi(val);
+        /* STRICT, unlike the sibling knobs above. Those are benign
+         * toggles where a typo costs a feature; this one advances an
+         * IRREVERSIBLE security floor, and `ascii_atoi` + a UINT8
+         * truncation would let `2`, `1garbage`, or an overflowing
+         * decimal that wraps to a nonzero byte all read as opt-IN,
+         * because the kernel treats any nonzero value as enabled.
+         * A corrupted or mistyped boot.conf must never be able to
+         * strand older signed images. Anything unrecognized falls back
+         * to the safe 0 and says so on serial. */
+        if      (ascii_streq(val, "off") || ascii_streq(val, "0"))
+            cfg->anti_rollback_raise = 0;
+        else if (ascii_streq(val, "on")  || ascii_streq(val, "1"))
+            cfg->anti_rollback_raise = 1;
+        else {
+            cfg->anti_rollback_raise = 0;
+            serial_early_print("[WARN] boot.conf: anti_rollback_raise=");
+            serial_early_print(val);
+            serial_early_print(" is not 0/1/on/off -- treating as OFF\r\n");
+        }
     }
     else if (ascii_streq(key, "compositor")) {
         /* Desktop UI test framework, headless compositor section. */

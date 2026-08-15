@@ -1093,7 +1093,17 @@ _Static_assert(sizeof(struct boot_gop_handle) == 32,
  *    14       1   deferred
  *    15       1   async_init
  *    16       1   crash_test
- *    17      15   _reserved[]
+ *    17       1   ob_handle_trace
+ *    18       1   config_version
+ *    19       1   error_screen_test
+ *    20       1   compositor
+ *    21       1   test_monitors_count
+ *    22       1   anti_rollback_raise   <-- LIVE since the scripted rollback harness
+ *    23       1   firmware_quirk_disable
+ *    24       1   firmware_rng
+ *    25       1   seed_file
+ *    26       1   tpm_enroll
+ *    27       5   _reserved[]
  *    32     256   cmdline          <-- STABLE ABI offset
  *   288       1   config_found
  *   289       1   tap                (S4: TODO-04 user-mode TAP mode)
@@ -1134,7 +1144,9 @@ struct boot_config {
     /* Async init */
     uint8_t  async_init;       /* 1 = parallel subsystem init on APs, 0 = sequential (default) */
     /* Crash test */
-    uint8_t  crash_test;       /* 1 = trigger deliberate BSOD after desktop init */
+    uint8_t  crash_test;       /* 0 = off, 1 = deliberate BSOD early in Phase 3,
+                                * 2 = deliberate BSOD inside the compositor
+                                *     loop, before the first composite */
     /* Object Manager tracing (S15) */
     uint8_t  ob_handle_trace;  /* 1 = log every handle alloc/free to klog */
     /* Config version (S7) -- future boot.conf changes can key on this */

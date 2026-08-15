@@ -233,7 +233,7 @@ jobs:
       - name: Stale-ABI fixtures
         run: make stale-abi-fixtures
 
-      # Anti-rollback NVRAM fixtures: four sequenced boots over ONE
+      # Anti-rollback NVRAM fixtures: four sequenced boots (B, A, C, D) over ONE
       # persistent OVMF_VARS.fd proving the compositor-steady gate on
       # the IPOSRequiredSecVersion floor through the live UEFI Runtime
       # Services SetVariable path -- the last mile a kernel unit test

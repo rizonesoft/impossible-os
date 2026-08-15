@@ -410,6 +410,17 @@ void boot_phase3(void)
                      "CRASH_TEST: Deliberate panic for testing",
                      __FILE__, __LINE__);
     }
+    else if (g_boot_info.config.crash_test != 0 &&
+             g_boot_info.config.crash_test != 2) {
+        /* Say so rather than booting normally. Before the exact-match
+         * narrowing above, ANY nonzero value fired this site, so an
+         * operator typo was self-evident; now 3-255 are handled by
+         * nobody and the knob would just look broken. */
+        klog(LOG_WARN, "boot",
+             "crash_test=%u is not a known crash site (0=off, 1=here, "
+             "2=pre-first-composite) -- no crash will be triggered",
+             (uint64_t)g_boot_info.config.crash_test);
+    }
 
     boot_splash_tick();
     boot_splash_status("Loading fonts...");

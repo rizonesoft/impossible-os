@@ -4,19 +4,20 @@
 #
 # Proves the compositor-steady gate on the IPOSRequiredSecVersion NVRAM
 # floor end-to-end, through the LIVE UEFI Runtime Services SetVariable
-# path that a kernel unit test may not call. Five boots share ONE
+# path that a kernel unit test may not call. Four boots share ONE
 # persistent OVMF_VARS.fd so the NVRAM state carries across them:
 #
+#   B  opt-in disk with crash_test=2, which panics INSIDE the compositor
+#      loop immediately before the first composite. That boot performed
+#      every Phase-3 action there is, and entered the compositor, EXCEPT
+#      becoming user-visible -- so its floor must not move.
 #   A  stock disk (anti_rollback_raise=0), boots to the shell prompt.
-#      The floor must stay absent: `required=0`, no raise line.
-#   B  opt-in disk with crash_test=2, which panics on the last statement
-#      before compositor_run(). That boot performed every Phase-3 action
-#      there is EXCEPT becoming user-visible, so its floor must not move.
-#   B2 stock disk, SAME OVMF_VARS: an INDEPENDENT read of the store after
-#      that death, which must still say `required=0`. This is the only
-#      check that does not rely on the rollback code describing its own
-#      behavior, so it holds whatever route a raise might have taken --
-#      including a direct SetVariable that never touches the helpers.
+#      Two jobs: the opt-out path must withhold the raise, AND its own
+#      Phase-0 validator record (with [CRASH-PREV] replays excluded) is
+#      the INDEPENDENT read proving B left the floor at 0. That check
+#      does not rely on the rollback code describing its own behavior,
+#      so it holds whatever route a raise might have taken -- including
+#      a direct SetVariable that never touches the helpers.
 #   C  opt-in disk, allowed to reach the first frame. The floor must
 #      advance exactly once, and steady -> enqueued -> raised in order.
 #   D  stock disk again, SAME OVMF_VARS. Its Phase-0 validator must now
@@ -415,7 +416,11 @@ MARKER_USERSPACE='C:\>'
 # statement before compositor_run(), so B's boot performs every Phase-3
 # action there is EXCEPT becoming user-visible -- which is exactly the
 # boot whose floor must not move.
-MARKER_CRASH_TEST='crash_test=2 -- triggering deliberate BSOD before compositor'
+MARKER_CRASH_TEST='crash_test=2 -- triggering deliberate BSOD before first composite'
+# The panic banner itself -- the LAST line fixture B's boot can emit,
+# and therefore its stop marker. Stopping on MARKER_CRASH_TEST instead
+# would cut the log off before the banner it then asserts.
+MARKER_PANIC_BANNER='CRASH_TEST: Deliberate pre-presentation panic'
 
 RE_VALIDATE='boot_rollback: security version shipped=[0-9]+ required=[0-9]+'
 RE_RAISED='anti-rollback: raised IPOSRequiredSecVersion to [0-9]+ \(steady\)'
@@ -473,7 +478,9 @@ fixture_a_cold_optout() {
     local label="A-cold-optout"
     EXECUTED=$((EXECUTED + 1))
     echo; printf "%s=== %s ===%s\n" "$CYAN" "$label" "$NC"
-    say_info "  stock disk (anti_rollback_raise=0), boot to userspace"
+    say_info "  stock disk (anti_rollback_raise=0), boot to userspace."
+    say_info "  Runs AFTER B, so its own validator record is also the"
+    say_info "  INDEPENDENT proof that B's pre-frame death left the floor at 0."
 
     local serial="$FIXTURES_DIR/$label.serial.log"
     local st=0
@@ -488,8 +495,34 @@ fixture_a_cold_optout() {
     local bad=0
     assert_present "$label" "$stripped" "$RE_VALIDATE" \
         "Phase-0 rollback validator line" || bad=1
-    assert_present "$label" "$stripped" 'boot_rollback: security version shipped=[0-9]+ required=0 ' \
-        "required=0 on a cold NVRAM store" || bad=1
+
+    # THE INDEPENDENT ORACLE, absorbed from what used to be a separate
+    # readback boot. Everything fixture B asserts comes from markers the
+    # rollback code emits about itself, so relocating the whole
+    # steady -> enqueued -> raised sequence earlier still yields one
+    # correctly ordered triplet and slips past every log-based check.
+    # This asks the only question those markers cannot answer: what does
+    # the NVRAM actually hold after a boot that died before presenting?
+    #
+    # It reads THIS boot's own validator record, excluding [CRASH-PREV]
+    # replays: B panicked on purpose, so klog_crash_recover() replays B's
+    # pre-crash "required=0" into this log, where it would otherwise mask
+    # a floor that really had moved.
+    local own_validator
+    own_validator="$(grep -a 'boot_rollback: security version shipped=' "$stripped" \
+                     | grep -av 'CRASH-PREV' | head -n 1 || true)"
+    if [ -z "$own_validator" ]; then
+        say_fail "$label: no Phase-0 validator record of its own"
+        say_info "  (replayed CRASH-PREV lines do not count -- they describe"
+        say_info "   the previous boot, which is the one under suspicion)"
+        FAILED=$((FAILED + 1)); return
+    fi
+    say_info "  own validator record: ${own_validator##*] }"
+    if ! printf '%s\n' "$own_validator" | grep -qE 'shipped=[0-9]+ required=0 '; then
+        say_fail "$label: THE FLOOR MOVED on a boot that never presented a frame"
+        say_info "  this boot's own validator reads: ${own_validator##*] }"
+        bad=1
+    fi
     assert_present "$label" "$stripped" 'Boot complete in' \
         "Boot complete sentinel" || bad=1
     # The whole point of an opt-OUT fixture is that it reached the state
@@ -516,7 +549,7 @@ fixture_a_cold_optout() {
     fi
 
     if [ "$bad" -eq 0 ]; then
-        say_pass "$label (cold store stays at required=0; opt-out withholds the raise)"
+        say_pass "$label (floor still 0 after the pre-frame death; opt-out withholds the raise)"
     else
         FAILED=$((FAILED + 1))
     fi
@@ -535,11 +568,15 @@ fixture_b_optin_pre_steady() {
     fi
     local serial="$FIXTURES_DIR/$label.serial.log"
     local st=0
+    # Stop on the PANIC BANNER, not the klog that precedes it: the banner
+    # is the last thing this boot can emit, so nothing is gained by
+    # settling afterwards. The CPU is halted -- an async raise cannot
+    # arrive late here the way it can on a boot that keeps running.
     boot_fixture "$disk" "$SHARED_VARS" "$serial" \
-                 "$MARKER_CRASH_TEST" "$SETTLE_SECS" || st=$?
+                 "$MARKER_PANIC_BANNER" 2 || st=$?
     local stripped; stripped="$(strip_log "$serial")"
 
-    if ! boot_status_ok "$label" "$st" "the deliberate crash point"; then
+    if ! boot_status_ok "$label" "$st" "the deliberate panic banner"; then
         FAILED=$((FAILED + 1)); return
     fi
 
@@ -574,73 +611,6 @@ fixture_b_optin_pre_steady() {
 
     if [ "$bad" -eq 0 ]; then
         say_pass "$label (deep boot, no first frame -> floor held)"
-    else
-        FAILED=$((FAILED + 1))
-    fi
-}
-
-# The INDEPENDENT pre-frame oracle. Everything fixture B asserts is read
-# out of B's own serial log using markers the rollback code emits about
-# itself, so a regression that relocates the whole steady -> enqueued ->
-# raised sequence wholesale still produces one correctly ordered triplet
-# and slips past every log-based check. This fixture asks the only
-# question those markers cannot answer: after a boot that did all of
-# Phase 3 and then died before its first frame, what does the NVRAM
-# store actually say? It must still say zero, whatever route a raise
-# might have taken -- including a direct uefi_set_variable() that never
-# touches the helpers at all.
-fixture_b2_pre_steady_readback() {
-    local label="B2-pre-steady-readback"
-    EXECUTED=$((EXECUTED + 1))
-    echo; printf "%s=== %s ===%s\n" "$CYAN" "$label" "$NC"
-    say_info "  stock disk, SAME OVMF_VARS -- the floor must be untouched by"
-    say_info "  the pre-frame boot that just died"
-
-    local serial="$FIXTURES_DIR/$label.serial.log"
-    local st=0
-    boot_fixture "$BUILD_DIR/system-disk.img" "$SHARED_VARS" \
-                 "$serial" "$MARKER_USERSPACE" "$SETTLE_SECS" || st=$?
-    local stripped; stripped="$(strip_log "$serial")"
-
-    if [ ! -s "$stripped" ]; then
-        say_fail "$label: boot produced NO serial output at all"
-        say_info "  the shared variable store is damaged or unreadable after"
-        say_info "  the pre-frame death -- an in-flight raise is the usual cause"
-        FAILED=$((FAILED + 1)); return
-    fi
-    if ! boot_status_ok "$label" "$st" "the shell prompt"; then
-        FAILED=$((FAILED + 1)); return
-    fi
-
-    local bad=0
-    # Read THIS boot's own validator record, not any line that happens to
-    # say required=0. The previous fixture panicked on purpose, so its klog
-    # was persisted and this boot replays it through klog_crash_recover()
-    # with a `[CRASH-PREV] ` prefix -- including B's own pre-crash
-    # "required=0". A floor that partially advanced would then be masked by
-    # B's recovered evidence, and the independent oracle would be reading
-    # the very boot it is supposed to be checking up on.
-    local own_validator
-    own_validator="$(grep -a 'boot_rollback: security version shipped=' "$stripped" \
-                     | grep -av 'CRASH-PREV' | head -n 1 || true)"
-    if [ -z "$own_validator" ]; then
-        say_fail "$label: no Phase-0 validator record of its own"
-        say_info "  (replayed CRASH-PREV lines do not count -- they describe"
-        say_info "   the previous boot, which is the one under suspicion)"
-        FAILED=$((FAILED + 1)); return
-    fi
-    say_info "  own validator record: ${own_validator##*] }"
-    if ! printf '%s\n' "$own_validator" \
-         | grep -qE 'shipped=[0-9]+ required=0 '; then
-        say_fail "$label: THE FLOOR MOVED on a boot that never presented a frame"
-        say_info "  this boot's own validator reads: ${own_validator##*] }"
-        bad=1
-    fi
-    assert_absent "$label" "$stripped" 'ANTI-ROLLBACK REFUSAL' \
-        "pre-jump downgrade refusal (the floor moved and stranded the image)" || bad=1
-
-    if [ "$bad" -eq 0 ]; then
-        say_pass "$label (NVRAM independently confirms the floor held)"
     else
         FAILED=$((FAILED + 1))
     fi
@@ -849,10 +819,23 @@ else
             say_fail "preflight: scripts/build.sh failed"
             exit 1
         }
-        # Re-check AFTER the build. An incremental build that leaves an
-        # input newer than the image it produced has not made the image
-        # current, and booting it would test something other than the tree.
-        _newer="$(_stale_check)" || true
+        # Re-check AFTER the build, through the SAME checked path as the
+        # first scan. An incremental build that leaves an input newer than
+        # the image it produced has not made the image current, and booting
+        # it would test something other than the tree. Discarding this
+        # scan's status (the earlier `|| true`) reopened exactly the
+        # fail-open hole the first scan closes.
+        : > "$_newer_err"
+        _newer="$(_stale_check)" || {
+            say_fail "preflight: post-build freshness scan failed"
+            cat "$_newer_err" >&2 || true
+            exit 1
+        }
+        if [ -s "$_newer_err" ]; then
+            say_fail "preflight: post-build freshness scan reported errors"
+            cat "$_newer_err" >&2 || true
+            exit 1
+        fi
         if [ -n "$_newer" ]; then
             say_fail "preflight: build inputs are STILL newer than system-disk.img"
             say_info "  first offender: $_newer"
@@ -866,9 +849,11 @@ fi
 SHARED_VARS="$FIXTURES_DIR/shared.OVMF_VARS.fd"
 cp "$OVMF_VARS_SRC" "$SHARED_VARS"
 
-fixture_a_cold_optout
+# B runs FIRST so that A's own validator record doubles as the
+# independent readback proving B left the floor untouched. That merge
+# removes a whole QEMU boot from every CI run at no loss of coverage.
 fixture_b_optin_pre_steady
-fixture_b2_pre_steady_readback
+fixture_a_cold_optout
 fixture_c_optin_steady
 fixture_d_readback
 

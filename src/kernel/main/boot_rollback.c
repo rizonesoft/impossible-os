@@ -10,8 +10,11 @@
  *   - boot_rollback_should_raise() -- decision helper. Returns 1 when
  *     the opt-in policy is set AND shipped > required.
  *   - boot_rollback_mark_steady() -- compositor-side setter called once
- *     the first stable frame has rendered (or a timer fallback fires).
- *     Records that the boot reached user-visible steady state.
+ *     the first stable frame has rendered. There is no timer fallback:
+ *     first_frame forces a full composite on iteration 1, so either the
+ *     first-frame path fires or the compositor hung before it, and a
+ *     hung compositor withholding the raise IS the safety goal. The
+ *     sole production caller is compositor.c's first_frame branch.
  *   - boot_rollback_raise_if_steady() -- one-shot NVRAM write of
  *     IPOSRequiredSecVersion. No-op until mark_steady has fired;
  *     subsequent calls after the first successful raise are no-ops.
@@ -212,7 +215,7 @@ void boot_rollback_mark_steady(void)
      * before it and logged late". The rollback fixture harness asserts
      * steady -> enqueued -> raised as an ORDER; on bare metal this is
      * also the marker that says the compositor reached a real frame. */
-    klog(LOG_INFO, "boot", "anti-rollback: compositor steady latched");
+    klog_unrated(LOG_INFO, "boot", "anti-rollback: compositor steady latched");
 }
 
 int boot_rollback_is_steady(void)
@@ -276,9 +279,9 @@ int boot_rollback_raise_if_steady(void)
          * inside the state lock above; publish s_raised with release
          * so was_raised() observers see a coherent advance. */
         __atomic_store_n(&s_raised, 1, __ATOMIC_RELEASE);
-        klog(LOG_INFO, "boot",
-             "anti-rollback: raised IPOSRequiredSecVersion to %u (steady)",
-             (uint64_t)new_value);
+        klog_unrated(LOG_INFO, "boot",
+                     "anti-rollback: raised IPOSRequiredSecVersion to %u (steady)",
+                     (uint64_t)new_value);
         return 1;
     }
 
@@ -349,7 +352,7 @@ int boot_rollback_request_raise(void)
      * synchronous fallback runs. A regression that requests the raise
      * from anywhere other than the compositor first-frame path shows up
      * here immediately, even when the write itself lands later or never. */
-    klog(LOG_INFO, "boot", "anti-rollback: raise request enqueued");
+    klog_unrated(LOG_INFO, "boot", "anti-rollback: raise request enqueued");
 
     /* Try the deferred path first. sys_wq might be NULL during early
      * boot or if creation failed; the workqueue pool can also fill

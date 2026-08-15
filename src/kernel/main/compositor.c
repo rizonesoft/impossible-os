@@ -29,6 +29,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/fs/partition.h"   /* ab_boot_mark_slot_successful (TODO-21 A/B mark-good) */
 #include "kernel/boot_status.h"    /* boot_status_accept_advance (single bless authority) */
+#include "kernel/panic.h"        /* panic_screen -- declared, not re-externed locally */
 
 /* Headless state + test seed. All reads/writes are plain volatile
  * because tests + compositor thread never race on them today:
@@ -293,12 +294,18 @@ void compositor_run(void)
              * only on the first iteration -- the boot cannot reach a
              * second one. */
             if (first_frame && g_boot_info.config.crash_test == 2) {
-                extern void panic_screen(struct interrupt_frame *frame,
-                                         uint64_t error_code,
-                                         const char *description,
-                                         const char *file, uint32_t line);
-                klog(LOG_WARN, "boot",
-                     "crash_test=2 -- triggering deliberate BSOD before compositor");
+                /* Unrated: the fixture harness greps this exact line as
+                 * proof the boot really died here, and the shared
+                 * per-subsystem rate cap would otherwise let an unrelated
+                 * chatty "boot" caller drop it -- which reads downstream
+                 * as a rollback-policy regression rather than a lost log.
+                 * No fb_unlock_compositor() call here: panic_screen does
+                 * that itself before its first draw, so the BSOD reaches
+                 * VRAM regardless of the lock state at entry, and
+                 * unlocking early would only widen the window before its
+                 * interrupt mask. */
+                klog_unrated(LOG_WARN, "boot",
+                             "crash_test=2 -- triggering deliberate BSOD before first composite");
                 panic_screen((struct interrupt_frame *)0, 0xDEAD,
                              "CRASH_TEST: Deliberate pre-presentation panic",
                              __FILE__, __LINE__);

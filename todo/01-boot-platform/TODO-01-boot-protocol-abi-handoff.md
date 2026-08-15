@@ -95,6 +95,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
 | 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
 | ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [x]   |
+| 💎  |  25   | Bounded retry for a transient rollback-floor write | §13, §16, §24                      |  [ ]   |
 
 ---
 
@@ -857,25 +858,28 @@ That is a coverage gap rather than a live exploit, and it was surfaced by a cons
 
 The gap is narrow and the shape of the fix already exists in this file: §19 built exactly this kind of harness for the stale-ABI path (disposable disk image, persistent OVMF_VARS, QEMU PID tracking, per-fixture fault-class assertion) and it now runs on every push, under TCG in CI and KVM locally. This section is that harness applied to the rollback gate. It is NOT a re-implementation of §19 and does not re-cover the stale-ABI fixtures.
 
-- [x] Wire `anti_rollback_raise` into the bootloader's `parse_conf_kv()` and document the key in [`resources/boot/boot.conf`](../../resources/boot/boot.conf), default 0.
+- [x] Wire `anti_rollback_raise` into the bootloader's `parse_conf_kv()` and document the key in [`resources/boot/boot.conf`](../../resources/boot/boot.conf), default 0, accepting ONLY `0`/`off`/`1`/`on`.
   - The field existed in both ABI mirrors and the kernel read it at `boot_rollback.c:238`, but no parser branch ever set it, so the opt-in was unreachable and §16's steady-gated raise was dead code in production.
-  - Accepts `on`/`off`/numeric like the neighbouring policy knobs; `boot_config_defaults()` memsets it to the safe 0.
+  - Strict, unlike the neighbouring knobs: those are benign toggles, but this floor is irreversible, and `ascii_atoi` + a `UINT8` truncation would let `2`, `1garbage` or a wrapping decimal all read as opt-IN. Anything unrecognized falls back to 0 and says so on serial.
   - -> XREF: [§16](#16-anti-rollback-raise-timing-hardening) -- this is the missing producer for the policy §16 gates.
 - [x] Add `scripts/debug/rollback-fixtures/run-fixtures.sh` driving FOUR sequenced boots over one persistent `OVMF_VARS.fd`, modelled on the `stale-abi-fixtures` harness.
   - Carries over its env-probe, QEMU PID tracking, cleanup traps, and the `GITHUB_ACTIONS` SKIP-to-FAIL upgrade so a silent no-op cannot satisfy the gate.
-- [x] Assert A (cold, opt-out) reports `required=0` and no raise; B (opt-in, dies pre-frame) leaves the floor unchanged; B2 independently re-reads the store; C (opt-in, reaches first frame) raises once; D reads it back.
-- [x] Add fixture B2: an independent readback boot after B, asserting the store still says `required=0`.
+- [x] Assert B (opt-in, dies pre-frame) leaves the floor unchanged; A (opt-out) both withholds the raise and independently re-reads the store; C (opt-in, reaches first frame) raises once; D reads it back.
+- [x] Make fixture A the independent readback: run B FIRST, then have A's own Phase-0 validator record double as the proof that B's pre-frame death left the floor at 0.
   - Everything B asserts comes from markers the rollback code emits about itself, so relocating the whole `steady` -> `enqueued` -> `raised` sequence to an earlier site still produces one correctly ordered triplet and slips past every log-based check.
   - B2 asks the only question those markers cannot answer -- what the NVRAM actually holds -- so it holds against any route, including a direct `uefi_set_variable()` that never touches the helpers.
-  - It reads only its OWN Phase-0 validator record, excluding `[CRASH-PREV]` lines: B panics deliberately, so `klog_crash_recover()` replays B's pre-crash `required=0` into B2's log, where it would otherwise mask a floor that really had moved.
-- [x] Add a `crash_test=2` site INSIDE the compositor loop, guarded on the first iteration and placed before the first composite and flip; match the existing `crash_test=1` site exactly rather than for truthiness.
+  - It reads only its OWN Phase-0 validator record, excluding `[CRASH-PREV]` lines: B panics deliberately, so `klog_crash_recover()` replays B's pre-crash `required=0` into this log, where it would otherwise mask a floor that really had moved.
+  - Merging this into A rather than keeping a fifth boot removes a whole QEMU boot from every CI run at no loss of coverage (perf review).
+- [x] Add a `crash_test=2` site INSIDE the compositor loop, guarded on the first iteration and placed before the first composite and flip.
+  - Match the existing `crash_test=1` site exactly rather than for truthiness, and report every other value on serial instead of silently doing nothing.
   - `crash_test=1` panics early in Phase 3, ahead of the pre-§16 raise site, so a boot stopped there could not see a raise moved to that site at all.
   - Stopping merely BEFORE `compositor_run()` was also not enough: a raise relocated to the top of that function would run on no fixture's boot, and all five would still pass. The hook sits at the deepest pre-presentation point instead.
 - [x] Rebuild when any build input is newer than `system-disk.img`, not merely when the image is absent.
   - Booting a stale image can report all-PASS for code no longer in the tree, which is the worst failure a regression gate has: a green verdict about something that was never tested.
-- [x] Add synchronous `anti-rollback: compositor steady latched` and `anti-rollback: raise request enqueued` klogs so the gate can be asserted as an ORDER rather than a timing coincidence.
+- [x] Add synchronous `anti-rollback: compositor steady latched` and `anti-rollback: raise request enqueued` klogs so the gate can be asserted as an ORDER rather than a timing coincidence, and emit all three oracles through `klog_unrated()`.
   - The raise itself runs on `sys_wq`, so the absence of its success log proves nothing: a pre-frame request that has not been scheduled yet looks identical to no request at all. Both new markers fire on the caller's thread.
   - Run C asserts `steady` -> `enqueued` -> `raised` and exactly one of each; that is what catches a raise moved anywhere earlier in the boot.
+  - Unrated because the shared per-subsystem rate cap would otherwise let a chatty `boot` caller drop an oracle line, which reads downstream as a rollback regression rather than a lost log.
 - [x] Stop run B with the shipped `crash_test=1` boot.conf knob rather than by racing a serial marker, so the pre-frame death is deterministic on any accelerator.
   - Two marker-based stops were measured and rejected: `Boot complete in` sits ahead of the pre-§16 raise site and would mask the regression, and the `heap:` stats line clears that site but leads the first frame by only ~260 ms under KVM, so a 0.2s poll routinely stopped the guest too late.
   - The masking objection that ruled the knob out initially is answered by run C's ordering and exactly-once assertions, which catch a raise moved to the old site.
@@ -894,16 +898,42 @@ The gap is narrow and the shape of the fix already exists in this file: §19 bui
   - -> XREF: [§13](#13-anti-rollback-and-security-version-binding) -- §13 owns the `IPOSRequiredSecVersion` variable contract.
 - [x] Commit: `"test: scripted anti-rollback NVRAM fixture harness"`
 
-**Test checkpoint:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` reports 5/5 fixtures PASS on KVM locally, and the same step passes under TCG in a CI run whose log shows the TCG accelerator line. Sensitivity control: restoring the pre-§16 behavior (calling `boot_rollback_mark_steady()` + `boot_rollback_request_raise()` immediately after `boot_post_nvram_write16(POST16_BOOT_OK)` in `boot_desktop.c`) must make the harness FAIL on BOTH run B (its markers appear on a boot with no first frame) and run B2 (the store no longer reads required=0), and reverting must restore 5/5 -- the harness must be able to catch the regression it exists for, not merely pass. The failure must be SEMANTIC: an earlier revision of this harness failed that injection only because the interrupted NVRAM write happened to corrupt the variable store, which is a timing side effect and not a gate assertion. Inverting `boot_rollback_is_steady()` is NOT a valid control either: that accessor is observer-only, and both `raise_if_steady()` and `request_raise()` load `s_steady` directly.
+**Test checkpoint:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` reports 4/4 fixtures PASS on KVM locally, and the same step passes under TCG in a CI run whose log shows the TCG accelerator line. Sensitivity control: restoring the pre-§16 behavior (calling `boot_rollback_mark_steady()` + `boot_rollback_request_raise()` immediately after `boot_post_nvram_write16(POST16_BOOT_OK)` in `boot_desktop.c`) must make the harness FAIL on BOTH run B (its markers appear on a boot with no first frame) and run A (the store no longer reads required=0), and reverting must restore 4/4 -- the harness must be able to catch the regression it exists for, not merely pass. The failure must be SEMANTIC: an earlier revision of this harness failed that injection only because the interrupted NVRAM write happened to corrupt the variable store, which is a timing side effect and not a gate assertion. Inverting `boot_rollback_is_steady()` is NOT a valid control either: that accessor is observer-only, and both `raise_if_steady()` and `request_raise()` load `s_steady` directly.
 
-> **Test runner:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` | 5/5 fixtures PASS (KVM local) | kernel-side state machine stays covered by the 18 `boot_rollback:` cases in `test_boot_rollback.c` (SUITE=boot). **Note:** the bootloader `parse_conf_kv()` branch has no kernel test surface -- it is UEFI-side code the kernel test binary does not link. Fixtures B and C are its validation: both boot a disk whose `boot.conf` carries `anti_rollback_raise=1`, so a parser regression makes C fail.
+> **Test runner:** `bash scripts/debug/rollback-fixtures/run-fixtures.sh` | 4/4 fixtures PASS (KVM local) | kernel-side state machine stays covered by the 18 `boot_rollback:` cases in `test_boot_rollback.c` (SUITE=boot). **Note:** the bootloader `parse_conf_kv()` branch has no kernel test surface -- it is UEFI-side code the kernel test binary does not link. Fixtures B and C are its validation: both boot a disk whose `boot.conf` carries `anti_rollback_raise=1`, so a parser regression makes C fail.
 
 > **Notes:**
-> - **Shipped:** the five-boot harness, its CI step in `build.yml`, the `anti_rollback_raise` parser branch in `bootx64.c`, the documented key in `boot.conf`, and the canonical-GUID cleanup in `boot_rollback.c`.
+> - **Shipped:** the four-boot harness, its CI step in `build.yml`, the `anti_rollback_raise` parser branch in `bootx64.c`, the documented key in `boot.conf`, and the canonical-GUID cleanup in `boot_rollback.c`.
 > - **Integration:** patches `::/EFI/ImpossibleOS/boot.conf` in a disposable disk copy via the same `mcopy @@EFI_OFFSET` mechanism as `scripts/patch-boot-conf.sh`, and boots with the smoke gate's QEMU flags.
 > - **Downstream:** the opt-in policy §13 defines and §16 gates is reachable for the first time; the config field was never written before, so the raise could not fire on any real boot.
 > - **Canonical doc:** [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) now points at the harness and keeps the manual steps as the debugging fallback.
 > - **Scope boundary:** §24 owns the harness and the opt-in wiring; the variable contract stays §13's and the steady-latch design stays §16's.
+
+> **Verified:** 2026-08-15 | commit `47942a8d1` + review fixes | 12/13 items | build OK | harness 4/4 fixtures (KVM) | 30009 kernel + 17 user-mode PASS | lint 0 errors | smoke matrix 4/4 legs (TCG+KVM x 1+2 CPU) | sensitivity re-proven twice: the pre-§16 raise site and a raise relocated into `compositor_run()` both fail runs B and A, and reverting each restores 4/4
+> **Deferred:** [H] a transient `SetVariable` failure is never retried -- the rollback of `s_attempted`/`s_enqueued` exists so "a future request can retry", but the only production caller is the compositor `first_frame` branch, which never fires twice (reason: needs a bounded retry + backoff design on the security-floor write, not a hasty loop) -> XREF: 01-boot-platform/TODO-01 §25 (item: "Schedule a bounded retry on `sys_wq` after a transient failure" at line 927)
+> **Accepted:** [M] require the bootloader to demand EXACT `NV|BS|RT` equality rather than a superset (reason: `bootx64.c:16659` fail-closes on that path, so exact-match would refuse to boot on firmware that adds an attribute bit) -> XREF: 01-boot-platform/TODO-01 §24 (item: "Seed a fixture store written under a historical GUID or a wider attribute set" at line 895)
+> **Quality reviewed:** 2026-08-15 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) + kernel-quality-auditor + boot-quality-auditor | 5H+9M+3L fixed, 1H deferred | scope: kernel-code-quality + boot-code-quality
+
+---
+
+## 25. Bounded Retry for a Transient Rollback-Floor Write
+
+> **Spawned-by:** §24 (review)
+> **User impact:** an operator who enabled `anti_rollback_raise` to retire a vulnerable image gets a machine that silently did NOT retire it. One transient firmware error on the single `SetVariable` attempt leaves the floor at its old value for the rest of the boot, so the next restart still accepts the older signed image the operator was trying to lock out, with nothing on screen or in the Registry saying the policy did not take effect.
+
+§16's raise path already contains the retry machinery and cannot reach it. On a transient `SetVariable` failure `boot_rollback_raise_if_steady()` rolls `s_attempted` and `s_enqueued` back to 0 under `s_state_lock`, and its comment states this is so "a future request can retry". No future request exists: the only production caller is the compositor's `first_frame` branch in [`src/kernel/main/compositor.c`](../../src/kernel/main/compositor.c), and `first_frame` is cleared at the end of that same iteration. The rollback is therefore dead code, and the failure is silent -- the only evidence is one `LOG_WARN`.
+
+§24's fixture harness cannot see this: it exercises only the success path, because a QEMU boot has no way to make one `SetVariable` fail and the next succeed.
+
+- [ ] Schedule a bounded retry on `sys_wq` after a transient failure in [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c), retaining exactly one in-flight claim so the retry cannot double-write.
+- [ ] Cap the attempts and back off between them; a firmware that fails every write must not spin the workqueue for the life of the boot.
+- [ ] Report exhaustion once, at `LOG_ERROR`, naming the last firmware status so an operator can tell "policy declined" from "policy failed".
+- [ ] Add a fault-injected unit test where `SetVariable` fails once then succeeds, with no second compositor first-frame request, and assert the floor still advances exactly once.
+- [ ] Commit: `"boot: bounded retry for a transient anti-rollback floor write"`
+
+**Test checkpoint:** with a fault injector failing the first `SetVariable` and passing the second, a single steady boot advances `IPOSRequiredSecVersion` exactly once and `boot_rollback_was_raised()` returns 1. With the injector failing every attempt, the boot completes, the floor is unchanged, and exactly one `LOG_ERROR` names the final status. Neither case may double-write, and the §24 harness must stay 4/4.
+
+> -> XREF: [§16](#16-anti-rollback-raise-timing-hardening) -- §16 owns the steady gate and shipped the dead rollback; this section makes it reachable. [§24](#24-scripted-anti-rollback-nvram-fixture-harness) -- §24's harness proves the success path and is why this gap was found.
 
 ---
 
