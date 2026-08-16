@@ -51,7 +51,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  11   | TPM tests and event-log fixtures                             | §1-§10, §12, §13                                          |  [x]   |
 | 💎  |  12   | PCR allocation table and policy masks                        | (foundational; consumed by §6/§8/§13)                     |  [x]   |
 | 💎  |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
-| 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [ ]   |
+| 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [x]   |
+| 💎  |  15   | Trusted enrollment provenance                                | §6, §14                                                   |  [ ]   |
+| 💎  |  16   | Baseline image identity (real bootloader + kernel hashes)    | §6, §14, TODO-01 (boot_info ABI)                          |  [ ]   |
+| 💎  |  17   | Write-locked and monotonic NV indexes (anti-rollback anchor) | §6, §7, §14                                               |  [ ]   |
+| 💎  |  18   | Atomic boot-integrity report publication                     | §6, §12, §14                                              |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -338,8 +342,6 @@ A single source of truth for which boot events extend which PCR, and which PCR m
 > **Verified:** 2026-06-14 | commit `026400d6` | 4/4 items | build OK | tests 465/465
 > **Quality reviewed:** 2026-06-14 | Codex 5x (design + adversarial + consistency + perf) | 2H+2M fixed, 0 open | scope: kernel-code-quality
 
-**Test checkpoint:** A manifest-only change (rebuild kernel with a new `.bootproto` sha) is reported as the kernel-ABI layer in diagnostics and does NOT spuriously fail FDE unseal (§8) or remote-attestation verification (§13); the allocation table in `docs/boot/pcr-allocation.md` matches the runtime extends (a unit test asserts each owned PCR's event name). Platforms: kernel unit tests + QEMU swtpm KVM; bare metal.
-
 ---
 
 ## 13. Attestation Key Provisioning and TPM2 Quote
@@ -375,17 +377,101 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
-From the stamped section 6:
-- [ ] Follow-up: trusted enrollment PROVENANCE -- gate enroll on a loader-validated recovery flag + console confirmation, NOT the boot.conf config gate (operator/ESP-write authority only). -> owner: recovery-kind + console-input infra.
-- [ ] Follow-up: actual bootloader + kernel image SHA-256 in the baseline -- bootloader must compute + carry them in `boot_info` (`.bootproto` sha is the ABI-manifest hash). -> XREF: §9 + `01-boot-platform/TODO-01`.
-- [ ] Follow-up (blocking for rollback-resistance claims): TPM NV write-lock / monotonic-counter anti-rollback so rotation cannot roll the baseline back to a tampered blob. -> XREF: §7 (`tpm_nv_*` NV mechanism).
-- [ ] Follow-up: atomic `boot_integrity_report` per-PCR publication -- refresh per-PCR statuses + add a PCR11 slot on baseline verdict (today `pcrs[8]` stays `NO_CRYPTO`, so VERIFIED self-contradicts the per-PCR detail). Owner: `tpm.c` report struct.
-From the stamped section 7:
-- [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless): DEFERRED until §6 ships the baseline schema; §7 provides the chunked NV read/write it consumes. -> XREF: §6 (baseline storage item).
-- [ ] Provide a monotonic / write-locked NV index for the A/B per-slot anti-rollback floor (the trust anchor that makes a below-floor slot genuinely unbootable, not merely CRC-corruption-detected) -> XREF: [`01-boot-platform/TODO-21 §8`](TODO-21-ab-boot-rollback.md) (anti-rollback floor authority; A/B selection reads the floor, this index stores it authentically).
-- [ ] Commit: `"tpm: measured boot NV index storage"`
+**Disposition (2026-08-17).** `section-manifest.py` scored this section SPLIT-RECOMMENDED (6 work items + ABI impact), and it is right: the cohort is six unrelated deliverables that happen to share an origin story. One is closed here as never-applicable; the other five moved to sections of their own, because they touch different files, carry different risk, and one of them is an ABI change that must not ride along with unrelated work. Nothing was dropped and nothing was re-created: each migrated item names its new owner below, and each new section states what it does NOT re-cover.
 
-**Test checkpoint:** per moved item; each carries its original acceptance text.
+From the stamped section 7:
+- [x] Migration from UEFI authenticated-variable storage to TPM NV (lossless) -- NOT APPLICABLE: there was never a UEFI-variable baseline to migrate from.
+  - The item was filed while §6's storage backend was still undecided, and §7 recorded the migration as "deferred to §6's schema". §6 then shipped straight to TPM NV: `tpm_baseline_enroll`/`_verify` go through `tpm_nv_define_data`/`tpm_nv_write`/`tpm_nv_read` against the owner-auth data index `TPM_NV_INDEX_BASELINE` (`src/kernel/tpm_baseline.c:222-309`; index at `include/kernel/tpm_nv.h:93`).
+  - Verified absent rather than assumed: `src/kernel/tpm_baseline.c` contains no `uefi_set_variable`/`SetVariable` call, and no other writer stores a baseline blob in a UEFI variable.
+  - The chunked NV read/write the item expected to consume is also not needed yet: `struct tpm_baseline` is ~348 bytes against `TPM_NV_MAX_DATA` 512 (`include/kernel/tpm_nv.h:105`), so one transaction carries it. A chunked path belongs with whatever first outgrows that bound, not here.
+- [x] Commit: `"tpm: measured boot NV index storage"` -- superseded; the cohort ships as sections 15-18, each with its own commit.
+
+Migrated, each now owned by its own section (records, not tasks -- the work is `- [ ]` at the new owner):
+
+- Trusted enrollment PROVENANCE, from the stamped section 6 -> §15.
+- Real bootloader + kernel image SHA-256 in the baseline, from the stamped section 6 -> §16.
+- TPM NV write-lock / monotonic-counter anti-rollback for baseline rotation, from the stamped section 6 -> §17.
+- Monotonic / write-locked NV index for the A/B per-slot anti-rollback floor, from the stamped section 7 -> §17, the same mechanism with a second consumer.
+- Atomic `boot_integrity_report` per-PCR publication, from the stamped section 6 -> §18.
+
+**Test checkpoint:** no code ships from this section. The not-applicable verdict is checkable by grep -- `src/kernel/tpm_baseline.c` has no UEFI variable call and its enroll/verify paths go through `tpm_nv_*`. The migrated items are covered by their new sections' checkpoints.
+
+---
+
+## 15. Trusted Enrollment Provenance
+
+> **Spawned-by:** §14 (split)
+
+§6 gates baseline enrollment on `config.boot_mode == 2 && config.tpm_enroll` (`src/kernel/main/boot_interrupts.c:548-550`). Both fields are parsed verbatim from `boot.conf` on the ESP, so the gate proves ESP-write authority and nothing more: anyone who can add a line to a text file can make their own tampered boot the golden baseline that every later boot is measured against. §6's review recorded this as an accepted [H] finding, not a design choice.
+
+The substrate this needs already exists on both sides, which the cohort item's own text ("owner: recovery-kind + console-input infra") did not know and which is the reason this is a section rather than a park. The bootloader publishes a recovery signal it DECIDED rather than read back: `BOOT_PATH_RECOVERY` (`include/kernel/boot_info.h:673`), `BOOT_REASON_RECOVERY_TRIGGER` (`boot_info.h:713`), `BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED` (`boot_info.h:804`) and `sticky_recovery_trigger` (`boot_info.h:1855`). And `src/kernel/main/boot_recovery.c:33-60` already polls PS/2 scancodes behind a masked keyboard GSI for a single-key console menu, which is the physical-presence pattern a confirmation prompt needs.
+
+- [ ] Gate enrollment on the LOADER-decided recovery signal (`boot_path` / `boot_reason` / `boot_source_flags`), not `config.boot_mode`; `config.tpm_enroll` stays a second factor and is never sufficient alone.
+- [ ] Require physical-presence confirmation at the console before an enroll or rotate writes NV, reusing the `boot_recovery.c` polled-scancode pattern; a timeout or a wrong key REFUSES, fail-closed, with a distinct status.
+- [ ] Report the enrollment AUTHORITY alongside the verdict so an operator can distinguish a console-confirmed enroll from a config-only one; a config-only path must never be reported as trusted.
+- [ ] Unit-test the gate as a pure predicate over (boot_path, boot_reason, source_flags, tpm_enroll, confirmed) so every refusal reason is asserted without a live TPM.
+- [ ] Annotate §6's accepted [H] provenance stamp RESOLVED (do not delete it) once this ships. -> XREF: §6 (the "Accepted: [H] enrollment gate is boot.conf config" stamp).
+- [ ] Commit: `"tpm: loader-validated + console-confirmed baseline enrollment"`
+
+**Test checkpoint:** the gate predicate refuses a boot whose `config.boot_mode` says recovery but whose loader-decided `boot_path`/`boot_reason` do not, which is the exact spoof §6 accepted; it refuses an unconfirmed console prompt on timeout and on a wrong key; and it admits only a loader-signalled recovery boot with `tpm_enroll` set AND an affirmative keypress. The refusal reasons are distinct values, not one boolean. Scope: this section does NOT re-cover baseline CONTENT, rotation, or the NV mechanism (§6, §7, §17). Platforms: kernel unit suites cover the predicate; the live enroll cycle is QEMU-swtpm / bare-metal and operator-gated (no `swtpm` on the dev host).
+
+---
+
+## 16. Baseline Image Identity -- Real Bootloader and Kernel Hashes
+
+> **Spawned-by:** §14 (split)
+
+The baseline records what §6 could reach: per-bank PCR digests, Secure Boot state, a firmware-version hash, and `abi_manifest_sha256`. That last field is routinely misread as an image hash and is not one. `boot_proto_descriptor.sha256` is a BUILD-TIME hash of `build/boot-info-abi.kernel.json`, computed by `tools/boot-info-manifest/gen-proto-sha-header.sh` and baked into `build/boot_proto_sha.h` as a constant, so it moves when the ABI manifest moves and stays put when the kernel image changes underneath it. No hash of the actual `BOOTX64.EFI` or `kernel.exe` bytes is computed anywhere in the tree.
+
+The producer side needs code before it needs ABI: `src/kernel/crypto/sha256.c` is a freestanding FIPS 180-4 implementation, but `src/boot/uefi/Makefile` does not compile it into the bootloader.
+
+- [ ] Compile the freestanding SHA-256 into the UEFI bootloader as a SHARED translation unit; never a second implementation, which would drift from the kernel's.
+- [ ] Hash the loaded kernel image bytes in the bootloader before the jump, over the same range the loader actually transfers control into.
+- [ ] Hash the running `BOOTX64.EFI` image itself, read back through the loaded-image protocol rather than trusting a build-time constant about itself.
+- [ ] Carry both digests in `boot_info`: reserved-region fields where they fit, otherwise a `BOOT_INFO_VERSION` bump applied to kernel header AND mirror together. -> XREF: [`TODO-01`](TODO-01-boot-protocol-abi-handoff.md).
+- [ ] Extend `struct tpm_baseline` with both digests behind its existing version field so an older blob still validates; enroll stores them, verify compares them, and a mismatch names WHICH image differs.
+- [ ] Commit: `"tpm: real image hashes in the measured-boot baseline"`
+
+**Test checkpoint:** a kernel rebuilt with no ABI-manifest change produces a DIFFERENT baseline kernel digest and the same `abi_manifest_sha256`, which is the distinction this section exists to make and which today's baseline cannot express. A baseline blob written before this field existed still validates under the version field rather than reading as corrupt. The bootloader and kernel agree on the digest of the same bytes. Scope: this section does NOT re-cover the PCR-11 manifest extend or the attestation report schema (§9). Platforms: kernel unit suites for the marshal/compare/version paths; the loader-side hash is smoke-matrix + bare-metal.
+
+---
+
+## 17. Write-Locked and Monotonic NV Indexes (Anti-Rollback Trust Anchor)
+
+> **Spawned-by:** §14 (split)
+
+Two cohort items, one mechanism, which is why they are one section. §6's baseline rotation rejects a lower generation in SOFTWARE (`tpm_baseline_rotation_ok`), so an attacker who can write the NV index simply overwrites the generation along with the blob. And TODO-21 §8's per-slot A/B floor has no authenticated store at all: its design note states that CRC metadata is a cached hint and never the floor authority, and that selection enforcement ships WITH the store. That is why its `ROLLBACK_BLOCKED` enforcement is a Critical deferral pointed here rather than shipped code.
+
+§7 modelled only the attributes it needed. `include/kernel/tpm_nv.h:56-64` carries OWNER/AUTH/POLICY read and write, `NO_DA`, and the read-only `WRITTEN` status; there is no `WRITE_LOCKED`, no `WRITEDEFINE`, no `WRITE_STCLEAR`, and no NV-type counter. Neither `TPM2_NV_WriteLock` nor `TPM2_NV_Increment` has a command code (`src/kernel/tpm_nv.c:647-760`).
+
+- [ ] Model the missing TPMA_NV attributes and the NV index TYPE field, so a define can request a counter or a write-lockable index rather than only an ordinary data index.
+- [ ] Add `TPM2_NV_Increment` and `TPM2_NV_WriteLock` builders and parsers beside the existing NV ops, classified through the same format-first `tpm_nv_classify_rc` so a locked index never wedges.
+- [ ] Define the monotonic floor index plus read/advance helpers: advance is increment-only, and a read finding a HIGHER stored value than the caller expects is a REFUSAL.
+- [ ] Consumer 1 -- baseline rotation consults the monotonic counter, not only the in-blob generation, so overwriting the NV blob cannot roll the baseline back. -> XREF: §6 (rotation item).
+- [ ] Consumer 2 -- publish the floor read/advance API the A/B selection needs. -> XREF: [`TODO-21 §8`](TODO-21-ab-boot-rollback.md) (item: "Store `rollback_floor` in an authenticated monotonic / write-locked TPM-NV index").
+- [ ] Unit-test the builders, the classifier against locked and counter response codes, and the increment-only invariant through the fake-TIS seam.
+- [ ] Commit: `"tpm: write-locked and monotonic NV indexes"`
+
+**Test checkpoint:** a define requesting a counter index emits the correct TPMA_NV bits and NV type; an increment past a write-lock returns the locked status rather than wedging the transport; the floor helper refuses an advance that would lower the stored value and refuses a read whose expectation is below what is stored. Scope: this section owns the NV MECHANISM and publishes the floor API. It does NOT re-cover A/B selection enforcement, which stays TODO-21 §8, nor baseline content, which stays §6. Platforms: fake-TIS unit suites are the whole automatable surface; the live swtpm round trip and real-fTPM write-lock semantics are operator-gated (no `swtpm` on the dev host).
+
+---
+
+## 18. Atomic Boot-Integrity Report Publication
+
+> **Spawned-by:** §14 (split)
+
+`tpm_integrity_init()` sets `pcrs[0..7].status = BOOT_INTEGRITY_NO_CRYPTO` in Phase 0 and never revisits them (`src/kernel/tpm.c:684`, 730-736). The three post-init setters -- `tpm_integrity_set_rng_available`, `tpm_integrity_set_replay_verdict` and `tpm_integrity_set_overall_status` (`tpm.c:795`, 800, 810) -- touch scalars only. So after a Phase-1 VERIFIED verdict is published the per-PCR detail still reads NO_CRYPTO and the report contradicts itself in the one place a reader would look to see WHICH measurement was trusted. The array is also `pcrs[8]`, PCR 0-7 (`include/kernel/tpm.h:170`), while the measured baseline set is {0-7,11}: PCR 11 has no slot to be reported in at all.
+
+Publication is field-by-field into one static struct with no lock and no snapshot swap. That is safe TODAY only because every writer runs single-threaded on the BSP before the APs are up, which is an accident of init ordering rather than a stated contract, while the readers are already UI and VPD consumers.
+
+- [ ] Add a PCR 11 slot and size the array from the baseline mask rather than the literal 8, so the reported set cannot drift from `tpm_pcr_baseline_pcrs()`.
+- [ ] Refresh every per-PCR status when the baseline verdict is published, so the overall verdict and the per-PCR detail can never disagree.
+- [ ] Publish as one atomic swap, or under a seqlock readers retry, and STATE the SMP contract in the header instead of relying on BSP-only ordering that nothing enforces.
+- [ ] Correct the stale contract comment at `include/kernel/tpm.h:184-192`, which still describes the superseded Phase-0 "read golden values" design that §6 moved to Phase 1.
+- [ ] Annotate §6's accepted [H] per-PCR publication stamp RESOLVED (do not delete it) once this ships. -> XREF: §6 (the "Accepted: [H] baseline verify leaves stale per-PCR `NO_CRYPTO`" stamp).
+- [ ] Commit: `"tpm: atomic boot-integrity report publication"`
+
+**Test checkpoint:** after a published VERIFIED verdict no slot still reads `NO_CRYPTO`, and PCR 11 is present in the reported set; after a MISMATCH the per-PCR detail names which PCR differed rather than leaving the reader to guess. A reader taking a snapshot mid-publication observes either the old report or the new one, never a mix. Scope: this section owns the report STRUCT and its publication only; the verdicts themselves stay with §4 (replay), §5 (Secure Boot) and §6 (baseline). Platforms: kernel unit suites; no TPM required.
 
 ---
 
