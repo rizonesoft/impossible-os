@@ -176,6 +176,11 @@ At boot, compute SHA-256 of the kernel `.text` and `.rodata` sections. Extend TP
 - [ ] First boot (no baseline): write current PCR value to `ImpossibleOS-KernelPCR` UEFI variable via Runtime Services; log `[INTEGRITY] Baseline stored`
 - [ ] Export `kernel_integrity_ok()` → returns `!boot_flags.integrity_violation`; security-sensitive paths (module loader, `secboot_is_enabled()`) call this
 - [ ] Boot log: `[INTEGRITY] Kernel SHA-256: %s PCR[10] extended`
+- [ ] Publish the computed kernel digest for the measured-boot baseline to consume, not only for the PCR extend. -> XREF: [`01-boot-platform/TODO-13 §16`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md).
+  - §16 is the consumer and deliberately does NOT recompute the hash; this section stays the sole producer of the kernel image digest.
+  - `src/kernel/crypto/sha256.c` already ships a freestanding FIPS 180-4 implementation, so the `src/kernel/sha256.c` item above is partly satisfied -- check before writing a second one.
+- [ ] Reconcile the `ImpossibleOS-KernelPCR` UEFI-variable golden record against the TPM-NV baseline store, or state why they stay separate. -> XREF: [`01-boot-platform/TODO-13 §14`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md).
+  - §14 closed a UEFI-var to TPM-NV migration item as not applicable to ITS baseline, and explicitly did not close this one. Two golden records with different trust properties is a decision, not a default.
 - [ ] Commit: `"kernel: integrity -- SHA-256 kernel measure, TPM PCR[10] extend, baseline compare"`
 
 ---

@@ -120,6 +120,8 @@ bare-metal deployment.
   - `tpm2_pcr_extend(8, digest32)` -- extend PCR 8 with kernel hash
   - `tpm2_pcr_read(8, pcr8_out)` -- read back PCR 8; log `"[TPM] PCR[8] = {hex}"` to boot serial
   - If Secure Boot enforcement is on (`HKLM\SYSTEM\SecureBoot\Enforce = 1`) and TPM PCR 8 doesn't match stored expected value: refuse to boot
+- [ ] Publish the PCR-8 kernel digest for the measured-boot baseline to consume. -> XREF: [`01-boot-platform/TODO-13 §16`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md).
+  - §16 records image identity in the baseline blob and deliberately does NOT recompute the hash; the loader-side digest stays this section's to produce.
 - [ ] **PCR 9 -- kmod hash extension** (in `src/kernel/kmod.c`, cross-ref `12-user-platform-sdk/TODO-03 §5`):
   - In `kmod_load()`, after ELF validation but before `init_fn()`:
   - `cng_sha256(kmod_buf, kmod_size, digest32)` + `tpm2_pcr_extend(9, digest32)`
