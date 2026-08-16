@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     465 |     132881 |
+| **Markdown** (`.md`)        |     465 |     132890 |
 | **JSON** (`.json`)          |      16 |       2449 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1830 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **513** | **139346** |
+| **Subtotal**                | **513** | **139355** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
 | **Core code + tooling**        | **1564** | **851152** |
-| **Supporting text + metadata** |  **513** | **139346** |
-| **All counted text files**     | **2077** | **990498** |
+| **Supporting text + metadata** |  **513** | **139355** |
+| **All counted text files**     | **2077** | **990507** |
 
 > Vendored code excluded: ~88481 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`, and the four imported Fluent System Icons CSS files)
 >
@@ -78,8 +78,8 @@
 |                                |                    Linux |                  Windows |         Impossible OS |
 | ------------------------------ | -----------------------: | -----------------------: | --------------------: |
 | **Core code + tooling lines**  |              ~28,000,000 |              ~50,000,000 |               851,152 |
-| **Supporting text + metadata** | not separately published | not separately published |               139,346 |
-| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |               990,498 |
+| **Supporting text + metadata** | not separately published | not separately published |               139,355 |
+| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |               990,507 |
 | **Developers**                 |            ~1,000 active |              ~5,000 peak |                     1 |
 | **Time span**                  |                 33 years |                 40 years | 5 month(s), 13 day(s) |
 
@@ -90,4 +90,4 @@
 
 ---
 
-*Last updated: 2026-08-17 01:21 · commit `6f5ce8a76`*
+*Last updated: 2026-08-17 01:28 · commit `f511e8440`*

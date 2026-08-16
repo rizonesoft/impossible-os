@@ -24,6 +24,15 @@ Every change below carries a refusal-direction control (a case that must still b
 - **`codex_review_completed` lock loop is monotonic.** Watch for: `four_dispatch_gate: D` still failing under load -- if so the residual (test measures whole-hook, not the lock section) is the cause.
 - **Doctrine shipped:** convergence `record` at VERDICT time; envelope `--section`; `run-artifact.sh` backgrounded with the flag not `&`; WHPX absolute-path fallback; kernel-code-quality Gate 2 (count is never a slot bound); implement-unit-tests DOC-SYNC (4096 cap, leak column, harness primitives, coverage.md pointer).
 
+## Found live this cycle
+
+- [ ] Split predictor's `abi_impact` gate fires on PROSE and contradicts the file's own calibration note
+      - OBSERVED 2026-08-17 on `todo/01-boot-platform/TODO-13 §15`: verdict `SPLIT-RECOMMENDED (6 work items; ABI impact + 6 work items (>=6 ABI gate))`, which lowers the split threshold from the default to 6 items. The section has no ABI change: it READS `boot_path`/`boot_reason`/`boot_source_flags`, which have existed in `struct boot_info` since v8 (`include/kernel/boot_info.h:1681-1683`), with no `BOOT_INFO_VERSION` bump and no mirror edit.
+      - MECHANISM CONFIRMED AT SOURCE, not inferred: `scripts/overnight/section-manifest.py:431-433` sets `abi_impact` from `re.search(r"(?i)\b(ABI|NTSTATUS|SSDT|boot_info|...)\b", block)` over the section BODY TEXT. §15's body cites `boot_info.h` four times as evidence for where the recovery signals already live, so the flag fires on a citation. Any section that merely NAMES the header trips it.
+      - The same file already records the arm as non-predictive: the calibration comment at `section-manifest.py:441-443` says `open_items` is the only feature with predictive power (r = +0.50) and that `abi_impact` scores **r = -0.22** against turns, i.e. sections mentioning ABI ran SHORTER. Line 491 nonetheless uses it to TIGHTEN the threshold, so the one arm measured to point the wrong way is wired to make splits more likely.
+      - Cost this occurrence: one waiver authored, validated and carried (`waiver-check` rc 0), plus the reads to disprove the ABI premise. Cheap once; it recurs on every section whose body cites a header the regex names.
+      - Do NOT apply -- `scripts/overnight/**` is control plane. Settled by either dropping the `abi_impact` arm from the threshold (its measured sign says it should never tighten) or deriving it from the section's actual likely_files diff surface rather than prose. Ship with a control that a section genuinely bumping `BOOT_INFO_VERSION` still flags.
+
 ## Carried forward from v14 -- open
 
 - [ ] `subagent_audit` duration arm is dead and needs a dispatch-time-stamp companion

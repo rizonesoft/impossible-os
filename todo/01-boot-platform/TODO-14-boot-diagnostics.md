@@ -354,8 +354,8 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
 > - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver coverage + probe-result aggregation + NVMe per-controller status are the open `[ ]` items in this section.
 > **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 6/9 items | build OK | smoke PASS + tests 2605/2605
-> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 375)
-> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 376)
+> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 381)
+> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 382)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

@@ -196,7 +196,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > **Verified:** 2026-06-14 | commit `c7032e45` (impl) + review fixes | 4/9 items | build OK | tests 668 security PASS, smoke PASS (KVM 2.50s)
 > **Accepted:** [H] enrollment gate is boot.conf config (`boot_mode==recovery && tpm_enroll`), not loader-validated recovery provenance -- config-spoofable -> XREF: 01-boot-platform/TODO-13 §15 (item: "Gate enrollment on the LOADER-decided recovery signal") (RETARGETED 2026-08-17: the follow-up item moved out of this section when §14 split the backfill cohort)
 > **Accepted:** [H] baseline verify leaves stale per-PCR `NO_CRYPTO` + omits PCR11 in `boot_integrity_report` (self-contradicts VERIFIED) -> XREF: 01-boot-platform/TODO-13 §18 (item: "Refresh every per-PCR status when the baseline verdict is published") (RETARGETED 2026-08-17: the follow-up item moved out of this section when §14 split the backfill cohort)
-> **Accepted:** [M] measured PCR set `{0-7,11}` duplicated across `tpm.c`/`tpm_replay.c`/`tpm_baseline.c`/test -> XREF: 01-boot-platform/TODO-13 §6 (item: "Follow-up: consolidate the measured PCR set" at line 179) (RESOLVED 2026-06-14 by §6 commit 2b0dd4ed: `tpm_pcr_baseline_pcrs()` derives the set from the allocation-table mask; the 3 consumers migrated)
+> **Accepted:** [M] measured PCR set `{0-7,11}` duplicated across `tpm.c`/`tpm_replay.c`/`tpm_baseline.c`/test -> XREF: 01-boot-platform/TODO-13 §6 (item: "Follow-up: consolidate the measured PCR set" at line 183) (RESOLVED 2026-06-14 by §6 commit 2b0dd4ed: `tpm_pcr_baseline_pcrs()` derives the set from the allocation-table mask; the 3 consumers migrated)
 > **Quality reviewed:** 2026-06-14 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 4H+3M fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ## 7. TPM NV Index Support
@@ -240,7 +240,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Session-response validation is STRUCTURAL (shared `tpm_session_auth_response_ok`, keyed off the command tag): a malformed / truncated / wrong-tag success can never return secret bytes or a bogus handle as OK. Cryptographic authenticity vs a bus interposer (response HMAC) is the filed HMAC-session follow-up.
 > - Scope boundary: this section owns the seal/unseal mechanism + forward hooks; the storage-encryption / CI-policy consumers and the live recovery prompt are tracked elsewhere.
 > **Verified:** 2026-06-14 | commit `f0712b77` | 5/7 items | build OK | tests 777/777
-> **Deferred:** [H] cryptographic response authenticity + parameter encryption vs a physical bus interposer (forged well-formed success / key sniffing); structural validation only today -> XREF: 01-boot-platform/TODO-13 §8 (item: "salted/bound HMAC sessions + parameter encryption" at line 227)
+> **Deferred:** [H] cryptographic response authenticity + parameter encryption vs a physical bus interposer (forged well-formed success / key sniffing); structural validation only today -> XREF: 01-boot-platform/TODO-13 §8 (item: "salted/bound HMAC sessions + parameter encryption" at line 231)
 > **Quality reviewed:** 2026-06-14 | Codex 11x (design + adversarial + adversarial-impl + re-adversarial + consistency + perf) | 5H+5M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 9. Attestation Report Export
@@ -269,9 +269,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Canonical doc: the trust/coherence/DRTM schema lives in the `boot_attestation_report` struct header comment.
 > - Scope boundary: native query API + remote placeholder + bootloader PCR-11 extend + cap-bit are Deferred (stop-and-ask ABI / firmware HW-validation); they keep §9 at `[/]`.
 > **Verified:** 2026-06-14 | commit `2355ba5f` (report+export) + review fixes | 5/10 items | build OK | security 982 PASS, smoke PASS (KVM 2.490s)
-> **Deferred:** [M] native attestation query API for user-mode (new syscall/SSDT ABI exposing attestation evidence + an access-control decision; stop-and-ask) -> XREF: 01-boot-platform/TODO-13 §9 (item: "Add native query API for user-mode system settings" at line 251)
+> **Deferred:** [M] native attestation query API for user-mode (new syscall/SSDT ABI exposing attestation evidence + an access-control decision; stop-and-ask) -> XREF: 01-boot-platform/TODO-13 §9 (item: "Add native query API for user-mode system settings" at line 255)
 > **Deferred:** [M] bootloader PCR-11 manifest extend + `BOOT_CAP_MANIFEST_PCR_BOUND` cap-bit (firmware TCG2 HashLogExtendEvent; real-HW validation; cap-bit ABI owned by TODO-01 §11) -> XREF: 01-boot-platform/TODO-13 §9 (item: "Extend a TPM PCR (target PCR 11..." at line 269)
-> **Deferred:** [L] remote-attestation placeholder needs a remote-attest protocol design decision -> XREF: 01-boot-platform/TODO-13 §9 (item: "Add remote-attestation placeholder for platform services" at line 252)
+> **Deferred:** [L] remote-attestation placeholder needs a remote-attest protocol design decision -> XREF: 01-boot-platform/TODO-13 §9 (item: "Add remote-attestation placeholder for platform services" at line 256)
 > **Deferred:** [L] handoff-triple bootloader build-identity field pends TODO-01 §20 -> XREF: 01-boot-platform/TODO-13 §9 (item: "Include the bootloader-to-kernel handoff triple..." at line 271)
 > **Quality reviewed:** 2026-06-14 | Codex 5x (adversarial + consistency + perf + re-adversarial) | 1H+5M fixed | scope: kernel-code-quality
 
@@ -368,7 +368,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 > - Query APIs (`tpm2_quote`/`tpm_ak_public_get`/`tpm_ek_cert_read`) are what §9 consumes; report integration + the `MakeCredential`/`ActivateCredential` challenge are tracked follow-ups.
 > - Scope boundary: §13 owns the TPM-rooted signing mechanism; §9 owns the report export; live quote+verify + credential activation are swtpm/bare-metal validation.
 > **Verified:** 2026-06-14 | commit `c9ce7bcd` (ship) + review (request/response binding) | 6/9 items | build OK | tests 903/903 PASS (security)
-> **Deferred:** [H] `TPMS_ATTEST.qualifiedSigner` not bound to the AK Qualified Name -> XREF: 01-boot-platform/TODO-13 §13 (item: "Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name" at line 355) (reason: needs EK-pub capture + Name-algebra; verifier binds the signer via the exported AK pub)
+> **Deferred:** [H] `TPMS_ATTEST.qualifiedSigner` not bound to the AK Qualified Name -> XREF: 01-boot-platform/TODO-13 §13 (item: "Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name" at line 357) (reason: needs EK-pub capture + Name-algebra; verifier binds the signer via the exported AK pub)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (adversarial, consistency, perf, re-adversarial) | 4H+4M fixed, 1H deferred | scope: kernel-code-quality
 
 ---
