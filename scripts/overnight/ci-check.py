@@ -44,6 +44,7 @@ def main() -> int:
     project = sys.argv[1] if len(sys.argv) > 1 else "."
     ci = collect(project)
     out = {"schema": "ci-check-v1", "ours_red": ci["ours_red"],
+           "completed_drought": ci.get("completed_drought", False),
            "available": ci["available"], "runs": ci["runs"],
            "notes": ci["notes"]}
     print(json.dumps(out, indent=2))

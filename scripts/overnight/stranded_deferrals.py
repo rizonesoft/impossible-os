@@ -46,7 +46,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(REPO / ".claude/hooks"))
+sys.path.insert(0, str(REPO / "scripts"))
 import sequencer_triage as st  # noqa: E402  (authoritative section-stamp oracle)
+import todo_fence as _fence  # noqa: E402  (the shared `## N.` classifier)
 
 _SIGN = "§"  # the section-sign glyph, built here so source carries no bare glyph+digit
 
@@ -143,11 +145,16 @@ def _stamp_cache():
 
 
 def _containing_section(lines, idx):
-    """Section number of the `## N.` heading at or above line index `idx`."""
+    """Section number of the `## N.` heading at or above line index `idx`.
+
+    Uses the shared classifier (v14 close-out): the triage oracle's private
+    grammar this used to borrow is retired. An over-long heading has no usable
+    number and is skipped, same as any non-heading line.
+    """
     for j in range(idx, -1, -1):
-        m = st.SECTION_HEADING_RE.match(lines[j] + "\n")
-        if m:
-            return int(m.group(1))
+        h = _fence.classify_heading(lines[j])
+        if h.kind == "ok":
+            return h.n
     return None
 
 

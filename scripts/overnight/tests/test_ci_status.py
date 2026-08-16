@@ -108,6 +108,48 @@ class SupersessionTests(unittest.TestCase):
             ci_status._superseded_by(failure, [_rec("", "success")], ANC), "")
 
 
+class CompletedDroughtTests(unittest.TestCase):
+    """v14 close-out (2026-08-16): `cancelled` is neither red nor green, so a
+    CI job killed by its own `timeout-minutes` on every push was invisible --
+    18 hours and 6 pushes with no completed build leg while `ours_red` stayed
+    False. The drought detector counts the leading streak of cancelled runs
+    (newest first) before any verdict. NOTE-level by design: it must never set
+    `ours_red` or halt an unattended run."""
+
+    def test_observed_incident_shape_fires(self):
+        # 6 cancelled pushes, then the stale greens further down the window --
+        # the exact shape that read clean for 18 hours.
+        recs = ([_rec(f"c{i}", "cancelled") for i in range(6)]
+                + [_rec("g1", "success"), _rec("g2", "success")])
+        self.assertEqual(ci_status.completed_drought(recs), 6)
+        self.assertGreaterEqual(6, ci_status.DROUGHT_LIMIT)
+
+    def test_refusal_a_green_head_stays_clean(self):
+        # The 05:35Z green-run control: a verdict at the head means no drought,
+        # however many cancellations sit behind it.
+        recs = ([_rec("g1", "success")]
+                + [_rec(f"c{i}", "cancelled") for i in range(20)])
+        self.assertEqual(ci_status.completed_drought(recs), 0)
+
+    def test_refusal_a_failure_head_is_the_red_paths_job(self):
+        recs = [_rec("f1", "failure"), _rec("c1", "cancelled")]
+        self.assertEqual(ci_status.completed_drought(recs), 0)
+
+    def test_under_the_limit_does_not_fire(self):
+        recs = ([_rec(f"c{i}", "cancelled") for i in range(4)]
+                + [_rec("g1", "success")])
+        self.assertLess(ci_status.completed_drought(recs),
+                        ci_status.DROUGHT_LIMIT)
+
+    def test_in_flight_runs_are_not_evidence_either_way(self):
+        # A queued/in-progress run at the head resolves on its own; it neither
+        # counts toward the streak nor ends it.
+        recs = ([{"headSha": "p1", "conclusion": "",
+                  "status": "in_progress", "createdAt": "2026-08-13T00:00:00Z"}]
+                + [_rec(f"c{i}", "cancelled") for i in range(5)])
+        self.assertEqual(ci_status.completed_drought(recs), 5)
+
+
 class WindowTests(unittest.TestCase):
     def test_window_is_wide_enough_to_see_a_fix_land(self):
         """--limit 3 could not see the repair: the live fix was 3 pushes later.

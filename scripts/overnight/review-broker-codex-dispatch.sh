@@ -32,6 +32,12 @@ if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\][[:space:]]+to
 fi
 KIND="${BASH_REMATCH[1],,}"
 TODO_PATH="$(printf '%s\n' "$FIRST_LINE" | grep -oE 'todo/[^[:space:]]+\.md' | head -1)"
+# Section attribution (v14 close-out, 2026-08-16): the envelope was FILE-scoped
+# only, so a section's review wave silently ingested an earlier section's legs
+# from the same TODO. The prompt already names the section; record it so
+# review-envelope.py --section can filter. Separator set matches the
+# codex_review_completed.py recogniser (space, dash, underscore, colon).
+SECTION="$(printf '%s\n' "$FIRST_LINE" | grep -oE "(section[[:space:]_:-]*|\xc2\xa7[[:space:]]*)[0-9]+" | head -1 | grep -oE '[0-9]+' | tail -1 || true)"
 
 COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
 [[ -f "$COMPANION" ]] || { echo "ERROR: codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
@@ -75,8 +81,13 @@ else
 fi
 
 PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
-printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s"}\n' \
-  "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
+if [[ -n "$SECTION" ]]; then
+  printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s"}\n' \
+    "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
+else
+  printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s"}\n' \
+    "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
+fi
 
 printf '{"kind": "%s", "jobId": "%s", "logFile": "%s", "manifest": "%s"}\n' \
   "$KIND" "$DETACH" "$LOG_FILE" "$MANIFEST"

@@ -681,10 +681,26 @@ def main() -> int:
                            f"under todo/")
                     break
                 if ident not in base_owners and ident not in live_owners:
+                    # A KNOWN NON-OWNER is fine (v14 close-out, 2026-08-16): a
+                    # capture file (`todo/overnight-runner-improvements/`,
+                    # `todo/token-saver/`) is a legitimate todo file that is
+                    # deliberately not a graph node, and the self-improvement
+                    # rule REQUIRES filing into it in the same turn a finding
+                    # is observed -- so a path-limited commit routinely leaves
+                    # it dirty and excluded. Such a path contributes ZERO to
+                    # both sides of the arithmetic, so accepting it subtracts
+                    # nothing and cannot widen the gate; and a rename in the
+                    # unsafe direction stays covered, because the live walk
+                    # counts an on-disk owner under its CURRENT name (an
+                    # exclusion under that name would then be IN live_owners,
+                    # not here). Only a path that does not EXIST is the
+                    # renamed/misspelled case the refusal was written for.
+                    if (repo_root / ident).is_file():
+                        continue
                     bad = (f"exclusion {ident!r} names no TODO in either the "
-                           f"baseline or the current cache -- a renamed or "
-                           f"misspelled entry excludes nothing and would widen "
-                           f"this gate silently")
+                           f"baseline or the current cache AND no such file "
+                           f"exists -- a renamed or misspelled entry excludes "
+                           f"nothing and would widen this gate silently")
                     break
         if bad:
             sys.stderr.write(

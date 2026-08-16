@@ -86,9 +86,23 @@ def test_the_baseline_is_a_real_floor_and_it_holds_today():
 
 def test_a_coverage_DROP_is_an_error():
     """The failure a green test suite cannot see. Raise the recorded floor above
-    the live number and the check must refuse (rc 7), naming the regression."""
+    the live number and the check must refuse (rc 7), naming the regression.
+
+    The inflation must keep the `by_owner` contract intact: since da02510ee
+    (2026-08-12) the checker validates that the per-owner sums equal the
+    top-level totals (and per-owner resolved <= occurrences) BEFORE comparing
+    the floor, so the old fixture -- which bumped only `resolved` -- got rc 8
+    (baseline invalid) and never exercised the drop path at all. It silently
+    did that for four days (caught at the v14 close-out, 2026-08-16). The
+    maximum LEGAL floor with an unchanged population is a fully-resolved
+    baseline, which is what this builds."""
     data = json.loads(BASELINE.read_text(encoding="utf-8"))
-    data["resolved"] = data["resolved"] + 10_000
+    for val in data["by_owner"].values():
+        val["resolved"] = val["occurrences"]
+    data["resolved"] = data["total"]
+    assert data["resolved"] > json.loads(
+        BASELINE.read_text(encoding="utf-8"))["resolved"], \
+        "corpus is fully resolved; this fixture can no longer force a drop"
     with _baseline(json.dumps(data)) as env:
         r = _run(env)
         assert r.returncode == 7, (r.returncode, r.stdout[:300], r.stderr[:300])
@@ -310,6 +324,23 @@ def test_bucket_names_do_not_claim_a_CAUSE():
     assert "calllike-unresolved=" in buck and "no-calllike-token=" in buck, buck
 
 
+def test_a_capture_file_exclusion_is_accepted_and_a_ghost_still_refused():
+    """v14 close-out (2026-08-16): a dirty-but-unstaged CAPTURE FILE wedged
+    Check 7 closed on every path-limited commit -- the exclusion named a
+    legitimate todo file that is deliberately not a graph node, and the
+    validator only knew 'renamed or misspelled'. A known non-owner that EXISTS
+    contributes zero to both sides, so accepting it subtracts nothing; a path
+    that does not exist is still the misspelled case and must keep refusing
+    (the refusal-direction control)."""
+    r = _run({"STUB_LINT_EXCLUDED":
+              "todo/overnight-runner-improvements/"
+              "overnight-runner-improvements-v14.md"})
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    r = _run({"STUB_LINT_EXCLUDED": "todo/00-infrastructure/TODO-99-ghost.md"})
+    assert r.returncode == 7, (r.returncode, r.stderr[-400:])
+    assert "no such file exists" in r.stderr, r.stderr[-400:]
+
+
 if __name__ == "__main__":
     test_coverage_is_reported_not_discarded()
     test_coverage_never_lands_on_STDOUT()
@@ -328,4 +359,5 @@ if __name__ == "__main__":
     test_the_classifier_is_cached_PER_FILE_not_per_symbol()
     test_missing_file_refs_are_counted_not_dropped()
     test_bucket_names_do_not_claim_a_CAUSE()
+    test_a_capture_file_exclusion_is_accepted_and_a_ghost_still_refused()
     print("PASS: Check 7 coverage counting + regression floor + bucket invariant")

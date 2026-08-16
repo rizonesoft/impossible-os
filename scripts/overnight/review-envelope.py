@@ -9,7 +9,7 @@ names the artifact for any finding that needs its full surrounding context
 (slice-read the artifact at need).
 
 Usage: review-envelope.py [PROJECT_DIR] [--kinds adversarial,consistency,perf]
-                          [--todo <todo-path>] [--since <epoch>]
+                          [--todo <todo-path>] [--section <n>] [--since <epoch>]
 Reads the newest manifest entry PER KIND from
 .claude/overnight/reviews/manifest.jsonl; exits 1 if any requested leg is
 missing or incomplete (envelope still printed, with the gap named).
@@ -88,6 +88,19 @@ def main(argv) -> int:
     want_todo = None
     if "--todo" in argv:
         want_todo = str(argv[argv.index("--todo") + 1]).replace("\\", "/").lstrip("./")
+    # v14 close-out (2026-08-16): FILE scope alone silently ingested an
+    # earlier section's legs from the same TODO (observed: a section-26 wave
+    # returned section-25 consistency+perf legs, whose findings were about
+    # code the change never touched). With --section, an entry that carries a
+    # DIFFERENT section is skipped; an entry with NO section field is skipped
+    # too -- fail toward redispatch, which costs one dispatch, never a wrong
+    # verdict ingested as this section's.
+    want_section = None
+    if "--section" in argv:
+        try:
+            want_section = int(argv[argv.index("--section") + 1])
+        except (ValueError, IndexError):
+            want_section = None
     since = None
     if "--since" in argv:
         try:
@@ -105,7 +118,11 @@ def main(argv) -> int:
             if want_todo is not None:
                 etodo = str(e.get("todo") or "").replace("\\", "/").lstrip("./")
                 if etodo != want_todo:
-                    continue  # a different section's review -- not ours
+                    continue  # a different TODO's review -- not ours
+            if want_section is not None:
+                esec = e.get("section")
+                if not isinstance(esec, int) or esec != want_section:
+                    continue  # different or unattributed section -- not ours
             if since is not None:
                 ets = e.get("ts")
                 if not isinstance(ets, int) or ets < since:

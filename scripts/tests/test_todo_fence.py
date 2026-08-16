@@ -1751,10 +1751,12 @@ def test_one_heading_rule_section43():
     """One `## N.` classifier, and nothing may define a second one.
 
     Section 43. Three copies were deleted in favour of `classify_heading`; the
-    fourth (`.claude/hooks/sequencer_triage.py`) is control-plane and an
-    unattended run may not edit it, so it is an ALLOWLISTED residual here rather
-    than an untested claim -- when an operator retires it, this list shrinks and
-    the test says so.
+    fourth (`.claude/hooks/sequencer_triage.py`) was control-plane and was
+    retired by the operator at the v14 close-out (2026-08-16) -- it now routes
+    through the shared projection, with its own refusal controls in
+    `scripts/overnight/tests/test_triage_stamp_attribution.py`. The remaining
+    residuals are ALLOWLISTED rather than untested claims -- when an operator
+    retires one, this list shrinks and the test says so.
     """
     fence = load("todo_fence_s43", "scripts/todo_fence.py")
     cs = load("cache_schema_s43", "scripts/todo-graph/cache_schema.py")
@@ -1875,8 +1877,7 @@ def test_one_heading_rule_section43():
     # rest rather than pretending the closure was complete. Shrinking this set
     # is an operator-authorised change; growing it is a regression, which is
     # why it is spelled out here instead of being a silent skip.
-    residual = {".claude/hooks/sequencer_triage.py",
-                "scripts/overnight/section_slice.py",
+    residual = {"scripts/overnight/section_slice.py",
                 "scripts/overnight/section-manifest.py"}
     heading_pat = re.compile(r"##\s*\\?\(?\\d")
     offenders = []

@@ -396,6 +396,43 @@ def _converged_kinds(root: str, entry: dict) -> set:
         return set()
 
 
+def _receipted_kinds(root: str, entry: dict) -> set:
+    """Review kinds with a receipt in last-review-stamps.json minted AFTER
+    this skill invocation started.
+
+    v14 close-out (2026-08-16): bundling the three review dispatches into ONE
+    Bash call ran all three reviews (artifacts on disk, stamps recorded, the
+    commit gate satisfied) while THIS gate still demanded step 8 -- the step
+    observer attributes off the COMMAND LINE and saw one opaque call. Two
+    gates read the same event and reached opposite conclusions, and the only
+    exit was the blanket SKIP, indistinguishable at the log level from
+    skipping the step for real. The stamp file is the ground truth the commit
+    gate already trusts, so a receipt minted DURING this invocation satisfies
+    the step -- same doctrine as _converged_kinds above: positive evidence the
+    review happened, not an excuse for skipping it. Receipts from BEFORE the
+    invocation never count; the started_ts bound is what stops last section's
+    receipts crediting this one.
+    """
+    try:
+        todo = entry.get("todo_path") or entry.get("todo") or entry.get("file")
+        started = entry.get("started_ts")
+        if not todo or not isinstance(started, int):
+            return set()
+        import json as _json
+        sp = os.path.join(root, ".claude", "state", "last-review-stamps.json")
+        with open(sp, encoding="utf-8") as fh:
+            stamps = _json.load(fh)
+        rec = stamps.get(todo)
+        if not isinstance(rec, dict):
+            return set()
+        return {k for k, v in rec.items()
+                if isinstance(v, int) and not isinstance(v, bool)
+                and not k.endswith(("_head", "_section"))
+                and k != "section" and v >= started}
+    except Exception:
+        return set()
+
+
 def _log_skip(root: str, reason: str, skill: str, missing: list) -> None:
     p = os.path.join(root, _SKIP_LOG_REL)
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -648,6 +685,9 @@ def main() -> int:
         # the review happened, not an excuse for skipping it. Without this the
         # only exit was the blanket SKIP, which suppresses every other check too.
         conv = _converged_kinds(root, entry)
+        # Receipts minted during this invocation are the same class of
+        # positive evidence (v14 close-out: the bundled-dispatch shape).
+        conv = conv | _receipted_kinds(root, entry)
         if conv:
             try:
                 from skill_step_map import SKILL_STEP_MAP

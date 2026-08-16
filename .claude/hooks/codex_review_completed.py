@@ -848,10 +848,18 @@ def _record_stamp(
             # timeout (which loses the stamp anyway). Bounded retry
             # caps the wait at well under 5s and degrades gracefully
             # to lock-free with a stderr WARN if contention persists.
+            # MONOTONIC, not wall clock (v14 close-out, 2026-08-16). This
+            # host's realtime clock steps; a backward step kept
+            # `time.time() < deadline` true past the budget, so the 2s bound
+            # was not a bound -- measured live as suite failures with
+            # elapsed ~= the 4s holder sleep and an EMPTY warn (the hook
+            # never timed out, it acquired after the holder released). The
+            # TEST side was migrated to monotonic earlier; the hook it
+            # measures was not, so the fix had landed on the observer only.
             acquired = False
-            deadline = time.time() + 2.0  # 2s budget; harness timeout is 5s
+            deadline = time.monotonic() + 2.0  # 2s budget; harness timeout 5s
             sleep_s = 0.01
-            while time.time() < deadline:
+            while time.monotonic() < deadline:
                 try:
                     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     acquired = True

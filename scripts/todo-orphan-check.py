@@ -145,9 +145,13 @@ def scan_file(path: Path, tri, fence=None) -> list:
         # whether the items below it are orphans (section 38).
         if mask[i]:
             continue
-        m = tri.SECTION_HEADING_RE.match(ln)
-        if m:
-            cur = int(m.group(1))
+        # THE SHARED CLASSIFIER (v14 close-out): this used to borrow the
+        # triage oracle's private grammar; that grammar is retired. An
+        # over-long heading falls through to the `is_h2` boundary below and
+        # correctly ends the current section without starting one.
+        h = fence.classify_heading(ln)
+        if h.kind == "ok":
+            cur = h.n
             heads[cur] = ln.strip()
             continue
         # ANY non-numbered `## ` heading ends the current section. Without this

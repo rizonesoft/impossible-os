@@ -37,6 +37,38 @@ WORKFLOWS = ("build.yml", "todo-graph.yml")
 LIMIT = 10
 _FIELDS = "headSha,conclusion,status,workflowName,createdAt"
 
+# Consecutive newest CANCELLED runs before the drought note fires. The
+# observed incident (2026-08-13, v14): 6 pushes across ~18 hours with no
+# completed build.yml leg -- every run killed by its own `timeout-minutes` --
+# while `ours_red` stayed False throughout, because `cancelled` is neither
+# failure nor success. Five consecutive verdictless pushes is decisively
+# abnormal for this repo and still under the observed incident's size.
+DROUGHT_LIMIT = 5
+
+
+def completed_drought(recs):
+    """Leading streak of CANCELLED runs, newest first, before any verdict.
+
+    `ours_red` keys on a `failure` conclusion, and the supersession logic
+    treats `in_progress` as carry-on -- both correct. But a `timeout-minutes`
+    kill lands as `cancelled`, which is TERMINAL and will never resolve into a
+    verdict on its own, so a streak of them means the workflow has not
+    COMPLETED on any recent push and nothing reports it (v14 finding: 16
+    cancelled / 13 success in the window, last green 18 hours and 6 pushes
+    old, `ours_red: false` throughout). Runs still in flight or queued are
+    skipped, not counted -- they are not evidence either way. A `success` or
+    `failure` ends the streak: from there the ordinary verdict logic owns it.
+    """
+    streak = 0
+    for rec in recs:
+        c = rec.get("conclusion")
+        if c == "cancelled":
+            streak += 1
+            continue
+        if c in ("success", "failure"):
+            break
+    return streak
+
 
 def _git(project, args, timeout=10):
     return subprocess.run(["git", "-C", str(project)] + args,
@@ -50,7 +82,8 @@ def collect(project, workflows=WORKFLOWS, limit=LIMIT):
     lands in `notes` and leaves `ours_red` False. An unattended run must not
     stop because GitHub is down.
     """
-    out = {"available": False, "ours_red": False, "runs": [], "notes": []}
+    out = {"available": False, "ours_red": False, "completed_drought": False,
+           "runs": [], "notes": []}
 
     try:
         head = _git(project, ["rev-parse", "HEAD"]).stdout.strip()
@@ -92,6 +125,21 @@ def collect(project, workflows=WORKFLOWS, limit=LIMIT):
             continue
 
         out["available"] = True
+
+        # NOTE-level by design, distinct from `ours_red`: a drought is "CI has
+        # stopped answering", not "CI said no", and an unattended run must not
+        # halt on it -- but a section boundary reading clean for 6 pushes while
+        # no build leg completed is the blindness the v14 finding measured.
+        streak = completed_drought(recs)
+        if streak >= DROUGHT_LIMIT:
+            out["completed_drought"] = True
+            out["notes"].append(
+                f"{wf}: the newest {streak} completed runs are all CANCELLED "
+                f"-- no run of this workflow has finished with a verdict on "
+                f"recent pushes. A `timeout-minutes` kill lands here and is "
+                f"terminal; unlike `in_progress` it never resolves on its "
+                f"own. Check the workflow's wall-clock before trusting a "
+                f"clean verdict.")
 
         # Successful runs on our history are the evidence that a later failure
         # entry is already repaired.

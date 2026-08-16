@@ -187,9 +187,20 @@ def main() -> int:
         pass
 
     # Runaway detection. Count-based check fires only when the count
-    # is trustworthy (payload-provided, not fallback-derived). The
-    # duration-based check is independent of count trust because
-    # duration_ms is always a payload field.
+    # is trustworthy (payload-provided, not fallback-derived).
+    #
+    # WARNING (v14 close-out, 2026-08-16, measured): the duration arm below is
+    # DEAD. The harness does NOT send `duration_ms` -- it is None in 1893 of
+    # 1893 recorded SubagentStop payloads -- so `isinstance(duration_ms, int)`
+    # is never true and the arm has never fired. The earlier comment here
+    # ("duration_ms is always a payload field") was simply wrong. Making it
+    # real needs a dispatch-time stamp keyed by agent_id in a PreToolUse-on-
+    # Agent hook, then elapsed computed here; that is a separate design pass
+    # (filed, overnight-runner-improvements-v14). Until then the arm guards
+    # nothing, and the count arm cannot see the failure it was meant to catch
+    # (long wall-clock, few tool calls). Re-baselining RUNAWAY_TOOL_USES alone
+    # is explicitly NOT the fix -- it would quiet the noise while leaving that
+    # gap invisible.
     runaway = False
     if not count_untrusted:
         if isinstance(tool_uses_total, int) and tool_uses_total >= RUNAWAY_TOOL_USES:

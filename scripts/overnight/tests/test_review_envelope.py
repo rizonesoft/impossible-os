@@ -128,10 +128,43 @@ def test_since_window_excludes_prior_round():
         assert "adversarial" in env["missing"], env  # ts=100 < 150 -> scoped out
 
 
+def test_section_scope_excludes_other_sections_and_unattributed():
+    # v14 close-out (2026-08-16): --todo alone ingested an EARLIER section's
+    # legs from the same TODO. --section must exclude a different section AND
+    # an entry with no section field (fail toward redispatch: one extra
+    # dispatch, never another section's findings triaged as this one's).
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        rev.mkdir(parents=True)
+        for name in ("s25.out", "s26.out", "nosec.out"):
+            (rev / name).write_text("[HIGH] x\nTurn completed (rc=0)\n")
+        (rev / "manifest.jsonl").write_text("\n".join([
+            json.dumps({"ts": 100, "kind": "adversarial", "todo": "todo/x.md",
+                        "section": 25, "logFile": str(rev / "s25.out")}),
+            json.dumps({"ts": 200, "kind": "adversarial", "todo": "todo/x.md",
+                        "section": 26, "logFile": str(rev / "s26.out")}),
+            json.dumps({"ts": 300, "kind": "consistency", "todo": "todo/x.md",
+                        "logFile": str(rev / "nosec.out")}),
+        ]) + "\n")
+        _, env = _run_args(root, "--kinds", "adversarial", "--todo",
+                           "todo/x.md", "--section", "25")
+        assert env["kinds"]["adversarial"]["artifact"].endswith("s25.out"), env
+        _, env = _run_args(root, "--kinds", "adversarial", "--todo",
+                           "todo/x.md", "--section", "26")
+        assert env["kinds"]["adversarial"]["artifact"].endswith("s26.out"), env
+        # REFUSAL: an unattributed leg never satisfies a section-scoped ask.
+        _, env = _run_args(root, "--kinds", "consistency", "--todo",
+                           "todo/x.md", "--section", "26")
+        assert "consistency" in env["missing"], env
+
+
 if __name__ == "__main__":
     test_crashed_leg_flagged_and_isolated()
     test_all_clean_exits_zero()
     test_missing_leg_needs_redispatch()
     test_todo_scope_excludes_other_sections()
     test_since_window_excludes_prior_round()
+    test_section_scope_excludes_other_sections_and_unattributed()
     print("PASS: review-envelope")

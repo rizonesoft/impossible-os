@@ -107,6 +107,10 @@ def is_review_pipeline_passthrough(cmd: str) -> bool:
     if not isinstance(cmd, str):
         return False
     cmd_stripped = _skip_leading_groups(cmd.lstrip())
+    # A command/process substitution here runs BEFORE any allowlisted program,
+    # so its content is unreviewed code -- refuse (v14 close-out).
+    if _LEADING_SUBST_RE.match(cmd_stripped):
+        return False
     cmd_stripped = _skip_leading_assignments(cmd_stripped)
     if cmd_stripped is None:
         return False
@@ -135,11 +139,25 @@ def is_review_pipeline_passthrough(cmd: str) -> bool:
 # that runs first. The sanctioned long wait already has allowed spellings --
 # `bash scripts/overnight/wait-for-codex-verdict.sh` or a `python3` heredoc --
 # and the wait discipline prefers one blocking call over a poll loop anyway.
-_GROUP_RE = re.compile(r"^[({]\s*")
+# A `(` opener ONLY when it is not immediately followed by another `(`. An
+# adjacent `((` is Bash's ARITHMETIC construct, not two nested subshells, and
+# stepping over both used to reduce `((git = $(rm target)))` to a string
+# starting with `git ` -- an allowlisted program while a command substitution
+# executed first (Codex adversarial, v14 close-out 2026-08-16, [high]). A
+# genuine nested subshell is spelled `( ( cmd` with a space and still steps.
+_GROUP_RE = re.compile(r"^(?:\((?!\()|\{)\s*")
+# A command / process substitution appearing where the first program should be:
+# its inner command runs before any allowlisted token, so passthrough must
+# refuse regardless of what follows.
+_LEADING_SUBST_RE = re.compile(r"^(?:\$\(|`|<\(|>\()")
 
 
 def _skip_leading_groups(cmd: str) -> str:
-    """Step over leading `(` / `{` grouping tokens. Repeatable: `( ( cmd`."""
+    """Step over leading `(` / `{` grouping tokens. Repeatable: `( ( cmd`.
+
+    An adjacent `((` (arithmetic) is NOT a group and is left in place, so the
+    first-token check refuses it.
+    """
     prev = None
     while prev != cmd:
         prev = cmd

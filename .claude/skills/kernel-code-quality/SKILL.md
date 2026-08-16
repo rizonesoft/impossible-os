@@ -35,7 +35,7 @@ Every create/modify of `.c`, `.h`, `.asm` under `src/kernel/` or
 - [ ] **New global/static mutable variable?** Spinlock (`spin_lock_irqsave`/`spin_unlock_irqrestore` if ISR-reachable), atomic (`__atomic_fetch_add`/`__atomic_load_n`), or per-CPU (`smp_this_cpu()->field`).
 - [ ] **Interrupt-safe?** ISR-reachable locks use `irqsave` variants; plain spinlocks in interrupt context deadlock.
 - [ ] **Lock hold time.** Never hold a spinlock across disk I/O, serial output, or anything blocking/millisecond-scale. Pattern: lock -> snapshot -> unlock -> use snapshot.
-- [ ] **No CPU-count assumptions.** Works on 1 CPU and 64. `smp_cpu_count()`, never hardcode.
+- [ ] **No CPU-count assumptions.** Works on 1 CPU and 64. A COUNT is never a slot bound -- iterate `MAX_CPUS` with `smp_cpu_is_online()`, or bound by `smp_cpu_present_count()` when walking discovered slots. `smp_cpu_count()` is LIVE (it falls when a CPU parks), so use it ONLY when you mean active processors, never as an index ceiling (TODO-10 section 21: a count-bounded affinity check rejected a live high slot). Never hardcode.
 
 ### Gate 3: 5-Layer Defense for Invariants
 

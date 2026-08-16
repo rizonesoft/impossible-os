@@ -88,6 +88,18 @@ if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
         # wrong in both directions before; it is accurate only because the code
         # under it changed, never because the wording did.
         echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/10/11/17/24 (Check 7 additionally downgrades a STALE cache to a warning when every dirty todo file is excluded -- exclusion cannot answer staleness)${NC:-}"
+        # THE TRANSPORT INVARIANT (v14 close-out, 2026-08-16). This variable is
+        # newline-delimited and downstream consumers recover owners from prose,
+        # so a todo path carrying whitespace would not match its own exclusion
+        # entry and would still gate an unrelated commit (Codex adversarial,
+        # todo-metadata-layer gate-scope work post-ship, [medium]). Measured 0 of 281 corpus
+        # paths carry any -- the convention is `TODO-NN-slug.md` -- so instead
+        # of a NUL-safe protocol redesign the invariant is pinned fail-closed
+        # at the boundary the transport depends on.
+        if printf '%s\n' "$GATE_EXCLUDED_TODO" | grep -q '[[:space:]]'; then
+            echo "ERROR: a modified todo path contains whitespace; the newline-delimited gate-scope transport cannot carry it. Rename the file (corpus convention is TODO-NN-slug.md, no spaces)."
+            exit 1
+        fi
     fi
 fi
 

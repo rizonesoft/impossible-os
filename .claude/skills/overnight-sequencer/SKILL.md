@@ -137,8 +137,13 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   their logFiles in one long call `... wait-for-codex-verdict.sh --max 540 f1 f2
   f3` (+ tool `timeout: 600000`), then read ONE combined envelope SCOPED to this
   section: `python3 scripts/overnight/review-envelope.py . --todo
-  <this-section's-todo-path>`. **The `--todo` filter is REQUIRED** (the manifest
-  accumulates across sections; an unscoped read pulls a stale prior review). The
+  <this-section's-todo-path> --section <n>`. **The `--todo` AND `--section`
+  filters are REQUIRED** (the manifest accumulates across sections; a
+  file-scoped-only read pulled an EARLIER section's legs from the SAME todo,
+  observed 2026-08-14 -- their findings were about code the change never
+  touched). An unattributed leg is excluded under `--section` by design:
+  redispatching costs one leg, ingesting another section's verdict costs a
+  wrong triage. The
   `.out` artifact + envelope IS the authoritative review body -- NEVER glob
   `~/.codex/sessions/**/*.jsonl` for it.
 - **On a crashed leg, re-dispatch ONLY that leg -- NEVER the whole bundle.** The
@@ -160,7 +165,12 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   re-dispatching kind K in a fix loop: `python3
   .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>`
   (exit 1 = CONVERGED -> SKIP K; exit 0 = redispatch), then `... record
-  '<todo>#<section>' <K>` once K's round resolves.
+  '<todo>#<section>' <K>` **at VERDICT time -- the moment K's verdict lands,
+  BEFORE applying any fix it prompted**. `record` fingerprints the tree AT THE
+  CALL, so recording after the fixes stores a fingerprint no reviewer has seen
+  and the next `should-redispatch` answers CONVERGED over unreviewed edits --
+  observed live 2026-08-11 (TODO-06 section 41 round 2: obeying that verdict
+  would have skipped rounds 3-8, every one of which found a real defect).
 - **Round counter (P2.3).** After each re-dispatch: `python3
   .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --progress
   <new|none>`. Exit 2 = CAPPED -> stop the loop, spin unresolved findings to a

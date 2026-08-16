@@ -33,7 +33,17 @@ MIN_MAX_S = 300           # required --max floor (seconds)
 TIMEOUT_SLACK_MS = 30_000  # tool timeout must exceed --max by this much
 SUGGEST_MAX_S = 540        # suggested bound: fits the 600000ms tool ceiling
 
-_WAIT_RE = re.compile(r"\bwait-for-codex-verdict\.sh\b")
+# Match an INVOCATION of the waiter, not a substring anywhere (v14 close-out,
+# 2026-08-16). The old `\bwait-for-codex-verdict\.sh\b` fired on the script
+# name appearing inside a `cat >> <capture-file>` heredoc body or a commit
+# message, blocking a filing that merely DISCUSSED the waiter. An invocation
+# has the script in command position: at the start of a pipeline segment,
+# after a control operator, or as the argument of a runner (`bash`/`sh`/
+# `timeout N`/`env`), optionally path-qualified. A name preceded by ordinary
+# text (prose, an echo/cat argument) is a mention and no longer matches.
+_WAIT_RE = re.compile(
+    r"(?:^|[;&|(]|&&|\|\||\bbash\s+|\bsh\s+|\btimeout\s+\S+\s+|\benv\s+)"
+    r"\s*(?:\S*/)?wait-for-codex-verdict\.sh\b")
 _MAX_RE = re.compile(r"--max(?:=|\s+)(\d+)")
 
 _MSG = (

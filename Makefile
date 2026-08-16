@@ -784,8 +784,9 @@ test-boot-info-abi: $(BOOT_ABI_KERNEL_JSON)
 	$(BOOT_ABI_HOST_ARCH_GATE)
 	@bash tools/boot-info-manifest/test-drift-detection.sh
 
-## todo-graph: Rebuild build/todo-cache.json and run the 7-check graph
-##              validator. Owned by the TODO metadata layer CI-gate
+## todo-graph: Rebuild build/todo-cache.json and run the graph
+##              validator (it prints `N/M checks passed`; the count grows,
+##              so it is not hardcoded here). Owned by the TODO metadata layer CI-gate
 ##              section. Exit 0 if every check
 ##              passes; exit 1 on drift (stale XREF, dangling §N, orphan
 ##              row, dep cycle, missing bat, status mismatch, $schema

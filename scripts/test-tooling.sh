@@ -8079,6 +8079,18 @@ cases = [
     ('L="$(rm -rf /tmp/x)"; grep n "$L"',  False, "rpp_v08_substitution_runs"),
     ("L=`rm -rf /tmp/x`; grep n \"$L\"",   False, "rpp_v08_backtick_runs"),
     ('L="$(ls ; grep n',                  False, "rpp_v08_unparseable_refused"),
+    # v14 (2026-08-16): arithmetic `((...))` is NOT two nested groups -- it was
+    # reducing `((git = $(rm target)))` to a string starting with `git ` and
+    # passing while the substitution ran first. And a leading command/process
+    # substitution must be refused. The sanctioned `( git push ... )` ship
+    # shape and a real nested subshell `( ( cmd ) )` still pass.
+    ("((git = $(rm target; printf 1) )); grep x file",
+                                          False, "rpp_v14_arith_subst_refused"),
+    ("( $(rm target); git push )",        False, "rpp_v14_leading_subst_refused"),
+    ("`rm x`; git status",                False, "rpp_v14_leading_backtick_refused"),
+    ("( git push origin main > /tmp/ship-push.log 2>&1; echo rc ) &",
+                                          True,  "rpp_v14_ship_shape_ok"),
+    ("( ( git status ) )",                True,  "rpp_v14_nested_subshell_ok"),
 ]
 for cmd, want, name in cases:
     got = ok(cmd)
@@ -8089,7 +8101,7 @@ for cmd, want, name in cases:
 PYEOF
 )
 RPP_OK=$(echo "$RPP_OUT" | grep -c "^OK ")
-if [ "$RPP_OK" = "13" ]; then
+if [ "$RPP_OK" = "18" ]; then
     echo "$RPP_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_pipeline_passthrough: $line"
     done

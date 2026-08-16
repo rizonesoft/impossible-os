@@ -47,7 +47,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
     - Read the domain `INDEX.md` and other TODO files in the same folder.
     - Grep for deliverable names and feature keywords to detect scope overlap.
     - Scan for duplicate XREFs where two TODOs both *implement* the same section.
-    - **Programmatic integrity gate:** run `bash scripts/todo-graph/build-and-validate.sh --keep-cache` to catch cross-TODO XREF drift the structural sweep cannot (stale XREF, dangling `§N`, orphan IO row, dep cycle, missing bat, status-transition mismatch, `$schema` unreachable, duplicate id). Any failure there is a real violation that blocks ready-to-implement; fix it or downgrade the affected section before finishing validation. (Owned by the todo-graph CI gate; local validator run mirrors the PR-time check.)
+    - **Programmatic integrity gate:** run `bash scripts/todo-graph/build-and-validate.sh --keep-cache` to catch cross-TODO XREF drift the structural sweep cannot. It runs the FULL check set the validator prints as `N/M checks passed` (stale XREF, dangling `§N`, orphan IO row, dep cycle, missing bat, status-transition mismatch, `$schema` unreachable, duplicate id, duplicate resolver key, in-file anchor -- do not hardcode the count here, it grows; the tool's own tally is the source of truth). Any failure there is a real violation that blocks ready-to-implement; fix it or downgrade the affected section before finishing validation. (Owned by the todo-graph CI gate; local validator run mirrors the PR-time check.)
 6. Validate the lean TODO structure.
     - Check required sections, numbering, checklist shape, references, and exit criteria.
     - Verify the TODO has a clear completion boundary:

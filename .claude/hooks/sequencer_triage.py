@@ -52,7 +52,6 @@ from pathlib import Path
 import re
 import sys
 
-SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.")
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
 QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*")
 DEFERRED_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")
@@ -66,6 +65,35 @@ TODO_NUM_RE = re.compile(r"/TODO-(\d+)-")
 # This excludes INDEX.md and non-TODO doctrine files (e.g. the runner-doctrine
 # TODO-Claude-Overnight-Runner.md), which the runner must never "work".
 IMPL_TODO_RE = re.compile(r"(?:^|/)todo/\d\d-[^/]+/TODO-\d+-[^/]*\.md$")
+
+# THE SHARED PARSER (TODO-06 consolidation). This hook is the triage oracle --
+# the authority every sequencer phase classifies from -- and it kept a private
+# column-zero `## N.` grammar after the producer and gates moved onto the
+# shared projection. Measured consequence (v14 finding, 2026-08-12): for
+# `## 1. Root` / `- ## 2. Nested` / stamps under the nested heading, this walk
+# never advanced past section 1 and assigned BOTH stamps to it, so an
+# unstamped shipped root read DONE (unreviewed work skipped) while the stamped
+# nested section read NEEDS_WORK (completed work looped).
+#
+# LOADED LAZILY, not at module import. `run_phase_guard.py` imports this module
+# for verbs that never touch section parsing (cursor/phase/rotation), and the
+# runner suite copies this file ALONE into stripped fixtures; a top-level
+# `import todo_fence` would make the whole module unimportable there. The
+# import happens inside `_scan_sections`, so only the stamp/lifecycle walks
+# require the parser. Failure raises loudly -- a silent fallback to a private
+# grammar would be the exact drift this consolidation removes.
+_fence = None
+
+
+def _load_fence():
+    global _fence
+    if _fence is None:
+        scripts_dir = str(Path(__file__).resolve().parents[2] / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import todo_fence as _f
+        _fence = _f
+    return _fence
 
 
 def is_impl_todo(file_path):
@@ -136,33 +164,73 @@ def load_cache(cache_path, root):
         return data
 
 
+def _scan_sections(text):
+    """(scan, [(n_or_None, heading_line, body_start, body_end)]) -- shared walk.
+
+    Mirrors `todo-reachability.py:_sections`, the projection the producer and
+    gates already share: headings come from `leaf_views` (so `- ## 2. Nested`
+    is a real section), fenced and blockquoted lines are never boundaries, and
+    a body ends at the next `## ` of ANY kind -- closing matter such as
+    `## Unit Tests` ends the last numbered section rather than inheriting its
+    stamps. An over-long heading still delimits its section but has no usable
+    number, so it yields None and nothing attributes to it.
+    """
+    fence = _load_fence()
+    scan = fence.scan_text(text)
+    mask, leaves = scan.mask, scan.leaf_views
+    in_bq = scan.in_blockquote
+    starts = [(i, h) for i, l in enumerate(leaves)
+              if not mask[i] and not in_bq(i)
+              and (h := fence.classify_heading(l)).kind != "none"]
+    total = len(scan.lines)
+    out = []
+    for ln, head in starts:
+        end = total
+        for j in range(ln + 1, total):
+            if not mask[j] and not in_bq(j) and fence.is_h2(leaves[j]):
+                end = j
+                break
+        out.append((head.n if head.kind == "ok" else None, ln, ln + 1, end))
+    return scan, out
+
+
 def section_stamps(md_path):
     """Map section number -> set of stamp kinds present: 'V', 'Q', 'D'.
 
     V = `> **Verified:**`, Q = `> **Quality reviewed:**`, D = `> **Deferred:**`.
-    Stamps are attributed to the section heading they follow.
+    Stamps are attributed through the SHARED projection (`_scan_sections`), so
+    a nested heading owns the stamps under it and a fenced example never
+    stamps. The stamp lines themselves stay PHYSICAL: every pattern anchors on
+    `> ` and the projection strips that marker from a blockquote's
+    continuation lines (see the measured failure in `todo-reachability.py`'s
+    section walk), so matching projected lines would drop `Quality reviewed`
+    from an ordinary two-line stamp block.
     """
     out = {}
     if not os.path.exists(md_path):
         return out
-    cur = None
     with open(md_path, encoding="utf-8") as fh:
-        for line in fh:
-            m = SECTION_HEADING_RE.match(line)
-            if m:
-                cur = int(m.group(1))
-                out.setdefault(cur, set())
+        text = fh.read()
+    scan, sections = _scan_sections(text)
+    mask, lines = scan.mask, scan.lines
+    for num, _ln, start, end in sections:
+        if num is None:
+            continue
+        kinds = out.setdefault(num, set())
+        for j in range(start, end):
+            if mask[j]:
                 continue
-            if cur is None:
+            phys = lines[j]
+            if phys[:1] != ">":
                 continue
-            if VERIFIED_RE.match(line):
-                out[cur].add("V")
-            elif QUALITY_RE.match(line):
-                out[cur].add("Q")
-            elif DEFERRED_RE.match(line):
-                out[cur].add("D")
-                if DEFERRED_RECOVERABLE_RE.search(line):
-                    out[cur].add("DR")  # recoverable deferral (awaiting-*)
+            if VERIFIED_RE.match(phys):
+                kinds.add("V")
+            elif QUALITY_RE.match(phys):
+                kinds.add("Q")
+            elif DEFERRED_RE.match(phys):
+                kinds.add("D")
+                if DEFERRED_RECOVERABLE_RE.search(phys):
+                    kinds.add("DR")  # recoverable deferral (awaiting-*)
     return out
 
 
@@ -181,13 +249,19 @@ def file_lifecycle(md_path, root=None, rel_path=None):
     if not os.path.exists(md_path):
         return out
     with open(md_path, encoding="utf-8") as fh:
-        for line in fh:
-            if SECTION_HEADING_RE.match(line):
-                break  # lifecycle stamps live in the preamble only
-            if VALIDATED_RE.match(line):
-                out["validated"] = True
-            elif GAP_AUDITED_RE.match(line):
-                out["gap_audited"] = True
+        text = fh.read()
+    scan, sections = _scan_sections(text)
+    # lifecycle stamps live in the preamble only -- before the first section
+    # heading of any kind (numbered or over-long), per the shared projection.
+    bound = sections[0][1] if sections else len(scan.lines)
+    for j in range(bound):
+        if scan.mask[j]:
+            continue
+        line = scan.lines[j]
+        if VALIDATED_RE.match(line):
+            out["validated"] = True
+        elif GAP_AUDITED_RE.match(line):
+            out["gap_audited"] = True
     return out
 
 
@@ -270,18 +344,21 @@ def collect_blockers(cache, root):
                 continue
             token = ""
             try:
-                cur = None
                 with open(md_path, encoding="utf-8") as fh:
-                    for line in fh:
-                        m = SECTION_HEADING_RE.match(line)
-                        if m:
-                            cur = int(m.group(1))
+                    text = fh.read()
+                scan, sections = _scan_sections(text)
+                for num, _ln, start, end in sections:
+                    if num != s.get("n"):
+                        continue
+                    for j in range(start, end):
+                        if scan.mask[j]:
                             continue
-                        if cur == s.get("n") and DEFERRED_RE.match(line):
-                            mm = DEFERRED_RECOVERABLE_RE.search(line)
+                        if DEFERRED_RE.match(scan.lines[j]):
+                            mm = DEFERRED_RECOVERABLE_RE.search(scan.lines[j])
                             if mm:
                                 token = mm.group(0).lower()
                             break
+                    break
             except OSError:
                 pass
             out.append({"file": entry["file_path"], "section": s.get("n"),

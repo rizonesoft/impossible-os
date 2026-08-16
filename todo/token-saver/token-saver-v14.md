@@ -28,3 +28,11 @@ So the question for this cycle is the one that keeps going unanswered: **is ther
 - [ ] EXCLUDED (below the >= 2% bar, recorded so a later pass does not re-derive it): the ~22 full gate runs on this section cost ~90 minutes of wall-clock but almost no TOKENS.
   - Every one went through `run-artifact.sh`, so a green run returns a bounded JSON envelope and spends zero model tokens on the output. The in-context cost per gate is one Bash call plus a ~6-line tail -- far under 2% of the segment even multiplied by 22.
   - Recorded here anyway because the wall-clock number is large enough to LOOK like a token problem at a glance. The correct home is the FLOW finding in `overnight-runner-improvements-v14.md` (gate cadence inside a fix loop), not this file. The artifact wrapper is doing exactly what it was built to do, and this is evidence it works.
+
+## v14 close-out (2026-08-16)
+
+**CLOSED -> [token-saver-v15.md](token-saver-v15.md).**
+
+No actionable cost finding was filed this cycle. The one item above is EXCLUDED below the >= 2% bar (recorded so a later pass does not re-derive it: the ~22 gate runs on TODO-10 section 16 cost wall-clock, not tokens, because `run-artifact.sh` returns a bounded envelope). The standing measurement obligations (pre-push receipt hit-rate, suite-lock contention, J1 re-runs from attended commits, backgrounded-push poll cost, agent-cache hit rate, segment-start orientation cost) are carried to v15 with their baselines.
+
+The cycle's cost-shaped observations all arrived attached to a MISFIRING GATE and filed next door in overnight-runner-improvements-v14 with their mechanism (which is what the scope rule instructs), so this file closing near-empty is not evidence of a quiet run -- it is the scope rule working. The open question restated for v15: is there a cost finding with NO gate attached? Still unanswered.

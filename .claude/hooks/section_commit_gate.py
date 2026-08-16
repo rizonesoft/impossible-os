@@ -3303,22 +3303,33 @@ def _heuristic_step18_loose_ends_scan(root: Path, history: list,
                     latest_src_edit_ts = ts
         if latest_src_edit_ts == 0:
             return
+        # Accept the Grep TOOL or an equivalent Bash grep/rg (v14 close-out,
+        # 2026-08-16): the Grep tool is absent from some session schemas, so a
+        # scan run through `Bash: grep/rg ...` used to leave this WARN
+        # un-clearable no matter how the scan was done -- a warning that cannot
+        # be satisfied honestly trains the run to ignore it. A Bash record's
+        # `target` is the command line; require an actual grep/rg program plus
+        # one of the markers so an unrelated Bash call does not clear it.
+        marker = r"TODO|FIXME|HACK|STATUS_NOT_IMPLEMENTED"
         scan_grep = any(
-            r.get("tool_name") == "Grep"
-            and isinstance(r.get("ts_ns", 0), int)
+            isinstance(r.get("ts_ns", 0), int)
             and r.get("ts_ns", 0) > latest_src_edit_ts
             and isinstance(r.get("target", ""), str)
-            and re.search(r"TODO|FIXME|HACK|STATUS_NOT_IMPLEMENTED",
-                          r.get("target", ""))
+            and re.search(marker, r.get("target", ""))
+            and (r.get("tool_name") == "Grep"
+                 or (r.get("tool_name") == "Bash"
+                     and re.search(r"\b(?:grep|rg|egrep|fgrep)\b",
+                                   r.get("target", ""))))
             for r in history
         )
         if not scan_grep:
             hm.emit_warn(
                 str(root), 18,
                 "loose-ends-scan-missing",
-                "section commit pending but no `Grep` for "
+                "section commit pending but no scan for "
                 "TODO|FIXME|HACK|STATUS_NOT_IMPLEMENTED recorded since "
-                "the last src/ edit. implement-todo-section step 18: "
+                "the last src/ edit (Grep tool OR Bash grep/rg both count). "
+                "implement-todo-section step 18: "
                 "scan for stubs/markers before marking the section done.",
                 todo_path=todo_path, section=section,
             )

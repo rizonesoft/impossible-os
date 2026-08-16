@@ -24,6 +24,14 @@ def _mk_fixture(d: pathlib.Path) -> pathlib.Path:
     for hook in ("run_phase_guard.py", "sequencer_triage.py"):
         (fx / ".claude/hooks" / hook).write_bytes(
             (REPO / ".claude/hooks" / hook).read_bytes())
+    # sequencer_triage.file_lifecycle now routes through the shared `## N.`
+    # parser (v14 close-out): copy the parser chain it lazy-loads from
+    # `<root>/scripts` so the stripped fixture can classify a mature file.
+    (fx / "scripts/todo-graph").mkdir(parents=True)
+    (fx / "scripts/todo_fence.py").write_bytes(
+        (REPO / "scripts/todo_fence.py").read_bytes())
+    (fx / "scripts/todo-graph/cache_schema.py").write_bytes(
+        (REPO / "scripts/todo-graph/cache_schema.py").read_bytes())
     # Mature cursor TODO: both preamble stamps, one section.
     (fx / "todo/00-infrastructure/TODO-01-fixture.md").write_text(
         "# TODO-01 fixture\n\n"

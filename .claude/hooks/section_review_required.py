@@ -77,44 +77,60 @@ if tn == 'Skill' and (ti.get('skill', '') in _REVIEW_PIPELINE_SKILLS or
 
 
 def _review_pipeline_active(repo_root):
-    """Return True iff review-todo-section is the active multi-step skill
-    in this session and was started after the HEAD commit (the user
+    """(active: bool, reason: str) -- is review-todo-section the active
+    multi-step skill in this session, started after the HEAD commit (the user
     invoked review AFTER the section-ship commit landed -- exactly the
-    window where step-13 fixes need to write to src/include/todo).
+    window where step-13 fixes need to write to src/include/todo)?
+
+    The REASON is diagnostic (v14 close-out, 2026-08-16): a mid-review Edit
+    was observed BLOCKed on 2026-08-14 (TODO-10 section 26) while the review
+    was demonstrably running, and the filed mechanism ("the reception
+    displaced it as the most recent skill event") does not match this state
+    model at source -- entries are per-skill and preserved. Which condition
+    below actually failed could not be reconstructed after the fact, so the
+    block message now names it; the next occurrence identifies itself.
     """
     try:
         state_p = Path(repo_root) / '.claude/state/skill-progress.json'
         if not state_p.exists():
-            return False
+            return (False, 'no skill-progress.json')
         with state_p.open() as fh:
             state = json.load(fh)
     except Exception:
-        return False
+        return (False, 'skill-progress.json unreadable')
     rts = state.get('review-todo-section')
     if not isinstance(rts, dict):
-        return False
+        return (False, 'no review-todo-section entry in skill-progress')
+    if rts.get('compaction_orphaned') is True:
+        return (False, 'review-todo-section entry is compaction-orphaned')
     try:
         sess_p = Path(repo_root) / '.claude/state/session.json'
         cur_sid = json.loads(sess_p.read_text()).get('session_id', '')
     except Exception:
         cur_sid = ''
     if cur_sid and rts.get('session_id') and rts.get('session_id') != cur_sid:
-        return False
+        return (False, 'review-todo-section entry belongs to another session')
     try:
         head_ts_str = subprocess.check_output(
             ['git', '-C', repo_root, 'log', '-1', '--format=%ct'],
             text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
         head_ts_ns = int(head_ts_str) * 1_000_000_000
     except Exception:
-        return False
+        return (False, 'cannot read HEAD commit time')
     rts_ts_ns = rts.get('started_ts') or 0
-    return isinstance(rts_ts_ns, int) and rts_ts_ns >= head_ts_ns
+    if not isinstance(rts_ts_ns, int):
+        return (False, 'review-todo-section started_ts malformed')
+    if rts_ts_ns < head_ts_ns:
+        return (False, 'review-todo-section started BEFORE the HEAD commit '
+                       '(a commit landed after the review began)')
+    return (True, '')
 
 
 # When a review-todo-section invocation is currently active, allow
 # Edit / Write / MultiEdit on the implementation surface -- review
 # step 13 ("Fix ALL findings") is the legitimate write path between
 # commit-without-stamp and commit-with-stamp.
+_pipeline_inactive_reason = ''
 if tn in ('Edit', 'Write', 'MultiEdit'):
     file_path = ti.get('file_path', '') or ''
     try:
@@ -123,11 +139,13 @@ if tn in ('Edit', 'Write', 'MultiEdit'):
             text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
     except Exception:
         _root_for_pipeline = ''
-    if (_root_for_pipeline and _review_pipeline_active(_root_for_pipeline)
-            and any(seg in file_path for seg in ('/src/', '/include/',
-                                                  '/todo/', '/scripts/',
-                                                  '/docs/'))):
-        sys.exit(0)
+    if _root_for_pipeline:
+        _active, _pipeline_inactive_reason = _review_pipeline_active(
+            _root_for_pipeline)
+        if _active and any(seg in file_path for seg in ('/src/', '/include/',
+                                                        '/todo/', '/scripts/',
+                                                        '/docs/')):
+            sys.exit(0)
 
 # Git operations + script wrappers + codex dispatches pass via the
 # shared review-pipeline-passthrough helper. Section-29 of TODO-08
@@ -222,6 +240,10 @@ sys.stderr.write(
     'Next tool call: Skill(skill="review-todo-section", args="' + todo_path + ' \xa7' + sec + ' <title>"). ' +
     'Allowed while gated: Read / Grep / Glob (for info gathering), Bash with git / bash scripts / node / python3 / grep / awk / sed / wc / head / tail / ls / cat / find / rg / cd prefixes (for the review pipeline itself). ' +
     'Opt-out for legitimate false positives (revert commits, stamp-only edits, etc.): SKIP_REVIEW_HOOK=1 env var on the next tool call. ' +
-    'Canonical rule: feedback_never_skip_review memory + CLAUDE.md "Mandatory Skill Triggers" row.'
+    'Canonical rule: feedback_never_skip_review memory + CLAUDE.md "Mandatory Skill Triggers" row.' +
+    (' [diagnostic: review-pipeline-active check failed: '
+     + _pipeline_inactive_reason + ' -- if a review IS running right now, '
+     'this names the condition to repair; file it with this string]'
+     if _pipeline_inactive_reason else '')
 )
 sys.exit(2)
