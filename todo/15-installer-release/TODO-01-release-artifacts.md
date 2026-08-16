@@ -113,6 +113,9 @@ shows `Impossible OS 1.0 (Build 22000)`.
 - [ ] **`make release-image`** target: calls `scripts/release-image.sh`; depends on `make` (build) completing first
 - [ ] **Decompression instructions** in `docs/infrastructure/install-from-image.md`: `zstd -d impossible-os-{ver}.img.zst -o impossible-os.img && dd if=impossible-os.img of=/dev/sdX bs=4M status=progress`
 - [ ] **Deterministic-image XREF** -- `release-image.sh` calls `scripts/release/build-image.sh` (owner: `D01 T06 §2`) and runs `verify-esp.sh` as the pre-compress gate.
+- [ ] **Anti-rollback fixture capture** -- take the first release image's UEFI variable store as a rollback-harness drift fixture. -> XREF: [01-boot-platform/TODO-01](../01-boot-platform/TODO-01-boot-protocol-abi-handoff.md) §24.
+  - The harness can only prove a coordinated kernel-writer + bootloader-reader drift is caught against a store written by an OLDER released build; a fresh current-writer/current-reader round trip passes either way, so no development build produces the evidence.
+  - Cheap here and impossible later: once the release is superseded, the store that pins the compatibility contract no longer exists anywhere.
 
 ---
 

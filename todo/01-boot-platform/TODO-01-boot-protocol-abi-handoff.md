@@ -893,8 +893,9 @@ The gap is narrow and the shape of the fix already exists in this file: §19 bui
 - [/] Add a `make rollback-fixtures` wrapper target -- operator-gated: the root `Makefile` is receipt surface that an unattended run may not edit, so the harness is invoked by path until an operator adds the target.
 - [x] Replace the prose procedure in [`docs/testing/rollback-steady-gate-manual-test.md`](../../docs/testing/rollback-steady-gate-manual-test.md) with a pointer to the harness, keeping the manual steps as the debugging fallback.
   - Also corrects two stale claims in them: the `POST 0xFF00` kill trigger is not emitted on serial, and a same-boot readback cannot observe the write.
-- [ ] Seed a fixture store written under a historical GUID or a wider attribute set, so a coordinated drift of BOTH the kernel writer and the bootloader reader is caught.
+- [/] Seed a fixture store under a historical GUID or wider attribute set, catching coordinated kernel-writer + bootloader-reader drift -- blocked on 15-installer-release/TODO-01 §2, which ships the first released image to capture one from.
   - A fresh current-writer/current-reader round trip passes either way; only a captured store from a released image can pin the compatibility contract, and no current build produces one.
+  - Parked rather than dropped because the drift it catches is real and unowned elsewhere: the reciprocal capture item sits on the release side, so the store is taken at the moment a release first exists rather than reconstructed later.
   - -> XREF: [§13](#13-anti-rollback-and-security-version-binding) -- §13 owns the `IPOSRequiredSecVersion` variable contract.
 - [x] Commit: `"test: scripted anti-rollback NVRAM fixture harness"`
 
