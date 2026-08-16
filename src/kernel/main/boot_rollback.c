@@ -39,6 +39,7 @@
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/kworker.h"
+#include "kernel/timer.h"
 
 extern struct boot_info g_boot_info;
 
@@ -50,20 +51,27 @@ extern struct boot_info g_boot_info;
  * LOG_WARN. An operator who set anti_rollback_raise to retire a
  * vulnerable image got a machine that silently did not retire it.
  *
- * ATTEMPT CAP. Four attempts total (one initial plus three retries).
- * A firmware that fails every write must not hold a delayed-work slot
- * for the life of the boot.
+ * ATTEMPT CAP. Four attempts total (one initial plus three retries),
+ * so a firmware that fails every write cannot keep attempting for the
+ * life of the boot. Note what this does NOT bound: the registration
+ * is released by the tick that observes the terminal outcome, so a
+ * stopped clock or a hung peer callback -- neither of which this code
+ * can recover from, see BACKOFF -- prevents that tick and therefore
+ * holds the slot. The cap bounds WRITES, not registration lifetime.
  *
  * BACKOFF. 25 ms, then 50 ms, then 100 ms between attempts. These are
- * MINIMUM spacings, not deadlines: kworker has no wakeup on register,
- * so its loop notices a freshly armed entry only on its next pass,
- * which its own KWORKER_MAX_SLEEP_MS cap bounds at ~1 s. A retry that
- * lands late still lands inside the same boot, and advancing the floor
- * before the machine next restarts is the whole user-visible contract
- * here. Do not read the ladder as a timing guarantee. The chain also
- * inherits the carrier's contract that callbacks are bounded and
- * non-hanging (kernel/sched/kworker.h): a peer callback that hangs
- * forever stalls every registered monitor, not just this one.
+ * MINIMUM spacings with NO upper bound on delivery. kworker has no
+ * wakeup on register, so its loop notices a freshly armed entry only
+ * on its next pass; KWORKER_MAX_SLEEP_MS bounds that IDLE interval at
+ * ~1 s, but only while the clock advances and no peer callback is
+ * occupying the single serial worker. A retry that lands late still
+ * lands inside the same boot, and advancing the floor before the
+ * machine next restarts is the whole user-visible contract here. Do
+ * not read the ladder as a timing guarantee. The chain also inherits
+ * the carrier's contract that callbacks are bounded and non-hanging
+ * (kernel/sched/kworker.h): a peer callback that hangs forever stalls
+ * every registered monitor, this one included, and nothing here can
+ * recover from that.
  *
  * CARRIER. The retries ride the kworker delayed-work primitive, not a
  * spawned task and not sys_wq. A task would work exactly once: task
@@ -76,8 +84,9 @@ extern struct boot_info g_boot_info;
  * mark-good the compositor enqueues immediately after this raise --
  * across the whole backoff. kworker registrations are reclaimed on
  * unregister, its callbacks run at PASSIVE_LEVEL and may call
- * firmware, and one SetVariable sits well inside its
- * KWORKER_CALLBACK_WARN_MS budget.
+ * firmware, and a typical SetVariable sits inside its
+ * KWORKER_CALLBACK_WARN_MS budget -- typical, not guaranteed: nothing
+ * here bounds how long firmware may take.
  *
  * LOCK ORDER. kworker_register / kworker_unregister are NEVER called
  * while holding s_state_lock: the token is read or published inside
@@ -87,6 +96,7 @@ extern struct boot_info g_boot_info;
  * fault-injected tests assert the exact write count against it. */
 #define BOOT_ROLLBACK_BACKOFF_BASE_MS   25u
 #define BOOT_ROLLBACK_BACKOFF_MAX_MS   100u
+#define BOOT_ROLLBACK_NS_PER_MS         1000000ULL
 
 boot_result_t boot_rollback_validate(const struct boot_info *info,
                                      enum boot_rollback_error *out_error)
@@ -223,13 +233,25 @@ int boot_rollback_should_raise(const struct boot_info *info,
  * reconsider policy) on success, opt-out, or once the chain has given
  * up. s_raised stays 0 until NVRAM actually changes.
  *
- * SMP note: as of the deferred-raise refactor, s_steady / s_attempted
- * / s_raised / s_enqueued are accessed by both the compositor caller
- * and the sys_wq worker (different kernel tasks, possibly different
- * CPUs). All four are read/written via __atomic_* with explicit
- * memory order: mark_steady stores RELEASE; the worker loads
- * ACQUIRE. s_attempted and s_enqueued use CAS so the worker-vs-
- * fallback race resolves to a single SetVariable attempt. */
+ * SMP note. Three kernel tasks touch this state -- the compositor
+ * first-frame caller, the single sys_wq worker, and the kworker
+ * thread running the retry chain -- so the split matters:
+ *   s_steady, s_raised      PUBLICATION flags, __atomic_* with
+ *                           explicit order (mark_steady stores
+ *                           RELEASE, readers load ACQUIRE). They do
+ *                           not interlock with anything else.
+ *   everything else         guarded by s_state_lock, NOT atomics and
+ *                           NOT CAS: s_attempted, s_enqueued,
+ *                           s_attempts, s_terminal, s_last_status,
+ *                           s_retry_spawned, s_retry_token,
+ *                           s_retry_period_ms, s_next_attempt_ns,
+ *                           s_arm_epoch. They are read and mutated
+ *                           together, so every decision that reads
+ *                           one takes the lock.
+ * A transient failure releases ONLY s_attempted and KEEPS s_enqueued
+ * (see the failure region below); do not "simplify" that to clearing
+ * both, which is what the pre-retry code did and what would let a
+ * second requester start a competing write. */
 /* SMP synchronization: the worker thread (boot_rollback_request_raise
  * dispatches the raise to sys_wq) reads/writes these flags from a
  * different kernel task than the compositor first-frame caller. Use
@@ -245,7 +267,10 @@ static volatile int s_enqueued  = 0;  /* request_raise dedup; updated under s_st
  * {s_attempted, s_enqueued} pair because every decision they drive is
  * taken in the same critical region that claims or releases an
  * attempt: s_attempts is the cap counter (how many SetVariable calls
- * this boot has actually made) and s_terminal latches the moment the
+ * this boot has FAILED -- a successful write ends the chain and never
+ * bumps it, so a chain whose last attempt lands reads one lower than
+ * the number of writes issued; the cap arithmetic wants the failure
+ * count, which is why it is counted this way) and s_terminal latches the moment the
  * chain gives up, so the one LOG_ERROR can never be emitted twice and
  * no later caller can start a fresh chain. */
 static volatile uint32_t s_attempts = 0;
@@ -259,23 +284,51 @@ static volatile uint64_t s_last_status = 0;
  * prevents one (s_enqueued stays latched for the life of the chain),
  * so a second schedule would be a logic error, not a race. */
 static volatile int      s_retry_spawned = 0;
-/* Live kworker registration for the retry chain, and the period it
- * was registered with. Both under s_state_lock; -1 means no
- * registration is published. A tick that observes -1 does nothing and
- * waits for the next period rather than acting on an unpublished
- * token. */
+/* s_retry_token is the ONE registration that carries the whole chain,
+ * armed at the fixed BOOT_ROLLBACK_BACKOFF_BASE_MS cadence and never
+ * re-registered; -1 means none is published, and a tick that observes
+ * -1 does nothing and waits for the next period rather than acting on
+ * an unpublished token. s_retry_period_ms is NOT that cadence: it is
+ * the current logical backoff STEP, moved 25 -> 50 -> 100 solely to
+ * compute s_next_attempt_ns. Do not reintroduce unregister-then-
+ * register to change the cadence -- that needs a second free slot
+ * while the running callback still holds the first, and fails the
+ * chain when none exists. Both under s_state_lock. */
 static volatile int      s_retry_token     = -1;
 static volatile uint32_t s_retry_period_ms = 0;
+/* Absolute deadline of the NEXT attempt. The registration is armed
+ * once for the whole chain at a fixed polling cadence and the backoff
+ * is enforced here, so a tick that arrives early simply returns. That
+ * is what keeps the chain to ONE slot: kworker_register only accepts
+ * a slot that is neither active nor running, and the running bit of
+ * the slot executing the callback is not cleared until the callback
+ * returns, so an unregister-then-register re-arm from inside the tick
+ * would transiently need a SECOND free slot -- and fail the whole
+ * chain when none exists. */
+static volatile uint64_t s_next_attempt_ns = 0;
+/* Arming epoch, bumped whenever the chain state is rewound. The
+ * registration is made OUTSIDE s_state_lock (the carrier must not be
+ * called under it) and published afterwards, so there is a window in
+ * which a live kworker entry exists that s_retry_token does not name.
+ * A rewind landing in that window would leave the entry orphaned --
+ * unreachable to cancel and free to tick against freshly reset state.
+ * The arming path therefore captures the epoch before registering and
+ * publishes only if it still matches; otherwise it unregisters the
+ * entry it just created. Guarded by s_state_lock. */
+static volatile uint32_t s_arm_epoch = 0;
 /* s_state_lock makes the {s_attempted, s_enqueued} pair atomic with
  * respect to concurrent callers. Codex 2026-04-30 step-13 M2 finding:
  * a transient SetVariable failure used to clear the two flags via two
  * independent atomic stores, exposing a window where a concurrent
  * request_raise saw s_enqueued=1 + s_attempted=0 and dropped the
- * retry. With the lock, the failure path clears both inside the same
- * critical region; request_raise reads s_enqueued under the same
- * lock. s_steady and s_raised stay outside the lock (acquire/release
- * atomics) because their state machines do not interlock with the
- * request/attempt pair. */
+ * retry. The lock is what closed that window; what the failure path
+ * does INSIDE it changed with the bounded retry, which now releases
+ * s_attempted and deliberately RETAINS s_enqueued so the chain keeps
+ * the single claim (the older "clears both" behavior would hand the
+ * raise to whoever asked next). request_raise reads s_enqueued under
+ * the same lock. s_steady and s_raised stay outside it
+ * (acquire/release atomics) because their state machines do not
+ * interlock with the request/attempt pair. */
 static DEFINE_SPINLOCK(s_state_lock);
 
 void boot_rollback_mark_steady(void)
@@ -330,9 +383,12 @@ static uint64_t boot_rollback_write_nvram(uint32_t value)
 /* Fault-injection seam. The retry state machine is otherwise
  * unreachable from a unit test: no harness can make real firmware
  * fail one SetVariable and pass the next, which is exactly the case
- * this section exists to handle. KERNEL_TESTS-gated so a release
- * kernel calls the writer directly -- no indirect call, and no
- * writable code pointer sitting behind the anti-rollback write.
+ * this section exists to handle. KERNEL_TESTS-gated, so the PRUNED flavor
+ * (`KERNEL_TESTS=off`) calls the writer directly with no indirect call
+ * and no writable code pointer behind the anti-rollback write. Note
+ * the default build is KERNEL_TESTS=on (Makefile), so an image built
+ * without that override DOES carry the pointer and its setter; the
+ * hardening applies to the pruned flavor, not to every build.
  * s_inline_retry runs the chain on the caller instead of registering
  * a kworker entry, so a test observes the whole state machine
  * deterministically rather than racing a background thread;
@@ -378,8 +434,19 @@ static void boot_rollback_report_terminal(uint64_t status, uint32_t attempts,
                                           const char *reason)
 {
 #ifdef KERNEL_TESTS
-    s_terminal_reports++;
-    s_terminal_status = status;
+    /* Under the same lock as the rest of the retry state. Exactly-once
+     * is already enforced by the s_terminal latch, so there is no live
+     * race to close -- but this is the file's only shared mutable
+     * state, and leaving one field outside the discipline invites the
+     * next reader to conclude the discipline is optional. The klog
+     * below stays outside the region. */
+    {
+        uint64_t rflags;
+        spin_lock_irqsave(&s_state_lock, &rflags);
+        s_terminal_reports++;
+        s_terminal_status = status;
+        spin_unlock_irqrestore(&s_state_lock, rflags);
+    }
 #endif
     klog_unrated(LOG_ERROR, "boot",
                  "anti-rollback: floor NOT advanced -- SetVariable status 0x%lx "
@@ -501,7 +568,9 @@ static enum boot_rollback_attempt boot_rollback_attempt_raise(void)
 
 static void boot_rollback_retry_tick(void *ctx);
 
-/* Register the retry callback for one backoff period. Returns the
+/* Register the retry callback at the fixed base cadence, once for the
+ * life of the chain (the backoff is a deadline, not a period; see
+ * s_retry_period_ms). Returns the
  * kworker token, or negative when no carrier could be armed.
  * kworker is called with s_state_lock NOT held (see LOCK ORDER). */
 static int boot_rollback_arm_retry(uint32_t period_ms)
@@ -513,9 +582,17 @@ static int boot_rollback_arm_retry(uint32_t period_ms)
     /* A registration only fills a slot: with no worker thread running,
      * the entry would never fire and the claim would sit latched
      * behind a chain that can never advance -- the silent failure this
-     * section exists to remove. kworker_init is idempotent and returns
-     * 0 only when the worker is READY, so it is the readiness probe. */
-    if (kworker_init() != 0)
+     * section exists to remove.
+     *
+     * The probe is kworker_is_started(), a pure query, NOT kworker_init().
+     * init is idempotent but it is only CHEAP when the worker already
+     * reached STARTED: on a system whose boot-time kworker_init failed,
+     * it re-runs task_create or yield-spins to KWORKER_START_YIELD_CAP
+     * before returning -1. This path can run on the compositor
+     * first-frame thread (the sys_wq-unavailable fallback), where
+     * spawning a task and stalling presentation on a startup handshake
+     * is exactly the deferred-init hazard the bare-metal rules forbid. */
+    if (!kworker_is_started())
         return -1;
 
     return kworker_register(boot_rollback_retry_tick, (void *)0, period_ms);
@@ -560,38 +637,21 @@ static void boot_rollback_cancel_retry(void)
         (void)kworker_unregister(token);
 }
 
-/* Re-arm for the next, longer backoff. kworker has no set-period
- * call, so the step is unregister-then-register; at most three of
- * these happen in a boot, and the old slot is inactive before the new
- * one is taken. */
-static void boot_rollback_rearm_retry(void)
+/* Push the next attempt out by the next backoff step. The
+ * registration is left alone: only the deadline moves. */
+static void boot_rollback_defer_next_attempt(void)
 {
-    int      token;
     uint32_t period;
     uint64_t flags;
 
     spin_lock_irqsave(&s_state_lock, &flags);
-    token         = s_retry_token;
-    period        = boot_rollback_next_backoff_ms(s_retry_period_ms);
-    s_retry_token = -1;
-    spin_unlock_irqrestore(&s_state_lock, flags);
-
-    if (token >= 0)
-        (void)kworker_unregister(token);
-
-    token = boot_rollback_arm_retry(period);
-    if (token < 0) {
-        boot_rollback_abandon_retry();
-        return;
-    }
-
-    spin_lock_irqsave(&s_state_lock, &flags);
-    s_retry_token     = token;
+    period            = boot_rollback_next_backoff_ms(s_retry_period_ms);
     s_retry_period_ms = period;
+    s_next_attempt_ns = uptime_ns() + (uint64_t)period * BOOT_ROLLBACK_NS_PER_MS;
     spin_unlock_irqrestore(&s_state_lock, flags);
 }
 
-/* One backoff period elapsed: take the next attempt. */
+/* A poll of the retry deadline, at the carrier's cadence. */
 static void boot_rollback_retry_tick(void *ctx)
 {
     (void)ctx;
@@ -602,16 +662,20 @@ static void boot_rollback_retry_tick(void *ctx)
      * yet cancel. */
     {
         int      token;
+        uint64_t due;
         uint64_t flags;
         spin_lock_irqsave(&s_state_lock, &flags);
         token = s_retry_token;
+        due   = s_next_attempt_ns;
         spin_unlock_irqrestore(&s_state_lock, flags);
         if (token < 0)
             return;
+        if (uptime_ns() < due)
+            return;   /* backoff still running */
     }
 
     if (boot_rollback_attempt_raise() == BOOT_ROLLBACK_ATTEMPT_RETRYABLE)
-        boot_rollback_rearm_retry();
+        boot_rollback_defer_next_attempt();
     else
         boot_rollback_cancel_retry();
 }
@@ -631,7 +695,9 @@ static void boot_rollback_run_chain_inline(void)
 static void boot_rollback_schedule_retry(void)
 {
     int      arm = 0;
+    int      keep;
     int      token;
+    uint32_t epoch;
     uint32_t period = BOOT_ROLLBACK_BACKOFF_BASE_MS;
     uint64_t flags;
 
@@ -640,6 +706,7 @@ static void boot_rollback_schedule_retry(void)
         s_retry_spawned = 1;
         arm = 1;
     }
+    epoch = s_arm_epoch;
     spin_unlock_irqrestore(&s_state_lock, flags);
     if (!arm)
         return;
@@ -651,16 +718,31 @@ static void boot_rollback_schedule_retry(void)
     }
 #endif
 
+    /* Armed ONCE for the life of the chain, at the base cadence. The
+     * backoff lives in s_next_attempt_ns, so later steps move the
+     * deadline instead of taking a second slot. */
     token = boot_rollback_arm_retry(period);
     if (token < 0) {
         boot_rollback_abandon_retry();
         return;
     }
 
+    /* Publish only if this arming is still the current one. A rewind
+     * that landed while kworker_register was running has moved the
+     * epoch on, and the entry we just created belongs to nobody -- so
+     * we unregister it here rather than leave it ticking. */
     spin_lock_irqsave(&s_state_lock, &flags);
-    s_retry_token     = token;
-    s_retry_period_ms = period;
+    keep = (epoch == s_arm_epoch) && !s_terminal;
+    if (keep) {
+        s_retry_token     = token;
+        s_retry_period_ms = period;
+        s_next_attempt_ns = uptime_ns()
+                          + (uint64_t)period * BOOT_ROLLBACK_NS_PER_MS;
+    }
     spin_unlock_irqrestore(&s_state_lock, flags);
+
+    if (!keep)
+        (void)kworker_unregister(token);
 }
 
 int boot_rollback_raise_if_steady(void)
@@ -675,15 +757,44 @@ int boot_rollback_raise_if_steady(void)
 
 /* Worker callback for sys_wq -- runs the slow-path raise on the
  * deferred-work thread instead of the compositor first-frame
- * thread. The actual NVRAM write blocks for 10-100 ms on real
- * firmware; offloading it removes that hitch from presentation.
+ * thread. The NVRAM write is typically 10-100 ms on real firmware
+ * and has no enforced ceiling here (no timeout, no watchdog), which
+ * is exactly why it is kept off the presentation path.
  * Exactly ONE attempt runs here: on a transient failure
- * raise_if_steady hands the retry chain to its own one-shot task and
+ * raise_if_steady hands the retry chain to the kworker carrier and
  * returns, so the single sys_wq worker is never held across a
  * backoff. */
 static void boot_rollback_raise_worker(void *arg)
 {
     (void)arg;
+
+    /* NO carrier-startup handshake here, deliberately. A review round
+     * proposed calling kworker_init() on this thread so a worker still
+     * in STARTING could be waited for rather than reported
+     * unavailable; implementing it produced two worse defects and it
+     * was withdrawn.
+     *
+     * First, kworker_init() can reach task_create(), and this callback
+     * runs after userland and preemptive scheduling are live.
+     * task_create picks its slot with pid = num_tasks and publishes it
+     * by incrementing num_tasks much later (src/kernel/sched/task.c),
+     * with no lock spanning the two, so a concurrent NtCreateProcess
+     * can select the same slot. Trading a rare unraised security floor
+     * for task-table corruption is not a trade worth making, and
+     * fixing the admission race belongs to the scheduler, not here.
+     *
+     * Second, the handshake would run BEFORE the policy check, so on a
+     * degraded system every steady boot would pay it even when the
+     * policy is off and no write can happen -- stalling the single
+     * sys_wq worker, and with it the A/B mark-good queued immediately
+     * behind this item.
+     *
+     * The accepted limitation: arm_retry probes the side-effect-free
+     * kworker_is_started(), so a worker still in STARTING reads as
+     * unavailable and the chain ends terminal. It ends LOUDLY -- one
+     * LOG_ERROR naming the failure -- which is the contract this
+     * section actually owes: the floor is raised, or the operator is
+     * told it was not. */
     (void)boot_rollback_raise_if_steady();
 }
 
@@ -701,9 +812,13 @@ int boot_rollback_request_raise(void)
     if (!__atomic_load_n(&s_steady, __ATOMIC_ACQUIRE))
         return 0;
 
-    /* Idempotent: claim the enqueue slot under the state lock so a
-     * concurrent failure-path cleanup cannot expose a half-cleared
-     * {s_attempted, s_enqueued} pair. */
+    /* Idempotent: test-and-latch s_enqueued under the state lock, so
+     * exactly one caller per boot takes ownership of the raise. Note
+     * the failure path never CLEANS UP this flag -- a transient
+     * failure mutates only s_attempted and deliberately retains
+     * s_enqueued, so the pair it establishes is {0,1} and the chain
+     * keeps the claim. Reading it under the same lock is what makes
+     * that hand-off indivisible from a concurrent requester's view. */
     {
         uint64_t flags;
         spin_lock_irqsave(&s_state_lock, &flags);
@@ -737,14 +852,21 @@ int boot_rollback_request_raise(void)
      * raise attempt would violate the section test checkpoint
      * "a boot that reaches first stable compositor frame MUST advance
      * the counter exactly once when the opt-in policy is set". The
-     * stall is unfortunate but bounded (single SetVariable call, no
-     * loop). */
+     * stall is ONE SetVariable call with no loop and no retry inline.
+     * That bounds the NUMBER of firmware calls, not their duration:
+     * BOOT_ROLLBACK_WRITE enters firmware with no timeout and no
+     * watchdog, so degraded firmware can stall this thread for as
+     * long as it likes. The 10-100 ms figure quoted elsewhere is a
+     * typical observation, not a bound this code enforces. */
     klog(LOG_WARN, "boot",
          "anti-rollback: workqueue unavailable (sys_wq=%s); running "
          "raise synchronously on caller",
          (uint64_t)(uintptr_t)(sys_wq ? "full" : "null"));
-    /* raise_if_steady manages s_enqueued cleanup atomically with
-     * s_attempted on transient failure; nothing to do here. */
+    /* On a transient failure raise_if_steady releases s_attempted
+     * under s_state_lock and RETAINS s_enqueued, handing the chain its
+     * single claim, so the fallback has no state transition of its own
+     * to perform. It does NOT clear both flags -- that was the
+     * pre-retry behavior. */
     (void)boot_rollback_raise_if_steady();
     return 1;
 }
@@ -759,14 +881,25 @@ int boot_rollback_request_raise(void)
 void boot_rollback_reset_for_test(void)
 {
     /* Latch terminal FIRST, then drop any live registration, and only
-     * then rewind. Cancelling first is not enough: kworker_unregister
-     * waits for an in-flight callback to drain, and that callback can
-     * still return RETRYABLE and re-arm -- publishing a NEW token
-     * after the cancel already cleared the old one, which reset would
-     * then walk past and leave ticking into the next test's state.
-     * With s_terminal set, an in-flight attempt returns SKIPPED and
-     * the tick takes the cancel path instead of the re-arm path, so
-     * no registration can outlive this reset. */
+     * then rewind.
+     *
+     * What this actually guarantees, precisely: no tick can PUBLISH a
+     * registration, because the tick has no path that registers -- the
+     * chain arms exactly once and later steps only move a deadline. So
+     * cancel_retry clears the one token that can exist, and nothing can
+     * create another behind it.
+     *
+     * What the s_terminal pre-latch does NOT do, despite an earlier
+     * comment here saying so: it does not stop a callback that has
+     * ALREADY claimed its attempt. attempt_raise reads s_terminal once,
+     * at claim time, and the give-up decision afterwards is computed
+     * from the status and the attempt count alone. Such a callback can
+     * still return RETRYABLE and push the deadline out. That is
+     * harmless -- the deadline it writes belongs to a chain whose token
+     * is already -1, and the next tick returns at the token guard --
+     * but it is not the mechanism, and claiming it was would be
+     * asserting a property nothing enforces. What the pre-latch buys
+     * is that no attempt claimed AFTER it can start a fresh write. */
     {
         uint64_t flags;
         spin_lock_irqsave(&s_state_lock, &flags);
@@ -788,7 +921,10 @@ void boot_rollback_reset_for_test(void)
         s_terminal        = 0;
         s_last_status     = 0;
         s_retry_spawned   = 0;
+        s_arm_epoch++;
+        s_retry_token     = -1;
         s_retry_period_ms = 0;
+        s_next_attempt_ns = 0;
         spin_unlock_irqrestore(&s_state_lock, flags);
     }
     /* Atomic stores to mirror the production paths -- tests that
@@ -836,12 +972,24 @@ uint32_t boot_rollback_attempts_for_test(void)
 
 uint32_t boot_rollback_terminal_reports_for_test(void)
 {
-    return s_terminal_reports;
+    uint32_t n;
+    uint64_t flags;
+
+    spin_lock_irqsave(&s_state_lock, &flags);
+    n = s_terminal_reports;
+    spin_unlock_irqrestore(&s_state_lock, flags);
+    return n;
 }
 
 uint64_t boot_rollback_terminal_status_for_test(void)
 {
-    return s_terminal_status;
+    uint64_t st;
+    uint64_t flags;
+
+    spin_lock_irqsave(&s_state_lock, &flags);
+    st = s_terminal_status;
+    spin_unlock_irqrestore(&s_state_lock, flags);
+    return st;
 }
 
 uint32_t boot_rollback_next_backoff_for_test(uint32_t current_ms)

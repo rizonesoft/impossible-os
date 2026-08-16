@@ -715,6 +715,12 @@ From the stamped section 1:
 From the stamped section 9:
 - [ ] Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process: needs the per-process VM/commit counters this section already owes `RLIMIT_AS`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §9`
 
+Filed 2026-08-16 from the 01-boot-platform/TODO-01 §25 review:
+- [ ] Make the two `task_create` concurrency XREFs name their distinct invariants: today one stamp reads as though the other already owns its defect.
+  - They are NOT the same race. Slot CLAIM is creator-versus-creator: two creators read the same `num_tasks` before either reserves it (owner `03-memory-concurrency/TODO-06 §13`, item "Atomic task-slot CLAIM" at line 300, referenced from line 315). PUBLICATION is writer-versus-reader: ordering `num_tasks++` and the slot publish against scheduler enumeration and `job_kill_all_members`.
+  - The work is to state which invariant each stamp covers, NOT to pick one canonical owner: collapsing them would leave the other invariant untracked. Line 554's stamp mixes both descriptions today.
+  - Confirmed at source while reviewing TODO-01 §25: [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) selects the slot at 830-835 and publishes at 1119-1125 under `pgroup_jobctl_lock()`, which covers process-group membership and not slot admission. They are separate phases, which is why they are separate invariants.
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

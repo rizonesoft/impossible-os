@@ -54,3 +54,14 @@ int kworker_init(void);
 /* Test/diagnostic: last fire time (uptime ns) for a token; 0 if never fired or
  * the token is stale/invalid. */
 uint64_t kworker_last_fire_ns(int token);
+
+/* Non-zero when the shared worker is RUNNING and will service registrations.
+ *
+ * This is a pure query with NO side effects: unlike kworker_init(), it never
+ * creates the worker task and never yield-spins waiting for one to publish
+ * STARTED. Use it when a caller needs to know whether registering is
+ * worthwhile but must not pay a startup handshake -- notably any path that can
+ * run on a latency-sensitive thread, where kworker_init() on a failed-startup
+ * system would re-run task_create or spin to KWORKER_START_YIELD_CAP. A caller
+ * that legitimately wants to START the worker still calls kworker_init(). */
+int kworker_is_started(void);

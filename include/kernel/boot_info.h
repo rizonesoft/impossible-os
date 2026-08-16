@@ -395,9 +395,13 @@ int boot_rollback_should_raise(const struct boot_info *info,
  * latches the steady signal from the compositor first stable frame --
  * today this is the only steady source; a pre-frame hang
  * intentionally withholds the raise so the machine can still fall
- * back to the prior image. raise_if_steady() performs the one-shot
- * NVRAM raise of IPOSRequiredSecVersion when the opt-in policy is set
- * and shipped > required. The raise site used to fire in Phase 3
+ * back to the prior image. raise_if_steady() performs ONE immediate
+ * NVRAM write attempt of IPOSRequiredSecVersion when the opt-in
+ * policy is set and shipped > required, and -- on a firmware status
+ * in the retry allowlist -- also STARTS the bounded retry chain
+ * described below, which may issue up to three further writes from
+ * the carrier. It is not one-shot in the sense of having no further
+ * side effects. The raise site used to fire in Phase 3
  * immediately after POST16_BOOT_OK, which could advance the rollback
  * floor on a boot that crashed during compositor init.
  * Test-only reset helper is declared but not exposed to release
@@ -415,7 +419,8 @@ int  boot_rollback_was_raised(void);
 int  boot_rollback_raise_if_steady(void);
 /* Schedule the raise asynchronously on sys_wq so the compositor
  * first-frame thread does not block on the UEFI Runtime Services
- * SetVariable call (10-100 ms NVRAM flash on real firmware). The
+ * SetVariable call (typically a 10-100 ms NVRAM flash on real
+ * firmware, with no ceiling enforced by this code). The
  * actual NVRAM write happens later in the worker thread.
  *
  * Precondition: caller must have invoked mark_steady() first. A call
@@ -425,23 +430,41 @@ int  boot_rollback_raise_if_steady(void);
  * mistakes that would otherwise permanently strand the rollback
  * floor for the boot.
  *
- * Idempotence is conditional on the eventual outcome:
- *  - On confirmed SUCCESS or permanent OPT-OUT, the request is
- *    latched (s_attempted=1, s_enqueued=1) and subsequent calls
- *    return 0 forever. This is the common-case "already serviced"
- *    no-op.
+ * Idempotence is conditional on the eventual outcome. FIVE outcomes
+ * are terminal for the boot -- all of them latch the request
+ * (s_attempted=1, s_enqueued=1) so every later call returns 0, and
+ * only the FIRST means the floor actually moved:
+ *  - confirmed SUCCESS (the floor advanced; was_raised() reports 1);
+ *  - permanent OPT-OUT (policy off, or shipped <= required);
+ *  - a TERMINAL firmware status, i.e. one outside the retry allowlist;
+ *  - RETRIES EXHAUSTED at BOOT_ROLLBACK_MAX_ATTEMPTS;
+ *  - NO CARRIER available, i.e. the kworker worker is not already
+ *    started or no registration slot is free. The chain does NOT wait
+ *    for a worker that might still be starting.
+ * The last three emit exactly one LOG_ERROR naming the firmware
+ * status. A caller MUST NOT read a 0 return as "serviced": ask
+ * boot_rollback_was_raised() for that.
  *  - On TRANSIENT SetVariable failure, the request stays latched and
  *    a bounded retry chain takes over: the implementation releases
  *    s_attempted under the state lock but KEEPS s_enqueued, so
  *    exactly one in-flight claim owns every remaining attempt and no
  *    second caller can start a competing write. A later
  *    request_raise() therefore returns 0 while the chain is live.
- *    The chain runs on its own one-shot task (never on the single
- *    sys_wq worker and never on the compositor thread, both of which
- *    perform at most ONE attempt before returning), retries only
- *    firmware statuses that can plausibly clear, caps the total at
- *    four attempts with 25/50/100 ms backoff, and reports failure
- *    once at LOG_ERROR naming the last firmware status.
+ *    The chain is carried by a SINGLE kworker delayed-work
+ *    registration, armed once and released only when the chain ends;
+ *    it never runs on the single sys_wq worker and never on the
+ *    compositor thread, both of which perform at most ONE attempt
+ *    before returning. It retries only firmware statuses that can
+ *    plausibly clear, caps the total at four attempts spaced by a
+ *    25/50/100 ms backoff, and reports failure once at LOG_ERROR
+ *    naming the last firmware status. Each step stores an ABSOLUTE
+ *    eligibility deadline and every tick before it is a no-op, so the
+ *    ladder is a guaranteed MINIMUM spacing with NO upper bound on
+ *    delivery. KWORKER_MAX_SLEEP_MS bounds only the carrier's IDLE
+ *    pickup interval, and only while the clock advances and no peer
+ *    callback is occupying the single serial worker; the chain
+ *    inherits kworker's contract that callbacks stay bounded and
+ *    non-hanging, and has no recourse if a peer breaks it.
  *
  * Fallback: if sys_wq is null OR the workqueue pool is exhausted,
  * runs boot_rollback_raise_if_steady() synchronously on the caller s
@@ -449,13 +472,27 @@ int  boot_rollback_raise_if_steady(void);
  * only raise attempt would violate the section test checkpoint.
  *
  * Returns 1 if work was enqueued OR the synchronous fallback ran.
- * Returns 0 in TWO distinct cases that callers MUST NOT collapse:
+ * Returns 0 in THREE distinct cases that callers MUST NOT collapse:
  *  - Pre-steady no-op (retryable): mark_steady has not fired yet;
  *    no slot was consumed and a later post-steady call can still
  *    own the raise.
- *  - Already-serviced no-op (terminal for this boot): the request
- *    is latched on success or permanent opt-out and subsequent
- *    calls stay 0 forever. */
+ *  - Request-in-flight no-op (PENDING, not finished): s_enqueued is
+ *    latched and someone else owns the raise. This covers BOTH the
+ *    initial request, which latches s_enqueued before the sys_wq
+ *    callback has run at all, and the later retry chain, which a
+ *    transient failure hands ownership to by releasing s_attempted
+ *    while KEEPING s_enqueued. In either case was_raised() is still 0
+ *    and the outcome is not yet known -- do not read this as a
+ *    transient-write retry specifically, or as a finished attempt.
+ *  - Already-latched terminal no-op: the request is latched by ANY
+ *    of the five terminal outcomes listed above -- success, opt-out,
+ *    a terminal firmware status, exhausted retries, or no available
+ *    carrier -- and subsequent calls stay 0 forever. Only the first
+ *    two of those five mean nothing is wrong, and only the FIRST
+ *    means the floor moved, so a 0 here is NOT evidence the policy
+ *    was applied. Call boot_rollback_was_raised() to distinguish --
+ *    and note that a 0 from IT means pending, opt-out, or failure,
+ *    which are separated only by the LOG_ERROR the failures emit. */
 int  boot_rollback_request_raise(void);
 #ifdef KERNEL_TESTS
 /* Fault-injection seam for the bounded-retry state machine. No test

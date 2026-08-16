@@ -370,6 +370,12 @@ From the stamped section 5:
 From the stamped section 9:
 - [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
 - [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
+From 01-boot-platform/TODO-01 §25 (anti-rollback bounded retry, 2026-08-16):
+- [ ] Give the anti-rollback give-up a durable record; it reports only to the boot log. -> XREF: 01-boot-platform/TODO-01 §25 (item: "Report exhaustion once, at `LOG_ERROR`, naming the last firmware status" at line 930)
+  - `boot_rollback_report_terminal()` in [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c) emits one `klog_unrated(LOG_ERROR, ...)` naming the final firmware status, and that line lives solely in the serial log of the boot that produced it. Mirror it into the boot-decision Registry record or the BlackBox transcript.
+  - User impact: an operator enables `anti_rollback_raise` to retire a vulnerable image on an unattended or headless box, the write exhausts its retries, and nothing survives the boot to say the policy never took effect. Windows records the equivalent SVN-update outcome durably as Event ID 1042.
+  - Precedent already in the tree: TODO-01 §7 and §12 ship exactly this pattern (Registry record + BlackBox transcript) for stale-loader mismatch and boot provenance; §25's terminal give-up is the anti-rollback failure mode that did not get one.
+
 From the stamped section 11:
 - [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports vs the single aggregate `storage` entry. Owner: this section.
 - [ ] Probe-result aggregation (storage + network): split driver return codes so absent-vs-failed is distinguishable (rtl8139/ahci/virtio-blk return -1 for both; sequential storage always LOADED) for accurate SKIPPED/FAILED. Owner: this section.

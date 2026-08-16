@@ -255,6 +255,16 @@ static void kworker_main(void)
     }
 }
 
+int kworker_is_started(void)
+{
+    /* Acquire pairs with the RELEASE store in kworker_main that publishes
+     * STARTED, so a caller that observes started also observes the worker's
+     * initialized state. No CAS, no task_create, no spin -- a caller on a
+     * latency-sensitive thread can ask this question for free. */
+    return (__atomic_load_n(&s_kworker_state, __ATOMIC_ACQUIRE) == KWORKER_STARTED)
+           ? 1 : 0;
+}
+
 int kworker_init(void)
 {
     extern int task_create(void (*entry)(void), const char *name);
