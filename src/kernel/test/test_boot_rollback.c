@@ -19,6 +19,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
+#include "kernel/uefi_runtime.h"
 #include "kernel/sched/workqueue.h"
 
 static struct boot_info s_rb_buf;
@@ -366,6 +367,352 @@ static void test_boot_rollback_request_raise_pre_steady_no_latch(void)
     boot_rollback_reset_for_test();
 }
 
+/* ---- Bounded-retry state machine (section 25) ----
+ *
+ * The retry path is unreachable without fault injection: no harness
+ * can make real firmware fail one SetVariable and pass the next,
+ * which is exactly the case the retry exists for. These cases install
+ * a fake writer, run the chain inline on the test thread, and zero
+ * the backoff, so the whole state machine is observed
+ * deterministically and off the wall clock.
+ *
+ * Every case forces sys_wq NULL so the raise takes the synchronous
+ * path on this thread rather than racing the workqueue worker. */
+
+#define RB_FI_MAX_SCRIPT 8u
+
+static uint32_t s_fi_calls        = 0;   /* writer invocations */
+static uint64_t s_fi_script[RB_FI_MAX_SCRIPT];  /* status per call, in order */
+static uint32_t s_fi_script_len   = 0;   /* calls past the end return success */
+static uint32_t s_fi_value_seen   = 0;   /* value of the LAST write attempt */
+static int      s_fi_nested_rc    = -1;  /* rc of a request issued mid-chain */
+static int      s_fi_nested_probe = 0;   /* issue that nested request? */
+
+static uint64_t rb_fault_writer(uint32_t value)
+{
+    uint64_t status;
+
+    s_fi_calls++;
+    s_fi_value_seen = value;
+
+    /* Concurrency probe: a second requester arriving while the chain
+     * still owns its claim must be refused, and must not produce a
+     * second writer call. Issued from inside the first write so the
+     * chain is provably mid-flight. */
+    if (s_fi_nested_probe && s_fi_calls == 1u)
+        s_fi_nested_rc = boot_rollback_request_raise();
+
+    /* Scripted status sequence: the Nth call returns the Nth entry,
+     * and anything past the end succeeds. This is what makes
+     * transient-then-terminal and mixed-status orders expressible. */
+    status = 0u;
+    if (s_fi_calls <= s_fi_script_len)
+        status = s_fi_script[s_fi_calls - 1u];
+    return status;
+}
+
+/* Stage opt-in policy + injected writer. The script is copied so the
+ * caller can pass a literal array. Returns via out-params so the
+ * caller can restore the globals it borrowed. */
+static void rb_fault_begin(const uint64_t *script, uint32_t script_len,
+                           workqueue_t **saved_wq, uint8_t *saved_opt,
+                           uint32_t *saved_ship, uint32_t *saved_req)
+{
+    uint32_t i;
+
+    boot_rollback_reset_for_test();
+
+    s_fi_calls        = 0u;
+    s_fi_value_seen   = 0u;
+    s_fi_nested_rc    = -1;
+    s_fi_nested_probe = 0;
+    s_fi_script_len   = (script_len > RB_FI_MAX_SCRIPT) ? RB_FI_MAX_SCRIPT
+                                                        : script_len;
+    for (i = 0u; i < s_fi_script_len; i++)
+        s_fi_script[i] = script[i];
+
+    *saved_wq   = sys_wq;
+    *saved_opt  = g_boot_info.config.anti_rollback_raise;
+    *saved_ship = g_boot_info.os_loader_security_version;
+    *saved_req  = g_boot_info.required_security_version;
+
+    sys_wq = (workqueue_t *)0;                  /* synchronous, deterministic */
+    g_boot_info.config.anti_rollback_raise = 1; /* opt in so the write happens */
+    g_boot_info.os_loader_security_version = 7u;
+    g_boot_info.required_security_version  = 5u;
+
+    boot_rollback_set_writer_for_test(rb_fault_writer);
+    boot_rollback_set_inline_retry_for_test(1); /* chain runs on this thread */
+}
+
+static void rb_fault_end(workqueue_t *saved_wq, uint8_t saved_opt,
+                         uint32_t saved_ship, uint32_t saved_req)
+{
+    sys_wq = saved_wq;
+    g_boot_info.config.anti_rollback_raise = saved_opt;
+    g_boot_info.os_loader_security_version = saved_ship;
+    g_boot_info.required_security_version  = saved_req;
+    s_fi_nested_probe = 0;
+    boot_rollback_reset_for_test();   /* also restores the production writer */
+}
+
+static void test_boot_rollback_retry_transient_then_success(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    static const uint64_t script[] = { UEFI_DEVICE_ERROR };
+    rb_fault_begin(script, 1u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    int rc = boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)rc, 1u, "request owns the raise");
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 2u,
+                   "one failure then one success: exactly 2 writes");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 1u,
+                   "floor advanced after the retry");
+    TEST_ASSERT_EQ((uint64_t)s_fi_value_seen, 7u,
+                   "retry writes the shipped version, not a stale value");
+
+    /* No second compositor first-frame request exists on a real boot;
+     * assert that even if one arrived it cannot double-write. */
+    int rc2 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)rc2, 0u, "post-success request is a no-op");
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 2u, "no third write");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+static void test_boot_rollback_retry_exhaustion_caps_attempts(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    /* Fail every call: the cap, not the firmware, must end the chain.
+     * Five entries against a cap of four also proves the cap binds
+     * before the script runs out. */
+    static const uint64_t script[] = {
+        UEFI_DEVICE_ERROR, UEFI_DEVICE_ERROR, UEFI_DEVICE_ERROR,
+        UEFI_DEVICE_ERROR, UEFI_DEVICE_ERROR
+    };
+    rb_fault_begin(script, 5u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, (uint64_t)BOOT_ROLLBACK_MAX_ATTEMPTS,
+                   "attempts stop at the cap");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_attempts_for_test(),
+                   (uint64_t)BOOT_ROLLBACK_MAX_ATTEMPTS,
+                   "counter agrees with the write count");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "floor never advanced");
+    /* The give-up telemetry is a completion requirement, so assert it
+     * rather than only suppressing it. */
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_terminal_reports_for_test(), 1u,
+                   "exactly one exhaustion report");
+    TEST_ASSERT_EQ(boot_rollback_terminal_status_for_test(),
+                   (uint64_t)UEFI_DEVICE_ERROR,
+                   "report carries the final firmware status");
+
+    /* Terminal for the boot: nothing re-arms the chain. */
+    int rc2 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)rc2, 0u, "post-exhaustion request refused");
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, (uint64_t)BOOT_ROLLBACK_MAX_ATTEMPTS,
+                   "no attempt past the cap");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+static void test_boot_rollback_terminal_status_not_retried(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    /* A write-protected variable store is a decision the firmware
+     * makes identically every time. Retrying spends three more
+     * blocking calls and mislabels a refusal as a timeout. */
+    static const uint64_t script[] = {
+        UEFI_WRITE_PROTECTED, UEFI_WRITE_PROTECTED
+    };
+    rb_fault_begin(script, 2u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 1u,
+                   "terminal status stops at the first attempt");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "floor never advanced");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_terminal_reports_for_test(), 1u,
+                   "exactly one refusal report");
+    TEST_ASSERT_EQ(boot_rollback_terminal_status_for_test(),
+                   (uint64_t)UEFI_WRITE_PROTECTED,
+                   "report names the refusing status, not a timeout");
+
+    int rc2 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)rc2, 0u, "post-terminal request refused");
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 1u, "still exactly one write");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+/* The second allowlist entry must recover exactly like the first: a
+ * variable store briefly out of working memory is the other status
+ * this section exists to survive. */
+static void test_boot_rollback_out_of_resources_is_retried(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    static const uint64_t script[] = { UEFI_OUT_OF_RESOURCES };
+    rb_fault_begin(script, 1u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 2u, "resource shortage is retried");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 1u,
+                   "floor advanced on the retry");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_terminal_reports_for_test(), 0u,
+                   "a recovered chain reports nothing");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+/* A chain that starts transient and then hits a refusal must stop at
+ * the refusal, not run out the remaining attempts. */
+static void test_boot_rollback_transient_then_terminal_stops(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    static const uint64_t script[] = {
+        UEFI_DEVICE_ERROR, UEFI_SECURITY_VIOLATION, UEFI_DEVICE_ERROR
+    };
+    rb_fault_begin(script, 3u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 2u,
+                   "chain stops at the refusal, short of the cap");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "floor never advanced");
+    TEST_ASSERT_EQ(boot_rollback_terminal_status_for_test(),
+                   (uint64_t)UEFI_SECURITY_VIOLATION,
+                   "report names the refusal, not the earlier hiccup");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+/* Fail-closed: a status outside the allowlist is not demonstrably
+ * transient, so it ends the chain at the first attempt. */
+static void test_boot_rollback_unknown_status_is_terminal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    /* High bit set marks an EFI error; the code itself is one this
+     * kernel does not classify. */
+    static const uint64_t script[] = { (0x2AULL | (1ULL << 63)) };
+    rb_fault_begin(script, 1u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 1u,
+                   "unclassified status is not retried");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_terminal_reports_for_test(), 1u,
+                   "exactly one report");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+/* The last attempt inside the cap must still be able to succeed --
+ * an off-by-one in the give-up test would burn it. */
+static void test_boot_rollback_succeeds_on_final_attempt(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    static const uint64_t script[] = {
+        UEFI_DEVICE_ERROR, UEFI_DEVICE_ERROR, UEFI_DEVICE_ERROR
+    };
+    rb_fault_begin(script, 3u, &wq, &opt, &ship, &req);
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, (uint64_t)BOOT_ROLLBACK_MAX_ATTEMPTS,
+                   "the fourth write is still made");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 1u,
+                   "success on the final allowed attempt still raises");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_terminal_reports_for_test(), 0u,
+                   "no give-up report when the last attempt lands");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+/* No carrier for the retry: the raise must fail CLOSED with the one
+ * report, never sit latched behind a chain that will never run. */
+static void test_boot_rollback_retry_scheduling_failure_is_terminal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    static const uint64_t script[] = { UEFI_DEVICE_ERROR };
+    rb_fault_begin(script, 1u, &wq, &opt, &ship, &req);
+    boot_rollback_set_inline_retry_for_test(0);  /* take the real carrier path */
+    boot_rollback_set_sched_fail_for_test(1);    /* which cannot be armed */
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 1u,
+                   "one attempt, then nothing to carry the retry");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 0u,
+                   "floor never advanced");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_terminal_reports_for_test(), 1u,
+                   "the unschedulable retry is reported once");
+
+    int rc2 = boot_rollback_request_raise();
+    TEST_ASSERT_EQ((uint64_t)rc2, 0u, "state is terminal, not retryable");
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 1u, "still exactly one write");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
+/* The backoff ladder is a pure function, so assert it directly rather
+ * than inferring it from timing. */
+static void test_boot_rollback_backoff_progression(void)
+{
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_next_backoff_for_test(0u), 25u,
+                   "first backoff is 25 ms");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_next_backoff_for_test(25u), 50u,
+                   "then 50 ms");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_next_backoff_for_test(50u), 100u,
+                   "then 100 ms");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_next_backoff_for_test(100u), 100u,
+                   "and clamps at 100 ms");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_next_backoff_for_test(0x80000000u),
+                   100u, "a doubling that would wrap clamps instead");
+}
+
+static void test_boot_rollback_retry_excludes_concurrent_request(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    workqueue_t *wq; uint8_t opt; uint32_t ship, req;
+    static const uint64_t script[] = { UEFI_DEVICE_ERROR };
+    rb_fault_begin(script, 1u, &wq, &opt, &ship, &req);
+    s_fi_nested_probe = 1;   /* second requester arrives mid-write */
+
+    boot_rollback_mark_steady();
+    (void)boot_rollback_request_raise();
+
+    TEST_ASSERT_EQ((uint64_t)s_fi_nested_rc, 0u,
+                   "a request during the live chain is refused");
+    TEST_ASSERT_EQ((uint64_t)s_fi_calls, 2u,
+                   "the chain owns both writes; the intruder added none");
+    TEST_ASSERT_EQ((uint64_t)boot_rollback_was_raised(), 1u,
+                   "chain still completes the raise exactly once");
+
+    rb_fault_end(wq, opt, ship, req);
+}
+
 void test_register_boot_rollback(void)
 {
     test_suite_register_cat("boot_rollback: NULL info rejected",
@@ -404,4 +751,24 @@ void test_register_boot_rollback(void)
                             test_boot_rollback_request_raise_pre_steady_no_latch, TEST_CAT_BOOT);
     test_suite_register_cat("boot_rollback: was_raised split stays 0 on opt-out; reset clears",
                             test_boot_rollback_was_raised_reset_clears, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: transient failure then success raises exactly once",
+                            test_boot_rollback_retry_transient_then_success, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: all-fail chain stops at the attempt cap",
+                            test_boot_rollback_retry_exhaustion_caps_attempts, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: terminal firmware status is not retried",
+                            test_boot_rollback_terminal_status_not_retried, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: live retry chain excludes a concurrent request",
+                            test_boot_rollback_retry_excludes_concurrent_request, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: out-of-resources is retried like device-error",
+                            test_boot_rollback_out_of_resources_is_retried, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: transient then terminal stops at the refusal",
+                            test_boot_rollback_transient_then_terminal_stops, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: unclassified firmware status is terminal",
+                            test_boot_rollback_unknown_status_is_terminal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: success on the final allowed attempt still raises",
+                            test_boot_rollback_succeeds_on_final_attempt, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: unschedulable retry fails closed with one report",
+                            test_boot_rollback_retry_scheduling_failure_is_terminal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_rollback: backoff ladder 25/50/100 with clamp",
+                            test_boot_rollback_backoff_progression, TEST_CAT_BOOT);
 }

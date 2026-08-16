@@ -95,7 +95,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | ⭐  |  22   | Handoff base in the deploy-time ABI fingerprint    | §2, §3, §17, §21                   |  [/]   |
 | 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
 | ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [x]   |
-| 💎  |  25   | Bounded retry for a transient rollback-floor write | §13, §16, §24                      |  [ ]   |
+| 💎  |  25   | Bounded retry for a transient rollback-floor write | §13, §16, §24                      |  [x]   |
 
 ---
 
@@ -910,7 +910,7 @@ The gap is narrow and the shape of the fix already exists in this file: §19 bui
 > - **Scope boundary:** §24 owns the harness and the opt-in wiring; the variable contract stays §13's and the steady-latch design stays §16's.
 
 > **Verified:** 2026-08-15 | commit `47942a8d1` + review fixes | 12/13 items | build OK | harness 4/4 fixtures (KVM) | 30009 kernel + 17 user-mode PASS | lint 0 errors | smoke matrix 4/4 legs (TCG+KVM x 1+2 CPU) | sensitivity re-proven twice: the pre-§16 raise site and a raise relocated into `compositor_run()` both fail runs B and A, and reverting each restores 4/4
-> **Deferred:** [H] a transient `SetVariable` failure is never retried -- the rollback of `s_attempted`/`s_enqueued` exists so "a future request can retry", but the only production caller is the compositor `first_frame` branch, which never fires twice (reason: needs a bounded retry + backoff design on the security-floor write, not a hasty loop) -> XREF: 01-boot-platform/TODO-01 §25 (item: "Schedule a bounded retry on `sys_wq` after a transient failure" at line 928)
+> **Deferred:** [H] RESOLVED 2026-08-16 by §25 -- a transient `SetVariable` failure is now retried on a bounded `kworker` chain that keeps one in-flight claim; the dead `s_attempted`/`s_enqueued` rollback is reachable at last -> XREF: 01-boot-platform/TODO-01 §25 (item: "Schedule a bounded retry after a transient failure" at line 928)
 > **Accepted:** [M] require the bootloader to demand EXACT `NV|BS|RT` equality rather than a superset (reason: `bootx64.c:16659` fail-closes on that path, so exact-match would refuse to boot on firmware that adds an attribute bit) -> XREF: 01-boot-platform/TODO-01 §24 (item: "Seed a fixture store written under a historical GUID or a wider attribute set" at line 896)
 > **Quality reviewed:** 2026-08-15 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) + kernel-quality-auditor + boot-quality-auditor | 5H+9M+3L fixed, 1H deferred | scope: kernel-code-quality + boot-code-quality
 
@@ -925,13 +925,34 @@ The gap is narrow and the shape of the fix already exists in this file: §19 bui
 
 §24's fixture harness cannot see this: it exercises only the success path, because a QEMU boot has no way to make one `SetVariable` fail and the next succeed.
 
-- [ ] Schedule a bounded retry on `sys_wq` after a transient failure in [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c), retaining exactly one in-flight claim so the retry cannot double-write.
-- [ ] Cap the attempts and back off between them; a firmware that fails every write must not spin the workqueue for the life of the boot.
-- [ ] Report exhaustion once, at `LOG_ERROR`, naming the last firmware status so an operator can tell "policy declined" from "policy failed".
-- [ ] Add a fault-injected unit test where `SetVariable` fails once then succeeds, with no second compositor first-frame request, and assert the floor still advances exactly once.
-- [ ] Commit: `"boot: bounded retry for a transient anti-rollback floor write"`
+- [x] Schedule a bounded retry after a transient failure in [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c), retaining exactly one in-flight claim so the retry cannot double-write.
+  - `boot_rollback_attempt_raise()` releases `s_attempted` but KEEPS `s_enqueued` under `s_state_lock`, so the chain owns every remaining attempt and a concurrent requester is refused.
+  - Carrier is `kworker` delayed work, NOT `sys_wq` as drafted and not a spawned task. `sys_wq` has a single worker, so a loop there would block the A/B mark-good [`src/kernel/main/compositor.c`](../../src/kernel/main/compositor.c) enqueues right after the raise; a fire-and-forget task would hold one of 32 slots plus its guarded stack for the boot, since slots are reclaimed only through `task_waitpid`.
+  - The sys_wq worker and the synchronous fallback each make exactly ONE attempt and return.
+- [x] Cap the attempts and back off between them; a firmware that fails every write must not hold a delayed-work slot for the life of the boot.
+  - `BOOT_ROLLBACK_MAX_ATTEMPTS` 4, declared in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) so the tests assert the exact write count, with a 25/50/100 ms ladder from the pure `boot_rollback_next_backoff_ms()` helper.
+  - Timing belongs to `kworker`, so there is no polling loop that a stalled clock could wedge.
+- [x] Report exhaustion once, at `LOG_ERROR`, naming the last firmware status so an operator can tell "policy declined" from "policy failed".
+  - `s_terminal` latches inside the same critical region that decides to give up, so `boot_rollback_report_terminal()` is unreachable twice. It separates "retries exhausted", "terminal firmware status", and "no carrier available".
+  - Added beyond the draft: `boot_rollback_status_is_transient()` is a fail-closed allowlist (`UEFI_DEVICE_ERROR`, `UEFI_OUT_OF_RESOURCES`). Retrying a write-protected or security-violating store would spend three more blocking calls and mislabel a platform refusal as a timeout.
+  - Arming also probes `kworker_init()`: a registration with no worker running would leave the claim latched behind a chain that can never fire.
+- [x] Add a fault-injected unit test where the NVRAM write fails once then succeeds, with no second first-frame request, and assert the floor still advances exactly once.
+  - `test_boot_rollback_retry_transient_then_success` in [`src/kernel/test/test_boot_rollback.c`](../../src/kernel/test/test_boot_rollback.c) asserts exactly 2 writes, `was_raised()` 1, and no third write on a later request.
+  - Ten cases total: the cap with exactly-once telemetry, terminal status, out-of-resources recovery, transient-then-terminal, unclassified status, success on the final allowed attempt, unschedulable-carrier fail-closed, concurrent-request exclusion, and the backoff ladder.
+  - The writer / inline-retry / sched-fail / terminal-report seams are all `KERNEL_TESTS`-gated; the release flavor calls its writer directly and carries no writable pointer behind the anti-rollback write.
+- [x] Commit: `"boot: bounded retry for a transient anti-rollback floor write"`
 
 **Test checkpoint:** with a fault injector failing the first `SetVariable` and passing the second, a single steady boot advances `IPOSRequiredSecVersion` exactly once and `boot_rollback_was_raised()` returns 1. With the injector failing every attempt, the boot completes, the floor is unchanged, and exactly one `LOG_ERROR` names the final status. Neither case may double-write, and the §24 harness must stay 4/4.
+
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (or `make test-boot`); expect the boot suite green with the ten `boot_rollback:` retry cases among it. Measured 2026-08-16: 4947 boot-suite kernel tests, 30052 kernel tests overall.
+
+> **Notes:**
+> - A transient `SetVariable` failure now releases the attempt latch while holding the enqueue claim, and a `kworker` entry takes the remaining attempts on a 25/50/100 ms ladder capped at `BOOT_ROLLBACK_MAX_ATTEMPTS`.
+> - Retryability is a fail-closed allowlist, so a firmware refusal stops at the first attempt and is reported as a refusal rather than a timeout.
+> - Give-up is reported exactly once at `LOG_ERROR` with the raw firmware status, which is what separates "policy declined" from "policy failed".
+> - Downstream: §16's rollback path is reachable instead of dead, and §24's fixture harness stays 4/4 because the success path is unchanged.
+> - Canonical doc: the raise contract in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) beside `boot_rollback_request_raise()`.
+> - Scope boundary: the live `kworker` dispatch is exercised by the boot path, not by a unit test; driving it would need boot infrastructure the test policy forbids.
 
 > -> XREF: [§16](#16-anti-rollback-raise-timing-hardening) -- §16 owns the steady gate and shipped the dead rollback; this section makes it reachable. [§24](#24-scripted-anti-rollback-nvram-fixture-harness) -- §24's harness proves the success path and is why this gap was found.
 
@@ -957,6 +978,7 @@ The gap is narrow and the shape of the fix already exists in this file: §19 bui
 | ⭐  | Rollback vs ABI drift split UX  | ❌                           | ❌                              | ✅ §18 hint helper + halt-preserve screen         |
 | ⭐  | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression     | ⚠️ kunit / kselftests partial   | ✅ §19 KVM+TCG harness wired to CI                |
 | ⭐  | Anti-rollback raise CI gate     | ❌ no public regression test | ❌ no equivalent gate           | ✅ §24 4-boot NVRAM harness wired to CI           |
+| ⭐  | Retry on a failed floor write   | ⚠️ internal, undocumented    | ❌ no equivalent write          | ✅ §25 bounded chain + one-shot LOG_ERROR report  |
 | ⭐  | TPM-bound kernel ABI manifest   | ⚠️ Measured Boot generic     | ⚠️ shim+SBAT only (no manifest) | ⬜ §11 cap bit + TODO-13 §9 PCR extend            |
 | 💎  | Bootloader build identity       | ⚠️ HAL-internal              | ⚠️ kernel CONFIG only           | ✅ §20 git-sha + build-time in boot_info          |
 | ⭐  | Handoff-base drift protection   | ⚠️ internal constant         | ✅ shared asm/bootparam.h       | ✅ §21 one definition; ⬜ §22 deploy-time gate    |

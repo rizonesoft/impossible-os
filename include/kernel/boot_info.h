@@ -402,6 +402,13 @@ int boot_rollback_should_raise(const struct boot_info *info,
  * floor on a boot that crashed during compositor init.
  * Test-only reset helper is declared but not exposed to release
  * callers; tests link against it via the test harness. */
+/* Total NVRAM write attempts the raise path will make in one boot:
+ * one initial attempt plus three retries, spaced 25/50/100 ms apart.
+ * Only firmware statuses that can plausibly clear on a later call are
+ * retried at all; a terminal status stops the chain at the first
+ * failure. */
+#define BOOT_ROLLBACK_MAX_ATTEMPTS  4u
+
 void boot_rollback_mark_steady(void);
 int  boot_rollback_is_steady(void);
 int  boot_rollback_was_raised(void);
@@ -423,13 +430,18 @@ int  boot_rollback_raise_if_steady(void);
  *    latched (s_attempted=1, s_enqueued=1) and subsequent calls
  *    return 0 forever. This is the common-case "already serviced"
  *    no-op.
- *  - On TRANSIENT SetVariable failure, the implementation atomically
- *    rolls BOTH s_attempted and s_enqueued back to 0 under the
- *    state lock so a future caller can retry the raise. A later
- *    request_raise() therefore CAN return 1 again -- this is by
- *    design (Codex 2026-04-30 step-13 M1: blocking retry through
- *    the public API would silently strand the rollback floor on
- *    UEFI runtime hiccups).
+ *  - On TRANSIENT SetVariable failure, the request stays latched and
+ *    a bounded retry chain takes over: the implementation releases
+ *    s_attempted under the state lock but KEEPS s_enqueued, so
+ *    exactly one in-flight claim owns every remaining attempt and no
+ *    second caller can start a competing write. A later
+ *    request_raise() therefore returns 0 while the chain is live.
+ *    The chain runs on its own one-shot task (never on the single
+ *    sys_wq worker and never on the compositor thread, both of which
+ *    perform at most ONE attempt before returning), retries only
+ *    firmware statuses that can plausibly clear, caps the total at
+ *    four attempts with 25/50/100 ms backoff, and reports failure
+ *    once at LOG_ERROR naming the last firmware status.
  *
  * Fallback: if sys_wq is null OR the workqueue pool is exhausted,
  * runs boot_rollback_raise_if_steady() synchronously on the caller s
@@ -446,7 +458,29 @@ int  boot_rollback_raise_if_steady(void);
  *    calls stay 0 forever. */
 int  boot_rollback_request_raise(void);
 #ifdef KERNEL_TESTS
-void boot_rollback_reset_for_test(void);
+/* Fault-injection seam for the bounded-retry state machine. No test
+ * harness can make real firmware fail one SetVariable and pass the
+ * next, so the retry path is only reachable through an injected
+ * writer: it receives the value the raise would have written and
+ * returns the EFI status to simulate (0 = success). The companion
+ * setters keep an injected test off the background carrier (inline
+ * retry runs the attempt loop on the caller instead of registering a
+ * kworker entry) and let it force the carrier to fail (sched_fail),
+ * so both the happy chain and the fail-closed latch are observed
+ * deterministically. The terminal-report accessors expose the
+ * exactly-once give-up telemetry without scraping the log.
+ * reset_for_test restores every one of them.
+ * KERNEL_TESTS-gated: a release kernel calls its writer directly and
+ * carries no writable pointer behind the anti-rollback write. */
+typedef uint64_t (*boot_rollback_writer_fn)(uint32_t value);
+void     boot_rollback_reset_for_test(void);
+void     boot_rollback_set_writer_for_test(boot_rollback_writer_fn fn);
+void     boot_rollback_set_inline_retry_for_test(int inline_retry);
+void     boot_rollback_set_sched_fail_for_test(int fail);
+uint32_t boot_rollback_attempts_for_test(void);
+uint32_t boot_rollback_terminal_reports_for_test(void);
+uint64_t boot_rollback_terminal_status_for_test(void);
+uint32_t boot_rollback_next_backoff_for_test(uint32_t current_ms);
 #endif
 
 /* Warm-kernel-update handoff (section 14).
