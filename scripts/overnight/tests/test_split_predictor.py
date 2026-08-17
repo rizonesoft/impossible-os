@@ -46,12 +46,62 @@ def _manifest(root):
 
 
 def test_abi_8_item_section_now_splits():
+    """P3.1's INTENT, preserved after its mechanism was retired 2026-08-17.
+
+    The original assertion demanded the verdict name a `>=6 ABI gate`. That
+    arm is gone: once the 2026-07-28 calibration dropped the general item gate
+    to `>= 5`, the ABI arm at `>= 6` could only ever fire on input the general
+    gate had already caught, so it appended a reason and changed no verdict.
+    What P3.1 actually wanted -- an exactly-8-item ABI section does not slip
+    through -- still holds, now via the arm that genuinely causes it."""
     with tempfile.TemporaryDirectory() as d:
         root = _repo_with_todo(d, items=8)      # exactly 8 -> old `> 8` missed it
         cx = _manifest(root)["complexity"]
         assert "SPLIT-RECOMMENDED" in cx["verdict"], cx
-        assert ">=6 ABI gate" in cx["verdict"], cx
+        assert "8 work items" in cx["verdict"], cx
+        # No ABI-derived REASON, in any wording. Deliberately broader than the
+        # retired `>=6 ABI gate` string: the cost this removal was paid for was
+        # a verdict ASSERTING an ABI premise the manifest never checked, which
+        # sent a session reading to disprove it. Any reason mentioning ABI
+        # re-creates that cost regardless of how the arm is spelled.
+        assert "ABI" not in cx["verdict"], cx
         assert cx["waiver_required"] is True
+        # the SIGNAL is retained even though it no longer authors a reason
+        assert cx["abi_impact"] is True, cx
+
+
+def test_abi_arm_cannot_change_a_verdict():
+    """REFUSAL-DIRECTION CONTROL for the 2026-08-17 removal.
+
+    The claim that justified deleting the arm is that it was dominated: any
+    section tripping it had already tripped the item gate. Prove it the way a
+    removal should be proven -- an ABI-prose section and an ABI-free section
+    must reach the SAME split decision at every item count around both
+    thresholds. If someone reintroduces an ABI arm that actually tightens, the
+    two columns diverge and this fails.
+
+    Deliberately asserts the DECISION (`waiver_required` and the SPLIT/fits
+    classification), not the reason string, because the reason text is exactly
+    what is allowed to differ."""
+    for n in range(0, 11):
+        with tempfile.TemporaryDirectory() as d:
+            root = _repo_with_todo(d, items=n)
+            abi = _manifest(root)["complexity"]
+        with tempfile.TemporaryDirectory() as d:
+            root = _repo_with_todo(d, items=n)
+            # strip every token the abi_impact regex matches from the body
+            for p in pathlib.Path(root).rglob("TODO-*.md"):
+                text = p.read_text(encoding="utf-8")
+                text = text.replace("SSDT env syscalls (ABI impact)", "env syscalls")
+                text = text.replace("and the SSDT shadow table", "and the lookup table")
+                p.write_text(text, encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+            plain = _manifest(root)["complexity"]
+        assert abi["abi_impact"] is True, (n, abi)
+        assert plain["abi_impact"] is False, (n, plain)
+        assert abi["waiver_required"] == plain["waiver_required"], (n, abi, plain)
+        assert (("SPLIT-RECOMMENDED" in abi["verdict"])
+                == ("SPLIT-RECOMMENDED" in plain["verdict"])), (n, abi, plain)
 
 
 def test_small_abi_section_fits():

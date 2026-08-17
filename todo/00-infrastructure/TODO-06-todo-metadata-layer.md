@@ -47,56 +47,57 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                            | Depends On    | Status |
-| --- | :---: | :-----: | -------------------------------------------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                          | --            |  [x]   |
-| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                 | §1            |  [x]   |
-| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                    | §1, §2        |  [x]   |
-| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema          | §2            |  [x]   |
-| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code    | §2            |  [x]   |
-| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                             | §3, §4        |  [x]   |
-| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                        | §2, §4        |  [x]   |
-| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                      | §4            |  [x]   |
-| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                | §2            |  [x]   |
-| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)           | §9            |  [x]   |
-| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                            | §10           |  [x]   |
-| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                         | §10, §11      |  [x]   |
-| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                 | §2, §11       |  [x]   |
-| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)           | §13           |  [x]   |
-| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles              | §13, §14      |  [x]   |
-| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)               | §12, §14      |  [x]   |
-| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                      | §14, §16      |  [x]   |
-| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction          | §16           |  [x]   |
-| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed           | §17           |  [x]   |
-| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                | §18           |  [x]   |
-| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                     | §17, §19      |  [x]   |
-| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)          | §19, §8       |  [x]   |
-| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)            | §19, §3       |  [x]   |
-| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile           | §21, §22      |  [x]   |
-| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)      | §2, §7        |  [x]   |
-| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)           | §3, §22       |  [x]   |
-| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)       | §21, §24      |  [x]   |
-| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has      | §25, §26      |  [x]   |
-| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                 | §23, §26      |  [x]   |
-| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)        | §24, §27      |  [x]   |
-| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id         | §21, §27      |  [x]   |
-| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                     | §3            |  [x]   |
-| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)       | §2, §26       |  [x]   |
-| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)        | §2            |  [x]   |
-| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line        | §29           |  [x]   |
-| ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35) | §2, §32, §35  |  [x]   |
-| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33           |  [x]   |
-| ⭐  |  38   |   §38   | Every gate parser adopts the shared fence tracker (split out of §36)                   | §36           |  [x]   |
-| ⭐  |  39   |   §41   | The two mutating repair tools adopt the shared fence tracker (split out of §38)        | §36, §38      |  [x]   |
-| ⭐  |  40   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                    | §36, §38, §41 |  [x]   |
-| ⭐  |  41   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges    | §37           |  [x]   |
-| ⭐  |  42   |   §42   | HTML blocks join the tracker, and the terminal contract carries the block kind         | §39           |  [/]   |
-| ⭐  |  43   |   §43   | Finish the one-contract consolidation across the consumer closure (split from §42)     | §39, §40, §42 |  [x]   |
-| ⭐  |  44   |   §44   | Inline span precedence + the Inputs table cell reaching the parser (split from §43)    | §39, §40      |  [x]   |
-| ⭐  |  45   |   §45   | Container phase: cost model, indent check, one section context for five walks          | §39, §42, §43 |  [x]   |
-| ⭐  |  46   |   §46   | CommonMark HTML block type 7 needs a non-backtracking matcher (split from §43)         | §42, §43      |  [x]   |
-| ⭐  |  47   |   §47   | The gate consumers adopt the section-context projections (spawned by §45 review)       | §45           |  [x]   |
-| ⭐  |  48   |   §48   | The mutating repair tool stops rewriting the raw HTML it is shown (split from §47)     | §42, §46      |  [x]   |
+| ⭐  | Order | Section | Deliverable                                                                             | Depends On    | Status |
+| --- | :---: | :-----: | --------------------------------------------------------------------------------------- | ------------- | :----: |
+| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                           | --            |  [x]   |
+| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                  | §1            |  [x]   |
+| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                     | §1, §2        |  [x]   |
+| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema           | §2            |  [x]   |
+| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code     | §2            |  [x]   |
+| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                              | §3, §4        |  [x]   |
+| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                         | §2, §4        |  [x]   |
+| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                       | §4            |  [x]   |
+| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                 | §2            |  [x]   |
+| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)            | §9            |  [x]   |
+| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                             | §10           |  [x]   |
+| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                          | §10, §11      |  [x]   |
+| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                  | §2, §11       |  [x]   |
+| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)            | §13           |  [x]   |
+| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles               | §13, §14      |  [x]   |
+| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)                | §12, §14      |  [x]   |
+| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                       | §14, §16      |  [x]   |
+| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction           | §16           |  [x]   |
+| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed            | §17           |  [x]   |
+| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                 | §18           |  [x]   |
+| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                      | §17, §19      |  [x]   |
+| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)           | §19, §8       |  [x]   |
+| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)             | §19, §3       |  [x]   |
+| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile            | §21, §22      |  [x]   |
+| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)       | §2, §7        |  [x]   |
+| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)            | §3, §22       |  [x]   |
+| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)        | §21, §24      |  [x]   |
+| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has       | §25, §26      |  [x]   |
+| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                  | §23, §26      |  [x]   |
+| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)         | §24, §27      |  [x]   |
+| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id          | §21, §27      |  [x]   |
+| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                      | §3            |  [x]   |
+| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)        | §2, §26       |  [x]   |
+| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)         | §2            |  [x]   |
+| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line         | §29           |  [x]   |
+| ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35)  | §2, §32, §35  |  [x]   |
+| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)          | §33           |  [x]   |
+| ⭐  |  38   |   §38   | Every gate parser adopts the shared fence tracker (split out of §36)                    | §36           |  [x]   |
+| ⭐  |  39   |   §41   | The two mutating repair tools adopt the shared fence tracker (split out of §38)         | §36, §38      |  [x]   |
+| ⭐  |  40   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                     | §36, §38, §41 |  [x]   |
+| ⭐  |  41   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges     | §37           |  [x]   |
+| ⭐  |  42   |   §42   | HTML blocks join the tracker, and the terminal contract carries the block kind          | §39           |  [/]   |
+| ⭐  |  43   |   §43   | Finish the one-contract consolidation across the consumer closure (split from §42)      | §39, §40, §42 |  [x]   |
+| ⭐  |  44   |   §44   | Inline span precedence + the Inputs table cell reaching the parser (split from §43)     | §39, §40      |  [x]   |
+| ⭐  |  45   |   §45   | Container phase: cost model, indent check, one section context for five walks           | §39, §42, §43 |  [x]   |
+| ⭐  |  46   |   §46   | CommonMark HTML block type 7 needs a non-backtracking matcher (split from §43)          | §42, §43      |  [x]   |
+| ⭐  |  47   |   §47   | The gate consumers adopt the section-context projections (spawned by §45 review)        | §45           |  [x]   |
+| ⭐  |  48   |   §48   | The mutating repair tool stops rewriting the raw HTML it is shown (split from §47)      | §42, §46      |  [x]   |
+| ⭐  |  49   |   §49   | Decide whether `alias-staleness` is producer-assertable, then promote or record why not | §36, §43      |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -454,8 +455,8 @@ This section owns ONLY that head-matching gap -- the PARSE. It does NOT re-cover
 
 > **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `144/144 passed, 0 failed` (sub-tests 14j-14z cover the split-head shapes, the negatives, and the corpus gate). No kernel test surface: this is host tooling, so there is no `TEST_CAT_*` category or bat.
 > **Verified:** 2026-08-06 | commit `cc05f2e9` + review fixes | 7/7 items | build OK | coverage 55 -> 57, corpus gate 0 lost / 0 moved / 2 added
-> **Deferred:** [M] resolver cache is line-bounded not byte-bounded, keys on path alone, and the fixed pre-slice shortens the body window near the head limit -- all pre-existing (RESOLVED 2026-08-13 in §12, commit `d41701b3`) -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Bound the resolver by BYTES and detect input mutation" at line 576)
-> **Deferred:** [M] backslash-newline splicing is mis-lexed (C splices before lexing); raised as a regression but reproduces identically on the pre-§10 resolver (RESOLVED 2026-08-13 in §12, commit `d41701b3`) -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Handle backslash-newline splicing in the resolver lexer" at line 582)
+> **Deferred:** [M] resolver cache is line-bounded not byte-bounded, keys on path alone, and the fixed pre-slice shortens the body window near the head limit -- all pre-existing (RESOLVED 2026-08-13 in §12, commit `d41701b3`) -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Bound the resolver by BYTES and detect input mutation" at line 577)
+> **Deferred:** [M] backslash-newline splicing is mis-lexed (C splices before lexing); raised as a regression but reproduces identically on the pre-§10 resolver (RESOLVED 2026-08-13 in §12, commit `d41701b3`) -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Handle backslash-newline splicing in the resolver lexer" at line 583)
 > **Quality reviewed:** 2026-08-06 | Codex 7x (design, adversarial x2, review-adversarial, consistency, perf, re-adversarial) | 4H+11M+0L fixed, 1 rejected, 2 deferred | scope: N/A (host tooling; the five code-quality skills all cover kernel/boot/desktop/shell/user surfaces)
 
 -> XREF: [`TODO-06 §9`](#9-per-item-stamped_items-cache-extension) -- the parent section; its `- [/]` item points here and this section states what it does not re-cover.
@@ -515,7 +516,7 @@ This section makes the second state countable. It is the REPORTING half of the r
 > - Coverage did not move (57 resolved, floor unchanged) -- this section changed what is REPORTED; §12 owns moving the number and now also owns wiring the identity snapshot into a gate.
 
 > **Verified:** 2026-08-06 | commit `08b96744` + review fixes | 8/9 items (1 parked operator-gated) | build OK | coverage 57/1625 with buckets summing; 17 coverage fixtures + test_build 146/146 + tooling 1287/1287 + lint 0 errors
-> **Deferred:** [H] a scalar `resolved_n` floor cannot see a lost resolved identity that a duplicate or unrelated one offsets; `corpus_resolution_snapshot.py` already pins identities but no gate runs it -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Wire `corpus_resolution_snapshot.py` into a GATE" at line 544)
+> **Deferred:** [H] a scalar `resolved_n` floor cannot see a lost resolved identity that a duplicate or unrelated one offsets; `corpus_resolution_snapshot.py` already pins identities but no gate runs it -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Wire `corpus_resolution_snapshot.py` into a GATE" at line 545)
 > **Resolved:** [M] 1,122 unpaired symbol refs (69% of the population) named a symbol with no file. Shipped in §13: section-scope pairing recovered 264; the residual 858 are an authoring convention, not bad data -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §13` (item: "Decide what an UNPAIRED symbol ref means" at line 586)
 > **Resolved:** [M] 246 bare-filename refs pointed at paths that never exist at the repo root though 224 had a unique basename. Shipped in §13: 238 repaired at resolution time, the 7 ambiguous + 1 absent never guessed -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §13` (item: "Resolve BARE-FILENAME refs against the tree" at line 593)
 > **Quality reviewed:** 2026-08-06 | Codex 4x (design, adversarial x2, consistency, perf) | 2H+5M+2L fixed, 1 deferred | scope: N/A (host tooling; the five code-quality skills all cover kernel/boot/desktop/shell/user surfaces)
@@ -684,7 +685,7 @@ It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, o
 
 > **Verified:** 2026-08-06 | commit `10cdda4b` + review fixes | 4/4 items | build OK | Check 7 474/1625 (baseline 474, 0 findings); identity 0 lost / 0 moved over 363 added, all ground-truthed; test_build 186/186; tooling 1287/1287; kernel 28326 + 17 user-mode; lint rc 0
 > **Quality reviewed:** 2026-08-06 | Codex 13x (design x1, adversarial x4, consistency x4, perf x4) | 5H+14M+2L fixed, 1 rejected, 2 filed | scope: N/A (host tooling; the one kernel-surface edit is a comment-only INTENTIONAL-STUB marker inside `#else /* !KERNEL_TESTS */`)
-> **Deferred:** [H] the identity snapshot records a verdict for only part of the population -- 930 of 1,625 occurrences get no entry and the 221 stored nulls do not say WHICH bucket, so a ref moving between unresolved buckets is invisible to it (RESOLVED 2026-08-13 in §14, commit `d0b2dc17`) -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §14` (item: "Record a verdict for EVERY `kind=symbol` occurrence" at line 706)
+> **Deferred:** [H] the identity snapshot records a verdict for only part of the population -- 930 of 1,625 occurrences get no entry and the 221 stored nulls do not say WHICH bucket, so a ref moving between unresolved buckets is invisible to it (RESOLVED 2026-08-13 in §14, commit `d0b2dc17`) -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §14` (item: "Record a verdict for EVERY `kind=symbol` occurrence" at line 707)
 > **Deferred:** [M] RESOLVED in §15, by refuting the premise rather than batching: per-symbol candidate discovery is ~5% of the walk (0.071s of ~1.5s) because `str.find` runs at C speed, and the cost is definition CONFIRMATION -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §15` (item: "Cut the shared rule's cost at the hot path the MEASUREMENT found")
 > **Deferred:** [L] RESOLVED in §15, split by what pins each cache: topology-derived ones walk-scoped, content-bound ones LRU-bounded -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §15` (item: "Bound the process-wide caches by WHAT PINS THEM")
 
@@ -735,7 +736,7 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
 > **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields (RESOLVED 2026-08-13 in §17, commit `4d2b9fa62`) -> XREF: 00-infrastructure/TODO-06 §17 (item: "ONE validator module both readers call, with the shape rules stated once" at line 843)
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields (RESOLVED 2026-08-13 in §17, commit `4d2b9fa62`) -> XREF: 00-infrastructure/TODO-06 §17 (item: "ONE validator module both readers call, with the shape rules stated once" at line 844)
 > **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
@@ -822,10 +823,10 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 -> XREF: [`TODO-06 §18`](#18-identity-gate-hardening-producer-differential-and-protocol-constant-extraction) -- owns the four review findings this section accepted but does NOT close (item: "Producer differential across BOTH corpora"); the gate ships without them and states every one of those blind spots in its own header.
 
 > **Verified:** 2026-08-06 | commit `800b62e0` + review fixes | 3/3 items | build OK | test_build 224/224 (11 identity-gate fixtures 22a-22k); tooling 1287/1287; kernel 28326 + 17 user-mode; lint rc 0, 0 errors; todo-graph 8/8 checks
-> **Accepted:** [M] Producer differential must run over BOTH corpora, not just head, or a change that removes a ref form's last live example while dropping its parser passes (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Producer differential across BOTH corpora, so a cache-producer regression cannot hide" at line 912)
-> **Accepted:** [M] `ALL_BUCKETS` lives inside `ref_resolution.py`, so a bucket migration cannot be separated from a resolver change; the gate fails CLOSED on it (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Extract the snapshot protocol constants into their own module" at line 918)
-> **Accepted:** [H] The lint consumer shares the resolution rule but neither walk executes it, so this gate adjudicates nothing about it (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "A differential for the LINT CONSUMER, or a delegation invariant in its place" at line 924)
-> **Accepted:** [M] Two serial walks (~80-120s) against a 20-minute CI ceiling on a growing corpus; needs concurrency or a runtime budget (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Bound the gate's runtime before the corpus outgrows the CI job" at line 929)
+> **Accepted:** [M] Producer differential must run over BOTH corpora, not just head, or a change that removes a ref form's last live example while dropping its parser passes (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Producer differential across BOTH corpora, so a cache-producer regression cannot hide" at line 913)
+> **Accepted:** [M] `ALL_BUCKETS` lives inside `ref_resolution.py`, so a bucket migration cannot be separated from a resolver change; the gate fails CLOSED on it (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Extract the snapshot protocol constants into their own module" at line 919)
+> **Accepted:** [H] The lint consumer shares the resolution rule but neither walk executes it, so this gate adjudicates nothing about it (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "A differential for the LINT CONSUMER, or a delegation invariant in its place" at line 925)
+> **Accepted:** [M] Two serial walks (~80-120s) against a 20-minute CI ceiling on a growing corpus; needs concurrency or a runtime budget (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Bound the gate's runtime before the corpus outgrows the CI job" at line 930)
 > **Quality reviewed:** 2026-08-06 | Codex 8x (design x3, adversarial x3, consistency x1, perf x1) | 4H+8M+1L fixed, 0 open | scope: N/A (host tooling; no kernel/boot/desktop/shell/userland surface touched)
 > **Notes:** The gate DETECTS, it does not PREVENT -- this repo pushes straight to main, so a bad push lands before the job verdicts it. What is guaranteed is ADJUDICATION: the range starts at the last SHA the job actually passed, so a cancelled or skipped run is absorbed by the next one instead of lost. Prevention needs a pre-receive hook or a protected merge queue, both operator-reserved. Two review rounds were spent on claims that were true in prose and false in code: a job-level concurrency group does not exempt a job from its own run being cancelled, and a regex over `ALL_BUCKETS` cannot see a bucket rename because the RHS is spelled in terms of two other constants. Both are now pinned by fixtures rather than by comments.
 > **Test runner:** `bash scripts/test-tooling.sh` (group: `[todo-graph]`) | expected: `[test_build] 224/224 passed`, 0 failed -- identity-gate fixtures are 22a-22k. Host-side tooling; no kernel `TEST_CAT_*` surface and no `scripts/debug/kernel/run-*.bat`.
@@ -962,7 +963,7 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the gate these harden (item: "Implemented the chosen wiring, fail-CLOSED on its own infrastructure errors"); both findings were accepted during its design review and scoped out of it.
 
 > **Verified:** 2026-08-07 | commit `9ef13a2b3` | 6/6 items | build OK | test_build 289/289, tooling 1287/1287, kernel 28326 pass/0 fail, lint 0 errors, identity gate PASS
-> **Accepted:** [M] Retirement is provable only by searching the emitters' source text, which indexed or concatenated emission defeats; the path is closed rather than knowingly unsound (reason: replacing the evidence is a redesign of how ref_resolution emits, not a patch) (RESOLVED 2026-08-13 in §20, commit `f86175ccd`) -> XREF: 00-infrastructure/TODO-06 §20 (item: "Give the resolver a declared emitted-member set instead of raw bucket strings" at line 1036)
+> **Accepted:** [M] Retirement is provable only by searching the emitters' source text, which indexed or concatenated emission defeats; the path is closed rather than knowingly unsound (reason: replacing the evidence is a redesign of how ref_resolution emits, not a patch) (RESOLVED 2026-08-13 in §20, commit `f86175ccd`) -> XREF: 00-infrastructure/TODO-06 §20 (item: "Give the resolver a declared emitted-member set instead of raw bucket strings" at line 1037)
 > **Quality reviewed:** 2026-08-07 | Codex 17x (adversarial x15, consistency, perf) | 12H+9M+2L fixed, 1 open | scope: review-todo-section
 
 ---
@@ -1176,11 +1177,11 @@ Split out of §19 on 2026-08-07 by that section's Codex design review, which rat
 > - Scope boundary: `requires_history` stays FALSE by design (§24 owns it); `validate.py` recovery remains §23's; three residuals (watch guard, FastMCP `isError`, AST wiring pin) are documented at their fixtures.
 
 > **Verified:** 2026-08-08 | commit `8783f048d` | 5/5 items | build OK | test_build.sh 384/384, test-tooling.sh 1293/1293, test_query_bounds.sh 22/22, lint 0 errors, build-and-validate 8/8, 28326 kernel + 17 user-mode tests, smoke boot 2.650s
-> **Accepted:** [H] domain-qualified references still bind to an arbitrary directory: `01-b/INDEX.md` resolves to `todo/01-a/INDEX.md`, and reversing cache order reverses the answer (RESOLVED 2026-08-13 in §26, commit `0c5928fe6`) -> XREF: 00-infrastructure/TODO-06 §26 (item: "Index domain CODES to their full set of parent directories" at line 1353)
-> **Accepted:** [H] `validate.py` parses the cache TWICE, neither read through the 64 MiB ceiling (38.7ms median, 74,704 KiB peak RSS on the live cache) (RESOLVED 2026-08-13 in §23, commit `38727f0ff`) -> XREF: 00-infrastructure/TODO-06 §23 (item: "Preserve ONE rebuild, then re-validate the recovered artifact" at line 1198)
-> **Accepted:** [M] `_all_paths` rebuilds the whole path set per reference, O(E*V) on path-like edges (45.9ms at 500 nodes to 1.815s at 4,000) (RESOLVED 2026-08-13 in §26, commit `0c5928fe6`) -> XREF: 00-infrastructure/TODO-06 §26 (item: "Precompute the path set the resolver rebuilds per reference" at line 1362)
-> **Accepted:** [M] `stale` and `stats.top_longest_deferred` consume `last_active_at` while `PROFILE_QUERY` disables history binding, so a rewritten history is invisible (RESOLVED 2026-08-13 in §24, commit `277c39584`) -> XREF: 00-infrastructure/TODO-06 §24 (item: "Re-measure the history projection before turning `requires_history` on" at line 1255)
-> **Accepted:** [M] `PROFILE_QUERY` claims to inventory what the readers consume, but `render.py` reads `effort`, which the producer cannot emit (RESOLVED 2026-08-13 in §25, commit `c2c9015af`) -> XREF: 00-infrastructure/TODO-06 §25 (item: "`effort` is carried end to end, behind a fail-closed duration grammar" at line 1304)
+> **Accepted:** [H] domain-qualified references still bind to an arbitrary directory: `01-b/INDEX.md` resolves to `todo/01-a/INDEX.md`, and reversing cache order reverses the answer (RESOLVED 2026-08-13 in §26, commit `0c5928fe6`) -> XREF: 00-infrastructure/TODO-06 §26 (item: "Index domain CODES to their full set of parent directories" at line 1354)
+> **Accepted:** [H] `validate.py` parses the cache TWICE, neither read through the 64 MiB ceiling (38.7ms median, 74,704 KiB peak RSS on the live cache) (RESOLVED 2026-08-13 in §23, commit `38727f0ff`) -> XREF: 00-infrastructure/TODO-06 §23 (item: "Preserve ONE rebuild, then re-validate the recovered artifact" at line 1199)
+> **Accepted:** [M] `_all_paths` rebuilds the whole path set per reference, O(E*V) on path-like edges (45.9ms at 500 nodes to 1.815s at 4,000) (RESOLVED 2026-08-13 in §26, commit `0c5928fe6`) -> XREF: 00-infrastructure/TODO-06 §26 (item: "Precompute the path set the resolver rebuilds per reference" at line 1363)
+> **Accepted:** [M] `stale` and `stats.top_longest_deferred` consume `last_active_at` while `PROFILE_QUERY` disables history binding, so a rewritten history is invisible (RESOLVED 2026-08-13 in §24, commit `277c39584`) -> XREF: 00-infrastructure/TODO-06 §24 (item: "Re-measure the history projection before turning `requires_history` on" at line 1256)
+> **Accepted:** [M] `PROFILE_QUERY` claims to inventory what the readers consume, but `render.py` reads `effort`, which the producer cannot emit (RESOLVED 2026-08-13 in §25, commit `c2c9015af`) -> XREF: 00-infrastructure/TODO-06 §25 (item: "`effort` is carried end to end, behind a fail-closed duration grammar" at line 1305)
 > **Quality reviewed:** 2026-08-08 | Codex 11x (adversarial, consistency, perf, re-adversarial x8) | 2H+17M+0L fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the section this was split from and DEPENDS ON (item: "Give `cache_schema` caller-declared validation profiles instead of one fixed contract"); `query.py` consumes those profiles, so this cannot start before §19 ships.
@@ -1287,7 +1288,7 @@ Split out of §22 on 2026-08-07 because it is a measure-then-decide question, no
 > **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` | expected: `[test_build] 432/432 passed`, 0 failed -- the twelve section-24 fixtures cover profile discrimination, the post-walk history re-check, the typed provenance markers and both rescue sets, the cross-repo and non-default-`--root` builds, the pathspec-magic literalisation, and the deferred-history load. Also `bash scripts/test-tooling.sh` (`1293/1293`). Host-side tooling; no kernel `TEST_CAT_*` surface and no `scripts/debug/kernel/run-*.bat`.
 > **Verified:** 2026-08-08 | commit `277c39584` | 6/6 items | build OK | test_build 432/432, tooling 1293/1293, kernel 28326+17, lint 0 errors, SMOKE TEST PASSED
 > **Deferred:** [M] CLOSED 2026-08-09 by §27 (commit `f814af76f`): replacements and grafts are now inert on both sides via `HISTORY_GIT_GLOBALS` + `history_git_env()` (RESOLVED 2026-08-13 in §27, commit `f814af76f`) -> XREF: 00-infrastructure/TODO-06 §27 (item: "REJECT replacement ancestry -- `cache_schema.HISTORY_GIT_GLOBALS = (\"--no-replace-objects\",)` on every git call in both `collect_git_timestamps` and `corpus_history_id`" at line 1378)
-> **Deferred:** [M] CLOSED 2026-08-09 by §30 (commit `55f4bc9f0`): a watcher on a history-consuming verb now re-runs on an amend, triggered by a bounded 50.1us ref probe rather than the 2s identity poll this deferral rejected (RESOLVED 2026-08-13 in §30, commit `55f4bc9f0`) -> XREF: 00-infrastructure/TODO-06 §30 (item: "Trigger is a 50.1us pathname snapshot of the git ref surface, polled every 2s; the 54.2ms identity runs only when it moves" at line 1562)
+> **Deferred:** [M] CLOSED 2026-08-09 by §30 (commit `55f4bc9f0`): a watcher on a history-consuming verb now re-runs on an amend, triggered by a bounded 50.1us ref probe rather than the 2s identity poll this deferral rejected (RESOLVED 2026-08-13 in §30, commit `55f4bc9f0`) -> XREF: 00-infrastructure/TODO-06 §30 (item: "Trigger is a 50.1us pathname snapshot of the git ref surface, polled every 2s; the 54.2ms identity runs only when it moves" at line 1563)
 > **Quality reviewed:** 2026-08-08 | Codex 7x (design x2, adversarial x2, consistency, perf, re-adversarial) | 4H+12M fixed, 2 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the section this was split from (item: "Route `query.py` through the shared validator, fail-closed"); that section decides WHETHER the query surface refuses an unusable cache, this one decides WHAT its identity is derived from and what it costs.
@@ -1382,7 +1383,7 @@ Found on 2026-08-07 by §22's round-7 review, in the one `resolve_xref_target` b
 > - The corpus debt this exposed landed as two separate `todo:` commits, each verified green under the pre-change resolver.
 > - Scope boundary: no new reference form is accepted, and `by_dn` keeps its code-keyed answer for genuinely code-qualified `D<dd>T<nn>`.
 > **Verified:** 2026-08-09 | commit `0c5928fe6` | 4/4 items | build OK | test_build 464/464, test-tooling 1319/1319, corpus 9/9 checks 0 failures
-> **Accepted:** [H] stamp-target capture splits a space-bearing markdown label, so a legitimate label cannot resolve (reason: producer-side, `build.py` not the resolver; §26 closed the dangerous half by failing closed) (RESOLVED 2026-08-13 in §33, commit `c6af1c6a6`) -> XREF: 00-infrastructure/TODO-06 §33 (item: "Capture the complete markdown link as one target, not `\S+`" at line 1706)
+> **Accepted:** [H] stamp-target capture splits a space-bearing markdown label, so a legitimate label cannot resolve (reason: producer-side, `build.py` not the resolver; §26 closed the dangerous half by failing closed) (RESOLVED 2026-08-13 in §33, commit `c6af1c6a6`) -> XREF: 00-infrastructure/TODO-06 §33 (item: "Capture the complete markdown link as one target, not `\S+`" at line 1707)
 > **Quality reviewed:** 2026-08-09 | Codex 13x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 0 open, 1 rejected | scope: N/A (pure tooling, no Win11/Linux parity surface)
 
 -> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the section that found this and closed every OTHER arbitrary-member path in the resolver (item: "Route `query.py` through the shared validator, fail-closed"); it made `by_dn`, `by_filename` and the letter branch collision-aware and deliberately left this one, which needs a new index.
@@ -1440,7 +1441,7 @@ This is NOT the shallow-deepening case, which the count does catch because deepe
 > - Scope boundary: the equal-count shallow-boundary collision is REPRODUCED but deliberately NOT closed here -- it needs a product decision about shallow clones and is filed as §31.
 > **Verified:** 2026-08-09 | commit `f814af76f` | 6/6 items | build OK | test_build 466/466, tooling 1319/1319, kernel 28326+17, lint 0 errors, todo-graph 9/9
 > **Deferred:** [M] CLOSED 2026-08-09 by §31: an equal-count shallow boundary moved `created_at` while tip and count compared equal; the product decision it was waiting on came down on REFUSING a shallow corpus outright (`--is-shallow-repository` before the walk, ~1.0ms), after binding was reproduced colliding on a multi-root history (RESOLVED 2026-08-13 in §31, commit `d5a695833`) -> XREF: 00-infrastructure/TODO-06 §31 (item: "Decide what a shallow corpus IS to this tool, and record the reasoning")
-> **Deferred:** [L] `validate.py` never checks in-file `](#...)` anchors, so a retitled heading silently breaks every inbound link (reason: a validator capability, not this section's axis; 3 of 63 links in this file were dead and are repaired in the review commit) (RESOLVED 2026-08-13 in §32, commit `b4f26f6d0`) -> XREF: 00-infrastructure/TODO-06 §32 (item: "Validate IN-FILE `](#anchor)` links against the file's own headings" at line 1666)
+> **Deferred:** [L] `validate.py` never checks in-file `](#...)` anchors, so a retitled heading silently breaks every inbound link (reason: a validator capability, not this section's axis; 3 of 63 links in this file were dead and are repaired in the review commit) (RESOLVED 2026-08-13 in §32, commit `b4f26f6d0`) -> XREF: 00-infrastructure/TODO-06 §32 (item: "Validate IN-FILE `](#anchor)` links against the file's own headings" at line 1667)
 > **Quality reviewed:** 2026-08-09 | Codex 6x (design, adversarial x3, consistency, perf) | 6H+5M+0L fixed, 2 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §30`](#30---watch-never-ticks-on-a-history-change-for-the-history-consuming-verbs) -- the watch-mode half of §24's residue, split out of this section before implementation (item: "Give `--watch` a history trigger for the history-consuming verbs"); it consumes whatever probe this section settles on, so it ships after this one.
@@ -1538,7 +1539,7 @@ Implementation found a THIRD case of the same defect and corrected one premise. 
 > - Scope boundary: exit contract and collision refusal only; §32 and §33 were split out before implementation, and the hook fix is control plane.
 
 > **Verified:** 2026-08-09 | commit `859d96cf0` | 4/5 items | build OK | test_build 514/514, test-tooling 1319/1319, 28326 kernel + 17 user-mode, lint 0 errors
-> **Deferred:** [H] the auto-rewrite hook surfaces rc 1 only when the output contains "ambiguous", so it still discards the unresolvable and missing-item classes for the one caller that runs automatically (reason: `.claude/hooks/**` is control plane an unattended run may not edit) -> XREF: 00-infrastructure/TODO-06 §29 (item: "The auto-rewrite hook still swallows the two new failure classes -- operator-gated" at line 1523)
+> **Deferred:** [H] the auto-rewrite hook surfaces rc 1 only when the output contains "ambiguous", so it still discards the unresolvable and missing-item classes for the one caller that runs automatically (reason: `.claude/hooks/**` is control plane an unattended run may not edit) -> XREF: 00-infrastructure/TODO-06 §29 (item: "The auto-rewrite hook still swallows the two new failure classes -- operator-gated" at line 1524)
 > **Quality reviewed:** 2026-08-09 | Codex 7x (design, adversarial, test-coverage, adversarial, consistency, perf, re-adversarial) | 3H+8M+0L fixed, 1 open | scope: kernel-code-quality N/A (host-side Python tooling, no kernel surface)
 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.
@@ -2062,8 +2063,8 @@ Split AGAIN 2026-08-11, before code, on the sequencer's SPLIT-RECOMMENDED verdic
 > - Scope boundary: the two control-plane parsers stay parked, and `todo-reflow.py` / `todo-section-order.py` are §41's.
 
 > **Verified:** 2026-08-11 | commit `9c734e46e` | 9/11 items (2 parked, both control-plane) | build OK | lint 0 errors | test-tooling 1321/1321 | test_todo_fence 72 assertions | 28326 kernel + 17 user-mode
-> **Deferred:** [M] `validate.py:_scan_markdown` re-derives the document scan and cannot report terminal unclosed state, so it hides what `build.py` and the shim refuse (reason: routing it changes validator verdicts corpus-wide -- design, not adoption) (RESOLVED 2026-08-13 in §39, commit `94c19a580`) -> XREF: 00-infrastructure/TODO-06-todo-metadata-layer.md §39 (item: "Route `validate.py:_scan_markdown` through the shared full-document scan, terminal flags included" at line 2087)
-> **Deferred:** [M] `gate_excluded()` has zero callers and the scope banner over-claimed for Checks 7 and 17 (reason: the banner is corrected here, but making Check 7 exclude per file CHANGES which commits it blocks and needs its own differential) (RESOLVED 2026-08-13 in §39, commit `94c19a580`) -> XREF: 00-infrastructure/TODO-06-todo-metadata-layer.md §39 (item: "Decide whether Check 7 and Check 17 honour the commit-gate exclusion set, then make the banner true either way" at line 2093)
+> **Deferred:** [M] `validate.py:_scan_markdown` re-derives the document scan and cannot report terminal unclosed state, so it hides what `build.py` and the shim refuse (reason: routing it changes validator verdicts corpus-wide -- design, not adoption) (RESOLVED 2026-08-13 in §39, commit `94c19a580`) -> XREF: 00-infrastructure/TODO-06-todo-metadata-layer.md §39 (item: "Route `validate.py:_scan_markdown` through the shared full-document scan, terminal flags included" at line 2088)
+> **Deferred:** [M] `gate_excluded()` has zero callers and the scope banner over-claimed for Checks 7 and 17 (reason: the banner is corrected here, but making Check 7 exclude per file CHANGES which commits it blocks and needs its own differential) (RESOLVED 2026-08-13 in §39, commit `94c19a580`) -> XREF: 00-infrastructure/TODO-06-todo-metadata-layer.md §39 (item: "Decide whether Check 7 and Check 17 honour the commit-gate exclusion set, then make the banner true either way" at line 2094)
 > **Quality reviewed:** 2026-08-11 | Codex 6x (design, adversarial 3x, consistency, perf) | 7H+6M fixed, 2 deferred | scope: N/A (tooling; no kernel/boot surface)
 
 -> XREF: [`TODO-06 §36`](#36-the-cache-producer-adopts-the-shared-fence-tracker) -- the section this split out of, which publishes the `fence_mask()` primitive every adopter here consumes (item: "Publish `fence_mask()` beside `fence_step()` in `cache_schema.py`").
@@ -2134,8 +2135,8 @@ Split out of §36 at authoring time. This is the only item in the original filin
 > - Scope boundary: HTML blocks other than `<!--` comments are NOT in this section -- they need the terminal contract to carry the block kind, which is §42.
 
 > **Verified:** 2026-08-11 | commit `94c19a580` | 6/6 items | build OK | test_build 586/586 | test_todo_fence 233 assertions | lint 0 errors | graph validate 10/10 | 28326 kernel + 17 user tests | cache/validator/reflow differentials byte-identical over 281 files
-> **Accepted:** [H] a fenced example inside a multi-line link reference definition reaches `extract_stamped_items` as a shipped item (reason: needs stateful multi-line definition parsing the three-flag block model does not have; 0 corpus instances) -> XREF: 00-infrastructure/TODO-06 §42 (item: "Model MULTI-LINE link reference definitions, the one bound section 39 states rather than solves" at line 2283)
-> **Accepted:** [M] a lazy-continuation/nested-container shape opens a fence CommonMark does not have and refuses a valid document (reason: architectural -- three fixes measured worse, incl. one that traded it for a fail-open erasure; 0 corpus instances) -> XREF: 00-infrastructure/TODO-06 §42 (item: "Reconcile the lazy-continuation / nested-container interaction, the second residual class" at line 2294)
+> **Accepted:** [H] a fenced example inside a multi-line link reference definition reaches `extract_stamped_items` as a shipped item (reason: needs stateful multi-line definition parsing the three-flag block model does not have; 0 corpus instances) -> XREF: 00-infrastructure/TODO-06 §42 (item: "Model MULTI-LINE link reference definitions, the one bound section 39 states rather than solves" at line 2284)
+> **Accepted:** [M] a lazy-continuation/nested-container shape opens a fence CommonMark does not have and refuses a valid document (reason: architectural -- three fixes measured worse, incl. one that traded it for a fail-open erasure; 0 corpus instances) -> XREF: 00-infrastructure/TODO-06 §42 (item: "Reconcile the lazy-continuation / nested-container interaction, the second residual class" at line 2295)
 > **Accepted:** [H] five one-contract violations survive outside this section's edits -- a second heading grammar, a conflicting code-span state machine, an rc-1-vs-rc-2 split, a half-consuming formatter, and a lint check that erases formatter refusals (reason: none of it is code §39 touched) (RESOLVED 2026-08-13 in §43, commit `da02510ee`) -> XREF: 00-infrastructure/TODO-06 §43 (item: "Finish the one-contract consolidation §39 started, in the five places it did not reach")
 > **Quality reviewed:** 2026-08-11 | Codex 15x (design, adversarial x12, consistency, perf) | 12H+16M+2L fixed, 3 accepted | scope: N/A (host tooling -- no kernel/boot surface, and no domain code-quality skill covers `scripts/`); parity N/A (no user-visible OS surface)
 
@@ -2239,7 +2240,7 @@ Split out of §38 on 2026-08-11, before code, on the sequencer's SPLIT-RECOMMEND
 > - Scope boundary: the fallback is a heuristic that retires when §39 makes the tracker container-aware; no shared corpus-list refactor across Checks 19/22/22b.
 
 > **Verified:** 2026-08-11 | commit `25eaa820d` | 6/6 items | build OK | lint 0 errors | test-tooling 1323/1323 | test_todo_fence 130 assertions | both tools byte-identical over 281 files
-> **Deferred:** [M] a fifth TODO parser, `.claude/hooks/todo_wrap_reminder.py`, still carries the naive `incode` toggle (reason: control plane, the unattended run may not edit it) -> XREF: 00-infrastructure/TODO-06 §38 (item: "`.claude/hooks/todo_wrap_reminder.py:109` (`_blocks`) and `:177` (`long_continuation`) each carry their own `incode` toggle -- PARKED, control plane, operator-gated" at line 2039)
+> **Deferred:** [M] a fifth TODO parser, `.claude/hooks/todo_wrap_reminder.py`, still carries the naive `incode` toggle (reason: control plane, the unattended run may not edit it) -> XREF: 00-infrastructure/TODO-06 §38 (item: "`.claude/hooks/todo_wrap_reminder.py:109` (`_blocks`) and `:177` (`long_continuation`) each carry their own `incode` toggle -- PARKED, control plane, operator-gated" at line 2040)
 > **Quality reviewed:** 2026-08-11 | Codex 13x (design, adversarial x9, consistency x2, perf) over 9 rounds | 3H+9M fixed, 1 deferred control-plane with reciprocal owner | scope: N/A (host tooling -- no kernel/boot surface, and no domain code-quality skill covers `scripts/`); parity N/A (no user-visible OS surface)
 
 -> XREF: [`TODO-06 §38`](#38-every-gate-parser-adopts-the-shared-fence-tracker) -- the section this split out of, which owns the four gate parsers and the two control-plane parks (item: "Route the four GATE parsers that return blocking verdicts").
@@ -2517,7 +2518,7 @@ The second item followed it here on the same day, out of §43's consolidation li
 > - Memory: one lazily-allocated byte per line -- peak RSS 312,288 KB before and 328,456 KB after on a 16 MiB newline-only document.
 > - Scope boundary: `_walk_stamps_xrefs` and the resolver are untouched; the three GATE consumers still read physical lines and are §47's.
 > **Verified:** 2026-08-12 | commit `ba1af2ada` | 3/3 items | build OK | 28326 kernel + 17 user-mode; test_todo_fence 415; test_build 625/625; lint 0 errors; cache byte-identical, producer differential 3,689 refs both ways
-> **Accepted:** [H] a multi-line link reference definition leaves a stale list stack, and the leaf projection now publishes a section AND a stamped item from it, suppressing the `orphan-io-row` refusal (reason: needs the backtracking block parser the owner item already names; two line-at-a-time attempts measured worse, 509 -> 524 divergent of 2,000 generated documents; 0 corpus instances) -> XREF: 00-infrastructure/TODO-06 §42 (item: "Model MULTI-LINE link reference definitions, the one bound section 39 states rather than solves" at line 2283)
+> **Accepted:** [H] a multi-line link reference definition leaves a stale list stack, and the leaf projection now publishes a section AND a stamped item from it, suppressing the `orphan-io-row` refusal (reason: needs the backtracking block parser the owner item already names; two line-at-a-time attempts measured worse, 509 -> 524 divergent of 2,000 generated documents; 0 corpus instances) -> XREF: 00-infrastructure/TODO-06 §42 (item: "Model MULTI-LINE link reference definitions, the one bound section 39 states rather than solves" at line 2284)
 > **Accepted:** [H] three gate consumers still classify headings from physical lines, so producer and enforcement disagree about what a section is (reason: a distinct surface -- `todo-reachability.py`, `todo-staged-check.py`, `validate.py` -- each needing its own fixtures, and §43 which owned the consumer closure is closed) (RESOLVED 2026-08-13 in §47, commit `c830b4811`) -> XREF: 00-infrastructure/TODO-06 §47 (item: "`todo-reachability.py` classifies headings from the leaf projection, not physical lines")
 > **Quality reviewed:** 2026-08-12 | Codex 8x (design, adversarial x4, test-coverage, consistency, perf) | 5H+6M+2L fixed, 2 accepted | scope: N/A (host tooling -- no kernel/boot surface, and no domain code-quality skill covers `scripts/`); parity N/A (no user-visible OS surface)
 
@@ -2677,6 +2678,32 @@ Split out of §47 on 2026-08-12, before any code, on `section-manifest.py`'s `SP
 > **Quality reviewed:** 2026-08-13 | Codex 12x (design, adversarial, test-coverage, consistency, perf, re-adversarial x7) | 7H+8M fixed, 0 open | scope: N/A (host-side Python tooling; no kernel/boot domain skill applies)
 
 -> XREF: [`TODO-06 §47`](#47-the-gate-consumers-adopt-the-section-context-projections-the-producer-already-uses) -- the parent this was split out of, which owns the three GATE adopters of the same projections (item: "Commit: `\"todo-graph: the gate consumers adopt the section-context projections\"`").
+
+---
+
+## 49. Decide Whether `alias-staleness` Is Producer-Assertable, Then Promote It or Record Why Not
+
+> **Spawned-by:** root
+
+The reviewer-to-automation promotion doctrine says a finding class at 3+ fixed findings with no lint, assert, helper or hook behind it is a loose end: build the automation or file it. `alias-staleness` sits at 4 fixed findings, every one of them against this file's tooling, and it is the only PROMOTE-class with neither automation nor an owner. This section is that owner.
+
+The measurement, re-verified 2026-08-17 at the v15 canary close-out: `python3 scripts/overnight/finding-ledger.py classes` reports `missing-error-path` 7, `abi-mismatch` 4, `alias-staleness` 4 above the threshold of 3. The first two are already promoted and say so at line 1342 of this file, which records the declaration-drift work as their promotion into import-time asserts plus per-node producer scans. `alias-staleness` is named nowhere in the tree: `grep -rn alias-staleness scripts/lint.sh scripts/lint/ .claude/hooks/` returns nothing, and before this section no TODO mentioned it either.
+
+The class describes a specific defect shape this file's own history is full of: a symbol is retired to an alias of a shared implementation, and something downstream keeps referring to the retired spelling, or the alias outlives the reason it existed. §36, §38, §41, §42 and §43 each retired a private parser to a one-line alias of the shared tracker, and §44 retired an 83-line private code-span machine the same way, so the corpus of aliases this class is about is large and still growing.
+
+**What this section must DECIDE before it implements anything.** The judgment the ledger cannot make is whether alias staleness is checkable by a producer assert the way declaration drift was, or is inherently a review-time property. Both answers are acceptable outcomes; what is not acceptable is leaving the class unowned for a third cycle.
+
+- [ ] Decide whether an alias's staleness is decidable at producer time, against the real aliases rather than in the abstract
+      - The concrete question: given `X = shared.Y` in a consumer, can the producer mechanically tell that `X` has no remaining callers, or that `X` and `shared.Y` have drifted, without a call graph the tooling does not have?
+      - Answer it against the aliases §36, §38, §41, §42, §43 and §44 actually created, since those are the population the class was mined from.
+- [ ] If DECIDABLE: promote it as an import-time assert plus a per-node producer scan, and record it where line 1342 records the other two
+- [ ] If NOT DECIDABLE: record that verdict with its evidence and add the class to the promotion doctrine's exemption surface
+      - Without the exemption the ledger keeps reporting it as an unpromoted class forever, which is the same noise as leaving it unowned.
+- [ ] Close the ROUTING gap that produced this section: name where a promotable class gets filed when it belongs to another file
+      - This is the actual finding. The class itself is just the instance that exposed it: the doctrine bullet has no owner when the class belongs to a file the current run is not the cursor for, which is why it went two full cycles unfiled.
+- [ ] Commit: `"todo-graph: decide and record the alias-staleness promotion verdict"`
+
+-> XREF: [`todo/overnight-runner-improvements/overnight-runner-improvements-v15.md`](../overnight-runner-improvements/overnight-runner-improvements-v15.md) -- filed here at the 2026-08-17 v15 close-out (item: "`alias-staleness` promotion-class has no automation and no owner-side filing"), which carries the measurement and the routing-gap analysis.
 
 ---
 

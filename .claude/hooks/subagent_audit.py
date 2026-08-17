@@ -23,6 +23,10 @@ from typing import Optional
 
 _SUBAGENT_LOG_REL = ".claude/state/subagent-log.jsonl"
 _SKIP_LOG_REL = ".claude/state/acknowledged-but-skipped.log"
+# Union of observed SubagentStop payload key NAMES (never values). Settles
+# whether a PreToolUse-on-Agent stamp can be correlated back to a Stop event,
+# which is the unproven precondition of the dead duration arm in main().
+_PAYLOAD_KEYS_REL = ".claude/state/subagent-payload-keys.json"
 
 RUNAWAY_TOOL_USES = 30
 RUNAWAY_DURATION_MS = 600 * 1000  # 10 minutes
@@ -118,6 +122,48 @@ def _count_leaf_tool_uses(path: str):
     return count
 
 
+def _record_payload_keys(root: str, payload: dict) -> None:
+    """Accumulate the union of SubagentStop payload KEY NAMES.
+
+    Why this exists. The duration arm below has been dead for two capture
+    cycles: `duration_ms` is None in 0 of 1912 recorded payloads. The proposed
+    repair is a PreToolUse-on-Agent hook stamping a start time keyed by an
+    agent id, with elapsed computed here -- but nobody has ever established
+    that the Stop payload CARRIES an id that a PreToolUse event could be
+    matched against. Two cycles of filing have restated the fix without
+    checking its precondition.
+
+    So record the precondition instead of guessing at it. One segment of live
+    traffic answers it deterministically: if a correlator key appears, the
+    stamp fix is buildable; if none does, the arm should be DELETED rather
+    than repaired.
+
+    KEY NAMES ONLY, never values -- payloads carry transcript paths and
+    free-form agent output, and this file is not a place to accumulate either.
+    Bounded by the key space, so it converges to a few dozen bytes and stops
+    growing. Fail-silent, like every other write in this hook: an audit
+    sidecar must never be able to fail a subagent."""
+    keys_path = os.path.join(root, _PAYLOAD_KEYS_REL)
+    try:
+        seen = set()
+        if os.path.exists(keys_path):
+            with open(keys_path, "r", encoding="utf-8") as f:
+                prior = json.load(f)
+            if isinstance(prior, dict) and isinstance(prior.get("keys"), list):
+                seen = {k for k in prior["keys"] if isinstance(k, str)}
+        fresh = {k for k in payload.keys() if isinstance(k, str)}
+        if fresh <= seen:
+            return                      # nothing new; do not rewrite the file
+        merged = sorted(seen | fresh)
+        os.makedirs(os.path.dirname(keys_path), exist_ok=True)
+        tmp = keys_path + ".%d.tmp" % os.getpid()
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"keys": merged, "updated_ts_ns": _ts_ns()}, f, indent=1)
+        os.replace(tmp, keys_path)
+    except Exception:
+        pass
+
+
 def main() -> int:
     try:
         d = json.load(sys.stdin)
@@ -185,6 +231,8 @@ def main() -> int:
             f.write(json.dumps(record, separators=(",", ":")) + "\n")
     except Exception:
         pass
+
+    _record_payload_keys(root, d)
 
     # Runaway detection. Count-based check fires only when the count
     # is trustworthy (payload-provided, not fallback-derived).

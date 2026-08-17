@@ -1680,16 +1680,54 @@ rm -rf "$AD_TMP"
 
 POST_HOOK="$REPO_ROOT/.claude/hooks/codex_review_completed.py"
 PRE_HOOK="$REPO_ROOT/.claude/hooks/receiving_review_required.py"
-STATE_FILE="$REPO_ROOT/.claude/state/last-codex-review.json"
-# these probes mutate the LIVE session state file (the hooks resolve their
-# state path from their own location) -- back it up and restore after, or
-# every suite run silently destroys the session review-receipt state (this
-# was the root cause of the recurring 'last-codex-review.json missing' gate
-# blocks and likely the 2026-06-14 'hook dead' incident)
-RRG_STATE_BACKUP=""
-if [ -f "$STATE_FILE" ]; then
-    RRG_STATE_BACKUP="$STATE_FILE.suite-backup.$$"
-    cp "$STATE_FILE" "$RRG_STATE_BACKUP"
+# These probes used to run against the LIVE session state file, backed up and
+# restored around the block. That was wrong in both directions and it cost a
+# blocked push on a green tree (2026-08-17, a TPM attestation section ship):
+# sub-test 9 does `rm -f "$STATE_FILE"` and then probes for rc 0, so a
+# concurrent session's PostToolUse hook re-creating the file between the two
+# makes the gate BLOCK correctly and the test read rc 2. Worse, the restore
+# writes the PRE-suite backup back over anything the session minted during the
+# window, and a suite that dies before restoring leaves the live file deleted
+# outright (the orphan `.suite-backup.447413` from 2026-07-29 is that failure
+# on disk).
+#
+# The fix is the sandbox pattern the four_dispatch_gate block below has used
+# since it was written: a temp repo with the hooks copied in. The reader hook
+# resolves its state from its own `__file__` and so follows the copy; the
+# writer hook resolves the repo root via `git rev-parse --show-toplevel` and so
+# follows cwd, which is why the block runs pushed into the sandbox. Nothing
+# here opens a path under $REPO_ROOT/.claude/state any more.
+#
+# Deliberately NOT done: adding a state-path env override to the hooks. The
+# reader resolves from `__file__` on purpose (it avoids a git subprocess on the
+# no-state fast path), and an override there would be a gate-bypass vector.
+RRG_TMP="$(mktemp -d)"
+RRG_SANDBOX="$RRG_TMP/repo"
+mkdir -p "$RRG_SANDBOX/.claude/state" "$RRG_SANDBOX/.claude/hooks" "$RRG_SANDBOX/src"
+for _h in codex_review_completed.py receiving_review_required.py \
+          _codex_dispatch.py _skip_env.py; do
+    cp "$REPO_ROOT/.claude/hooks/$_h" "$RRG_SANDBOX/.claude/hooks/$_h"
+done
+(
+    cd "$RRG_SANDBOX"
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    printf 'int seed(void) { return 0; }\n' > src/foo.c
+    git add src/foo.c
+    git -c commit.gpgsign=false commit -q --no-verify -m "seed"
+)
+POST_HOOK="$RRG_SANDBOX/.claude/hooks/codex_review_completed.py"
+PRE_HOOK="$RRG_SANDBOX/.claude/hooks/receiving_review_required.py"
+STATE_FILE="$RRG_SANDBOX/.claude/state/last-codex-review.json"
+# Refusal-direction control, part (b): the live file must be BYTE-IDENTICAL
+# after the block. Snapshot it now; the assertion runs at cleanup. This is the
+# control that fails if the sandbox is ever reverted to the live path.
+RRG_LIVE_STATE="$REPO_ROOT/.claude/state/last-codex-review.json"
+if [ -f "$RRG_LIVE_STATE" ]; then
+    RRG_LIVE_BEFORE="$(sha256sum "$RRG_LIVE_STATE" | cut -d' ' -f1)"
+else
+    RRG_LIVE_BEFORE="absent"
 fi
 
 if [ ! -f "$POST_HOOK" ]; then
@@ -1697,6 +1735,11 @@ if [ ! -f "$POST_HOOK" ]; then
 elif [ ! -f "$PRE_HOOK" ]; then
     t_fail "receiving_review_gate pre hook missing: $PRE_HOOK"
 else
+    # cwd matters: the WRITER hook resolves its repo root from
+    # `git rev-parse --show-toplevel`, so every probe that writes state must
+    # run inside the sandbox. pushd rather than a subshell because t_pass /
+    # t_fail increment shell variables that a subshell would discard.
+    pushd "$RRG_SANDBOX" >/dev/null
     _gate_probe() {
         # Args: <expected_rc> <description> <hook> <payload-json> [env_var]
         local want="$1" desc="$2" hook="$3" payload="$4" envvar="${5:-}"
@@ -2099,11 +2142,11 @@ open(p, "w").write(json.dumps(s))
     # the same .tmp file. Verify by inspecting the temp-file glob:
     # writing the state from a Python in-process call should leave
     # NO .tmp residue in the state dir.
-    STATE_DIR="$REPO_ROOT/.claude/state"
+    STATE_DIR="$RRG_SANDBOX/.claude/state"
     rm -f "$STATE_FILE" "$STATE_DIR"/*.tmp 2>/dev/null
     python3 -c "
 import sys
-sys.path.insert(0, '$REPO_ROOT/.claude/hooks')
+sys.path.insert(0, '$RRG_SANDBOX/.claude/hooks')
 import importlib.util
 spec = importlib.util.spec_from_file_location('crc', '$POST_HOOK')
 m = importlib.util.module_from_spec(spec)
@@ -2119,12 +2162,25 @@ m._write_atomic(Path('$STATE_FILE'), {'test': 2, 'received': False, 'timestamp_n
         t_fail "receiving_review_gate: tmp residue ($TMP_COUNT files) or state missing (H3)"
     fi
 
-    # Cleanup: restore the pre-suite session state instead of deleting it
-    rm -f "$STATE_FILE" "$STATE_DIR"/*.tmp 2>/dev/null
-    if [ -n "$RRG_STATE_BACKUP" ] && [ -f "$RRG_STATE_BACKUP" ]; then
-        mv "$RRG_STATE_BACKUP" "$STATE_FILE"
+    popd >/dev/null
+
+    # Refusal-direction control (b), asserted: the block must not have touched
+    # the LIVE review-state file. There is no backup/restore any more because
+    # there is nothing to restore -- and a backup/restore pair is exactly what
+    # left an orphaned `.suite-backup.*` behind when a suite died mid-run.
+    if [ -f "$RRG_LIVE_STATE" ]; then
+        RRG_LIVE_AFTER="$(sha256sum "$RRG_LIVE_STATE" | cut -d' ' -f1)"
+    else
+        RRG_LIVE_AFTER="absent"
+    fi
+    if [ "$RRG_LIVE_AFTER" = "$RRG_LIVE_BEFORE" ]; then
+        t_pass "receiving_review_gate: live session state untouched by the suite"
+    else
+        t_fail "receiving_review_gate: live session state MUTATED by the suite" \
+               "before=$RRG_LIVE_BEFORE after=$RRG_LIVE_AFTER ($RRG_LIVE_STATE)"
     fi
 fi
+rm -rf "$RRG_TMP"
 
 
 # ============================================================================

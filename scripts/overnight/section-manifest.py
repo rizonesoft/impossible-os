@@ -485,13 +485,26 @@ def main(argv) -> int:
                if _tight else ""))
     if len(subsystems) > 3:
         split_reasons.append(f"{len(subsystems)} subsystems")
-    # P3.1: ABI/SSDT sections are heavier per item (each item touches syscall
-    # tables, ABI hashes, tests), so an exactly-8-item ABI section slipped past
-    # the old `> 8` gate. Lower the ABI-weighted threshold to `>= 6`.
-    if abi_impact and len(work_items) >= (_thresh + 1 if _tight else 6):
-        split_reasons.append(
-            f"ABI impact + {len(work_items)} work items "
-            f"(>={_thresh + 1 if _tight else 6} ABI gate)")
+    # REMOVED 2026-08-17: the ABI-weighted item arm. It was added by P3.1
+    # (2026-07-14) when the general item gate was `> 8`, so `abi_impact and
+    # items >= 6` genuinely caught sections the general gate missed. The
+    # calibration two weeks later (2026-07-28) dropped the general gate to
+    # `>= 5` loose / `>= 8` tight, at which point the ABI arm became
+    # ARITHMETICALLY DOMINATED: it fired at `>= 6` loose and `>= _thresh + 1`
+    # tight, and both are strictly above the general gate that had already
+    # fired. It could append a reason string; it could never change a verdict.
+    #
+    # Two independent reasons it goes rather than gets re-tuned. It asserted a
+    # premise nothing verified -- `abi_impact` is a regex over the section's
+    # PROSE, so a section merely CITING a header as evidence trips it, and one
+    # such verdict cost a session the reads to disprove an ABI change it never
+    # proposed. And the calibration measured this exact feature at r = -0.22
+    # against turns (see the note above): sections mentioning ABI ran SHORTER,
+    # so the one arm whose sign was measured pointed the wrong way.
+    #
+    # `abi_impact` is still computed and still REPORTED in `complexity` below.
+    # The signal stays auditable and a future recalibration can use it; it just
+    # no longer authors a reason for a verdict it did not cause.
     complexity = {
         "files": len(likely_files) + len(input_files),
         "subsystems": subsystems,

@@ -1,6 +1,10 @@
-# Token Saver v15 -- Cost Findings (opened 2026-08-16)
+# Token Saver v15 -- Cost Findings (opened 2026-08-16, CLOSED 2026-08-17)
 
-Cost and token findings from the run armed after the 2026-08-16 close-out of [v14](token-saver-v14.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v16.
+> **CLOSED 2026-08-17.** Successor: [v16](token-saver-v16.md). File cost findings there, not here.
+>
+> **Closed with ZERO items filed, for the fifth cycle running.** That is the finding, and it is recorded rather than treated as a quiet run: 11 items landed next door in `overnight-runner-improvements-v15.md` over the same ~17 hours, so the run was not quiet, it was routing every cost number to the gate that produced it. See "The open question" below, now five cycles old.
+
+Cost and token findings from the run armed after the 2026-08-16 close-out of [v14](token-saver-v14.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.
 

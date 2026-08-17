@@ -51,6 +51,12 @@ include/build_info.h
 compile_commands.json
 # ON-flavor DB snapshot preserved for the release seam gate's PART A2 advisory
 compile_commands.on.json
+# Bear's intermediate event stream. Sibling of the two above and just as
+# machine-specific, but it was never listed, so a plain `bash scripts/build.sh`
+# left ~19 MB of untracked artifact in the tree. That is not cosmetic: the ship
+# rollover refuses on an unclean tree, so an unignored build output blocks the
+# unattended run at its next boundary.
+compile_commands.events.json
 
 # clangd background index cache
 .cache/
