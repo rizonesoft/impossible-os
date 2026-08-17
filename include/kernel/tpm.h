@@ -162,12 +162,28 @@ struct pcr_check {
     uint8_t  pad[2];
 };
 
-/* Full boot integrity report -- feeds into the "Boot Integrity" UI panel */
+/* Slots in boot_integrity_report.pcrs[]. Sized for the MEASURED-BOOT set, which
+ * is {0..7, 11} -- the report used to carry a literal 8 (PCR 0-7), so PCR 11
+ * had no slot to be reported in at all. The canonical set is the BASELINE
+ * policy mask in tpm_pcr_alloc.h and the indices are filled from
+ * tpm_pcr_baseline_pcrs(), never from a second hard-coded list, so the reported
+ * set cannot drift from the measured one. tpm.c carries the _Static_assert
+ * tying this to TPM_BASELINE_MAX_PCRS (it is the one translation unit that sees
+ * both headers; tpm.h deliberately does not include tpm_baseline.h). */
+#define BOOT_INTEGRITY_MAX_PCRS 9u
+
+/* Full boot integrity report -- feeds into the "Boot Integrity" UI panel.
+ *
+ * PUBLICATION CONTRACT: this struct is an IMMUTABLE SNAPSHOT. It is never
+ * mutated in place once published; a writer builds the next value off-lock and
+ * swaps it in (see tpm_integrity_report_copy). Readers obtain it ONLY by
+ * copy-out -- there is deliberately no accessor handing out a pointer into the
+ * live slot, because a naked pointer cannot be held safely across a swap. */
 struct boot_integrity_report {
     uint8_t  overall_status;           /* BOOT_INTEGRITY_* */
     uint8_t  pcr_count;                /* number of PCRs checked */
     uint8_t  pad[2];
-    struct pcr_check pcrs[8];          /* PCR[0], PCR[1], ..., PCR[7] */
+    struct pcr_check pcrs[BOOT_INTEGRITY_MAX_PCRS];   /* measured set {0-7,11} */
     uint32_t event_count;              /* total measured events */
     uint8_t  tpm_version;              /* 0=none, 1=1.2, 2=2.0 */
     uint8_t  secure_boot;              /* 1 ONLY if SB state readable AND active; never
@@ -181,24 +197,61 @@ struct boot_integrity_report {
                                         * event-log integrity, distinct from baseline */
 };
 
-/* Initialize boot integrity verification.
- * Analyzes the parsed event log, attempts PCR golden value comparison.
- * Must be called after tpm_init().
+/* Assemble the FIRST boot-integrity snapshot from already-sampled inputs. PURE
+ * -- no UEFI calls, no TPM, no logging, no locking, no publication -- so the
+ * construction rules are testable without calling tpm_integrity_init(), which
+ * is boot infrastructure a unit test may not invoke.
  *
- * When fully implemented, this will:
- *   - Read golden PCR values from secure storage (enrolled at first boot)
- *   - Replay the event log to compute expected PCR values (requires SHA-256)
- *   - Compare computed values against TPM PCR registers (requires TPM read API)
- *   - Set per-PCR status in the boot integrity report */
+ *   tpm_present    0 = no TPM: status NO_TPM and NO PCR is reportable.
+ *   version        tpm_version field verbatim (0 none, 1 = 1.2, 2 = 2.0).
+ *   events         measured-event count.
+ *   sb_valid       1 if the live Secure Boot state was READABLE.
+ *   sb_enabled     1 if Secure Boot is active; only meaningful when sb_valid.
+ *                  An unreadable state NEVER collapses to "off".
+ *   set / n        the measured-boot PCR set and its size, from
+ *                  tpm_pcr_baseline_pcrs(). `n` is that function's TOTAL match
+ *                  count, which may EXCEED what it wrote into `set`.
+ *
+ * Returns 1 when the report describes the measured set, or 0 when `n` is not
+ * exactly BOOT_INTEGRITY_MAX_PCRS -- drift in EITHER direction, which is a
+ * build-configuration error. On 0 the report is still fully written, fail
+ * CLOSED: pcr_count 0 and status UNKNOWN, so a report that cannot represent
+ * the measured set never reads as verified. `out` must be non-NULL; `set` may
+ * be NULL only when tpm_present is 0. */
+int tpm_integrity_build_report(struct boot_integrity_report *out,
+                               int tpm_present, uint8_t version,
+                               uint32_t events, int sb_valid, int sb_enabled,
+                               const uint8_t *set, uint8_t n);
+
+/* Build and publish the FIRST boot-integrity snapshot (Phase 0, on the BSP,
+ * after tpm_init()). It records what Phase 0 can know -- the event count, the
+ * TPM version, the live Secure Boot state -- and marks the measured-boot PCR
+ * set NO_CRYPTO, because the transport and PCR cache do not exist yet.
+ *
+ * The golden-value comparison is NOT done here and never was: reading the
+ * baseline needs the Phase-1 NV transport, so tpm_baseline_verify() runs in
+ * Phase 1 and publishes its verdict through tpm_integrity_publish_baseline(). */
 boot_result_t tpm_integrity_init(void);
 
 /* Returns 1 if boot integrity is verified (all PCRs match golden values).
  * Returns 0 if not verified, no TPM, or no baseline enrolled. */
 int tpm_integrity_verified(void);
 
-/* Returns the full boot integrity report for the System Settings UI.
- * Valid after tpm_integrity_init(). */
-const struct boot_integrity_report *tpm_integrity_report(void);
+/* Copy the published boot-integrity snapshot into the caller's buffer. This is
+ * the ONLY reader entry point, on purpose.
+ *
+ * The report is published by swapping in a fresh immutable snapshot, so a
+ * pointer accessor would hand out a reference into a slot the next publication
+ * may reuse -- and a reader paused between LOADING that pointer and USING it
+ * would then read a buffer that is already being overwritten. A refcount does
+ * not close that window either: the gap sits between the load and the pin.
+ * Holding the publication lock across BOTH the load and the copy is what makes
+ * ACQUISITION itself safe, which is why the copy is not optional.
+ *
+ * Safe to call at any time (a pre-init call yields a zeroed report, which reads
+ * as BOOT_INTEGRITY_UNKNOWN). No-op on a NULL argument. Not for the panic path:
+ * it takes a spinlock. */
+void tpm_integrity_report_copy(struct boot_integrity_report *out);
 
 /* One-word boot-diagnostics status for the integrity report, for serial log /
  * VPD / recovery UX: "no-TPM", "event-log-tamper" (replay != hardware -- checked
@@ -260,11 +313,37 @@ void tpm_integrity_set_rng_available(int available);
  * hold). Called from the boot path after tpm_pcr_cache_init(). */
 void tpm_integrity_set_replay_verdict(uint8_t verdict);
 
-/* Publish the Phase-1 baseline-verify verdict (BOOT_INTEGRITY_VERIFIED /
- * MISMATCH / NO_BASELINE) into the integrity report. A prior replay TAMPER
- * (MISMATCH) is never downgraded to VERIFIED -- event-log tamper outranks a
- * baseline match. Called from the boot path after the replay verify. */
-void tpm_integrity_set_overall_status(uint8_t status);
+/* Publish the Phase-1 baseline-verify verdict together with the per-PCR detail
+ * it produced, in ONE publication, so the overall verdict and the per-PCR
+ * statuses can never disagree.
+ *
+ * `pcr_status` carries BOOT_INTEGRITY_* per entry, positionally matched to the
+ * measured-boot set from tpm_pcr_baseline_pcrs(); `n` is how many entries it
+ * holds (0 is legal and means "this path never compared", which leaves the
+ * per-PCR detail at NOT-EVALUATED rather than stale).
+ *
+ * A prior replay TAMPER pins overall_status at MISMATCH -- event-log tamper
+ * outranks a baseline match, so no later baseline verdict may downgrade it.
+ * The per-PCR detail is still refreshed in that case: pinning the overall
+ * verdict is not a reason to keep reporting stale per-PCR values. */
+void tpm_integrity_publish_baseline(uint8_t status,
+                                    const uint8_t *pcr_status, uint8_t n);
+
+#ifdef KERNEL_TESTS
+/* Republish an exact snapshot (kernel unit tests only), so a test can restore
+ * the boot's real verdict at teardown after exercising the publication path.
+ * Same save/restore contract as tpm_t_test_install / tpm_t_test_restore:
+ * capture with tpm_integrity_report_copy(), put back with this. Without it a
+ * publication test would leave the machine reporting whatever verdict its last
+ * fixture published, which the UI, VPD and serial log all read.
+ *
+ * KERNEL_TESTS-gated for the same reason the transport seams are: it publishes
+ * an arbitrary whole snapshot, which BYPASSES the tamper pin, the PCR-count
+ * validation and the base-load/mutate discipline every production writer goes
+ * through. That is correct for a restore and wrong for anything else, so it
+ * must not exist as callable surface in a release kernel. */
+void tpm_integrity_test_republish(const struct boot_integrity_report *r);
+#endif /* KERNEL_TESTS */
 
 /* ---- Secure Boot Variable Measurement Reconciliation (STRUCTURAL, UNAUTHENTICATED) ----
  *

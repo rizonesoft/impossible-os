@@ -555,8 +555,12 @@ static void test_entropy_tpm_collect(void)
     TEST_ASSERT_EQ(len, 69u, "staged record is 1+4+64 bytes");
     TEST_ASSERT_EQ(out[0], (uint8_t)ENTROPY_SRC_TPM_RNG,
                    "staged record carries TPM src id");
-    TEST_ASSERT_EQ(tpm_integrity_report()->tpm_rng_available, 1u,
-                   "integrity report records TPM RNG availability");
+    {
+        struct boot_integrity_report ir;
+        tpm_integrity_report_copy(&ir);
+        TEST_ASSERT_EQ(ir.tpm_rng_available, 1u,
+                       "integrity report records TPM RNG availability");
+    }
 
     /* Stuck output: identical halves (vary off -> same 32 bytes twice)
      * must be rejected with no staged record. */
@@ -628,8 +632,12 @@ static void test_entropy_tpm_collect(void)
                    "32-byte constant-fill output not credited");
     TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
                    "32-byte constant-fill output not staged");
-    TEST_ASSERT_EQ(tpm_integrity_report()->tpm_rng_available, 0u,
-                   "report flag stays clear on rejected output");
+    {
+        struct boot_integrity_report ir;
+        tpm_integrity_report_copy(&ir);
+        TEST_ASSERT_EQ(ir.tpm_rng_available, 0u,
+                       "report flag stays clear on rejected output");
+    }
 
     /* No transport: collector is a silent no-op. */
     tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);

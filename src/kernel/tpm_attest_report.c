@@ -128,7 +128,7 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
                                             struct boot_attestation_report *out)
 {
     const struct boot_attest_handoff *h;
-    const struct boot_integrity_report *ir;
+    struct boot_integrity_report ir;
     uint32_t qmask;
     uint8_t pcr;
     int self_test;
@@ -183,16 +183,18 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
     out->boot_source_flags   = h->boot_source_flags;
     out->boot_fallback_depth = h->boot_fallback_depth;
 
-    /* (3) Integrity verdict. */
-    ir = tpm_integrity_report();
-    if (ir) {
-        out->overall_status    = ir->overall_status;
-        out->replay_verdict    = ir->replay_verdict;
-        out->tpm_version       = ir->tpm_version;
-        out->secure_boot       = ir->secure_boot;
-        out->secure_boot_valid = ir->secure_boot_valid;
-        out->event_count       = ir->event_count;
-    }
+    /* (3) Integrity verdict. Copied out under the report's publication lock, so
+     * these six fields all come from the SAME snapshot -- a field-by-field read
+     * of a live struct could straddle a publication and pair a new verdict with
+     * old provenance, which is precisely what an attestation report must not
+     * do. */
+    tpm_integrity_report_copy(&ir);
+    out->overall_status    = ir.overall_status;
+    out->replay_verdict    = ir.replay_verdict;
+    out->tpm_version       = ir.tpm_version;
+    out->secure_boot       = ir.secure_boot;
+    out->secure_boot_valid = ir.secure_boot_valid;
+    out->event_count       = ir.event_count;
 
     /* (4) Verifier nonce: exact copy (validated MIN..MAX above; no truncation). */
     if (!self_test) {

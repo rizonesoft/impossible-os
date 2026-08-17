@@ -167,6 +167,57 @@ tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
     return TPM_BASELINE_MATCH;
 }
 
+uint8_t tpm_baseline_compare_pcrs(const struct tpm_baseline *golden,
+                                  const struct tpm_baseline *current,
+                                  uint8_t *out_status, uint8_t cap)
+{
+    uint8_t i, n;
+    int bank_ok;
+
+    if (!golden || !current || !out_status)
+        return 0;
+    if (golden->pcr_count > TPM_BASELINE_MAX_PCRS ||
+        current->pcr_count > TPM_BASELINE_MAX_PCRS)
+        return 0;
+
+    n = golden->pcr_count;
+    if (n > cap)
+        n = cap;
+
+    /* Digests from different banks are not comparable at all, so a bank
+     * disagreement is a per-PCR mismatch for every slot rather than something
+     * that could leave individual PCRs looking verified. */
+    bank_ok = (golden->alg == current->alg);
+
+    for (i = 0; i < n; i++) {
+        const struct tpm_baseline_pcr *g = &golden->pcrs[i];
+        uint8_t st = BOOT_INTEGRITY_MISMATCH;
+        uint8_t j;
+
+        if (!g->present) {
+            /* The golden pins nothing here, so this boot's value is UNVERIFIED,
+             * not wrong. Reporting it as a mismatch would invent a culprit. */
+            out_status[i] = BOOT_INTEGRITY_NO_BASELINE;
+            continue;
+        }
+        if (bank_ok) {
+            for (j = 0; j < current->pcr_count; j++) {
+                const struct tpm_baseline_pcr *c = &current->pcrs[j];
+                if (c->index == g->index && c->present) {
+                    st = (memcmp(g->digest, c->digest, TPM_BASELINE_DIGEST) == 0)
+                             ? (uint8_t)BOOT_INTEGRITY_VERIFIED
+                             : (uint8_t)BOOT_INTEGRITY_MISMATCH;
+                    break;
+                }
+            }
+            /* Falling out of the loop without a match leaves st MISMATCH: the
+             * golden pinned this PCR and the current boot cannot produce it. */
+        }
+        out_status[i] = st;
+    }
+    return n;
+}
+
 int tpm_baseline_rotation_ok(uint32_t old_gen, uint32_t new_gen)
 {
     return (new_gen > old_gen) ? 1 : 0;
@@ -176,7 +227,7 @@ int tpm_baseline_rotation_ok(uint32_t old_gen, uint32_t new_gen)
 
 tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *out)
 {
-    const struct boot_integrity_report *rep;
+    struct boot_integrity_report rep;
     const struct smbios_system_info *si;
     uint32_t i, present = 0;
 
@@ -222,12 +273,13 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
         return TPM_BASELINE_NO_TPM;
 
     /* Secure Boot state from the honest Secure Boot reconciliation in the boot
-     * integrity report. */
-    rep = tpm_integrity_report();
-    if (rep) {
-        out->secure_boot = rep->secure_boot;
-        out->secure_boot_valid = rep->secure_boot_valid;
-    }
+     * integrity report. Copied out, so the two fields come from one snapshot
+     * and cannot straddle a publication -- and the copy is taken here, never
+     * with a publication lock held, because this runs inside the verify path
+     * whose caller publishes only after it returns. */
+    tpm_integrity_report_copy(&rep);
+    out->secure_boot = rep.secure_boot;
+    out->secure_boot_valid = rep.secure_boot_valid;
 
     /* Firmware-version hash: SHA-256 over the SMBIOS BIOS version string. */
     si = smbios_get_info();
@@ -320,7 +372,10 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
 }
 
 tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
-                                          uint8_t *out_overall)
+                                          uint8_t *out_overall,
+                                          uint8_t *out_pcr_status,
+                                          uint8_t pcr_cap,
+                                          uint8_t *out_pcr_n)
 {
     uint8_t blob[sizeof(struct tpm_baseline)];
     struct tpm_baseline current;
@@ -329,6 +384,14 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
     tpm_nv_status_t nv;
     tpm_baseline_status_t st;
     tpm_baseline_verdict_t v;
+
+    /* NOT EVALUATED until a comparison actually runs. Set once, up front, so
+     * every early return below leaves the caller with an honest count rather
+     * than whatever happened to be in its buffer -- a stale or uninitialized
+     * per-PCR array published beside a MISMATCH is the self-contradiction this
+     * out-param exists to prevent. */
+    if (out_pcr_n)
+        *out_pcr_n = 0;
 
     /* THIS KERNEL's identity is checked BEFORE the NV lookup, for the same
      * reason snapshot checks it before the PCR reads: it does not depend on
@@ -346,6 +409,24 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
             return TPM_BASELINE_SELF_CORRUPT;
         }
     }
+
+    /* A detail buffer that cannot hold the whole measured set is refused before
+     * any TPM work, but AFTER the self-identity check above -- the ordering is
+     * load-bearing and the opposite order was a real regression. SELF_CORRUPT
+     * is fail-closed and publishes MISMATCH, while the boot caller deliberately
+     * does not publish a BADARG; checking capacity first would let a corrupt
+     * kernel descriptor arriving with an undersized buffer return BADARG and
+     * leave the corruption entirely unreported.
+     *
+     * Clamping instead of refusing would hand back VERIFIED beside a truncated
+     * detail array whose tail then publishes as UNKNOWN -- the
+     * overall-vs-per-PCR contradiction the detail exists to remove, moved one
+     * layer out. The bound is knowable before the read because
+     * tpm_baseline_validate only accepts a golden pinning the FULL measured set
+     * in canonical order, so a validated golden always has pcr_count ==
+     * TPM_BASELINE_MAX_PCRS. Declining the detail entirely (NULL) stays legal. */
+    if (out_pcr_status && pcr_cap < (uint8_t)TPM_BASELINE_MAX_PCRS)
+        return TPM_BASELINE_BADARG;
 
     nv = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof(blob), &got);
     if (nv != TPM_NV_OK) {
@@ -384,5 +465,14 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
         *out_overall = (v == TPM_BASELINE_MATCH)
                            ? BOOT_INTEGRITY_VERIFIED
                            : BOOT_INTEGRITY_MISMATCH;
+    /* Per-PCR detail runs on BOTH outcomes, including a MISMATCH that a scalar
+     * field caused. tpm_baseline_compare stops at the first difference, so it
+     * cannot supply this; compare_pcrs walks the PCRs regardless, which is what
+     * lets the report say "the overall verdict is MISMATCH and every PCR
+     * verified" -- the honest reading of a Secure-Boot-state or ABI-manifest
+     * change, and the one that stops it looking like PCR tampering. */
+    if (out_pcr_status && out_pcr_n)
+        *out_pcr_n = tpm_baseline_compare_pcrs(&golden, &current,
+                                               out_pcr_status, pcr_cap);
     return TPM_BASELINE_OK;
 }

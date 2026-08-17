@@ -620,7 +620,7 @@ void boot_phase1(void)
              * under !admit, so without this the enrolling boot would log the
              * corruption and carry on under whatever status preceded it. */
             if (bs == TPM_BASELINE_SELF_CORRUPT)
-                tpm_integrity_set_overall_status(BOOT_INTEGRITY_MISMATCH);
+                tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0);
         } else if (g_boot_info.config.tpm_enroll) {
             /* Only report a refusal when enrollment was actually requested;
              * every ordinary boot refuses at CONFIG_DISABLED and saying so
@@ -634,14 +634,27 @@ void boot_phase1(void)
 
         if (!gr.admit) {
             uint8_t overall = 0;
+            uint8_t pcr_status[BOOT_INTEGRITY_MAX_PCRS];
+            uint8_t pcr_n = 0;
             tpm_baseline_status_t bs =
-                tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall);
+                tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                                    pcr_status, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                    &pcr_n);
+            /* One publication carries the overall verdict AND the per-PCR
+             * detail, so a reader can never catch the report with a fresh
+             * verdict beside stale per-PCR values. A non-verdict return
+             * (NO_TPM / TPMERR / BADARG) publishes nothing at all -- a machine
+             * that could not measure has not failed to match. */
             if (bs == TPM_BASELINE_OK || bs == TPM_BASELINE_NO_BASELINE ||
                 bs == TPM_BASELINE_CORRUPT || bs == TPM_BASELINE_SELF_CORRUPT)
-                tpm_integrity_set_overall_status(overall);
+                tpm_integrity_publish_baseline(overall, pcr_status, pcr_n);
         }
-        klog(LOG_INFO, "TPM", "Boot integrity status: %s",
-             tpm_integrity_status_label(tpm_integrity_report()));
+        {
+            struct boot_integrity_report ir;
+            tpm_integrity_report_copy(&ir);
+            klog(LOG_INFO, "TPM", "Boot integrity status: %s",
+                 tpm_integrity_status_label(&ir));
+        }
     }
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);

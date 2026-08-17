@@ -8,6 +8,9 @@
 #include "kernel/test/test.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_baseline.h"
+#include "kernel/tpm_nv.h"          /* TPM_NV_INDEX_BASELINE */
+#include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical set) */
+#include "kernel/tpm_transport.h"   /* tpm_t_test_install/restore (no-transport path) */
 #include "kernel/boot_proto_descriptor.h"
 #include "libc/string.h"
 
@@ -347,6 +350,554 @@ static void test_baseline_validate_manifest_shape(void)
                    "legacy unbound blob still validates (compare reports it, not validate)");
 }
 
+/* Per-PCR comparison detail. tpm_baseline_compare answers "does this boot
+ * match" and stops at the first difference, so it cannot say WHICH PCR moved --
+ * and on a scalar difference it never looks at a PCR at all. These assert that
+ * compare_pcrs answers that question independently of the scalars. */
+static void test_baseline_compare_pcrs(void)
+{
+    struct tpm_baseline g, c;
+    uint8_t st[TPM_BASELINE_MAX_PCRS];
+    uint8_t i, n;
+
+    /* Control: an identical snapshot verifies every slot. Without this a
+     * detector that returned VERIFIED unconditionally would pass the
+     * attribution cases below. */
+    make_golden(&g);
+    make_golden(&c);
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    TEST_ASSERT_EQ(n, (uint8_t)TPM_BASELINE_MAX_PCRS,
+                   "one status per golden PCR slot");
+    for (i = 0; i < n; i++)
+        TEST_ASSERT_EQ(st[i], (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                       "identical snapshot verifies every PCR");
+
+    /* PCR 4 alone moved: slot 4 is MISMATCH and NOTHING else is. This is the
+     * attribution the report needs -- the overall verdict already said
+     * MISMATCH, the per-PCR detail is what names the culprit. */
+    make_golden(&c);
+    memset(c.pcrs[4].digest, 0x5A, TPM_BASELINE_DIGEST);
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    TEST_ASSERT_EQ(n, (uint8_t)TPM_BASELINE_MAX_PCRS, "count unchanged");
+    for (i = 0; i < n; i++)
+        TEST_ASSERT_EQ(st[i],
+                       (i == 4u) ? (uint8_t)BOOT_INTEGRITY_MISMATCH
+                                 : (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                       "only the PCR that differs is reported as mismatched");
+    /* Attribution must follow the PCR INDEX, not the array position. Asserting
+     * the fixture's own `g.pcrs[4].index == 4` proved nothing: every snapshot
+     * shares make_golden's ordering, so a positional `pcrs[i]` comparison would
+     * pass the whole suite. PERMUTING the current entries while preserving each
+     * index/digest pair is what distinguishes the two. */
+    make_golden(&c);
+    {
+        struct tpm_baseline_pcr tmp = c.pcrs[1];
+        c.pcrs[1] = c.pcrs[7];
+        c.pcrs[7] = tmp;
+    }
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    for (i = 0; i < n; i++)
+        TEST_ASSERT_EQ(st[i], (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                       "matching by index, a permuted current snapshot verifies");
+
+    /* And when an index genuinely disappears from the current snapshot, ONLY
+     * the golden PCR that lost its match is blamed. */
+    make_golden(&c);
+    c.pcrs[3].index = 20u;      /* PCR 3 no longer present; PCR 20 appears */
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    for (i = 0; i < n; i++)
+        TEST_ASSERT_EQ(st[i],
+                       (i == 3u) ? (uint8_t)BOOT_INTEGRITY_MISMATCH
+                                 : (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                       "a golden index absent from the current snapshot is the "
+                       "only one blamed");
+
+    /* A golden PCR that the current boot can no longer produce is a mismatch,
+     * not a pass -- the measured state changed even though no digest differs. */
+    make_golden(&c);
+    c.pcrs[6].present = 0u;
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    TEST_ASSERT_EQ(st[6], (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "golden PCR now unreadable is a mismatch");
+    TEST_ASSERT_EQ(st[5], (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                   "its neighbours are untouched");
+
+    /* A golden that pins nothing for a slot leaves that PCR UNVERIFIED, never
+     * mismatched -- reporting a mismatch there would invent a culprit. */
+    make_golden(&g);
+    g.pcrs[2].present = 0u;
+    make_golden(&c);
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    TEST_ASSERT_EQ(st[2], (uint8_t)BOOT_INTEGRITY_NO_BASELINE,
+                   "unpinned golden slot reports no-baseline, not mismatch");
+
+    /* THE SCALAR CASE, which is why this function exists. A Secure Boot change
+     * makes tpm_baseline_compare return MISMATCH before it inspects a single
+     * PCR; the per-PCR detail must still show the PCRs as they actually
+     * compared, so the report cannot read as PCR tampering. */
+    make_golden(&g);
+    make_golden(&c);
+    c.secure_boot = 0u;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare(&g, &c), (int)TPM_BASELINE_MISMATCH,
+                   "control: a Secure Boot change is an overall mismatch");
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    TEST_ASSERT_EQ(n, (uint8_t)TPM_BASELINE_MAX_PCRS,
+                   "per-PCR detail is produced even on a scalar mismatch");
+    for (i = 0; i < n; i++)
+        TEST_ASSERT_EQ(st[i], (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                       "a scalar-caused mismatch does not blame any PCR");
+
+    /* Different banks make no digest comparable, so nothing may look verified. */
+    make_golden(&c);
+    c.alg = TPM_ALG_SHA1;
+    n = tpm_baseline_compare_pcrs(&g, &c, st, TPM_BASELINE_MAX_PCRS);
+    for (i = 0; i < n; i++)
+        TEST_ASSERT_EQ(st[i], (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                       "a bank disagreement leaves no PCR verified");
+
+    /* Bad arguments write nothing and report 0 -- which the caller must read as
+     * NOT EVALUATED, never as a clean pass. Asserted with a canary rather than
+     * by return value alone, so "returns 0 but scribbled anyway" still fails. */
+    make_golden(&c);
+    memset(st, 0xEE, sizeof(st));
+    TEST_ASSERT_EQ(tpm_baseline_compare_pcrs((const struct tpm_baseline *)0, &c,
+                                             st, TPM_BASELINE_MAX_PCRS), 0u,
+                   "NULL golden reports nothing evaluated");
+    TEST_ASSERT_EQ(st[0], 0xEEu, "NULL golden writes no status");
+    TEST_ASSERT_EQ(tpm_baseline_compare_pcrs(&g, (const struct tpm_baseline *)0,
+                                             st, TPM_BASELINE_MAX_PCRS), 0u,
+                   "NULL current reports nothing evaluated");
+    TEST_ASSERT_EQ(st[0], 0xEEu, "NULL current writes no status");
+    TEST_ASSERT_EQ(tpm_baseline_compare_pcrs(&g, &c, (uint8_t *)0,
+                                             TPM_BASELINE_MAX_PCRS), 0u,
+                   "NULL out buffer writes no status");
+    TEST_ASSERT_EQ(tpm_baseline_compare_pcrs(&g, &c, st, 0u), 0u,
+                   "zero capacity evaluates nothing");
+    TEST_ASSERT_EQ(st[0], 0xEEu, "zero capacity writes no status");
+
+    /* An oversized pcr_count is rejected rather than walked. */
+    {
+        struct tpm_baseline bad;
+        make_golden(&bad);
+        bad.pcr_count = (uint8_t)(TPM_BASELINE_MAX_PCRS + 1u);
+        TEST_ASSERT_EQ(tpm_baseline_compare_pcrs(&bad, &c, st,
+                                                 TPM_BASELINE_MAX_PCRS), 0u,
+                       "oversized golden pcr_count is refused");
+        TEST_ASSERT_EQ(st[0], 0xEEu, "oversized golden writes no status");
+        make_golden(&bad);
+        bad.pcr_count = (uint8_t)(TPM_BASELINE_MAX_PCRS + 1u);
+        TEST_ASSERT_EQ(tpm_baseline_compare_pcrs(&g, &bad, st,
+                                                 TPM_BASELINE_MAX_PCRS), 0u,
+                       "oversized current pcr_count is refused");
+    }
+
+    /* A short buffer is honoured rather than overrun. The count alone cannot
+     * show this -- an implementation that wrote all 9 entries and returned 3
+     * would pass -- so the assertion is on GUARD BYTES past the stated
+     * capacity, which must survive untouched. */
+    {
+        uint8_t guarded[TPM_BASELINE_MAX_PCRS];
+        uint8_t k;
+        memset(guarded, 0xEE, sizeof(guarded));
+        TEST_ASSERT_EQ(tpm_baseline_compare_pcrs(&g, &c, guarded, 3u), 3u,
+                       "count is clamped to the caller's capacity");
+        for (k = 3u; k < TPM_BASELINE_MAX_PCRS; k++)
+            TEST_ASSERT_EQ(guarded[k], 0xEEu,
+                           "nothing is written past the stated capacity");
+        TEST_ASSERT(guarded[0] != 0xEEu, "control: the in-capacity slots WERE written");
+    }
+}
+
+/* The verify WRAPPER's per-PCR out-params, on the path this suite can reach
+ * without a full NV-blob fake: with no transport installed the NV read fails,
+ * verify returns NO_TPM, and the contract is that it publishes NO verdict and
+ * reports NOTHING evaluated. The sentinel must be zeroed by verify itself, so
+ * the buffers are POISONED first -- a wrapper that simply never touched them
+ * would otherwise pass. */
+static void test_baseline_verify_no_transport(void)
+{
+    struct tpm_t_test_state prev;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+
+    memset(pcr_status, 0xEE, sizeof(pcr_status));
+    prev = tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);
+
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status, (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "no transport verifies to NO_TPM");
+    TEST_ASSERT_EQ(pcr_n, 0u,
+                   "a path that never compared reports nothing evaluated");
+    TEST_ASSERT_EQ(pcr_status[0], 0xEEu,
+                   "a non-comparing path writes no per-PCR status");
+    TEST_ASSERT_EQ(overall, 0xEEu,
+                   "a non-verdict return leaves the overall status untouched");
+
+    /* NULL out-params on the same path must not fault. Declining the detail is
+     * always legal; it is only an UNDERSIZED buffer that is refused. */
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                             (uint8_t *)0, (uint8_t *)0, 0u, (uint8_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "NULL out-params are accepted on the no-transport path");
+
+    /* An UNDERSIZED detail buffer is BADARG, refused as an argument error
+     * before any TPM work -- never a verdict beside a truncated detail array.
+     * It is checked ahead of the transport, so it outranks NO_TPM here, which
+     * is what proves it happens before the NV read rather than after it.
+     *
+     * The OTHER half of that ordering -- that the kernel self-identity check
+     * still outranks this BADARG -- cannot be asserted from a unit test: the
+     * real `boot_proto_abi_digest()` reads the linked-in read-only `.bootproto`
+     * descriptor, and the only corruption seam is the pure
+     * `boot_proto_abi_digest_from(&d, out)` variant that takes a caller's
+     * descriptor. Adding a seam to force the live self-check to fail would let
+     * any caller spoof the fail-closed identity gate, which is a worse trade
+     * than the missing assertion. The precedence is held by statement order in
+     * tpm_baseline_verify and documented at the site. */
+    overall = 0xEEu;
+    pcr_n = 0xEEu;
+    memset(pcr_status, 0xEE, sizeof(pcr_status));
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status,
+                             (uint8_t)(TPM_BASELINE_MAX_PCRS - 1u), &pcr_n);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
+                   "a detail buffer smaller than the measured set is refused");
+    TEST_ASSERT_EQ(pcr_n, 0u, "a refused call reports nothing evaluated");
+    TEST_ASSERT_EQ(overall, 0xEEu, "a refused call publishes no verdict");
+    TEST_ASSERT_EQ(pcr_status[0], 0xEEu, "a refused call writes no detail");
+
+    /* Control: the SAME call with an exactly-sized buffer gets past the
+     * argument check and reaches the transport. Without this the assertion
+     * above would also pass against a function that refused everything. */
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status, (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "control: an exactly-sized buffer is accepted");
+
+    tpm_t_test_restore(prev);
+}
+
+/* Publication: the report is an immutable snapshot swapped in whole, so a
+ * reader's copy can never be mutated underneath it and the overall verdict can
+ * never be published apart from its per-PCR detail. */
+static void test_integrity_publication(void)
+{
+    struct boot_integrity_report saved, a, b;
+    uint8_t st[BOOT_INTEGRITY_MAX_PCRS];
+    uint8_t i;
+
+    /* Save the boot's real verdict; every path below restores it. */
+    tpm_integrity_report_copy(&saved);
+
+    /* Seed a fixture with the full measured set, then publish VERIFIED with
+     * per-PCR detail to match. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+        a.pcrs[i].status = (uint8_t)BOOT_INTEGRITY_NO_CRYPTO;
+    }
+    tpm_integrity_test_republish(&a);
+
+    /* PCR 11 has a SLOT at all -- the report was sized 8 and could not carry
+     * it. The claim under test is the SIZING, so it is asserted against the
+     * canonical measured set rather than against the fixture's own injected
+     * value (which would only prove memcpy works): the report must hold every
+     * PCR that tpm_pcr_baseline_pcrs() enumerates, and 11 must be among them. */
+    {
+        uint8_t set[TPM_BASELINE_MAX_PCRS];
+        uint8_t n = tpm_pcr_baseline_pcrs(set, (uint8_t)TPM_BASELINE_MAX_PCRS);
+        uint8_t k, found11 = 0;
+        /* EXACT equality, matching the guard tpm_integrity_build_report ships.
+         * `<=` would still pass if the canonical set LOST a PCR, which is one
+         * of the two drift directions the guard exists to refuse. */
+        TEST_ASSERT_EQ(n, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                       "the report is sized to exactly the measured-boot set");
+        for (k = 0; k < n; k++)
+            if (set[k] == 11u)
+                found11 = 1u;
+        TEST_ASSERT_EQ(found11, 1u, "PCR 11 is in the measured-boot set");
+    }
+
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                   "verified verdict published");
+    for (i = 0; i < b.pcr_count; i++)
+        TEST_ASSERT(b.pcrs[i].status != (uint8_t)BOOT_INTEGRITY_NO_CRYPTO,
+                    "no slot still reads NO_CRYPTO behind a VERIFIED verdict");
+
+    /* A path that never compared publishes NOT-EVALUATED per-PCR rather than
+     * leaving the stale VERIFIED detail standing beside a NO_BASELINE verdict. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_NO_BASELINE, (const uint8_t *)0, 0u);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_NO_BASELINE,
+                   "no-baseline verdict published");
+    for (i = 0; i < b.pcr_count; i++)
+        TEST_ASSERT_EQ(b.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                       "a path that never compared reports not-evaluated");
+
+    /* A reader's copy is a SNAPSHOT: publishing again cannot mutate it. That is
+     * the property a naked pointer into the live slot could not provide, and it
+     * is what makes acquisition safe rather than merely well-timed. */
+    tpm_integrity_report_copy(&a);
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_MISMATCH;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    TEST_ASSERT_EQ(a.overall_status, (uint8_t)BOOT_INTEGRITY_NO_BASELINE,
+                   "an earlier copy is unaffected by a later publication");
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "a fresh copy sees the new snapshot");
+
+    /* Many publications in a row: the slots are recycled, and a copy taken
+     * after each one is complete and self-consistent -- it never spins and
+     * never observes a half-written mixture. A seqlock reader could stall here
+     * on a writer stuck mid-update; the copy-out cannot. */
+    for (i = 0; i < 8u; i++) {
+        uint8_t want = (uint8_t)((i & 1u) ? BOOT_INTEGRITY_VERIFIED
+                                          : BOOT_INTEGRITY_MISMATCH);
+        uint8_t j;
+        for (j = 0; j < BOOT_INTEGRITY_MAX_PCRS; j++)
+            st[j] = want;
+        tpm_integrity_publish_baseline(want, st, (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+        tpm_integrity_report_copy(&b);
+        TEST_ASSERT_EQ(b.overall_status, want,
+                       "each publication is observed whole");
+        for (j = 0; j < b.pcr_count; j++)
+            TEST_ASSERT_EQ(b.pcrs[j].status, want,
+                           "per-PCR detail matches the verdict it shipped with");
+    }
+
+    /* TAMPER pins MISMATCH: a later baseline VERIFIED must NOT downgrade it,
+     * and the per-PCR detail is still refreshed. A pinned verdict is a
+     * statement about the verdict, not a licence to report stale PCR values. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+        a.pcrs[i].status = (uint8_t)BOOT_INTEGRITY_NO_CRYPTO;
+    }
+    a.replay_verdict = 1u;                       /* TPM_REPLAY_TAMPER */
+    a.overall_status = (uint8_t)BOOT_INTEGRITY_MISMATCH;
+    tpm_integrity_test_republish(&a);
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "a baseline VERIFIED never overwrites a replay TAMPER");
+    for (i = 0; i < b.pcr_count; i++)
+        TEST_ASSERT_EQ(b.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                       "per-PCR detail is refreshed even while the verdict is pinned");
+
+    /* An oversized count must be clamped by the INDEPENDENT
+     * BOOT_INTEGRITY_MAX_PCRS write bound, not merely by pcr_count. The earlier
+     * shape could not test that: it seeded pcr_count=9, so n=255 executed only
+     * nine iterations through the pcr_count bound and removing the clamp
+     * changed nothing. Seeding an OVERSIZED pcr_count is what challenges the
+     * real bound, and the canary is event_count -- the field that actually
+     * follows pcrs[] in the struct (replay_verdict is last, several fields
+     * further on, so it was the wrong canary). */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = 255u;                    /* deliberately impossible */
+    a.event_count = 0xA5A5A5A5u;           /* overrun canary, sits after pcrs[] */
+    a.tpm_version = 2u;
+    a.secure_boot = 1u;
+    a.secure_boot_valid = 1u;
+    a.tpm_rng_available = 1u;
+    a.replay_verdict = 0u;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+    tpm_integrity_test_republish(&a);
+
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_NO_TPM;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 255u);
+    tpm_integrity_report_copy(&b);
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        TEST_ASSERT_EQ(b.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_NO_TPM,
+                       "an oversized count writes every real slot");
+    TEST_ASSERT_EQ(b.event_count, 0xA5A5A5A5u,
+                   "the field immediately after pcrs[] survives the overrun");
+    TEST_ASSERT_EQ(b.tpm_version, 2u, "later fields survive the overrun");
+    TEST_ASSERT_EQ(b.secure_boot_valid, 1u, "later fields survive the overrun");
+    TEST_ASSERT_EQ(b.tpm_rng_available, 1u, "later fields survive the overrun");
+
+    /* BOTH real writer orderings, through the REAL setters. The fixture above
+     * pre-set replay_verdict via the restore seam, which cannot catch a broken
+     * tpm_integrity_set_replay_verdict or a lost update between the two. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+        a.pcrs[i].status = (uint8_t)BOOT_INTEGRITY_NO_CRYPTO;
+    }
+    tpm_integrity_test_republish(&a);
+
+    /* Order 1: TAMPER lands FIRST, then a baseline VERIFIED arrives. */
+    tpm_integrity_set_replay_verdict(1u);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "the replay setter escalates to MISMATCH by itself");
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "tamper-then-verified: the tamper verdict stands");
+
+    /* Order 2: baseline VERIFIED lands FIRST, then TAMPER arrives. The verdict
+     * must END at MISMATCH -- a report that settled on VERIFIED because the
+     * tamper signal was late is the failure this ordering exists to catch. */
+    tpm_integrity_test_republish(&a);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                   "control: with no tamper the baseline verdict is published");
+    tpm_integrity_set_replay_verdict(1u);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "verified-then-tamper: the tamper verdict wins");
+    /* And a later baseline verdict still cannot undo it. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "the pin holds against a repeat baseline publication");
+
+    /* NULL-safety on the reader and the restore seam: neither may fault, and
+     * neither may disturb the published snapshot. */
+    tpm_integrity_report_copy((struct boot_integrity_report *)0);
+    tpm_integrity_test_republish((const struct boot_integrity_report *)0);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "NULL arguments leave the published report untouched");
+
+    /* A NULL status array with a nonzero count must not be dereferenced; the
+     * detail falls back to NOT-EVALUATED. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH,
+                                   (const uint8_t *)0,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    for (i = 0; i < b.pcr_count; i++)
+        TEST_ASSERT_EQ(b.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                       "a NULL status array with a nonzero count is not read");
+
+    /* A PARTIAL count fills what it covers and marks the rest not-evaluated,
+     * rather than leaving stale values in the uncovered tail. */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 4u);
+    tpm_integrity_report_copy(&b);
+    for (i = 0; i < b.pcr_count; i++)
+        TEST_ASSERT_EQ(b.pcrs[i].status,
+                       (i < 4u) ? (uint8_t)BOOT_INTEGRITY_VERIFIED
+                                : (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                       "a partial count covers its prefix and blanks the tail");
+
+    tpm_integrity_test_republish(&saved);
+}
+
+/* The PURE initial-report builder. tpm_integrity_init() itself is boot
+ * infrastructure a test may not call, so the construction RULES live here where
+ * they can be exercised directly: no-TPM handling, PCR enumeration and PCR 11
+ * placement, NO_CRYPTO seeding, Secure Boot normalization, and measured-set
+ * drift in BOTH directions. */
+static void test_integrity_build_report(void)
+{
+    struct boot_integrity_report r;
+    uint8_t set[BOOT_INTEGRITY_MAX_PCRS];
+    uint8_t canonical[BOOT_INTEGRITY_MAX_PCRS];
+    uint8_t n, i;
+
+    n = tpm_pcr_baseline_pcrs(canonical, (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    TEST_ASSERT_EQ(n, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                   "control: the canonical set fits the report exactly");
+
+    /* No TPM, in the PRODUCTION input shape: tpm_integrity_init only enumerates
+     * the measured set when a TPM is present, so its no-TPM call reaches the
+     * builder with set == NULL and n == 0. Passing a populated set here would
+     * have hidden a regression that moved the exact-set guard ahead of the
+     * no-TPM branch -- production would report UNKNOWN while the test stayed
+     * green on inputs the real caller never supplies. */
+    TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 0, 0u, 42u, 1, 1,
+                                              (const uint8_t *)0, 0u),
+                   1, "no-TPM is a well-formed report on the production inputs");
+    TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_NO_TPM, "status NO_TPM");
+    TEST_ASSERT_EQ(r.pcr_count, 0u, "no-TPM reports no PCRs");
+    TEST_ASSERT_EQ(r.event_count, 42u, "event count is carried through");
+
+    /* A stray set with no TPM is still NO_TPM, never a PCR report. */
+    TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 0, 0u, 0u, 1, 1, canonical, n),
+                   1, "no-TPM ignores a supplied set");
+    TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_NO_TPM,
+                   "no-TPM outranks a valid measured set");
+    TEST_ASSERT_EQ(r.pcr_count, 0u, "no-TPM still reports no PCRs");
+
+    /* TPM present with the canonical set: every measured PCR gets a slot, in
+     * order, seeded NO_CRYPTO -- and PCR 11 is the one that used not to fit. */
+    TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 1, 2u, 7u, 1, 1, canonical, n),
+                   1, "the canonical set builds a full report");
+    TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_NO_CRYPTO,
+                   "Phase 0 cannot verify anything yet");
+    TEST_ASSERT_EQ(r.pcr_count, n, "every measured PCR is reported");
+    TEST_ASSERT_EQ(r.tpm_version, 2u, "TPM version is carried through");
+    for (i = 0; i < n; i++) {
+        TEST_ASSERT_EQ(r.pcrs[i].pcr_index, canonical[i],
+                       "slots follow the canonical measured set");
+        TEST_ASSERT_EQ(r.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_NO_CRYPTO,
+                       "each slot starts NO_CRYPTO");
+    }
+    TEST_ASSERT_EQ(r.pcrs[n - 1u].pcr_index, 11u, "PCR 11 has a slot");
+
+    /* Secure Boot normalization: an UNREADABLE state never collapses to "off". */
+    tpm_integrity_build_report(&r, 1, 2u, 0u, 0, 1, canonical, n);
+    TEST_ASSERT_EQ(r.secure_boot_valid, 0u, "unreadable SB state is not valid");
+    TEST_ASSERT_EQ(r.secure_boot, 0u, "unreadable SB never reports as enabled");
+    tpm_integrity_build_report(&r, 1, 2u, 0u, 1, 0, canonical, n);
+    TEST_ASSERT_EQ(r.secure_boot_valid, 1u, "readable SB state is valid");
+    TEST_ASSERT_EQ(r.secure_boot, 0u, "readable-and-off reports off");
+    tpm_integrity_build_report(&r, 1, 2u, 0u, 1, 1, canonical, n);
+    TEST_ASSERT_EQ(r.secure_boot, 1u, "readable-and-on reports on");
+
+    /* Measured-set DRIFT, both directions, each failing closed. */
+    memcpy(set, canonical, sizeof(set));
+    TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 1, 2u, 0u, 1, 1, set,
+                                              (uint8_t)(n - 1u)), 0,
+                   "an undersized measured set is refused");
+    TEST_ASSERT_EQ(r.pcr_count, 0u, "undersized drift reports no PCRs");
+    TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "undersized drift never reads as verified");
+    TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 1, 2u, 0u, 1, 1, set,
+                                              (uint8_t)(n + 1u)), 0,
+                   "an oversized measured set is refused");
+    TEST_ASSERT_EQ(r.pcr_count, 0u, "oversized drift reports no PCRs");
+    TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "oversized drift never reads as verified");
+    TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 1, 2u, 0u, 1, 1,
+                                              (const uint8_t *)0, n), 0,
+                   "a NULL set with a TPM present is refused");
+    TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "a NULL set fails closed too");
+
+    /* NULL out is rejected without faulting. */
+    TEST_ASSERT_EQ(tpm_integrity_build_report((struct boot_integrity_report *)0,
+                                              1, 2u, 0u, 1, 1, canonical, n), 0,
+                   "NULL out is refused");
+}
+
 void test_register_tpm_baseline(void)
 {
     test_suite_register_cat("tpm: baseline finalize/validate", test_baseline_finalize_validate, TEST_CAT_SECURITY);
@@ -359,4 +910,12 @@ void test_register_tpm_baseline(void)
                             test_baseline_abi_manifest_compare, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: baseline manifest shape validation",
                             test_baseline_validate_manifest_shape, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline per-PCR compare detail",
+                            test_baseline_compare_pcrs, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify per-PCR out-params (no transport)",
+                            test_baseline_verify_no_transport, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: boot-integrity report publication",
+                            test_integrity_publication, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: boot-integrity initial-report builder",
+                            test_integrity_build_report, TEST_CAT_SECURITY);
 }

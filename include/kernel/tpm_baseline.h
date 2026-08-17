@@ -126,6 +126,36 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
 tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
                                             const struct tpm_baseline *current);
 
+/* Per-PCR comparison DETAIL, for the boot-integrity report's per-PCR slots.
+ *
+ * Separate from tpm_baseline_compare on purpose. That function answers "does
+ * this boot match the baseline", and to answer it cheaply it returns MISMATCH
+ * on the first difference -- including the SCALAR ones (bank, Secure Boot,
+ * firmware hash, ABI manifest), which it checks BEFORE looking at any PCR. So a
+ * scalar-caused mismatch leaves it with no PCR result to report, and a report
+ * publishing "MISMATCH" beside stale per-PCR detail is exactly the
+ * self-contradiction the report is supposed to remove.
+ *
+ * This function therefore always walks the PCRs, whatever the scalars did, and
+ * writes one BOOT_INTEGRITY_* status per GOLDEN pcr slot into out_status
+ * (positionally matching golden->pcrs[]):
+ *   VERIFIED    -- golden slot present and the current digest for that index
+ *                  in the same bank is identical
+ *   MISMATCH    -- present in the golden but differing, or no longer readable
+ *   NO_BASELINE -- the golden pins no digest for that slot, so this boot's
+ *                  value is unverified rather than wrong
+ * A bank disagreement makes NO digest comparable, so every slot is MISMATCH.
+ *
+ * Returns the number of entries written (0 on a NULL/oversized argument, which
+ * the caller must treat as NOT-EVALUATED rather than as a pass). A cap below
+ * the golden count CLAMPS here rather than failing, which is safe only because
+ * the return value is the true written extent: a caller pairing this with an
+ * overall verdict must not truncate, and tpm_baseline_verify enforces that by
+ * refusing an undersized buffer outright. Pure. */
+uint8_t tpm_baseline_compare_pcrs(const struct tpm_baseline *golden,
+                                  const struct tpm_baseline *current,
+                                  uint8_t *out_status, uint8_t cap);
+
 /* Rotation guard: a new baseline may replace an old one only if its generation
  * strictly increases (anti-rollback at the content layer; NV write-lock/counter
  * hardening is a tracked follow-up). Returns 1 if new_gen > old_gen. */
@@ -161,6 +191,27 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg);
  * the return is OK / CORRUPT / NO_BASELINE. On NO_TPM / TPMERR / BADARG no
  * verdict is produced and *out_overall is left unchanged -- the caller applies
  * *out_overall to the integrity report only on a verdict-producing return.
- * out_overall may be NULL. */
+ * out_overall may be NULL.
+ *
+ * PER-PCR DETAIL. `out_pcr_status` (capacity `pcr_cap`) receives one
+ * BOOT_INTEGRITY_* per golden PCR slot via tpm_baseline_compare_pcrs, and
+ * *out_pcr_n the count written, so the caller can publish the overall verdict
+ * and the per-PCR detail in ONE report update and they cannot disagree.
+ *
+ * *out_pcr_n is 0 on every path that never reached the comparison -- an absent
+ * baseline, a corrupt stored blob, a corrupt kernel descriptor, a snapshot that
+ * failed. That 0 means NOT EVALUATED and the caller must publish it as such;
+ * treating it as "no PCR problems" would report a clean per-PCR detail for a
+ * boot whose PCRs were never checked. Both out params may be NULL.
+ *
+ * A non-NULL out_pcr_status with pcr_cap smaller than the golden PCR count is
+ * BADARG with NO verdict produced, rather than a truncated detail array. A
+ * clamp would hand back VERIFIED beside a partial detail whose tail publishes
+ * as UNKNOWN, which is the overall-vs-per-PCR contradiction the per-PCR
+ * plumbing exists to remove. Size the buffer to TPM_BASELINE_MAX_PCRS, or pass
+ * NULL to decline the detail entirely. */
 tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
-                                          uint8_t *out_overall);
+                                          uint8_t *out_overall,
+                                          uint8_t *out_pcr_status,
+                                          uint8_t pcr_cap,
+                                          uint8_t *out_pcr_n);

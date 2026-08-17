@@ -16,9 +16,11 @@
 #include "kernel/tpm.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical measured set) */
+#include "kernel/tpm_baseline.h"    /* TPM_BASELINE_MAX_PCRS (report-size invariant) */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/sched/spinlock.h"  /* boot-integrity report publication lock */
 #include "libc/string.h"   /* snprintf */
 
 /* ---- TCG event log structures ---- */
@@ -505,37 +507,86 @@ void tpm_evlog_export_cel(void)
 /* ============================================================================
  * Boot Integrity Verification
  *
- * Stub implementation -- provides the framework and data structures for
- * boot chain verification.  Currently reports status as BOOT_INTEGRITY_NO_CRYPTO
- * because we lack the crypto primitives to replay PCR calculations.
+ * The report is assembled across two boot phases and published as one immutable
+ * snapshot per update (see the publication block below).
  *
- * Full implementation roadmap:
+ *   Phase 0 (tpm_integrity_init, here): what the parsed event log and the UEFI
+ *     runtime can tell us with no TPM transport -- TPM presence and version,
+ *     event count, live Secure Boot state -- plus the measured-boot PCR set
+ *     seeded NO_CRYPTO, because neither the transport nor the PCR cache exists
+ *     yet and nothing is verifiable.
  *
- *   Phase 1: PCR Event Log Summary (THIS -- done)
- *     - Build a boot_integrity_report from parsed event log data
- *     - Report TPM availability, version, event count, Secure Boot state
- *     - Mark all PCRs as NO_CRYPTO since we can't verify them yet
+ *   Phase 1 (elsewhere, published back through the setters here): the PCR
+ *     replay-vs-hardware verdict (tpm_replay.c, event-log tamper detection) and
+ *     the golden-baseline verdict with its per-PCR detail (tpm_baseline.c,
+ *     reading the enrolled blob from a TPM NV index).
  *
- *   Phase 2: PCR Replay (requires SHA-256)
- *     - Replay the event log: for each event, hash the event data and
- *       extend the result into a running PCR accumulator
- *       (PCR_new = SHA-256(PCR_old || digest))
- *     - Compare replayed values against TPM PCR registers
- *     - This detects event log tampering (log says X, TPM says Y)
- *
- *   Phase 3: Golden Value Enrollment (requires secure storage)
- *     - First boot: save computed PCR values as "golden baseline"
- *     - Store in TPM NV index (tamper-resistant) or encrypted UEFI variable
- *     - Subsequent boots: compare current PCRs against stored golden values
- *     - Mismatch = firmware/bootloader/kernel was modified
- *
- *   Phase 4: FDE Key Sealing (requires TPM2_Seal/Unseal)
- *     - Seal disk encryption keys to PCR[0,4,7] state
- *     - TPM only releases keys if PCRs match sealed state
- *     - Foundation for BitLocker-style automatic unlock
+ * Ranking between the two is fixed: an event-log TAMPER verdict outranks any
+ * baseline result, because a log that does not replay to the hardware PCRs is a
+ * definitive failure whatever the golden values say.
  * ============================================================================ */
 
-static struct boot_integrity_report s_integrity_report;
+/* ---- Boot-integrity report publication ----
+ *
+ * The report is published as an IMMUTABLE SNAPSHOT swapped in by release store,
+ * never mutated field-by-field in place. It used to be one static struct that
+ * every writer poked directly, which was safe only because all four writers
+ * happened to run single-threaded on the BSP before the APs came up -- an
+ * accident of init ordering rather than a stated contract, while the readers
+ * (UI, VPD, attestation) are ordinary consumers with no such guarantee.
+ *
+ * Two slots are enough, and the reason is the reader protocol rather than the
+ * slot count: a reader holds s_publish_lock across BOTH the pointer load and
+ * the copy, so no reader can still be inside a slot once it drops the lock, and
+ * the writer's next publication always has the non-published slot free. A
+ * lock-free reader would need more (hazard pointers or an RCU grace period),
+ * because acquiring a pointer and then pinning it leaves a window in which the
+ * writer swaps and reuses the buffer underneath.
+ *
+ * Writers serialize on the SAME lock and follow base-load -> mutate -> publish
+ * inside one critical section. Safe readers alone would not be enough: the
+ * setters mutate independent fields, so two writers each rebuilding off the
+ * snapshot they read would let a slower baseline writer publishing VERIFIED
+ * discard a replay-tamper writer's MISMATCH -- every published snapshot would
+ * stay internally coherent while the report said VERIFIED on a tampered boot.
+ *
+ * No blocking work, TPM transaction or serial output may sit inside the
+ * publication region; callers build their inputs first and publish last. */
+static struct boot_integrity_report s_report_slots[2];
+static struct boot_integrity_report *s_report_published;   /* NULL until first publish */
+static uint8_t s_report_next_slot;                         /* index of the free slot */
+static spinlock_t s_publish_lock = SPINLOCK_INIT;
+
+/* The reported PCR set is the measured-boot set, so the two array bounds are
+ * one invariant expressed in two headers. tpm.c is the only translation unit
+ * that sees both (tpm.h deliberately does not include tpm_baseline.h). */
+_Static_assert(BOOT_INTEGRITY_MAX_PCRS == TPM_BASELINE_MAX_PCRS,
+               "boot_integrity_report.pcrs[] must hold the whole measured-boot "
+               "PCR set that the baseline pins");
+
+/* Snapshot the currently published report into `out`. Caller holds s_publish_lock.
+ * Before the first publication there is no snapshot, so the base is all-zero --
+ * which reads as BOOT_INTEGRITY_UNKNOWN, the honest "not evaluated yet" state. */
+static void integrity_base_locked(struct boot_integrity_report *out)
+{
+    const struct boot_integrity_report *cur =
+        __atomic_load_n(&s_report_published, __ATOMIC_ACQUIRE);
+    if (cur)
+        memcpy(out, cur, sizeof(*out));
+    else
+        memset(out, 0, sizeof(*out));
+}
+
+/* Publish `next` as the new snapshot. Caller holds s_publish_lock.
+ * The release store is the publication point and is written LAST, so a reader
+ * that observes the new pointer observes a fully written slot. */
+static void integrity_publish_locked(const struct boot_integrity_report *next)
+{
+    struct boot_integrity_report *slot = &s_report_slots[s_report_next_slot];
+    memcpy(slot, next, sizeof(*slot));
+    s_report_next_slot = (uint8_t)(s_report_next_slot ^ 1u);
+    __atomic_store_n(&s_report_published, slot, __ATOMIC_RELEASE);
+}
 
 /* ---- PCR Read API (measured-boot PCR access) ---- */
 
@@ -681,88 +732,147 @@ tpm_pcr_status_t tpm_pcr_get(uint32_t pcr_index, uint16_t alg,
     return st;
 }
 
+int tpm_integrity_build_report(struct boot_integrity_report *out,
+                               int tpm_present, uint8_t version,
+                               uint32_t events, int sb_valid, int sb_enabled,
+                               const uint8_t *set, uint8_t n)
+{
+    uint8_t i;
+
+    if (!out)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    out->event_count = events;
+    out->tpm_version = version;
+
+    /* NEVER collapse an unreadable Secure Boot state into "off": secure_boot is
+     * 1 only when the state is readable AND active, and secure_boot_valid
+     * records the readability, so a consumer can tell genuine "off" from
+     * "unknown". */
+    out->secure_boot_valid = (uint8_t)(sb_valid ? 1 : 0);
+    out->secure_boot = (uint8_t)((sb_valid && sb_enabled) ? 1 : 0);
+
+    if (!tpm_present) {
+        /* No TPM: cannot verify, and no PCR is reportable at all. */
+        out->overall_status = BOOT_INTEGRITY_NO_TPM;
+        out->pcr_count = 0;
+        return 1;
+    }
+
+    /* tpm_pcr_baseline_pcrs() returns the TOTAL matching count, NOT the number
+     * it wrote -- it fills only while total < cap (tpm_pcr_alloc.c). So a
+     * BASELINE policy mask that outgrew the caller's array returns n > capacity,
+     * and iterating to n would read past `set` and write past `out->pcrs`.
+     *
+     * The test is EXACT EQUALITY, not just an upper bound, and matches
+     * tpm_baseline_snapshot() (npcr != TPM_BASELINE_MAX_PCRS -> BADARG). An
+     * asymmetric guard would let a mask that LOST a PCR publish a quietly
+     * reduced set here while the baseline layer refused it as BADARG -- two
+     * subsystems disagreeing about what the measured set is, which is exactly
+     * the drift the sizing exists to prevent. Either direction fails CLOSED: no
+     * PCRs reported and the verdict left UNKNOWN, so a report that cannot
+     * represent the measured set never reads as verified. */
+    if (!set || n != (uint8_t)BOOT_INTEGRITY_MAX_PCRS) {
+        out->pcr_count = 0;
+        out->overall_status = BOOT_INTEGRITY_UNKNOWN;
+        return 0;
+    }
+
+    /* TPM present, but Phase 0 has neither the transport nor the PCR cache, so
+     * nothing is verifiable yet. The Phase-1 baseline verify replaces every one
+     * of these through tpm_integrity_publish_baseline(). */
+    for (i = 0; i < n; i++) {
+        out->pcrs[i].pcr_index = set[i];
+        out->pcrs[i].status = BOOT_INTEGRITY_NO_CRYPTO;
+    }
+    out->pcr_count = n;
+    out->overall_status = BOOT_INTEGRITY_NO_CRYPTO;
+    return 1;
+}
+
 boot_result_t tpm_integrity_init(void)
 {
-    uint32_t i;
-    /* Zero the report */
-    uint8_t *p = (uint8_t *)&s_integrity_report;
-    for (i = 0; i < (uint32_t)sizeof(s_integrity_report); i++)
-        p[i] = 0;
+    /* Built OFF-lock into a local, published in one short critical section at
+     * the end. The Secure Boot reads below are UEFI runtime calls and must not
+     * happen inside the publication region. */
+    struct boot_integrity_report r;
+    uint64_t flags;
+    boot_result_t res = BOOT_OK;
+    int no_tpm;
+    int set_drift = -1;   /* >= 0: measured-set size that disagrees with the report */
 
-    s_integrity_report.event_count = s_event_count;
-    s_integrity_report.tpm_version = (uint8_t)s_version;
-
-    /* Live Secure Boot state. Declared extern here because tpm.c deliberately
-     * does not include uefi_runtime.h (circular deps). NEVER collapse an
-     * unreadable SB state into "off": secure_boot is 1 only when the state is
-     * readable AND active; secure_boot_valid records readability so a consumer
-     * can tell genuine "off" from "unknown". (UEFI runtime + secureboot init
-     * run before this in the boot sequence.) */
+    /* Sample the live inputs here; the construction RULES live in the pure
+     * builder above so they can be tested without calling this function. */
+    no_tpm = !s_available;
     {
+        /* Live Secure Boot state. Declared extern here because tpm.c
+         * deliberately does not include uefi_runtime.h (circular deps). The
+         * builder holds the rule that an unreadable state never collapses to
+         * "off". (UEFI runtime + secureboot init run before this in the boot
+         * sequence.) */
         extern int uefi_secureboot_state_valid(void);
         extern int uefi_secureboot_enabled(void);
+        uint8_t set[BOOT_INTEGRITY_MAX_PCRS];
+        uint8_t n = 0;
         int sbv = uefi_secureboot_state_valid();
-        s_integrity_report.secure_boot_valid = (uint8_t)(sbv ? 1 : 0);
-        s_integrity_report.secure_boot =
-            (uint8_t)((sbv && uefi_secureboot_enabled()) ? 1 : 0);
-    }
 
-    /* ---- No TPM: cannot verify ---- */
-    if (!s_available) {
-        s_integrity_report.overall_status = BOOT_INTEGRITY_NO_TPM;
-        s_integrity_report.pcr_count = 0;
+        if (!no_tpm)
+            n = tpm_pcr_baseline_pcrs(set, (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+
+        if (!tpm_integrity_build_report(&r, !no_tpm, (uint8_t)s_version,
+                                        s_event_count, sbv,
+                                        uefi_secureboot_enabled(), set, n))
+            set_drift = n;
+    }
+    if (no_tpm)
+        res = BOOT_DEGRADED;
+
+    spin_lock_irqsave(&s_publish_lock, &flags);
+    integrity_publish_locked(&r);
+    spin_unlock_irqrestore(&s_publish_lock, flags);
+
+    /* Logging is deliberately OUTSIDE the publication region -- serial output is
+     * millisecond-scale and must never sit inside a spinlock. */
+    if (no_tpm) {
         klog(LOG_INFO, "TPM", "Boot integrity: skipped (no TPM)");
-        return BOOT_DEGRADED;
+    } else if (set_drift >= 0) {
+        /* A build-configuration error, not a runtime condition: the PCR policy
+         * table changed size and BOOT_INTEGRITY_MAX_PCRS did not follow it.
+         * Loud, and the report says UNKNOWN rather than claiming a set it
+         * cannot faithfully represent in either direction. */
+        klog(LOG_ERROR, "TPM",
+             "Boot integrity: measured-boot set is %u PCRs but the report is "
+             "sized %u -- reporting UNKNOWN (resize BOOT_INTEGRITY_MAX_PCRS)",
+             (uint32_t)set_drift, (uint32_t)BOOT_INTEGRITY_MAX_PCRS);
+    } else {
+        klog(LOG_INFO, "TPM",
+             "Boot integrity: pending (crypto stack required for PCR replay)");
+        klog(LOG_INFO, "TPM",
+             "Boot integrity: %u events measured, %u measured-boot PCRs not yet "
+             "verifiable", s_event_count, (uint32_t)r.pcr_count);
     }
 
-    /* ---- TPM present but no crypto stack for PCR replay ----
-     *
-     * TODO: When SHA-256 is available, implement:
-     *   1. Walk the parsed event log entries
-     *   2. For each entry, compute: PCR[i] = SHA-256(PCR[i] || event_digest)
-     *   3. After replaying all events, compare computed PCR values
-     *      against actual TPM PCR registers (via TPM2_PCR_Read command)
-     *   4. If all match: BOOT_INTEGRITY_VERIFIED
-     *   5. If any differ: BOOT_INTEGRITY_MISMATCH + flag which PCR
-     *
-     * For now, populate the report with what we know and mark as NO_CRYPTO. */
-
-    s_integrity_report.pcr_count = 8;  /* PCR[0] through PCR[7] */
-    for (i = 0; i < 8; i++) {
-        s_integrity_report.pcrs[i].pcr_index = (uint8_t)i;
-        s_integrity_report.pcrs[i].status = BOOT_INTEGRITY_NO_CRYPTO;
-        s_integrity_report.pcrs[i].pad[0] = 0;
-        s_integrity_report.pcrs[i].pad[1] = 0;
-    }
-
-    /* TODO Phase 3: Read golden PCR values from secure storage.
-     * If no golden values are enrolled, set:
-     *   s_integrity_report.overall_status = BOOT_INTEGRITY_NO_BASELINE;
-     * If golden values exist and PCR replay matches, set:
-     *   s_integrity_report.overall_status = BOOT_INTEGRITY_VERIFIED;
-     * If golden values exist but mismatch, set:
-     *   s_integrity_report.overall_status = BOOT_INTEGRITY_MISMATCH;
-     *   s_integrity_report.pcrs[i].status = BOOT_INTEGRITY_MISMATCH; */
-
-    s_integrity_report.overall_status = BOOT_INTEGRITY_NO_CRYPTO;
-
-    klog(LOG_INFO, "TPM",
-         "Boot integrity: pending (crypto stack required for PCR replay)");
-    klog(LOG_INFO, "TPM",
-         "Boot integrity: %u events measured, PCR[0-7] not yet verifiable",
-         s_event_count);
-
-    return BOOT_OK;
+    return res;
 }
 
 int tpm_integrity_verified(void)
 {
-    return s_integrity_report.overall_status == BOOT_INTEGRITY_VERIFIED;
+    struct boot_integrity_report r;
+    tpm_integrity_report_copy(&r);
+    return r.overall_status == BOOT_INTEGRITY_VERIFIED;
 }
 
-const struct boot_integrity_report *tpm_integrity_report(void)
+void tpm_integrity_report_copy(struct boot_integrity_report *out)
 {
-    return &s_integrity_report;
+    uint64_t flags;
+    if (!out)
+        return;
+    /* The lock spans the pointer LOAD and the COPY. That span is the whole
+     * point: it is what makes acquisition safe, so no reader can be paused
+     * mid-copy while a writer swaps the slot out from under it. */
+    spin_lock_irqsave(&s_publish_lock, &flags);
+    integrity_base_locked(out);
+    spin_unlock_irqrestore(&s_publish_lock, flags);
 }
 
 const char *tpm_integrity_status_label(const struct boot_integrity_report *r)
@@ -794,27 +904,82 @@ const char *tpm_integrity_status_label(const struct boot_integrity_report *r)
 
 void tpm_integrity_set_rng_available(int available)
 {
-    s_integrity_report.tpm_rng_available = available ? 1u : 0u;
+    struct boot_integrity_report r;
+    uint64_t flags;
+    spin_lock_irqsave(&s_publish_lock, &flags);
+    integrity_base_locked(&r);
+    r.tpm_rng_available = available ? 1u : 0u;
+    integrity_publish_locked(&r);
+    spin_unlock_irqrestore(&s_publish_lock, flags);
 }
 
 void tpm_integrity_set_replay_verdict(uint8_t verdict)
 {
-    s_integrity_report.replay_verdict = verdict;
+    struct boot_integrity_report r;
+    uint64_t flags;
+    spin_lock_irqsave(&s_publish_lock, &flags);
+    integrity_base_locked(&r);
+    r.replay_verdict = verdict;
     /* A replay/hardware mismatch (event-log tamper) is a definitive integrity
      * failure regardless of any golden baseline -- escalate the overall status.
      * 1 == TPM_REPLAY_TAMPER (see kernel/tpm_replay.h). */
     if (verdict == 1u)
-        s_integrity_report.overall_status = BOOT_INTEGRITY_MISMATCH;
+        r.overall_status = BOOT_INTEGRITY_MISMATCH;
+    integrity_publish_locked(&r);
+    spin_unlock_irqrestore(&s_publish_lock, flags);
 }
 
-void tpm_integrity_set_overall_status(uint8_t status)
+#ifdef KERNEL_TESTS
+void tpm_integrity_test_republish(const struct boot_integrity_report *r)
 {
+    uint64_t flags;
+    if (!r)
+        return;
+    spin_lock_irqsave(&s_publish_lock, &flags);
+    integrity_publish_locked(r);
+    spin_unlock_irqrestore(&s_publish_lock, flags);
+}
+#endif /* KERNEL_TESTS */
+
+void tpm_integrity_publish_baseline(uint8_t status,
+                                    const uint8_t *pcr_status, uint8_t n)
+{
+    struct boot_integrity_report r;
+    uint64_t flags;
+    uint8_t i;
+
+    spin_lock_irqsave(&s_publish_lock, &flags);
+    integrity_base_locked(&r);
+
+    /* Per-PCR detail is refreshed FIRST and unconditionally, so it is applied
+     * even on the TAMPER path below that pins the overall verdict. Pinning the
+     * overall status is a statement about the verdict, not a reason to keep
+     * reporting stale per-PCR values.
+     *
+     * n == 0 means this verify path never reached the comparison (no baseline,
+     * a corrupt blob, a corrupt kernel descriptor). The honest per-PCR answer
+     * there is NOT-EVALUATED (BOOT_INTEGRITY_UNKNOWN) rather than the stale
+     * Phase-0 NO_CRYPTO, which would read as "the crypto stack is missing" long
+     * after it arrived. The bound is defensive: `n` is caller-supplied. */
+    if (n > (uint8_t)BOOT_INTEGRITY_MAX_PCRS)
+        n = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < r.pcr_count && i < (uint8_t)BOOT_INTEGRITY_MAX_PCRS; i++)
+        r.pcrs[i].status = (pcr_status && i < n)
+                               ? pcr_status[i]
+                               : (uint8_t)BOOT_INTEGRITY_UNKNOWN;
+
     /* The Phase-1 baseline verify (tpm_baseline_verify) publishes its golden-vs-
      * current verdict here. A replay/hardware TAMPER (replay_verdict == 1) is a
      * definitive integrity failure that pins MISMATCH -- NO later baseline status
      * (VERIFIED, NO_BASELINE, ...) may overwrite it, or an overall_status
-     * consumer would lose the tamper signal. */
-    if (s_integrity_report.replay_verdict == 1u)
-        return;
-    s_integrity_report.overall_status = status;
+     * consumer would lose the tamper signal. This guard is INSIDE the critical
+     * section on purpose: reading replay_verdict off-lock and publishing later
+     * would let a baseline writer that read a pre-tamper snapshot overwrite the
+     * tamper verdict with VERIFIED, which is exactly the lost update that safe
+     * readers alone do not prevent. */
+    if (r.replay_verdict != 1u)
+        r.overall_status = status;
+
+    integrity_publish_locked(&r);
+    spin_unlock_irqrestore(&s_publish_lock, flags);
 }

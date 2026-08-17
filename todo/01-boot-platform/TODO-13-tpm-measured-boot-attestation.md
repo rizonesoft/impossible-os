@@ -55,7 +55,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [/]   |
 | 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)     | §6, §14                                                   |  [x]   |
 | 💎  |  17   | Write-locked and monotonic NV index primitives                | §6, §7, §14                                               |  [x]   |
-| 💎  |  18   | Atomic boot-integrity report publication                      | §6, §12, §14                                              |  [ ]   |
+| 💎  |  18   | Atomic boot-integrity report publication                      | §6, §12, §14                                              |  [x]   |
 | 💎  |  19   | Versioned baseline growth and NV index migration              | §16, §21                                                  |  [ ]   |
 | 💎  |  20   | BOOTX64.EFI on-disk self-measurement                          | §16, TODO-01 (boot_info ABI)                              |  [ ]   |
 | 💎  |  21   | Authenticated NV index lifecycle and anti-rollback anchor     | §17, §6, §15                                              |  [ ]   |
@@ -63,6 +63,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  23   | Headless enrollment authorization escape hatch                | §21, §15                                                  |  [ ]   |
 | 💎  |  24   | Bounded sequence + verified teardown for seal and attestation | §17, §8, §13                                              |  [ ]   |
 | 💎  |  25   | Field-level baseline mismatch attribution + status scoping    | §16, §18, §19                                             |  [ ]   |
+| 💎  |  26   | Baseline-blob NV fake: wrapper-level verify coverage          | §11, §18, §6                                              |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -202,7 +203,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Scope: §6 owns baseline CONTENT/enroll/verify/rotate; console confirmation is §15, image-digest carriage is §16, NV write-lock anti-rollback is §17 (primitives) and §21 (trust anchor), moved there by the §14 split and the 2026-08-17 §17 split ( "infra-blocked" was wrong for the console half, which is buildable).
 > **Verified:** 2026-06-14 | commit `c7032e45` (impl) + review fixes | 4/9 items | build OK | tests 668 security PASS, smoke PASS (KVM 2.50s)
 > **Accepted:** [H] enrollment gate is boot.conf config (`boot_mode==recovery && tpm_enroll`), not loader-validated recovery provenance -- config-spoofable -> XREF: 01-boot-platform/TODO-13 §15 (item: "Gated enrollment on `tpm_enroll_gate_evaluate()`") (RETARGETED 2026-08-17: the follow-up item moved out of this section when §14 split the backfill cohort; RESOLVED 2026-08-17 by §15 -- the gate now anchors on the NVRAM sticky trigger plus `selection_reason` and requires console confirmation, and the config-only path is reported as `esp-config-only` authority which never authorizes a write)
-> **Accepted:** [H] baseline verify leaves stale per-PCR `NO_CRYPTO` + omits PCR11 in `boot_integrity_report` (self-contradicts VERIFIED) -> XREF: 01-boot-platform/TODO-13 §18 (item: "Refresh every per-PCR status when the baseline verdict is published") (RETARGETED 2026-08-17: the follow-up item moved out of this section when §14 split the backfill cohort)
+> **Accepted:** [H] baseline verify leaves stale per-PCR `NO_CRYPTO` + omits PCR11 in `boot_integrity_report` (self-contradicts VERIFIED) -> XREF: 01-boot-platform/TODO-13 §18 (item: "`tpm_integrity_publish_baseline()` replaces `tpm_integrity_set_overall_status()`") (RETARGETED 2026-08-17: the follow-up item moved out of this section when §14 split the backfill cohort) (RESOLVED 2026-08-17 by §18: the array is sized `BOOT_INTEGRITY_MAX_PCRS` so PCR 11 has a slot, and every per-PCR status is refreshed in the same publication as the verdict)
 > **Accepted:** [M] measured PCR set `{0-7,11}` duplicated across `tpm.c`/`tpm_replay.c`/`tpm_baseline.c`/test -> XREF: 01-boot-platform/TODO-13 §6 (item: "Follow-up: consolidate the measured PCR set" at line 185) (RESOLVED 2026-06-14 by §6 commit 2b0dd4ed: `tpm_pcr_baseline_pcrs()` derives the set from the allocation-table mask; the 3 consumers migrated)
 > **Quality reviewed:** 2026-06-14 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 4H+3M fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
@@ -597,26 +598,38 @@ The baseline records what §6 could reach: per-bank PCR digests, Secure Boot sta
 
 > **Spawned-by:** §14 (split)
 
-`tpm_integrity_init()` sets `pcrs[0..7].status = BOOT_INTEGRITY_NO_CRYPTO` in Phase 0 and never revisits them (`src/kernel/tpm.c:684`, 730-736). The three post-init setters -- `tpm_integrity_set_rng_available`, `tpm_integrity_set_replay_verdict` and `tpm_integrity_set_overall_status` (`tpm.c:795`, 800, 810) -- touch scalars only. So after a Phase-1 VERIFIED verdict is published the per-PCR detail still reads NO_CRYPTO and the report contradicts itself in the one place a reader would look to see WHICH measurement was trusted. The array is also `pcrs[8]`, PCR 0-7 (`include/kernel/tpm.h:170`), while the measured baseline set is {0-7,11}: PCR 11 has no slot to be reported in at all.
+STATE BEFORE THIS SECTION (all of it now fixed; kept because it is why the design is what it is). `tpm_integrity_init()` set `pcrs[0..7].status = BOOT_INTEGRITY_NO_CRYPTO` in Phase 0 and never revisited them. The three post-init setters -- `tpm_integrity_set_rng_available`, `tpm_integrity_set_replay_verdict` and `tpm_integrity_set_overall_status` -- touched scalars only. So after a Phase-1 VERIFIED verdict was published the per-PCR detail still read NO_CRYPTO and the report contradicted itself in the one place a reader would look to see WHICH measurement was trusted. The array was `pcrs[8]`, PCR 0-7, while the measured baseline set is {0-7,11}: PCR 11 had no slot to be reported in at all.
 
-Publication is field-by-field into one static struct with no lock and no snapshot swap. That is safe TODAY only because every writer runs single-threaded on the BSP before the APs are up, which is an accident of init ordering rather than a stated contract, while the readers are already UI and VPD consumers.
+Publication was field-by-field into one static struct with no lock and no snapshot swap. That was safe only because every writer ran single-threaded on the BSP before the APs came up, which is an accident of init ordering rather than a stated contract, while the readers are already UI and VPD consumers.
 
-- [ ] Add a PCR 11 slot and size the array from the baseline mask rather than the literal 8, so the reported set cannot drift from `tpm_pcr_baseline_pcrs()`.
-- [ ] Refresh every per-PCR status when the baseline verdict is published, so the overall verdict and the per-PCR detail can never disagree.
-- [ ] Build the report OFF-lock and publish by release-store swap to an IMMUTABLE snapshot, with a reader protocol that makes ACQUISITION itself safe: a lock spanning load-plus-pin, hazard publication then revalidation, or an RCU grace period.
+- [x] Sized `boot_integrity_report.pcrs[]` by `BOOT_INTEGRITY_MAX_PCRS`, `_Static_assert`-tied to `TPM_BASELINE_MAX_PCRS`, indices filled from `tpm_pcr_baseline_pcrs()` -- PCR 11 now has a slot and cannot drift from the measured set.
+- [x] `tpm_integrity_publish_baseline()` replaces `tpm_integrity_set_overall_status()`, carrying the verdict AND per-PCR statuses in ONE publication, from the new pure `tpm_baseline_compare_pcrs()`.
+  - This needs a per-PCR comparison OUTPUT, which `tpm_baseline_compare` does not produce: it returns MISMATCH on a bank, Secure Boot, firmware-hash or ABI-manifest difference BEFORE the PCR loop (`src/kernel/tpm_baseline.c:104-133`), and `tpm_baseline_verify` never reaches it at all on NO_BASELINE, corrupt-baseline or self-corrupt (`tpm_baseline.c:333-379`). Found by this section's design review, so the per-PCR result surface belongs HERE; §25 owns only which SCALAR field differed.
+  - Every verdict-producing path defines its per-PCR output rather than leaving the previous value standing: a comparison that ran publishes its real per-PCR result even when a scalar field is what forced MISMATCH, and a path that never compared publishes a not-evaluated status. Publishing uninitialized detail, keeping stale `NO_CRYPTO`, or attributing a scalar failure to a PCR are all wrong answers.
+- [x] Report built OFF-lock and published by release-store swap into one of two immutable slots; the naked-pointer `tpm_integrity_report()` is GONE, replaced by `tpm_integrity_report_copy()`, and all 5 callers migrated.
+  - The reader protocol chosen is the lock-spanning-acquisition option: `tpm_integrity_report_copy()` holds `s_publish_lock` across BOTH the pointer load and the copy, so no reader can be paused between them and no reader is inside a slot once it drops the lock. That is also why two slots suffice; a lock-free reader would have needed hazard pointers or an RCU grace period.
   - A bare refcount is explicitly NOT sufficient and an earlier draft allowed it: acquire-loading the pointer and then incrementing its refcount leaves a load-to-pin window in which the writer can swap and reclaim, so the reader pins a buffer that is already gone.
-  - `tpm_integrity_report()` hands out an unowned pointer today, so every naked-pointer caller migrates, or the accessor becomes a synchronized copy-out.
-- [ ] Serialize the WRITERS too: base-load, mutate and publish under one short writer lock, or a CAS/rebase loop that preserves fields an intervening writer set. Safe readers do not prevent lost updates.
+  - `tpm_integrity_report()` handed out an unowned pointer, so the choice was to migrate every naked-pointer caller or make the accessor a synchronized copy-out. It became a copy-out and the pointer accessor was deleted.
+- [x] Writers serialize on the same `s_publish_lock`: base-load, mutate and publish inside one critical section, with the TAMPER-pins-MISMATCH guard evaluated INSIDE it so no baseline writer can lose it.
   - The setters mutate independent fields, so if each rebuilds off-lock from the snapshot it read, a replay-tamper writer publishing MISMATCH can be overwritten by a slower baseline writer publishing VERIFIED that never saw it. Every published snapshot stays internally coherent, so an old-or-new reader test passes while the report says VERIFIED on a tampered boot.
-  - This is a live invariant, not a hypothetical: `tpm_integrity_set_overall_status()` already pins MISMATCH once a TAMPER verdict landed (`src/kernel/tpm.c:817`). An off-lock rebuild would silently discard that guard, so preserving it is part of the acceptance, not a nicety.
-  - Two alternatives were considered and both rejected in writing so nobody re-derives them. An unsynchronized bounded copy is not publication at all: `tpm_integrity_report()` returns a pointer to a multi-field static struct, so a field-by-field copy straddles a publication and sees a new verdict beside old per-PCR detail -- the exact contradiction this section exists to remove.
+  - This is a live invariant, not a hypothetical: the pre-section `tpm_integrity_set_overall_status()` already pinned MISMATCH once a TAMPER verdict landed. An off-lock rebuild would have silently discarded that guard, so preserving it was part of the acceptance, not a nicety. It now lives inside the publication critical section.
+  - Two alternatives were considered and both rejected in writing so nobody re-derives them. An unsynchronized bounded copy is not publication at all: the old `tpm_integrity_report()` returned a pointer to a multi-field static struct, so a field-by-field copy straddled a publication and saw a new verdict beside old per-PCR detail -- the exact contradiction this section exists to remove.
   - A seqlock was the second, and it cannot meet this section's own checkpoint without more machinery than the swap costs: `seqlock_read_begin` spins while the sequence is odd, so a stuck-odd writer stalls a UI/VPD reader forever, and bounding the OUTER retries does not bound that spin. Making it work would need a copy-out accessor whose validation spans the whole copy, a defined result on attempt exhaustion, and migration of every existing caller off the pointer accessor.
   - Whichever form ships, no blocking or TPM work may sit inside the writer's publication region.
-- [ ] Correct the stale contract comment at `include/kernel/tpm.h:184-192`, which still describes the superseded Phase-0 "read golden values" design that §6 moved to Phase 1.
-- [ ] Annotate §6's accepted [H] per-PCR publication stamp RESOLVED (do not delete it) once this ships. -> XREF: §6 (the "Accepted: [H] baseline verify leaves stale per-PCR `NO_CRYPTO`" stamp).
-- [ ] Commit: `"tpm: atomic boot-integrity report publication"`
+- [x] Rewrote the stale Phase-0 "read golden values" contract comment on `tpm_integrity_init()` and the stale roadmap block in `tpm.c` to describe the two-phase assembly that actually ships.
+- [x] Annotated §6's accepted [H] per-PCR publication stamp RESOLVED (kept, not deleted). -> XREF: §6 (the "Accepted: [H] baseline verify leaves stale per-PCR `NO_CRYPTO`" stamp).
+- [x] Commit: `"tpm: atomic boot-integrity report publication"`
 
-**Test checkpoint:** after a published VERIFIED verdict no slot still reads `NO_CRYPTO`, and PCR 11 is present in the reported set; after a MISMATCH the per-PCR detail names which PCR differed rather than leaving the reader to guess. A reader paused between the pointer LOAD and its pin, while the writer publishes and tries to reclaim, still ends with a coherent report -- that acquisition window is the one a held-reference test starts too late to cover. A replay-tamper update racing a baseline-verified update leaves MISMATCH authoritative, never VERIFIED: the existing TAMPER-pins-MISMATCH guard must survive the new publication path. A reader held across several publications likewise sees a coherent report and no reuse underneath it; under repeated concurrent publication readers observe old-or-new, never a mix, and always complete -- a test that only asserts old-or-new passes against a writer that stalls readers forever. Scope: this section owns the report STRUCT and its publication only; the verdicts themselves stay with §4 (replay), §5 (Secure Boot) and §6 (baseline), and WHICH scalar field differed plus what the `"verified"` string claims are §25. Platforms: kernel unit suites; no TPM required.
+**Test checkpoint:** after a published VERIFIED verdict no slot still reads `NO_CRYPTO`, and PCR 11 is present in the reported set; after a PCR-CAUSED MISMATCH the per-PCR detail names which PCR differed rather than leaving the reader to guess. The qualifier is load-bearing and was added by the design review: a mismatch forced by a SCALAR field (bank, Secure Boot, firmware hash, ABI manifest) must show its PCRs as they actually compared rather than manufacturing a PCR culprit, and a path that never compared at all (NO_BASELINE, corrupt baseline, self-corrupt) must show a not-evaluated status rather than stale detail. A reader paused between the pointer LOAD and its pin, while the writer publishes and tries to reclaim, still ends with a coherent report -- that acquisition window is the one a held-reference test starts too late to cover. A replay-tamper update racing a baseline-verified update leaves MISMATCH authoritative, never VERIFIED: the existing TAMPER-pins-MISMATCH guard must survive the new publication path. A reader held across several publications likewise sees a coherent report and no reuse underneath it; under repeated concurrent publication readers observe old-or-new, never a mix, and always complete -- a test that only asserts old-or-new passes against a writer that stalls readers forever. Scope: this section owns the report STRUCT and its publication only; the verdicts themselves stay with §4 (replay), §5 (Secure Boot) and §6 (baseline), and WHICH scalar field differed plus what the `"verified"` string claims are §25. Platforms: kernel unit suites; no TPM required.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1914 kernel + 17 user-mode, 0 failures
+> **Notes:**
+> - Shipped: `pcrs[]` sized `BOOT_INTEGRITY_MAX_PCRS`, two-slot immutable-snapshot publication under `s_publish_lock`, copy-out-only reads, and two new pure cores: `tpm_baseline_compare_pcrs()` and `tpm_integrity_build_report()`.
+> - Integration: `tpm_integrity_report()` DELETED and all five callers migrated to `tpm_integrity_report_copy()`; `tpm_integrity_set_overall_status()` replaced by `tpm_integrity_publish_baseline()` (verdict + detail in one call).
+> - Downstream: `tpm_baseline_verify()` gained per-PCR out-params and refuses an undersized detail buffer with BADARG, AFTER the self-identity check so a corrupt kernel descriptor still publishes MISMATCH.
+> - Both size contracts fail CLOSED: a measured set not exactly `BOOT_INTEGRITY_MAX_PCRS` publishes `pcr_count=0` + UNKNOWN with a `LOG_ERROR`, matching how `tpm_baseline_snapshot()` guards the same invariant.
+> - `tpm_integrity_test_republish()` is a `KERNEL_TESTS`-gated save/restore seam, verified absent from a `KERNEL_TESTS=off` binary; wrapper-level verify coverage needing an NV-blob fake is §26.
+> - Scope boundary: this section owns the report struct, its publication and the per-PCR detail; scalar-field attribution and status-string scoping are §25.
 
 ---
 
@@ -769,7 +782,7 @@ Its failure mode is the opposite of §21's. §21 fails by accepting a forged rec
 
 > **Spawned-by:** §18 (split)
 
-Split out of §18 because it is a different surface with a different owner: §18 owns the report STRUCT and its publication path (`include/kernel/tpm.h`, `src/kernel/tpm.c`), while this section changes what `tpm_baseline_compare` RETURNS (`src/kernel/tpm_baseline.{h,c}`) and what the reported status string claims. Neither half needs the other to land, and §18's own scope line already excluded the scalar fields.
+Split out of §18 because it is a different surface with a different owner: §18 owns the report STRUCT, its publication path (`include/kernel/tpm.h`, `src/kernel/tpm.c`) and the PER-PCR comparison result it publishes, while this section adds WHICH SCALAR FIELD differed (`src/kernel/tpm_baseline.{h,c}`) and scopes what the reported status string claims. The boundary is per-PCR (§18) against scalar-field (§25); §18's design review is what drew it there, having found that the per-PCR detail §18 must publish cannot come from anywhere else.
 
 - [ ] Attribute a mismatch to the FIELD that differed, not only to a PCR: every branch of `tpm_baseline_compare` collapses to one undifferentiated verdict today. -> XREF: 01-boot-platform/TODO-13 §16 (item: "Fixed the compare path").
   - Filed from §16's parity review. Bank, Secure Boot state, Secure Boot validity, firmware hash, ABI-manifest presence, ABI-manifest content and each PCR all return the same `TPM_BASELINE_MISMATCH`, which reaches the operator as the single string `"baseline-mismatch"` (`src/kernel/tpm.c`).
@@ -780,6 +793,32 @@ Split out of §18 because it is a different surface with a different owner: §18
 - [ ] Commit: `"tpm: field-level baseline mismatch attribution"`
 
 **Test checkpoint:** each distinguishable mismatch cause (bank, Secure Boot state, Secure Boot validity, firmware hash, ABI-manifest presence, ABI-manifest content, a PCR digest) produces its OWN reported reason rather than the single `"baseline-mismatch"` string, with a control asserting a matching baseline still reports VERIFIED. The `"verified"` string states what it covers, so a reader cannot read kernel-image measurement into it. Scope: this section owns the compare path's return detail and the status strings only; the report struct and its publication are §18. Platforms: kernel unit suites; no TPM required.
+
+---
+
+## 26. Baseline-Blob NV Fake and Wrapper-Level Verify Coverage
+
+> **Spawned-by:** §18 (review)
+> **User impact:** on a boot where the measured state genuinely changed, the operator is told WHICH PCR moved. That attribution is plumbed through `tpm_baseline_verify` and nothing tests the plumbing, so a refactor can silently pass the wrong snapshots, the wrong capacity, or drop the call entirely, and the report goes back to a bare "baseline-mismatch" with no per-PCR detail. The pure comparison tests stay green throughout, which is exactly what makes it survivable.
+
+Filed by §18's test-coverage review. §18 shipped the per-PCR detail and covered `tpm_baseline_compare_pcrs` thoroughly as a pure function, plus the one wrapper path reachable without a fake: no transport, which proves the not-evaluated sentinel is set. Every path that actually COMPARES is untested at the wrapper level, because reaching it needs an NV fake that returns a crafted `struct tpm_baseline` blob and PCR reads whose digests match it.
+
+The existing fake in `test_tpm_nv.c` serves only a 4-byte `"DATA"` payload or an 8-byte counter (`nvf_read_payload_len`, `test_tpm_nv.c:380-392`), so it cannot carry a baseline blob. This section builds that capability once, for the whole TPM suite.
+
+- [ ] Extend the NV fake so an `NV_Read` can return caller-supplied bytes of arbitrary length, rather than the two fixed payload shapes it has today.
+- [ ] Add a PCR-read fake path so `tpm_pcr_get` resolves to controlled digests without `tpm_pcr_cache_init` (a subsystem `_init`, which tests may not call).
+- [ ] Cover `tpm_baseline_verify` end-to-end for: full match, one PCR differing, scalar-only mismatch (Secure Boot / ABI manifest), NO_BASELINE, corrupt blob, and snapshot failure.
+  - Assert the overall verdict, the returned count, and EVERY per-PCR status together -- the point is that they describe one comparison. Assert the untouched sentinels on the non-comparing paths too.
+  - The scalar-only case is the one that matters most: overall MISMATCH with every PCR VERIFIED is the shape that stops a Secure Boot change reading as PCR tampering. -> XREF: 01-boot-platform/TODO-13 §18 (item: "`tpm_integrity_publish_baseline()` replaces `tpm_integrity_set_overall_status()`").
+- [ ] Cover the enroll wrapper against the same fake while it is being built, since it reads the existing blob for the generation guard.
+- [/] Deterministic concurrent-publication coverage: a `KERNEL_TESTS`-gated hook widening the publication window so an unlocked publication FAILS. BLOCKED on the scheduler join/wait fix (see sub-bullets).
+  - §18 WROTE a `race_barrier` + kthread concurrent suite and then REMOVED it, which is the evidence here rather than a gap to re-discover. Mutation-checked: deleting the lock pair from `tpm_integrity_report_copy()` left it green at 1917/1917, because the window is a sub-microsecond memcpy inside an IRQs-disabled region and the interleaving never lands in a bounded run. It also could not force the tamper race -- both writers rendezvous only before their loops, so writer A can finish before B raises TAMPER and removing the pin guard would still pass.
+  - It was removed rather than kept because it can HANG THE WHOLE SUITE for no detection benefit: `thread_join` has a documented publish-before-block window that can strand the joiner forever (`src/kernel/sched/task.c:5964-5971`), and a stalled run also leaves the live integrity report unrestored.
+  - So this is BLOCKED on scheduler work, not TPM work. -> XREF: 03-memory-concurrency/TODO-06 (item: "Commit: `\"sched: wait/wake transaction locking -- close the lost-wakeup window in all wait primitives\"`"). Once a bounded race-free join exists, the widener is a busy-wait (never a yield -- the reader holds a spinlock, and `include/kernel/test/race_barrier.h` records that yielding under a caller-held spinlock deadlocks), and acceptance is the mutation itself: with the hook armed, removing the lock must fail.
+  - The sequential suites still cover the pin deterministically (both writer orderings through the real `tpm_integrity_set_replay_verdict`), so what is missing is the CONCURRENT proof, not the pin. -> XREF: 01-boot-platform/TODO-13 §18 (item: "Report built OFF-lock and published by release-store swap into one of two immutable slots").
+- [ ] Commit: `"test: baseline-blob NV fake and wrapper-level verify coverage"`
+
+**Test checkpoint:** deleting the `tpm_baseline_compare_pcrs` call from `tpm_baseline_verify`, passing it the wrong capacity, or swapping golden and current each makes at least one assertion FAIL -- that is the regression the pure-core tests cannot see, so a control proving the suite is green before the mutation is part of the checkpoint. Scope: this section owns the fake and the wrapper coverage; the comparison logic itself is §18 and the scalar attribution is §25. Platforms: fake-TIS kernel unit suites; no live TPM (the dev host has no `swtpm`).
 
 ---
 
@@ -799,6 +838,7 @@ Split out of §18 because it is a different surface with a different owner: §18
 | 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation  | Keylime AK quote               | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                      |
 | 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal     | systemd-pcrlock CEL            | ✅ §12 event-centric table + derived masks                                    |
 | ⭐  | Baseline enrollment authority          | TPM PPI physical presence  | root + interactive prompt      | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value       |
+| 💎  | Boot-integrity report publication      | Measured Boot / WBCL state | sysfs PCRs + IMA runtime       | ✅ §18 immutable snapshot swap, copy-out readers, per-PCR detail with verdict |
 
 ## Unit Tests
 
@@ -806,7 +846,7 @@ Split out of §18 because it is a different surface with a different owner: §18
 - [ ] `test_tpm_event_log_tpm12_fixture`
 - [ ] `test_tpm_event_log_tpm20_fixture`
 - [ ] `test_tpm_pcr_replay_sha256`
-- [ ] `test_tpm_integrity_mismatch_report`
+- [x] `test_tpm_integrity_mismatch_report` -- §18 ships it as "tpm: boot-integrity report publication" + "tpm: baseline per-PCR compare detail" (`test_tpm_baseline.c`): MISMATCH publication, per-PCR attribution, TAMPER pin, writer orderings.
 - [ ] `test_tpm_pcr_allocation_manifest_layer` (§12: manifest-only change attributed to kernel-ABI layer, not blanket mismatch)
 - [ ] `test_tpm_quote_verify_nonce` (§13: swtpm quote verifies under AK pubkey + carries nonce; stale-nonce replay rejected)
 
