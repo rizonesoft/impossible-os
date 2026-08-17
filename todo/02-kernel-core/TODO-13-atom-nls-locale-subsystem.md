@@ -336,7 +336,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Scope boundary:** the full-BMP `invariant.nls` corpus (host tool + build wiring) and the minimal real-table boot fixture are deferred `[ ]` items; they also own the deferred §7 full-FoldStringW + §9 full-BMP.
 
 > **Verified:** 2026-07-04 | commit `e877efe5` | 6/8 items ([/] partial) | build OK | 96 nls suites PASS
-> **Deferred:** [H] boot still only exercises the fallback NLS table; the real disk-load path is unproven -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §10 (item: "Minimal real-table boot fixture" at line 319)
+> **Deferred:** [H] boot still only exercises the fallback NLS table; the real disk-load path is unproven -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §10 (item: "Minimal real-table boot fixture" at line 322)
 > **Quality reviewed:** 2026-07-04 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 4M+1L fixed | scope: kernel-code-quality (test-only)
 
 ---
