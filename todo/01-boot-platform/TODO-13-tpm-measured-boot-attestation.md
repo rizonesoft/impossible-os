@@ -53,9 +53,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
 | 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [x]   |
 | 💎  |  15   | Trusted enrollment provenance                                | §6, §14                                                   |  [/]   |
-| 💎  |  16   | Baseline image identity (real bootloader + kernel hashes)    | §6, §14, TODO-01 (boot_info ABI)                          |  [ ]   |
+| 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)    | §6, §14                                                   |  [ ]   |
 | 💎  |  17   | Write-locked and monotonic NV indexes (anti-rollback anchor) | §6, §7, §14                                               |  [ ]   |
 | 💎  |  18   | Atomic boot-integrity report publication                     | §6, §12, §14                                              |  [ ]   |
+| 💎  |  19   | Versioned baseline growth and NV index migration             | §16, §17                                                  |  [ ]   |
+| 💎  |  20   | BOOTX64.EFI on-disk self-measurement                         | §16, TODO-01 (boot_info ABI)                              |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -492,34 +494,25 @@ Half the substrate exists, which the cohort item's own text ("owner: recovery-ki
 
 ---
 
-## 16. Baseline Image Identity -- Carry Real Image Digests
+## 16. Baseline ABI-Manifest Identity -- Populate the Reserved Digest
 
 > **Spawned-by:** §14 (split)
 
 The baseline records what §6 could reach: per-bank PCR digests, Secure Boot state, a firmware-version hash, and a RESERVED `abi_manifest` field. Two things about that field are load-bearing and both were stated wrongly in this section's first draft. It is not an image hash -- `boot_proto_descriptor.sha256` is a BUILD-TIME hash of `build/boot-info-abi.kernel.json`, baked into `build/boot_proto_sha.h` by `tools/boot-info-manifest/gen-proto-sha-header.sh`, so it tracks the ABI manifest and stays put when the kernel image changes underneath it. And it is not populated: `tpm_baseline_snapshot()` sets `abi_manifest_present = 0` because no kernel-side accessor is exposed (`src/kernel/tpm_baseline.c:202-206`). The struct reserves the field and nothing fills it.
 
+**Scope was narrowed 2026-08-17 by a SPLIT-RECOMMENDED verdict, and the narrowing is what makes the section shippable.** The original §16 carried eight items spanning the UEFI loader, the `boot_info` ABI, and a crash-safe NV index resize. Three of those were not reachable at all: both "consume the kernel digest from its owner" items XREF `[ ]` items in other TODOs that have no code behind them (`kernel_measure()` is defined nowhere in `src/`), and the struct-growth item depends on §17's anti-rollback state, which has not shipped. What remains here is the one digest the struct ALREADY has room for, which needs no struct growth, no `BOOT_INFO_VERSION` bump, and no NV migration. The rest moved to §19 (versioned growth + NV migration) and §20 (the `BOOTX64.EFI` loader digest).
+
 **This section does NOT compute the KERNEL hashes, and an earlier draft of it did -- which duplicated two open owners elsewhere in the corpus.** Kernel image measurement is `04-drivers-hardware/TODO-04 §7` (SHA-256 over `.text`/`.rodata`, PCR[10] extend, its own golden record). The bootloader-side hash of the loaded kernel ELF before ExitBootServices is `18-future-research/TODO-04 §2` (PCR 8). Neither carries a digest into §6's measured-boot baseline blob, and neither measures the LOADER.
 
-So the ownership line is: **§16 owns the baseline schema, the mismatch attribution, AND the `BOOTX64.EFI` loader digest; only the two KERNEL digests are externally produced.** Stated this precisely because the previous wording ("takes its digests from those producers") contradicted the restored loader task and would have let an implementer or reviewer drop it as out of scope.
+- [ ] Expose a kernel-side accessor for the build-time ABI-manifest digest so `tpm_baseline_snapshot()` can reach `boot_proto_descriptor.sha256` without `tpm_baseline.c` including the generated header directly.
+  - The digest is baked into `build/boot_proto_sha.h` by `tools/boot-info-manifest/gen-proto-sha-header.sh`; the accessor is what keeps the baseline code independent of that generator's output shape.
+  - Decide and state what the accessor returns when the generated header is absent or the descriptor is zero-filled, because that path decides `abi_manifest_present` rather than silently storing 32 zero bytes as if they were a digest.
+- [ ] Populate `abi_manifest` and set `abi_manifest_present` in `tpm_baseline_snapshot()`, replacing the unconditional `abi_manifest_present = 0` at `src/kernel/tpm_baseline.c:202-206`.
+- [ ] Confirm the compare path already honors the field, or fix it: `tpm_baseline_compare` documents that "a present fw-hash / abi-manifest must match", and that clause has never been exercised with a populated manifest on either side.
+  - The asymmetric cases are the ones that decide the verdict: golden present + current absent, and golden absent + current present. State which is a MISMATCH and which is not, rather than letting the existing code's accident stand as the specification.
+- [ ] Commit: `"tpm: populate the baseline ABI-manifest digest"`
 
-- [ ] Populate the reserved `abi_manifest` field first -- expose the kernel-side accessor, set `abi_manifest_present`, enroll and verify it. It is the digest the baseline already has room for and still does not carry.
-- [ ] Consume the kernel-image digest from its owner, never recomputing it. -> XREF: [`04-drivers-hardware/TODO-04 §7`](../04-drivers-hardware/TODO-04-security-hardware.md) (item: "`kernel_measure()`").
-- [ ] Consume the loader-side kernel digest from its owner. -> XREF: [`18-future-research/TODO-04 §2`](../18-future-research/TODO-04-secureboot-tpm.md) (item: "PCR 8 -- kernel hash extension").
-- [ ] PRODUCE the `BOOTX64.EFI` digest here over the ON-DISK FILE BYTES, not the resident image. Both consumed producers measure the KERNEL, so nothing else identifies the bootloader binary.
-  - The canonical measured bytes are the ESP file's contents, reopened through the loaded-image `DeviceHandle` + `FilePath`. `EFI_LOADED_IMAGE_PROTOCOL` hands back a RELOCATED in-memory `ImageBase`/`ImageSize` whose relocations are applied and whose data sections mutate as the loader runs, so hashing that range yields a different digest for the same binary across boots and destroys the attribution the checkpoint claims.
-  - State the degraded behavior explicitly for the paths where the file cannot be reopened (NULL `DeviceHandle`, pure HTTP boot): report the digest ABSENT rather than substituting a resident-range hash, because a silently different measurement is worse than a missing one.
-  - Restored after the deduplication pass dropped it: removing §16's two duplicate kernel-hash tasks took this one with them, which would have let the section complete with the baseline still unable to say which loader ran. Searched before restoring -- the `BOOTX64.EFI` digests elsewhere in `todo/` are build-time signing, USB-write verification and release manifests, none a runtime self-measurement.
-- [ ] Carry whichever digests the producers publish in `boot_info`: reserved-region fields where they fit, otherwise a `BOOT_INFO_VERSION` bump applied to kernel header AND mirror together. -> XREF: [`TODO-01`](TODO-01-boot-protocol-abi-handoff.md).
-- [ ] Extend `struct tpm_baseline` behind its version field AND design the NV index migration, which the version field alone does not buy. Enroll stores, verify compares, and a mismatch names WHICH image differs.
-  - The blob is 412 bytes today and `tpm_nv_define_data` sizes `TPM_NV_INDEX_BASELINE` at exactly `sizeof(struct tpm_baseline)`, while `tpm_baseline_parse` rejects any blob whose `size` differs (`src/kernel/tpm_baseline.c:45`). Growing the struct therefore hits an index too small to hold it -- and define-if-present returns `DEFINED` rather than enlarging it -- so "older blob still validates" is false without a migration.
-  - Specify a version-sized read path (probe the header via `NV_ReadPublic` / a size-prefix read rather than demanding the new `sizeof`), plus an authorized, crash-safe resize that preserves the generation counter and the §17 anti-rollback state across the undefine/redefine window.
-  - Three 32-byte digests also leave the blob near `TPM_NV_MAX_DATA` 512, so the migration design is where the chunked NV path §14 deferred either becomes necessary or is explicitly ruled out.
-  - Fixture the migration from a REAL 412-byte v1 index, not a synthesized one: the failure being tested is the on-NV size mismatch, which a hand-built blob of the new size cannot reproduce.
-- [ ] Bound the cost the producers are asked to pay: a size ceiling on what is hashed, exactly one pass over already-resident bytes, and a pre-ExitBootServices timing milestone.
-  - The kernel image is already ~14 MiB and the loader accepts up to 32 MiB, and the smoke matrix does not fail on a latency regression, so an unbounded "hash the image" instruction would silently lengthen every boot as the image grows.
-- [ ] Commit: `"tpm: carry real image digests in the measured-boot baseline"`
-
-**Test checkpoint:** a kernel rebuilt with no ABI-manifest change produces a DIFFERENT baseline kernel digest and the SAME `abi_manifest` digest, which is the distinction this section exists to make and which today's baseline cannot express at all because the manifest field is unpopulated. Rebuilding ONLY the bootloader changes the loader digest and leaves the kernel digest untouched, and the reverse holds -- that independence is what makes attribution real rather than a single "something changed" bit. A migration starting from a REAL 412-byte v1 NV index ends with the enlarged index readable, the generation counter and anti-rollback state preserved, and an interrupted migration recoverable rather than leaving no baseline at all. Hashing stays within its stated size ceiling and the pre-EBS milestone is recorded. A rebuilt-but-identical `BOOTX64.EFI` measured on two consecutive boots yields the SAME digest, and a boot path where the file cannot be reopened reports it ABSENT rather than falling back to a resident-range hash. Scope: this section owns the BASELINE SCHEMA, the attribution, and the LOADER digest; only the two KERNEL digests come from the producers XREF'd above, and the PCR-11 manifest extend and attestation report schema stay §9's. Platforms: kernel unit suites for the marshal/compare/version paths; the producers' own sections own their platform validation.
+**Test checkpoint:** a snapshot taken against a known descriptor reports `abi_manifest_present == 1` and carries exactly that digest, and the enroll-then-verify round trip through the fake-TIS seam returns MATCH. The distinction the field exists to make is proven by the compare path, not by the snapshot alone: a golden baseline whose manifest digest differs from the current one is a MISMATCH, while the SAME manifest digest matches even though this section changes no kernel image. Both asymmetric present/absent orientations assert their stated verdict, with a control asserting that two populated, equal manifests still MATCH -- without it the asymmetry assertions would pass against a compare that rejected everything. A zero-filled or unavailable descriptor leaves `abi_manifest_present == 0` rather than pinning 32 zero bytes as a golden value, which would make every later boot match a digest that means nothing. Scope: this section owns ONLY the ABI-manifest digest and its compare semantics. Struct growth, the NV index migration, and the two externally-produced KERNEL digests are §19; the `BOOTX64.EFI` loader digest is §20; the PCR-11 manifest extend and attestation report schema stay §9's. Platforms: kernel unit suites cover the whole surface (the digest is build-time, so no TPM hardware distinguishes it); the live enroll cycle is operator-gated with the rest of §6's.
 
 ---
 
@@ -590,6 +583,51 @@ Publication is field-by-field into one static struct with no lock and no snapsho
 - [ ] Commit: `"tpm: atomic boot-integrity report publication"`
 
 **Test checkpoint:** after a published VERIFIED verdict no slot still reads `NO_CRYPTO`, and PCR 11 is present in the reported set; after a MISMATCH the per-PCR detail names which PCR differed rather than leaving the reader to guess. A reader paused between the pointer LOAD and its pin, while the writer publishes and tries to reclaim, still ends with a coherent report -- that acquisition window is the one a held-reference test starts too late to cover. A replay-tamper update racing a baseline-verified update leaves MISMATCH authoritative, never VERIFIED: the existing TAMPER-pins-MISMATCH guard must survive the new publication path. A reader held across several publications likewise sees a coherent report and no reuse underneath it; under repeated concurrent publication readers observe old-or-new, never a mix, and always complete -- a test that only asserts old-or-new passes against a writer that stalls readers forever. Scope: this section owns the report STRUCT and its publication only; the verdicts themselves stay with §4 (replay), §5 (Secure Boot) and §6 (baseline). Platforms: kernel unit suites; no TPM required.
+
+---
+
+## 19. Versioned Baseline Growth and NV Index Migration
+
+> **Spawned-by:** §16 (split)
+
+Split out of §16 on 2026-08-17. §16 could populate the digest the struct already reserves; every ADDITIONAL digest requires the struct to grow, and growth is not a header edit. The blob is 412 bytes today, `tpm_nv_define_data` sizes `TPM_NV_INDEX_BASELINE` at exactly `sizeof(struct tpm_baseline)`, and `tpm_baseline_parse` rejects any blob whose `size` differs (`src/kernel/tpm_baseline.c:45`). Growing the struct therefore lands on an index too small to hold it, and define-if-present returns `DEFINED` rather than enlarging it -- so "older blob still validates behind the version field" is false without a migration. That migration is the section: an undefine/redefine window over the trust anchor, which must not lose the generation counter or the anti-rollback state across a crash.
+
+**This is why it is not part of §16.** The failure mode is opposite: §16 fails by attributing a change to the wrong image, this section fails by leaving the machine with NO baseline at all after an interrupted resize. It is also blocked on §17, which owns the write-lock and monotonic-counter state the migration has to carry across the window; sequencing it before §17 would mean designing the preservation of state that does not exist yet.
+
+- [/] BLOCKED on §17: the migration must preserve anti-rollback state across the undefine/redefine window, and §17 owns that state. -> XREF: 01-boot-platform/TODO-13 §17 (item: "Commit: `\"tpm: write-locked and monotonic NV indexes\"`").
+- [ ] Specify a version-sized read path that probes the stored header before demanding the new `sizeof` -- `NV_ReadPublic` for the index size, or a size-prefix read -- so a v1 blob is recognized as v1 rather than read as corrupt.
+- [ ] Design an authorized, crash-safe resize that preserves the generation counter and the §17 anti-rollback state across the undefine/redefine window, and state which step is the commit point.
+  - The window is the whole risk: between undefine and the rewrite there is no baseline on the machine, so the recovery path has to be reachable from a boot that finds the index absent but the anti-rollback counter advanced.
+- [ ] Decide the chunked-NV question explicitly rather than discovering it mid-implementation.
+  - Three 32-byte digests leave the blob near `TPM_NV_MAX_DATA` 512, so either the chunked path §14 deferred becomes necessary here or it is ruled out with the arithmetic written down. -> XREF: 01-boot-platform/TODO-13 §14 (item: "Commit: `\"tpm: post-ship follow-up backfill\"`").
+- [/] Consume the kernel-image digest from its owner, never recomputing it -- parked, owner has no code behind it. -> XREF: [`04-drivers-hardware/TODO-04 §7`](../04-drivers-hardware/TODO-04-security-hardware.md) (item: "`kernel_measure()`").
+  - Verified 2026-08-17: `kernel_measure()` is defined nowhere in `src/`; the owning item is still `[ ]`.
+- [/] Consume the loader-side kernel digest from its owner -- parked on the same grounds. -> XREF: [`18-future-research/TODO-04 §2`](../18-future-research/TODO-04-secureboot-tpm.md) (item: "PCR 8 -- kernel hash extension").
+- [ ] Fixture the migration from a REAL 412-byte v1 index, not a synthesized one: the failure under test is the on-NV size mismatch, which a hand-built blob of the new size cannot reproduce.
+- [ ] Commit: `"tpm: versioned baseline growth and NV index migration"`
+
+**Test checkpoint:** a migration starting from a REAL 412-byte v1 NV index ends with the enlarged index readable, the generation counter preserved and strictly greater than the pre-migration value, and the anti-rollback state intact. An interrupted migration is recoverable rather than leaving the machine with no baseline: a boot that finds the index absent while the anti-rollback counter has advanced reaches the recovery path rather than enrolling a fresh baseline over the gap, which is the shape that would silently launder a rollback. A v1 blob read through the version-sized path is recognized as v1 and not reported CORRUPT, with a control asserting that a genuinely corrupt blob of the same length still IS reported corrupt -- without it the version-sized read would pass by accepting everything. The chunked-NV decision is asserted by the arithmetic in a test, not only in prose. Scope: this section owns the SCHEMA GROWTH and the NV migration. The ABI-manifest digest is §16, the loader digest is §20, the NV write-lock and counter mechanism is §17, and the two kernel digests stay with their producers. Platforms: kernel unit suites via the fake-TIS seam are the whole automatable surface; a live resize against real NV is operator-gated (no `swtpm` on the dev host).
+
+---
+
+## 20. BOOTX64.EFI On-Disk Self-Measurement
+
+> **Spawned-by:** §16 (split)
+
+Split out of §16 on 2026-08-17. Both digests §16 originally consumed measure the KERNEL, so nothing in the corpus identifies the bootloader binary that ran. This section produces that digest. Restored during the deduplication pass that dropped §16's two duplicate kernel-hash tasks and took this one with them, which would have let the baseline complete while still unable to say which loader ran. Searched before restoring -- the `BOOTX64.EFI` digests elsewhere in `todo/` are build-time signing, USB-write verification and release manifests, none a runtime self-measurement.
+
+**The measured bytes are the ON-DISK FILE, and that is the whole correctness argument.** `EFI_LOADED_IMAGE_PROTOCOL` hands back a RELOCATED in-memory `ImageBase`/`ImageSize` whose relocations are already applied and whose data sections mutate as the loader runs, so hashing that range yields a different digest for the same binary across boots and destroys the attribution. The canonical bytes are the ESP file's contents, reopened through the loaded-image `DeviceHandle` + `FilePath`.
+
+- [ ] Reopen `BOOTX64.EFI` through the loaded-image `DeviceHandle` + `FilePath` and hash the file bytes, never the resident image range.
+- [ ] Report the digest ABSENT on paths where the file cannot be reopened (NULL `DeviceHandle`, pure HTTP boot) rather than substituting a resident-range hash, because a silently different measurement is worse than a missing one.
+- [ ] Bound the cost: a size ceiling on what is hashed, exactly one pass over the bytes, and a pre-ExitBootServices timing milestone recorded on serial.
+  - The loader accepts images up to 32 MiB and the smoke matrix does not fail on a latency regression, so an unbounded "hash the file" instruction would silently lengthen every boot as the binary grows.
+- [ ] Carry the digest to the kernel in `boot_info`, reserved-region field if one fits. -> XREF: [`TODO-01`](TODO-01-boot-protocol-abi-handoff.md).
+  - Otherwise a `BOOT_INFO_VERSION` bump applied to the kernel header AND the bootloader mirror together, per the boot_info ABI rule.
+- [/] Store the loader digest in the baseline blob -- parked until the struct can grow. -> XREF: 01-boot-platform/TODO-13 §19 (item: "Design an authorized, crash-safe resize that preserves the generation counter").
+- [ ] Commit: `"boot: BOOTX64.EFI on-disk self-measurement"`
+
+**Test checkpoint:** a rebuilt-but-byte-identical `BOOTX64.EFI` measured on two consecutive boots yields the SAME digest, and a bootloader rebuilt with a real change yields a DIFFERENT one while the kernel digest is untouched -- that independence is what makes attribution real rather than a single "something changed" bit. Hashing the resident image range instead of the file is caught by the first assertion, which is why it is stated as two boots rather than one measurement. A boot path where the file cannot be reopened reports the digest ABSENT and reaches the kernel with the absence flagged, rather than carrying a resident-range hash that would look valid. Hashing stays within its stated size ceiling and the pre-EBS milestone appears on serial. The `boot_info` carriage is proven by the manifest gate: kernel header and mirror agree, and `compare.sh` passes. Scope: this section owns the LOADER digest and its `boot_info` carriage only. Storing it in the baseline blob waits on §19's struct growth; the kernel digests stay with their producers. Platforms: the boot-info manifest gate and the smoke matrix cover the carriage; the two-boot digest-stability assertion runs on the QEMU legs, and bare-metal validation stays with §6's platform item.
 
 ---
 

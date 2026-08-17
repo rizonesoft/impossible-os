@@ -176,7 +176,8 @@ At boot, compute SHA-256 of the kernel `.text` and `.rodata` sections. Extend TP
 - [ ] First boot (no baseline): write current PCR value to `ImpossibleOS-KernelPCR` UEFI variable via Runtime Services; log `[INTEGRITY] Baseline stored`
 - [ ] Export `kernel_integrity_ok()` → returns `!boot_flags.integrity_violation`; security-sensitive paths (module loader, `secboot_is_enabled()`) call this
 - [ ] Boot log: `[INTEGRITY] Kernel SHA-256: %s PCR[10] extended`
-- [ ] Publish the computed kernel digest for the measured-boot baseline to consume, not only for the PCR extend. -> XREF: [`01-boot-platform/TODO-13 §16`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md).
+- [ ] Publish the computed kernel digest for the baseline to consume, not only for the PCR extend. -> XREF: [`01-boot-platform/TODO-13 §19`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md) (item: "Consume the kernel-image digest").
+  - Retargeted 2026-08-17: TODO-13 §16 was split, and the consuming side moved to §19 (versioned baseline growth), which is where the grown struct can hold this digest.
   - §16 is the consumer and deliberately does NOT recompute the hash; this section stays the sole producer of the kernel image digest.
   - `src/kernel/crypto/sha256.c` already ships a freestanding FIPS 180-4 implementation, so the `src/kernel/sha256.c` item above is partly satisfied -- check before writing a second one.
 - [ ] Reconcile the `ImpossibleOS-KernelPCR` UEFI-variable golden record against the TPM-NV baseline store, or state why they stay separate. -> XREF: [`01-boot-platform/TODO-13 §14`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md).
