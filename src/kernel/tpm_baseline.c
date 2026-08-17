@@ -15,6 +15,12 @@
 #include "kernel/fs/gpt.h"   /* gpt_crc32 (IEEE CRC32) */
 #include "libc/string.h"
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical measured set) */
+#include "kernel/boot_proto_descriptor.h"   /* boot_proto_abi_digest (build-time ABI identity) */
+
+/* The baseline stores the ABI-manifest digest verbatim, so the two lengths must
+ * agree; a silent mismatch would truncate or overrun the field. */
+_Static_assert(BOOT_PROTO_ABI_DIGEST_LEN == TPM_BASELINE_DIGEST,
+    "ABI-manifest digest must be exactly one baseline digest wide");
 
 /* ---- Pure core ---- */
 
@@ -72,6 +78,20 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
     if (out->secure_boot > 1u || out->secure_boot_valid > 1u ||
         out->fw_hash_present > 1u || out->abi_manifest_present > 1u)
         return 0;
+    /* A claimed-present ABI manifest must carry an actual digest. The producer
+     * (boot_proto_abi_digest via tpm_baseline_snapshot) can never emit
+     * present=1 with an all-zero digest -- it treats all-zero as corruption and
+     * fails the snapshot -- so admitting that shape here would canonicalize a
+     * blob no honest enroll could have written. Compare would usually catch it
+     * against a live descriptor, but validate must not accept a representation
+     * the producer cannot create. */
+    if (out->abi_manifest_present) {
+        uint8_t nz = 0u;
+        for (i = 0; i < TPM_BASELINE_DIGEST; i++)
+            nz |= out->abi_manifest[i];
+        if (nz == 0u)
+            return 0;
+    }
     return 1;
 }
 
@@ -95,12 +115,22 @@ tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
             memcmp(golden->fw_hash, current->fw_hash, TPM_BASELINE_DIGEST) != 0)
             return TPM_BASELINE_MISMATCH;
     }
-    /* Kernel-ABI manifest identity (when the golden carries one). */
-    if (golden->abi_manifest_present) {
-        if (!current->abi_manifest_present ||
-            memcmp(golden->abi_manifest, current->abi_manifest, TPM_BASELINE_DIGEST) != 0)
-            return TPM_BASELINE_MISMATCH;
-    }
+    /* Kernel-ABI manifest identity -- SYMMETRIC, unlike the fw-hash gate above,
+     * and the difference is deliberate. The firmware hash comes from SMBIOS,
+     * which a platform may genuinely not provide, so a golden enrolled without
+     * one is a legitimate state and gating on the golden alone is correct
+     * forward compatibility. The ABI manifest is a compile-time constant that
+     * every correctly built kernel carries (boot_proto_abi_digest fails the
+     * whole snapshot rather than reporting it absent), so `current` always has
+     * it. A golden WITHOUT it can therefore only be a pre-binding baseline, and
+     * a one-way gate would let that baseline keep reporting VERIFIED forever
+     * while attesting nothing about the ABI. Either presence disagreement is a
+     * mismatch; clearing it takes a re-enroll, which is the honest signal. */
+    if (golden->abi_manifest_present != current->abi_manifest_present)
+        return TPM_BASELINE_MISMATCH;
+    if (golden->abi_manifest_present &&
+        memcmp(golden->abi_manifest, current->abi_manifest, TPM_BASELINE_DIGEST) != 0)
+        return TPM_BASELINE_MISMATCH;
     if (golden->pcr_count > TPM_BASELINE_MAX_PCRS ||
         current->pcr_count > TPM_BASELINE_MAX_PCRS)
         return TPM_BASELINE_CMP_BADARG;
@@ -199,11 +229,17 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
         }
     }
 
-    /* abi_manifest (the .bootproto ABI-manifest sha256) is the only "available"
-     * image identity, but its kernel-side accessor is not yet exposed -- left
-     * absent (present=0). Real bootloader/kernel image hashes + this manifest
-     * hash are tracked follow-ups. */
-    out->abi_manifest_present = 0;
+    /* Kernel-ABI manifest identity: the sha256 the kernel carries in its
+     * `.bootproto` descriptor. FAIL CLOSED -- this digest is a compile-time
+     * constant present in every correctly built kernel, so a failure here means
+     * read-only kernel data is corrupt, not that the field is unavailable.
+     * Reporting it absent instead would let a corrupted kernel enroll a
+     * baseline that binds no ABI identity, and (because compare gates on the
+     * pair) would let that baseline verify forever. CORRUPT is the honest
+     * status: the caller publishes MISMATCH for it. */
+    if (!boot_proto_abi_digest(out->abi_manifest))
+        return TPM_BASELINE_CORRUPT;
+    out->abi_manifest_present = 1;
     return TPM_BASELINE_OK;
 }
 
@@ -297,8 +333,19 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
     }
 
     st = tpm_baseline_snapshot(alg, &current);
-    if (st != TPM_BASELINE_OK)
+    if (st != TPM_BASELINE_OK) {
+        /* A CORRUPT snapshot means the kernel's OWN build-time identity failed
+         * validation, which is a hard integrity failure and must be published
+         * as one -- returning without touching *out_overall would leave the
+         * previously computed status standing and read as a clean boot.
+         * Deliberately narrow: NO_TPM/BADARG mean the current state could not
+         * be measured at all, and a machine that cannot measure is not a
+         * machine that failed to match, so those keep the existing
+         * leave-unpublished behavior rather than reporting false tamper. */
+        if (st == TPM_BASELINE_CORRUPT && out_overall)
+            *out_overall = BOOT_INTEGRITY_MISMATCH;
         return st;
+    }
 
     v = tpm_baseline_compare(&golden, &current);
     if (out_overall)

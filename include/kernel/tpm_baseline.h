@@ -100,9 +100,21 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
 
 /* Compare a validated golden baseline against a current snapshot (same struct
  * shape, generation/crc ignored): every golden PCR slot with present==1 must
- * equal the current digest for that index+bank, the SB state must match, and a
- * present fw-hash / abi-manifest must match. Returns MATCH / MISMATCH / BADARG.
- * Pure -- the caller supplies `current` (gathered live by tpm_baseline_snapshot). */
+ * equal the current digest for that index+bank, and the SB state must match.
+ * Returns MATCH / MISMATCH / BADARG. Pure -- the caller supplies `current`
+ * (gathered live by tpm_baseline_snapshot).
+ *
+ * The two optional digests use DIFFERENT presence rules, on purpose:
+ *   fw-hash      -- one-way. Checked only when the GOLDEN carries one, because
+ *                   SMBIOS may genuinely be absent, so a golden enrolled
+ *                   without a firmware hash is a legitimate state.
+ *   abi-manifest -- SYMMETRIC. A presence disagreement in EITHER direction is a
+ *                   mismatch. Every correctly built kernel carries this digest
+ *                   (tpm_baseline_snapshot fails outright rather than reporting
+ *                   it absent), so a golden without one can only be a
+ *                   pre-binding baseline; accepting it would let that baseline
+ *                   report VERIFIED forever while attesting nothing about the
+ *                   ABI. Clearing the mismatch takes a re-enroll. */
 tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
                                             const struct tpm_baseline *current);
 
@@ -116,8 +128,15 @@ int tpm_baseline_rotation_ok(uint32_t old_gen, uint32_t new_gen);
 /* Gather the CURRENT measured state into a baseline struct: PCR digests for the
  * measured set {0..7,11} in `alg` via tpm_pcr_get, Secure Boot state via
  * tpm_sb_reconcile_report, and the firmware-version hash via SHA-256 over the
- * SMBIOS bios_version. generation/crc are left 0 (the caller stamps them on
- * enroll). Returns OK, or NO_TPM when no PCR is readable. */
+ * SMBIOS bios_version, and the kernel-ABI manifest digest via
+ * boot_proto_abi_digest. generation/crc are left 0 (the caller stamps them on
+ * enroll).
+ *
+ * Returns OK; NO_TPM when the full measured PCR set is not readable; or CORRUPT
+ * when the kernel's own `.bootproto` ABI digest fails validation. CORRUPT is
+ * fail-closed by design: that digest is a compile-time constant, so its absence
+ * means read-only kernel data is corrupt, and enrolling a baseline with the
+ * identity silently dropped would produce a golden that binds nothing. */
 tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *out);
 
 /* Enroll: snapshot the current state, stamp a monotonic generation (the existing

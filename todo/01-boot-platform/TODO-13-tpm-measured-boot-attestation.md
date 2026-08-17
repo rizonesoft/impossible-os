@@ -53,7 +53,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
 | 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [x]   |
 | 💎  |  15   | Trusted enrollment provenance                                | §6, §14                                                   |  [/]   |
-| 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)    | §6, §14                                                   |  [ ]   |
+| 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)    | §6, §14                                                   |  [x]   |
 | 💎  |  17   | Write-locked and monotonic NV indexes (anti-rollback anchor) | §6, §7, §14                                               |  [ ]   |
 | 💎  |  18   | Atomic boot-integrity report publication                     | §6, §12, §14                                              |  [ ]   |
 | 💎  |  19   | Versioned baseline growth and NV index migration             | §16, §17                                                  |  [ ]   |
@@ -504,15 +504,27 @@ The baseline records what §6 could reach: per-bank PCR digests, Secure Boot sta
 
 **This section does NOT compute the KERNEL hashes, and an earlier draft of it did -- which duplicated two open owners elsewhere in the corpus.** Kernel image measurement is `04-drivers-hardware/TODO-04 §7` (SHA-256 over `.text`/`.rodata`, PCR[10] extend, its own golden record). The bootloader-side hash of the loaded kernel ELF before ExitBootServices is `18-future-research/TODO-04 §2` (PCR 8). Neither carries a digest into §6's measured-boot baseline blob, and neither measures the LOADER.
 
-- [ ] Expose a kernel-side accessor for the build-time ABI-manifest digest so `tpm_baseline_snapshot()` can reach `boot_proto_descriptor.sha256` without `tpm_baseline.c` including the generated header directly.
-  - The digest is baked into `build/boot_proto_sha.h` by `tools/boot-info-manifest/gen-proto-sha-header.sh`; the accessor is what keeps the baseline code independent of that generator's output shape.
-  - Decide and state what the accessor returns when the generated header is absent or the descriptor is zero-filled, because that path decides `abi_manifest_present` rather than silently storing 32 zero bytes as if they were a digest.
-- [ ] Populate `abi_manifest` and set `abi_manifest_present` in `tpm_baseline_snapshot()`, replacing the unconditional `abi_manifest_present = 0` at `src/kernel/tpm_baseline.c:202-206`.
-- [ ] Confirm the compare path already honors the field, or fix it: `tpm_baseline_compare` documents that "a present fw-hash / abi-manifest must match", and that clause has never been exercised with a populated manifest on either side.
-  - The asymmetric cases are the ones that decide the verdict: golden present + current absent, and golden absent + current present. State which is a MISMATCH and which is not, rather than letting the existing code's accident stand as the specification.
-- [ ] Commit: `"tpm: populate the baseline ABI-manifest digest"`
+- [x] Exposed `boot_proto_abi_digest()` in `src/kernel/main/boot_proto.c` (declared in `include/kernel/boot_proto_descriptor.h`), so `tpm_baseline.c` reads the build-time digest without including the generated header.
+  - The generated `build/boot_proto_sha.h` stays a dependency of that ONE TU. `BOOT_PROTO_ABI_DIGEST_LEN` is `_Static_assert`ed against the descriptor field, and again in `tpm_baseline.c` against `TPM_BASELINE_DIGEST`, so the two lengths cannot drift.
+  - Answered the open question FAIL-CLOSED: bad magic or an all-zero digest returns 0 and zeroes the output, and the caller treats 0 as a hard failure. The digest is a compile-time constant the build cannot link without, so 0 means corrupt read-only data, never "absent optional field".
+  - `boot_proto_abi_digest_from()` is the pure seam over a caller-supplied descriptor. Added because `kernel_boot_proto` is const and linked, so the corruption branches -- the actual safety property -- were otherwise untestable.
+- [x] `tpm_baseline_snapshot()` populates `abi_manifest` and sets `abi_manifest_present = 1`, replacing the unconditional `abi_manifest_present = 0`.
+  - It returns `TPM_BASELINE_CORRUPT` when the accessor fails rather than enrolling a baseline with the identity dropped, and `tpm_baseline_verify()` publishes `BOOT_INTEGRITY_MISMATCH` for that status. Deliberately narrow: `NO_TPM` and `BADARG` still leave the status unpublished, because a machine that cannot measure is not a machine that failed to match.
+- [x] Fixed the compare path: the `abi_manifest` presence gate is now SYMMETRIC, and the difference from the fw-hash gate is documented at both sites.
+  - Decided the asymmetric cases rather than inheriting the previous behavior. BOTH orientations are a MISMATCH. `fw_hash` stays one-way on purpose because SMBIOS can be genuinely absent, whereas every correctly built kernel carries the ABI digest, so a golden without one can only be a pre-binding baseline.
+  - `tpm_baseline_validate()` also refuses a CRC-valid blob claiming `abi_manifest_present = 1` with an all-zero digest, a shape no honest enroll can produce.
+- [x] Commit: `"tpm: populate the baseline ABI-manifest digest"`
 
 **Test checkpoint:** a snapshot taken against a known descriptor reports `abi_manifest_present == 1` and carries exactly that digest, and the enroll-then-verify round trip through the fake-TIS seam returns MATCH. The distinction the field exists to make is proven by the compare path, not by the snapshot alone: a golden baseline whose manifest digest differs from the current one is a MISMATCH, while the SAME manifest digest matches even though this section changes no kernel image. Both asymmetric present/absent orientations assert their stated verdict, with a control asserting that two populated, equal manifests still MATCH -- without it the asymmetry assertions would pass against a compare that rejected everything. A zero-filled or unavailable descriptor leaves `abi_manifest_present == 0` rather than pinning 32 zero bytes as a golden value, which would make every later boot match a digest that means nothing. Scope: this section owns ONLY the ABI-manifest digest and its compare semantics. Struct growth, the NV index migration, and the two externally-produced KERNEL digests are §19; the `BOOTX64.EFI` loader digest is §20; the PCR-11 manifest extend and attestation report schema stay §9's. Platforms: kernel unit suites cover the whole surface (the digest is build-time, so no TPM hardware distinguishes it); the live enroll cycle is operator-gated with the rest of §6's.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1343 kernel + 17 user-mode, 0 failures (+28 assertions across 4 new suites in `test_tpm_baseline.c`)
+
+> **Notes:**
+> - **What shipped:** `boot_proto_abi_digest()` + its pure `_from()` seam, a snapshot that populates the reserved `abi_manifest` field, and a symmetric presence gate in `tpm_baseline_compare()`.
+> - **How it integrates:** `tpm_baseline_snapshot()` now fails CORRUPT instead of dropping the identity, and `tpm_baseline_verify()` publishes MISMATCH for that status only, leaving NO_TPM unpublished as before.
+> - **Downstream effects:** a baseline enrolled before this ships compares as MISMATCH rather than silently VERIFIED, so clearing it takes a re-enroll; that is the intended signal, not a regression.
+> - **Canonical doc:** the fail-closed contract in `include/kernel/boot_proto_descriptor.h`; the two presence rules and why they differ in `include/kernel/tpm_baseline.h`.
+> - **Scope boundary:** this section owns the ABI-manifest digest only. Struct growth and the NV migration are §19, the `BOOTX64.EFI` loader digest is §20.
 
 ---
 
@@ -633,18 +645,19 @@ Split out of §16 on 2026-08-17. Both digests §16 originally consumed measure t
 
 ## OS Comparison
 
-| ⭐  | Feature                                | Windows                   | Linux                     | Impossible OS                                                                 |
-| --- | -------------------------------------- | ------------------------- | ------------------------- | ----------------------------------------------------------------------------- |
-| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB           | tpm_tis/tpm_crb drivers   | ✅ §2 burst-chunked TIS + CRB                                                 |
-| 💎  | Secure Boot PCR integration            | Measured Boot             | IMA/TPM tools             | ⚠️ §5 structural SB var reconcile                                             |
-| 💎  | PCR replay                             | internal/Defender         | tpm2-tools                | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                |
-| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker        | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                               |
-| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline    | IMA + systemd-pcrlock     | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation            |
-| 💎  | Sealed secrets                         | BitLocker                 | systemd-cryptenroll       | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff      |
-| ⭐  | Boot attestation report (JSON)         | Device Health Attestation | Keylime AK quote JSON     | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending |
-| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation | Keylime AK quote          | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                      |
-| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal    | systemd-pcrlock CEL       | ✅ §12 event-centric table + derived masks                                    |
-| ⭐  | Baseline enrollment authority          | TPM PPI physical presence | root + interactive prompt | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value       |
+| ⭐  | Feature                                | Windows                    | Linux                     | Impossible OS                                                                 |
+| --- | -------------------------------------- | -------------------------- | ------------------------- | ----------------------------------------------------------------------------- |
+| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB            | tpm_tis/tpm_crb drivers   | ✅ §2 burst-chunked TIS + CRB                                                 |
+| 💎  | Secure Boot PCR integration            | Measured Boot              | IMA/TPM tools             | ⚠️ §5 structural SB var reconcile                                             |
+| 💎  | PCR replay                             | internal/Defender          | tpm2-tools                | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                |
+| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker         | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                               |
+| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline     | IMA + systemd-pcrlock     | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation            |
+| 💎  | Kernel-ABI identity bound in baseline  | Boot config / WBCL binding | IMA template hash binding | ✅ §16 build-time `.bootproto` sha256, fail-closed, symmetric presence gate   |
+| 💎  | Sealed secrets                         | BitLocker                  | systemd-cryptenroll       | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff      |
+| ⭐  | Boot attestation report (JSON)         | Device Health Attestation  | Keylime AK quote JSON     | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending |
+| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation  | Keylime AK quote          | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                      |
+| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal     | systemd-pcrlock CEL       | ✅ §12 event-centric table + derived masks                                    |
+| ⭐  | Baseline enrollment authority          | TPM PPI physical presence  | root + interactive prompt | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value       |
 
 ## Unit Tests
 
