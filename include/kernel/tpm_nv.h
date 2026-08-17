@@ -214,6 +214,15 @@ _Static_assert(TPMA_NV_TYPE(TPM_NT_PIN_PASS) == 0x90u,
  * always within the device's MAX_NV_BUFFER_SIZE. */
 #define TPM_NV_MAX_DATA 512u
 
+/* Largest index this module will DEFINE. Deliberately separate from
+ * TPM_NV_MAX_DATA: that one caps a single TRANSFER, and the read/write
+ * wrappers chunk by offset past it, so treating it as the definition limit
+ * makes an index that can be read and written in chunks impossible to
+ * provision -- exactly the shape the versioned-baseline-growth work needs.
+ * Bounded at the
+ * PTP command-buffer scale so a define is still sanity-checked. */
+#define TPM_NV_MAX_INDEX_SIZE 4096u
+
 /* ---- Status (one classified outcome; degraded states never wedge) ---- */
 typedef enum {
     TPM_NV_OK        = 0,   /* success (data copied / index defined) */

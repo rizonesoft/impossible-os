@@ -375,6 +375,10 @@ static tpm_attest_status_t map_attest(tpm_nv_status_t s)
         case TPM_NV_BUSY:      return TPM_ATTEST_BUSY;
         case TPM_NV_NOTFOUND:  return TPM_ATTEST_NO_EK_CERT;
         case TPM_NV_TRANSPORT: return TPM_ATTEST_TRANSPORT;
+        /* Same reasoning as tpm_seal.c's map_nv_status: a cumulative-budget
+         * expiry means the operation ran out of the boot's patience, not that
+         * the TPM failed. TPMERR would misreport a usable device. */
+        case TPM_NV_BUDGET:    return TPM_ATTEST_BUSY;
         default:               return TPM_ATTEST_TPMERR;
     }
 }

@@ -252,6 +252,19 @@ static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
         case TPM_NV_NOTFOUND:
         case TPM_NV_UNINIT:    return TPM_BASELINE_NO_BASELINE;
         case TPM_NV_TRANSPORT: return TPM_BASELINE_NO_TPM;
+        /* A cumulative-budget expiry belongs with NO_TPM, not TPMERR. The two
+         * are handled oppositely downstream: NO_TPM means "this machine could
+         * not measure at all", which deliberately leaves the integrity verdict
+         * UNPUBLISHED rather than reporting a false tamper, and that is exactly
+         * right for a TPM that answered too slowly for the boot's patience.
+         * TPMERR would instead read as a device fault. */
+        case TPM_NV_BUDGET:    return TPM_BASELINE_NO_TPM;
+        /* Enumerated rather than left to default: both are genuine hard
+         * failures (an illegal attribute request, or an index whose public area
+         * is not the one we asked for), and naming them stops a future status
+         * from inheriting this bucket by accident. */
+        case TPM_NV_ATTRS:
+        case TPM_NV_MISMATCH:  return TPM_BASELINE_TPMERR;
         default:               return TPM_BASELINE_TPMERR;
     }
 }

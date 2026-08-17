@@ -33,6 +33,13 @@ Every change below carries a refusal-direction control (a case that must still b
       - Cost this occurrence: one waiver authored, validated and carried (`waiver-check` rc 0), plus the reads to disprove the ABI premise. Cheap once; it recurs on every section whose body cites a header the regex names.
       - Do NOT apply -- `scripts/overnight/**` is control plane. Settled by either dropping the `abi_impact` arm from the threshold (its measured sign says it should never tighten) or deriving it from the section's actual likely_files diff surface rather than prose. Ship with a control that a section genuinely bumping `BOOT_INFO_VERSION` still flags.
 
+- [ ] `test-tooling.sh` mutates the LIVE review-state file, so a pre-push run during an active session both fails spuriously and destroys that session's review receipts
+      - OBSERVED 2026-08-17 on the TODO-13 §17 ship push: `FAIL 1/1358 tooling tests failed -- receiving_review_gate: PreToolUse allows Edit when no state file (want 0, got 2)`, blocking the push. Three Codex reviews were in flight at the time.
+      - MECHANISM CONFIRMED AT SOURCE: `scripts/test-tooling.sh:1683` sets `STATE_FILE="$REPO_ROOT/.claude/state/last-codex-review.json"` -- the REAL file, not a temp copy. Sub-test 9 (`:1798-1800`) does `rm -f "$STATE_FILE"` then probes `receiving_review_required.py` expecting rc 0. A concurrent dispatch's PostToolUse hook re-creates that file between the `rm` and the probe, the gate correctly blocks, and the test reads rc 2.
+      - TWO costs, and the second is the worse one. The visible cost is a blocked push on a green tree. The invisible cost is that the suite DELETES and rewrites the session's own `last-codex-review.json`, so an in-flight review's receipt can be destroyed by a test run -- the receiving-review gate and the section-commit gate both read that file.
+      - Not a flake in the usual sense: it is deterministic given overlap, and the overlap is normal (a ship push runs the pre-push suite while the session may still be waiting on reviews). It is the same class as the already-recorded `flock` fix for concurrent suite runs, but for STATE rather than for the tree.
+      - Do NOT apply -- `scripts/test-tooling.sh` is control plane. The fix is to point `STATE_FILE` at a temp dir for the duration of that sub-test (the hook already honors an override path in other tests), or to make the sub-test skip when a live review record exists.
+
 ## Carried forward from v14 -- open
 
 - [ ] `subagent_audit` duration arm is dead and needs a dispatch-time-stamp companion

@@ -136,11 +136,21 @@ typedef uint64_t tpm2_seq_t;
 typedef int (*tpm2_seq_fn)(tpm2_seq_t seq, void *ctx);
 
 /* Run fn() as ONE bounded sequence holding the transport gate throughout.
- * work_ms bounds the sequence's ordinary commands. cleanup_ms is RESERVED on top
- * of it and is not consumable until tpm2_seq_cleanup_begin() re-arms the budget,
- * so a mandatory teardown (FlushContext) is still both possible and bounded
- * AFTER the work budget expires -- a single hard deadline would leave a started
- * session unflushable, leaking a handle out of the TPM's small session pool.
+ * The advertised total is work + cleanup + up to 2 * the PTP command timeout.
+ * A budget expiry runs a bounded interface abort with the budget DISARMED (it
+ * has to be -- the abort exists precisely because the budget is gone), and
+ * that can happen once after the work budget and once after the cleanup
+ * allowance. Recovery is not free, and the contract says so rather than
+ * quietly excluding it; the same figure is derived at the quiesce in
+ * tpm_transport.c.
+ *
+ * work_ms bounds the sequence's ordinary commands. cleanup_ms is a SEPARATE
+ * allowance, spent only by tpm2_submit_seq_teardown(), so a mandatory teardown
+ * (FlushContext) is still both possible and bounded AFTER the work budget
+ * expires -- a single hard deadline would leave a started session unflushable,
+ * leaking a handle out of the TPM's small session pool. Every teardown attempt
+ * in one sequence DEBITS that one allowance rather than re-arming it, so the
+ * total is work + cleanup regardless of how many retries a teardown needs.
  * Returns fn()'s value, or a negative TPM_T_ERR_* if the sequence never started
  * (TPM_T_ERR_BUSY when another sequence or transaction holds the transport).
  * Never call from ISR context; sequences do not nest. */
@@ -154,11 +164,6 @@ int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
 int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
                     uint8_t *rsp, uint32_t rsp_cap);
 
-/* 1 when `seq` is live and its budget has been exhausted by a poll. Lets a
- * caller distinguish "this TPM is too slow for the boot path" from a genuine
- * protocol failure before deciding how to degrade. */
-int tpm2_seq_expired(tpm2_seq_t seq);
-
 /* Submit a mandatory TEARDOWN command (FlushContext) inside the sequence, on
  * the RESERVED allowance rather than on whatever the work phase left.
  *
@@ -167,8 +172,10 @@ int tpm2_seq_expired(tpm2_seq_t seq);
  * through a larger sequence topped the deadline up, and the ordinary commands
  * after it -- including an irreversible NV_DefineSpace -- then spent time
  * reserved for cleanup. The work budget is saved and restored around the
- * teardown, so a sequence spends at most work + (teardowns x reserve), with
- * teardowns bounded by the caller's retry limit. */
+ * teardown. All teardowns in one sequence SHARE that single allowance -- each
+ * attempt resumes it where the previous one left off rather than taking a
+ * fresh reserve -- so the sequence total stays work + cleanup (plus up to two
+ * bounded aborts), however many retries a teardown needs. */
 int tpm2_submit_seq_teardown(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
                              uint8_t *rsp, uint32_t rsp_cap);
 
@@ -318,8 +325,8 @@ void tpm_t_test_restore(struct tpm_t_test_state st);
  * replace" needs a budget large enough that a replacement would still succeed,
  * which no timing-based probe can distinguish. tpm_t_test_budget_deadline()
  * returns the raw TSC deadline (0 when the budget runs in iteration mode), and
- * tpm_t_test_seq_cleanup_pending() reports whether the one-shot reserve is
- * still unclaimed. */
+ * tpm_t_test_seq_cleanup_pending() reports whether the sequence's single
+ * cleanup allowance has been armed yet by a first teardown. */
 uint64_t tpm_t_test_budget_deadline(void);
 int tpm_t_test_seq_cleanup_pending(void);
 

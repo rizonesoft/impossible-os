@@ -36,31 +36,32 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                  | Depends On                                                | Status |
-| --- | :---: | ------------------------------------------------------------ | --------------------------------------------------------- | :----: |
-| 💎  |   1   | Harden TCG event-log parser                                  | --                                                        |  [/]   |
-| 💎  |   2   | TPM2 command transport                                       | §1 (ordering-only; transport does not consume the parser) |  [x]   |
-| 💎  |   3   | PCR read API                                                 | §2                                                        |  [x]   |
-| 💎  |   4   | PCR replay engine                                            | §1, ../02-kernel-core/TODO-03 §3                          |  [x]   |
-| 💎  |   5   | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3                                            |  [x]   |
-| 💎  |   6   | Baseline enrollment and storage                              | §3, §4, §7                                                |  [/]   |
-| 💎  |   7   | TPM NV index support                                         | §2 (transport); §12 (baseline mask)                       |  [/]   |
-| ⭐  |   8   | Sealed-secret boot policy hooks                              | §7, §12                                                   |  [x]   |
-| 💎  |   9   | Attestation report export                                    | §3-§6, §12, §13                                           |  [/]   |
-| ⭐  |  10   | Recovery and mismatch UX                                     | §6, TODO-22                                               |  [/]   |
-| 💎  |  11   | TPM tests and event-log fixtures                             | §1-§10, §12, §13                                          |  [x]   |
-| 💎  |  12   | PCR allocation table and policy masks                        | (foundational; consumed by §6/§8/§13)                     |  [x]   |
-| 💎  |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
-| 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [x]   |
-| 💎  |  15   | Trusted enrollment provenance                                | §6, §14                                                   |  [/]   |
-| 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)    | §6, §14                                                   |  [x]   |
-| 💎  |  17   | Write-locked and monotonic NV index primitives               | §6, §7, §14                                               |  [x]   |
-| 💎  |  18   | Atomic boot-integrity report publication                     | §6, §12, §14                                              |  [ ]   |
-| 💎  |  19   | Versioned baseline growth and NV index migration             | §16, §21                                                  |  [ ]   |
-| 💎  |  20   | BOOTX64.EFI on-disk self-measurement                         | §16, TODO-01 (boot_info ABI)                              |  [ ]   |
-| 💎  |  21   | Authenticated NV index lifecycle and anti-rollback anchor    | §17, §6, §15                                              |  [ ]   |
-| 💎  |  22   | Bootloader-side NV floor read (EFI_TCG2 adapter)             | §21, TODO-21 §3 (selection)                               |  [ ]   |
-| 💎  |  23   | Headless enrollment authorization escape hatch               | §21, §15                                                  |  [ ]   |
+| ⭐  | Order | Deliverable                                                   | Depends On                                                | Status |
+| --- | :---: | ------------------------------------------------------------- | --------------------------------------------------------- | :----: |
+| 💎  |   1   | Harden TCG event-log parser                                   | --                                                        |  [/]   |
+| 💎  |   2   | TPM2 command transport                                        | §1 (ordering-only; transport does not consume the parser) |  [x]   |
+| 💎  |   3   | PCR read API                                                  | §2                                                        |  [x]   |
+| 💎  |   4   | PCR replay engine                                             | §1, ../02-kernel-core/TODO-03 §3                          |  [x]   |
+| 💎  |   5   | Secure Boot variable measurement reconciliation (structural)  | §1, TODO-02 §3                                            |  [x]   |
+| 💎  |   6   | Baseline enrollment and storage                               | §3, §4, §7                                                |  [/]   |
+| 💎  |   7   | TPM NV index support                                          | §2 (transport); §12 (baseline mask)                       |  [/]   |
+| ⭐  |   8   | Sealed-secret boot policy hooks                               | §7, §12                                                   |  [x]   |
+| 💎  |   9   | Attestation report export                                     | §3-§6, §12, §13                                           |  [/]   |
+| ⭐  |  10   | Recovery and mismatch UX                                      | §6, TODO-22                                               |  [/]   |
+| 💎  |  11   | TPM tests and event-log fixtures                              | §1-§10, §12, §13                                          |  [x]   |
+| 💎  |  12   | PCR allocation table and policy masks                         | (foundational; consumed by §6/§8/§13)                     |  [x]   |
+| 💎  |  13   | Attestation key provisioning and TPM2 quote                   | §3, §7, §12                                               |  [x]   |
+| 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)              | --                                                        |  [x]   |
+| 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [/]   |
+| 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)     | §6, §14                                                   |  [x]   |
+| 💎  |  17   | Write-locked and monotonic NV index primitives                | §6, §7, §14                                               |  [x]   |
+| 💎  |  18   | Atomic boot-integrity report publication                      | §6, §12, §14                                              |  [ ]   |
+| 💎  |  19   | Versioned baseline growth and NV index migration              | §16, §21                                                  |  [ ]   |
+| 💎  |  20   | BOOTX64.EFI on-disk self-measurement                          | §16, TODO-01 (boot_info ABI)                              |  [ ]   |
+| 💎  |  21   | Authenticated NV index lifecycle and anti-rollback anchor     | §17, §6, §15                                              |  [ ]   |
+| 💎  |  22   | Bootloader-side NV floor read (EFI_TCG2 adapter)              | §21, TODO-21 §3 (selection)                               |  [ ]   |
+| 💎  |  23   | Headless enrollment authorization escape hatch                | §21, §15                                                  |  [ ]   |
+| 💎  |  24   | Bounded sequence + verified teardown for seal and attestation | §17, §8, §13                                              |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -575,14 +576,19 @@ The baseline records what §6 could reach: per-bank PCR digests, Secure Boot sta
 
 **Test checkpoint:** VERIFIED. A counter define emits the correct TPMA_NV bits and NV type and a write-lockable define emits `WRITEDEFINE`, both asserted against spec-literal attribute words rather than the macros under test; an increment past a write-lock returns LOCKED through `tpm_nv_classify_rc` and a later command still runs. A stalling TPM exhausts the cumulative budget and reports BUDGET with the transport left usable, while a failed abort still sticky-fails -- and a control asserts the same stalling TPM completes inside the real budget, without which the bound would pass by firing on everything. A teardown accepts only an exact envelope, retries an illegal tag, a wrong shape and a wrong-envelope HANDLE, and accepts well-formed SUCCESS and HANDLE replies on the FIRST attempt. Scope: this section owns the NV wire primitives and the command budget ONLY. The index lifecycle, the two-index contract and record authorization are §21; the bootloader-side read path is §22; the headless escape hatch is §23; baseline content stays §6. Platforms: fake-TIS unit suites are the whole automatable surface; the live swtpm round trip and real-fTPM write-lock semantics are operator-gated (no `swtpm` on the dev host).
 
-> **Test runner:** `make test-security` (or `scripts/debug/kernel/run-security-tests.bat`) | 1612 security-suite assertions pass; 22 `tpm: NV *` suites.
+> **Test runner:** `make test-security` (or `scripts/debug/kernel/run-security-tests.bat`) | 1629 security-suite assertions pass; 22 `tpm: NV *` suites.
 
 > **Notes:**
-> - **What shipped:** the corrected + complete TPMA_NV/TPM_NT model with a pure `tpm_nv_attrs_valid()`, `TPM2_NV_Increment`/`TPM2_NV_WriteLock` builders and wrappers, `tpm_nv_read_counter`, and a bounded-sequence transport seam (`tpm2_seq_run`/`tpm2_submit_seq`/`tpm2_seq_cleanup_begin`).
+> - **What shipped:** the corrected + complete TPMA_NV/TPM_NT model with a pure `tpm_nv_attrs_valid()`, `TPM2_NV_Increment`/`TPM2_NV_WriteLock` builders and wrappers, `tpm_nv_read_counter`, and a bounded-sequence transport seam (`tpm2_seq_run` / `tpm2_submit_seq` / `tpm2_submit_seq_teardown`).
 > - **How it integrates:** `tpm_policy_session_run` and every exported NV wrapper now run inside one bounded sequence; `tpm_policy_op_fn` gained the sequence token and `tpm_seal.c`'s callback moved with it.
 > - **Downstream effects:** the read-bit correction changes what a define REQUESTS, so an index enrolled under the old attributes is refused as `TPM_NV_MISMATCH` rather than silently reused; authorized re-definition of such an index is §21's.
 > - **Canonical doc:** the TPMA_NV table comment in `include/kernel/tpm_nv.h` cites the spec table and records the off-by-one.
 > - **Scope boundary:** wire primitives + command budget only. Lifecycle and record authorization are §21, the loader read is §22, the headless hatch is §23.
+
+> **Verified:** 2026-08-17 | commit `68ca66d7d` | 6/6 items | build OK | 30484 kernel + 17 user tests; lint 0 errors; smoke matrix 4/4 legs
+> **Accepted:** [H] seal and attestation still run outside a bounded sequence, and attestation's teardown discards the FlushContext result (reason: another component's surface; this section converted the NV path only) -> XREF: 01-boot-platform/TODO-13 §24 (item: "Route `tpm_seal_secret` and `tpm_unseal_secret` through one bounded sequence each" at line 756)
+> **Accepted:** [M] the sequence deadline compares a raw TSC the owner can migrate away from (reason: pre-dates this section, and the corrected per-CPU reader does not exist in the tree) -> XREF: 01-boot-platform/TODO-13 §24 (item: "Decide whether the sequence deadline should survive a thread migration" at line 760)
+> **Quality reviewed:** 2026-08-17 | Codex 37x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 2H+13M+5L fixed, 2 open | scope: kernel-code-quality
 
 ---
 
@@ -741,6 +747,26 @@ Its failure mode is the opposite of §21's. §21 fails by accepting a forged rec
 - [ ] Commit: `"tpm: headless enrollment authorization escape hatch"`
 
 **Test checkpoint:** a valid one-shot authorization enrolls exactly once, and the same bytes replayed on the next boot are REFUSED -- the single assertion that separates this from the file-only authority §15 removed. The same blob presented on a different device identity, against a different PCR set, or for a different operation than the one it was signed for, is refused as three distinct values rather than one generic decline, so an operator reading the log can tell a stale blob from a wrong machine. With no authorization present at all the verdict is still `CONFIRM_UNAVAILABLE`, unchanged from §15, and a control asserts the console path is untouched by any of this. Scope: this section owns the headless enrollment AUTHORITY only. Who may enroll on a console machine stays §15, baseline content stays §6, and the NV record authorization it borrows is §21. Platforms: kernel unit suites cover every refusal and the accept path; an end-to-end headless enrollment against real firmware is operator-gated (no `swtpm` on the dev host, and the bare-metal leg stays with §6's platform item).
+
+---
+
+## 24. Extend the Bounded Sequence and Teardown Proof to Seal and Attestation
+
+> **Spawned-by:** §17 (review)
+> **User impact:** on a machine whose TPM is slow or briefly desynchronized, FDE unlock and EK-certificate reads can each spend their own unbounded per-command timeouts and can leak a session or transient-object handle per attempt. The TPM has only a few slots, so after a handful of retries `StartAuthSession` starts refusing outright and sealing stops working for the rest of the boot -- the user sees FDE unlock fail late, with no message connecting it to the slow TPM that caused it.
+
+§17 gave the NV path a bounded sequence and a teardown that requires PROOF the session was released. The seal and attestation paths were not converted, so the two largest remaining multi-command flows in the subsystem still have the behavior §17 exists to remove. Found by §17's own consistency, perf and kernel-auditor passes, all three independently.
+
+- [ ] Route `tpm_seal_secret` and `tpm_unseal_secret` through one bounded sequence each.
+  - Today each runs 2-4 transport transactions with the gate released between them (`src/kernel/tpm_seal.c` CreatePrimary, Create/Load, and two `seal_flush` calls), so the per-burst PTP timeouts accumulate exactly as they did before §17.
+- [ ] Give attestation a verified teardown, factoring §17's proof-requiring helper rather than writing a second one.
+  - `at_flush` (`src/kernel/tpm_attest.c`) discards the FlushContext result, so a transient warning or a wrong-envelope reply leaves the session allocated while the code proceeds as if it were released -- the defect §17 fixed in `nv_flush`, still live here.
+- [ ] Decide whether the sequence deadline should survive a thread migration. -> XREF: 01-boot-platform/TODO-10 (bare-metal hardening owns per-CPU TSC behavior).
+  - `tpm_t_budget_spent` compares a raw RDTSC against a deadline recorded earlier, while `tpm2_seq_run` explicitly allows its owner to migrate; `per_cpu.tsc_offset` exists for this but has no corrected reader anywhere in the tree, so the choice is to build one, to pin the sequence, or to state the exposure and accept it. Pre-dates §17 (every TPM deadline already used raw TSC) but §17 widened its reach.
+- [ ] Unit-test each converted flow for the same properties §17 proved: one budget across the whole operation, a teardown that requires proof, and a leak that is reported rather than silently accepted.
+- [ ] Commit: `"tpm: bounded sequences and verified teardown for seal and attestation"`
+
+**Test checkpoint:** a slow-but-responsive TPM makes a seal and an unseal report BUDGET rather than spending an unbounded multiple of the per-command timeouts, with a control proving the same fake completes inside a generous budget. An attestation teardown that receives a transient warning is retried and, if never proven, reported -- asserted by counting FlushContext commands, not by the operation's return value. Scope: this section converts the seal and attestation flows only; the NV primitives and their budget are §17, and the authenticated lifecycle is §21. Platforms: fake-TIS unit suites are the whole automatable surface; the live swtpm round trip is operator-gated (no `swtpm` on the dev host).
 
 ---
 

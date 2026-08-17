@@ -110,6 +110,14 @@ tpm_nv_status_t tpm_nv_attrs_valid(uint32_t attrs, uint16_t data_size,
              * field). */
             if (data_size != 8u)
                 return TPM_NV_ATTRS;
+            /* WRITEALL means "a partial write is refused", which is meaningless
+             * for an index written by Increment or SetBits rather than by
+             * NV_Write. Refused rather than passed through: no consumer here
+             * needs it, and the alternative is a define that validates locally
+             * and is then refused by firmware -- the exact failure this
+             * validator exists to prevent. */
+            if (attrs & TPMA_NV_WRITEALL)
+                return TPM_NV_ATTRS;
             /* CLEAR_STCLEAR would let a TPM Reset return the index to its
              * pre-written state, which is the one property an anti-rollback
              * counter must not have. */
@@ -123,7 +131,12 @@ tpm_nv_status_t tpm_nv_attrs_valid(uint32_t attrs, uint16_t data_size,
                 return TPM_NV_ATTRS;
             return TPM_NV_OK;
         case TPM_NT_ORDINARY:
-            if (data_size == 0u || (uint32_t)data_size > TPM_NV_MAX_DATA)
+            /* Bounded by the DEFINITION limit, not the per-transfer one:
+             * tpm_nv_read/write chunk by offset past TPM_NV_MAX_DATA, so an
+             * index larger than one transfer is legitimate and must stay
+             * definable. Conflating the two made a chunk-readable index
+             * unprovisionable. */
+            if (data_size == 0u || (uint32_t)data_size > TPM_NV_MAX_INDEX_SIZE)
                 return TPM_NV_ATTRS;
             return TPM_NV_OK;
         default:
@@ -342,8 +355,14 @@ int tpm2_parse_nv_read_public(const uint8_t *rsp, uint32_t len, uint32_t nv_inde
     if ((uint32_t)pubsize > plen - 2u)
         return -1;
     /* TPMS_NV_PUBLIC: nvIndex(4) + nameAlg(2) + attributes(4) + authPolicy
-     * TPM2B(2 + N) + dataSize(2). Minimum is 14 (empty policy). */
+     * TPM2B(2 + N) + dataSize(2). The structure is FIXED at 14 + policy, so
+     * require an exact size rather than a minimum: a larger pubsize means
+     * unaccounted bytes sit between dataSize and the trailing TPM2B_NAME, and
+     * because nothing reads them they would sail through both parsers and be
+     * accepted by the definition-identity check as an exact match. */
     if (pubsize < 14u)
+        return -1;
+    if ((uint32_t)pubsize != 14u + (uint32_t)tpm2_be16_get(rsp + poff + 2u + 10u))
         return -1;
     base = poff + 2u;                         /* start of TPMS_NV_PUBLIC */
     /* Bind the public area to the REQUESTED index: a desynchronized/malicious
@@ -790,10 +809,17 @@ static void nv_flush(tpm2_seq_t seq, uint32_t handle)
          * or unparseable reply is exactly the transient case worth another
          * attempt -- FlushContext is idempotent, so a second try costs one
          * command and may well succeed. Only two conditions make further
-         * attempts pointless: no budget left to spend, or a transport gone
-         * sticky-failed that will refuse every command from here. */
-        if (st == TPM_NV_BUDGET || tpm2_seq_expired(seq) ||
-            !tpm_transport_available())
+         * attempts pointless: the ALLOWANCE is gone (reported as
+         * TPM_NV_BUDGET), or the transport went sticky-failed and will refuse
+         * every command from here.
+         *
+         * Deliberately NOT tpm2_seq_expired(): that reports the WORK budget,
+         * which the teardown saves and restores around itself, so consulting it
+         * would break the loop after one attempt in precisely the situation the
+         * allowance exists for -- a spent work budget with a session still to
+         * release. Each attempt re-arms the allowance, so exhaustion surfaces
+         * as TPM_NV_BUDGET on its own. */
+        if (st == TPM_NV_BUDGET || !tpm_transport_available())
             break;
     }
 
@@ -840,10 +866,12 @@ static void nv_session_failure_guard(tpm2_seq_t seq, tpm_nv_status_t st,
          "session creation outcome unknown; a session slot may be held until reset");
 }
 
-/* The budget one NV operation runs under. Constant in production; the test seam
- * below shrinks it so the expiry paths are reachable without a unit test
- * spending real seconds waiting for a 3-second deadline. Mirrors the transport's
- * own tpm_t_test_budget_iters seam. */
+/* The budget one NV operation runs under. CONSTANT in production -- nothing
+ * outside the KERNEL_TESTS seam below ever writes these, so a release build's
+ * only concurrency question is a read of a never-changing value. The seam
+ * itself assumes a single-threaded test context (the suite runs on the BSP);
+ * it is not safe to call while another CPU has an operation in flight, and
+ * nothing does. Mirrors the transport's own tpm_t_test_budget_iters seam. */
 static uint32_t s_nv_work_ms    = TPM_NV_OP_BUDGET_MS;
 static uint32_t s_nv_cleanup_ms = TPM_NV_OP_CLEANUP_BUDGET_MS;
 
@@ -1297,7 +1325,7 @@ tpm_nv_status_t tpm_nv_define_counter(uint32_t nv_index, uint32_t access_attrs)
 tpm_nv_status_t tpm_nv_define_data(uint32_t nv_index, uint16_t data_size)
 {
     uint32_t attrs = TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA;
-    if (data_size == 0u || data_size > TPM_NV_MAX_DATA)
+    if (data_size == 0u || data_size > TPM_NV_MAX_INDEX_SIZE)
         return TPM_NV_BADARG;
     return tpm_nv_define_ex(nv_index, attrs, data_size, 0, 0);
 }
@@ -1309,7 +1337,7 @@ tpm_nv_status_t tpm_nv_define_baseline(uint32_t nv_index, uint16_t data_size)
     tpm_nv_status_t st;
     int r;
 
-    if (data_size == 0u || data_size > TPM_NV_MAX_DATA)
+    if (data_size == 0u || data_size > TPM_NV_MAX_INDEX_SIZE)
         return TPM_NV_BADARG;
     st = tpm_nv_attrs_valid(attrs, data_size, TPM_ALG_SHA256);
     if (st != TPM_NV_OK)

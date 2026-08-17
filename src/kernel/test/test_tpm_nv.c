@@ -1008,6 +1008,31 @@ static void test_nv_parse_public_policy_bound(void)
     TEST_ASSERT_EQ((uint32_t)pub.name_alg, (uint32_t)TPM_ALG_SHA256, "nameAlg reported");
     TEST_ASSERT_EQ((int)pub.data_size, 64, "dataSize reported");
 
+    /* Unaccounted bytes inside TPM2B_NV_PUBLIC are refused. Nothing READS the
+     * space between dataSize and the trailing TPM2B_NAME, so a size-only check
+     * would let a padded public area pass both parsers and then be accepted by
+     * the definition-identity comparison as an exact match. */
+    memset(&pub, 0x5A, sizeof pub);
+    before = pub;
+    n = nvp_build_public(rsp, TPM_NV_INDEX_OS_DATA, 0u, 0u);
+    {
+        uint16_t sz = 0;
+        uint32_t at = 0;
+        /* Grow pubsize (and the response) by one byte the fixed TPMS_NV_PUBLIC
+         * layout does not account for, leaving policy_len at 0. */
+        tpm2_be16_put(rsp + 10, (uint16_t)(tpm2_be16_get(rsp + 10) + 1u));
+        tpm2_be32_put(rsp + 2, n + 1u);
+        rsp[n] = 0x00u;
+        TEST_ASSERT_EQ(tpm2_parse_nv_read_public(rsp, n + 1u, TPM_NV_INDEX_OS_DATA,
+                                                 &sz, &at), -1,
+                       "the strict parser refuses a padded TPMS_NV_PUBLIC");
+        TEST_ASSERT_EQ(tpm2_parse_nv_public_full(rsp, n + 1u, TPM_NV_INDEX_OS_DATA,
+                                                 &pub), -1,
+                       "the full parser refuses a padded TPMS_NV_PUBLIC");
+        TEST_ASSERT_EQ(memcmp(&pub, &before, sizeof pub), 0,
+                       "and that refusal is transactional too");
+    }
+
     /* Bound to the REQUESTED index, like the strict parser it builds on. */
     memset(&pub, 0x5A, sizeof pub);
     before = pub;
@@ -1147,6 +1172,22 @@ static void test_nv_attrs_validation(void)
     TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw | TPMA_NV_TYPE(TPM_NT_BITS), 8u,
                                            TPM_ALG_SHA256),
                    (int)TPM_NV_OK, "BITS index at 8 bytes is legal");
+    /* WRITEALL is meaningless on an index written by Increment/SetBits, and a
+     * conforming TPM refuses the combination -- so the validator does too
+     * rather than letting it pass locally and fail on firmware. */
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw | TPMA_NV_TYPE(TPM_NT_COUNTER) |
+                                           TPMA_NV_WRITEALL, 8u, TPM_ALG_SHA256),
+                   (int)TPM_NV_ATTRS, "WRITEALL on a counter refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw | TPMA_NV_TYPE(TPM_NT_BITS) |
+                                           TPMA_NV_WRITEALL, 8u, TPM_ALG_SHA256),
+                   (int)TPM_NV_ATTRS, "WRITEALL on a BITS index refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw | TPMA_NV_WRITEALL, 64u, TPM_ALG_SHA256),
+                   (int)TPM_NV_OK, "WRITEALL on an ORDINARY index is still legal");
+    TEST_ASSERT_EQ((int)tpm_nv_define_counter(TPM_NV_INDEX_OS_DATA,
+                                              TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE |
+                                              TPMA_NV_WRITEALL),
+                   (int)TPM_NV_ATTRS, "a counter define carrying WRITEALL is refused");
+
     /* The PIN types are refused whatever their size: this module does not
      * validate their authorization rules, so it will not marshal one. */
     TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw | TPMA_NV_TYPE(TPM_NT_PIN_FAIL), 16u,
@@ -1176,9 +1217,19 @@ static void test_nv_attrs_validation(void)
     /* Size bounds for an ordinary index. */
     TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw, 0u, TPM_ALG_SHA256),
                    (int)TPM_NV_ATTRS, "zero dataSize refused");
+    /* An index LARGER than one transfer is still definable: the read/write
+     * wrappers chunk by offset, so capping the definition at TPM_NV_MAX_DATA
+     * would make a chunk-readable index impossible to provision. The two limits
+     * are separate on purpose. */
     TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw, (uint16_t)(TPM_NV_MAX_DATA + 1u),
                                            TPM_ALG_SHA256),
-                   (int)TPM_NV_ATTRS, "oversize dataSize refused");
+                   (int)TPM_NV_OK, "an index bigger than one transfer is definable");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw, (uint16_t)TPM_NV_MAX_INDEX_SIZE,
+                                           TPM_ALG_SHA256),
+                   (int)TPM_NV_OK, "an index at the definition limit is legal");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(rw, (uint16_t)(TPM_NV_MAX_INDEX_SIZE + 1u),
+                                           TPM_ALG_SHA256),
+                   (int)TPM_NV_ATTRS, "past the definition limit is refused");
 
     /* The builder enforces the authPolicy length rule too: it is an exported
      * symbol, so a direct caller must not be able to marshal a shape
@@ -1547,6 +1598,37 @@ static int seq_probe_teardown_expiry(tpm2_seq_t seq, void *ctx)
     return 0;
 }
 
+/* Repeated teardowns under a SPENT work budget must all run: the allowance is
+ * independent of the work phase, which is the whole point of separating them.
+ * This is asserted at the sequence seam rather than through tpm_nv_read/flush,
+ * because a spent work budget refuses the StartAuthSession too, so the wrapper
+ * path can never reach a flush in that state -- the property is real on
+ * hardware, where budgets elapse mid-operation, and only reachable here. */
+static int seq_probe_teardown_repeats(tpm2_seq_t seq, void *ctx)
+{
+    uint8_t fcmd[16], frsp[16];
+    int *rc = (int *)ctx;
+    uint32_t fn = tpm2_build_flush_context(fcmd, sizeof fcmd, 0x03000000u);
+    int i;
+    for (i = 0; i < 3; i++)
+        rc[i] = tpm2_submit_seq_teardown(seq, fcmd, fn, frsp, sizeof frsp);
+    return 0;
+}
+
+/* Once the callback returns the sequence stops accepting work: a holder that
+ * kept its token past the callback is refused rather than driving a gate that
+ * is being torn down. Asserted from INSIDE by leaving the closing flag set --
+ * the drain wait in tpm2_seq_run is what makes the shutdown safe, and this is
+ * the observable half of it. */
+static tpm2_seq_t seq_escaped_token;
+
+static int seq_probe_capture_only(tpm2_seq_t seq, void *ctx)
+{
+    (void)ctx;
+    seq_escaped_token = seq;
+    return 0;
+}
+
 /* A teardown FIRST, before anything has polled: the work budget is already
  * spent by the clock but no poll has latched it yet. Restoring the pre-teardown
  * latch then leaves expiry unrecorded, so an ordinary command would proceed on
@@ -1725,6 +1807,34 @@ static void test_nv_sequence_budget(void)
     TEST_ASSERT_EQ(nvf_cc_count(TPM2_CC_FLUSH_CONTEXT), 0,
                    "the flush stops immediately when it has no allowance at all");
 
+    /* Every teardown gets the allowance, however spent the work budget is --
+     * and they SHARE it rather than each taking a fresh reserve. Sharing is what
+     * keeps the advertised bound true: re-arming per attempt turned a 2s reserve
+     * into 3 x 2s plus an abort each, ~17s for one operation. */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    rc[0] = rc[1] = rc[2] = 0;
+    (void)tpm2_seq_run(0u, 60000u, seq_probe_teardown_repeats, rc);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT(rc[0] > 0 && rc[1] > 0 && rc[2] > 0,
+                "a spent work budget does not cut the teardown's own retries");
+    TEST_ASSERT_EQ(nvf_cc_count(TPM2_CC_FLUSH_CONTEXT), 3,
+                   "all three teardowns reached the TPM");
+
+    /* Once that ONE allowance is spent, further teardowns are refused: the
+     * retries debit a shared deadline instead of resetting it. */
+    nvf_reset(0u, 0u);
+    nvf_stall_after_go = 8u;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    rc[0] = rc[1] = rc[2] = 0;
+    (void)tpm2_seq_run(0u, 0u, seq_probe_teardown_repeats, rc);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(rc[0], TPM_T_ERR_BUDGET, "a spent allowance refuses the first teardown");
+    TEST_ASSERT_EQ(rc[1], TPM_T_ERR_BUDGET, "and does not renew for the second");
+    TEST_ASSERT_EQ(rc[2], TPM_T_ERR_BUDGET, "or the third");
+    TEST_ASSERT_EQ(nvf_cc_count(TPM2_CC_FLUSH_CONTEXT), 0,
+                   "no teardown reached the TPM on a spent allowance");
+
     /* An elapsed-but-unlatched work budget must refuse ordinary work even when
      * the teardown ran first and restored a clean latch. Checking only the
      * latch let an irreversible NV_DefineSpace start after its deadline. */
@@ -1771,6 +1881,24 @@ static void test_nv_sequence_budget(void)
     tpm_t_test_restore(prev);
     TEST_ASSERT_EQ(rc[0], TPM_T_ERR_SEQ, "submit with no token refused");
     TEST_ASSERT_EQ(rc[1], TPM_T_ERR_SEQ, "submit with a wrong token refused");
+
+    /* A token that ESCAPED its sequence is refused once that sequence has
+     * ended -- the shutdown path clears the token, so a late holder cannot
+     * submit against a released gate. */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    seq_escaped_token = 0;
+    (void)tpm2_seq_run(60000u, 1000u, seq_probe_capture_only, 0);
+    {
+        uint8_t cmd[40], rsp[64];
+        uint32_t n = tpm2_build_nv_increment(cmd, sizeof cmd, TPM_RH_OWNER,
+                                             TPM_NV_INDEX_OS_DATA, TPM_RS_PW);
+        r = tpm2_submit_seq(seq_escaped_token, cmd, n, rsp, sizeof rsp);
+    }
+    tpm_t_test_restore(prev);
+    TEST_ASSERT(seq_escaped_token != 0u, "the probe captured a live token");
+    TEST_ASSERT_EQ(r, TPM_T_ERR_SEQ,
+                   "a token used after its sequence ended cannot drive the gate");
 
     /* A token from a COMPLETED sequence is refused by the NEXT one. seq+1 above
      * would pass against a constant token; this is what proves the generation

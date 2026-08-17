@@ -299,6 +299,12 @@ static tpm_seal_status_t map_nv_status(tpm_nv_status_t s)
         case TPM_NV_BUSY:      return TPM_SEAL_BUSY;
         case TPM_NV_TRANSPORT: return TPM_SEAL_TRANSPORT;
         case TPM_NV_AUTH:      return TPM_SEAL_AUTH_FAIL;
+        /* BUDGET is "the TPM answered, just slower than this boot will wait",
+         * not a device error. Letting it fall into TPMERR would tell a caller
+         * the TPM misbehaved and send it into hard-failure recovery, when the
+         * honest report is the same transient class as BUSY: worth retrying
+         * outside the boot path, not a reason to distrust the device. */
+        case TPM_NV_BUDGET:    return TPM_SEAL_BUSY;
         default:               return TPM_SEAL_TPMERR;
     }
 }

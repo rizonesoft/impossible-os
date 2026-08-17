@@ -216,11 +216,39 @@ static int      s_budget_expired;
 static uint64_t s_seq_token;
 static uint32_t s_seq_cleanup_ms;
 static uint64_t s_seq_generation;   /* only ever increases; 0 stays "no sequence" */
+/* ONE cleanup allowance per sequence, carried across every teardown attempt.
+ * Re-arming the full reserve per attempt made the advertised bound wrong by a
+ * multiple: three FlushContext retries each took a fresh 2s reserve and each
+ * expiry could add another abort, so a 3s operation could hold the transport
+ * for ~17s. These fields hold that allowance between attempts so the retries
+ * DEBIT one deadline instead of resetting it. */
+static int      s_seq_cleanup_armed;
+static uint64_t s_cleanup_deadline;
+static uint64_t s_cleanup_iters;
+static int      s_cleanup_expired;
+/* Serializes submissions made with the SAME live sequence token, and keeps the
+ * gate alive until every one of them has finished. s_busy keeps unrelated
+ * transactions out but cannot separate two holders of one token, and a plain
+ * boolean was not enough either: the callback can return while a holder is
+ * still inside a submission, and tearing the sequence down then would release
+ * s_busy with MMIO still in flight. A count plus a closing flag makes shutdown
+ * wait instead. */
+static int      s_seq_inflight;
+static int      s_seq_closing;
 
-/* Budget arm/disarm happens ONLY inside tpm_t_seq_begin/seq_end (the
- * sequence owns the busy gate for its whole duration, so the unlocked
- * budget reads in tpm_t_wait_tick are only ever reached by the budget
- * owner's transaction) and the test seam. */
+/* Budget arm/disarm is unlocked, and what makes that safe is the BUSY GATE,
+ * not the lock: a sequence holds s_busy for its whole duration, and both locked
+ * readers short-circuit on s_busy before they would look at the budget
+ * (tpm_t_seq_begin tests `s_busy || s_budget_active`, tpm2_submit_waiting tests
+ * s_busy first), so a non-owner never observes these fields mid-change. That
+ * property is load-bearing -- do not reorder either test.
+ *
+ * The arm/disarm sites are therefore MORE than seq_begin/seq_end: tpm_t_quiesce
+ * disarms and restores around an abort, and tpm2_submit_seq_teardown swaps the
+ * work budget out for the cleanup allowance and back. An earlier version of
+ * this comment named those two functions as the only ones, which is exactly the
+ * sentence a maintainer would rely on to conclude the unlocked reads in
+ * tpm_t_wait_tick are safe -- and it had stopped being true. */
 
 static void tpm_t_wait_begin(struct tpm_t_wait *w, uint32_t ms)
 {
@@ -919,6 +947,12 @@ static void tpm_t_seq_end(void)
     s_budget_expired = 0;
     s_seq_token = 0;
     s_seq_cleanup_ms = 0;
+    s_seq_cleanup_armed = 0;
+    s_cleanup_deadline = 0;
+    s_cleanup_iters = 0;
+    s_cleanup_expired = 0;
+    s_seq_inflight = 0;
+    s_seq_closing = 0;
     spin_unlock_irqrestore(&s_state_lock, irqf);
 }
 
@@ -945,11 +979,80 @@ int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
 
     rc = fn(token, ctx);
 
+    /* Stop accepting new submissions, then WAIT for any that are still running
+     * before tearing the sequence down. Clearing the gate the moment fn()
+     * returned would release s_busy while a holder of the same token was still
+     * driving the FIFO/CRB, and the next transaction would interleave with it.
+     * Nothing in the tree hands a token to another context today, but this is
+     * an exported seam and the guarantee should not depend on that staying
+     * true. The wait terminates because the in-flight command carries its own
+     * deadline. */
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_seq_closing = 1;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+    for (;;) {
+        int busy;
+        spin_lock_irqsave(&s_state_lock, &irqf);
+        busy = s_seq_inflight;
+        spin_unlock_irqrestore(&s_state_lock, irqf);
+        if (!busy)
+            break;
+        __asm__ volatile ("pause");
+    }
+
     /* Scoped: the sequence is released on EVERY path out of fn(), including the
      * early returns its error handling is full of. That is the whole reason the
      * gate is not exposed as a raw begin/end pair. */
     tpm_t_seq_end();
     return rc;
+}
+
+/* Validate the token AND claim the sequence's single in-flight slot, atomically.
+ *
+ * The token check alone was not exclusion: s_busy keeps UNRELATED transactions
+ * out, but two holders of the SAME token both pass it, and could then enter the
+ * transaction path concurrently and interleave FIFO/CRB bytes. Every callback
+ * in the tree keeps its token on the call stack, so that is latent rather than
+ * live -- but the seam advertises exclusive submission, and an advertised
+ * guarantee that rests on callers behaving is not a guarantee. Claiming a slot
+ * under the state lock makes it one. The lock is released before any MMIO, so
+ * nothing spins on it for a TPM duration.
+ *
+ * Returns 0 on success (caller MUST release), or a TPM_T_ERR_*. */
+static int tpm_t_seq_claim(tpm2_seq_t seq)
+{
+    uint64_t irqf;
+    int rc = 0;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    if (seq == 0u || seq != s_seq_token)
+        rc = TPM_T_ERR_SEQ;
+    else if (s_failed)
+        rc = TPM_T_ERR_FAILED;
+    else if (s_seq_closing)
+        rc = TPM_T_ERR_SEQ;      /* the sequence is shutting down; no new work */
+    else if (s_seq_inflight)
+        rc = TPM_T_ERR_BUSY;
+    else
+        s_seq_inflight = 1;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+    return rc;
+}
+
+/* Capture the cleanup allowance as the current attempt left it, so the next
+ * teardown resumes from there rather than starting over. */
+static void tpm_t_seq_save_cleanup(void)
+{
+    s_cleanup_deadline = s_budget_deadline;
+    s_cleanup_iters    = s_budget_iters;
+    s_cleanup_expired  = s_budget_expired;
+}
+
+static void tpm_t_seq_release(void)
+{
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_seq_inflight = 0;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
 }
 
 int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
@@ -958,23 +1061,19 @@ int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
     int rc = tpm_t_check_args(cmd, cmd_len, rsp, rsp_cap);
     if (rc != 0)
         return rc;
-    if (seq == 0u || seq != s_seq_token)
-        return TPM_T_ERR_SEQ;
-    if (s_failed)
-        return TPM_T_ERR_FAILED;
+    rc = tpm_t_seq_claim(seq);
+    if (rc != 0)
+        return rc;
     /* Refuse BEFORE touching the interface once the budget is gone: starting a
      * command we already know cannot finish would leave the TPM mid-transfer
      * for the abort path to clean up, for nothing. */
-    if (tpm_t_budget_spent())
+    if (tpm_t_budget_spent()) {
+        tpm_t_seq_release();
         return TPM_T_ERR_BUDGET;
-    return tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
-}
-
-int tpm2_seq_expired(tpm2_seq_t seq)
-{
-    if (seq == 0u || seq != s_seq_token)
-        return 0;
-    return tpm_t_budget_spent();
+    }
+    rc = tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
+    tpm_t_seq_release();
+    return rc;
 }
 
 #ifdef KERNEL_TESTS
@@ -985,7 +1084,7 @@ uint64_t tpm_t_test_budget_deadline(void)
 
 int tpm_t_test_seq_cleanup_pending(void)
 {
-    return (s_seq_cleanup_ms != 0u) ? 1 : 0;
+    return (s_seq_cleanup_ms != 0u && !s_seq_cleanup_armed) ? 1 : 0;
 }
 #endif
 
@@ -998,10 +1097,9 @@ int tpm2_submit_seq_teardown(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_le
 
     if (rc != 0)
         return rc;
-    if (seq == 0u || seq != s_seq_token)
-        return TPM_T_ERR_SEQ;
-    if (s_failed)
-        return TPM_T_ERR_FAILED;
+    rc = tpm_t_seq_claim(seq);
+    if (rc != 0)
+        return rc;
 
     /* A teardown runs on its OWN allowance, and the work budget is saved and
      * restored around it rather than extended.
@@ -1015,40 +1113,55 @@ int tpm2_submit_seq_teardown(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_le
      * few milliseconds of a spent work budget" hole in the other, because the
      * allowance no longer depends on what the work phase left behind.
      *
-     * The total a sequence can spend is therefore work + (teardowns x reserve),
-     * with teardowns bounded by the caller's retry limit. */
+     * All teardowns in one sequence SHARE that allowance (see the swap below),
+     * so the total stays work + cleanup plus up to two bounded aborts,
+     * regardless of how many retries a teardown needs. */
     saved_deadline = s_budget_deadline;
     saved_iters    = s_budget_iters;
     saved_active   = s_budget_active;
     saved_expired  = s_budget_expired;
 
-    /* Arm the allowance unconditionally, INCLUDING a zero one. A sequence
-     * created with no reserve means exactly that -- no teardown allowance --
-     * and the teardown is refused. Skipping the arm instead would silently fall
-     * back to the work budget, which is the quiet borrowing this split exists
-     * to stop. */
-    tpm_t_budget_arm(s_seq_cleanup_ms);
+    /* Swap in the sequence's ONE cleanup allowance. The first teardown arms it
+     * (including a ZERO one -- a sequence created with no reserve means exactly
+     * that, and skipping the arm would silently fall back to the work budget,
+     * which is the quiet borrowing this split exists to stop). Every LATER
+     * teardown resumes the same allowance where the previous attempt left it,
+     * so N retries debit one deadline instead of taking N fresh reserves. */
+    if (!s_seq_cleanup_armed) {
+        tpm_t_budget_arm(s_seq_cleanup_ms);
+        s_seq_cleanup_armed = 1;
+    } else {
+        s_budget_active   = 1;
+        s_budget_deadline = s_cleanup_deadline;
+        s_budget_iters    = s_cleanup_iters;
+        s_budget_expired  = s_cleanup_expired;
+    }
 
     /* PREFLIGHT, before touching the interface. Arming alone does not stop a
-     * zero allowance from running: every poll reads the device BEFORE ticking
+     * spent allowance from running: every poll reads the device BEFORE ticking
      * the budget, so an immediately-ready TPM completes the command and the
      * allowance is never consulted -- "no reserve means no teardown" would have
      * been a guarantee in name only. Checking here makes it real and keeps the
      * refusal free of any TPM state change. */
     if (tpm_t_budget_spent()) {
+        tpm_t_seq_save_cleanup();
         s_budget_deadline = saved_deadline;
         s_budget_iters    = saved_iters;
         s_budget_active   = saved_active;
         s_budget_expired  = saved_expired;
+        tpm_t_seq_release();
         return TPM_T_ERR_BUDGET;
     }
 
     rc = tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
 
+    /* Carry whatever the attempt did NOT spend forward to the next one. */
+    tpm_t_seq_save_cleanup();
     s_budget_deadline = saved_deadline;
     s_budget_iters    = saved_iters;
     s_budget_active   = saved_active;
     s_budget_expired  = saved_expired;
+    tpm_t_seq_release();
     return rc;
 }
 
@@ -1469,6 +1582,15 @@ struct tpm_t_test_state tpm_t_test_install(const struct tpm_t_io *io,
         s_fast_timeouts = 0;
     }
     s_busy = 0;
+    /* Also drop any live SEQUENCE state. Clearing only s_busy left a stale
+     * s_seq_token matching for a sequence whose gate had just been revoked, and
+     * an armed budget belonging to it. */
+    s_seq_token = 0;
+    s_seq_cleanup_ms = 0;
+    s_seq_cleanup_armed = 0;
+    s_seq_inflight = 0;
+    s_budget_active = 0;
+    s_budget_expired = 0;
     s_test_busy_ticks = 0;
     spin_unlock_irqrestore(&s_state_lock, irqf);
     return old;
