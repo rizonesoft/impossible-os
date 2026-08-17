@@ -66,6 +66,12 @@ Device microcode and configuration blobs are redistributed **inside the OS image
 
 `04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md` owns the loading subsystem and specifies a per-blob manifest carrying device ids, version, license, source URL, hash, and an explicit **redistribution flag**. That flag is the load-bearing field: some vendor firmware is freely redistributable and some is not, and the difference decides whether a blob may ship in a release image at all. Every blob that ships must gain a row here.
 
+## Reference implementations used as oracles (not vendored)
+
+**EDK2 / TianoCore** (BSD-2-Clause-Patent, https://github.com/tianocore/edk2) is used as an external correctness oracle, not as a dependency. `src/boot/uefi/efi.h` is hand-written against the UEFI specification and deliberately carries no gnu-efi or EDK2 dependency, which keeps the bootloader freestanding but means every protocol GUID in it is a 128-bit constant transcribed by hand. `tools/uefi-guid-check/` fetches EDK2's MdePkg headers on demand and compares, because a wrong GUID fails no build, no unit test, and no QEMU boot -- it fails on real firmware as a protocol that is never located.
+
+No EDK2 source is copied into this tree, so no attribution obligation attaches to the shipped artifacts; the entry is recorded here because the oracle is load-bearing for boot correctness.
+
 ## Specifications and reference documents
 
 Impossible OS implements behavior defined by external specifications. Implementing a published specification creates no license obligation, and no specification text is copied into this tree, but the specifications are acknowledged as the normative sources for the code that follows them: UEFI, ACPI, Intel SDM, PE/COFF, ELF, TCG TPM 2.0, PCIe, NVMe, AHCI, xHCI, SMBIOS, FAT32, and the relevant IETF RFCs.
