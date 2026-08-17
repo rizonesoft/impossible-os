@@ -13,6 +13,11 @@ title: "TODO-02 -- Text, Font, and Internationalization Foundation"
 > [!IMPORTANT]
 > **Current state:** `include/font_mgr.h` and `src/kernel/gfx/gfx_text.c` already load a small fixed font set from `C:\Impossible\Fonts\`, pre-bake ASCII 32-126 atlases for three sizes, and fall back to an LRU raster cache for uncached glyphs. `ttf_get()`, `ttf_draw_char()`, `ttf_draw_string()`, `ttf_measure_width()`, and `ttf_line_height()` already exist. `src/desktop/font.c` still carries the legacy ASCII bitmap font path for older UI callers. Desktop, controls, window manager, and shell code already call `ttf_get()` and `ttf_draw_string()` directly. What is missing is everything a full OS text stack needs beyond "draw this Latin string": font enumeration and installation policy, fallback chains, emoji/color-font handling, script shaping, bidi-aware layout, grapheme-safe cursor movement, paragraph measurement, composition hooks for IME, and shared font/dialog APIs for Win32 consumers.
 
+> [!IMPORTANT]
+> **Evaluate HarfBuzz before implementing complex-script shaping.** HarfBuzz is "Old MIT" licensed (verified 2026-08-17) and therefore GPL-3.0-compatible. Complex-script shaping (Arabic joining, Indic reordering, ligature and kerning resolution via OpenType GSUB/GPOS) is a domain where a fresh implementation is wrong for years in ways only native readers notice, which makes it a poor from-scratch candidate. Simple Latin layout over the existing `stb_truetype` rasteriser does not need it; anything past that does.
+>
+> Record the verdict here before implementing the shaping sections, per CLAUDE.md "Vendor-First Evaluation".
+
 ## Inputs
 
 - [`include/font_mgr.h`](../../include/font_mgr.h) -- current font slot and glyph-cache public API

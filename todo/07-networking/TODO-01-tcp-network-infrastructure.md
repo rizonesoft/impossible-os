@@ -21,6 +21,13 @@ title: "TODO-01 -- TCP Protocol & Network Infrastructure"
 - Related (no stable XREF target): `07-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
 - Related (no stable XREF target): `10-platform-services/TODO-xx-firewall` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
 
+> [!IMPORTANT]
+> **Vendor-vs-build is UNDECIDED for this file and must be settled before §1 is implemented.** Every section below specifies TCP from scratch, down to header bit layouts, the 11-state machine, retransmission and congestion control. **lwIP is BSD-3-Clause (verified 2026-08-17 against its `COPYING`) and therefore GPL-3.0-compatible**, and it has two decades of real-network hardening behind exactly this code. TCP is the canonical example of a protocol where a fresh implementation buys a long tail of interop bugs that only show against real peers.
+>
+> Arguments the decision has to weigh, not skip: the sections here are wired into a specific conntrack/firewall design (§7) and a Win32 Winsock-shaped API, so adoption is an integration job rather than a drop-in, and lwIP brings its own memory and threading model that must be mapped onto this kernel's. Neither point settles it; both belong in the decision.
+>
+> Record the verdict here either way before implementing, per CLAUDE.md "Vendor-First Evaluation". If the answer is from-scratch, say why, so this is not re-litigated every pass.
+
 ## Outcome
 
 - `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()` fully operational; full 11-state RFC 793 machine.

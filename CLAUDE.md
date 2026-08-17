@@ -190,7 +190,27 @@ Short-form list (group / rule):
 
 - **Scheduler is flat-cyclic round-robin across ALL runnable threads.** `find_next_task()` walks every `(task, thread)` slot in a single global cyclic order starting one slot after the current one; the first-reached thread at the highest priority wins. Same-priority threads in different tasks are NOT favored over same-task siblings (or vice versa) -- everyone gets a fair turn. Code can rely on this: a `while (!cond) yield()` loop will not starve sibling kthreads. Counter-example fixed 2026-04-15: the old task-first nested scan starved a newly-created kthread when its caller cooperatively yielded (instead of `thread_join`-blocking) -- ALPC handshake tests timed out 5s waiting for a worker that the scheduler never picked.
 
-Stop and ask before: security-sensitive changes, destructive operations, ABI changes, dependency additions, large refactors.
+Stop and ask before: security-sensitive changes, destructive operations, ABI changes, large refactors. **Dependency additions are NOT on that list** (changed 2026-08-17): vendoring a mature, license-compatible upstream is a normal engineering decision, made and recorded, not escalated.
+
+## Vendor-First Evaluation -- prefer a mature upstream over a fresh implementation
+
+**Before specifying any subsystem as new code, evaluate whether a mature, license-compatible implementation already exists.** Writing a TCP stack, an AML interpreter, a TLS library, or a text shaper from scratch is not a neutral choice: it buys a bug surface that the alternative has already paid down over decades. ACPICA landed 2026-08-17 for exactly this reason, closing a section that had blocked five others.
+
+**The license check is the gate, and it comes first, because this project is GPL-3.0-only:**
+
+- **GPL-2.0-only is a HARD STOP.** The Linux kernel and everything derived from it (its drivers, and out-of-tree projects that inherit the license) cannot be used. This is the counterintuitive part: being GPL does not let you take GPL code. **Verified 2026-08-17: `lwext4` is GPL-2.0, so the ext4 driver in `05-storage-filesystems/TODO-09` stays a from-scratch implementation.** NTFS-3G is the same trap.
+- **Permissive is fine:** BSD-2/3-Clause, MIT, CC0, ISC, SIL OFL, BSD-2-Clause-Patent (EDK2).
+- **Apache-2.0 is fine here** and would NOT be for a GPLv2 kernel, so it is an advantage this license buys.
+- **GPL-2.0-or-later is fine** (the "or later" clause permits v3).
+- **A project's README is not evidence. Read the LICENSE file.** ACPICA was recorded in its own TODO as Apache-2.0 for months and is actually Intel/BSD-3-Clause/GPL-2.0.
+
+**Where the vendor boundary goes.** Vendor code that is pure, spec-defined, and format- or hardware-facing: interpreters, protocol stacks, crypto, format parsers, decompressors, font shapers. Write the code that touches this kernel's own model: scheduler, locking, `kmalloc`/pmm/vmm, object manager, the Win32 surface. That line is also what keeps an upstream re-drop possible, which `src/libs/PROVENANCE.md`'s update procedure depends on.
+
+**A vendored upstream is not a free pass.** ACPICA's own `acenv.h` ships a global-lock fallback that never reads the lock word, and taking it would have raced SMM firmware on real hardware. Vendoring moves the work from "implement it" to "integrate it correctly and know which defaults are wrong". Review the integration seam as hard as you would review new code.
+
+**Every addition records itself:** a row in [`src/libs/PROVENANCE.md`](src/libs/PROVENANCE.md) (upstream, version, license, vendoring commit) AND a row in [`CREDITS.md`](CREDITS.md), which is the notice set that must accompany a redistributed binary. Same commit.
+
+**Reference implementations may be used as ORACLES without vendoring.** Where the code is ours by design but the constants are not, validate against upstream instead of adopting it: `tools/uefi-guid-check/` checks the hand-written `src/boot/uefi/efi.h` GUIDs against EDK2's MdePkg, because a mistyped GUID fails no build, no test, and no QEMU boot -- only real firmware.
 
 ## Doc Sync
 

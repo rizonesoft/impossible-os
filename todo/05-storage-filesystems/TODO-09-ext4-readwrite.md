@@ -13,6 +13,11 @@ title: "TODO-09 -- ext4 Read/Write Driver"
 > [!IMPORTANT]
 > ext4 is the default filesystem on every major Linux distribution (Ubuntu, Fedora, Debian, Arch). The existing codebase has only a `probe_ext2_sector2()` magic-byte check in `src/kernel/fs/partition.c` -- this is a blank-slate driver. **JBD2 journal replay (§6) must run before any write path (§7–§10) is active** -- mounting without journal replay risks data corruption on a dirty volume. Refuse mount (or mount read-only) if `s_feature_incompat` contains unknown bits. Wire `ext4_probe()` into `vfs_probe()` at step 5 (→ XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1`). This is a `⭐` exclusive feature -- Windows 11 cannot read ext4 natively.
 
+> [!IMPORTANT]
+> **From-scratch here is a LICENSING constraint, not an oversight.** The obvious shortcut is `lwext4`, and it is unusable: its `LICENSE` is **GPL-2.0**, verified 2026-08-17, which is incompatible with this project's GPL-3.0-only license. The Linux `fs/ext4` driver is GPL-2.0-only for the same reason. Neither may be vendored, adapted, or translated into this tree.
+>
+> This note exists so a later vendor-first pass does not "discover" lwext4 and file it as a missed opportunity. It was checked. It is off the table. See CLAUDE.md "Vendor-First Evaluation" and the CREDITS.md "Sources that cannot be used" table.
+
 ## Inputs
 
 - `src/kernel/fs/partition.c` -- `probe_ext2_sector2()` at line 133; magic `0xEF53` detection already present; replace with `ext4_probe()` registered via `vfs_probe()` (TODO-03 §1)

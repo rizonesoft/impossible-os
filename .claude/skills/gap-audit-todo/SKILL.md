@@ -14,6 +14,16 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
 > - **No ownerless gaps.** Every deferred or adjacent gap must end with a concrete owner section or TODO XREF.
 > - **Think beyond parity.** Win11/Linux parity is the floor. Competitive edge and refinement opportunities belong in the TODO when they are feasible and relevant.
 
+## Vendor-vs-build gap
+
+A gap audit asks what is MISSING. It must also ask what is being BUILT that need not be. For each subsystem this TODO implements from scratch, check whether a mature, license-compatible upstream exists, and flag it when one does.
+
+- License first, and it disqualifies more than it admits: this project is GPL-3.0-only, so **GPL-2.0-only upstreams are a hard stop** (the Linux kernel and its drivers, NTFS-3G, lwext4). Read the upstream LICENSE file; a README or a wiki page is not evidence.
+- Compatible and already proven in this tree: ACPICA (ACPI/AML), Mbed TLS (crypto/TLS), Monocypher, LZ4, miniz, cJSON. Compatible and verified but not yet adopted: lwIP (BSD-3, TCP/IP), HarfBuzz (MIT, text shaping), FatFs (permissive, FAT/exFAT), litehtml (BSD-3, HTML/CSS layout), EDK2 (BSD-2-Clause-Patent, used as an oracle rather than vendored).
+- A finding here is "this section reimplements X, which <upstream> provides under <license>", with the upstream named and its license verified. It is NOT an instruction to rewrite a shipped section; existing work stays unless the section is still open.
+- The reverse finding counts too: a plan that says "port <upstream>" where that upstream is GPL-2.0-only is a licensing defect, and a more urgent one than a missing feature.
+
+
 ## Use This Skill When
 
 - A TODO file needs to be checked for feature completeness against Windows 11 and Linux.

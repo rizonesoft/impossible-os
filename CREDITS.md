@@ -86,6 +86,18 @@ Recorded so the constraint is not rediscovered the hard way. Because this projec
 
 - The Linux kernel and its device drivers, which are GPL-2.0-only by the explicit terms in its `COPYING`.
 - Anything whose only upstream is a Linux driver, including out-of-tree Linux driver projects that inherit that license.
+- **lwext4** (https://github.com/gkostka/lwext4), the obvious candidate for an ext4 driver. Its `LICENSE` is GPL-2.0, verified 2026-08-17. `05-storage-filesystems/TODO-09-ext4-readwrite.md` therefore stays a from-scratch implementation, and that is a licensing constraint rather than a missed opportunity.
+- **NTFS-3G**, GPL-2.0, for the same reason `05-storage-filesystems/TODO-02-ntfs-readwrite.md` is written from scratch.
+
+Upstreams checked and found COMPATIBLE, recorded so the research is not repeated (adoption is a separate decision, tracked in the owning TODO):
+
+| Upstream | License | Would serve |
+| --- | --- | --- |
+| lwIP | BSD-3-Clause | TCP/IP stack (`07-networking/TODO-01`) |
+| HarfBuzz | Old MIT | Text shaping (`08-graphics-ui/TODO-02`) |
+| FatFs | Custom permissive (BSD-like) | FAT32/exFAT (`05-storage-filesystems/TODO-04`, `TODO-08`) |
+| litehtml | BSD-3-Clause | HTML/CSS layout (`07-networking/TODO-07-web-browser`) |
+| EDK2 / TianoCore | BSD-2-Clause-Patent | UEFI reference; used as an oracle, not vendored |
 
 The compatible route to mature driver and stack code is the permissively-licensed ecosystem: the BSD kernels (BSD-2-Clause / BSD-3-Clause), EDK2/TianoCore (BSD-2-Clause-Patent), ACPICA (dual BSD/GPL, so the BSD arm is available), and standalone permissive stacks. Adding any of these requires verifying GPL-3.0 compatibility first, then a row in `src/libs/PROVENANCE.md` and in this file. The licence check is the gate; it is not waivable, because getting it wrong contaminates the whole tree rather than one file.
 
