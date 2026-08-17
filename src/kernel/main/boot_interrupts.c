@@ -614,6 +614,13 @@ void boot_phase1(void)
             klog(LOG_WARN, "TPM",
                  "Baseline enroll (authority %s): status %d",
                  tpm_enroll_authority_label(gr.authority), (uint64_t)bs);
+            /* An enroll that failed because THIS KERNEL's own ABI identity is
+             * corrupt is a hard integrity failure, not a diagnostic. Only the
+             * verify branch below publishes a status, and it runs exclusively
+             * under !admit, so without this the enrolling boot would log the
+             * corruption and carry on under whatever status preceded it. */
+            if (bs == TPM_BASELINE_SELF_CORRUPT)
+                tpm_integrity_set_overall_status(BOOT_INTEGRITY_MISMATCH);
         } else if (g_boot_info.config.tpm_enroll) {
             /* Only report a refusal when enrollment was actually requested;
              * every ordinary boot refuses at CONFIG_DISABLED and saying so
@@ -630,7 +637,7 @@ void boot_phase1(void)
             tpm_baseline_status_t bs =
                 tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall);
             if (bs == TPM_BASELINE_OK || bs == TPM_BASELINE_NO_BASELINE ||
-                bs == TPM_BASELINE_CORRUPT)
+                bs == TPM_BASELINE_CORRUPT || bs == TPM_BASELINE_SELF_CORRUPT)
                 tpm_integrity_set_overall_status(overall);
         }
         klog(LOG_INFO, "TPM", "Boot integrity status: %s",

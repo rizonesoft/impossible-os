@@ -12,12 +12,21 @@
 #include "kernel/tpm.h"                  /* tpm_integrity_report, tpm_pcr_get, TPM_ALG_SHA256 */
 #include "kernel/tpm_seal.h"             /* TPM_ALG_RSA (EK-cert NV-index selector) */
 #include "kernel/tpm_pcr_alloc.h"        /* tpm_pcr_quote_mask */
-#include "kernel/boot_proto_descriptor.h"/* kernel_boot_proto (.bootproto manifest const) */
+#include "kernel/boot_proto_descriptor.h"/* boot_proto_abi_digest (validated ABI identity) */
 #include "kernel/crypto/sha256.h"        /* recompute the quoted pcrDigest */
 #include "kernel/csprng.h"               /* fresh nonce for the exported quote */
 #include "kernel/fs/vfs.h"               /* X:\Diag\attestation.json export */
 #include "kernel/mm/heap.h"              /* kmalloc/kfree the ~2.3 KB report */
 #include "kernel/klog.h"                 /* best-effort export logging */
+
+/* The exported manifest field is filled by boot_proto_abi_digest(), which
+ * writes exactly BOOT_PROTO_ABI_DIGEST_LEN bytes. Pinning the two together
+ * closes the last unasserted link in the digest-length chain: a future widening
+ * would otherwise have this write past the field, and a narrowing would leave a
+ * silently truncated identity that still looked valid. */
+_Static_assert(sizeof(((struct boot_attestation_report *)0)->manifest_sha256) ==
+                   BOOT_PROTO_ABI_DIGEST_LEN,
+    "attest report manifest_sha256 must match the ABI-manifest digest length");
 #include "libc/string.h"
 
 /* The kernel-image ABI manifest descriptor, emitted as a compile-time const in
@@ -147,8 +156,19 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
     out->qualified_signer_status = ATTEST_TRUST_UNVERIFIED;
     out->ek_cert_status          = ATTEST_TRUST_ABSENT;
 
-    /* (1) Kernel-image identity: the immutable .bootproto manifest const. */
-    memcpy(out->manifest_sha256, kernel_boot_proto.sha256, sizeof out->manifest_sha256);
+    /* (1) Kernel-ABI identity: the immutable .bootproto MANIFEST digest. This
+     * is NOT a kernel-image hash -- it is the SHA-256 of the boot-info ABI
+     * manifest, so it stays put when the kernel image changes underneath it.
+     * The image digests are separately owned and not yet implemented.
+     *
+     * Routed through the validated accessor rather than copying the descriptor
+     * field directly: the accessor is the single place that decides whether the
+     * descriptor is intact, and a direct copy exported a corrupt (bad-magic or
+     * all-zero) identity as a VALID manifest. On failure the report carries no
+     * manifest identity and is marked invalid rather than shipping zeros that a
+     * verifier could mistake for a real digest. */
+    if (!boot_proto_abi_digest(out->manifest_sha256))
+        return TPM_ATTEST_SELF_CORRUPT;
     out->manifest_version     = kernel_boot_proto.version;
     out->manifest_struct_size = kernel_boot_proto.struct_size;
 
@@ -468,6 +488,7 @@ void tpm_attest_report_export(void)
     const uint8_t *np = 0;
     uint16_t nl = 0;
     int rc;
+    tpm_attest_status_t bs;
 
     /* Open the destination FIRST, before any live TPM work: on a boot where
      * diagnostics storage is unavailable we must not pay the quote + AK/EK
@@ -499,7 +520,29 @@ void tpm_attest_report_export(void)
         np = nonce;
         nl = (uint16_t)sizeof nonce;
     }
-    tpm_attest_report_build(np, nl, r);
+    /* The builder's status is load-bearing, not advisory. It can now abandon the
+     * report early (SELF_CORRUPT: this kernel's own ABI identity failed
+     * validation), at which point the struct holds only the memset zeros plus a
+     * few defaults -- and zero is a VALID enum value for quote_status,
+     * ak_status and ek_status, so serializing it would publish TPM_ATTEST_OK
+     * for three trust fields that were never evaluated, under a success log.
+     * Write nothing instead: an absent artifact is honest, a confidently-wrong
+     * one is not. The file is truncated on open, so closing without writing
+     * already leaves it empty; the explicit re-truncate keeps that true even if
+     * a future edit writes a prefix before this point. */
+    bs = tpm_attest_report_build(np, nl, r);
+    if (bs != TPM_ATTEST_OK) {
+        struct vfs_node *z;
+        vfs_close(f);
+        kfree(r);
+        z = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_TRUNC);
+        if (z)
+            vfs_close(z);
+        klog(LOG_ERROR, "TPM",
+             "attestation export: report build failed (status %u) -> no artifact written",
+             (uint64_t)bs);
+        return;
+    }
 
     rc = tpm_attest_report_to_json(r, rpt_vfs_write, f);
     vfs_close(f);

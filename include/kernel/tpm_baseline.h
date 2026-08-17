@@ -76,9 +76,17 @@ typedef enum {
     TPM_BASELINE_OK         = 0,
     TPM_BASELINE_NO_BASELINE = 1,  /* NV index not defined / never written */
     TPM_BASELINE_NO_TPM     = 2,   /* transport unavailable */
-    TPM_BASELINE_CORRUPT    = 3,   /* blob failed magic/version/size/crc validation */
+    TPM_BASELINE_CORRUPT    = 3,   /* STORED blob failed magic/version/size/crc */
     TPM_BASELINE_TPMERR     = 4,   /* TPM/NV transaction failure */
     TPM_BASELINE_BADARG     = 5,
+    /* THIS KERNEL's own build-time `.bootproto` ABI identity failed validation.
+     * Split from TPM_BASELINE_CORRUPT deliberately: the two are operationally
+     * OPPOSITE even though both are integrity failures. A corrupt STORED blob
+     * invites "offer a re-enroll", which is exactly the wrong response to a
+     * corrupt KERNEL descriptor -- it would enroll the corruption as the new
+     * golden. Any handler that treats CORRUPT as re-enrollable must not reach
+     * this value. */
+    TPM_BASELINE_SELF_CORRUPT = 6,
 } tpm_baseline_status_t;
 
 /* ---- Pure core (MMIO-free, fixture-tested) ---- */

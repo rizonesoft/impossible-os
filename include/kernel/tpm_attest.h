@@ -92,6 +92,12 @@ typedef enum {
     TPM_ATTEST_TRANSPORT     = 7,  /* transport failure / malformed response */
     TPM_ATTEST_BUSY          = 8,
     TPM_ATTEST_TPMERR        = 9,
+    /* THIS KERNEL's build-time `.bootproto` ABI identity failed validation, so
+     * no honest manifest identity can be exported. Distinct from every status
+     * above: those describe the TPM or the caller, this one describes corrupt
+     * read-only kernel data, and a verifier must not read the resulting report
+     * as merely degraded evidence. */
+    TPM_ATTEST_SELF_CORRUPT  = 10,
 } tpm_attest_status_t;
 
 /* Parsed TPMS_ATTEST quote fields a verifier / report consumer needs. */

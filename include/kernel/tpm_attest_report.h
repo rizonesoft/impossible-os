@@ -121,8 +121,10 @@ struct boot_attestation_report {
     uint8_t  quote_present;         /* 1 if tpm2_quote succeeded */
     uint32_t event_count;           /* total measured events */
 
-    /* Kernel-image identity: the immutable .bootproto manifest (compile-time const). */
-    uint8_t  manifest_sha256[32];   /* kernel_boot_proto.sha256 (ABI manifest hash) */
+    /* Kernel-ABI identity: the immutable .bootproto MANIFEST digest (compile-
+     * time const). NOT a kernel-image hash -- it tracks the boot-info ABI and
+     * stays put when the image changes underneath it. */
+    uint8_t  manifest_sha256[32];   /* == BOOT_PROTO_ABI_DIGEST_LEN; asserted in tpm_attest_report.c */
     uint32_t manifest_version;      /* kernel_boot_proto.version (== BOOT_INFO_VERSION) */
     uint32_t manifest_struct_size;  /* kernel_boot_proto.struct_size */
 

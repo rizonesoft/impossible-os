@@ -185,6 +185,18 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
     memset(out, 0, sizeof(*out));
     out->alg = alg;
 
+    /* Kernel-ABI manifest identity FIRST, before anything that can fail for an
+     * environmental reason. Ordering is load-bearing, not cosmetic: this is a
+     * check on THIS kernel's own read-only data, so it is true or false
+     * independently of whether a TPM answers or a baseline exists. Running it
+     * after the PCR reads (where it originally sat) let an unreadable PCR
+     * return NO_TPM first and mask the corruption the fail-closed contract
+     * exists to expose -- and NO_TPM is the COMMON state on a machine with no
+     * TPM, so the masking was the normal case rather than a corner. */
+    if (!boot_proto_abi_digest(out->abi_manifest))
+        return TPM_BASELINE_SELF_CORRUPT;
+    out->abi_manifest_present = 1;
+
     uint8_t pcrs[TPM_BASELINE_MAX_PCRS];
     uint8_t npcr = tpm_pcr_baseline_pcrs(pcrs, TPM_BASELINE_MAX_PCRS);
     if (npcr != TPM_BASELINE_MAX_PCRS)   /* blob is sized for exactly the measured set */
@@ -229,17 +241,6 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
         }
     }
 
-    /* Kernel-ABI manifest identity: the sha256 the kernel carries in its
-     * `.bootproto` descriptor. FAIL CLOSED -- this digest is a compile-time
-     * constant present in every correctly built kernel, so a failure here means
-     * read-only kernel data is corrupt, not that the field is unavailable.
-     * Reporting it absent instead would let a corrupted kernel enroll a
-     * baseline that binds no ABI identity, and (because compare gates on the
-     * pair) would let that baseline verify forever. CORRUPT is the honest
-     * status: the caller publishes MISMATCH for it. */
-    if (!boot_proto_abi_digest(out->abi_manifest))
-        return TPM_BASELINE_CORRUPT;
-    out->abi_manifest_present = 1;
     return TPM_BASELINE_OK;
 }
 
@@ -316,6 +317,23 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
     tpm_baseline_status_t st;
     tpm_baseline_verdict_t v;
 
+    /* THIS KERNEL's identity is checked BEFORE the NV lookup, for the same
+     * reason snapshot checks it before the PCR reads: it does not depend on
+     * the TPM or on a baseline existing. Behind the NV read, an absent index
+     * returns NO_BASELINE first and the corruption is never reported -- and
+     * "no baseline" is the normal state on a machine that has never enrolled,
+     * so the masking covered the common case. Publishing MISMATCH here is
+     * fail-closed: a kernel whose own read-only identity is corrupt must not
+     * report anything better, whatever the NV index holds. */
+    {
+        uint8_t self[BOOT_PROTO_ABI_DIGEST_LEN];
+        if (!boot_proto_abi_digest(self)) {
+            if (out_overall)
+                *out_overall = BOOT_INTEGRITY_MISMATCH;
+            return TPM_BASELINE_SELF_CORRUPT;
+        }
+    }
+
     nv = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof(blob), &got);
     if (nv != TPM_NV_OK) {
         st = nv_to_baseline(nv);
@@ -334,15 +352,16 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
 
     st = tpm_baseline_snapshot(alg, &current);
     if (st != TPM_BASELINE_OK) {
-        /* A CORRUPT snapshot means the kernel's OWN build-time identity failed
-         * validation, which is a hard integrity failure and must be published
-         * as one -- returning without touching *out_overall would leave the
-         * previously computed status standing and read as a clean boot.
-         * Deliberately narrow: NO_TPM/BADARG mean the current state could not
-         * be measured at all, and a machine that cannot measure is not a
-         * machine that failed to match, so those keep the existing
+        /* SELF_CORRUPT is a hard integrity failure and must be published as
+         * one -- returning without touching *out_overall would leave the
+         * previously computed status standing and read as a clean boot. The
+         * pre-NV check above normally catches it first; this stays as the
+         * belt-and-braces path for any future snapshot failure of the same
+         * class. Deliberately narrow: NO_TPM/BADARG mean the current state
+         * could not be measured at all, and a machine that cannot measure is
+         * not a machine that failed to match, so those keep the existing
          * leave-unpublished behavior rather than reporting false tamper. */
-        if (st == TPM_BASELINE_CORRUPT && out_overall)
+        if (st == TPM_BASELINE_SELF_CORRUPT && out_overall)
             *out_overall = BOOT_INTEGRITY_MISMATCH;
         return st;
     }

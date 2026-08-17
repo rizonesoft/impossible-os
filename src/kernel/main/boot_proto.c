@@ -39,6 +39,17 @@ const struct boot_proto_descriptor kernel_boot_proto
     ._reserved   = { 0u, 0u },
 };
 
+/* The generator-to-descriptor link, and the ONLY one in the digest-length chain
+ * that a C declaration cannot pin on its own. `.sha256 = KERNEL_ABI_SHA256` is
+ * array initialization, so a generated header emitting FEWER than 32 byte
+ * initializers zero-fills the tail with no diagnostic at any warning level --
+ * yielding a truncated-plus-zeroes digest that still has non-zero bytes, so it
+ * sails past the accessor's all-zero canary and would be enrolled as a real
+ * measured-boot identity. Counting the initializers in their own compound
+ * literal is what makes the length a compile-time error instead. */
+_Static_assert(sizeof((const uint8_t[])KERNEL_ABI_SHA256) == BOOT_PROTO_ABI_DIGEST_LEN,
+    "generated KERNEL_ABI_SHA256 must carry exactly BOOT_PROTO_ABI_DIGEST_LEN bytes");
+
 /* Read-only accessor for the build-time ABI-manifest digest.
  *
  * Pure: touches nothing but the immutable `.bootproto` record, which is const
