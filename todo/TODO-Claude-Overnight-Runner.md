@@ -9,461 +9,114 @@ title: "TODO-Claude-Overnight-Runner -- OS Completion Driver (runner doctrine, n
 
 # TODO-Claude-Overnight-Runner -- OS Completion Driver
 
-> **Runner doctrine file, not an implementation TODO.** This file is the control
-> program for the unattended overnight runner: it defines the traversal order,
-> the per-file pipeline, the per-section pipeline, and the hard rules. The
-> runner's only state is the repo itself (checklists, stamps, commits); this
-> file is re-read at the start of every session and after every compaction.
+> **Runner doctrine file, not an implementation TODO.** This file is the control program for the unattended overnight runner: it defines the traversal order, the per-file pipeline, the per-section pipeline, and the hard rules. The runner's only state is the repo itself (checklists, stamps, commits); this file is re-read at the start of every session and after every compaction.
 
 ## Mission
 
-Drive every TODO file under `todo/` to completion, in order, using the exact
-pipeline below -- no deviation, no reordering, no skipped stages. The runner is
-a **fixpoint loop**: it sweeps the whole repo in traversal order, then sweeps
-again, because most blockers are temporal (a section blocked on a later domain's
-section completes on a later pass once that section ships). The run ends only
-when a **complete pass makes zero progress** (nothing newly shipped, no deferral
-newly cleared) -- at which point everything autonomously-doable is implemented,
-tested (KVM/TCG + unit), reviewed, and committed, and the only remainder is a
-short human punch-list (bare-metal / WHPX sign-off, genuine product decisions).
+Drive every TODO file under `todo/` to completion, in order, using the exact pipeline below -- no deviation, no reordering, no skipped stages. The runner is a **fixpoint loop**: it sweeps the whole repo in traversal order, then sweeps again, because most blockers are temporal (a section blocked on a later domain's section completes on a later pass once that section ships). The run ends only when a **complete pass makes zero progress** (nothing newly shipped, no deferral newly cleared) -- at which point everything autonomously-doable is implemented, tested (KVM/TCG + unit), reviewed, and committed, and the only remainder is a short human punch-list (bare-metal / WHPX sign-off, genuine product decisions).
 
 ## Cursor
 
-- **Current (2026-06-12, run 4):** `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md`.
-  Stages 1-2 (validate + gap-audit) and §1-§3 + §5 are done AND reviewed
-  (§5 review shipped 5ccdd14d). TODO-13 §2 TPM transport pulled forward and
-  shipped + reviewed (8ae51bf1 + review stamps) per user direction, so §4 is
-  UNBLOCKED and now SHIPPED + REVIEWED (§4: ee546157 + review stamps).
-  **USER AUTHORIZED Monocypher vendoring (2026-06-12):** the dependency
-  addition for `02-kernel-core/TODO-03` §5 is approved -- do not re-ask.
-  Run-5/6 work queue, in order:
-  1. **`02-kernel-core/TODO-03` §5** -- DONE: Monocypher 4.0.2 + kernel
-     CSPRNG + `NtGetRandom` shipped (99910014) + reviewed (21168666).
-     (TODO-03 gets its own validate/gap-audit when the domain cursor
-     reaches it; only §5 was pulled forward.)
-  2. **TODO-12 §6** -- DONE (run 6): seed-file carryover shipped
-     (08340720) + reviewed (23b3b611); FAT32 durability/coherence/LFN
-     fixes landed with it; follow-ups filed in `05-storage/TODO-04`
-     §4/§6/§15 + `01-boot/TODO-24` §5.
-  3. **TODO-12 §7** -- DONE (run 8): boot_info seed handoff shipped
-     (dff35172) + reviewed (c1da9924); digest-chained first-seed
-     handoff, producer-identity frame release, FLAG_VALID retire
-     semantics, NVRAM verify budget, phase3 early-counter anti-replay.
-  4. **TODO-12 §8** -- DONE (run 8): early CSPRNG seeding shipped
-     (4ce71522) + reviewed (d364441e); named init point, CSPRNG-owned
-     credited class, unconditional key-gen gate, classified fill.
+- **Current (2026-06-12, run 4):** `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md`. Stages 1-2 (validate + gap-audit) and §1-§3 + §5 are done AND reviewed (§5 review shipped 5ccdd14d). TODO-13 §2 TPM transport pulled forward and shipped + reviewed (8ae51bf1 + review stamps) per user direction, so §4 is UNBLOCKED and now SHIPPED + REVIEWED (§4: ee546157 + review stamps). **USER AUTHORIZED Monocypher vendoring (2026-06-12):** the dependency addition for `02-kernel-core/TODO-03` §5 is approved -- do not re-ask. Run-5/6 work queue, in order:
+  1. **`02-kernel-core/TODO-03` §5** -- DONE: Monocypher 4.0.2 + kernel CSPRNG + `NtGetRandom` shipped (99910014) + reviewed (21168666). (TODO-03 gets its own validate/gap-audit when the domain cursor reaches it; only §5 was pulled forward.)
+  2. **TODO-12 §6** -- DONE (run 6): seed-file carryover shipped (08340720) + reviewed (23b3b611); FAT32 durability/coherence/LFN fixes landed with it; follow-ups filed in `05-storage/TODO-04` §4/§6/§15 + `01-boot/TODO-24` §5.
+  3. **TODO-12 §7** -- DONE (run 8): boot_info seed handoff shipped (dff35172) + reviewed (c1da9924); digest-chained first-seed handoff, producer-identity frame release, FLAG_VALID retire semantics, NVRAM verify budget, phase3 early-counter anti-replay.
+  4. **TODO-12 §8** -- DONE (run 8): early CSPRNG seeding shipped (4ce71522) + reviewed (d364441e); named init point, CSPRNG-owned credited class, unconditional key-gen gate, classified fill.
   5. **TODO-12 §9** entropy diagnostics + policy gates. <- NEXT
   6. **§10 tests**, then `complete-todo-file` closure.
-- TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
-  blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
+- TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]` blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
-- Everything before the cursor (domain `00-infrastructure`, and
-  `01-boot-platform` TODO-01 through TODO-10) is DONE -- do not revisit except
-  when an XREF from active work lands a concrete item there.
-- **Resume rule:** the cursor is computed, not hand-maintained. On session start
-  the runner runs the triage oracle `python3 .claude/hooks/sequencer_triage.py
-  --next` (graph-truth over `build/todo-cache.json` + section review stamps),
-  which returns the first NEEDS_WORK file in traversal order; within
-  it, `--classify <file>` gives the first section not shipped-and-reviewed,
-  plus a `stages_1_2_done` flag (from the file-preamble `> **Validated:**` /
-  `> **Gap-audited:**` stamps) that Stage 0 of the per-file pipeline uses to
-  skip re-validating / re-gap-auditing an already-processed file.
-  DONE files (every section `[x]`/`[/]` with BOTH Verified + Quality-reviewed,
-  or Deferred-parked) are skipped. A shipped `[x]` section missing either stamp
-  is NOT done -- the oracle classes it NEEDS_WORK (there is deliberately no
-  DONE_UNSTAMPED class), and Stage 3 runs `review-todo-section` on it via the
-  already-complete-section branch. The Cursor block below is a human-readable
-  convenience log, NOT the source of truth -- the oracle is.
+- Everything before the cursor (domain `00-infrastructure`, and `01-boot-platform` TODO-01 through TODO-10) is DONE -- do not revisit except when an XREF from active work lands a concrete item there.
+- **Resume rule:** the cursor is computed, not hand-maintained. On session start the runner runs the triage oracle `python3 .claude/hooks/sequencer_triage.py --next` (graph-truth over `build/todo-cache.json` + section review stamps), which returns the first NEEDS_WORK file in traversal order; within it, `--classify <file>` gives the first section not shipped-and-reviewed, plus a `stages_1_2_done` flag (from the file-preamble `> **Validated:**` / `> **Gap-audited:**` stamps) that Stage 0 of the per-file pipeline uses to skip re-validating / re-gap-auditing an already-processed file. DONE files (every section `[x]`/`[/]` with BOTH Verified + Quality-reviewed, or Deferred-parked) are skipped. A shipped `[x]` section missing either stamp is NOT done -- the oracle classes it NEEDS_WORK (there is deliberately no DONE_UNSTAMPED class), and Stage 3 runs `review-todo-section` on it via the already-complete-section branch. The Cursor block below is a human-readable convenience log, NOT the source of truth -- the oracle is.
 
 ## Traversal Order
 
-1. Files within a domain: ascending `TODO-NN` numeric order (skip `INDEX.md`
-   and any non-TODO doctrine files, including this one).
-2. Domains: ascending numeric order -- `01-boot-platform` ->
-   `02-kernel-core` -> `03-memory-concurrency` -> `04-drivers-hardware` ->
-   `05-storage-filesystems` -> `06-desktop-foundation` -> `07-networking` ->
-   `08-graphics-ui` -> `09-desktop-shell` -> `10-platform-services` ->
-   `11-apps` -> `12-user-platform-sdk` -> `13-tools-accessories` ->
-   `14-host-tools` -> `15-installer-release` -> `16-architecture-ports` ->
-   `17-polish-hardening` -> `18-future-research`.
-3. End of a domain (e.g. `01-boot-platform/TODO-29-boot-perf-health-observability.md`
-   done) -> first file of the next domain (e.g.
-   `02-kernel-core/TODO-01-kernel-init-sequencing.md`).
+1. Files within a domain: ascending `TODO-NN` numeric order (skip `INDEX.md` and any non-TODO doctrine files, including this one).
+2. Domains: ascending numeric order -- `01-boot-platform` -> `02-kernel-core` -> `03-memory-concurrency` -> `04-drivers-hardware` -> `05-storage-filesystems` -> `06-desktop-foundation` -> `07-networking` -> `08-graphics-ui` -> `09-desktop-shell` -> `10-platform-services` -> `11-apps` -> `12-user-platform-sdk` -> `13-tools-accessories` -> `14-host-tools` -> `15-installer-release` -> `16-architecture-ports` -> `17-polish-hardening` -> `18-future-research`.
+3. End of a domain (e.g. `01-boot-platform/TODO-29-boot-perf-health-observability.md` done) -> first file of the next domain (e.g. `02-kernel-core/TODO-01-kernel-init-sequencing.md`).
 
 ## Per-File Pipeline (exact sequence, no deviation)
 
 For each TODO file at the cursor:
 
-0. **Lifecycle check (skip Stages 1-2 when already done).** Run
-   `python3 .claude/hooks/sequencer_triage.py --classify <file>` and read its
-   `stages_1_2_done` field. The file-preamble stamps `> **Validated:**` and
-   `> **Gap-audited:**` (above `> **Goal:**`) record that Stages 1-2 already
-   ran on a prior pass. If `stages_1_2_done` is true AND no `## N.` section has
-   been ADDED since (a new XREF'd `[ ]` item inside an EXISTING section does
-   NOT count -- it already came from a gap-audit elsewhere), SKIP Stages 1-2
-   and go straight to Stage 3. This is the guard against the fixpoint loop
-   re-validating / re-gap-auditing a mature file every sweep (incident
-   2026-06-21). Re-run Stages 1-2 only when the stamps are absent or a
-   genuinely new section appeared.
-1. **Validate** -- `Skill(validate-todo-file)` on the file. Fix structural
-   findings before proceeding. On completion, write/refresh the file-preamble
-   stamp `> **Validated:** <date> | <one-line basis>`.
-2. **Gap analysis** -- `Skill(gap-audit-todo)` on the file (includes the
-   mandatory `codex-gap-audit` secondary pass; its Phase 2.0 maturity gate keys
-   off these same signals). Land the resulting TODO edits before touching code.
-   On completion, write/refresh the file-preamble stamp
-   `> **Gap-audited:** <date> | <one-line basis>`.
-3. **Sections, in order.** For each `## N.` implementation section, first to
-   last:
-   - Section already complete (all items `[x]`, marked `[x]` in the
-     Implementation Order table) -> `Skill(review-todo-section)`.
-   - Section not complete -> `Skill(implement-todo-section)`, which chains
-     into `review-todo-section` at step 20 as usual.
-   - **Commit AND push after every section** (one atomic act per
-     `feedback_commit_push_workflow`). Never batch sections into one commit.
-4. **File closure** -- when all sections are shipped: `Skill(complete-todo-file)`
-   loose-end sweep, then advance the cursor to the next file.
+0. **Lifecycle check (skip Stages 1-2 when already done).** Run `python3 .claude/hooks/sequencer_triage.py --classify <file>` and read its `stages_1_2_done` field. The file-preamble stamps `> **Validated:**` and `> **Gap-audited:**` (above `> **Goal:**`) record that Stages 1-2 already ran on a prior pass. If `stages_1_2_done` is true AND no `## N.` section has been ADDED since (a new XREF'd `[ ]` item inside an EXISTING section does NOT count -- it already came from a gap-audit elsewhere), SKIP Stages 1-2 and go straight to Stage 3. This is the guard against the fixpoint loop re-validating / re-gap-auditing a mature file every sweep (incident 2026-06-21). Re-run Stages 1-2 only when the stamps are absent or a genuinely new section appeared.
+1. **Validate** -- `Skill(validate-todo-file)` on the file. Fix structural findings before proceeding. On completion, write/refresh the file-preamble stamp `> **Validated:** <date> | <one-line basis>`.
+2. **Gap analysis** -- `Skill(gap-audit-todo)` on the file (includes the mandatory `codex-gap-audit` secondary pass; its Phase 2.0 maturity gate keys off these same signals). Land the resulting TODO edits before touching code. On completion, write/refresh the file-preamble stamp `> **Gap-audited:** <date> | <one-line basis>`.
+3. **Sections, in order.** For each `## N.` implementation section, first to last:
+   - Section already complete (all items `[x]`, marked `[x]` in the Implementation Order table) -> `Skill(review-todo-section)`.
+   - Section not complete -> `Skill(implement-todo-section)`, which chains into `review-todo-section` at step 20 as usual.
+   - **Commit AND push after every section** (one atomic act per `feedback_commit_push_workflow`). Never batch sections into one commit.
+4. **File closure** -- when all sections are shipped: `Skill(complete-todo-file)` loose-end sweep, then advance the cursor to the next file.
 
-**File-complete criterion:** 100% of sections shipped and reviewed. A small
-number of `Deferred:`/`Accepted:` items with concrete XREFs is acceptable ONLY
-when implementation is genuinely blocked (missing infrastructure owned by a
-later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
+**File-complete criterion:** 100% of sections shipped and reviewed. A small number of `Deferred:`/`Accepted:` items with concrete XREFs is acceptable ONLY when implementation is genuinely blocked (missing infrastructure owned by a later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 
 ## Hard Rules
 
-- **Session-exit policy: the work unit is the ENTIRE queue, not one
-  section -- and the runner NEVER stops or disarms itself.** Finishing a
-  section (ship + review + push) is NOT a reason to run
-  `overnight-runner finish-check` / `handoff` or to final-answer. After every
-  section: update the cursor, then IMMEDIATELY start the next section in the
-  queue. There is NO voluntary session-exit on a blocker of ANY kind:
-  - A **user-decision / operator-reserved item** (a stop-and-ask boundary) is
-    NOT a stop and NOT a disarm. Resolve it by the three-tier answer order
-    (adopted 2026-07-03): (1) if `todo/answers.md` carries an
-    `A: (operator, DATE)` answer matching the TODO + question, apply it as the
-    decision; (2) a LOW-RISK question (no money/permissions/data/ABI impact)
-    may take a conservative logged default -- record it in `todo/answers.md` as
-    `A: (proposed default)` so the operator can confirm or veto; (3) otherwise
-    DEFER the item (`[/]` + a Deferred stamp whose line contains
-    `awaiting-answer` + an XREF naming the decision) and ADVANCE. The
-    `awaiting-answer` token makes the deferral RECOVERABLE: the 3-state oracle
-    classes the section BLOCKED (never falsely DONE), the launcher's heal probe
-    retries once per `todo/answers.md` edit, and `collect-questions.py` writes
-    the consolidated operator punch-list to
-    `.claude/overnight/questions-for-operator.md` at each lifecycle exit.
-    Terminal (won't-do / out-of-scope-here) deferrals keep the plain Deferred
-    stamp + XREF as before -- no awaiting token. A single reserved decision in
-    one section must never strand the other 85 TODO files. (Incident
-    2026-06-16: the runner read a stale "user reserved this" blocker and ran
-    `--disarm`. Both the stale-state and the self-disarm paths are now closed;
-    the behavioral rule is: defer and advance, full stop.)
-  - A **hard failure** is handled by the defer-and-escalate rule below (defer +
-    advance, never halt).
-  - **External death** (usage limit / API error) is not a choice; the watchdog
-    relaunches and the run resumes.
-  The runner must NEVER run `arm-sequencer.sh --disarm`,
-  `run_phase_guard.py clear`, `run_phase_guard.py phase FIXPOINT`,
-  `systemctl stop`, or otherwise tear down its own run -- disarm is a
-  HUMAN-ONLY operation, and `run_phase_guard.py` hard-blocks self-teardown from
-  the headless run. Do NOT clear the overnight-guard state between sections.
-  The ONLY permanent stop is an oracle-verified `run_phase_guard.py fixpoint`
-  (every section in every domain DONE or deferred-with-XREF; it writes the
-  FIXPOINT sentinel and auto-disarms the watchdog) or the human's `--disarm`.
-  The watchdog relaunches any death; mid-queue voluntary exits accomplish
-  nothing.
-- **Reviews are polled IN-SESSION; the runner never exits to wait
-  (2026-07-11).** A Codex/agent verdict that gates the next action is polled
-  with the canonical waiter `bash scripts/overnight/wait-for-codex-verdict.sh
-  <logFile>` (B1) -- a sleeping shell costs ~0 model tokens (the model is idle
-  while it sleeps), so holding the session open is free. The waiter bounds
-  ITSELF under the Bash tool's ~120s default, so a bare call is NEVER killed at
-  2m (the old hand-rolled `for i in $(seq 1 9); do ... sleep 60; done` was 540s
-  and died at the 120s default unless you remembered a `timeout:` arg -- a
-  wasted killed call + recovery turn every session). Exit 0 = DONE; exit 3 =
-  STILL RUNNING -> just call it again (a 16-min review is a few clean
-  re-invokes). Pass several logs to wait on a whole multi-kind round in one
-  call. Do NOT narrate between polls. The
-  structural-wait apparatus (a `wait`/`wake` verb + a background watcher that
-  relaunched a fresh session) was REMOVED after it deadlocked the runner
-  2026-07-11: it existed only to shave ~10 min of latency off the watchdog and
-  bought a fatal process-lifecycle bug class (watchers dying in their own
-  systemd cgroup) for a cost saving that a single blocking poll already
-  provides. The lesson: reliability first -- a cost feature that breaks the
-  runner is net-negative.
-- **Verified rollover is the one deliberate session exit** (2026-07-11).
-  After a section is implemented, reviewed, pushed, and fully stamped,
-  `run_phase_guard.py rollover` machine-verifies the checkpoint -- clean tree
-  INCLUDING untracked files, zero unpushed commits, todo-graph rebuild green,
-  content-bound build + test + smoke receipts valid, no unreceived Codex
-  review, no outstanding background jobs -- and only then permits ONE clean
-  session end. The `*:0/10` watchdog (the sole, systemd-owned relaunch
-  mechanism) starts a fresh session on its next tick; the run stays ARMED and
-  the durable cursor (`sequencer-run.json`) carries all state. A REFUSED
-  rollover lists unfinished work: finish it and continue in-session. Rollover
-  exists because a fresh context outperforms a long-tail one; it is never a
-  way to leave work behind (the gates make that impossible).
-- **NO ChromeMCP / browser automation. Ever.** Impossible OS has its own
-  smoke-test infrastructure: `bash scripts/test-smoke.sh` (boot-to-userspace),
-  `bash scripts/test.sh` (unit suites), `bash scripts/build.sh` (build).
-  Browser verification gates in the runner are satisfied by these; waive any
-  browser-specific gate with that justification rather than reaching for
-  ChromeMCP.
-- **Smoke testing matters.** It is built into the section pipelines
-  (implement-todo-section step 16, review verification) -- run it after every
-  boot-path change; do not skip it to save time.
-- **Hard failure: defer-and-escalate, never halt-the-run, never ship broken.**
-  On a hard failure (build break surviving the skill's fix loop, test
-  regression with unclear root cause, Codex infra down, commit-gate deadlock):
-  first diagnose + fix the root cause via the skills' bounded fix loops. If it
-  STILL fails, roll back (commit nothing, clean tree) and DEFER the section with
-  the captured diagnostic, then advance -- a later fix elsewhere may unblock it
-  on the next pass. A failure that reproduces identically across K=3 passes
-  escalates to the residual punch-list (Run Log + the section's Deferred stamp)
-  for human attention. The run never stops on a single failure (that defeats the
-  come-back-in-a-month goal) and never papers over with workarounds or ships
-  broken code (`feedback_no_bandaids`, `feedback_fix_root_causes`). Deferral uses
-  the EXISTING machinery (`[/]` + Deferred/Accepted stamps, todo-graph
-  `deferred`, `complete-todo-file` sweep), not a parallel ledger. [Supersedes the
-  prior halt-and-pause rule for unattended fixpoint runs, per the 2026-06-13
-  sequencer design (retired from the tree 2026-07-03; git history:
-  `docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`).]
-- **Full quality pipeline every section** -- all Codex dispatches, domain
-  code-quality gates, unit tests, stamps. No "straightforward section"
-  exceptions (`feedback_no_corner_cutting`, `feedback_never_skip_review`).
-- **No scope inflation:** gap-audit edits go into TODO files as checklist
-  items; do not implement gap findings inline outside the section pipeline.
+- **Session-exit policy: the work unit is the ENTIRE queue, not one section -- and the runner NEVER stops or disarms itself.** Finishing a section (ship + review + push) is NOT a reason to run `overnight-runner finish-check` / `handoff` or to final-answer. After every section: update the cursor, then IMMEDIATELY start the next section in the queue. There is NO voluntary session-exit on a blocker of ANY kind:
+  - A **user-decision / operator-reserved item** (a stop-and-ask boundary) is NOT a stop and NOT a disarm. Resolve it by the three-tier answer order (adopted 2026-07-03): (1) if `todo/answers.md` carries an `A: (operator, DATE)` answer matching the TODO + question, apply it as the decision; (2) a LOW-RISK question (no money/permissions/data/ABI impact) may take a conservative logged default -- record it in `todo/answers.md` as `A: (proposed default)` so the operator can confirm or veto; (3) otherwise DEFER the item (`[/]` + a Deferred stamp whose line contains `awaiting-answer` + an XREF naming the decision) and ADVANCE. The `awaiting-answer` token makes the deferral RECOVERABLE: the 3-state oracle classes the section BLOCKED (never falsely DONE), the launcher's heal probe retries once per `todo/answers.md` edit, and `collect-questions.py` writes the consolidated operator punch-list to `.claude/overnight/questions-for-operator.md` at each lifecycle exit. Terminal (won't-do / out-of-scope-here) deferrals keep the plain Deferred stamp + XREF as before -- no awaiting token. A single reserved decision in one section must never strand the other 85 TODO files. (Incident 2026-06-16: the runner read a stale "user reserved this" blocker and ran `--disarm`. Both the stale-state and the self-disarm paths are now closed; the behavioral rule is: defer and advance, full stop.)
+  - A **hard failure** is handled by the defer-and-escalate rule below (defer + advance, never halt).
+  - **External death** (usage limit / API error) is not a choice; the watchdog relaunches and the run resumes.
+  The runner must NEVER run `arm-sequencer.sh --disarm`, `run_phase_guard.py clear`, `run_phase_guard.py phase FIXPOINT`, `systemctl stop`, or otherwise tear down its own run -- disarm is a HUMAN-ONLY operation, and `run_phase_guard.py` hard-blocks self-teardown from the headless run. Do NOT clear the overnight-guard state between sections. The ONLY permanent stop is an oracle-verified `run_phase_guard.py fixpoint` (every section in every domain DONE or deferred-with-XREF; it writes the FIXPOINT sentinel and auto-disarms the watchdog) or the human's `--disarm`. The watchdog relaunches any death; mid-queue voluntary exits accomplish nothing.
+- **Reviews are polled IN-SESSION; the runner never exits to wait (2026-07-11).** A Codex/agent verdict that gates the next action is polled with the canonical waiter `bash scripts/overnight/wait-for-codex-verdict.sh <logFile>` (B1) -- a sleeping shell costs ~0 model tokens (the model is idle while it sleeps), so holding the session open is free. The waiter bounds ITSELF under the Bash tool's ~120s default, so a bare call is NEVER killed at 2m (the old hand-rolled `for i in $(seq 1 9); do ... sleep 60; done` was 540s and died at the 120s default unless you remembered a `timeout:` arg -- a wasted killed call + recovery turn every session). Exit 0 = DONE; exit 3 = STILL RUNNING -> just call it again (a 16-min review is a few clean re-invokes). Pass several logs to wait on a whole multi-kind round in one call. Do NOT narrate between polls. The structural-wait apparatus (a `wait`/`wake` verb + a background watcher that relaunched a fresh session) was REMOVED after it deadlocked the runner 2026-07-11: it existed only to shave ~10 min of latency off the watchdog and bought a fatal process-lifecycle bug class (watchers dying in their own systemd cgroup) for a cost saving that a single blocking poll already provides. The lesson: reliability first -- a cost feature that breaks the runner is net-negative.
+- **Verified rollover is the one deliberate session exit** (2026-07-11). After a section is implemented, reviewed, pushed, and fully stamped, `run_phase_guard.py rollover` machine-verifies the checkpoint -- clean tree INCLUDING untracked files, zero unpushed commits, todo-graph rebuild green, content-bound build + test + smoke receipts valid, no unreceived Codex review, no outstanding background jobs -- and only then permits ONE clean session end. The `*:0/10` watchdog (the sole, systemd-owned relaunch mechanism) starts a fresh session on its next tick; the run stays ARMED and the durable cursor (`sequencer-run.json`) carries all state. A REFUSED rollover lists unfinished work: finish it and continue in-session. Rollover exists because a fresh context outperforms a long-tail one; it is never a way to leave work behind (the gates make that impossible).
+- **NO ChromeMCP / browser automation. Ever.** Impossible OS has its own smoke-test infrastructure: `bash scripts/test-smoke.sh` (boot-to-userspace), `bash scripts/test.sh` (unit suites), `bash scripts/build.sh` (build). Browser verification gates in the runner are satisfied by these; waive any browser-specific gate with that justification rather than reaching for ChromeMCP.
+- **Smoke testing matters.** It is built into the section pipelines (implement-todo-section step 16, review verification) -- run it after every boot-path change; do not skip it to save time.
+- **Hard failure: defer-and-escalate, never halt-the-run, never ship broken.** On a hard failure (build break surviving the skill's fix loop, test regression with unclear root cause, Codex infra down, commit-gate deadlock): first diagnose + fix the root cause via the skills' bounded fix loops. If it STILL fails, roll back (commit nothing, clean tree) and DEFER the section with the captured diagnostic, then advance -- a later fix elsewhere may unblock it on the next pass. A failure that reproduces identically across K=3 passes escalates to the residual punch-list (Run Log + the section's Deferred stamp) for human attention. The run never stops on a single failure (that defeats the come-back-in-a-month goal) and never papers over with workarounds or ships broken code (`feedback_no_bandaids`, `feedback_fix_root_causes`). Deferral uses the EXISTING machinery (`[/]` + Deferred/Accepted stamps, todo-graph `deferred`, `complete-todo-file` sweep), not a parallel ledger. [Supersedes the prior halt-and-pause rule for unattended fixpoint runs, per the 2026-06-13 sequencer design (retired from the tree 2026-07-03; git history: `docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`).]
+- **Full quality pipeline every section** -- all Codex dispatches, domain code-quality gates, unit tests, stamps. No "straightforward section" exceptions (`feedback_no_corner_cutting`, `feedback_never_skip_review`).
+- **No scope inflation:** gap-audit edits go into TODO files as checklist items; do not implement gap findings inline outside the section pipeline.
 - All other repo doctrine (CLAUDE.md, memory feedback) applies unchanged.
 
 ## Soft Cost SLOs (advisory targets -- never quality-cutting budgets)
 
-Efficiency targets the run self-checks against; breaching one is a signal to
-fix the WORKFLOW, never to skip a gate, review, or test:
+Efficiency targets the run self-checks against; breaching one is a signal to fix the WORKFLOW, never to skip a gate, review, or test:
 
-- **Zero inference requests while waiting** -- a gating verdict is polled in
-  ONE blocking Bash call (`sleep 60` loop), which spends ~0 tokens; never a
-  burst of separate re-poll turns with narration between them.
-- **At most one full load of each skill per section** (compaction excepted) --
-  re-reads are slices.
-- **No successful build/test through the main session** -- green mechanics run
-  via `scripts/overnight/preflight.py`, `checks-runner`, or
-  `scripts/overnight/run-artifact.sh`; only failures earn main-session
-  attention (via diagnostic-digester first).
-- **Checkpoint before context exceeds ~200-250K tokens when safely possible**
-  -- prefer a verified `rollover` at the next section boundary over drifting
-  into compaction.
-- **Track main-loop cache-read + output tokens per shipped commit** --
-  `scripts/overnight/section-cost-report.py <metrics.jsonl>` normalizes by
-  changed LOC / files / commits; compare runs ONLY on normalized numbers.
-- **Alert on repeated unchanged receipts** -- an `agent-cache` HIT or an
-  identical re-dispatch over unchanged content means the workflow re-asked a
-  settled question; `scripts/overnight/offload-report.py` and the cache-hit
-  block messages surface these.
-- **Unchanged-input retry rule (soft):** no build, review, agent dispatch, or
-  failed edit is repeated unless its relevant input hash changed (receipts,
-  agent cache, failure ledger, finding ledger are the oracles) or an explicit
-  one-line reason is recorded for the deliberate re-run.
-- **HARD COST CONSTRAINT (2026-07-11): every change is cost-neutral or
-  cost-negative.** No new model call unless it REPLACES a more expensive call
-  and measured total cost (main + sidechain tokens per accepted section)
-  decreases. Corollaries, all enforced above: add no standing Sonnet agents;
-  green builds/tests/CI-status/triage/graph-checks run through deterministic
-  scripts (`run-artifact.sh`, `preflight.py`, `gh run list --json`,
-  `sequencer_triage.py`) and spend NO model; Sonnet is used ONLY to digest a
-  FAILURE or to replace substantial Opus reading (the mapper must replace
-  reading, never supplement it); all mandatory Codex reviews stay intact; new
-  specialties EXTEND an existing agent's checklist rather than spawning one
-  (heap ownership/refcount/teardown -> concurrency-evidence-mapper). A new
-  agent or hook ships only with proven token ROI.
-- **Agent scorecard -- score by NET savings, not dispatch count.** Per agent
-  type, periodically assess: main-session requests avoided, main cache-read
-  reduction, Sonnet cost added, share of claims the main session rejects at
-  verification, re-dispatch frequency (the content cache should absorb
-  repeats -- watch agent-cache `cache-hit` events in `offload-events.jsonl`),
-  and misses later caught by Codex. Retire or revise an agent that adds more
-  context than it removes. Inputs: metrics sidecar (main vs sidechain split),
-  `offload-report.py`, `section-cost-report.py` (normalized per accepted
-  section, alongside Critical/High findings + regressions), agent-cache hit
-  log. A/B effort compares NORMAL comparable sections -- never duplicate paid
-  runs of the same section.
-- **Reviewer-to-automation promotion (the compounding rule).** Every Codex
-  finding recorded in the finding ledger carries a `--class` tag
-  (overflow-guard, raw-user-pointer, lock-misuse, stale-xref,
-  unchecked-allocation, missing-error-path, abi-mismatch, ...). When
-  `finding-ledger.py classes` flags a class at >= 3 FIXED findings, the next
-  session in that area MUST promote it into deterministic automation -- a
-  `scripts/lint.sh` check, a `_Static_assert` pattern, a test helper, or a
-  PreToolUse hook -- so the whole class is caught before review, forever.
-  Every expensive discovery makes its class cheaper to detect next time.
-- **Review debt converts to tests.** A section that needed 2+ Codex fix
-  rounds leaves behind regression tests (or a promoted deterministic gate)
-  for the bug classes found -- the review taught something; the tests keep
-  the lesson. `complete-todo-file` checks the conversion happened.
-- **Cost-ordered work inside every section.** Cheap structural validation
-  (manifest, lint, todo-graph) -> static analysis + targeted compile ->
-  targeted owning-suite tests -> expensive Codex reviews -> full
-  build/test/smoke boundary gate. A cheap-stage failure STOPS the ladder:
-  never launch reviewers against work that fails a deterministic check.
-- **Shadow mode for new Sonnet routes.** A newly added agent route runs in
-  shadow first: the agent produces its map/recommendation, the main session
-  proceeds exactly as WITHOUT it, and the delta is measured (what the agent
-  missed, what the main session re-read anyway, whether acting on the output
-  would have been safe). Only a route that survives shadow becomes
-  authoritative (default-on). Record shadow runs in the offload events log.
-- **Offline model-routing evaluation, not live experiments.** Before routing
-  a work class to a cheaper model/effort tier, build an eval set from
-  HISTORY (prior section inputs via `section-manifest.py` at the pre-ship
-  commit, the shipped patch, the finding-ledger decisions, test failures)
-  and compare candidates read-only against that ground truth. Live kernel
-  work is never the first experiment.
-- **Decision capsules (EXPERIMENTAL, A/B-gated, default OFF).** Protocol for
-  a future A/B leg only -- never a default: a short high-effort session
-  produces a content-bound implementation/review plan (bound to the section
-  manifest's blob hashes); a fresh medium-effort worker executes the
-  mechanical portion; high-effort handles security/ABI decisions and final
-  finding triage. Run it only against a measured baseline (normalized by
-  `section-cost-report.py`) -- two sessions can cost MORE when the plan is
-  weak; abandon the leg if quality or cost regresses.
+- **Zero inference requests while waiting** -- a gating verdict is polled in ONE blocking Bash call (`sleep 60` loop), which spends ~0 tokens; never a burst of separate re-poll turns with narration between them.
+- **At most one full load of each skill per section** (compaction excepted) -- re-reads are slices.
+- **No successful build/test through the main session** -- green mechanics run via `scripts/overnight/preflight.py`, `checks-runner`, or `scripts/overnight/run-artifact.sh`; only failures earn main-session attention (via diagnostic-digester first).
+- **Checkpoint before context exceeds ~200-250K tokens when safely possible** -- prefer a verified `rollover` at the next section boundary over drifting into compaction.
+- **Track main-loop cache-read + output tokens per shipped commit** -- `scripts/overnight/section-cost-report.py <metrics.jsonl>` normalizes by changed LOC / files / commits; compare runs ONLY on normalized numbers.
+- **Alert on repeated unchanged receipts** -- an `agent-cache` HIT or an identical re-dispatch over unchanged content means the workflow re-asked a settled question; `scripts/overnight/offload-report.py` and the cache-hit block messages surface these.
+- **Unchanged-input retry rule (soft):** no build, review, agent dispatch, or failed edit is repeated unless its relevant input hash changed (receipts, agent cache, failure ledger, finding ledger are the oracles) or an explicit one-line reason is recorded for the deliberate re-run.
+- **HARD COST CONSTRAINT (2026-07-11): every change is cost-neutral or cost-negative.** No new model call unless it REPLACES a more expensive call and measured total cost (main + sidechain tokens per accepted section) decreases. Corollaries, all enforced above: add no standing Sonnet agents; green builds/tests/CI-status/triage/graph-checks run through deterministic scripts (`run-artifact.sh`, `preflight.py`, `gh run list --json`, `sequencer_triage.py`) and spend NO model; Sonnet is used ONLY to digest a FAILURE or to replace substantial Opus reading (the mapper must replace reading, never supplement it); all mandatory Codex reviews stay intact; new specialties EXTEND an existing agent's checklist rather than spawning one (heap ownership/refcount/teardown -> concurrency-evidence-mapper). A new agent or hook ships only with proven token ROI.
+- **Agent scorecard -- score by NET savings, not dispatch count.** Per agent type, periodically assess: main-session requests avoided, main cache-read reduction, Sonnet cost added, share of claims the main session rejects at verification, re-dispatch frequency (the content cache should absorb repeats -- watch agent-cache `cache-hit` events in `offload-events.jsonl`), and misses later caught by Codex. Retire or revise an agent that adds more context than it removes. Inputs: metrics sidecar (main vs sidechain split), `offload-report.py`, `section-cost-report.py` (normalized per accepted section, alongside Critical/High findings + regressions), agent-cache hit log. A/B effort compares NORMAL comparable sections -- never duplicate paid runs of the same section.
+- **Reviewer-to-automation promotion (the compounding rule).** Every Codex finding recorded in the finding ledger carries a `--class` tag (overflow-guard, raw-user-pointer, lock-misuse, stale-xref, unchecked-allocation, missing-error-path, abi-mismatch, ...). When `finding-ledger.py classes` flags a class at >= 3 FIXED findings, the next session in that area MUST promote it into deterministic automation -- a `scripts/lint.sh` check, a `_Static_assert` pattern, a test helper, or a PreToolUse hook -- so the whole class is caught before review, forever. Every expensive discovery makes its class cheaper to detect next time. **WHERE it gets filed when the class does not belong to the cursor file, which is the case the rule used to leave ownerless.** "The next session in that area" names no owner: a class whose defects all sit in another TODO's subsystem is nobody's until a run happens to be pointed there, and a promotable class can sit unowned indefinitely that way -- `alias-staleness` reached 4 fixed findings and two full canary cycles with no automation and no filing, because every session that saw the count was working somewhere else. So the session that OBSERVES the threshold files it, immediately, in the same turn: a new `## N.` section in the TODO that OWNS the code the class's findings are against (next free number, body last, `> **Spawned-by:** root`, plus a reciprocal XREF to the capture file carrying the measurement). Filing it is not the same as implementing it, and the observing session is not expected to implement it -- the owning file's next pass does that, which it now can, because the section exists for the triage oracle to see. A promotable class named only in a capture file is NOT filed: nothing in the traversal reads those.
+- **Review debt converts to tests.** A section that needed 2+ Codex fix rounds leaves behind regression tests (or a promoted deterministic gate) for the bug classes found -- the review taught something; the tests keep the lesson. `complete-todo-file` checks the conversion happened.
+- **Cost-ordered work inside every section.** Cheap structural validation (manifest, lint, todo-graph) -> static analysis + targeted compile -> targeted owning-suite tests -> expensive Codex reviews -> full build/test/smoke boundary gate. A cheap-stage failure STOPS the ladder: never launch reviewers against work that fails a deterministic check.
+- **Shadow mode for new Sonnet routes.** A newly added agent route runs in shadow first: the agent produces its map/recommendation, the main session proceeds exactly as WITHOUT it, and the delta is measured (what the agent missed, what the main session re-read anyway, whether acting on the output would have been safe). Only a route that survives shadow becomes authoritative (default-on). Record shadow runs in the offload events log.
+- **Offline model-routing evaluation, not live experiments.** Before routing a work class to a cheaper model/effort tier, build an eval set from HISTORY (prior section inputs via `section-manifest.py` at the pre-ship commit, the shipped patch, the finding-ledger decisions, test failures) and compare candidates read-only against that ground truth. Live kernel work is never the first experiment.
+- **Decision capsules (EXPERIMENTAL, A/B-gated, default OFF).** Protocol for a future A/B leg only -- never a default: a short high-effort session produces a content-bound implementation/review plan (bound to the section manifest's blob hashes); a fresh medium-effort worker executes the mechanical portion; high-effort handles security/ABI decisions and final finding triage. Run it only against a measured baseline (normalized by `section-cost-report.py`) -- two sessions can cost MORE when the plan is weak; abandon the leg if quality or cost regresses.
 
 ## Enforcement & Scheduling
 
-This doctrine is not just guidance: it is hard-enforced. Architecture is
-**repo schedules, repo decides** (2026-06-13 sequencer design, in git history):
+This doctrine is not just guidance: it is hard-enforced. Architecture is **repo schedules, repo decides** (2026-06-13 sequencer design, in git history):
 
-- **Scheduler (repo-vendored, `scripts/overnight/`):** systemd main + watchdog
-  timers, headless `claude` launch, usage-limit snooze, linger-survival,
-  `flock`. Vendored 2026-06-16 from the rizonetech `overnight-runner` plugin and
-  de-coupled from it -- the repo owns `overnight-arm.sh` + `overnight-launch.sh`
-  so there is exactly ONE armed path (no competing unguarded plugin flow), no
-  dependency on a user-cache plugin version, and ChromeMCP is gated off at the
-  source for kernel runs. The launcher bootstraps `Skill(overnight-sequencer)`
-  directly (no plugin slash command). The **watchdog is pure failover at
-  `*:0/10`**: a tick is a no-op if a run is alive (flock); it relaunches only
-  when a run died (crash / usage-limit / kill) and the run has not cleanly
-  finished. On an oracle-verified fixpoint the runner **auto-disarms its own
-  timers**, so it stops for good (no spin-after-done).
-- **Brain (this repo, `.claude/`):** `sequencer_triage.py` (cursor oracle),
-  `run_phase_guard.py` (a PreToolUse + Stop hook that hard-blocks any tool call
-  outside the current phase's allow-list, and blocks `AskUserQuestion` entirely --
-  unattended means decide-or-defer), and the `overnight-sequencer` skill that
-  drives the per-file / per-section pipeline above. The within-section gates
-  (design-review, adversarial, section-commit, review-required, skill-step-block)
-  keep running inside `implement/review-todo-section`; the phase-guard governs the
-  outer sequence. Run mode is always `bypassPermissions` (a weaker mode stalls an
-  unattended run); it is safe precisely because the run physically cannot skip a
-  phase, ship un-reviewed code, or commit a failing build.
-- **ChromeMCP is off at the systemd-unit level for this repo only** (per-unit env
-  on impossible-os's units), so the "NO ChromeMCP. Ever." rule is enforced before
-  `claude` even launches, without affecting any other project's overnight runs.
-- **FIXPOINT is machine-verified, not asserted.** The only path to a permanent
-  stop is `run_phase_guard.py fixpoint`, which rebuilds the todo-graph and
-  REFUSES unless `sequencer_triage.py --next` returns DONE (zero remaining work).
-  Until then `Stop` is blocked, so the run cannot finish early; a false fixpoint
-  is impossible. Only a verified fixpoint auto-disarms the watchdog.
-- **Stranded-deferral gate (P6.1 owner sweep + P6.3 fixpoint gate; promoted from
-  advisory 2026-07-27).** THIS is what makes "the runner completes Impossible OS
-  in full" true rather than approximately true. The section oracle classifies on
-  the Implementation Order row plus SECTION stamps only, so a `[/]` checklist item
-  INSIDE a shipped section is invisible to it: the section carries V+Q, classifies
-  DONE, and the fixpoint loop never returns to it -- even after the work that
-  blocked it ships. Two layers close that hole:
-  - **P6.1, at the moment of unblocking.** `implement-todo-section` step 18 runs
-    `stranded_deferrals.py --owner <todo> --section <N>` on every section ship and
-    re-opens the inbound parked items that section's work actually freed. Verify at
-    file:line first: item text is frequently stale (a 2026-07-27 sample found items
-    reading "BLOCKED: X unimplemented" whose X had long since shipped).
-  - **P6.3, at the end, as backstop.** `run_phase_guard.py fixpoint` now runs
-    `stranded_deferrals.py --gate` and REFUSES completion while any stranded item
-    lacks a disposition. Each is cleared with
-    `stranded_deferrals.py --dispose <key> --action <reopen|done|park> --reason
-    '<why>'`. **It cannot wedge a run:** `park` is always legal, so every item has a
-    way forward -- the gate forces a DECISION, never a particular decision. It
-    fails OPEN on infrastructure error (missing script / timeout / crash), so a
-    broken audit can never strand a genuinely-complete run; only a clean exit 1
-    refuses. Dispositions live in `.claude/state/stranded-dispositions.json`, keyed
-    on a content hash that ignores line drift but invalidates when the item TEXT
-    changes.
+- **Scheduler (repo-vendored, `scripts/overnight/`):** systemd main + watchdog timers, headless `claude` launch, usage-limit snooze, linger-survival, `flock`. Vendored 2026-06-16 from the rizonetech `overnight-runner` plugin and de-coupled from it -- the repo owns `overnight-arm.sh` + `overnight-launch.sh` so there is exactly ONE armed path (no competing unguarded plugin flow), no dependency on a user-cache plugin version, and ChromeMCP is gated off at the source for kernel runs. The launcher bootstraps `Skill(overnight-sequencer)` directly (no plugin slash command). The **watchdog is pure failover at `*:0/10`**: a tick is a no-op if a run is alive (flock); it relaunches only when a run died (crash / usage-limit / kill) and the run has not cleanly finished. On an oracle-verified fixpoint the runner **auto-disarms its own timers**, so it stops for good (no spin-after-done).
+- **Brain (this repo, `.claude/`):** `sequencer_triage.py` (cursor oracle), `run_phase_guard.py` (a PreToolUse + Stop hook that hard-blocks any tool call outside the current phase's allow-list, and blocks `AskUserQuestion` entirely -- unattended means decide-or-defer), and the `overnight-sequencer` skill that drives the per-file / per-section pipeline above. The within-section gates (design-review, adversarial, section-commit, review-required, skill-step-block) keep running inside `implement/review-todo-section`; the phase-guard governs the outer sequence. Run mode is always `bypassPermissions` (a weaker mode stalls an unattended run); it is safe precisely because the run physically cannot skip a phase, ship un-reviewed code, or commit a failing build.
+- **ChromeMCP is off at the systemd-unit level for this repo only** (per-unit env on impossible-os's units), so the "NO ChromeMCP. Ever." rule is enforced before `claude` even launches, without affecting any other project's overnight runs.
+- **FIXPOINT is machine-verified, not asserted.** The only path to a permanent stop is `run_phase_guard.py fixpoint`, which rebuilds the todo-graph and REFUSES unless `sequencer_triage.py --next` returns DONE (zero remaining work). Until then `Stop` is blocked, so the run cannot finish early; a false fixpoint is impossible. Only a verified fixpoint auto-disarms the watchdog.
+- **Stranded-deferral gate (P6.1 owner sweep + P6.3 fixpoint gate; promoted from advisory 2026-07-27).** THIS is what makes "the runner completes Impossible OS in full" true rather than approximately true. The section oracle classifies on the Implementation Order row plus SECTION stamps only, so a `[/]` checklist item INSIDE a shipped section is invisible to it: the section carries V+Q, classifies DONE, and the fixpoint loop never returns to it -- even after the work that blocked it ships. Two layers close that hole:
+  - **P6.1, at the moment of unblocking.** `implement-todo-section` step 18 runs `stranded_deferrals.py --owner <todo> --section <N>` on every section ship and re-opens the inbound parked items that section's work actually freed. Verify at file:line first: item text is frequently stale (a 2026-07-27 sample found items reading "BLOCKED: X unimplemented" whose X had long since shipped).
+  - **P6.3, at the end, as backstop.** `run_phase_guard.py fixpoint` now runs `stranded_deferrals.py --gate` and REFUSES completion while any stranded item lacks a disposition. Each is cleared with `stranded_deferrals.py --dispose <key> --action <reopen|done|park> --reason '<why>'`. **It cannot wedge a run:** `park` is always legal, so every item has a way forward -- the gate forces a DECISION, never a particular decision. It fails OPEN on infrastructure error (missing script / timeout / crash), so a broken audit can never strand a genuinely-complete run; only a clean exit 1 refuses. Dispositions live in `.claude/state/stranded-dispositions.json`, keyed on a content hash that ignores line drift but invalidates when the item TEXT changes.
 
-  Precision evidence that retired the deferral: the original naive signal
-  over-matched ~6x (171 hits, 143 self-XREFs). The audit was then narrowed to
-  item-level `[/]` only, cross-TODO only, `awaiting-*` excluded, owner must carry
-  BOTH stamps, unambiguous resolution only. A 10-item hand sample across all three
-  action labels (2026-07-27) found **0 false positives** -- 6 verified genuinely
-  unblocked at file:line (`RtlCaptureStackBackTrace`,
-  `media_role_locate_blackbox_fs`, `SYSTEM_KERNEL_CONFIG_INFORMATION`,
-  `csprng_fill`/`csprng_crypto_ok`, `SeSinglePrivilegeCheck`,
-  `eif_decompress_segment`) and 2 ambiguous-but-correctly-flagged. The sample also
-  showed the `action` label runs CONSERVATIVE -- items tagged `blocked` were in fact
-  unblocked with stale text -- which is why the gate keys on `stranded`, not on
-  `action`. Live tree at promotion: **48 stranded items**.
+  Precision evidence that retired the deferral: the original naive signal over-matched ~6x (171 hits, 143 self-XREFs). The audit was then narrowed to item-level `[/]` only, cross-TODO only, `awaiting-*` excluded, owner must carry BOTH stamps, unambiguous resolution only. A 10-item hand sample across all three action labels (2026-07-27) found **0 false positives** -- 6 verified genuinely unblocked at file:line (`RtlCaptureStackBackTrace`, `media_role_locate_blackbox_fs`, `SYSTEM_KERNEL_CONFIG_INFORMATION`, `csprng_fill`/`csprng_crypto_ok`, `SeSinglePrivilegeCheck`, `eif_decompress_segment`) and 2 ambiguous-but-correctly-flagged. The sample also showed the `action` label runs CONSERVATIVE -- items tagged `blocked` were in fact unblocked with stale text -- which is why the gate keys on `stranded`, not on `action`. Live tree at promotion: **48 stranded items**.
 
 ### Guardrails against re-breaking the runner (2026-07-11)
 
-The control plane (the arm/launch/guard/breaker/review-dispatch code) broke the
-runner repeatedly because its tests were wired into nothing and control-plane
-changes reached an unattended night run ungated. Six layers now prevent that;
-the single source of truth for "what is control plane" is
-[`scripts/overnight/control-plane-manifest.txt`](../scripts/overnight/control-plane-manifest.txt).
+The control plane (the arm/launch/guard/breaker/review-dispatch code) broke the runner repeatedly because its tests were wired into nothing and control-plane changes reached an unattended night run ungated. Six layers now prevent that; the single source of truth for "what is control plane" is [`scripts/overnight/control-plane-manifest.txt`](../scripts/overnight/control-plane-manifest.txt).
 
-1. **Integration/regression tests** (`scripts/overnight/tests/test_runner_lifecycle.py`
-   + the sibling `test-launch.sh` DRYRUN): pin that the removed structural-wait
-   verbs/watcher stay gone, no source references a dead verb, the skill keeps
-   the in-session poll, and the launcher's flock is the sole concurrency guard.
-   `run-all.sh` runs the whole suite (the missing central runner).
-2. **Commit + push gates** (`.githooks/pre-commit`, `.githooks/pre-push`): a
-   change touching the manifest MUST pass `run-all.sh` (push also runs
-   `runner-doctor` advisory) before it lands -- catches operator AND the
-   runner's own section commits; the push gate catches `--no-verify` commits.
-3. **Pre-arm health gate** (`scripts/overnight/pre-arm-check.sh`, run by
-   `arm-sequencer.sh`): runner-doctor + a launcher DRYRUN + the suite must pass
-   or arming is refused (`--skip-preflight` to override, logged).
-4. **Canary gate** (`arm-sequencer.sh`): an unattended arm is REFUSED when the
-   control plane changed (committed or uncommitted) since the last GREEN
-   ATTENDED canary. Record one with `arm-sequencer.sh --record-canary` after
-   watching >=1 section ship + a rollover->relaunch; `--force` overrides.
-5. **Architectural lint** (`scripts/lint.sh` Check 18): any detach primitive
-   (`setsid`/`nohup`/`disown`/`systemd-run`, or `os.setsid`/`start_new_session`/
-   `preexec_fn`/`os.fork` in Python) in a control-plane file is an ERROR unless
-   it carries a `LIFECYCLE-WAIVER:` comment. The **`*:0/10` watchdog is the only
-   sanctioned relaunch**; a waiver is only for detaching a REVIEW/job, never the
-   session. Re-introducing the fragile mechanism becomes a conscious, reviewed act.
-6. **Fast-death / crash-loop breaker** (`scripts/overnight/run-outcome.py`): the
-   count-based breaker (>= `--threshold` consecutive unproductive) is too patient
-   for a bad deploy that dies instantly and relaunches every 10 min. Two
-   consecutive fast deaths (`run_secs < --fast-death-secs`, default 120s) trip
-   the breaker EARLY and jump to the backoff cap with a `crash_loop` flag.
+1. **Integration/regression tests** (`scripts/overnight/tests/test_runner_lifecycle.py` + the sibling `test-launch.sh` DRYRUN): pin that the removed structural-wait verbs/watcher stay gone, no source references a dead verb, the skill keeps the in-session poll, and the launcher's flock is the sole concurrency guard. `run-all.sh` runs the whole suite (the missing central runner).
+2. **Commit + push gates** (`.githooks/pre-commit`, `.githooks/pre-push`): a change touching the manifest MUST pass `run-all.sh` (push also runs `runner-doctor` advisory) before it lands -- catches operator AND the runner's own section commits; the push gate catches `--no-verify` commits.
+3. **Pre-arm health gate** (`scripts/overnight/pre-arm-check.sh`, run by `arm-sequencer.sh`): runner-doctor + a launcher DRYRUN + the suite must pass or arming is refused (`--skip-preflight` to override, logged).
+4. **Canary gate** (`arm-sequencer.sh`): an unattended arm is REFUSED when the control plane changed (committed or uncommitted) since the last GREEN ATTENDED canary. Record one with `arm-sequencer.sh --record-canary` after watching >=1 section ship + a rollover->relaunch; `--force` overrides.
+5. **Architectural lint** (`scripts/lint.sh` Check 18): any detach primitive (`setsid`/`nohup`/`disown`/`systemd-run`, or `os.setsid`/`start_new_session`/`preexec_fn`/`os.fork` in Python) in a control-plane file is an ERROR unless it carries a `LIFECYCLE-WAIVER:` comment. The **`*:0/10` watchdog is the only sanctioned relaunch**; a waiver is only for detaching a REVIEW/job, never the session. Re-introducing the fragile mechanism becomes a conscious, reviewed act.
+6. **Fast-death / crash-loop breaker** (`scripts/overnight/run-outcome.py`): the count-based breaker (>= `--threshold` consecutive unproductive) is too patient for a bad deploy that dies instantly and relaunches every 10 min. Two consecutive fast deaths (`run_secs < --fast-death-secs`, default 120s) trip the breaker EARLY and jump to the backoff cap with a `crash_loop` flag.
 
-**Cost gates (R1-R4, 2026-07-19).** The 2026-07-19 night cost ~75% cache reads
-(547M tokens re-read at ~325K/turn); four gates attack the turn-count and
-context-size drivers measured in that night's transcripts (fail-open, headless
-scope, tests in `scripts/overnight/tests/`):
+**Cost gates (R1-R4, 2026-07-19).** The 2026-07-19 night cost ~75% cache reads (547M tokens re-read at ~325K/turn); four gates attack the turn-count and context-size drivers measured in that night's transcripts (fail-open, headless scope, tests in `scripts/overnight/tests/`):
 
-- **R1 rollover-required-after-ship** (`run_phase_guard.py`, section-start
-  chokepoint): P3.2 only trapped a REFUSED rollover; R1 blocks the next
-  section-starter skill (implement-todo-section/-item/-ssdt-range) and any
-  `cursor` move to a different section when a ship-stamp commit postdates
-  `last_rollover_epoch` (set on `start` + every verified `rollover`). The
-  skill-level check is the load-bearing one: the SECTIONS loop never re-calls
-  `cursor` between sections of one file. Deferrals (no stamp) advance freely;
-  review/close skills stay unblocked (they legitimately run post-ship).
-  `overnight-launch.sh` stamps the boundary at every spawn (`mark-rotation`):
-  a relaunch IS a fresh context, so a crash/usage-limit relaunch never forces
-  a redundant rollover before the fresh worker's first section.
-- **R2 bypass-shape hardening** (`build_offload_reminder.py`): the P3.4 block
-  now also catches `make test-*`, absolute-path, `./`-prefixed, and direct
-  execution of the suite scripts; the sanctioned `run-artifact.sh` reroute logs
-  a `follow` event so `offload-report.py` counts command-reroute compliance
-  (the old dispatch-only metric misread the working block as 9% follow).
-- **R3 wait discipline** (`codex_wait_discipline.py`): a headless
-  `wait-for-codex-verdict.sh` call must be ONE long wait (`--max >= 300` + a
-  Bash tool `timeout` outliving it). Measured: 51 short polls x ~350K cached
-  tokens (~18M read tokens, 27% of the session's Bash calls) in
-  run-20260719-022200.
-- **R4 web-research reroute** (`websearch_offload_gate.py`): headless
-  MAIN-session WebSearch/WebFetch blocks with a reroute to the three
-  researcher agents; subagent calls pass (keyed on the agent transcript path,
-  so the reroute cannot deadlock). Measured: 10 main-session WebSearch calls
-  fired in parallel with a parity-research-analyst dispatch on the same
-  question (run-20260719-100809).
+- **R1 rollover-required-after-ship** (`run_phase_guard.py`, section-start chokepoint): P3.2 only trapped a REFUSED rollover; R1 blocks the next section-starter skill (implement-todo-section/-item/-ssdt-range) and any `cursor` move to a different section when a ship-stamp commit postdates `last_rollover_epoch` (set on `start` + every verified `rollover`). The skill-level check is the load-bearing one: the SECTIONS loop never re-calls `cursor` between sections of one file. Deferrals (no stamp) advance freely; review/close skills stay unblocked (they legitimately run post-ship). `overnight-launch.sh` stamps the boundary at every spawn (`mark-rotation`): a relaunch IS a fresh context, so a crash/usage-limit relaunch never forces a redundant rollover before the fresh worker's first section.
+- **R2 bypass-shape hardening** (`build_offload_reminder.py`): the P3.4 block now also catches `make test-*`, absolute-path, `./`-prefixed, and direct execution of the suite scripts; the sanctioned `run-artifact.sh` reroute logs a `follow` event so `offload-report.py` counts command-reroute compliance (the old dispatch-only metric misread the working block as 9% follow).
+- **R3 wait discipline** (`codex_wait_discipline.py`): a headless `wait-for-codex-verdict.sh` call must be ONE long wait (`--max >= 300` + a Bash tool `timeout` outliving it). Measured: 51 short polls x ~350K cached tokens (~18M read tokens, 27% of the session's Bash calls) in run-20260719-022200.
+- **R4 web-research reroute** (`websearch_offload_gate.py`): headless MAIN-session WebSearch/WebFetch blocks with a reroute to the three researcher agents; subagent calls pass (keyed on the agent transcript path, so the reroute cannot deadlock). Measured: 10 main-session WebSearch calls fired in parallel with a parity-research-analyst dispatch on the same question (run-20260719-100809).
   - [ ] **The R4 reroute DOES deadlock today: subagent detection does not fire, so both ends are blocked.**
         `_is_subagent_transcript` (`.claude/hooks/runner_bash_guard.py:87-91`, imported by `websearch_offload_gate.py:38-52` and `read_cache_block.py:255`) matches a transcript basename beginning `agent-` or a path containing `/subagents/`. On-disk subagent transcripts DO have that shape (`~/.claude/projects/<proj>/<session>/subagents/agent-<id>.jsonl`), so the payload's `transcript_path` must be carrying the MAIN session's path for subagent tool calls.
         - **Two independent symptoms, both observed 2026-07-29**: a `web-research-analyst` dispatch had every WebSearch and WebFetch blocked by R4 with the main-session reroute message, and `read_cache_block` charged that same agent's reads to the main session (it reported "read #7" for a file the main session had never opened).
@@ -471,20 +124,8 @@ scope, tests in `scripts/overnight/tests/`):
         - **Fix requires seeing a real subagent PreToolUse payload** to learn the correct discriminator; do NOT guess a field. Until it is fixed, treat "research blocked" as a defer-with-XREF rather than an answer from memory.
         -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §27 (item: "Evaluate `utest-json-v2` against CTRF (Common Test Report Format) before the schema has consumers")
 
-**Fail-direction policy (audited 2026-07-11 -- do not silently flip):** the
-LOAD-BEARING gates fail CLOSED -- `section_commit_gate.py` treats missing
-evidence as refusal, and `run_phase_guard.py` `_rollover_failures` appends a
-failure on ANY exception so a rollover can never proceed on an unverified
-checkpoint. The gates that fail OPEN do so DELIBERATELY, because failing closed
-would wedge the run: `receiving_review_required.py` allows on a malformed
-receipt (a corrupt receipt must not brick every edit), the pretool hook allows
-an unparseable payload (nothing to gate), and the Stop hook's own crash just
-ends the session (the watchdog relaunches -- a safe backstop). `run-outcome.py`
-classifies a git error as `unknown` with no state change (a transient git hiccup
-must not trip the breaker). A future change must preserve each gate's direction.
+**Fail-direction policy (audited 2026-07-11 -- do not silently flip):** the LOAD-BEARING gates fail CLOSED -- `section_commit_gate.py` treats missing evidence as refusal, and `run_phase_guard.py` `_rollover_failures` appends a failure on ANY exception so a rollover can never proceed on an unverified checkpoint. The gates that fail OPEN do so DELIBERATELY, because failing closed would wedge the run: `receiving_review_required.py` allows on a malformed receipt (a corrupt receipt must not brick every edit), the pretool hook allows an unparseable payload (nothing to gate), and the Stop hook's own crash just ends the session (the watchdog relaunches -- a safe backstop). `run-outcome.py` classifies a git error as `unknown` with no state change (a transient git hiccup must not trip the breaker). A future change must preserve each gate's direction.
 
 ## Run Log
 
-> **Archived (2026-07-11):** entries live in [docs/overnight/run-log.md](../docs/overnight/run-log.md) -- the doctrine file is re-read every session start and after every
-> compaction, and 64 KB of append-only history was riding along on each of those reads. APPEND new one-line entries (date, cursor at start/end, sections shipped,
-> pauses/blockers) to the ARCHIVE file, never here. `runner_status.py` reads recent decisions from the archive.
+> **Archived (2026-07-11):** entries live in [docs/overnight/run-log.md](../docs/overnight/run-log.md) -- the doctrine file is re-read every session start and after every compaction, and 64 KB of append-only history was riding along on each of those reads. APPEND new one-line entries (date, cursor at start/end, sections shipped, pauses/blockers) to the ARCHIVE file, never here. `runner_status.py` reads recent decisions from the archive.
