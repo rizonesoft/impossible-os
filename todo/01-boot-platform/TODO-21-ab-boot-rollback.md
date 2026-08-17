@@ -28,7 +28,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 - → XREF: `10-platform-services/TODO-03-updates-packages.md` -- update engine (downstream consumer)
 - → XREF: `../02-kernel-core/TODO-02-kernel-configuration-policy.md §4, §5, §10` -- LastKnownGood, Safe Mode recovery, and boot-status acceptance feed rollback decisions
 - → XREF: `TODO-07-boot-entry-store-menu-policy.md §9` -- A/B slot state from §1 + §3 + §4 here feeds the boot menu's slot/recovery entry generation + counter merge + auto-select-recovery (§9 deferred until those §§ land)
-- → XREF: `TODO-13-tpm-measured-boot-attestation.md §17` -- `tpm_nv_*` write-lock/monotonic-counter primitive backs the §8 anti-rollback floor
+- → XREF: `TODO-13-tpm-measured-boot-attestation.md §17`/`§21`/`§22` -- NV write-lock + counter primitives (§17), the authenticated floor record (§21) and the loader-side floor read (§22) back the §8 anti-rollback floor
 - → XREF: `../02-kernel-core/TODO-19-code-integrity-trust-policy.md` + `TODO-02-uefi-hardening-secureboot.md §1` -- verified slot identity gates §5 mark-good + §8 floor advance
 
 ---
@@ -298,20 +298,20 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 > [!IMPORTANT]
 > **DESIGN LOCKED (Codex design review 2026-06-16, 1C+1H+1M adopted) -- TWO INDEPENDENT FLOORS; enforcement BLOCKED on an authenticated store:**
 > 1. **Two independent floors.** The GLOBAL OS-security-version floor stays owned by `boot_rollback.c` (`IPOSRequiredSecVersion` NVRAM, `boot_rollback_raise_if_steady`). The PER-SLOT A/B `rollback_floor` (metadata) is a SEPARATE value read only by A/B slot selection and MUST NOT advance through `boot_rollback_raise_if_steady` (that global path has no verified-active-slot input). Corrects the earlier "reuse boot_rollback.c floor" framing.
-> 2. **The floor store MUST be authenticated.** `ab_boot_meta_is_valid` checks only CRC-32 = corruption detection, NOT authenticity: anyone who can write the metadata partition can lower `rollback_floor` + recompute the CRC. CRC-metadata is a CACHED HINT, never the floor AUTHORITY. Real anti-rollback REQUIRES a monotonic / write-locked store (TODO-13 §17); selection enforcement ships WITH that store -- enforcing against an unauthenticated floor is false security.
+> 2. **The floor store MUST be authenticated.** `ab_boot_meta_is_valid` checks only CRC-32 = corruption detection, NOT authenticity: anyone who can write the metadata partition can lower `rollback_floor` + recompute the CRC. CRC-metadata is a CACHED HINT, never the floor AUTHORITY. Real anti-rollback REQUIRES a monotonic / write-locked store (TODO-13 §21, on §17's primitives, read pre-selection by §22); selection enforcement ships WITH that store -- enforcing against an unauthenticated floor is false security.
 > 3. **Below-floor refusal is DISTINCT from retry exhaustion.** A `tries >= AB_BOOT_MAX_TRIES` slot may boot as a least-bad availability stopgap; a below-floor slot must NOT (known-vulnerable). Selection filters below-floor slots; if NO at-or-above-floor slot exists -> a `ROLLBACK_BLOCKED` refusal that routes to recovery (TODO-22), NEVER `least_bad`.
 
 - [ ] Per-slot `rollback_index` + a single `rollback_floor` -- **fields present** (§1: `ab_boot_slot.rollback_index`, `ab_boot_metadata.rollback_floor`); the comparison semantics ship with the authenticated store
-- [ ] §3 selection rejects `rollback_index < rollback_floor` as a DISTINCT `ROLLBACK_BLOCKED` state; ships with the authenticated store -> XREF: [`TODO-13 §17`](TODO-13-tpm-measured-boot-attestation.md)
+- [ ] §3 selection rejects `rollback_index < rollback_floor` as a DISTINCT `ROLLBACK_BLOCKED` state -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md) (item: "Read the floor BEFORE `select_active_slot()` decides")
   - Filter below-floor slots from the normal choice; all-below-floor refuses and routes to recovery, NEVER `least_bad`.
 - [ ] Advance `rollback_floor` to the active slot's `rollback_index` ONLY after `mark_boot_successful()` AND verified slot identity -> XREF: [`02-kernel-core/TODO-19 §7`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md)
-- [ ] Store `rollback_floor` in an authenticated monotonic / write-locked TPM-NV index (trust anchor; CRC-metadata is only a cached hint) -> XREF: [`TODO-13 §17`](TODO-13-tpm-measured-boot-attestation.md)
+- [ ] Store `rollback_floor` in an authenticated monotonic / write-locked TPM-NV index; CRC metadata is a cached hint -> XREF: [`TODO-13 §21`](TODO-13-tpm-measured-boot-attestation.md) (item: "Represent the A/B floor as an authenticated DATA record")
 - [ ] On rollback NEVER lower `rollback_floor` (monotonic raise only); a below-floor slot is unbootable and routes to recovery -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
 - [ ] Commit: `"boot: A/B anti-rollback -- per-slot version floor, monotonic, TPM-NV backed"`
 
 **Test checkpoint:** (when the authenticated store lands) `rollback_floor=5`, slot B `rollback_index=4`: selection refuses B as below-floor; both below floor -> `ROLLBACK_BLOCKED` + recovery (NOT least-bad). Mark slot A good at index 6 with verified identity: floor advances to 6. A test asserts `boot_rollback_raise_if_steady` does NOT mutate the A/B `rollback_floor` (independent floors). Test on: QEMU smoke + bare metal.
 
-> **Test runner:** N/A (enforcement deferred -- blocked on the authenticated floor store) | the per-slot `rollback_index`/`rollback_floor` fields are pinned by §1 `_Static_assert`; the selection-logic + tests land with TODO-13 §17
+> **Test runner:** N/A (enforcement deferred -- blocked on the authenticated floor store) | the per-slot `rollback_index`/`rollback_floor` fields are pinned by §1 `_Static_assert`; the selection-logic + tests land with TODO-13 §21 + §22
 
 > **Notes:**
 > - **What shipped:** the corrected §8 DESIGN only (two independent floors; authenticated-store-required; below-floor = distinct `ROLLBACK_BLOCKED` refusal, not least-bad). No enforcement code; the per-slot `rollback_index`/`rollback_floor` fields exist from §1.
