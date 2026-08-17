@@ -61,7 +61,11 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 - [ ] Initial rows (filled in as porting proceeds): e1000 → SerenityOS `E1000NetworkAdapter.cpp` BSD-2; RTL8169 → FreeBSD `re(4)` BSD-2; igc → FreeBSD `igc(4)` BSD-2; RTL8125 → FreeBSD `re(4)` extended BSD-2
 - [ ] VirtIO-net, iwlwifi stub, rtw89 stub: clean-room rows with `N/A` upstream, `GPL-compatible` note
 - [ ] Ensure every `src/modules/*/` file contains `// SPDX-License-Identifier: BSD-2-Clause` (or MIT) header comment where applicable
-- [ ] Commit: `"legal: LICENSES/ + NOTICE.md -- BSD-2-Clause, MIT, ported file inventory"`
+- [ ] **Reconcile with root `CREDITS.md`** -- XREF: `15-installer-release/TODO-01-release-artifacts.md §9` (item: "One notice file, not two"); root notice file now exists, so do NOT create a rival `NOTICE.md`
+  - `CREDITS.md` (root, created 2026-08-17) already carries whole-work attribution for vendored libraries, fonts and assets, and declares itself the root notice file
+  - This section's per-file SPDX table is still needed and is a different granularity; land it as a `CREDITS.md` section or a `LICENSES/` companion referenced from it
+  - The `LICENSES/BSD-2-Clause.txt` / `LICENSES/MIT.txt` texts are unaffected by the reconciliation and should be created as specified
+- [ ] Commit: `"legal: LICENSES/ + CREDITS.md per-file inventory -- BSD-2-Clause, MIT, ported files"`
 
 ---
 

@@ -63,16 +63,17 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ## Implementation Order
 
-| Step | Section                                                   | 💎/⭐ | Dependency                                          |
-| ---- | --------------------------------------------------------- | ----- | --------------------------------------------------- |
-| 1    | Versioning scheme (`set-version.sh`, `winver.exe`)        | 💎    | Extends existing `version.h` + `build_info.h`       |
-| 2    | GPT disk image release (`release-image.sh`, zstd)         | 💎    | §1 version baked; existing `build/system-disk.img`  |
-| 3    | USB-bootable image (`make-usb.sh` + `usb_creator.c`)      | 💎    | §2 compressed image                                 |
-| 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎    | `D10T11 §6` base ISO; §6 version                    |
-| 5    | Code signing (`sign-release.sh`, bootloader verify)       | 💎    | `D09T07 §7` `codesign_sign/verify`; §1–§4 artifacts |
-| 6    | Artifact manifest (`release-{version}.json`)              | ⭐    | §2–§5 all artifacts; `TODO-03` consumer             |
-| 7    | VM image variants (VMDK/VHD/VHDX + `.ovf`)                | 💎    | §2 raw image; `qemu-img` installed                  |
-| 8    | Reproducible builds (`SOURCE_DATE_EPOCH`)                 | ⭐    | §1–§7 all scripts; `make verify-reproducible`       |
+| Step | Section                                                   | 💎/⭐ | Dependency                                               |
+| ---- | --------------------------------------------------------- | ----- | -------------------------------------------------------- |
+| 1    | Versioning scheme (`set-version.sh`, `winver.exe`)        | 💎    | Extends existing `version.h` + `build_info.h`            |
+| 2    | GPT disk image release (`release-image.sh`, zstd)         | 💎    | §1 version baked; existing `build/system-disk.img`       |
+| 3    | USB-bootable image (`make-usb.sh` + `usb_creator.c`)      | 💎    | §2 compressed image                                      |
+| 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎    | `D10T11 §6` base ISO; §6 version                         |
+| 5    | Code signing (`sign-release.sh`, bootloader verify)       | 💎    | `D09T07 §7` `codesign_sign/verify`; §1–§4 artifacts      |
+| 6    | Artifact manifest (`release-{version}.json`)              | ⭐    | §2–§5 all artifacts; `TODO-03` consumer                  |
+| 7    | VM image variants (VMDK/VHD/VHDX + `.ovf`)                | 💎    | §2 raw image; `qemu-img` installed                       |
+| 8    | Reproducible builds (`SOURCE_DATE_EPOCH`)                 | ⭐    | §1–§7 all scripts; `make verify-reproducible`            |
+| 9    | Third-party attribution shipped with artifacts            | 💎    | `CREDITS.md`; `src/libs/PROVENANCE.md`; §2 and §4 images |
 
 ---
 
@@ -313,19 +314,52 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
+## 9. Third-Party Attribution Shipped With Artifacts `[Sonnet]`
+
+> **Spawned-by:** root
+
+**Source:** `CREDITS.md` (root, exists); `src/libs/PROVENANCE.md` (exists); new attribution step in `scripts/release-image.sh` + the ISO/USB builders from §2 to §4
+
+The permissive licenses this project vendors under (BSD-2-Clause, MIT, CC0-1.0, Apache-2.0, SIL OFL 1.1) attach their attribution requirement to **binary** redistribution, not only source redistribution. Today the notices exist only as files in the source tree, so a release image, ISO, or USB artifact handed to someone carries none of them. `CREDITS.md` closes the repository-side half; this section closes the shipped-artifact half.
+
+- [ ] **Attribution file inside the image**: install `CREDITS.md` plus every vendored license file to a fixed in-image path so the running OS carries its own notices
+  - Canonical path `C:\Impossible\License\` with `CREDITS.txt`, `LICENSE.txt` (GPL-3.0), and one file per vendored library
+  - Sourced from `src/libs/*/LICENSE` and `src/libs/*/LICENCE.md`; the glob MUST match both spellings, since Monocypher uses the British one and a `LICENSE*` sweep silently misses it
+  - Plain text, CRLF, so the shipped shell and Notepad render it correctly
+- [ ] **ISO and USB carry the notices at the root**: `README.txt` on the ISO (§4) gains a license section, and `CREDITS.txt` sits beside it, so the notices are readable without booting the image
+- [ ] **Release manifest records attribution**: extend the §6 `release-{version}.json` with a `third_party` array (name, version, license SPDX id, upstream URL) generated from `src/libs/PROVENANCE.md` rather than hand-maintained
+- [ ] **Drift gate**: a check that fails the release when a directory under `src/libs/` has no row in `PROVENANCE.md` or no row in `CREDITS.md`
+  - Monocypher was vendored 2026-06-12 (`99910014`) and was still absent from `PROVENANCE.md` on 2026-08-17, roughly two months, while being the most-used vendored library in the tree (CSPRNG, entropy, seed file, TPM replay, SHA-384)
+  - The gate is the reason that gap cannot recur; a manual convention already failed once
+- [ ] **Icons8 exclusion stays enforced**: assert the release image contains no `resources/icons/color/**` PNG payload, since that license prohibits redistribution as standalone files
+  - The files are gitignored today, so the risk is a local build directory leaking into an artifact, not the repository
+- [ ] **GPL-3.0 source-offer**: confirm the release satisfies GPLv3 section 6 for the binary artifacts, either by shipping the corresponding source or by carrying a written offer with the download
+- [ ] **One notice file, not two** -- XREF: `04-drivers-hardware/TODO-14-network-drivers.md §1` (item: "`NOTICE.md` header: `# Third-Party Notices`" at line 60) plans a rival root notice file
+  - Root `CREDITS.md` was created 2026-08-17 and covers whole-work attribution: vendored libraries, fonts, assets
+  - TODO-14 §1's per-file SPDX inventory is a different granularity and is still needed, but lands as a section of `CREDITS.md` or a `LICENSES/` companion referenced from it
+  - Whichever section runs second reconciles rather than duplicates; this item is the reciprocal marker
+- [ ] **Firmware blob rows** -- XREF: `04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md` (item: "Add `firmware.toml` or compact INI with device ids" at line 48)
+  - Every blob whose manifest sets the redistribution flag and ships inside a release image needs a `CREDITS.md` row plus an in-image license file
+  - A blob whose flag is clear must be absent from the image, and the §9 drift gate is the place to assert that
+
+**Test checkpoint:** A built release image mounts and shows `C:\Impossible\License\CREDITS.txt` plus one license file per `src/libs/` directory, with Monocypher's `LICENCE.md` present under both-spelling globbing; `release-{version}.json` lists every vendored library with an SPDX id matching `PROVENANCE.md`; the drift gate fails a deliberately-added unlisted `src/libs/dummy/` and passes once rowed; the image contains zero Icons8 PNG payloads. Platforms: host build + loopback mount of the release image; ISO checked with `isoinfo`.
+
+---
+
 ## OS Comparison
 
 
-| ⭐  | Feature                                                 | 🪟 Win11                                                             | 🐧 Linux                                        | 🚀 Impossible OS                                                          |
-| --- | ------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------- |
-| 💎  | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` | ✅ `/etc/os-release`; kernel `uname -r`         | ⬜ §1 `OS_VERSION_STRING`; `winver.exe`; in `HKLM\...\Impossible\Version` |
-| 💎  | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                     | ✅ `xz`/`zstd` compressed images (Fedora, Arch) | ⬜ §2 -- `zstd -T0 -9` + SHA-256                                          |
-| 💎  | Verified USB writer + cross-platform creator tool       | ✅ Rufus (3rd party); Windows Media                                  | ✅ `dd`; Etcher; Fedora Media Writer            | ⬜ §3 -- `make-usb.sh` with removable-only guard; `usb_creator.exe`       |
-| 💎  | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                           | ✅ Most distros use `-R -J`                     | ⬜ §4 -- extends `TODO-11 §6`; versioned filename                         |
-| 💎  | Ed25519 code signing + bootloader verification          | ✅ Authenticode RSA; Secure Boot UEFI                                | ✅ GRUB + shim + kernel                         | ⬜ §5 -- `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify |
-| ⭐  | Artifact manifest JSON                                  | ✅ Windows Update XML feeds (private)                                | ✅ Flatpak/Snap manifests; APT Packages         | ⬜ §6 -- `release-{ver}.json`; consumed by `TODO-03` update               |
-| 💎  | VM image variants                                       | ✅ Hyper-V VHD; VMware tools                                         | ✅ cloud images (QCOW2, VMDK, AMI)              | ⬜ §7 -- `qemu-img convert` to VMDK/VHD/VHDX; `.ovf`                      |
-| ⭐  | Byte-reproducible builds                                | ❌ Windows builds are not reproducible                               | ✅ Debian/NixOS reproducible builds             | ⬜ §8 -- `make verify-reproducible`; `llvm-ar rcsD`; documented           |
+| ⭐  | Feature                                                 | 🪟 Win11                                                                        | 🐧 Linux                                                  | 🚀 Impossible OS                                                          |
+| --- | ------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 💎  | `MAJOR.MINOR.BUILD` versioning baked into OS + registry | ✅ `10.0.22000`; `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`            | ✅ `/etc/os-release`; kernel `uname -r`                   | ⬜ §1 `OS_VERSION_STRING`; `winver.exe`; in `HKLM\...\Impossible\Version` |
+| 💎  | Compressed disk image with SHA-256                      | ✅ Windows ISO (no zstd); WinGet                                                | ✅ `xz`/`zstd` compressed images (Fedora, Arch)           | ⬜ §2 -- `zstd -T0 -9` + SHA-256                                          |
+| 💎  | Verified USB writer + cross-platform creator tool       | ✅ Rufus (3rd party); Windows Media                                             | ✅ `dd`; Etcher; Fedora Media Writer                      | ⬜ §3 -- `make-usb.sh` with removable-only guard; `usb_creator.exe`       |
+| 💎  | Joliet+Rock Ridge ISO                                   | ✅ Windows ISO uses Joliet                                                      | ✅ Most distros use `-R -J`                               | ⬜ §4 -- extends `TODO-11 §6`; versioned filename                         |
+| 💎  | Ed25519 code signing + bootloader verification          | ✅ Authenticode RSA; Secure Boot UEFI                                           | ✅ GRUB + shim + kernel                                   | ⬜ §5 -- `codesign_sign` on `kernel.exe`+`BOOTX64.EFI`; bootloader verify |
+| ⭐  | Artifact manifest JSON                                  | ✅ Windows Update XML feeds (private)                                           | ✅ Flatpak/Snap manifests; APT Packages                   | ⬜ §6 -- `release-{ver}.json`; consumed by `TODO-03` update               |
+| 💎  | VM image variants                                       | ✅ Hyper-V VHD; VMware tools                                                    | ✅ cloud images (QCOW2, VMDK, AMI)                        | ⬜ §7 -- `qemu-img convert` to VMDK/VHD/VHDX; `.ovf`                      |
+| 💎  | Third-party attribution shipped with artifacts          | ✅ Per-component licenses under `C:\Windows\System32\license.rtf` + OEM notices | ✅ `/usr/share/doc/*/copyright`; distro license manifests | ⬜ §9 `C:\Impossible\License\`; `third_party` manifest array; drift gate  |
+| ⭐  | Byte-reproducible builds                                | ❌ Windows builds are not reproducible                                          | ✅ Debian/NixOS reproducible builds                       | ⬜ §8 -- `make verify-reproducible`; `llvm-ar rcsD`; documented           |
 
 Impossible OS's `⭐` advantages: the **artifact manifest JSON** closes the loop to the
 on-OS update check (no separate update metadata infrastructure needed), **Ed25519 code
