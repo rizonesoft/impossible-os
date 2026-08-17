@@ -62,6 +62,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  22   | Bootloader-side NV floor read (EFI_TCG2 adapter)              | §21, TODO-21 §3 (selection)                               |  [ ]   |
 | 💎  |  23   | Headless enrollment authorization escape hatch                | §21, §15                                                  |  [ ]   |
 | 💎  |  24   | Bounded sequence + verified teardown for seal and attestation | §17, §8, §13                                              |  [ ]   |
+| 💎  |  25   | Field-level baseline mismatch attribution + status scoping    | §16, §18, §19                                             |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -543,8 +544,8 @@ The baseline records what §6 could reach: per-bank PCR digests, Secure Boot sta
 > **Accepted:** [H] an owner-writable NV baseline is still forgeable into VERIFIED, since CRC is integrity and not authenticity (reason: the NV lifecycle is §21's trust anchor; binding another field cannot fix an unauthenticated index) -> XREF: 01-boot-platform/TODO-13 §21 (item: "Close the index LIFECYCLE hole, without which none of this is a trust anchor" at line 667)
 > **Deferred:** [H] a pre-binding baseline is now a permanent MISMATCH with no reachable re-enrollment path (reason: needs the §15 authority plus an atomic migration, neither of which exists) -> XREF: 01-boot-platform/TODO-13 §19 (item: "Provide a reachable, authorized upgrade for a PRE-BINDING baseline")
 > **Deferred:** [M] the live baseline wrappers have no test caller, so `SELF_CORRUPT` propagation and the MISMATCH publication are unasserted (reason: needs a fake-TIS fixture and a descriptor-injection seam) -> XREF: 01-boot-platform/TODO-13 §19 (item: "Build the fake-TIS fixture and descriptor-injection seam the live baseline wrappers need")
-> **Deferred:** [M] every compare branch collapses to one undifferentiated MISMATCH, so a known migration is indistinguishable from tamper (reason: report-schema work owned by the publication section) -> XREF: 01-boot-platform/TODO-13 §18 (item: "Attribute a mismatch to the FIELD that differed, not only to a PCR")
-> **Deferred:** [M] the `"verified"` status string does not yet mean the kernel IMAGE was verified (reason: the image digests are unimplemented in their owning TODOs) -> XREF: 01-boot-platform/TODO-13 §18 (item: "Scope what the `\"verified\"` status string actually claims")
+> **Deferred:** [M] every compare branch collapses to one undifferentiated MISMATCH, so a known migration is indistinguishable from tamper (reason: report-schema work owned by the attribution section) -> XREF: 01-boot-platform/TODO-13 §25 (item: "Attribute a mismatch to the FIELD that differed, not only to a PCR") (RETARGETED 2026-08-17: §18 split the scalar-field attribution out to §25)
+> **Deferred:** [M] the `"verified"` status string does not yet mean the kernel IMAGE was verified (reason: the image digests are unimplemented in their owning TODOs) -> XREF: 01-boot-platform/TODO-13 §25 (item: "Scope what the `\"verified\"` status string actually claims") (RETARGETED 2026-08-17: §18 split the status-string scoping out to §25)
 > **Quality reviewed:** 2026-08-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+4M+2L fixed, 5 open | scope: kernel-code-quality (kernel-quality-auditor + parity-research-analyst)
 
 ---
@@ -611,17 +612,11 @@ Publication is field-by-field into one static struct with no lock and no snapsho
   - Two alternatives were considered and both rejected in writing so nobody re-derives them. An unsynchronized bounded copy is not publication at all: `tpm_integrity_report()` returns a pointer to a multi-field static struct, so a field-by-field copy straddles a publication and sees a new verdict beside old per-PCR detail -- the exact contradiction this section exists to remove.
   - A seqlock was the second, and it cannot meet this section's own checkpoint without more machinery than the swap costs: `seqlock_read_begin` spins while the sequence is odd, so a stuck-odd writer stalls a UI/VPD reader forever, and bounding the OUTER retries does not bound that spin. Making it work would need a copy-out accessor whose validation spans the whole copy, a defined result on attempt exhaustion, and migration of every existing caller off the pointer accessor.
   - Whichever form ships, no blocking or TPM work may sit inside the writer's publication region.
-- [ ] Attribute a mismatch to the FIELD that differed, not only to a PCR: every branch of `tpm_baseline_compare` collapses to one undifferentiated verdict today. -> XREF: 01-boot-platform/TODO-13 §16 (item: "Fixed the compare path").
-  - Filed from §16's parity review. Bank, Secure Boot state, Secure Boot validity, firmware hash, ABI-manifest presence, ABI-manifest content and each PCR all return the same `TPM_BASELINE_MISMATCH`, which reaches the operator as the single string `"baseline-mismatch"` (`src/kernel/tpm.c`).
-  - The per-PCR items above do not cover the SCALAR fields, so this is a distinct gap rather than a restatement. Windows ships WBCL/TCG-log decoding and systemd-pcrlock is per-component precisely so a verifier can say WHICH component moved.
-  - It becomes operator-visible the moment §16 ships: a pre-binding baseline flips to MISMATCH, and nothing distinguishes that known migration case from a genuine tamper event.
-- [ ] Scope what the `"verified"` status string actually claims, since it does not yet mean the kernel IMAGE was verified. -> XREF: 01-boot-platform/TODO-13 §19 (item: "Consume the kernel-image digest from its owner").
-  - `tpm_integrity_status_string()` reports a bare `"verified"` for a boot proven only against PCR replay, Secure Boot state, a firmware-version hash and the ABI-manifest shape. A reader carrying over Windows/Linux expectations will assume kernel content was measured, and it was not.
 - [ ] Correct the stale contract comment at `include/kernel/tpm.h:184-192`, which still describes the superseded Phase-0 "read golden values" design that §6 moved to Phase 1.
 - [ ] Annotate §6's accepted [H] per-PCR publication stamp RESOLVED (do not delete it) once this ships. -> XREF: §6 (the "Accepted: [H] baseline verify leaves stale per-PCR `NO_CRYPTO`" stamp).
 - [ ] Commit: `"tpm: atomic boot-integrity report publication"`
 
-**Test checkpoint:** after a published VERIFIED verdict no slot still reads `NO_CRYPTO`, and PCR 11 is present in the reported set; after a MISMATCH the per-PCR detail names which PCR differed rather than leaving the reader to guess. A reader paused between the pointer LOAD and its pin, while the writer publishes and tries to reclaim, still ends with a coherent report -- that acquisition window is the one a held-reference test starts too late to cover. A replay-tamper update racing a baseline-verified update leaves MISMATCH authoritative, never VERIFIED: the existing TAMPER-pins-MISMATCH guard must survive the new publication path. A reader held across several publications likewise sees a coherent report and no reuse underneath it; under repeated concurrent publication readers observe old-or-new, never a mix, and always complete -- a test that only asserts old-or-new passes against a writer that stalls readers forever. Scope: this section owns the report STRUCT and its publication only; the verdicts themselves stay with §4 (replay), §5 (Secure Boot) and §6 (baseline). Platforms: kernel unit suites; no TPM required.
+**Test checkpoint:** after a published VERIFIED verdict no slot still reads `NO_CRYPTO`, and PCR 11 is present in the reported set; after a MISMATCH the per-PCR detail names which PCR differed rather than leaving the reader to guess. A reader paused between the pointer LOAD and its pin, while the writer publishes and tries to reclaim, still ends with a coherent report -- that acquisition window is the one a held-reference test starts too late to cover. A replay-tamper update racing a baseline-verified update leaves MISMATCH authoritative, never VERIFIED: the existing TAMPER-pins-MISMATCH guard must survive the new publication path. A reader held across several publications likewise sees a coherent report and no reuse underneath it; under repeated concurrent publication readers observe old-or-new, never a mix, and always complete -- a test that only asserts old-or-new passes against a writer that stalls readers forever. Scope: this section owns the report STRUCT and its publication only; the verdicts themselves stay with §4 (replay), §5 (Secure Boot) and §6 (baseline), and WHICH scalar field differed plus what the `"verified"` string claims are §25. Platforms: kernel unit suites; no TPM required.
 
 ---
 
@@ -767,6 +762,24 @@ Its failure mode is the opposite of §21's. §21 fails by accepting a forged rec
 - [ ] Commit: `"tpm: bounded sequences and verified teardown for seal and attestation"`
 
 **Test checkpoint:** a slow-but-responsive TPM makes a seal and an unseal report BUDGET rather than spending an unbounded multiple of the per-command timeouts, with a control proving the same fake completes inside a generous budget. An attestation teardown that receives a transient warning is retried and, if never proven, reported -- asserted by counting FlushContext commands, not by the operation's return value. Scope: this section converts the seal and attestation flows only; the NV primitives and their budget are §17, and the authenticated lifecycle is §21. Platforms: fake-TIS unit suites are the whole automatable surface; the live swtpm round trip is operator-gated (no `swtpm` on the dev host).
+
+---
+
+## 25. Field-Level Baseline Mismatch Attribution and Status Scoping
+
+> **Spawned-by:** §18 (split)
+
+Split out of §18 because it is a different surface with a different owner: §18 owns the report STRUCT and its publication path (`include/kernel/tpm.h`, `src/kernel/tpm.c`), while this section changes what `tpm_baseline_compare` RETURNS (`src/kernel/tpm_baseline.{h,c}`) and what the reported status string claims. Neither half needs the other to land, and §18's own scope line already excluded the scalar fields.
+
+- [ ] Attribute a mismatch to the FIELD that differed, not only to a PCR: every branch of `tpm_baseline_compare` collapses to one undifferentiated verdict today. -> XREF: 01-boot-platform/TODO-13 §16 (item: "Fixed the compare path").
+  - Filed from §16's parity review. Bank, Secure Boot state, Secure Boot validity, firmware hash, ABI-manifest presence, ABI-manifest content and each PCR all return the same `TPM_BASELINE_MISMATCH`, which reaches the operator as the single string `"baseline-mismatch"` (`src/kernel/tpm.c`).
+  - §18's per-PCR items do not cover the SCALAR fields, so this is a distinct gap rather than a restatement. Windows ships WBCL/TCG-log decoding and systemd-pcrlock is per-component precisely so a verifier can say WHICH component moved.
+  - It becomes operator-visible the moment §16 ships: a pre-binding baseline flips to MISMATCH, and nothing distinguishes that known migration case from a genuine tamper event.
+- [ ] Scope what the `"verified"` status string actually claims, since it does not yet mean the kernel IMAGE was verified. -> XREF: 01-boot-platform/TODO-13 §19 (item: "Consume the kernel-image digest from its owner").
+  - `tpm_integrity_status_string()` reports a bare `"verified"` for a boot proven only against PCR replay, Secure Boot state, a firmware-version hash and the ABI-manifest shape. A reader carrying over Windows/Linux expectations will assume kernel content was measured, and it was not.
+- [ ] Commit: `"tpm: field-level baseline mismatch attribution"`
+
+**Test checkpoint:** each distinguishable mismatch cause (bank, Secure Boot state, Secure Boot validity, firmware hash, ABI-manifest presence, ABI-manifest content, a PCR digest) produces its OWN reported reason rather than the single `"baseline-mismatch"` string, with a control asserting a matching baseline still reports VERIFIED. The `"verified"` string states what it covers, so a reader cannot read kernel-image measurement into it. Scope: this section owns the compare path's return detail and the status strings only; the report struct and its publication are §18. Platforms: kernel unit suites; no TPM required.
 
 ---
 
