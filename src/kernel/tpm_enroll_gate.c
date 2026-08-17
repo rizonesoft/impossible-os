@@ -35,6 +35,14 @@ _Static_assert(BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED == (1u << 5),
                "tpm_enroll_gate: RECOVERY_TRIGGERED flag bit moved -- re-check the gate");
 _Static_assert(BOOT_SELECTION_RECOVERY_REQUEST == 6,
                "tpm_enroll_gate: BOOT_SELECTION_RECOVERY_REQUEST renumbered -- re-check the gate");
+/* VERIFIED is pinned FIRST because it is the value the admitting comparison
+ * actually tests. The original set pinned TAMPER and UNVERIFIABLE and omitted
+ * it, which had the coverage inverted relative to use: UNVERIFIABLE is never
+ * compared by value here, while a renumbered VERIFIED would quietly turn the
+ * replay whitelist into a whitelist for the wrong verdict. */
+_Static_assert(TPM_REPLAY_VERIFIED == 0,
+               "tpm_enroll_gate: TPM_REPLAY_VERIFIED renumbered -- the replay "
+               "whitelist compares against it directly");
 _Static_assert(TPM_REPLAY_TAMPER == 1,
                "tpm_enroll_gate: TPM_REPLAY_TAMPER renumbered -- re-check the gate");
 _Static_assert(TPM_REPLAY_UNVERIFIABLE == 2,
