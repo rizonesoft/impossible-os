@@ -202,7 +202,9 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg);
  * baseline, a corrupt stored blob, a corrupt kernel descriptor, a snapshot that
  * failed. That 0 means NOT EVALUATED and the caller must publish it as such;
  * treating it as "no PCR problems" would report a clean per-PCR detail for a
- * boot whose PCRs were never checked. Both out params may be NULL.
+ * boot whose PCRs were never checked. The two out params are INDEPENDENTLY
+ * optional: a status buffer with no count pointer is filled normally, and a
+ * count pointer with no status buffer reports 0.
  *
  * A non-NULL out_pcr_status with pcr_cap smaller than the golden PCR count is
  * BADARG with NO verdict produced, rather than a truncated detail array. A

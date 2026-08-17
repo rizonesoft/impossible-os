@@ -471,8 +471,16 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
      * lets the report say "the overall verdict is MISMATCH and every PCR
      * verified" -- the honest reading of a Secure-Boot-state or ABI-manifest
      * change, and the one that stops it looking like PCR tampering. */
-    if (out_pcr_status && out_pcr_n)
-        *out_pcr_n = tpm_baseline_compare_pcrs(&golden, &current,
-                                               out_pcr_status, pcr_cap);
+    /* The two out-params are INDEPENDENTLY optional, as the header says. Gating
+     * the comparison on both being present meant a caller that supplied a valid
+     * status buffer but declined the count got OK and a verdict with its buffer
+     * untouched -- silently stale detail beside a fresh verdict. Fill the buffer
+     * whenever it exists; store the count only when its own pointer exists. */
+    if (out_pcr_status) {
+        uint8_t written = tpm_baseline_compare_pcrs(&golden, &current,
+                                                    out_pcr_status, pcr_cap);
+        if (out_pcr_n)
+            *out_pcr_n = written;
+    }
     return TPM_BASELINE_OK;
 }

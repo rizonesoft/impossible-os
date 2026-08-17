@@ -17,6 +17,7 @@
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical measured set) */
 #include "kernel/tpm_baseline.h"    /* TPM_BASELINE_MAX_PCRS (report-size invariant) */
+#include "kernel/tpm_replay.h"      /* TPM_REPLAY_TAMPER (the pinned verdict) */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
@@ -532,8 +533,11 @@ void tpm_evlog_export_cel(void)
  * never mutated field-by-field in place. It used to be one static struct that
  * every writer poked directly, which was safe only because all four writers
  * happened to run single-threaded on the BSP before the APs came up -- an
- * accident of init ordering rather than a stated contract, while the readers
- * (UI, VPD, attestation) are ordinary consumers with no such guarantee.
+ * accident of init ordering rather than a stated contract. The readers wired
+ * today are the attestation report builder (tpm_attest_report.c), the baseline
+ * snapshot, and a Phase-1 boot log line; the UI and VPD consumers the report
+ * was designed for are not wired yet, and none of them would carry that
+ * single-threaded guarantee when they are.
  *
  * Two slots are enough, and the reason is the reader protocol rather than the
  * slot count: a reader holds s_publish_lock across BOTH the pointer load and
@@ -552,6 +556,17 @@ void tpm_evlog_export_cel(void)
  *
  * No blocking work, TPM transaction or serial output may sit inside the
  * publication region; callers build their inputs first and publish last. */
+/* THE LOCK IS THE SAFETY PROPERTY, NOT THE SLOT COUNT OR THE ATOMICS. Under the
+ * shipped reader protocol -- tpm_integrity_report_copy holds s_publish_lock
+ * across BOTH the pointer load and the copy -- a single buffer would be equally
+ * safe, so the second slot and the ACQUIRE/RELEASE pair add no protection
+ * TODAY. They are kept because they are what makes the published value an
+ * immutable snapshot rather than a mutable struct, which is the property a
+ * future lock-free or RCU reader would need and which is impossible to retrofit
+ * onto in-place mutation. Do NOT read the release-store as licence to load the
+ * pointer without the lock: two slots do not bound how long a reader may hold
+ * one, so an unlocked reader can still be overtaken. Going lock-free requires
+ * hazard pointers or an RCU grace period first (see tpm.h). */
 static struct boot_integrity_report s_report_slots[2];
 static struct boot_integrity_report *s_report_published;   /* NULL until first publish */
 static uint8_t s_report_next_slot;                         /* index of the free slot */
@@ -584,6 +599,25 @@ static void integrity_publish_locked(const struct boot_integrity_report *next)
 {
     struct boot_integrity_report *slot = &s_report_slots[s_report_next_slot];
     memcpy(slot, next, sizeof(*slot));
+    /* NORMALIZE the reported count at the publication boundary, so no consumer
+     * can be handed a pcr_count larger than pcrs[] actually holds. Every WRITE
+     * path already clamps, but the count itself was passed through verbatim --
+     * and a reader's natural `for (i = 0; i < r.pcr_count; i++)` idiom over its
+     * own struct would then over-read its stack copy. Clamping here makes the
+     * published count trustworthy for every reader instead of asking each one to
+     * re-derive the bound.
+     *
+     * The clamp also INVALIDATES a VERIFIED verdict rather than silently making
+     * an out-of-range count look well-formed. A producer that reports 255 PCRs
+     * is corrupt, and the fact that its slot contents happen to survive
+     * truncation is no reason to trust the claim it attached to them -- a silent
+     * clamp would launder exactly that corruption into a credible integrity
+     * assertion. */
+    if (slot->pcr_count > (uint8_t)BOOT_INTEGRITY_MAX_PCRS) {
+        slot->pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+        if (slot->overall_status == (uint8_t)BOOT_INTEGRITY_VERIFIED)
+            slot->overall_status = (uint8_t)BOOT_INTEGRITY_UNKNOWN;
+    }
     s_report_next_slot = (uint8_t)(s_report_next_slot ^ 1u);
     __atomic_store_n(&s_report_published, slot, __ATOMIC_RELEASE);
 }
@@ -824,11 +858,24 @@ boot_result_t tpm_integrity_init(void)
                                         uefi_secureboot_enabled(), set, n))
             set_drift = n;
     }
-    if (no_tpm)
+    /* A measured-set drift degrades the SUBSYSTEM too, not just the report.
+     * Returning BOOT_OK there let boot_hw.c compute worst == BOOT_OK and mark
+     * SUBSYS_TPM fully ready while the report itself said UNKNOWN -- a
+     * subsystem status contradicting the thing it owns. */
+    if (no_tpm || set_drift >= 0)
         res = BOOT_DEGRADED;
 
+    /* ENFORCE the "FIRST snapshot" contract rather than only documenting it.
+     * This is the one writer that publishes WITHOUT base-loading, because there
+     * is nothing to base-load from; that also means a second call would wipe a
+     * published replay-TAMPER pin and the RNG-availability flag. The other
+     * writers are idempotent by construction (they base-load); this one is not,
+     * so it says so in code. */
     spin_lock_irqsave(&s_publish_lock, &flags);
-    integrity_publish_locked(&r);
+    if (__atomic_load_n(&s_report_published, __ATOMIC_ACQUIRE) == (void *)0)
+        integrity_publish_locked(&r);
+    else
+        res = BOOT_DEGRADED;
     spin_unlock_irqrestore(&s_publish_lock, flags);
 
     /* Logging is deliberately OUTSIDE the publication region -- serial output is
@@ -889,8 +936,8 @@ const char *tpm_integrity_status_label(const struct boot_integrity_report *r)
         return "unknown";
     /* event-log tamper (replay != hardware) is checked BEFORE the baseline
      * status so the TAMPER->MISMATCH escalation is reported as tamper, not as a
-     * generic baseline mismatch. 1 == TPM_REPLAY_TAMPER (kernel/tpm_replay.h). */
-    if (r->replay_verdict == 1u)
+     * generic baseline mismatch. */
+    if (r->replay_verdict == (uint8_t)TPM_REPLAY_TAMPER)
         return "event-log-tamper";
     switch (r->overall_status) {
         case BOOT_INTEGRITY_VERIFIED:    return "verified";
@@ -921,9 +968,8 @@ void tpm_integrity_set_replay_verdict(uint8_t verdict)
     integrity_base_locked(&r);
     r.replay_verdict = verdict;
     /* A replay/hardware mismatch (event-log tamper) is a definitive integrity
-     * failure regardless of any golden baseline -- escalate the overall status.
-     * 1 == TPM_REPLAY_TAMPER (see kernel/tpm_replay.h). */
-    if (verdict == 1u)
+     * failure regardless of any golden baseline -- escalate the overall status. */
+    if (verdict == (uint8_t)TPM_REPLAY_TAMPER)
         r.overall_status = BOOT_INTEGRITY_MISMATCH;
     integrity_publish_locked(&r);
     spin_unlock_irqrestore(&s_publish_lock, flags);
@@ -977,8 +1023,40 @@ void tpm_integrity_publish_baseline(uint8_t status,
      * would let a baseline writer that read a pre-tamper snapshot overwrite the
      * tamper verdict with VERIFIED, which is exactly the lost update that safe
      * readers alone do not prevent. */
-    if (r.replay_verdict != 1u)
+    if (r.replay_verdict != (uint8_t)TPM_REPLAY_TAMPER)
         r.overall_status = status;
+
+    /* COHERENCE: a VERIFIED verdict is a positive assertion about every PCR the
+     * report carries, so it may not stand beside a slot that is not itself
+     * VERIFIED. Without this, publish_baseline(VERIFIED, st, 4) would report
+     * pcr_count=9 with five UNKNOWN slots and an overall VERIFIED -- the exact
+     * verdict-vs-detail contradiction this publication path exists to remove,
+     * reintroduced through a short detail array instead of through a torn read.
+     * Downgrade to UNKNOWN rather than trusting the caller: an integrity report
+     * that cannot back its own claim must not make it. Non-VERIFIED verdicts are
+     * untouched -- MISMATCH or NO_BASELINE beside partial detail asserts nothing
+     * that needs backing.
+     *
+     * The count test is EXACT EQUALITY against the measured set, not merely
+     * "non-zero", and the difference is the whole guard. A loop bounded by
+     * pcr_count passes VACUOUSLY on a zero-slot base, and passes WRONGLY on a
+     * truncated one: a snapshot carrying 4 slots all marked VERIFIED would
+     * publish VERIFIED while saying nothing about the other five measured PCRs.
+     * An oversized count is equally unacceptable -- integrity_publish_locked
+     * clamps it, which would otherwise launder a corrupt producer state into a
+     * well-formed VERIFIED report. Only a report covering exactly the measured
+     * set can carry the claim. */
+    if (r.overall_status == (uint8_t)BOOT_INTEGRITY_VERIFIED) {
+        if (r.pcr_count != (uint8_t)BOOT_INTEGRITY_MAX_PCRS) {
+            r.overall_status = (uint8_t)BOOT_INTEGRITY_UNKNOWN;
+        } else {
+            for (i = 0; i < (uint8_t)BOOT_INTEGRITY_MAX_PCRS; i++)
+                if (r.pcrs[i].status != (uint8_t)BOOT_INTEGRITY_VERIFIED) {
+                    r.overall_status = (uint8_t)BOOT_INTEGRITY_UNKNOWN;
+                    break;
+                }
+        }
+    }
 
     integrity_publish_locked(&r);
     spin_unlock_irqrestore(&s_publish_lock, flags);

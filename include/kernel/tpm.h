@@ -325,7 +325,14 @@ void tpm_integrity_set_replay_verdict(uint8_t verdict);
  * A prior replay TAMPER pins overall_status at MISMATCH -- event-log tamper
  * outranks a baseline match, so no later baseline verdict may downgrade it.
  * The per-PCR detail is still refreshed in that case: pinning the overall
- * verdict is not a reason to keep reporting stale per-PCR values. */
+ * verdict is not a reason to keep reporting stale per-PCR values.
+ *
+ * COHERENCE: a VERIFIED status is published ONLY when the report covers EXACTLY
+ * the measured set (pcr_count == BOOT_INTEGRITY_MAX_PCRS) and every one of
+ * those PCRs is itself VERIFIED. A partial, truncated, oversized, absent, or
+ * non-verified detail set downgrades the published verdict to UNKNOWN rather
+ * than asserting a match the report cannot back. Other verdicts pass through
+ * unchanged -- they assert nothing that needs backing. */
 void tpm_integrity_publish_baseline(uint8_t status,
                                     const uint8_t *pcr_status, uint8_t n);
 

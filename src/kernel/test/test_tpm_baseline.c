@@ -544,6 +544,27 @@ static void test_baseline_verify_no_transport(void)
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
                    "NULL out-params are accepted on the no-transport path");
 
+    /* The out-params are INDEPENDENTLY optional, per the header. A status buffer
+     * WITHOUT a count pointer is legal and must not be refused for that reason;
+     * the capacity rule still applies to it. */
+    memset(pcr_status, 0xEE, sizeof(pcr_status));
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status, (uint8_t)TPM_BASELINE_MAX_PCRS,
+                             (uint8_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "a status buffer without a count pointer is accepted");
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status, 1u, (uint8_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
+                   "the capacity rule still applies without a count pointer");
+    /* And a count pointer WITHOUT a status buffer is legal, reporting 0. */
+    pcr_n = 0xEEu;
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             (uint8_t *)0, 0u, &pcr_n);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "a count pointer without a status buffer is accepted");
+    TEST_ASSERT_EQ(pcr_n, 0u, "the count is zeroed even with no status buffer");
+
     /* An UNDERSIZED detail buffer is BADARG, refused as an argument error
      * before any TPM work -- never a verdict beside a truncated detail array.
      * It is checked ahead of the transport, so it outranks NO_TPM here, which
@@ -724,6 +745,12 @@ static void test_integrity_publication(void)
         st[i] = (uint8_t)BOOT_INTEGRITY_NO_TPM;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 255u);
     tpm_integrity_report_copy(&b);
+    /* pcr_count is NORMALIZED at publication, so no reader can be handed a
+     * count larger than pcrs[] holds -- a reader's natural
+     * `for (i = 0; i < r.pcr_count; i++)` over its own copy would otherwise
+     * over-read its stack struct by 246 entries. */
+    TEST_ASSERT_EQ(b.pcr_count, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                   "an oversized pcr_count is clamped at publication");
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         TEST_ASSERT_EQ(b.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_NO_TPM,
                        "an oversized count writes every real slot");
@@ -806,6 +833,114 @@ static void test_integrity_publication(void)
                        (i < 4u) ? (uint8_t)BOOT_INTEGRITY_VERIFIED
                                 : (uint8_t)BOOT_INTEGRITY_UNKNOWN,
                        "a partial count covers its prefix and blanks the tail");
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
+                   "a non-VERIFIED verdict is unaffected by partial detail");
+
+    /* COHERENCE: a partial detail array may NOT carry a VERIFIED verdict. The
+     * earlier version of this test asserted only the prefix/tail split and so
+     * legitimized publishing VERIFIED beside five UNKNOWN slots -- the very
+     * verdict-vs-detail contradiction the section exists to remove.
+     *
+     * Reset to an UNPINNED base first: earlier blocks raised a replay TAMPER,
+     * which pins MISMATCH and would mask the coherence guard entirely -- every
+     * assertion below would pass for the wrong reason. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+    tpm_integrity_test_republish(&a);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.replay_verdict, 0u,
+                   "control: the coherence checks run on an unpinned report");
+
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st, 4u);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "VERIFIED is refused when the detail does not cover every PCR");
+    /* A NULL detail array cannot back a VERIFIED verdict either. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, (const uint8_t *)0, 0u);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "VERIFIED is refused when no detail was evaluated at all");
+    /* Control: FULL coverage still publishes VERIFIED, so the guard rejects
+     * incoherence rather than rejecting the verdict outright. */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                   "control: full VERIFIED detail publishes a VERIFIED verdict");
+    /* And a single non-VERIFIED slot is enough to withhold the claim. */
+    st[6] = (uint8_t)BOOT_INTEGRITY_MISMATCH;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "one non-verified PCR withholds the VERIFIED verdict");
+
+    /* A ZERO-SLOT report cannot carry VERIFIED either. A guard bounded only by
+     * pcr_count passes VACUOUSLY here -- it finds no offending slot precisely
+     * BECAUSE there is no detail at all, which is the strongest case for
+     * withholding the claim, not the weakest. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = 0u;
+    tpm_integrity_test_republish(&a);
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.pcr_count, 0u, "control: the base really carries no slots");
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "a zero-slot report cannot claim VERIFIED");
+
+    /* A TRUNCATED count is equally unacceptable, and a non-zero test would miss
+     * it: 4 slots all marked VERIFIED says nothing about the other five
+     * measured PCRs, so the claim must still be withheld. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = 4u;
+    for (i = 0; i < 4u; i++) {
+        a.pcrs[i].pcr_index = i;
+        a.pcrs[i].status = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    }
+    tpm_integrity_test_republish(&a);
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st, 4u);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.pcr_count, 4u, "control: the base really is truncated");
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "a truncated report cannot claim VERIFIED even if all its "
+                   "slots verified");
+
+    /* An OVERSIZED producer count must not be laundered into a valid-looking
+     * VERIFIED by the publication-boundary clamp: the slot contents surviving
+     * truncation is no reason to trust the claim attached to them. */
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = 255u;
+    a.overall_status = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+        a.pcrs[i].status = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    }
+    tpm_integrity_test_republish(&a);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.pcr_count, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                   "the out-of-range count is clamped");
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
+                   "a clamped count invalidates the VERIFIED claim it carried");
+
+    /* Control: the SAME slot contents with an in-range count DO verify, so the
+     * rule above rejects the corrupt count rather than the contents. */
+    a.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    a.overall_status = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_test_republish(&a);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
+                   "control: an in-range count with the same slots verifies");
 
     tpm_integrity_test_republish(&saved);
 }

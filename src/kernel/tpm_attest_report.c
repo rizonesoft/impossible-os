@@ -9,7 +9,7 @@
 #include "kernel/types.h"
 #include "kernel/tpm_attest_report.h"
 #include "kernel/boot_info.h"
-#include "kernel/tpm.h"                  /* tpm_integrity_report, tpm_pcr_get, TPM_ALG_SHA256 */
+#include "kernel/tpm.h"                  /* tpm_integrity_report_copy, tpm_pcr_get, TPM_ALG_SHA256 */
 #include "kernel/tpm_seal.h"             /* TPM_ALG_RSA (EK-cert NV-index selector) */
 #include "kernel/tpm_pcr_alloc.h"        /* tpm_pcr_quote_mask */
 #include "kernel/boot_proto_descriptor.h"/* boot_proto_abi_digest (validated ABI identity) */

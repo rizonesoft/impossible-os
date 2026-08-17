@@ -1,6 +1,6 @@
 {
   "total_suites": 3002,
-  "total_assertions": 12654,
+  "total_assertions": 12672,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -97,7 +97,7 @@
     {"file": "test_timer_tick_cb.c", "suites": 2, "assertions": 4},
     {"file": "test_tpm_attest.c", "suites": 11, "assertions": 114},
     {"file": "test_tpm_attest_report.c", "suites": 3, "assertions": 63},
-    {"file": "test_tpm_baseline.c", "suites": 11, "assertions": 145},
+    {"file": "test_tpm_baseline.c", "suites": 11, "assertions": 163},
     {"file": "test_tpm_enroll_gate.c", "suites": 17, "assertions": 78},
     {"file": "test_tpm_event_log.c", "suites": 9, "assertions": 29},
     {"file": "test_tpm_nv.c", "suites": 22, "assertions": 283},
