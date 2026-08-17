@@ -23,7 +23,14 @@ Every change below carries a refusal-direction control (a case that must still b
 
 ## Found live this cycle
 
-<!-- The run files here. Nothing yet: v16 opened at close-out, before the next arm. -->
+<!-- The run files here. -->
+
+- [ ] `main` is RED: the vendored-ACPICA object rule omits the KERNEL_TESTS flavor stamp, so a flavor flip relinks stale objects (operator-applied: receipt surface)
+      - Observed 2026-08-17 at PREFLIGHT: `preflight.py` returned `ok: false` with `ours_red`, and `Build` has failed on every push since `4b376775` (runs 32061307096 at `cf316756`, 32062652670 at `c4f422d2` = HEAD). Single failing test, `FAIL 1/1357`: `KERNEL_TESTS flavor stamp is a real prereq of all C object rules`.
+      - Reproduced locally from the test's own greps (`scripts/test-tooling.sh:8450-8451`): 16 of 17 C object rules carry `$(KERNEL_TESTS_STAMP)`. The one that does not is `Makefile:1990`, `$(BUILD_DIR)/kernel/acpica/%.o: $(SRC_DIR)/kernel/acpica/%.c | $(GENERATED_HDRS)`, added by the ACPICA vendoring commit `41d4fd39b`.
+      - **Not cosmetic, and the test is right.** `override CFLAGS += $(KERNEL_TESTS_FLAG)` (`Makefile:115`) and `ACPICA_CFLAGS := $(filter-out -Werror,$(CFLAGS)) ...` (`Makefile:401`), so every ACPICA object IS compiled with `-DKERNEL_TESTS`/`-UKERNEL_TESTS`. With the stamp absent from its prerequisites, a `KERNEL_TESTS=on -> off` flip rebuilds nothing under `src/kernel/acpica/` and links objects built under the opposite flavor. That is precisely the silent-relink failure the assertion was written to catch, so do NOT widen the assertion.
+      - Fix is one line: give `Makefile:1990` the same real prerequisites the hand-written OSL rule beside it already carries (`Makefile:1983`), i.e. `... $(SRC_DIR)/kernel/acpica/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)`. Cost: a flavor flip now rebuilds the vendored tree, which is the correct price and only paid on a flip.
+      - Filed rather than applied because `Makefile` is receipt-surface machinery and `receipt_surface_guard.py` BLOCKs the unattended run from editing it. The run advanced past it per doctrine; every section shipped until an operator lands this pushes on top of a red `Build`.
 
 ## Carried forward from v15 -- open
 
