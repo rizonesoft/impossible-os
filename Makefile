@@ -1987,7 +1987,7 @@ $(BUILD_DIR)/kernel/acpi_osl.o: $(SRC_DIR)/kernel/acpi_osl.c $(KERNEL_TESTS_STAM
 	@echo "[CC] $<"
 
 # Vendored ACPICA. Matched ahead of the generic rule by being more specific.
-$(BUILD_DIR)/kernel/acpica/%.o: $(SRC_DIR)/kernel/acpica/%.c | $(GENERATED_HDRS)
+$(BUILD_DIR)/kernel/acpica/%.o: $(SRC_DIR)/kernel/acpica/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(ACPICA_CFLAGS) -c $< -o $@
 	@echo "[CC-ACPICA] $<"
