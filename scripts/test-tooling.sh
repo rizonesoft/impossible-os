@@ -798,6 +798,25 @@ else
     t_fail "scripts/tests/test_todo_fence.py not found"
 fi
 
+# The alias-staleness promotion check (scripts/tests/test_alias_staleness.py).
+# `scripts/todo_fence.py` is a shim of one-line wrappers, and nothing watched
+# whether a wrapper kept its callers or kept matching its target: four had gone
+# stale by the time the check was written. Every fixture pins one way a
+# name-based scan gets it WRONG -- a comment-only reference, a method sharing a
+# module function's name, a caller inside a shell heredoc, and an
+# annotation-shaped signature difference that is not drift.
+ALIAS_TEST="$REPO_ROOT/scripts/tests/test_alias_staleness.py"
+if [ -f "$ALIAS_TEST" ]; then
+    ALIAS_OUT=$(python3 "$ALIAS_TEST" 2>&1)
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_alias_staleness.py PASS ($(printf '%s\n' "$ALIAS_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_alias_staleness.py FAIL ($(printf '%s\n' "$ALIAS_OUT" | tail -3 | tr '\n' ' '))"
+    fi
+else
+    t_fail "scripts/tests/test_alias_staleness.py not found"
+fi
+
 # Query-surface output bounds (test_query_bounds.sh). Separate suite from
 # test_build.sh: that one owns subcommand SEMANTICS, this one owns what
 # comes OUT of them (default limit, fail-closed ceiling, envelope fields,

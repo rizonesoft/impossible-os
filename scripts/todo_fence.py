@@ -8,7 +8,7 @@ every caller outside that directory has to load it by path. Four copies of an
 wrong and four places a later move has to be repeated -- and the whole point of
 section 36 was ONE tracker rather than one per parser. The import lives here.
 
-WHAT THIS ADDS OVER RE-EXPORTING `fence_mask`. A mask alone is NOT enough for a
+WHY THE SURFACE IS `fence_scan` AND NOT A MASK. A mask alone is NOT enough for a
 gate. `cache_schema.fence_mask` is fail-closed about emitting wrong structure --
 an unclosed fence masks its opener through EOF -- but for a parser whose output
 REFUSES a commit or a fixpoint that same rule is fail-OPEN: every later item,
@@ -16,9 +16,11 @@ heading, row and stamp disappears, so the gate goes quiet on exactly the
 malformed document it should be loudest about. `build.py:1030` already consumes
 `fence_scan` and REFUSES rather than publishing the erasure; a gate that took
 only the mask would silently disagree with the producer about the same file.
-So the terminal flags are part of this module's surface, `unclosed_reason()`
-gives all four gates one wording, and each of them turns a truthy reason into a
-visible refusal (Codex design review, section 38, [high]).
+So the terminal flags are part of this module's surface, the shared
+`ScanResult.unclosed_reason()` gives all four gates one wording, and each of
+them turns a truthy reason into a visible refusal (Codex design review, section
+38, [high]). The mask-only wrapper this module once exported was retired in
+section 49 having never acquired a caller -- see the note below `__all__`.
 
 Measured 2026-08-11 across all 281 files under `todo/`: ZERO carry an unclosed
 fence and ZERO carry an unclosed HTML comment, so the refusal costs nothing
@@ -33,12 +35,21 @@ import sys
 from pathlib import Path
 
 __all__ = [
-    "fence_step", "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
+    "fence_scan", "scan_text",
     "terminal_category", "classify_heading", "heading_report", "is_h2",
     "h2_title",
-    "mask_text", "unmasked", "replace_atomically",
+    "mask_text", "replace_atomically",
     "StagedSnapshotError", "index_tree", "staged_docs",
 ]
+
+# RETIRED 2026-08-17 by `scripts/lint/check_alias_staleness.py`, the promotion of
+# the `alias-staleness` finding class: `fence_step`, `fence_mask`, `unmasked` and
+# `unclosed_reason`. The first two had no reference anywhere in the tracked tree,
+# and the last two were reached only by their own tests. Production callers of
+# the last one were never using this function at all -- they call the
+# `ScanResult.unclosed_reason()` METHOD, which shares the name and nothing else,
+# and is exactly why a textual scan reported 22 healthy references to a wrapper
+# no gate calls. Re-add any of them WITH a caller, never ahead of one.
 
 _CS = None
 
@@ -71,25 +82,6 @@ def _cache_schema():
     return _CS
 
 
-def fence_step(state, line: str):
-    """One line of fenced-block state -- see `cache_schema.fence_step`.
-
-    THE LEAF RULE, and it expects a line whose enclosing container prefixes are
-    already stripped. `validate.py` is the one caller that steps line by line
-    rather than taking a whole-document mask, and it drives the container phase
-    itself for exactly that reason.
-
-    Its other caller was `todo-reflow.py`, which ran it over indent-stripped
-    lines to cover the container-indented fences the mask could not see. Section
-    39 made `fence_scan` container-aware and that fallback was retired: an
-    indent-stripped step is a heuristic superset that cannot tell a container
-    fence from a root indented code block, so it is the wrong tool now that the
-    shared scan answers the question properly. A caller reaching for this to
-    hand-roll container handling is re-opening the closed limit.
-    """
-    return _cache_schema().fence_step(state, line)
-
-
 def fence_scan(lines):
     """A `ScanResult` -- see `cache_schema.fence_scan`.
 
@@ -99,11 +91,6 @@ def fence_scan(lines):
     boolean flag.
     """
     return _cache_schema().fence_scan(list(lines))
-
-
-def fence_mask(lines):
-    """`mask` only. Use `fence_scan` in a GATE; see the module docstring."""
-    return fence_scan(lines).mask
 
 
 def scan_text(text: str):
@@ -126,22 +113,6 @@ def scan_text(text: str):
     return _cache_schema().scan_text(text)
 
 
-def unclosed_reason(terminal):
-    """One wording for all four gates -- see `cache_schema.unclosed_reason`.
-
-    Takes the `Terminal` value (or None) since section 42, not a pair of
-    booleans: with seven HTML block types plus fences there is no fixed set of
-    flags to pass, and the message names the construct AND its opening line.
-
-    The sentence MOVED to `cache_schema` in section 39 rather than being copied
-    there: `validate.py` sits beside that module and cannot import this shim
-    without a `sys.path` insertion, and a second copy of the wording is the same
-    drift this module exists to end. This stays because the gates reach the
-    tracker through here and should not each learn where it really lives.
-    """
-    return _cache_schema().unclosed_reason(terminal)
-
-
 def terminal_category(terminal) -> str:
     """The producer error category for a `Terminal` -- see `cache_schema`.
 
@@ -155,8 +126,8 @@ def terminal_category(terminal) -> str:
 def classify_heading(line: str):
     """The ONE `## N.` rule -- see `cache_schema.classify_heading`.
 
-    Here for the same reason `unclosed_reason` is: the gates reach the tracker
-    through this shim and should not each learn where the rule really lives.
+    Here for the same reason the terminal helpers are: the gates reach the
+    tracker through this shim and should not each learn where the rule lives.
     Section 43 routed `todo-reachability.py` and `todo-section-order.py` here,
     which is what let their two private grammars be deleted rather than merely
     documented as divergent.
@@ -182,19 +153,11 @@ def heading_report(line_no: int, result) -> str:
     """The shared wording for an unrepresentable heading -- see `cache_schema`.
 
     Paired with `classify_heading` for the same reason `terminal_category` is
-    paired with `unclosed_reason`: a gate and the producer disagreeing about how
-    to describe one malformed heading reads as two separate defects.
+    paired with the scan's own terminal wording: a gate and the producer
+    disagreeing about how to describe one malformed heading reads as two
+    separate defects.
     """
     return _cache_schema().heading_report(line_no, result)
-
-
-def unmasked(lines, mask):
-    """`(index, line)` for the lines that are ordinary Markdown structure.
-
-    The index is into the ORIGINAL list, so a caller can still report a line
-    number or slice the untouched document.
-    """
-    return ((i, l) for i, l in enumerate(lines) if not mask[i])
 
 
 def replace_atomically(path, text: str, expect: str) -> None:

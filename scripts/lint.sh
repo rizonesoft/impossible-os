@@ -2623,6 +2623,66 @@ PYOSC
 fi
 
 # ============================================================================
+# Check 28: a `todo_fence` export that no longer has a reason to exist
+# ============================================================================
+# The promotion of the `alias-staleness` finding class, owned by the todo
+# metadata layer roadmap. Its shared-fence-tracker consolidation work retired
+# six private parsers to one-line wrappers over
+# `cache_schema`, and nothing then watched whether a wrapper kept its callers or
+# kept matching what it forwards to. Four had already gone stale by the time the
+# check was written: `fence_step` and `fence_mask` had no reference at all, and
+# `unclosed_reason` and `unmasked` were reached only by their own tests.
+#
+# EVERY VERDICT IS A WARNING; the only ERROR is a checker that could not RUN.
+# Three review rounds argued the enforcement level both ways and the evidence
+# settled it. Erroring on a reachability verdict was tried and withdrawn: live
+# consumers (`{"fence": mod}` reached by subscript, `helper(mod=tf)`,
+# `helper.use(tf)`) all read DEAD. Erroring on DRIFT was tried and withdrawn
+# too: renaming a target parameter while positional forwarding still works, and
+# a transparent decorator exposing `(*args, **kwargs)`, both report drift
+# without any behaviour changing. A check whose false positives stop work gets
+# skipped, and a skipped check is worth less than a noisy one. The class this
+# promotes was never short of a refusal -- it was short of anyone LOOKING.
+#
+# Skip via SKIP_LINT_ALIAS_STALENESS=1.
+if [ "${SKIP_LINT_ALIAS_STALENESS:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 28 (alias-staleness) skipped via SKIP_LINT_ALIAS_STALENESS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ -f "$REPO_ROOT/scripts/lint/check_alias_staleness.py" ] \
+     && [ -f "$REPO_ROOT/scripts/todo_fence.py" ]; then
+    LINT28_OUT="$(mktemp -t lint-alias-staleness.XXXXXX)"
+    LINT28_RC=0
+    python3 "$REPO_ROOT/scripts/lint/check_alias_staleness.py" "$REPO_ROOT" \
+        >"$LINT28_OUT" 2>&1 || LINT28_RC=$?
+    # PARSED REGARDLESS OF EXIT CODE. Gating the parse on a nonzero exit is how
+    # UNKNOWN went silent: it exits advisory, and a silent UNKNOWN means the
+    # reachability half has stopped working with nothing to say so.
+    while IFS= read -r _l28; do
+        [ -z "$_l28" ] && continue
+        _l28="${_l28#\[check_alias_staleness\] }"
+        # ONLY a FATAL line is an error: that is the checker reporting it could
+        # not run, which is the one claim here with no false-positive path.
+        # Every verdict -- DRIFT, DEAD, TEST-ONLY, UNKNOWN -- warns.
+        case "$_l28" in
+            FATAL*)
+                echo -e "${RED}error${NC}: Check 28 (alias-staleness) $_l28"
+                ERRORS=$((ERRORS + 1)) ;;
+            *)
+                echo -e "${YELLOW}warn${NC}: Check 28 (alias-staleness) $_l28"
+                WARNINGS=$((WARNINGS + 1)) ;;
+        esac
+    done < <(grep '^\[check_alias_staleness\]' "$LINT28_OUT" 2>/dev/null || true)
+    # FAIL CLOSED ON THE MECHANISM, never on the verdict. rc 0 and rc 1 are the
+    # tool speaking; anything else means it did not get to speak, and a check
+    # that could not run proves nothing -- the same stance Check 26 takes.
+    if [ "$LINT28_RC" != "0" ] && [ "$LINT28_RC" != "1" ]; then
+        echo -e "${RED}error${NC}: Check 28 (alias-staleness) checker did not run to completion (rc $LINT28_RC) -- a check that cannot run proves nothing"
+        ERRORS=$((ERRORS + 1))
+    fi
+    rm -f "$LINT28_OUT"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

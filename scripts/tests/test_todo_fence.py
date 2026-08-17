@@ -142,22 +142,23 @@ def test_shim():
     check("shim: a balanced document reports no unclosed fence", not uf)
     check("shim: a balanced document reports no unclosed comment", not uc)
     check("shim: unclosed_reason is None for a well-formed document",
-          tf.unclosed_reason(None) is None and _sc.unclosed_reason() is None)
+          _sc.unclosed_reason() is None)
     # THE MESSAGE COMES FROM A REAL SCAN, not from synthesised flags. The old
     # shape of this test passed booleans straight to `unclosed_reason`, so it
     # asserted the WORDING without ever proving a document produces those
     # flags; a scan that stopped reporting an unclosed construct would have
     # kept it green. Section 42 replaced the pair with a tagged terminal, and
     # the terminal has to come from somewhere, so the fixtures now do.
+    _cs_reason = tf._cache_schema().unclosed_reason
     _fence_term = tf.scan_text("a\n```\nnever closed\n").terminal
     check("shim: an unclosed FENCE names the fence and its opening line",
           _fence_term.kind == "fence"
-          and "fenced code block" in tf.unclosed_reason(_fence_term)
-          and "line 2" in tf.unclosed_reason(_fence_term))
+          and "fenced code block" in _cs_reason(_fence_term)
+          and "line 2" in _cs_reason(_fence_term))
     _comment_term = tf.scan_text("a\n<!--\nnever closed\n").terminal
     check("shim: an unclosed COMMENT names the comment, not the fence",
           _comment_term.kind == "comment"
-          and "fenced code block" not in tf.unclosed_reason(_comment_term))
+          and "fenced code block" not in _cs_reason(_comment_term))
     # A FENCE OPENED FIRST WINS, and it is now a property of the scan rather
     # than a precedence rule between two independent booleans: inside a fence a
     # `<!--` is literal text, so only one construct can ever be open.
@@ -177,10 +178,6 @@ def test_shim():
     # refuse a legal document.
     check("shim: a type-6 block running to EOF is well-formed, not terminal",
           tf.scan_text("<details>\nx\n").terminal is None)
-    check("shim: unmasked() yields ORIGINAL indices",
-          [i for i, _ in tf.unmasked(lines, mask)]
-          == [i for i, m in enumerate(mask) if not m])
-
     # mask_text must preserve BOTH the line count and every line's length, so a
     # caller's character offsets keep pointing at the same character.
     masked = tf.mask_text(FIXTURE)
