@@ -158,8 +158,16 @@ else
     ELAPSED_STR="${ELAPSED_DAYS} days"
 fi
 
-# Format numbers with commas: 144054 -> 144,054
-fmt() { echo "$1" | sed ':a;s/\B[0-9]\{3\}\>$/,&/;ta'; }
+# Format numbers with commas: 144054 -> 144,054, 1006165 -> 1,006,165
+#
+# The previous expression anchored on \>$ (end of line), so after inserting the
+# first comma the next pass could no longer match: the comma before the final
+# group IS a word boundary, which defeats the leading \B. It therefore stopped
+# after ONE separator and was correct only up to six digits. That went unnoticed
+# until the line count crossed a million and COUNT.md started reporting
+# "1006,165". This form walks right to left and repeats, so every group is
+# separated regardless of magnitude.
+fmt() { echo "$1" | sed -e :a -e 's/\(.*[0-9]\)\([0-9]\{3\}\)/\1,\2/;ta'; }
 
 hyphens() {
     local n="$1"
