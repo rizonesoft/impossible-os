@@ -44,6 +44,7 @@
 #define TPM_T_TIMEOUT_A_MS  750u   /* locality grant, burstCount refresh */
 #define TPM_T_TIMEOUT_B_MS  2000u  /* commandReady, command completion */
 #define TPM_T_TIMEOUT_C_MS  200u   /* stsValid between protocol steps */
+
 #define TPM_T_TIMEOUT_D_MS  30u    /* short register settle */
 
 /* ---- CRB control area (TCG ACPI spec) -- offsets within the mapped
@@ -204,6 +205,17 @@ struct tpm_t_wait {
 static uint64_t s_budget_deadline;  /* TSC mode */
 static uint64_t s_budget_iters;     /* iteration mode */
 static int      s_budget_active;
+/* Latched by tpm_t_wait_tick when the CUMULATIVE budget (not the per-command
+ * PTP deadline) is what ended a wait. Without it a budget expiry is
+ * indistinguishable from a wedged interface and sticky-fails the transport,
+ * disabling the TPM for the rest of the boot over a merely slow device. */
+static int      s_budget_expired;
+/* Live bounded-sequence token (0 = none) and the cleanup reserve it has not
+ * claimed yet. The generation only ever increases, so a token from a finished
+ * sequence can never match a later one. */
+static uint64_t s_seq_token;
+static uint32_t s_seq_cleanup_ms;
+static uint64_t s_seq_generation;   /* only ever increases; 0 stays "no sequence" */
 
 /* Budget arm/disarm happens ONLY inside tpm_t_seq_begin/seq_end (the
  * sequence owns the busy gate for its whole duration, so the unlocked
@@ -233,11 +245,15 @@ static int tpm_t_wait_tick(struct tpm_t_wait *w)
     __asm__ volatile ("pause");
     if (s_budget_active) {
         if (s_budget_deadline) {
-            if (tpm_t_rdtsc() >= s_budget_deadline)
+            if (tpm_t_rdtsc() >= s_budget_deadline) {
+                s_budget_expired = 1;
                 return 0;
+            }
         } else {
-            if (s_budget_iters == 0)
+            if (s_budget_iters == 0) {
+                s_budget_expired = 1;
                 return 0;
+            }
             s_budget_iters--;
         }
     }
@@ -739,6 +755,59 @@ static int tpm_t_check_args(const uint8_t *cmd, uint32_t cmd_len,
     return 0;
 }
 
+/* Return the interface to a quiescent state after a command was abandoned
+ * mid-flight, so the NEXT command does not inherit a half-written FIFO or an
+ * in-progress CRB transfer. TIS: write-1 commandReady is the PTP abort. CRB:
+ * cancel the running command, then go idle. The caller still owns the gate.
+ *
+ * Runs with the cumulative budget DISARMED and restored afterwards: the abort
+ * exists precisely because that budget is exhausted, so leaving it armed would
+ * make every poll here fail instantly and the interface would stay dirty.
+ * Touching the budget unlocked is the same owner-only discipline the rest of
+ * these fields use -- the gate is held, so no other transaction can observe it.
+ *
+ * The abort polls to the NORMATIVE PTP deadline, TIMEOUT_B, not to a shorter
+ * one of our choosing. A first attempt used 200 ms on the reasoning that an
+ * abort is a register handshake rather than a command; that was an invented
+ * number (it happens to equal TIMEOUT_C, which governs stsValid between
+ * protocol steps, not an abort), and the PTP allows CRB cancellation and a FIFO
+ * commandReady abort to take up to TIMEOUT_B. Declaring failure early would
+ * sticky-fail a CONFORMING TPM that merely cancels slowly -- far worse than the
+ * accounting problem the short bound was meant to solve.
+ *
+ * So the accounting is fixed by stating it honestly instead: a sequence's true
+ * worst case is work + cleanup + 2 * TPM_T_TIMEOUT_B_MS, because an abort can
+ * run after the work budget and again after the cleanup reserve. The budget
+ * bounds how long we WAIT ON THE TPM to make progress; it does not bound the
+ * recovery that makes the interface reusable afterwards.
+ *
+ * Returns 0 when the interface is quiescent, -1 when the abort itself failed
+ * (which IS a wedge, and is what still earns a sticky failure). */
+static int tpm_t_quiesce(void)
+{
+    int saved_active = s_budget_active;
+    int rc = 0;
+
+    s_budget_active = 0;
+    if (s_iface == TPM_T_IFACE_CRB) {
+        s_io->w32(TPM_CRB_REG_CANCEL, 1u);
+        if (tpm_t_poll32(TPM_CRB_REG_START, TPM_CRB_START_START, 0,
+                         TPM_T_TIMEOUT_B_MS) != 0)
+            rc = -1;
+        s_io->w32(TPM_CRB_REG_CANCEL, 0u);
+        s_io->w32(TPM_CRB_REG_REQ, TPM_CRB_REQ_GO_IDLE);
+    } else {
+        s_io->w32(TPM_TIS_REG_STS, TPM_TIS_STS_COMMAND_READY);
+        if (tpm_t_poll32(TPM_TIS_REG_STS,
+                         TPM_TIS_STS_VALID | TPM_TIS_STS_COMMAND_READY,
+                         TPM_TIS_STS_VALID | TPM_TIS_STS_COMMAND_READY,
+                         TPM_T_TIMEOUT_B_MS) != 0)
+            rc = -1;
+    }
+    s_budget_active = saved_active;
+    return rc;
+}
+
 /* Run one transaction. The caller MUST own the busy gate (public
  * submit or an owned sequence); sticky failure is recorded here. */
 static int tpm_t_submit_txn(const uint8_t *cmd, uint32_t cmd_len,
@@ -747,8 +816,24 @@ static int tpm_t_submit_txn(const uint8_t *cmd, uint32_t cmd_len,
     uint64_t irqf;
     int rc;
 
+    s_budget_expired = 0;
     rc = (s_iface == TPM_T_IFACE_CRB) ? crb_submit(cmd, cmd_len, rsp, rsp_cap)
                                       : tis_submit(cmd, cmd_len, rsp, rsp_cap);
+
+    /* A cumulative-BUDGET expiry is a policy decision about how long this boot
+     * will wait, not evidence that the device is broken -- a slow-but-responsive
+     * TPM is a real machine. Poisoning the transport for it would disable every
+     * unrelated later operation. Abort the abandoned command so the interface is
+     * clean, then report BUDGET and leave the transport usable. Only a failed
+     * abort, or an ordinary PTP deadline, still means wedged. */
+    if (rc == TPM_T_ERR_TIMEOUT && s_budget_expired) {
+        if (tpm_t_quiesce() == 0) {
+            klog(LOG_WARN, "TPM",
+                 "command budget exhausted; operation abandoned, transport kept");
+            return TPM_T_ERR_BUDGET;
+        }
+        klog(LOG_WARN, "TPM", "budget expiry recovery failed; interface wedged");
+    }
 
     if (rc == TPM_T_ERR_TIMEOUT) {
         /* A wedged interface stays wedged: every later command would
@@ -764,10 +849,43 @@ static int tpm_t_submit_txn(const uint8_t *cmd, uint32_t cmd_len,
     return rc;
 }
 
+/* Arm the cumulative budget for `ms`. Caller holds s_state_lock, or owns the
+ * gate (the teardown path swaps it in and back out under the gate). */
+static void tpm_t_budget_arm(uint32_t ms)
+{
+    s_budget_active = 1;
+    s_budget_expired = 0;
+    if (s_tsc_per_ms) {
+        s_budget_deadline = tpm_t_rdtsc() + (uint64_t)ms * s_tsc_per_ms;
+        s_budget_iters = 0;
+    } else {
+        s_budget_deadline = 0;
+        s_budget_iters = (uint64_t)ms * TPM_T_NOFREQ_ITERS_PER_MS;
+    }
+}
+
 /* Atomically reserve the busy gate AND the cumulative budget for a
  * multi-command sequence: while a sequence runs, no other transaction
  * can poll (so the budget is only ever consumed by its owner), and no
  * other budget can be armed. Returns 0 on success or a TPM_T_ERR_*. */
+/* Is the active budget spent RIGHT NOW? The latch alone is not the truth: it
+ * only records that a poll already noticed, and a deadline can pass with no
+ * poll in between -- which is exactly what a teardown does, since it runs on a
+ * separate allowance and then restores the work budget along with the latch
+ * value it had BEFORE. Checking the deadline makes the latch a cache rather
+ * than the authority, and closes the window where an ordinary command started
+ * after its budget had elapsed. */
+static int tpm_t_budget_spent(void)
+{
+    if (!s_budget_active)
+        return 0;
+    if (s_budget_expired)
+        return 1;
+    if (s_budget_deadline)
+        return (tpm_t_rdtsc() >= s_budget_deadline) ? 1 : 0;
+    return (s_budget_iters == 0u) ? 1 : 0;
+}
+
 static int tpm_t_seq_begin(uint32_t budget_ms)
 {
     uint64_t irqf;
@@ -785,15 +903,7 @@ static int tpm_t_seq_begin(uint32_t budget_ms)
         return TPM_T_ERR_BUSY;
     }
     s_busy = 1;
-    s_budget_active = 1;
-    if (s_tsc_per_ms) {
-        s_budget_deadline = tpm_t_rdtsc() +
-                            (uint64_t)budget_ms * s_tsc_per_ms;
-        s_budget_iters = 0;
-    } else {
-        s_budget_deadline = 0;
-        s_budget_iters = (uint64_t)budget_ms * TPM_T_NOFREQ_ITERS_PER_MS;
-    }
+    tpm_t_budget_arm(budget_ms);
     spin_unlock_irqrestore(&s_state_lock, irqf);
     return 0;
 }
@@ -806,7 +916,140 @@ static void tpm_t_seq_end(void)
     s_budget_active = 0;
     s_budget_deadline = 0;
     s_budget_iters = 0;
+    s_budget_expired = 0;
+    s_seq_token = 0;
+    s_seq_cleanup_ms = 0;
     spin_unlock_irqrestore(&s_state_lock, irqf);
+}
+
+int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
+                 tpm2_seq_fn fn, void *ctx)
+{
+    uint64_t irqf, token;
+    int rc;
+
+    if (!fn)
+        return TPM_T_ERR_ARG;
+
+    rc = tpm_t_seq_begin(work_ms);
+    if (rc != 0)
+        return rc;
+
+    /* Mint the token AFTER the gate is held, so a caller holding a stale token
+     * from a finished sequence can never be mistaken for this one. */
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    token = ++s_seq_generation;
+    s_seq_token = token;
+    s_seq_cleanup_ms = cleanup_ms;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+
+    rc = fn(token, ctx);
+
+    /* Scoped: the sequence is released on EVERY path out of fn(), including the
+     * early returns its error handling is full of. That is the whole reason the
+     * gate is not exposed as a raw begin/end pair. */
+    tpm_t_seq_end();
+    return rc;
+}
+
+int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
+                    uint8_t *rsp, uint32_t rsp_cap)
+{
+    int rc = tpm_t_check_args(cmd, cmd_len, rsp, rsp_cap);
+    if (rc != 0)
+        return rc;
+    if (seq == 0u || seq != s_seq_token)
+        return TPM_T_ERR_SEQ;
+    if (s_failed)
+        return TPM_T_ERR_FAILED;
+    /* Refuse BEFORE touching the interface once the budget is gone: starting a
+     * command we already know cannot finish would leave the TPM mid-transfer
+     * for the abort path to clean up, for nothing. */
+    if (tpm_t_budget_spent())
+        return TPM_T_ERR_BUDGET;
+    return tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
+}
+
+int tpm2_seq_expired(tpm2_seq_t seq)
+{
+    if (seq == 0u || seq != s_seq_token)
+        return 0;
+    return tpm_t_budget_spent();
+}
+
+#ifdef KERNEL_TESTS
+uint64_t tpm_t_test_budget_deadline(void)
+{
+    return s_budget_deadline;
+}
+
+int tpm_t_test_seq_cleanup_pending(void)
+{
+    return (s_seq_cleanup_ms != 0u) ? 1 : 0;
+}
+#endif
+
+int tpm2_submit_seq_teardown(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
+                             uint8_t *rsp, uint32_t rsp_cap)
+{
+    uint64_t saved_deadline, saved_iters;
+    int saved_active, saved_expired;
+    int rc = tpm_t_check_args(cmd, cmd_len, rsp, rsp_cap);
+
+    if (rc != 0)
+        return rc;
+    if (seq == 0u || seq != s_seq_token)
+        return TPM_T_ERR_SEQ;
+    if (s_failed)
+        return TPM_T_ERR_FAILED;
+
+    /* A teardown runs on its OWN allowance, and the work budget is saved and
+     * restored around it rather than extended.
+     *
+     * Extending the shared deadline was the previous design and it leaked: a
+     * mandatory flush in the middle of a larger operation (the trial session
+     * inside a baseline define) topped up the sequence, and the ORDINARY
+     * commands after it -- including an irreversible NV_DefineSpace -- then
+     * spent time explicitly reserved for teardown. Separating the two budgets
+     * removes the leak in one direction and the "teardown starts on the last
+     * few milliseconds of a spent work budget" hole in the other, because the
+     * allowance no longer depends on what the work phase left behind.
+     *
+     * The total a sequence can spend is therefore work + (teardowns x reserve),
+     * with teardowns bounded by the caller's retry limit. */
+    saved_deadline = s_budget_deadline;
+    saved_iters    = s_budget_iters;
+    saved_active   = s_budget_active;
+    saved_expired  = s_budget_expired;
+
+    /* Arm the allowance unconditionally, INCLUDING a zero one. A sequence
+     * created with no reserve means exactly that -- no teardown allowance --
+     * and the teardown is refused. Skipping the arm instead would silently fall
+     * back to the work budget, which is the quiet borrowing this split exists
+     * to stop. */
+    tpm_t_budget_arm(s_seq_cleanup_ms);
+
+    /* PREFLIGHT, before touching the interface. Arming alone does not stop a
+     * zero allowance from running: every poll reads the device BEFORE ticking
+     * the budget, so an immediately-ready TPM completes the command and the
+     * allowance is never consulted -- "no reserve means no teardown" would have
+     * been a guarantee in name only. Checking here makes it real and keeps the
+     * refusal free of any TPM state change. */
+    if (tpm_t_budget_spent()) {
+        s_budget_deadline = saved_deadline;
+        s_budget_iters    = saved_iters;
+        s_budget_active   = saved_active;
+        s_budget_expired  = saved_expired;
+        return TPM_T_ERR_BUDGET;
+    }
+
+    rc = tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
+
+    s_budget_deadline = saved_deadline;
+    s_budget_iters    = saved_iters;
+    s_budget_active   = saved_active;
+    s_budget_expired  = saved_expired;
+    return rc;
 }
 
 int tpm2_submit(const uint8_t *cmd, uint32_t cmd_len,

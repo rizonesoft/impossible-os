@@ -37,6 +37,8 @@
 #define TPM_T_ERR_IO       (-5)  /* protocol violation (Expect/dataAvail state wrong) */
 #define TPM_T_ERR_RESPONSE (-6)  /* malformed response header / oversized response */
 #define TPM_T_ERR_FAILED   (-7)  /* transport previously wedged (sticky) */
+#define TPM_T_ERR_BUDGET   (-8)  /* bounded-sequence budget exhausted (NOT a wedge) */
+#define TPM_T_ERR_SEQ      (-9)  /* submit outside, or with a stale, bounded sequence */
 
 /* ---- TPM2 command/response constants (TPM 2.0 Part 2) ---- */
 #define TPM2_ST_NO_SESSIONS      0x8001u
@@ -57,6 +59,22 @@
  * PTP-era TPMs use 4 KiB command/response buffers; anything larger in
  * a response header is treated as malformed (TPM_T_ERR_RESPONSE). */
 #define TPM_T_MAX_RESPONSE 4096u
+
+/* There is deliberately NO "worst-case transaction" constant here, and that
+ * absence is a finding rather than an omission.
+ *
+ * One was added (2*TIMEOUT_B + TIMEOUT_A + 2*TIMEOUT_C) so a caller could size
+ * a teardown reserve "safely above one normative transaction". It was wrong:
+ * tis_submit restarts TIMEOUT_A on EVERY burst, for both the command bytes and
+ * the response bytes, so with burstCount=1 a conforming device can legitimately
+ * spend 2*2000 + 24*750 + 3*200 = 22600 ms on a 14-byte FlushContext. Any
+ * fixed number is either below the spec (and aborts healthy hardware) or so far
+ * above it that a budget derived from it cannot bound a boot at all.
+ *
+ * So callers must NOT try to derive a budget that a conforming TPM can never
+ * exceed -- no such useful number exists. A cumulative budget is a POLICY
+ * statement about how long this boot is willing to wait, and the design work is
+ * in making expiry proportionate, not in making it impossible. */
 
 /* ---- Init + state queries ---- */
 
@@ -93,6 +111,66 @@ int tpm2_submit(const uint8_t *cmd, uint32_t cmd_len,
  * call from ISR context. */
 int tpm2_submit_waiting(const uint8_t *cmd, uint32_t cmd_len,
                         uint8_t *rsp, uint32_t rsp_cap, uint32_t budget_ms);
+
+/* ---- Bounded multi-command sequences ----
+ * A logical TPM operation is often several commands (the NV policy flow is
+ * StartAuthSession + PolicyPCR + the NV op + FlushContext). Submitted one at a
+ * time each carries its OWN per-command PTP timeouts, which reset on every FIFO
+ * burst -- so against a slow-but-responsive TPM the operation has no bound at
+ * all, while the whole-boot target is measured in seconds. A sequence holds the
+ * transport gate once and caps the SUM of every wait inside it.
+ *
+ * Ownership is a TOKEN, not a CPU and not an ambient flag. A raw
+ * begin/submit/end triple cannot express ownership safely: `end` after a FAILED
+ * begin would release somebody else's sequence, a forgotten `end` wedges every
+ * later command, and a CPU check both admits same-CPU reentrancy and rejects the
+ * legitimate owner after a thread migration. So the only entry point is the
+ * scoped runner below, which always releases, and every submit inside it
+ * presents the generation token it was handed. */
+
+/* Opaque bounded-sequence token. 0 is never a live sequence. */
+typedef uint64_t tpm2_seq_t;
+
+/* Body of one bounded sequence. Submit through tpm2_submit_seq(seq, ...); the
+ * return value is passed straight back out of tpm2_seq_run(). */
+typedef int (*tpm2_seq_fn)(tpm2_seq_t seq, void *ctx);
+
+/* Run fn() as ONE bounded sequence holding the transport gate throughout.
+ * work_ms bounds the sequence's ordinary commands. cleanup_ms is RESERVED on top
+ * of it and is not consumable until tpm2_seq_cleanup_begin() re-arms the budget,
+ * so a mandatory teardown (FlushContext) is still both possible and bounded
+ * AFTER the work budget expires -- a single hard deadline would leave a started
+ * session unflushable, leaking a handle out of the TPM's small session pool.
+ * Returns fn()'s value, or a negative TPM_T_ERR_* if the sequence never started
+ * (TPM_T_ERR_BUSY when another sequence or transaction holds the transport).
+ * Never call from ISR context; sequences do not nest. */
+int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
+                 tpm2_seq_fn fn, void *ctx);
+
+/* Submit one command inside the live sequence named by `seq`. Returns the same
+ * values as tpm2_submit, plus TPM_T_ERR_SEQ when `seq` is not the live token
+ * (no sequence running, or a stale token from a finished one) and
+ * TPM_T_ERR_BUDGET when the sequence's budget is already exhausted. */
+int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
+                    uint8_t *rsp, uint32_t rsp_cap);
+
+/* 1 when `seq` is live and its budget has been exhausted by a poll. Lets a
+ * caller distinguish "this TPM is too slow for the boot path" from a genuine
+ * protocol failure before deciding how to degrade. */
+int tpm2_seq_expired(tpm2_seq_t seq);
+
+/* Submit a mandatory TEARDOWN command (FlushContext) inside the sequence, on
+ * the RESERVED allowance rather than on whatever the work phase left.
+ *
+ * Teardown gets its own budget instead of extending the shared one, because
+ * extending leaked in a way that only shows up mid-operation: a flush partway
+ * through a larger sequence topped the deadline up, and the ordinary commands
+ * after it -- including an irreversible NV_DefineSpace -- then spent time
+ * reserved for cleanup. The work budget is saved and restored around the
+ * teardown, so a sequence spends at most work + (teardowns x reserve), with
+ * teardowns bounded by the caller's retry limit. */
+int tpm2_submit_seq_teardown(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
+                             uint8_t *rsp, uint32_t rsp_cap);
 
 /* ---- Pure marshaling helpers (unit-testable, no MMIO) ---- */
 
@@ -233,6 +311,17 @@ struct tpm_t_test_state tpm_t_test_install(const struct tpm_t_io *io,
  * mutated field (io/iface/available/failed/fast/busy). Use this at test
  * teardown instead of re-installing with forced (NONE, 0) args. */
 void tpm_t_test_restore(struct tpm_t_test_state st);
+
+/* Opaque view of the live sequence budget (kernel unit tests only), so the
+ * cleanup-reserve invariants are OBSERVABLE rather than asserted indirectly.
+ * They could not be tested through behavior alone: proving "extend, do not
+ * replace" needs a budget large enough that a replacement would still succeed,
+ * which no timing-based probe can distinguish. tpm_t_test_budget_deadline()
+ * returns the raw TSC deadline (0 when the budget runs in iteration mode), and
+ * tpm_t_test_seq_cleanup_pending() reports whether the one-shot reserve is
+ * still unclaimed. */
+uint64_t tpm_t_test_budget_deadline(void);
+int tpm_t_test_seq_cleanup_pending(void);
 
 /* Arm the cumulative wait budget in iteration mode (kernel unit tests
  * only) -- mirrors the boot startup-probe budget so its expiry path is

@@ -435,7 +435,7 @@ struct seal_unseal_ctx {
     uint32_t  tpm_rc;   /* raw rc captured for the structured report */
 };
 
-static tpm_nv_status_t seal_unseal_op(uint32_t session, void *vctx)
+static tpm_nv_status_t seal_unseal_op(tpm2_seq_t seq, uint32_t session, void *vctx)
 {
     struct seal_unseal_ctx *c = (struct seal_unseal_ctx *)vctx;
     uint8_t cmd[64], rsp[TPM_SEAL_SECRET_MAX + 128u];
@@ -451,7 +451,11 @@ static tpm_nv_status_t seal_unseal_op(uint32_t session, void *vctx)
      * bytes as OK. It also surfaces the raw rc (TPM_RC_POLICY_FAIL on PCR drift)
      * for the structured report. The policy session + object are flushed by the
      * callers, so no handle-leak hazard lives in this op. */
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, &c->tpm_rc) != 0)
+    /* Submits inside the caller's bounded sequence: that sequence already holds
+     * the transport gate, so an unsequenced tpm2_submit here would bounce BUSY
+     * against our own lock rather than run. */
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
+                                 &c->tpm_rc) != 0)
         return st;
     dl = tpm2_parse_unseal(rsp, rlen, c->out, c->cap);
     if (dl < 0)

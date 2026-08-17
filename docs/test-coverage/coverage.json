@@ -1,6 +1,6 @@
 {
-  "total_suites": 2986,
-  "total_assertions": 12373,
+  "total_suites": 2998,
+  "total_assertions": 12547,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -100,12 +100,12 @@
     {"file": "test_tpm_baseline.c", "suites": 7, "assertions": 55},
     {"file": "test_tpm_enroll_gate.c", "suites": 17, "assertions": 78},
     {"file": "test_tpm_event_log.c", "suites": 9, "assertions": 29},
-    {"file": "test_tpm_nv.c", "suites": 10, "assertions": 105},
+    {"file": "test_tpm_nv.c", "suites": 22, "assertions": 266},
     {"file": "test_tpm_pcr_alloc.c", "suites": 4, "assertions": 20},
     {"file": "test_tpm_replay.c", "suites": 9, "assertions": 45},
     {"file": "test_tpm_sb_reconcile.c", "suites": 2, "assertions": 30},
     {"file": "test_tpm_seal.c", "suites": 8, "assertions": 109},
-    {"file": "test_tpm_transport.c", "suites": 8, "assertions": 118},
+    {"file": "test_tpm_transport.c", "suites": 8, "assertions": 131},
     {"file": "test_uefi_advanced.c", "suites": 13, "assertions": 42},
     {"file": "test_uefi_boot.c", "suites": 42, "assertions": 111},
     {"file": "test_unwind.c", "suites": 46, "assertions": 191},

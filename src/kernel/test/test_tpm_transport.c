@@ -31,6 +31,9 @@ static int      fk_ready;         /* commandReady latched */
 static int      fk_executed;      /* go received, response phase */
 static uint32_t fk_cmd_total;     /* bytes received when go arrived */
 static int      fk_dead;          /* all waits time out (wedge test) */
+static int      fk_abort_refused; /* commandReady never asserts again: the
+                                   * budget-expiry ABORT itself fails, which is
+                                   * the branch that must still sticky-fail */
 static int      fk_no_valid;      /* status reads lack stsValid (stale) */
 static uint32_t fk_burst_delay;   /* STS reads reporting burst=0 first */
 static int      fk_vary;          /* vary response payload per command */
@@ -96,7 +99,7 @@ static uint32_t fake_r32(uint32_t off)
         return 1u << 8;
     }
     sts = FK_STS_VALID;
-    if (fk_ready && !fk_executed && fk_cmd_len == 0)
+    if (fk_ready && !fk_executed && fk_cmd_len == 0 && !fk_abort_refused)
         sts |= FK_STS_COMMAND_READY;
     if (fk_expect_mode == 2) {
         sts |= FK_STS_EXPECT;
@@ -156,6 +159,7 @@ static void fake_reset(void)
     fk_executed = 0;
     fk_cmd_total = 0;
     fk_dead = 0;
+    fk_abort_refused = 0;
     fk_no_valid = 0;
     fk_burst_delay = 0;
     fk_vary = 0;
@@ -362,14 +366,21 @@ static void test_tpm2_submit_fake(void)
 
     /* Cumulative budget: a slow device (valid status, delayed bursts)
      * fits inside the per-step waits but must NOT fit inside a small
-     * cumulative budget -- mirrors the boot startup-probe cap. */
+     * cumulative budget -- mirrors the boot startup-probe cap.
+     * The expiry reports BUDGET, not TIMEOUT, and leaves the transport
+     * USABLE: a device that answers within every per-command deadline and is
+     * merely slower than this boot will wait for is not a wedged one, and
+     * poisoning it here would disable every unrelated later TPM operation.
+     * The fk_dead block below is the control for the opposite case. */
     fake_reset();
     fake_set_rsp(TPM2_RC_SUCCESS, 10u);
     fk_burst_delay = 16u;
     tpm_t_test_budget_iters(8u);
     r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
-    TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT,
-                   "slow device exceeds cumulative budget -> timeout");
+    TEST_ASSERT_EQ(r, TPM_T_ERR_BUDGET,
+                   "slow device exceeds cumulative budget -> BUDGET");
+    TEST_ASSERT_EQ(tpm_transport_available(), 1,
+                   "budget expiry leaves the transport available");
     tpm_t_test_budget_iters(0u);
     tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
     fake_reset();
@@ -378,6 +389,27 @@ static void test_tpm2_submit_fake(void)
     r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
     TEST_ASSERT_EQ(r, 10,
                    "same slow device succeeds without the budget");
+
+    /* Budget expiry with a FAILED abort. The recovery is what decides between
+     * "slow device, keep the transport" and "wedged, disable it", and only the
+     * success side was covered: here commandReady never comes back, so the
+     * abort itself fails and the transport must go sticky exactly as an
+     * ordinary wedge does. Iteration-mode budgets make this deterministic --
+     * the deadline variant would need real elapsed time. */
+    fake_reset();
+    fake_set_rsp(TPM2_RC_SUCCESS, 10u);
+    fk_burst_delay = 16u;
+    fk_abort_refused = 1;
+    tpm_t_test_budget_iters(8u);
+    r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
+    tpm_t_test_budget_iters(0u);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT,
+                   "budget expiry whose abort FAILS reports TIMEOUT, not BUDGET");
+    TEST_ASSERT_EQ(tpm_transport_available(), 0,
+                   "a failed abort after budget expiry sticky-fails the transport");
+    r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
+    TEST_ASSERT_EQ(r, TPM_T_ERR_FAILED, "and every later command is refused");
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);   /* clear the sticky failure */
 
     /* Wedge: every wait times out -> sticky failure -> ERR_FAILED. */
     fake_reset();
@@ -720,6 +752,12 @@ static int      cf_stuck_start;   /* START never clears -> timeout */
 static int      cf_ready;         /* set by a CMD_READY write to REG_REQ */
 static int      cf_goidle;        /* set by a GO_IDLE write to REG_REQ */
 static uint32_t cf_rsp_decl_size; /* size field the fake writes into the response */
+static int      cf_cancelled;     /* a CANCEL write was observed */
+static int      cf_cancel_level;  /* CANCEL modelled as a LEVEL, not an edge: a
+                                   * still-asserted CANCEL blocks the next
+                                   * command on real hardware, so the fake makes
+                                   * readiness depend on it being cleared */
+static int      cf_cancel_clears; /* CANCEL releases a stuck START (cancel works) */
 
 static void cf_build_response(void)
 {
@@ -743,15 +781,27 @@ static uint32_t cf_r32(uint32_t off)
 {
     if (off == CF_REG_REQ)
         /* cmdReady reads as SET (not ready) until crb_submit requests it -- so a
-         * regression that drops the CMD_READY write times out instead of passing. */
-        return cf_ready ? 0u : CF_REQ_CMD_READY;
+         * regression that drops the CMD_READY write times out instead of passing.
+         * A CANCEL left asserted also keeps the interface unready, which is how
+         * hardware behaves and what makes the deassert write load-bearing. */
+        return (cf_ready && !cf_cancel_level) ? 0u : CF_REQ_CMD_READY;
     if (off == CF_REG_START)
         return (cf_stuck_start || !cf_executed) ? CF_START_START : 0u;
     return 0u;
 }
 
+#define CF_REG_CANCEL 0x08u
+
 static void cf_w32(uint32_t off, uint32_t v)
 {
+    if (off == CF_REG_CANCEL) {
+        cf_cancel_level = (v != 0u) ? 1 : 0;
+        if (v) {
+            cf_cancelled = 1;
+            if (cf_cancel_clears)
+                cf_stuck_start = 0;    /* the device honored the cancel */
+        }
+    }
     if (off == CF_REG_REQ) {
         if (v & CF_REQ_CMD_READY) cf_ready = 1;   /* ready granted on request */
         if (v & CF_REQ_GO_IDLE)   cf_goidle = 1;  /* goIdle issued */
@@ -771,6 +821,9 @@ static void cf_reset(void)
     cf_ready = 0;
     cf_goidle = 0;
     cf_rsp_decl_size = 12u;        /* header(10) + 2 payload bytes */
+    cf_cancelled = 0;
+    cf_cancel_level = 0;
+    cf_cancel_clears = 0;
 }
 
 static void test_tpm_crb_submit_fake(void)
@@ -800,6 +853,45 @@ static void test_tpm_crb_submit_fake(void)
     TEST_ASSERT(cf_cmd[6] == (uint8_t)(TPM2_CC_GET_RANDOM >> 24), "command reached CRB cmd buffer");
     TEST_ASSERT(cf_ready == 1, "crb_submit requested cmdReady (REG_REQ handshake)");
     TEST_ASSERT(cf_goidle == 1, "crb_submit returned to idle (goIdle) after success");
+
+    /* Budget expiry on the CRB path, which had NO recovery coverage at all --
+     * the quiesce there is a different sequence (CANCEL, wait for START to
+     * clear, clear CANCEL, GO_IDLE) and could have been broken in either
+     * direction without a test noticing. START stays asserted so the poll burns
+     * the budget; the CANCEL is honored, so recovery succeeds and the transport
+     * survives as a merely-slow device. */
+    cf_reset();
+    cf_stuck_start = 1;
+    cf_cancel_clears = 1;
+    tpm_t_test_budget_iters(8u);
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    tpm_t_test_budget_iters(0u);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_BUDGET, "CRB budget expiry reports BUDGET");
+    TEST_ASSERT_EQ(cf_cancelled, 1, "CRB recovery issued CANCEL");
+    TEST_ASSERT_EQ(cf_goidle, 1, "CRB recovery returned the interface to idle");
+    TEST_ASSERT_EQ(tpm_transport_available(), 1,
+                   "a recovered CRB cancel leaves the transport usable");
+    TEST_ASSERT_EQ(cf_cancel_level, 0,
+                   "CRB recovery DEASSERTED cancel (a latched cancel blocks the bus)");
+    /* Reuse WITHOUT resetting the fake: "available" is a claim about the
+     * interface, and the only thing that proves it is the next command working
+     * on the state recovery actually left behind. */
+    cf_executed = 0;
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    TEST_ASSERT_EQ(r, 12, "the next CRB command runs on the recovered interface");
+
+    /* And when the device ignores the CANCEL, that IS a wedge. */
+    cf_reset();
+    cf_stuck_start = 1;
+    cf_cancel_clears = 0;
+    tpm_t_test_budget_iters(8u);
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    tpm_t_test_budget_iters(0u);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT, "an ignored CRB CANCEL reports TIMEOUT");
+    TEST_ASSERT_EQ(cf_cancelled, 1, "CANCEL was still attempted");
+    TEST_ASSERT_EQ(tpm_transport_available(), 0,
+                   "an ignored CRB CANCEL sticky-fails the transport");
+    tpm_t_test_install(&cf_io, TPM_T_IFACE_CRB, 1);   /* clear the sticky failure */
 
     /* Oversized declared response (> rsp_cap and > buffer) rejected. */
     cf_reset();

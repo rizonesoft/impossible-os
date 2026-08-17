@@ -54,7 +54,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [x]   |
 | 💎  |  15   | Trusted enrollment provenance                                | §6, §14                                                   |  [/]   |
 | 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)    | §6, §14                                                   |  [x]   |
-| 💎  |  17   | Write-locked and monotonic NV index primitives               | §6, §7, §14                                               |  [ ]   |
+| 💎  |  17   | Write-locked and monotonic NV index primitives               | §6, §7, §14                                               |  [x]   |
 | 💎  |  18   | Atomic boot-integrity report publication                     | §6, §12, §14                                              |  [ ]   |
 | 💎  |  19   | Versioned baseline growth and NV index migration             | §16, §21                                                  |  [ ]   |
 | 💎  |  20   | BOOTX64.EFI on-disk self-measurement                         | §16, TODO-01 (boot_info ABI)                              |  [ ]   |
@@ -554,17 +554,35 @@ The baseline records what §6 could reach: per-bank PCR digests, Secure Boot sta
 
 **Scope was narrowed 2026-08-17 by a SPLIT-RECOMMENDED verdict (11 work items + ABI impact), and the narrowing is what makes the section shippable.** The original §17 carried one mechanism, two indexes, two consumers, a TPM policy-authorization construction and a bootloader-side read path: five distinct failure modes spanning the kernel, the UEFI loader and the NV wire format. What stays here is the WIRE and TRANSPORT layer -- the attributes and NV type a define can request, the two missing commands, their classification, and the boot-path command budget. One failure mode (wrong bits on the wire, or a locked index wedging the transport), fully testable through the fake-TIS seam with no consumer in play. The trust-anchor lifecycle and record authorization moved to §21, the bootloader floor read to §22, and the headless enrollment escape hatch to §23.
 
-§7 modelled only the attributes it needed. `include/kernel/tpm_nv.h:56-64` carries OWNER/AUTH/POLICY read and write, `NO_DA`, and the read-only `WRITTEN` status; there is no `WRITE_LOCKED`, no `WRITEDEFINE`, no `WRITE_STCLEAR`, and no NV-type counter. Neither `TPM2_NV_WriteLock` nor `TPM2_NV_Increment` has a command code (`src/kernel/tpm_nv.c:647-760`). Nothing above this layer is buildable until a define can ask for a counter or a write-lockable index at all, which is why this is the first of the four sections rather than the interesting one.
+§7 had modelled only the attributes it needed: OWNER/AUTH/POLICY read and write, `NO_DA`, and the read-only `WRITTEN` status, with no `WRITEDEFINE`, no `WRITE_STCLEAR`, no NV-type counter, and no command code for either `TPM2_NV_WriteLock` or `TPM2_NV_Increment`. Nothing above this layer was buildable until a define could ask for a counter or a write-lockable index at all, which is why this was the first of the four sections rather than the interesting one.
 
-- [ ] Model the missing TPMA_NV attributes and the NV index TYPE field, so a define can request a counter or a write-lockable index rather than only an ordinary data index.
-- [ ] Add `TPM2_NV_Increment` and `TPM2_NV_WriteLock` builders and parsers beside the existing NV ops, classified through the same format-first `tpm_nv_classify_rc` so a locked index never wedges.
-- [ ] Bound the boot-path cost: ONE cached read per boot, no unbounded retries, and one cumulative wall-clock budget across every NV command in an operation, with the fail/degrade policy stated for budget expiry.
-  - A slow-but-responsive TPM can spend multi-second transport timeouts per command without ever timing out, against a whole-boot target measured in seconds. Bounding this after implementation means discovering it on the slowest real machine.
-  - The budget belongs at this layer, not with a consumer: every consumer above shares the same transport, so a per-consumer bound would let two of them each stay inside their own budget and still blow the boot.
-- [ ] Unit-test the builders, parsers and classifier against locked-index and counter response codes through the fake-TIS seam, including the attribute/type bits a counter define and a write-lockable define emit.
-- [ ] Commit: `"tpm: write-locked and monotonic NV index primitives"`
+- [x] Modelled the WHOLE TPMA_NV table + the TPM_NT type field in `tpm_nv.h`, and CORRECTED the read bits: OWNERREAD/AUTHREAD/POLICYREAD sat at 18/19/20 against the spec's 17/18/19.
+  - The old numbering made `tpm_nv_define_data` request AUTHREAD while `tpm_nv_read` authorized with owner auth, and made `tpm_nv_define_baseline` set Reserved bit 20 in place of POLICYREAD, so the baseline index asked for NO read permission. Both are refusals on conforming firmware, invisible here because the dev host has no `swtpm`.
+  - Nothing caught it because every assertion compared the macros against themselves. The fixtures now carry spec-literal attribute words as an INDEPENDENT oracle, which is what makes the correction stick.
+  - `tpm_nv_attrs_valid()` (pure) rejects reserved bits, TPM-maintained status bits, an index nobody may read or write, undefined TPM_NT values, wrong per-type sizes, CLEAR_STCLEAR on a counter, and the platform-hierarchy attributes an owner-auth define cannot request. PIN types are refused outright rather than half-validated.
+- [x] Added `TPM2_NV_Increment` + `TPM2_NV_WriteLock` builders over one shared two-handle marshaller, with `tpm_nv_increment` / `tpm_nv_write_lock` / `tpm_nv_read_counter` wrappers and `TPM2_RC_F1_ATTRIBUTES` classified to a new `TPM_NV_ATTRS`.
+  - Counter reads take exactly 8 bytes at offset 0 and decode only on an exact-length read; `TPM_NV_UNINIT` is propagated, never synthesized as zero, because a recreated index's first increment can land above a previous value and conflating the two is how a rollback launders itself.
+- [x] Bounded the boot-path cost with ONE cumulative budget across every command in an operation: `tpm2_seq_run(work, cleanup, fn, ctx)` in the transport, plus `nv_exec_bounded()` so even single-command wrappers are covered.
+  - Ownership is an opaque generation TOKEN, not a CPU: a raw begin/end pair lets an end-after-failed-begin release somebody else's sequence, and a CPU check both admits same-CPU reentrancy and rejects the owner after a thread migration.
+  - Budget expiry is RECOVERABLE (`TPM_T_ERR_BUDGET` + a bounded interface quiesce) rather than sticky-failing the transport. A slow-but-responsive TPM is a real machine, and poisoning it disabled every later TPM operation over one slow command.
+  - A mandatory teardown runs on its OWN allowance, saved and restored around the work budget. Three earlier shapes were shipped and reverted in review: replacing the budget eagerly discarded a live one, replacing it only after expiry let a teardown die mid-FlushContext, and extending it leaked reserved time into the irreversible NV_DefineSpace that followed a mid-sequence flush.
+  - No fixed number can be a true PTP worst case here (the TIS restarts its burst deadline on every chunk), so the budget is documented as a POLICY statement about how long this boot will wait.
+- [x] Session teardown requires PROOF: `nv_flush()` takes only an exact header-only `ST_NO_SESSIONS` envelope carrying SUCCESS or "no such handle", retries anything else, and logs a possible leak rather than disabling the TPM.
+  - Both proof paths are gated, which is the point: a desynchronized `ST_SESSIONS` reply carrying `TPM_RC_HANDLE` classifies as NOTFOUND and would otherwise end a teardown with the session still allocated.
+  - Disabling the transport was tried across three review rounds and reverted: a held slot terminates on its own in a definite `StartAuthSession` failure every caller treats as a refusal, while poisoning also breaks PCR reads and attestation that open no session. Verified fail-closed at `tpm_baseline.c:372`, where VERIFIED needs a successful read AND compare.
+- [x] Unit-tested through the fake-TIS seam: spec-literal wire oracles, the attribute matrix over every reserved position, both builders, counter semantics, the define mismatch, the sequence token/budget/reserve, and the teardown envelope.
+- [x] Commit: `"tpm: write-locked and monotonic NV index primitives"`
 
-**Test checkpoint:** a define requesting a counter index emits the correct TPMA_NV bits and NV type, and a define requesting a write-lockable index emits `WRITEDEFINE`/`WRITE_STCLEAR` rather than silently dropping them; an increment past a write-lock returns the locked status through `tpm_nv_classify_rc` rather than wedging the transport, and an unparseable response is still classified format-first. A simulated slow TPM exhausts the cumulative budget and takes the stated degrade path instead of extending the boot, with a control asserting a responsive TPM completes the same sequence inside the budget -- without it the budget test would pass against a bound that fires on everything. Scope: this section owns the NV wire primitives and the command budget ONLY. The index lifecycle, the two-index contract and record authorization are §21; the bootloader-side read path is §22; the headless escape hatch is §23; baseline content stays §6. Platforms: fake-TIS unit suites are the whole automatable surface; the live swtpm round trip and real-fTPM write-lock semantics are operator-gated (no `swtpm` on the dev host).
+**Test checkpoint:** VERIFIED. A counter define emits the correct TPMA_NV bits and NV type and a write-lockable define emits `WRITEDEFINE`, both asserted against spec-literal attribute words rather than the macros under test; an increment past a write-lock returns LOCKED through `tpm_nv_classify_rc` and a later command still runs. A stalling TPM exhausts the cumulative budget and reports BUDGET with the transport left usable, while a failed abort still sticky-fails -- and a control asserts the same stalling TPM completes inside the real budget, without which the bound would pass by firing on everything. A teardown accepts only an exact envelope, retries an illegal tag, a wrong shape and a wrong-envelope HANDLE, and accepts well-formed SUCCESS and HANDLE replies on the FIRST attempt. Scope: this section owns the NV wire primitives and the command budget ONLY. The index lifecycle, the two-index contract and record authorization are §21; the bootloader-side read path is §22; the headless escape hatch is §23; baseline content stays §6. Platforms: fake-TIS unit suites are the whole automatable surface; the live swtpm round trip and real-fTPM write-lock semantics are operator-gated (no `swtpm` on the dev host).
+
+> **Test runner:** `make test-security` (or `scripts/debug/kernel/run-security-tests.bat`) | 1612 security-suite assertions pass; 22 `tpm: NV *` suites.
+
+> **Notes:**
+> - **What shipped:** the corrected + complete TPMA_NV/TPM_NT model with a pure `tpm_nv_attrs_valid()`, `TPM2_NV_Increment`/`TPM2_NV_WriteLock` builders and wrappers, `tpm_nv_read_counter`, and a bounded-sequence transport seam (`tpm2_seq_run`/`tpm2_submit_seq`/`tpm2_seq_cleanup_begin`).
+> - **How it integrates:** `tpm_policy_session_run` and every exported NV wrapper now run inside one bounded sequence; `tpm_policy_op_fn` gained the sequence token and `tpm_seal.c`'s callback moved with it.
+> - **Downstream effects:** the read-bit correction changes what a define REQUESTS, so an index enrolled under the old attributes is refused as `TPM_NV_MISMATCH` rather than silently reused; authorized re-definition of such an index is §21's.
+> - **Canonical doc:** the TPMA_NV table comment in `include/kernel/tpm_nv.h` cites the spec table and records the off-by-one.
+> - **Scope boundary:** wire primitives + command budget only. Lifecycle and record authorization are §21, the loader read is §22, the headless hatch is §23.
 
 ---
 
@@ -728,19 +746,20 @@ Its failure mode is the opposite of §21's. §21 fails by accepting a forged rec
 
 ## OS Comparison
 
-| ⭐  | Feature                                | Windows                    | Linux                     | Impossible OS                                                                 |
-| --- | -------------------------------------- | -------------------------- | ------------------------- | ----------------------------------------------------------------------------- |
-| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB            | tpm_tis/tpm_crb drivers   | ✅ §2 burst-chunked TIS + CRB                                                 |
-| 💎  | Secure Boot PCR integration            | Measured Boot              | IMA/TPM tools             | ⚠️ §5 structural SB var reconcile                                             |
-| 💎  | PCR replay                             | internal/Defender          | tpm2-tools                | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                |
-| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker         | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                               |
-| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline     | IMA + systemd-pcrlock     | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation            |
-| 💎  | Kernel-ABI identity bound in baseline  | Boot config / WBCL binding | IMA template hash binding | ✅ §16 build-time `.bootproto` sha256, fail-closed, symmetric presence gate   |
-| 💎  | Sealed secrets                         | BitLocker                  | systemd-cryptenroll       | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff      |
-| ⭐  | Boot attestation report (JSON)         | Device Health Attestation  | Keylime AK quote JSON     | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending |
-| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation  | Keylime AK quote          | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                      |
-| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal     | systemd-pcrlock CEL       | ✅ §12 event-centric table + derived masks                                    |
-| ⭐  | Baseline enrollment authority          | TPM PPI physical presence  | root + interactive prompt | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value       |
+| ⭐  | Feature                                | Windows                    | Linux                          | Impossible OS                                                                 |
+| --- | -------------------------------------- | -------------------------- | ------------------------------ | ----------------------------------------------------------------------------- |
+| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB            | tpm_tis/tpm_crb drivers        | ✅ §2 burst-chunked TIS + CRB                                                 |
+| 💎  | Secure Boot PCR integration            | Measured Boot              | IMA/TPM tools                  | ⚠️ §5 structural SB var reconcile                                             |
+| 💎  | PCR replay                             | internal/Defender          | tpm2-tools                     | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                |
+| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker         | tpm2_nvdefine + kernel RM      | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                               |
+| 💎  | NV counter / write-lock primitives     | TBS NV counters            | tpm2_nvincrement / nvwritelock | ✅ §17 TPMA_NV + TPM_NT model, Increment/WriteLock, bounded command budget    |
+| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline     | IMA + systemd-pcrlock          | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation            |
+| 💎  | Kernel-ABI identity bound in baseline  | Boot config / WBCL binding | IMA template hash binding      | ✅ §16 build-time `.bootproto` sha256, fail-closed, symmetric presence gate   |
+| 💎  | Sealed secrets                         | BitLocker                  | systemd-cryptenroll            | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff      |
+| ⭐  | Boot attestation report (JSON)         | Device Health Attestation  | Keylime AK quote JSON          | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending |
+| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation  | Keylime AK quote               | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                      |
+| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal     | systemd-pcrlock CEL            | ✅ §12 event-centric table + derived masks                                    |
+| ⭐  | Baseline enrollment authority          | TPM PPI physical presence  | root + interactive prompt      | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value       |
 
 ## Unit Tests
 
