@@ -343,6 +343,28 @@ int ioapic_unmask_irq(uint32_t gsi)
     return 0;
 }
 
+int ioapic_irq_masked(uint32_t gsi)
+{
+    uint64_t entry;
+    uint64_t irqf;
+    int pin;
+
+    if (!ioapic_base)
+        return -1;
+    pin = ioapic_gsi_to_pin(gsi);
+    if (pin < 0)
+        return -1;
+
+    /* Read-back accessor for save/restore callers. A caller that masks a
+     * line temporarily cannot restore it correctly by unmasking blindly:
+     * the line may have been masked before it ever ran, and unmasking it
+     * would enable an interrupt whose handler is not registered. */
+    spin_lock_irqsave(&ioapic_lock, &irqf);
+    entry = ioapic_get_entry((uint8_t)pin);
+    spin_unlock_irqrestore(&ioapic_lock, irqf);
+    return (entry & (1ULL << 16)) ? 1 : 0;
+}
+
 int ioapic_set_destination(uint32_t gsi, uint8_t dest_lapic)
 {
     uint64_t entry;

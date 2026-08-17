@@ -54,6 +54,13 @@ int ioapic_mask_irq(uint32_t gsi);
  * Returns 0 on success, -1 on invalid GSI / no IOAPIC. */
 int ioapic_unmask_irq(uint32_t gsi);
 
+/* Read a GSI's current mask bit, for callers that mask a line temporarily
+ * and must put it back exactly as they found it. Returns 1 (masked),
+ * 0 (unmasked), or -1 on invalid GSI / no IOAPIC. Unmasking blindly to
+ * "restore" is a bug: the line may have been masked before the caller ran,
+ * and enabling it would deliver an interrupt with no registered handler. */
+int ioapic_irq_masked(uint32_t gsi);
+
 /* Translate an ISA IRQ number to a GSI using MADT overrides.
  * Returns the GSI (may differ from irq due to overrides). */
 uint32_t ioapic_isa_to_gsi(uint8_t isa_irq);

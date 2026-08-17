@@ -978,6 +978,7 @@ extern void test_register_sha384(void);
 extern void test_register_tpm_replay(void);
 extern void test_register_tpm_nv(void);
 extern void test_register_tpm_baseline(void);
+extern void test_register_tpm_enroll_gate(void);
 extern void test_register_tpm_seal(void);
 extern void test_register_tpm_attest(void);
 extern void test_register_tpm_attest_report(void);
@@ -1107,6 +1108,7 @@ void test_runner_init(void)
     test_register_tpm_replay();
     test_register_tpm_nv();
     test_register_tpm_baseline();
+    test_register_tpm_enroll_gate();
     test_register_tpm_seal();
     test_register_tpm_attest();
     test_register_tpm_attest_report();

@@ -318,6 +318,18 @@ int boot_splash_active(void)
     return splash_on;
 }
 
+int boot_splash_text_ready(void)
+{
+    /* STRICTER than boot_splash_active(), and the difference is load-bearing
+     * for any caller that must know its message was actually SEEN.
+     * boot_splash_init() sets splash_on BEFORE attempting boot_font_init(),
+     * so a font or PMM failure leaves splash_on = 1 with ttf_ready = 0 --
+     * and boot_splash_status() then clears the text area and renders
+     * nothing. A caller checking only splash_on would conclude it had shown
+     * a message no operator can see. */
+    return splash_on && ttf_ready;
+}
+
 void boot_splash_abort(void)
 {
     if (!splash_on) return;

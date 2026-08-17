@@ -61,6 +61,11 @@ void pic_mask_irq(uint8_t irq);
 /* Unmask (enable) a specific IRQ line */
 void pic_unmask_irq(uint8_t irq);
 
+/* Read a specific IRQ line's current mask bit from the 8259 IMR, for
+ * callers that mask a line temporarily and must restore it exactly.
+ * Returns 1 (masked), 0 (unmasked), or -1 when no PIC is active. */
+int pic_irq_masked(uint8_t irq);
+
 /* Disable both PICs entirely (for APIC migration later) */
 void pic_disable(void);
 

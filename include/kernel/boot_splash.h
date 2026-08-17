@@ -39,6 +39,13 @@ void boot_splash_finish(void);
 /* Returns 1 if the boot splash is currently active (screen owned by splash). */
 int boot_splash_active(void);
 
+/* 1 only when the splash is on AND a usable text renderer exists, so a
+ * caller can tell "I called status()" apart from "the operator saw it".
+ * splash_on is set before the font is initialized, so the two differ on a
+ * font/PMM failure -- use THIS one whenever the message being seen is the
+ * point (a confirmation prompt), not merely nice to have. */
+int boot_splash_text_ready(void);
+
 /* Abort the splash immediately (no fade) and unlock framebuffer for printk.
  * Used by debug boot mode to show text output on screen. */
 void boot_splash_abort(void);

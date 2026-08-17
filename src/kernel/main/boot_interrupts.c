@@ -63,6 +63,8 @@
 #include "kernel/tpm_replay.h"
 #include "kernel/tpm_nv.h"
 #include "kernel/tpm_baseline.h"
+#include "kernel/tpm_enroll_gate.h"
+#include "kernel/boot_confirm.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/security/wx.h"
@@ -534,29 +536,96 @@ void boot_phase1(void)
      * integrity report. Single-threaded; uses the just-populated PCR cache. */
     {
         struct tpm_replay_report rpt;
+        /* Hoisted out of the verify block because the enrollment gate below
+         * consumes them: enrolling a boot whose event log already disagrees
+         * with the hardware PCRs would promote the tampered measurement to
+         * golden. `replay_known` stays 0 when the replay did not run at all,
+         * and the gate REFUSES on that -- it whitelists an explicit VERIFIED
+         * rather than treating "no verdict" as clean. */
+        uint8_t replay_known = 0;
+        uint8_t replay_verdict = 0;
         if (tpm_replay_verify(TPM_ALG_SHA256, &rpt) == TPM_REPLAY_OK) {
             tpm_integrity_set_replay_verdict(rpt.verdict);
+            replay_known = 1;
+            replay_verdict = rpt.verdict;
             if (rpt.verdict == TPM_REPLAY_TAMPER)
                 klog(LOG_WARN, "TPM", "PCR replay: event-log TAMPER at PCR %d",
                      (uint64_t)rpt.first_mismatch_pcr);
         }
-        /* Measured-boot baseline. In recovery mode with the enroll opt-in,
-         * (re)enroll the golden baseline (config-gated; a normal boot can never
-         * silently auto-enroll). Otherwise verify the current state against the
+        /* Measured-boot baseline. Enrollment writes the golden record every
+         * later boot is measured against, so it is gated on the enrollment
+         * AUTHORITY predicate rather than on boot.conf: `boot_mode` and
+         * `tpm_enroll` are both ESP-controlled, so the old gate proved ESP
+         * write access and nothing else. See include/kernel/tpm_enroll_gate.h
+         * for the trust model. Otherwise verify the current state against the
          * stored baseline and publish the verdict (the replay TAMPER above
          * already outranks a baseline match). */
-        if (g_boot_info.config.boot_mode == 2u && g_boot_info.config.tpm_enroll) {
+        struct tpm_enroll_gate_inputs gi = {
+            .boot_path               = g_boot_info.boot_path,
+            .boot_reason             = g_boot_info.boot_reason,
+            .boot_source_flags       = g_boot_info.boot_source_flags,
+            .selection_reason        = g_boot_info.selection_reason,
+            .audit_degraded          = g_boot_info.audit_degraded,
+            .sticky_present          = g_boot_info.sticky_present,
+            .sticky_recovery_trigger = g_boot_info.sticky_recovery_trigger,
+            .secure_boot_enabled     = g_boot_info.secure_boot_enabled,
+            /* Whole-chain coverage, NOT just "Secure Boot is on": only the
+             * UKI path runs a kernel the signature actually covered. The
+             * split path loads an unsigned kernel.exe from the ESP even with
+             * Secure Boot enabled (bootx64.c:7894-7896). */
+            .whole_chain_verified    =
+                (g_boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI) ? 1u : 0u,
+            .replay_known            = replay_known,
+            .replay_verdict          = replay_verdict,
+            .tpm_enroll              = g_boot_info.config.tpm_enroll,
+            .confirm                 = TPM_CONFIRM_PENDING,
+        };
+        struct tpm_enroll_gate_result gr;
+        tpm_enroll_gate_evaluate(&gi, &gr);
+
+        /* Prompt ONLY when every non-operator condition already held. That is
+         * what keeps a normal boot silent: a machine that never asked to
+         * enroll is refused at the config check and no prompt is drawn. */
+        if (gr.needs_confirm) {
+            boot_confirm_result_t cr =
+                boot_confirm_prompt("[TPM] Enroll THIS boot as the trusted "
+                                    "measured-boot baseline? [y/N]",
+                                    'y', 'n', BOOT_CONFIRM_TIMEOUT_MS,
+                                    BOOT_CONFIRM_IRQ_LEAVE_ALONE,
+                                    BOOT_CONFIRM_CLOCK_REQUIRED);
+            /* IRQ_LEAVE_ALONE is correct here and is load-bearing: this runs
+             * BEFORE keyboard_init() below, so nothing has claimed IRQ1 and
+             * IOAPIC entries are still masked from reset. Leaving interrupts
+             * enabled keeps the timer alive, so the splash spinner keeps
+             * animating and the watchdog keeps being petted through the
+             * prompt. */
+            switch (cr) {
+                case BOOT_CONFIRM_YES:         gi.confirm = TPM_CONFIRM_YES; break;
+                case BOOT_CONFIRM_DECLINED:    gi.confirm = TPM_CONFIRM_WRONG_KEY; break;
+                case BOOT_CONFIRM_TIMEOUT:     gi.confirm = TPM_CONFIRM_TIMEOUT; break;
+                case BOOT_CONFIRM_UNAVAILABLE: gi.confirm = TPM_CONFIRM_UNAVAILABLE; break;
+            }
+            tpm_enroll_gate_evaluate(&gi, &gr);
+        }
+
+        if (gr.admit) {
             tpm_baseline_status_t bs =
                 tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
-            /* CONFIG-authorized enrollment (boot.conf boot_mode=recovery +
-             * tpm_enroll), NOT cryptographic recovery provenance -- an operator
-             * with ESP write access opts in. A loader-populated recovery
-             * provenance gate + physical-console confirmation is a tracked
-             * follow-up; until then this is an admin/operator-trust action. */
             klog(LOG_WARN, "TPM",
-                 "Baseline enroll (CONFIG-authorized, not provenance-verified): status %d",
-                 (uint64_t)bs);
-        } else {
+                 "Baseline enroll (authority %s): status %d",
+                 tpm_enroll_authority_label(gr.authority), (uint64_t)bs);
+        } else if (g_boot_info.config.tpm_enroll) {
+            /* Only report a refusal when enrollment was actually requested;
+             * every ordinary boot refuses at CONFIG_DISABLED and saying so
+             * each time would be noise. The authority is reported next to the
+             * reason so a config-only boot can never read as trusted. */
+            klog(LOG_WARN, "TPM",
+                 "Baseline enroll REFUSED (%s; authority %s)",
+                 tpm_enroll_refusal_label(gr.refusal),
+                 tpm_enroll_authority_label(gr.authority));
+        }
+
+        if (!gr.admit) {
             uint8_t overall = 0;
             tpm_baseline_status_t bs =
                 tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall);

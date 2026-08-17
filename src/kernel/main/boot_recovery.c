@@ -7,12 +7,15 @@
  *
  * Displays: which subsystem failed, POST code, phase number.
  * Menu: [R] Retry, [C] Serial console, [P] Power off.
- * Polls PS/2 keyboard via port 0x60/0x64 (interrupts may be broken).
+ * Keypress polling goes through boot_confirm.c (the one PS/2 poll
+ * lifecycle in the tree); this screen is a terminal caller and uses its
+ * IRQ take-over mode.
  *
  * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md
  * ============================================================================ */
 
 #include "kernel/boot_recovery.h"
+#include "kernel/boot_confirm.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
 #include "kernel/boot_info.h"
@@ -21,77 +24,28 @@
 #include "kernel/klog.h"
 #include "kernel/uefi_runtime.h"
 
-/* ---- Port I/O ----------------------------------------------------------- */
+/* ---- Keypress polling ---------------------------------------------------
+ *
+ * The PS/2 poll lifecycle lives in boot_confirm.c so there is exactly ONE
+ * of it. This screen is a TERMINAL caller -- every action it returns ends
+ * in reboot / power-off / halt -- so it takes the IRQ TAKE_OVER mode and
+ * does not care that interrupts are off while it waits. The primitive
+ * still restores them on the way out, which costs nothing here and is what
+ * makes the same code reusable by a caller that must keep booting.
+ *
+ * The old spin-count backstop is gone: a spin budget is a different
+ * duration on every machine, and the primitive bounds the wait by the
+ * calibrated TSC instead. */
 
-static inline uint8_t inb(uint16_t port)
-{
-    uint8_t val;
-    __asm__ volatile ("inb %1, %0" : "=a"(val) : "Nd"(port));
-    return val;
-}
-
-/* ---- PS/2 scancode to ASCII (make codes only, US QWERTY) ---------------- */
-
-static char scancode_to_ascii(uint8_t sc)
-{
-    /* Only the keys we care about: R, C, P */
-    switch (sc) {
-        case 0x13: return 'r';  /* R */
-        case 0x2E: return 'c';  /* C */
-        case 0x19: return 'p';  /* P */
-        default:   return 0;
-    }
-}
-
-/* Disable keyboard IRQ so the normal keyboard driver doesn't race us
- * for scancodes on port 0x60. We disable interrupts entirely first,
- * then mask IRQ1 via IOAPIC if available. */
-static void kbd_poll_begin(void)
-{
-    __asm__ volatile ("cli");
-    if (kernel_subsystem_ready(SUBSYS_IOAPIC)) {
-        extern int ioapic_mask_irq(uint32_t gsi);
-        extern uint32_t ioapic_isa_to_gsi(uint8_t isa_irq);
-        /* Mask the routed keyboard GSI, not raw IRQ1 -- ACPI may
-         * have an interrupt source override remapping ISA IRQ1. */
-        uint32_t gsi = ioapic_isa_to_gsi(1);
-        ioapic_mask_irq(gsi);
-    }
-    /* Drain any pending scancodes, bounded so a stuck/absent PS/2 controller
-     * that always reports output-buffer-full cannot spin here forever before
-     * the bounded keypress poll below ever runs. The 8042 output buffer is a
-     * single byte, so 64 reads is far more than a real controller ever holds. */
-    {
-        uint32_t drain = 64;
-        while ((inb(0x64) & 0x01) && drain--)
-            (void)inb(0x60);
-    }
-}
-
-/* Coarse can't-hang-forever backstop for the recovery keypress poll. Each
- * iteration does two port-0x64/0x60 reads (~1us each on real hardware), so
- * this is roughly a tens-of-seconds-to-minutes wait on bare metal and shorter
- * under a VM -- NOT a precise wall-clock timeout, just a guarantee that a
- * headless / keyboard-less machine does not spin here forever with IRQs off. */
-#define RECOVERY_KBD_POLL_SPINS 200000000ULL
-
-/* Poll PS/2 keyboard for a single keypress, bounded by `spin_budget`
- * iterations. Caller must have called kbd_poll_begin() first. Returns the
- * pressed character, or 0 if the budget expired with no recognized keypress. */
-static char kbd_poll_char(uint64_t spin_budget)
-{
-    while (spin_budget--) {
-        if (inb(0x64) & 0x01) {
-            uint8_t sc = inb(0x60);
-            if (!(sc & 0x80)) {  /* ignore break codes */
-                char ch = scancode_to_ascii(sc);
-                if (ch) return ch;
-            }
-        }
-        __asm__ volatile ("pause");
-    }
-    return 0;  /* timeout -- no input */
-}
+/* Wall-clock backstop so a headless / keyboard-less machine does not sit on
+ * the recovery menu forever. Generous, because a human reading a recovery
+ * screen and deciding is exactly the case this must not cut short.
+ *
+ * Paired with BOOT_CONFIRM_CLOCK_BEST_EFFORT, and that pairing is the point:
+ * this screen exists precisely because the boot went wrong, so it must still
+ * work on a machine whose TSC never got calibrated. The security caller uses
+ * the opposite policy -- it would rather refuse than guess a duration. */
+#define RECOVERY_KBD_TIMEOUT_MS 120000u
 
 /* ---- Inline 8x8 bitmap font (minimal subset for recovery text) ---------- */
 
@@ -304,26 +258,33 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
     /* Swap to front buffer */
     fb_swap();
 
-    /* Disable keyboard IRQ and drain pending scancodes before polling */
-    kbd_poll_begin();
-
-    /* Poll keyboard for user choice, bounded so a headless / keyboard-less
-     * machine cannot spin here forever with IRQs disabled. On budget expiry
-     * with no input, halt with a serial banner so an operator or hardware
-     * watchdog can power-cycle (the failure was already printed to serial
-     * above). Unrecognized keys re-poll with a fresh budget. */
-    for (;;) {
-        char ch = kbd_poll_char(RECOVERY_KBD_POLL_SPINS);
-        switch (ch) {
-            case 'r': return RECOVERY_RETRY;
-            case 'c': return RECOVERY_CONSOLE;
-            case 'p': return RECOVERY_POWEROFF;
-            case 0:
-                serial_write("[RECOVERY] no keyboard input -- halting "
-                             "(power-cycle to retry)\n");
-                boot_halt("Recovery: no input");
-                for (;;) __asm__ volatile ("hlt");
+    /* Poll for the user's choice, bounded so a headless / keyboard-less
+     * machine cannot wait here forever. On expiry (or with no usable PS/2
+     * console at all) halt with a serial banner so an operator or hardware
+     * watchdog can power-cycle -- the failure was already printed to serial
+     * above. The primitive drains stale scancodes and takes over the
+     * keyboard route itself. */
+    {
+        char ch = 0;
+        boot_confirm_result_t r =
+            boot_confirm_wait_keys("rcp", &ch, RECOVERY_KBD_TIMEOUT_MS,
+                                   BOOT_CONFIRM_IRQ_TAKE_OVER,
+                                   BOOT_CONFIRM_CLOCK_BEST_EFFORT);
+        if (r == BOOT_CONFIRM_YES) {
+            switch (ch) {
+                case 'r': return RECOVERY_RETRY;
+                case 'c': return RECOVERY_CONSOLE;
+                case 'p': return RECOVERY_POWEROFF;
+                default:  break;  /* not in the accept set; unreachable */
+            }
         }
+        serial_write(r == BOOT_CONFIRM_UNAVAILABLE
+                         ? "[RECOVERY] no usable console -- halting "
+                           "(power-cycle to retry)\n"
+                         : "[RECOVERY] no keyboard input -- halting "
+                           "(power-cycle to retry)\n");
+        boot_halt("Recovery: no input");
+        for (;;) __asm__ volatile ("hlt");
     }
 }
 
@@ -334,10 +295,17 @@ void boot_recovery_act(boot_recovery_action_t act)
 {
     extern void acpi_poweroff_now(void);
     extern void acpi_reset_now(void);
-    /* The recovery screen reached here under cli (kbd_poll_begin), so use the
-     * quiesce-free ACPI primitives: acpi_shutdown()/acpi_reboot() run
-     * acpi_storage_quiesce() first, which sleeps via hlt and would hang
-     * forever with interrupts disabled. */
+    /* Use the quiesce-free ACPI primitives. acpi_shutdown()/acpi_reboot()
+     * run acpi_storage_quiesce() first, which sleeps via hlt and hangs
+     * forever if interrupts are disabled.
+     *
+     * The poll primitive now RESTORES the caller's interrupt state on exit,
+     * so this no longer runs under a guaranteed cli -- but it is not
+     * guaranteed to run with IF set either, because the restore puts back
+     * whatever the failing boot happened to have. Quiesce-free is the only
+     * choice that is correct under both, which is why it stays. Making the
+     * recovery power-off actually flush storage first is a real improvement
+     * and is tracked as its own item, not smuggled in here. */
     switch (act) {
         case RECOVERY_POWEROFF:
             acpi_poweroff_now();   /* does not return */

@@ -147,6 +147,26 @@ void pic_unmask_irq(uint8_t irq)
     outb(port, val);
 }
 
+int pic_irq_masked(uint8_t irq)
+{
+    uint16_t port;
+
+    if (!pic_ready)
+        return -1;  /* No PIC -- nothing to report */
+
+    /* Read-back accessor for save/restore callers. The 8259 IMR is
+     * directly readable, so a caller that masks a line temporarily can put
+     * it back exactly as it found it instead of unmasking blindly. */
+    if (irq < 8) {
+        port = PIC1_DATA;
+    } else {
+        port = PIC2_DATA;
+        irq -= 8;
+    }
+
+    return (inb(port) & (uint8_t)(1 << irq)) ? 1 : 0;
+}
+
 void pic_disable(void)
 {
     outb(PIC1_DATA, 0xFF);
