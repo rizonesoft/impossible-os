@@ -210,6 +210,8 @@ Stop and ask before: security-sensitive changes, destructive operations, ABI cha
 
 **Every addition records itself:** a row in [`src/libs/PROVENANCE.md`](src/libs/PROVENANCE.md) (upstream, version, license, vendoring commit) AND a row in [`CREDITS.md`](CREDITS.md), which is the notice set that must accompany a redistributed binary. Same commit.
 
+**The same rule covers authoritative DATA, not just code, and this is the half that gets missed.** Unicode case-fold and character-type tables, timezone rules, PCI/USB vendor-and-device IDs, ACPI and SMBIOS enum names: each has a canonical upstream that is permissively licensed and continuously corrected, and each is hopeless to maintain by hand. Generate these from the upstream corpus with a checked-in host tool, and record the corpus version, rather than transcribing entries. The failure mode is quieter than a bug in vendored code -- a table is simply wrong for the characters or devices nobody on the team tested. Canonical sources: the Unicode Character Database (Unicode licence), IANA tzdata (public domain), `pci.ids` / `usb.ids` (BSD/GPL dual -- take the BSD arm).
+
 **Reference implementations may be used as ORACLES without vendoring.** Where the code is ours by design but the constants are not, validate against upstream instead of adopting it: `tools/uefi-guid-check/` checks the hand-written `src/boot/uefi/efi.h` GUIDs against EDK2's MdePkg, because a mistyped GUID fails no build, no test, and no QEMU boot -- only real firmware.
 
 ## Doc Sync

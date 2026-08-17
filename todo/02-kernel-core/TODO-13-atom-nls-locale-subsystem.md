@@ -316,6 +316,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [x] `test_nls_fuzz_counted_strings`: deterministic 512-iter LCG fuzz over the validator/decode/RtlEqual/sort-key/normalize/fold helpers, per-target contracts + dst canary (never crash/overread/overrun).
 - [x] Missing-NLS invariant fallback: `test_nls_missing_dir_fallback` (no active table -> compiled fallback); boot degraded-state marker via the smoke path.
 - [ ] Compatibility corpus (full-BMP): host tool emits a real invariant.nls (UPCASE + CTYPE1/2/3, §4 format); unblocks §7 full-FoldStringW + §9 full-BMP. DEFERRED (host tooling + build wiring). (design §10)
+  - **Generate from the Unicode Character Database, do not hand-build.** `UnicodeData.txt` + `CaseFolding.txt` + `DerivedCoreProperties.txt` are the authoritative corpus for UPCASE and CTYPE1/2/3, published under the permissive Unicode licence and corrected every release. A hand-assembled full-BMP table is wrong for exactly the scripts nobody here tests, and silently so
+  - The host tool should record the UCD version it consumed in the emitted `invariant.nls` header, so a stale table is detectable rather than assumed current
+  - This is the DATA half of CLAUDE.md "Vendor-First Evaluation": the code shipped in sections 2 and 4 to 9 and stays ours; only the corpus comes from upstream
 - [ ] Minimal real-table boot fixture: a valid invariant.nls in sysroot + a boot/test assertion that nls_init loaded it (version != fallback), proving the disk-load path not just fallback. (design §10)
 - [x] Tests for `GetStringTypeW` C1/C2/C3 (`nls_char_type`), `FoldStringW`, `LCMapStringEx` sort keys, `GetNLSVersionEx`, `GetCPInfoEx`/`IsDBCSLeadByte` (SBCS), `CompareStringOrdinal`. (gap-audit)
 - [x] `TEST_CAT_NLS` wired: enum (test.h), labels (test_runner.c), `make test-nls` (Makefile), bootx64.c parser (test_suite=nls), run-nls-tests.bat.
