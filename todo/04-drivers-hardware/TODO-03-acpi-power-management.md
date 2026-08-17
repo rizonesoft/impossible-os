@@ -18,14 +18,14 @@ title: "TODO-03 -- ACPI Full Subsystem & Power Management"
 - -> XREF: `02-kernel-core/TODO-26-power-management.md` -- pre-ACPICA S1/S3/S4, EC, battery, power button, and thermal-zone checklist path until §1 here completes; merge plan in TODO-16 scope box
 - -> XREF: `02-kernel-core/TODO-26-power-management.md` section 21 Linux sysfs mem_sleep parity and pm_sleep_variant_t enum; complements this file when both land; no AML interpreter prerequisite
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c), [`include/kernel/acpi.h`](../../include/kernel/acpi.h)
-- ACPICA source (Apache-2.0): `src/kernel/acpica/` -- to be imported in §1
+- ACPICA source (Intel ACPI CA OR BSD-3-Clause OR GPL-2.0; BSD arm taken -- NOT Apache-2.0, corrected 2026-08-17): `src/kernel/acpica/` -- imported 2026-08-17
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) -- hibernate detection in §10 requires a bootloader-side hiberfil.sys check
 - → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §4` -- `hpet_read_ns()` used by S3 resume timing check in §9
 - → XREF: `04-drivers-hardware/TODO-02-apic-interrupt-routing.md §1` -- x2APIC re-init on S3 resume path in §9; Thermal LVT in §4
 - → XREF: `04-drivers-hardware/TODO-02-apic-interrupt-routing.md §3` -- `apic_alloc_msi_vector()` reused for SCI vector allocation in §3
 - → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` callback called from §6 DVFS after `_PSS` is parsed
 - → XREF: `05-storage-filesystems` domain -- VFS `cache_flush()` and unmount called in §2 shutdown orchestrator; hibernation image written to IXFS in §10
-- Spec refs: ACPI 6.5 spec; Intel 64 Arch SDM (IA32_THERM_STATUS, IA32_PERF_CTL, MWAIT); ACPICA Programmer's Reference (Apache-2.0)
+- Spec refs: ACPI 6.5 spec; Intel 64 Arch SDM (IA32_THERM_STATUS, IA32_PERF_CTL, MWAIT); ACPICA Programmer's Reference
 
 ## Outcome
 
@@ -60,14 +60,19 @@ title: "TODO-03 -- ACPI Full Subsystem & Power Management"
 
 ## 1. ACPICA AML Interpreter Integration `[Opus]`
 
-Integrate ACPICA (Intel's open-source AML interpreter, Apache-2.0) as a static library. Replace the current hand-rolled table parsing stubs with ACPICA's `AcpiInitializeSubsystem()` → `AcpiLoadTables()` → `AcpiEnableSubsystem()` sequence. Provide the required OS Services Layer (`acpi_osl.c`) to connect ACPICA to Impossible OS memory, I/O, and synchronisation primitives.
+Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACPI CA / BSD-3-Clause / GPL-2.0, BSD arm taken) as a static library. Replace the current hand-rolled table parsing stubs with ACPICA's `AcpiInitializeSubsystem()` → `AcpiLoadTables()` → `AcpiEnableSubsystem()` sequence. Provide the required OS Services Layer (`acpi_osl.c`) to connect ACPICA to Impossible OS memory, I/O, and synchronisation primitives.
 
-**Files:** `src/kernel/acpica/` (imported), `src/kernel/acpi/acpi_osl.c` (new), `include/kernel/acpi/acpi.h` (updated)
+**Files:** `src/kernel/acpica/` (imported), `src/kernel/acpi_osl.c` (new), `src/kernel/acpi_global_lock.{c,h}` (new), `include/freestanding/ctype.h` (new)
 
 > [!IMPORTANT]
 > ACPICA requires an OS Services Layer (`AcpiOs*` functions): `AcpiOsAllocate`/`Free`, `AcpiOsReadPort`/`WritePort`, `AcpiOsReadMemory`/`WriteMemory`, `AcpiOsInstallInterruptHandler`, `AcpiOsCreateMutex`/`DeleteMutex`/`AcquireMutex`/`ReleaseMutex`, and `AcpiOsPhysicalTableOverride`. Map these to `kmalloc`/`kfree`, `inb`/`outb`, `vmm_map_mmio`, IDT registration, and `mutex_t` respectively. Do not link ACPICA against any libc -- it must compile with `-ffreestanding`.
 
-- [ ] Import ACPICA source tree to `src/kernel/acpica/`; add to Makefile with `-DACPI_DEBUG_OUTPUT=0 -DACPI_APPLICATION=0 -ffreestanding`
+- [x] Import ACPICA source tree to `src/kernel/acpica/`; add to Makefile with `-DACPI_DEBUG_OUTPUT=0 -DACPI_APPLICATION=0 -ffreestanding`
+  - Vendored 2026-08-17 at upstream `077d74a4`, ACPI_CA_VERSION 20260408: 164 `.c` files across dispatcher/events/executer/hardware/namespace/parser/resources/tables/utilities, plus 62 headers
+  - Platform header `acimpossible.h` authored (modelled on `aczephyr.h`); the ONLY upstream edit is one `#elif defined(__IMPOSSIBLE_OS__)` branch in `acenv.h`
+  - `ACPI_USE_SYSTEM_CLIBRARY` + `ACPI_USE_STANDARD_HEADERS` so ACPICA uses the kernel's SSE/AVX-tuned mem/str rather than shipping a second `memcpy`; needed a new `include/freestanding/ctype.h` shim
+  - `ACPI_SINGLE_THREADED` deliberately NOT set (SMP-safe by default); `rsdump.c` and `utprint.c` excluded, see the Makefile for the measured reasons
+  - Release image links 753 ACPICA symbols + 47 `AcpiOs*` and ends at 0x52C000, 2.8 MiB under the firmware floor
 - [ ] Implement `src/kernel/acpi/acpi_osl.c` covering all `AcpiOs*` hooks:
   - Memory: `AcpiOsAllocate(size)` → `kmalloc`; `AcpiOsFree` → `kfree`; `AcpiOsMapMemory(phys, len)` → `vmm_map_mmio`
   - I/O ports: `AcpiOsReadPort`/`AcpiOsWritePort` → `inb/w/l`, `outb/w/l`
@@ -75,6 +80,24 @@ Integrate ACPICA (Intel's open-source AML interpreter, Apache-2.0) as a static l
   - Interrupt: `AcpiOsInstallInterruptHandler(gsi, handler)` → `ioapic_route_irq` + `idt_register_handler`
 - [ ] Initialisation sequence in `acpi_init()`:
   - `AcpiInitializeSubsystem()` → `AcpiInitializeTables(NULL, 32, FALSE)` → `AcpiLoadTables()` → `AcpiEnableSubsystem(ACPI_FULL_INITIALIZATION)` → `AcpiInitializeObjects()`
+- [ ] **Kernel semaphore is not SMP-safe** -- blocks ACPICA mutexes; verified at `src/kernel/sched/semaphore.c:29-52`
+  - `sem_wait()` reads `s->count` and writes `s->waiter_tasks[]`, `s->num_waiters++` and `s->count--` with no lock and no atomics
+  - ACPICA's default `ACPI_BINARY_SEMAPHORE` mutex model routes every mutex acquire through `AcpiOsWaitSemaphore` -> `sem_wait`/`sem_trywait`, so two CPUs can both observe a binary count of 1 and both succeed
+  - That lets the AML interpreter run concurrently while ACPICA believes the mutex is held. PRE-EXISTING defect affecting every semaphore user, not introduced by the OSL, which is why it is filed rather than fixed inside this section
+  - Found by the Codex adversarial review of the OSL, 2026-08-17
+- [ ] **PCI config space has no CF8/CFC lock** -- verified at `src/kernel/drivers/pci.c:60-64`
+  - `pci_read32()` does `outl(PCI_CONFIG_ADDR, ...)` then `inl(PCI_CONFIG_DATA)` with nothing serialising the pair; `pci_write32()` is the same shape
+  - Another CPU or an interrupt can reprogram 0xCF8 between the two accesses, so the read returns another device's register or the write lands on it
+  - Also: `pci_write16()` at line 85 composes a dword read-modify-write, which replays write-1-to-clear bits in neighbouring registers (a 16-bit Command write at 0x04 reads Status at 0x06 and writes the observed bits back, silently acknowledging errors). A native `pci_write8()` does not exist at all
+  - Repair shape: one IRQ-saving config lock in the PCI driver held across each complete transaction, plus native-width write helpers. The OSL refuses 8-bit config writes today rather than synthesising an unsafe RMW
+  - PRE-EXISTING, affects every PCI driver. Found by the Codex adversarial review of the OSL, 2026-08-17
+- [ ] **ACPICA is release-flavor only** -- the dev/test image does not fit under the firmware floor, so the unit suite does not exercise ACPICA
+  - The kernel loads at 0x100000 and ACPIMemoryNVS begins at exactly 0x800000 on this platform, giving the image a hard 7.0 MiB budget
+  - Measured 2026-08-17 from the bootloader's own PT_LOAD rejection: `type=ACPIMemoryNVS at=0x00800000`
+  - RELEASE (`KERNEL_TESTS=off`) ends at 0x52C000 with ACPICA linked, 2.8 MiB clear; the dev image compiles the full suite in (~487 KiB of test-only `.bss`) and would land 94 KiB over
+  - `ACPICA` therefore follows `KERNEL_TESTS` in the Makefile; override with `make ACPICA=on|off`
+  - The real fix is relocating the kernel above the firmware regions, which retires the conditional entirely
+  - Until then the global-lock algorithm is split into `src/kernel/acpi_global_lock.c` so at least that stays covered in the default build
 - [ ] Remove hand-rolled `acpi_find_table()`, `acpi_get_hpet_base()`, `acpi_get_mcfg()` -- replace with `AcpiGetTable("HPET", ...)`, `AcpiGetTable("MCFG", ...)`; keep the header API but back them with ACPICA
 - [ ] `acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject` for use by §5–§10
 - [ ] TPM2 ACPI start method (2/8): retrofit `tpm_transport_init()` start-method dispatch to invoke the TPM2 table's AML start method (replaces degrade-with-WARN). -> XREF: `01-boot-platform/TODO-13` §2 (consumer)
@@ -251,18 +274,18 @@ Serialise all physical RAM pages to `C:\Impossible\System\hiberfil.sys`, write a
 ## OS Comparison
 
 
-| ⭐  | Feature                                            | 🪟 Win11                                                           | 🐧 Linux                                                           | 🚀 Impossible OS                                                         |
-| --- | -------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| 💎  | AML interpreter                                    | ✅ `ACPI.sys` -- Microsoft AML interpreter                         | ✅ `drivers/acpi/` -- ACPICA (Apache-2.0) static                   | ⬜ §1 -- ACPICA + OSL (Apache-2.0), `AcpiEvaluateObject`                 |
-| 💎  | S3 suspend/resume -- trampoline + state restore    | ✅ `ntoskrnl` power manager; `PO_S3_RESUME` wakeup                 | ✅ `kernel/power/suspend.c`; `arch/x86/power/hibernate_asm_64.S`   | ⬜ §9 -- 1 MiB real-mode trampoline, `cpu_sleep_state`,                  |
-| 💎  | Battery `_BST`/`_BIF` → tray percentage            | ✅ `battc.sys`; `PoQueryBatteryStatus`; Windows tray icon          | ✅ `drivers/acpi/battery.c`; `upower` userspace daemon             | ⬜ §5 -- 30 s poll, system tray                                          |
-| 💎  | CPU DVFS -- `_PSS` / `IA32_PERF_CTL` P-states      | ✅ `processor.sys`; processor power policy; `PPM`                  | ✅ `drivers/cpufreq/acpi-cpufreq.c`; `ondemand`/`performance` govs | ⬜ §6 -- `_PSS` parse, `IA32_PERF_CTL`/`_PTC`, `cpufreq_register_driver` |
-| 💎  | Power button SCI → clean shutdown                  | ✅ `ACPI.sys` SCI ISR; `PoRequestPowerIrp(PowerActionShutdown)`    | ✅ `drivers/acpi/button.c`; `PWRBTN_STS` → `kernel_power_off()`    | ⬜ §3 -- FADT `SCI_INT` route, PWRBTN_STS, `system_shutdown()`           |
-| 💎  | Per-core thermal -- `IA32_THERM_STATUS` + Task Mgr | ✅ `ACPI.sys` thermal zone; Task Manager                           | ✅ `drivers/hwmon/coretemp.c`; `sensors` tool; `_TZ` via           | ⬜ §4 -- `IA32_THERM_STATUS`, LAPIC Thermal LVT, color                   |
-| 💎  | C-state idle -- `hlt` C1, `mwait` C2/C3            | ✅ `processor.sys`; `PROC_IDLE_STATE_INFO`; governor selects depth | ✅ `drivers/cpuidle/`; `menu` governor; `mwait` sub-states;        | ⬜ §8 -- `_CST` parse, `mwait` C2/C3, `/sys/cpuidle`                     |
-| 💎  | Hibernate S4 -- hiberfil.sys + bootloader restore  | ✅ `hiberfil.sys`; `ntldr`/`winload` resumes from file             | ✅ `kernel/power/hibernate.c`; `swsusp_write()`; `initrd` restores | ⬜ §10 -- sequential PMM page write, bootloader                          |
-| 💎  | Clean shutdown sequence with per-step timeout      | ✅ Session Manager orchestrates WM_CLOSE →                         | ✅ `systemd` shutdown: `SIGTERM` → `SIGKILL`                       | ⬜ §2 -- `system_shutdown()`, WM_CLOSE, 5 s kill,                        |
-| 💎  | Named power profiles -- Balanced/Performance/Saver | ✅ Windows power plans; `powercfg /setactive`                      | ✅ `cpupower` / `tlp`; `power_profile` kernel                      | ⬜ §7 -- 3 built-in profiles, Registry `SYSTEM\Power\Profile`,           |
+| ⭐  | Feature                                            | 🪟 Win11                                                           | 🐧 Linux                                                           | 🚀 Impossible OS                                                             |
+| --- | -------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| 💎  | AML interpreter                                    | ✅ `ACPI.sys` -- Microsoft AML interpreter                         | ✅ `drivers/acpi/` -- ACPICA static                                | 🔶 §1 -- ACPICA + OSL vendored/linked (release flavor), `AcpiEvaluateObject` |
+| 💎  | S3 suspend/resume -- trampoline + state restore    | ✅ `ntoskrnl` power manager; `PO_S3_RESUME` wakeup                 | ✅ `kernel/power/suspend.c`; `arch/x86/power/hibernate_asm_64.S`   | ⬜ §9 -- 1 MiB real-mode trampoline, `cpu_sleep_state`,                      |
+| 💎  | Battery `_BST`/`_BIF` → tray percentage            | ✅ `battc.sys`; `PoQueryBatteryStatus`; Windows tray icon          | ✅ `drivers/acpi/battery.c`; `upower` userspace daemon             | ⬜ §5 -- 30 s poll, system tray                                              |
+| 💎  | CPU DVFS -- `_PSS` / `IA32_PERF_CTL` P-states      | ✅ `processor.sys`; processor power policy; `PPM`                  | ✅ `drivers/cpufreq/acpi-cpufreq.c`; `ondemand`/`performance` govs | ⬜ §6 -- `_PSS` parse, `IA32_PERF_CTL`/`_PTC`, `cpufreq_register_driver`     |
+| 💎  | Power button SCI → clean shutdown                  | ✅ `ACPI.sys` SCI ISR; `PoRequestPowerIrp(PowerActionShutdown)`    | ✅ `drivers/acpi/button.c`; `PWRBTN_STS` → `kernel_power_off()`    | ⬜ §3 -- FADT `SCI_INT` route, PWRBTN_STS, `system_shutdown()`               |
+| 💎  | Per-core thermal -- `IA32_THERM_STATUS` + Task Mgr | ✅ `ACPI.sys` thermal zone; Task Manager                           | ✅ `drivers/hwmon/coretemp.c`; `sensors` tool; `_TZ` via           | ⬜ §4 -- `IA32_THERM_STATUS`, LAPIC Thermal LVT, color                       |
+| 💎  | C-state idle -- `hlt` C1, `mwait` C2/C3            | ✅ `processor.sys`; `PROC_IDLE_STATE_INFO`; governor selects depth | ✅ `drivers/cpuidle/`; `menu` governor; `mwait` sub-states;        | ⬜ §8 -- `_CST` parse, `mwait` C2/C3, `/sys/cpuidle`                         |
+| 💎  | Hibernate S4 -- hiberfil.sys + bootloader restore  | ✅ `hiberfil.sys`; `ntldr`/`winload` resumes from file             | ✅ `kernel/power/hibernate.c`; `swsusp_write()`; `initrd` restores | ⬜ §10 -- sequential PMM page write, bootloader                              |
+| 💎  | Clean shutdown sequence with per-step timeout      | ✅ Session Manager orchestrates WM_CLOSE →                         | ✅ `systemd` shutdown: `SIGTERM` → `SIGKILL`                       | ⬜ §2 -- `system_shutdown()`, WM_CLOSE, 5 s kill,                            |
+| 💎  | Named power profiles -- Balanced/Performance/Saver | ✅ Windows power plans; `powercfg /setactive`                      | ✅ `cpupower` / `tlp`; `power_profile` kernel                      | ⬜ §7 -- 3 built-in profiles, Registry `SYSTEM\Power\Profile`,               |
 
 > **After §1–10:** Impossible OS achieves full ACPI OSPM parity with Windows 11 and Linux for laptop and desktop hardware. Every gap -- AML evaluation, S3/S4, battery, DVFS, thermal, C-states, clean shutdown -- is closed. The Task Manager temperature display (§4) provides a visual differentiator: per-core color-coded bars that neither Linux `sensors` nor Windows Task Manager's basic CPU pane expose in a single integrated view.
 

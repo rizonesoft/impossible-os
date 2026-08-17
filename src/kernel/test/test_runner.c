@@ -973,6 +973,7 @@ extern void test_register_tpm_event_log(void);
 extern void test_register_tpm_sb_reconcile(void);
 extern void test_register_tpm_pcr_alloc(void);
 extern void test_register_sha256(void);
+extern void test_register_acpi_global_lock(void);
 extern void test_register_sha1(void);
 extern void test_register_sha384(void);
 extern void test_register_tpm_replay(void);
@@ -1103,6 +1104,7 @@ void test_runner_init(void)
     test_register_tpm_sb_reconcile();
     test_register_tpm_pcr_alloc();
     test_register_sha256();
+    test_register_acpi_global_lock();
     test_register_sha1();
     test_register_sha384();
     test_register_tpm_replay();

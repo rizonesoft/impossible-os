@@ -17,10 +17,11 @@ All third-party works listed here are compatible with GPL-3.0-only, which is a n
 
 ## Vendored code libraries
 
-Source under `src/libs/`. Each directory retains its upstream license file verbatim.
+Source under `src/libs/`, except ACPICA which lives at `src/kernel/acpica/` (see the note below). Each directory retains its upstream license file verbatim.
 
 | Library | Copyright | License | Upstream |
 | --- | --- | --- | --- |
+| ACPICA | Copyright (c) 1999-2026, Intel Corp. | Intel ACPI CA OR BSD-3-Clause OR GPL-2.0 (BSD arm taken) | https://github.com/acpica/acpica |
 | Mbed TLS | Copyright The Mbed TLS Contributors | Apache-2.0 OR GPL-2.0-or-later | https://github.com/Mbed-TLS/mbedtls |
 | Monocypher | Copyright (c) 2017-2020, Loup Vaillant | BSD-2-Clause OR CC0-1.0 | https://monocypher.org |
 | LZ4 | Copyright (c) Yann Collet | BSD-2-Clause (`lib/` only) | https://github.com/lz4/lz4 |
@@ -29,6 +30,7 @@ Source under `src/libs/`. Each directory retains its upstream license file verba
 
 Notes:
 
+- **ACPICA** is the AML interpreter and ACPI subsystem, vendored under `src/kernel/acpica/` rather than `src/libs/` (the only vendored library outside that directory, so license sweeps must cover both roots). It is **triple**-licensed: the Intel ACPI Component Architecture license, a BSD-3-Clause-style license, or GPL-2.0. This project takes the **BSD-3-Clause arm**, which is GPL-3.0-compatible. The GPL-2.0 arm is not, and selecting it would make the combined work undistributable, so the choice is load-bearing rather than a formality. Upstream's `LICENSE` reproducing all three is kept verbatim at `src/kernel/acpica/LICENSE`.
 - **LZ4** is dual-licensed upstream. Only the BSD-2-Clause `lib/` sources are vendored here; the GPL-2.0-or-later `programs/` sources are not. The effective license for this copy is BSD-2-Clause.
 - **Monocypher** ships its license as `LICENCE.md` (British spelling), not `LICENSE`. Automated license sweeps that glob `LICENSE*` will miss it.
 
@@ -79,12 +81,11 @@ Recorded so the constraint is not rediscovered the hard way. Because this projec
 - The Linux kernel and its device drivers, which are GPL-2.0-only by the explicit terms in its `COPYING`.
 - Anything whose only upstream is a Linux driver, including out-of-tree Linux driver projects that inherit that license.
 
-The compatible route to mature driver and stack code is the permissively-licensed ecosystem: the BSD kernels (BSD-2-Clause / BSD-3-Clause), EDK2/TianoCore (BSD-2-Clause-Patent), ACPICA (dual BSD/GPL, so the BSD arm is available), and standalone permissive stacks. Adding any of these is a dependency addition and requires explicit approval per the CLAUDE.md dependency gate, plus a row in `src/libs/PROVENANCE.md` and in this file.
+The compatible route to mature driver and stack code is the permissively-licensed ecosystem: the BSD kernels (BSD-2-Clause / BSD-3-Clause), EDK2/TianoCore (BSD-2-Clause-Patent), ACPICA (dual BSD/GPL, so the BSD arm is available), and standalone permissive stacks. Adding any of these requires verifying GPL-3.0 compatibility first, then a row in `src/libs/PROVENANCE.md` and in this file. The licence check is the gate; it is not waivable, because getting it wrong contaminates the whole tree rather than one file.
 
 ## Adding a third-party work
 
-1. Confirm license compatibility with GPL-3.0-only against the rules above. GPL-2.0-only is a hard stop.
-2. Get explicit approval: dependency additions are a gated decision, not an implementation detail.
-3. Vendor the source under `src/libs/<name>/`, keeping the upstream license file verbatim and unrenamed.
-4. Add a row to `src/libs/PROVENANCE.md` with upstream URL, embedded version macro, license, and the vendoring commit.
-5. Add a row to this file so the attribution ships with the binary.
+1. Confirm license compatibility with GPL-3.0-only against the rules above. GPL-2.0-only is a hard stop, and a project's own README is not evidence: read the LICENSE file. ACPICA was recorded in its owning TODO as Apache-2.0 and is actually Intel/BSD-3-Clause/GPL-2.0.
+2. Vendor the source under `src/libs/<name>/`, keeping the upstream license file verbatim and unrenamed.
+3. Add a row to `src/libs/PROVENANCE.md` with upstream URL, embedded version macro, license, and the vendoring commit.
+4. Add a row to this file so the attribution ships with the binary.

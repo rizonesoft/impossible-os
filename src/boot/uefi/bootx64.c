@@ -7739,7 +7739,8 @@ static const char *pt_load_mem_type_name(UINT32 type)
 static int pt_load_destination_allowed(UINT64 dst_start, UINT64 dst_end,
                                        const UINT8 *map, UINTN map_size,
                                        UINTN desc_size,
-                                       UINT32 *bad_type_out)
+                                       UINT32 *bad_type_out,
+                                       UINT64 *bad_addr_out)
 {
     UINTN offset;
 
@@ -7789,6 +7790,10 @@ static int pt_load_destination_allowed(UINT64 dst_start, UINT64 dst_end,
         if (t == EfiConventionalMemory)
             continue;  /* allowed; pass 2 will confirm full coverage */
         if (bad_type_out) *bad_type_out = t;
+        /* Report WHERE, not just what: a segment spanning megabytes gives
+         * no clue which end collided, and "shrink the kernel by how much"
+         * is exactly the number the operator needs. */
+        if (bad_addr_out) *bad_addr_out = d_start;
         return 0;
     }
 
@@ -8509,10 +8514,11 @@ kernel_loaded:
             UINT64 dst_start = phdr[i].p_paddr;
             UINT64 dst_end   = dst_start + phdr[i].p_memsz;
             UINT32 bad_type = (UINT32)-1;
+            UINT64 bad_addr = 0;
             if (!pt_load_destination_allowed(
                     dst_start, dst_end,
                     s_pt_load_mmap_buf, pt_mmap_size, pt_desc_size,
-                    &bad_type)) {
+                    &bad_type, &bad_addr)) {
                 /* Match the neighboring "[FAIL] Kernel ELF corrupt: segment N ..."
                  * shape so log scrapers and tests keying on that
                  * prefix see this rejection too. */
@@ -8526,6 +8532,9 @@ kernel_loaded:
                 serial_early_print_uint((UINT32)phdr[i].p_memsz);
                 serial_early_print(" type=");
                 serial_early_print(pt_load_mem_type_name(bad_type));
+                serial_early_print(" at=0x");
+                serial_early_print_hex16((UINT16)(bad_addr >> 16));
+                serial_early_print_hex16((UINT16)bad_addr);
                 serial_early_print("\n");
 
                 /* Persist a PT_LOAD_FORBIDDEN fault record so the

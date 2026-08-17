@@ -335,7 +335,78 @@ AP_TRAMPOLINE_OBJ := $(BUILD_DIR)/kernel/smp/ap_trampoline.o
 # and library-layer work; mbedtls is a larger TLS port. Excluded from the
 # auto-glob until each library is ported (the work that wires a lib re-adds it).
 LIBS_DIR   := $(SRC_DIR)/libs
-C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -name '*.c' ! -path '*/libs/lz4/*' ! -path '*/libs/miniz/*' ! -path '*/libs/mbedtls/*' 2>/dev/null)
+# ACPICA flavor decision MUST precede C_SRCS: the filter-out below reads
+# $(ACPICA), and make evaluates these assignments top-to-bottom, so deciding
+# it later left the variable empty here and silently pruned acpi_osl.c from
+# the release link (164 ACPICA objects present, no OS Services Layer).
+ifeq ($(KERNEL_TESTS),off)
+ACPICA ?= on
+else
+ACPICA ?= off
+endif
+
+C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -name '*.c' ! -path '*/libs/lz4/*' ! -path '*/libs/miniz/*' ! -path '*/libs/mbedtls/*' ! -path '*/acpica/*' 2>/dev/null)
+ifneq ($(ACPICA),on)
+# The OS Services Layer includes ACPICA headers, so it cannot compile without
+# the vendored tree. Pruned rather than #ifdef'd: an empty TU is not the point,
+# the point is that nothing references AcpiOs* when ACPICA is out.
+C_SRCS := $(filter-out $(KERNEL_DIR)/acpi_osl.c,$(C_SRCS))
+endif
+
+# --- ACPICA (vendored, src/kernel/acpica/) ---------------------------------
+#
+# PHYSICAL BUDGET, not a preference. The kernel loads at 0x100000 and on this
+# platform firmware-reserved memory (ACPIMemoryNVS) begins at exactly 0x800000,
+# measured 2026-08-17 from the bootloader's own PT_LOAD destination check:
+#   "segment 2 PT_LOAD destination forbidden ... type=ACPIMemoryNVS at=0x00800000"
+# That leaves the kernel image 7.0 MiB, full stop -- the check is correct and
+# must not be relaxed, because landing .bss in ACPI NVS corrupts firmware state.
+#
+# ACPICA costs ~164 KiB of .text + ~14 KiB of .bss. The RELEASE image
+# (KERNEL_TESTS=off) ends at 0x52C000 with it, 2.8 MiB clear, so the shipping
+# product carries ACPICA unconditionally. The DEV image compiles the whole test
+# suite in (~487 KiB of test-only .bss) and ends at 0x81781A, 94 KiB over.
+#
+# So ACPICA follows the test flavor until the kernel can be relocated above the
+# firmware regions, which is the real fix and is filed as its own work. Defaulting
+# it ON everywhere would break every unit-test run; defaulting it OFF everywhere
+# would ship a product without an AML interpreter. Override explicitly with
+# `make ACPICA=on` / `ACPICA=off`.
+# Excluded from the glob above and built by its own rule below: upstream code
+# cannot compile under the kernel's -Werror -Wall -Wextra set, and it needs
+# its own include root plus -D__IMPOSSIBLE_OS__ to select the platform header
+# acpica/include/platform/acimpossible.h. Relaxing warnings for VENDORED code
+# only is the point of the split -- src/kernel/acpi_osl.c, which we author,
+# stays under the full kernel flags via the normal rule.
+ACPICA_DIR  := $(KERNEL_DIR)/acpica
+ifeq ($(ACPICA),on)
+CFLAGS += -DCONFIG_ACPICA=1
+endif
+# rsdump.c is debug-only: its companion rsdumpinfo.c gates the descriptor
+# tables behind ACPI_DEBUG_OUTPUT/ACPI_DISASSEMBLER/ACPI_DEBUGGER, but rsdump.c
+# itself carries no such guard, so a non-debug build links it against tables
+# that were compiled out. Upstream handles this by excluding the file from the
+# object list rather than by a define; Linux does the same.
+# utprint.c defines snprintf/vsnprintf UNCONDITIONALLY (unlike utclib.c, which
+# ACPI_USE_SYSTEM_CLIBRARY compiles out wholesale), so it would collide with the
+# kernel's formatter regardless of that switch. ACPICA's core does not call into
+# it once the system clib is in use -- only the debugger and iasl do, and neither
+# is built here.
+ifeq ($(ACPICA),on)
+ACPICA_SRCS := $(shell find $(ACPICA_DIR)/components -name '*.c' ! -name 'rsdump.c' ! -name 'utprint.c' 2>/dev/null)
+else
+ACPICA_SRCS :=
+endif
+ACPICA_OBJS := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(ACPICA_SRCS))
+ACPICA_CFLAGS := $(filter-out -Werror,$(CFLAGS)) \
+                 -I$(ACPICA_DIR)/include -I$(INCLUDE) -I$(GENERATED) -I$(BUILD_DIR) \
+                 -isystem $(INCLUDE)/freestanding \
+                 -D__IMPOSSIBLE_OS__ \
+                 -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+                 -Wno-implicit-fallthrough -Wno-unused-but-set-variable \
+                 -Wno-format-nonliteral -Wno-cast-function-type-mismatch \
+                 -Wno-strict-prototypes -Wno-unused-function \
+                 -Wno-null-pointer-subtraction
 # Release flavor: prune the test suite from the build. The KERNEL_TESTS define
 # gates the in-TU seams, but the find above globs every .c unconditionally, so
 # without this the test translation units still compile and link. C_OBJS is
@@ -372,7 +443,7 @@ C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 LZ4_OBJ  := $(BUILD_DIR)/libs/lz4/lz4.o
 
 # All objects
-OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ) $(LZ4_OBJ)
+OBJS     := $(ASM_OBJS) $(C_OBJS) $(ACPICA_OBJS) $(AP_TRAMPOLINE_OBJ) $(LZ4_OBJ)
 
 # Generated headers — must exist before any C compilation starts (-j safe)
 GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h $(BUILD_DIR)/boot_proto_sha.h $(BUILD_DIR)/boot_loader_identity.h
@@ -1906,6 +1977,20 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_TU_FLAGS) -c $< -o $@
 	@echo "[CC] $<"
+
+# The OS Services Layer is OUR code, so it keeps the full kernel flag set
+# (-Werror included) and only borrows ACPICA's include root + platform select.
+$(BUILD_DIR)/kernel/acpi_osl.o: $(SRC_DIR)/kernel/acpi_osl.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(KERNEL_TU_FLAGS) -I$(ACPICA_DIR)/include -isystem $(INCLUDE)/freestanding \
+	      -D__IMPOSSIBLE_OS__ -Wno-unused-parameter -c $< -o $@
+	@echo "[CC] $<"
+
+# Vendored ACPICA. Matched ahead of the generic rule by being more specific.
+$(BUILD_DIR)/kernel/acpica/%.o: $(SRC_DIR)/kernel/acpica/%.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(ACPICA_CFLAGS) -c $< -o $@
+	@echo "[CC-ACPICA] $<"
 
 # Explicit dep: boot_proto.o tracks the generated sha header so a real
 # manifest change triggers a recompile (GENERATED_HDRS is an order-only

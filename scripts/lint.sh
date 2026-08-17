@@ -260,6 +260,12 @@ build_exclude_args() {
     # (monocypher, cjson, lz4, miniz, mbedtls). Our kernel-side wrappers live in
     # src/kernel/ and are still linted.
     args="$args ! -path '*/src/libs/*'"
+    # ACPICA is vendored too but lives at src/kernel/acpica/ (the path its
+    # owning TODO specified), so the src/libs/ rule above does not reach it.
+    # Same reasoning: upstream style, not ours. Our OS Services Layer
+    # (src/kernel/acpi_osl.c) and the global-lock unit sit OUTSIDE this tree
+    # and stay linted.
+    args="$args ! -path '*/src/kernel/acpica/*'"
     echo "$args"
 }
 

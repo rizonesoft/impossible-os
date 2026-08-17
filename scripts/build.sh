@@ -389,8 +389,16 @@ run_kernel_step $STEP $TOTAL || { print_errors; echo "=== BUILD FAILED ===" >> "
 # ── BSS / user-mode address collision check ─────────────────────────────────
 # Kernel BSS must not overlap the user-mode ELF base address (user/user.ld).
 # If BSS grows past USER_BASE, user programs overwrite kernel data at runtime.
-USER_BASE=0x800000
-if [[ -f build/kernel.map ]]; then
+# Derived from user/user.ld rather than hardcoded: this check previously
+# carried its own copy of 0x800000, a fourth definition that user_range.h's
+# dependency list did not even mention, so moving the user base left the gate
+# testing the OLD address and failing a build that was actually correct.
+USER_BASE=$(grep -oE '^\s*\.\s*=\s*0x[0-9A-Fa-f]+' user/user.ld | grep -oE '0x[0-9A-Fa-f]+' | head -1)
+if [[ -z "$USER_BASE" ]]; then
+    printf '\n %b! BSS check skipped:%b could not parse the load address from user/user.ld\n' \
+        "$YELLOW" "$RESET" | tee -a "$LOG"
+fi
+if [[ -f build/kernel.map && -n "$USER_BASE" ]]; then
     BSS_END_HEX=$(grep ' [bB] ' build/kernel.map | awk '{print $1}' | sort | tail -1)
     if [[ -n "$BSS_END_HEX" ]]; then
         BSS_END=$((16#${BSS_END_HEX}))
@@ -403,6 +411,26 @@ if [[ -f build/kernel.map ]]; then
         fi
         printf ' %b✓ BSS check:%b kernel BSS end 0x%s < user base 0x%X\n' \
             "$GREEN" "$RESET" "$BSS_END_HEX" "$USER_BASE" | tee -a "$LOG"
+
+        # Firmware-reserved floor. Separate from, and stricter than, the user
+        # base above: the bootloader refuses any PT_LOAD whose destination is
+        # not EfiConventionalMemory, and on this platform ACPIMemoryNVS begins
+        # at 0x800000 (measured 2026-08-17 from the loader's own rejection,
+        # "type=ACPIMemoryNVS at=0x00800000"). Without this the overflow is
+        # invisible until boot, where it shows up as "Kernel ELF could not be
+        # loaded" with no size in the message.
+        FW_FLOOR=0x800000
+        if [[ $BSS_END -ge $FW_FLOOR ]]; then
+            printf '\n %b✗ FIRMWARE OVERLAP:%b kernel image ends 0x%s, past the reserved floor 0x%X\n' \
+                "$RED" "$RESET" "$BSS_END_HEX" "$FW_FLOOR" | tee -a "$LOG"
+            printf '   The bootloader will refuse this image (PT_LOAD into ACPIMemoryNVS).\n' | tee -a "$LOG"
+            printf '   Over by %d KiB. Reduce kernel .text/.bss or relocate the kernel.\n' \
+                "$(( (BSS_END - FW_FLOOR) / 1024 ))" | tee -a "$LOG"
+            echo "=== BUILD FAILED ===" >> "$LOG"
+            exit 1
+        fi
+        printf ' %b✓ Firmware floor:%b kernel end 0x%s < 0x%X (%d KiB free)\n' \
+            "$GREEN" "$RESET" "$BSS_END_HEX" "$FW_FLOOR" "$(( (FW_FLOOR - BSS_END) / 1024 ))" | tee -a "$LOG"
     fi
 fi
 
