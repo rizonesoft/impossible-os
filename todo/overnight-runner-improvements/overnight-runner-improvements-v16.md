@@ -100,6 +100,19 @@ Every change below carries a refusal-direction control (a case that must still b
       - Landed via the sanctioned `SKIP_REVIEW_HOOK=1` opt-out with a specific honest reason (both legs genuinely reviewed and findings fixed twice over); filed here rather than silently normalized because a stamp mechanism that can go stale without the underlying review being stale is a gap that will recur on any section using the broker path for a re-dispatch.
       - Concrete next step: reproduce with a minimal single-kind broker re-dispatch + immediate `last-review-stamps.json` inspection, isolating whether the miss is in trigger detection, in the systemd-run completion observer, or in a race between the two.
 
+- [ ] The BSS-vs-`USER_BASE` ceiling has no EARLY sensor, so a section discovers it only after the full design-review-implement-test cycle is already spent
+      - Observed 2026-08-18 implementing `01-boot-platform/TODO-13` §28. The design review, implementation, tests and two builds all completed before `scripts/build.sh` reported `BSS COLLISION`; the section was then reverted whole. Everything after the first build was unrecoverable work.
+      - The mechanism is cascading, not proportional, which is why no amount of care during implementation predicts it: `.rodata`, `.data` and `.bss` are each `ALIGN(4K)` and chain, so a section either fits with room to spare or overshoots by a whole page. Measured at `d43b73d2b`: 347 bytes of headroom, and 859 bytes of `.rodata` growth was enough to trip it.
+      - This is the fourth-plus section stalled the same way. `02-kernel-core/TODO-33` §7 already lists re-run items for TODO-22 §23/§24/§25 and TODO-23 §1-§16, all parked by this identical late discovery, so the cost has been paid at least five times.
+      - The fix is cheap and belongs in the control plane, not in each section: `section-manifest.py` (or `preflight.py`) already runs before implementation and could read `build/kernel.map` for the current `__kernel_end`-to-`USER_BASE` gap and warn when a kernel-`.text`-adding section starts with under one page of slack. That is a read of a file the build already produces, so it costs no model tokens and no extra build.
+      - NOT applied: `scripts/overnight/**` is control plane and the run may not edit it.
+- [ ] A hard blocker forces a whole-section revert with no sanctioned place to preserve the work, so the doctrine's own remedy destroys reviewed output
+      - The sequencer rule is "roll back (commit nothing, clean tree), defer the section with the captured diagnostic, and advance", and the rollover gate independently requires a clean tree. Together they mean a section blocked by an EXTERNAL constraint loses its diff entirely, even though the diff was correct and design-reviewed.
+      - Worked around 2026-08-18 by writing `git diff` to `.claude/state/deferred-todo13-s28.patch` before reverting, and naming that path in the Deferred stamp. `.claude/state/` is gitignored and per-worktree, so it survives a rollover but not a fresh clone, which makes it a stopgap rather than a mechanism.
+      - The route is the finding: nothing in the doctrine suggested it, so whether a blocked section's work survives currently depends on the agent inventing a hiding place. `02-kernel-core/TODO-33` §11 shows the repo already relies on this pattern informally, referring to stashes by name (`todo23-s1-wip`), which is the same stopgap with a different storage backend.
+      - Concrete next step: give the phase machine a `defer-preserve` verb that writes the diff to a named, documented location and records the path in the deferral, so preservation is part of the deferral rather than a habit.
+
+
 
 ## Standing measurement obligations
 
