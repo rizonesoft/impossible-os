@@ -197,16 +197,19 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 **Regression risk:** LOW -- this section is documentation and ownership only until work migrates into `04-drivers-hardware/TODO-08`.
 
-- [ ] MSI-X (or MSI) completion path replacing polled CQ head spin (-> XREF `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §3)
-- [ ] Host-side multi I/O queue / affinity model comparable to Linux `blk-mq` per-core queues (-> XREF same file §1)
-- [ ] Get Log Page SMART / Health (identifier 0x02) plus Critical Warning surfacing to klog or VPD (-> XREF same file §1 + [`TODO-15-visual-post-display.md`](TODO-15-visual-post-display.md) when VPD owns SMART text)
-- [ ] Enumerate and attach namespaces beyond NSID 1 when drives expose multiple ranges (-> XREF same file §1)
-- [ ] Dataset Management / Deallocate wired to `blkdev_discard` for filesystem TRIM (-> XREF same file §1)
-- [ ] Autonomous Power State Transitions for idle power on laptops (-> XREF same file §1)
-- [ ] NVMe over Fabrics transports deferred (no SCSI translation layer needed) (-> XREF same file once networking + RDMA prerequisites exist)
-- [ ] Multi-page PRP2 / PRP-list transfers so a large read/write is one command not many 4 KiB submissions + a bounded tight-spin before the `sleep_ms(1)` completion poll (boot/mount latency) (-> XREF same file §3/§5)
-- [ ] Persistent per-controller DMA bounce buffer allocated at I/O-queue setup, guarded by the `io_busy` gate -- avoids per-read/write `pmm_alloc_contiguous`/free on the hot path (-> XREF same file §5)
-- [ ] Commit: `todo: NVMe advanced backlog tracked no kernel change`
+- [/] MSI-X (or MSI) completion path replacing polled CQ head spin (-> XREF `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §3) [parked: owner named in the XREF above; re-opens when that owner ships]
+- [/] Host-side multi I/O queue / affinity model comparable to Linux `blk-mq` per-core queues (-> XREF same file §1) [parked: owner named in the XREF above; re-opens when that owner ships]
+- [/] Get Log Page SMART / Health (identifier 0x02) plus Critical Warning surfacing to klog or VPD (-> XREF same file §1 + [`TODO-15-visual-post-display.md`](TODO-15-visual-post-display.md) when VPD owns SMART text)
+      - parked: owner named in the XREF above; re-opens when that owner ships
+- [/] Enumerate and attach namespaces beyond NSID 1 when drives expose multiple ranges (-> XREF same file §1) [parked: owner named in the XREF above; re-opens when that owner ships]
+- [/] Dataset Management / Deallocate wired to `blkdev_discard` for filesystem TRIM (-> XREF same file §1) [parked: owner named in the XREF above; re-opens when that owner ships]
+- [/] Autonomous Power State Transitions for idle power on laptops (-> XREF same file §1) [parked: owner named in the XREF above; re-opens when that owner ships]
+- [/] NVMe over Fabrics transports deferred (no SCSI translation layer needed) (-> XREF same file once networking + RDMA prerequisites exist) [parked: owner named in the XREF above; re-opens when that owner ships]
+- [/] Multi-page PRP2 / PRP-list transfers so a large read/write is one command not many 4 KiB submissions + a bounded tight-spin before the `sleep_ms(1)` completion poll (boot/mount latency) (-> XREF same file §3/§5)
+      - parked: owner named in the XREF above; re-opens when that owner ships
+- [/] Persistent per-controller DMA bounce buffer allocated at I/O-queue setup, guarded by the `io_busy` gate -- avoids per-read/write `pmm_alloc_contiguous`/free on the hot path (-> XREF same file §5)
+      - parked: owner named in the XREF above; re-opens when that owner ships
+- [x] Commit: the tracking backlog landed with the roadmap sync commit `44e3f3731` rather than under the planned `todo: NVMe advanced backlog tracked no kernel change` message; no kernel change shipped, matching the section's tracking-only scope
 
 **Test checkpoint:** Each §5 bullet maps to a matching `[x]` in `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §5 or §3 with proof: QEMU TCG `make run-nvme` shows no new `nvme: controller enable timeout` regressions; serial still shows POST16 `0x20A0` through `0x20A7` in order on reference image; `bash scripts/test.sh SUITE=storage` passes after the merged feature lands.
 > **Test runner:** N/A (documentation/ownership only -- no kernel change) | validation: each bullet carries a per-item XREF into `04-drivers-hardware/TODO-08`
