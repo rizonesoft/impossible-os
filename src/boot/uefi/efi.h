@@ -817,24 +817,90 @@ typedef struct {
 /* Forward-declare the protocol struct for function pointer typedefs */
 struct EFI_TCG2_PROTOCOL;
 
+/* Spec-named scalar alias (TCG PC Client Platform EFI Protocol Spec, Family
+ * "2.0"), so a prototype reads like the specification it came from. */
+typedef UINT32 EFI_TCG2_EVENT_LOG_FORMAT;
+
 typedef EFI_STATUS (EFIAPI *EFI_TCG2_GET_CAPABILITY)(
     struct EFI_TCG2_PROTOCOL *This,
     EFI_TCG2_BOOT_SERVICE_CAPABILITY *ProtocolCapability);
 
 typedef EFI_STATUS (EFIAPI *EFI_TCG2_GET_EVENT_LOG)(
     struct EFI_TCG2_PROTOCOL *This,
-    UINT32 EventLogFormat,
+    EFI_TCG2_EVENT_LOG_FORMAT EventLogFormat,
     EFI_PHYSICAL_ADDRESS *EventLogLocation,
     EFI_PHYSICAL_ADDRESS *EventLogLastEntry,
     BOOLEAN *EventLogTruncated);
 
+/* Sends a raw TPM2 command buffer to the TPM and returns its response. The
+ * loader has no TIS/CRB transport of its own before ExitBootServices, so this
+ * is the only way pre-kernel code can talk to the TPM. The block sizes are
+ * UINT32 in the specification, NOT UINTN. */
+typedef EFI_STATUS (EFIAPI *EFI_TCG2_SUBMIT_COMMAND)(
+    struct EFI_TCG2_PROTOCOL *This,
+    UINT32 InputParameterBlockSize,
+    UINT8 *InputParameterBlock,
+    UINT32 OutputParameterBlockSize,
+    UINT8 *OutputParameterBlock);
+
+/* MEMBER ORDER IS ABI, AND THIS STRUCT HAD IT WRONG until 2026-08-18.
+ *
+ * The protocol has SEVEN members in an order fixed by the specification:
+ * GetCapability, GetEventLog, HashLogExtendEvent, SubmitCommand, then the three
+ * active-PCR-bank methods. The previous definition declared five members as
+ * GetCapability, HashLogExtendEvent, SubmitCommand, GetEventLog, plus a
+ * "HashLogExtendEventEx" that does not exist in the protocol at all.
+ *
+ * That is not a naming nit. A vtable member's NAME is local to us; its POSITION
+ * is the call. GetEventLog sat at slot 3, which is the firmware's SubmitCommand,
+ * so retrieve_tpm_event_log() dispatched SubmitCommand with GetEventLog's
+ * arguments: firmware would read an input command block of EventLogFormat bytes
+ * from &EventLogLocation and write a response through &EventLogTruncated under a
+ * length taken from a pointer value. On real firmware that is memory
+ * corruption, not an EFI_UNSUPPORTED return.
+ *
+ * It survived five months (introduced cdbf84f76, 2026-03-19) because
+ * LocateProtocol fails on every platform this is tested on: QEMU carries no
+ * swtpm here and the dev host has no discrete TPM, so the path returns at
+ * "TPM: not available" and the mis-ordered slots are never reached. The bug was
+ * therefore invisible to the build, the suite and all four smoke legs.
+ *
+ * Verified against EDK2 MdePkg/Include/Protocol/Tcg2Protocol.h and the
+ * independent tpm2-software/tpm2-tcti-uefi copy of the same header; the GUID
+ * above was already correct.
+ *
+ * Unused members stay VOID * rather than fully typed, but they MUST keep their
+ * true positions, which is what the offset asserts below exist to hold. */
 typedef struct EFI_TCG2_PROTOCOL {
     EFI_TCG2_GET_CAPABILITY     GetCapability;
-    VOID                        *HashLogExtendEvent; /* not used */
-    VOID                        *SubmitCommand;      /* not used */
     EFI_TCG2_GET_EVENT_LOG      GetEventLog;
-    VOID                        *HashLogExtendEventEx; /* not used */
+    VOID                        *HashLogExtendEvent;           /* slot 2, unused */
+    EFI_TCG2_SUBMIT_COMMAND     SubmitCommand;
+    VOID                        *GetActivePcrBanks;            /* slot 4, unused */
+    VOID                        *SetActivePcrBanks;            /* slot 5, unused */
+    VOID                        *GetResultOfSetActivePcrBanks; /* slot 6, unused */
 } EFI_TCG2_PROTOCOL;
+
+/* Pin every slot. A later edit that reorders or drops a member now fails the
+ * build here instead of dispatching the wrong firmware routine on the one class
+ * of machine this code exists to serve. */
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL, GetCapability) == 0,
+               "EFI_TCG2_PROTOCOL.GetCapability must be slot 0");
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL, GetEventLog) == 8,
+               "EFI_TCG2_PROTOCOL.GetEventLog must be slot 1");
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL, HashLogExtendEvent) == 16,
+               "EFI_TCG2_PROTOCOL.HashLogExtendEvent must be slot 2");
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL, SubmitCommand) == 24,
+               "EFI_TCG2_PROTOCOL.SubmitCommand must be slot 3");
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL, GetActivePcrBanks) == 32,
+               "EFI_TCG2_PROTOCOL.GetActivePcrBanks must be slot 4");
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL, SetActivePcrBanks) == 40,
+               "EFI_TCG2_PROTOCOL.SetActivePcrBanks must be slot 5");
+_Static_assert(__builtin_offsetof(EFI_TCG2_PROTOCOL,
+                                  GetResultOfSetActivePcrBanks) == 48,
+               "EFI_TCG2_PROTOCOL.GetResultOfSetActivePcrBanks must be slot 6");
+_Static_assert(sizeof(EFI_TCG2_PROTOCOL) == 56,
+               "EFI_TCG2_PROTOCOL is seven function pointers");
 
 /* --- USB I/O Protocol (per USB device -- available before ExitBootServices) --- */
 
