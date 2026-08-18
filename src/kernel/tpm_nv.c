@@ -180,6 +180,34 @@ tpm_nv_status_t tpm_nv_attrs_valid_platform(uint32_t attrs, uint16_t data_size,
 
 /* ---- Index identity: the TPM2 Name ---- */
 
+/* The Name self-consistency check, in ONE place. It was duplicated verbatim
+ * into both the standalone gate and the in-sequence path; this is a SECURITY
+ * check, so two copies that must never drift is exactly the shape this module
+ * already refuses elsewhere (nv_build_define_common, nv_build_handles_only).
+ * Parses the public area, extracts the TPM-reported Name, recomputes it from
+ * that same public area, and reports whether the two agree. Returns 0 on a
+ * well-formed response (with *out_ok set) or -1 when the response cannot be
+ * parsed at all. An EMPTY or absent reported name yields *out_ok == 0. */
+static int nv_public_and_name(const uint8_t *rsp, uint32_t rlen, uint32_t nv_index,
+                              struct tpm_nv_public *out_pub, int *out_ok)
+{
+    uint8_t reported[TPM_NV_NAME_MAX], computed[TPM_NV_NAME_MAX];
+    int name_len, computed_len, ok = 0, i;
+
+    if (tpm2_parse_nv_public_full(rsp, rlen, nv_index, out_pub) != 0)
+        return -1;
+    name_len = tpm2_parse_nv_name(rsp, rlen, nv_index, reported, sizeof reported);
+    computed_len = tpm2_nv_name_compute(nv_index, out_pub, computed, sizeof computed);
+    /* Length equality FIRST, so a short name cannot match a prefix. */
+    if (name_len > 0 && computed_len == name_len) {
+        ok = 1;
+        for (i = 0; i < name_len; i++)
+            if (reported[i] != computed[i]) { ok = 0; break; }
+    }
+    *out_ok = ok;
+    return 0;
+}
+
 int tpm2_nv_name_compute(uint32_t nv_index, const struct tpm_nv_public *pub,
                          uint8_t *out, uint32_t cap)
 {
@@ -261,6 +289,16 @@ tpm_nv_status_t tpm_nv_identity_from_public(uint32_t nv_index,
     out->policy_len = pub->policy_len;
     for (i = 0; i < TPM_NV_POLICY_MAX; i++)
         out->auth_policy[i] = (i < pub->policy_len) ? pub->auth_policy[i] : 0u;
+    /* TPMA_NV_WRITTEN is cleared by a TPM Reset on an index carrying
+     * TPMA_NV_CLEAR_STCLEAR, and tpm_nv_attrs_valid permits that attribute on
+     * an ORDINARY index. Enrolling such an index as "written" would make an
+     * ordinary reboot indistinguishable from an undefine/redefine: the
+     * definition still matches, the Name is still self-consistent, and the
+     * cleared bit reports RECREATED. Refuse the combination at enrollment,
+     * where it is a provisioning choice, rather than mis-reporting an attack
+     * after every reset. */
+    if (expect_written && (pub->attrs & TPMA_NV_CLEAR_STCLEAR))
+        return TPM_NV_ATTRS;
     out->expect_written = expect_written ? 1u : 0u;
     return TPM_NV_OK;
 }
@@ -437,10 +475,13 @@ uint32_t tpm2_build_nv_undefine_special(uint8_t *buf, uint32_t cap,
 {
     /* header(10) + nvIndex(4) + platform(4) + authorizationSize(4) + TWO auth
      * areas. The index is authorized by a real POLICY session satisfying its own
-     * authPolicy (13 bytes: handle + empty nonce + attrs + empty hmac); the
-     * platform hierarchy is authorized by the password session (13 bytes).
-     * put_auth_area writes its own 4-byte authorizationSize per area, so the
-     * combined area is written once here and the per-area prefix is not reused. */
+     * authPolicy; the platform hierarchy is authorized by the password session.
+     * Each entry is a 9-byte TPMS_AUTH_COMMAND BODY (handle 4 + empty nonce
+     * TPM2B 2 + sessionAttributes 1 + empty hmac TPM2B 2), and the command
+     * carries ONE 4-byte combined authorizationSize before both of them. This
+     * deliberately does NOT use put_auth_area: that helper emits its own
+     * per-area authorizationSize, which is the single-authorization shape and
+     * would be wrong here. */
     uint32_t area1 = 4u + 2u + 1u + 2u;   /* handle + nonce(0) + attrs + hmac(0) */
     uint32_t area2 = area1;
     uint32_t total = 10u + 4u + 4u + 4u + area1 + area2;
@@ -876,17 +917,29 @@ int tpm_session_auth_response_n_ok(const uint8_t *rsp, uint32_t size,
     uint32_t off = auth_off;
     uint32_t i;
     uint16_t nonce_n, hmac_n;
+    /* EXPORTED kernel API: rsp, auth_off and n_sessions are all caller-supplied
+     * and none may be assumed sane. */
+    if (!rsp) return 0;
     /* A command with no authorizations has no auth area to validate, so asking
      * this function about one is a caller error rather than a vacuous pass. */
     if (n_sessions == 0u) return 0;
+    /* An auth_off past the response makes every bound below meaningless, and a
+     * LARGE one wraps: `size < off + 2u` is false once off + 2 overflows, so the
+     * guard passes and the read lands outside rsp. Every bound below is
+     * therefore a SUBTRACTION on a remainder already known non-negative. */
+    if (auth_off > size) return 0;
+    /* The minimum TPMS_AUTH_RESPONSE is 5 bytes (nonce 2 + attrs 1 + hmac 2), so
+     * a count that cannot possibly fit is rejected before the loop rather than
+     * discovered partway through it. */
+    if (n_sessions > (size - auth_off) / 5u) return 0;
     for (i = 0; i < n_sessions; i++) {
-        if (size < off + 2u) return 0;
+        if (size - off < 2u) return 0;
         nonce_n = tpm2_be16_get(rsp + off); off += 2u;
         if ((uint32_t)nonce_n > TPM2B_HA_MAX || (uint32_t)nonce_n > size - off) return 0;
         off += nonce_n;
-        if (size < off + 1u) return 0;      /* sessionAttributes */
+        if (size - off < 1u) return 0;      /* sessionAttributes */
         off += 1u;
-        if (size < off + 2u) return 0;
+        if (size - off < 2u) return 0;
         hmac_n = tpm2_be16_get(rsp + off); off += 2u;
         if ((uint32_t)hmac_n > TPM2B_HA_MAX || (uint32_t)hmac_n > size - off) return 0;
         off += hmac_n;
@@ -931,7 +984,7 @@ int tpm_session_cmd_exec_seq_n(tpm2_seq_t seq,
                                uint32_t n_sessions)
 {
     if (n_sessions == 0u) {
-        *out_st = TPM_NV_BADARG;
+        if (out_st) *out_st = TPM_NV_BADARG;
         return -1;
     }
     return nv_cmd_exec_common(seq, 0, cmd, n, rsp, cap, out_rlen, out_st, out_rc,
@@ -1798,32 +1851,27 @@ tpm_nv_status_t tpm_nv_read_identity(uint32_t nv_index,
                                      int *out_name_ok)
 {
     uint8_t cmd[16], rsp[128];
-    uint8_t reported[TPM_NV_NAME_MAX], computed[TPM_NV_NAME_MAX];
     struct tpm_nv_public pub;
     uint32_t n, rlen = 0;
-    int name_len, computed_len, ok = 0, i;
+    int ok = 0;
     tpm_nv_status_t st;
 
+    /* out_name_ok is REQUIRED: the Name verdict is the whole point of this
+     * function, and tpm_nv_read_public already serves the public-area-only
+     * case, so accepting NULL here would only let a caller discard the answer
+     * it asked for and read TPM_NV_OK as if the identity had held. */
+    if (!out_name_ok)
+        return TPM_NV_BADARG;
     n = tpm2_build_nv_read_public(cmd, sizeof cmd, nv_index);
     if (n == 0u)
         return TPM_NV_BADARG;
     st = nv_exec_bounded(cmd, n, rsp, sizeof rsp, &rlen);
     if (st != TPM_NV_OK)
         return st;
-    if (tpm2_parse_nv_public_full(rsp, rlen, nv_index, &pub) != 0)
+    if (nv_public_and_name(rsp, rlen, nv_index, &pub, &ok) != 0)
         return TPM_NV_TRANSPORT;
-    name_len = tpm2_parse_nv_name(rsp, rlen, nv_index, reported, sizeof reported);
-    computed_len = tpm2_nv_name_compute(nv_index, &pub, computed, sizeof computed);
-    /* An empty or absent reported name is NOT a pass: it is precisely the shape
-     * that let every earlier caller ignore the field. Length equality is
-     * checked before the bytes so a short name cannot match a prefix. */
-    if (name_len > 0 && computed_len == name_len) {
-        ok = 1;
-        for (i = 0; i < name_len; i++)
-            if (reported[i] != computed[i]) { ok = 0; break; }
-    }
     if (out_pub) *out_pub = pub;
-    if (out_name_ok) *out_name_ok = ok;
+    *out_name_ok = ok;
     return TPM_NV_OK;
 }
 
@@ -1860,7 +1908,13 @@ tpm_nv_status_t tpm_nv_verify_identity(const struct tpm_nv_identity *enrolled,
 /* ---- Verified operation: identity and the op share ONE sequence ---- */
 
 struct nv_verify_then_ctx {
-    const struct tpm_nv_identity *enrolled;
+    /* A SNAPSHOT, not the caller's pointer. The transport gate serializes TPM
+     * traffic; it does not serialize ordinary memory, so a caller-owned
+     * contract could be mutated by another CPU between the ReadPublic that
+     * verifies index A and the op that reads whatever nv_index now says --
+     * verifying A and reading B while reporting success. Copying once at entry
+     * makes every step below read the same bytes. */
+    struct tpm_nv_identity        enrolled;
     tpm_nv_verified_op_fn         op;
     void                         *ctx;
     tpm_nv_status_t               st;
@@ -1875,33 +1929,23 @@ static int nv_verify_then_seq(tpm2_seq_t seq, void *vctx)
 {
     struct nv_verify_then_ctx *c = (struct nv_verify_then_ctx *)vctx;
     uint8_t cmd[16], rsp[128];
-    uint8_t reported[TPM_NV_NAME_MAX], computed[TPM_NV_NAME_MAX];
     struct tpm_nv_public pub;
     uint32_t n, rlen = 0;
-    int name_len, computed_len, ok = 0, i;
+    int ok = 0;
     tpm_nv_status_t st;
 
-    n = tpm2_build_nv_read_public(cmd, sizeof cmd, c->enrolled->nv_index);
+    n = tpm2_build_nv_read_public(cmd, sizeof cmd, c->enrolled.nv_index);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
         c->st = st;
         return 0;
     }
-    if (tpm2_parse_nv_public_full(rsp, rlen, c->enrolled->nv_index, &pub) != 0) {
+    if (nv_public_and_name(rsp, rlen, c->enrolled.nv_index, &pub, &ok) != 0) {
         c->st = TPM_NV_TRANSPORT;
         return 0;
     }
-    name_len = tpm2_parse_nv_name(rsp, rlen, c->enrolled->nv_index, reported,
-                                  sizeof reported);
-    computed_len = tpm2_nv_name_compute(c->enrolled->nv_index, &pub, computed,
-                                        sizeof computed);
-    if (name_len > 0 && computed_len == name_len) {
-        ok = 1;
-        for (i = 0; i < name_len; i++)
-            if (reported[i] != computed[i]) { ok = 0; break; }
-    }
     if (!ok) { c->st = TPM_NV_MISMATCH; return 0; }
-    st = tpm_nv_identity_match(c->enrolled, &pub);
+    st = tpm_nv_identity_match(&c->enrolled, &pub);
     if (st != TPM_NV_OK) { c->st = st; return 0; }
     /* Identity alone is NOT enough, and this is the gap that would let the very
      * attack this module exists to refuse reach the content read.
@@ -1916,12 +1960,13 @@ static int nv_verify_then_seq(tpm2_seq_t seq, void *vctx)
      * returns TPM_RC_NV_UNINITIALIZED, which the baseline layer maps to
      * NO_BASELINE, i.e. "no record yet" -- so a destroyed anchor would be
      * laundered into a first enrollment. */
-    if (c->enrolled->expect_written && (pub.attrs & TPMA_NV_WRITTEN) == 0u) {
+    if (c->enrolled.expect_written && (pub.attrs & TPMA_NV_WRITTEN) == 0u) {
         c->st = TPM_NV_RECREATED;
         return 0;
     }
-    /* Only now, and still inside the same sequence. */
-    c->st = c->op(seq, c->enrolled->nv_index, &pub, c->ctx);
+    /* Only now, and still inside the same sequence, against the SNAPSHOT's
+     * handle -- the same one every check above was made against. */
+    c->st = c->op(seq, c->enrolled.nv_index, &pub, c->ctx);
     return 0;
 }
 
@@ -1933,7 +1978,8 @@ tpm_nv_status_t tpm_nv_verify_then(const struct tpm_nv_identity *enrolled,
 
     if (!enrolled || !op)
         return TPM_NV_BADARG;
-    c.enrolled = enrolled; c.op = op; c.ctx = ctx; c.st = TPM_NV_TRANSPORT;
+    /* Copy the contract ONCE, here, before the sequence opens. */
+    c.enrolled = *enrolled; c.op = op; c.ctx = ctx; c.st = TPM_NV_TRANSPORT;
     r = tpm2_seq_run(s_nv_work_ms, s_nv_cleanup_ms, nv_verify_then_seq, &c);
     return (r != 0) ? nv_seq_start_status(r) : c.st;
 }
@@ -2081,7 +2127,7 @@ tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap)
     struct nv_digest_ctx c;
     int r;
 
-    if (!out || cap < 32u)
+    if (!out || cap < SHA256_DIGEST_LEN)
         return TPM_NV_BADARG;
     c.alg = TPM_ALG_SHA256; c.sel = 0; c.out = out; c.cap = cap;
     c.st = TPM_NV_TRANSPORT;

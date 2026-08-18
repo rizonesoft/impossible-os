@@ -3475,6 +3475,97 @@ static void test_nv_identity_persisted_bounds(void)
                    "control: a max-length policy compares equal to itself");
 }
 
+/* ---- Review-round hardening: fixes from the post-commit review wave ---- */
+
+static void test_nv_review_hardening(void)
+{
+    struct tpm_nv_public pub;
+    struct tpm_nv_identity id;
+    uint8_t rsp[64];
+    uint32_t one = 5u;
+
+    /* The exported N-session validator takes caller-controlled arguments, so a
+     * NULL response and an out-of-range auth_off must be refusals rather than a
+     * crash or an overread. auth_off near UINT32_MAX is the wrap case: a
+     * `size < off + 2` guard is FALSE once off + 2 overflows, which would let
+     * the read land far outside the buffer. */
+    memset(rsp, 0, sizeof rsp);
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(0, one, 0u, 1u), 0,
+                   "a NULL response is refused, not dereferenced");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, one, one + 1u, 1u), 0,
+                   "an auth_off past the response is refused");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, one, 0xFFFFFFFCu, 1u), 0,
+                   "an auth_off that would WRAP the bound check is refused");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, one, 0u, 0xFFFFFFFFu), 0,
+                   "a session count that cannot fit is refused before the loop");
+    /* Control: the valid shape still validates, so the guards above reject the
+     * malformed cases rather than everything. */
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, one, 0u, 1u), 1,
+                   "control: a well-formed one-session area still validates");
+
+    /* An index whose WRITTEN bit is not durable cannot back an expect_written
+     * contract: TPM Reset clears WRITTEN on a TPMA_NV_CLEAR_STCLEAR index, so
+     * enrolling one that way would report RECREATED after every ordinary
+     * reboot -- an attack verdict for a normal event. */
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    pub.attrs |= TPMA_NV_CLEAR_STCLEAR;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_AB_FLOOR, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_ATTRS,
+                   "a CLEAR_STCLEAR index cannot be enrolled as written");
+    /* Controls: the same index enrolls fine when NOT claimed written, and a
+     * durable index enrolls fine when claimed written. */
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_AB_FLOOR, &pub, 0,
+                                                    &id),
+                   (int)TPM_NV_OK,
+                   "control: the same index enrolls when not claimed written");
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_AB_FLOOR, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK,
+                   "control: a durable index still enrolls as written");
+
+    /* The Name verdict may not be discarded: tpm_nv_read_public already serves
+     * the public-area-only case, so a NULL out_name_ok could only let a caller
+     * read OK as though the identity had been checked. */
+    TEST_ASSERT_EQ((int)tpm_nv_read_identity(TPM_NV_INDEX_BASELINE, &pub, 0),
+                   (int)TPM_NV_BADARG,
+                   "the Name verdict cannot be discarded");
+
+    /* A malformed PERSISTED contract must propagate as TPM_NV_CONTRACT through
+     * BOTH verification gates, not collapse into a transport error or a default
+     * arm -- the two statuses lead to opposite remediations (authorized
+     * recovery versus distrusting the device). */
+    {
+        struct tpm_t_test_state prev;
+        struct tpm_nv_identity bad;
+        tpm_nv_status_t st;
+        nvid_fill_public(&pub, 32u, 0x5Au);
+        TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE,
+                                                        &pub, 1, &bad),
+                       (int)TPM_NV_OK, "enroll a good contract first");
+        bad.policy_len = (uint16_t)(TPM_NV_POLICY_MAX + 1u);
+
+        nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                        TPMA_NV_WRITTEN);
+        prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+        st = tpm_nv_verify_identity(&bad, 0);
+        tpm_t_test_restore(prev);
+        TEST_ASSERT_EQ((int)st, (int)TPM_NV_CONTRACT,
+                       "the standalone gate propagates a corrupt contract");
+
+        nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                        TPMA_NV_WRITTEN);
+        prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+        st = tpm_nv_verify_and_read(&bad, 0u, (uint8_t *)&pub, 4u, 0);
+        tpm_t_test_restore(prev);
+        TEST_ASSERT_EQ((int)st, (int)TPM_NV_CONTRACT,
+                       "the atomic gate propagates a corrupt contract");
+        TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 0,
+                       "and reads no contents on a corrupt contract");
+    }
+}
+
 void test_register_tpm_nv(void)
 {
     test_suite_register_cat("tpm: NV rc classification", test_nv_classify_rc, TEST_CAT_SECURITY);
@@ -3523,4 +3614,6 @@ void test_register_tpm_nv(void)
     test_suite_register_cat("tpm: NV Name boundaries", test_nv_name_boundaries, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV verified read owns the handle", test_nv_verify_and_read, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV persisted contract bounds", test_nv_identity_persisted_bounds, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV review-round hardening",
+                            test_nv_review_hardening, TEST_CAT_SECURITY);
 }

@@ -305,6 +305,12 @@ static tpm_seal_status_t map_nv_status(tpm_nv_status_t s)
          * honest report is the same transient class as BUSY: worth retrying
          * outside the boot path, not a reason to distrust the device. */
         case TPM_NV_BUDGET:    return TPM_SEAL_BUSY;
+        /* Enumerated rather than left to default: a destroyed-and-recreated
+         * anchor and a corrupt persisted contract are both hard integrity
+         * failures, and naming them stops a future status from inheriting this
+         * bucket by accident. */
+        case TPM_NV_RECREATED:
+        case TPM_NV_CONTRACT:  return TPM_SEAL_TPMERR;
         default:               return TPM_SEAL_TPMERR;
     }
 }

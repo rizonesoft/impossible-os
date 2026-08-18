@@ -311,12 +311,39 @@ static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
          * right for a TPM that answered too slowly for the boot's patience.
          * TPMERR would instead read as a device fault. */
         case TPM_NV_BUDGET:    return TPM_BASELINE_NO_TPM;
+        /* BUSY is TRANSIENT -- another transaction held the transport -- and
+         * belongs with BUDGET for the same reason: the machine could not
+         * measure on THIS attempt, which must leave the verdict unpublished
+         * rather than report a device fault. Seal and attestation already
+         * preserve BUSY as retryable; routing it to TPMERR here would make one
+         * consumer call ordinary contention a permanent failure. */
+        case TPM_NV_BUSY:      return TPM_BASELINE_NO_TPM;
+        /* A caller-argument error is not a TPM fault, and this enum has the
+         * right value for it. */
+        case TPM_NV_BADARG:    return TPM_BASELINE_BADARG;
         /* Enumerated rather than left to default: both are genuine hard
          * failures (an illegal attribute request, or an index whose public area
          * is not the one we asked for), and naming them stops a future status
          * from inheriting this bucket by accident. */
         case TPM_NV_ATTRS:
         case TPM_NV_MISMATCH:  return TPM_BASELINE_TPMERR;
+        /* Named for the reason the comment above gives, and this pair is the
+         * case it was written for. RECREATED means the anchor was destroyed and
+         * recreated; CONTRACT means the persisted identity is corrupt. Neither
+         * may EVER reach NO_BASELINE, which this file treats as a genuine first
+         * enroll -- that is precisely the laundering the identity gate exists to
+         * stop, and letting it happen here would undo it downstream. */
+        case TPM_NV_RECREATED:
+        case TPM_NV_CONTRACT:  return TPM_BASELINE_TPMERR;
+        /* The remaining hard NV failures, named so the default arm is
+         * unreachable for every status the enum currently defines and a NEW one
+         * cannot inherit a bucket silently. */
+        case TPM_NV_LOCKED:
+        case TPM_NV_NOSPACE:
+        case TPM_NV_DEFINED:
+        case TPM_NV_RANGE:
+        case TPM_NV_AUTH:
+        case TPM_NV_TPMERR:    return TPM_BASELINE_TPMERR;
         default:               return TPM_BASELINE_TPMERR;
     }
 }

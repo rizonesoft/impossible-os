@@ -38,6 +38,7 @@
 
 #include "kernel/types.h"
 #include "kernel/tpm_transport.h"
+#include "kernel/crypto/sha256.h"
 
 /* ---- Permanent / reserved handles (TPM 2.0 Part 2) ---- */
 #define TPM_RH_OWNER     0x40000001u  /* storage (owner) hierarchy */
@@ -277,6 +278,14 @@ _Static_assert(TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE &&
  * Bounded at the
  * PTP command-buffer scale so a define is still sanity-checked. */
 #define TPM_NV_MAX_INDEX_SIZE 4096u
+
+/* Layer 1: the record must stay definable AND readable in one transfer, or the
+ * A/B consumers inherit a chunked read nobody has written. Growth past either
+ * bound is a build failure here rather than a TPM_NV_ATTRS at provisioning
+ * time on real firmware. */
+_Static_assert(TPM_NV_AB_FLOOR_SIZE > 0u &&
+               TPM_NV_AB_FLOOR_SIZE <= TPM_NV_MAX_DATA,
+               "TPM_NV_AB_FLOOR_SIZE must fit one NV transfer");
 
 /* ---- Status (one classified outcome; degraded states never wedge) ---- */
 typedef enum {
@@ -541,8 +550,12 @@ int tpm_session_cmd_exec_seq_n(tpm2_seq_t seq,
 /* Callback invoked under an open real PolicyPCR session: build + submit + parse
  * the authorized op using `session`; return its status. `seq` is the bounded
  * sequence the whole flow runs in -- submit through tpm_session_cmd_exec_seq()
- * with it, never a bare tpm2_submit, which would deadlock against the gate the
- * sequence already holds. */
+ * with it, never a bare tpm2_submit. That misuse does NOT hang: the transport
+ * sees the sequence's own busy gate and returns TPM_T_ERR_BUSY immediately,
+ * surfacing as a spurious TPM_NV_BUSY that reads like TPM contention rather
+ * than the caller's own mistake. (Same correction as tpm_nv_verified_op_fn; an
+ * earlier revision of both comments claimed a deadlock without checking
+ * tpm_transport.c, which refuses on the gate rather than blocking.) */
 typedef tpm_nv_status_t (*tpm_policy_op_fn)(tpm2_seq_t seq, uint32_t session,
                                             void *ctx);
 
@@ -682,6 +695,11 @@ tpm_nv_status_t tpm_nv_read_public(uint32_t nv_index, uint16_t *out_size,
 /* nameAlg(2) + one nameAlg digest. SHA-256 is the only bank this module
  * computes, so 2 + 32. */
 #define TPM_NV_NAME_MAX 34u
+/* Layer 1: pin the Name length to the algorithm it is built from. Without this
+ * a bank change would return a longer Name while the fixed-size buffers stayed
+ * 34, and every test comparing against the same constant would still pass. */
+_Static_assert(TPM_NV_NAME_MAX == 2u + SHA256_DIGEST_LEN,
+               "TPM_NV_NAME_MAX must be nameAlg(2) + one SHA-256 digest");
 
 /* Compute the TPM2 Name of an NV index: nameAlg (big-endian UINT16) followed by
  * H_nameAlg over the marshalled TPMS_NV_PUBLIC -- nvIndex(4) nameAlg(2)
@@ -723,8 +741,11 @@ struct tpm_nv_identity {
 /* Build an enrolled identity from an observed public area. Normalizes attrs and
  * records expect_written as supplied by the caller (the enroller knows whether
  * it wrote the index; the public area only says whether it is written NOW).
- * Returns TPM_NV_OK, or TPM_NV_BADARG on a NULL argument or an authPolicy
- * longer than the contract can hold. Pure; no transport. */
+ * Returns TPM_NV_OK; TPM_NV_BADARG on a NULL argument or an authPolicy longer
+ * than the contract can hold; and TPM_NV_ATTRS when expect_written is requested
+ * for an index carrying TPMA_NV_CLEAR_STCLEAR, whose WRITTEN bit a TPM Reset
+ * clears -- enrolling that combination would make an ordinary reboot
+ * indistinguishable from an undefine/redefine. Pure; no transport. */
 tpm_nv_status_t tpm_nv_identity_from_public(uint32_t nv_index,
                                             const struct tpm_nv_public *pub,
                                             int expect_written,
@@ -859,7 +880,9 @@ tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap);
  * reports a Name inconsistent with its own public area has contradicted itself,
  * which is a transport-level fault rather than a policy decision, so the fact is
  * REPORTED here and judged by the caller. An EMPTY reported name is name_ok 0,
- * never a pass. Either out pointer may be NULL. */
+ * never a pass. out_pub may be NULL; out_name_ok may NOT -- discarding the Name
+ * verdict would leave a caller reading TPM_NV_OK as though the identity held,
+ * and tpm_nv_read_public already serves the public-area-only case. */
 tpm_nv_status_t tpm_nv_read_identity(uint32_t nv_index,
                                      struct tpm_nv_public *out_pub,
                                      int *out_name_ok);
@@ -869,8 +892,19 @@ tpm_nv_status_t tpm_nv_read_identity(uint32_t nv_index,
  * -- a Name check that runs after the read has already trusted the bytes.
  * Returns TPM_NV_OK when the index is the enrolled one, TPM_NV_MISMATCH when it
  * is not (a failed self-consistency check, or a definition that no longer
- * matches), TPM_NV_NOTFOUND when the index is gone, or the underlying transport
- * status. out_pub (may be NULL) receives the observed public area on success so
+ * matches), TPM_NV_RECREATED when the definition matches but the contract says
+ * written and the live index is not, TPM_NV_CONTRACT when the ENROLLED contract
+ * is itself malformed, TPM_NV_BADARG on a NULL contract, TPM_NV_NOTFOUND when
+ * the index is gone, or ANY status the ReadPublic it performs can produce --
+ * the executor's classifier passes its verdict through, so TPM_NV_TPMERR and
+ * the other classified TPM errors are all reachable here. Do NOT write a
+ * caller that treats the named values as exhaustive; they are the ones this
+ * function DECIDES, not the whole set it can RETURN. It enforces the SAME
+ * lifecycle check as
+ * tpm_nv_verify_then; a caller switching on the status must handle RECREATED,
+ * which is the one value that signals the destroy-and-recreate attack, and must
+ * not fold CONTRACT into a default arm, since corrupt persisted state is an
+ * authorized-recovery question rather than a device fault. out_pub (may be NULL) receives the observed public area on success so
  * a caller can feed tpm_nv_lifecycle_classify without a second read. */
 tpm_nv_status_t tpm_nv_verify_identity(const struct tpm_nv_identity *enrolled,
                                        struct tpm_nv_public *out_pub);
@@ -884,8 +918,12 @@ tpm_nv_status_t tpm_nv_verify_identity(const struct tpm_nv_identity *enrolled,
  * read consumes bytes the gate never approved. Verifying and then reading in
  * two sequences is a check-then-use race, not an ordering guarantee -- so a
  * caller that reads CONTENTS after verifying uses this instead. `op` MUST
- * submit through tpm_session_cmd_exec_seq() with the supplied `seq`; a bare
- * tpm2_submit would deadlock against the gate the sequence already holds.
+ * submit through tpm_session_cmd_exec_seq() with the supplied `seq`: a bare
+ * tpm2_submit does NOT hang -- it sees the sequence's own busy gate and returns
+ * TPM_T_ERR_BUSY immediately, surfacing as a spurious TPM_NV_BUSY that reads
+ * like TPM contention rather than the caller's own mistake. (An earlier
+ * revision of this comment claimed a deadlock; it was never checked against
+ * tpm_transport.c, which refuses on the busy gate rather than blocking.)
  *
  * The LIFECYCLE state is enforced here too, not just the definition:
  * tpm_nv_identity_match normalizes TPMA_NV_WRITTEN away (it is not a definition
@@ -896,8 +934,13 @@ tpm_nv_status_t tpm_nv_verify_identity(const struct tpm_nv_identity *enrolled,
  * return TPM_RC_NV_UNINITIALIZED, which downstream reads as "no record yet".
  *
  * `pub` is the verified public area, so `op` need not re-read it. Returns the
- * op's status, or the verification failure (TPM_NV_MISMATCH / TPM_NV_RECREATED /
- * TPM_NV_NOTFOUND / transport) WITHOUT ever invoking `op`. */
+ * op's status, or the verification failure WITHOUT ever invoking `op`. The
+ * failures this function DECIDES are TPM_NV_MISMATCH, TPM_NV_RECREATED,
+ * TPM_NV_CONTRACT (the enrolled contract is malformed) and TPM_NV_BADARG (NULL
+ * contract or op). On top of those it passes through whatever the ReadPublic
+ * classifier returns (NOTFOUND, TRANSPORT, BUSY, BUDGET, TPMERR, ...) and,
+ * once `op` runs, whatever `op` returns -- so the full set is open by
+ * construction and a caller needs a default arm. */
 /* `nv_index` is the handle whose identity was just verified, and it is passed
  * explicitly so an op never has to name a handle of its own: an op that
  * hardcodes one is operating on an index this call did NOT verify, and the
@@ -932,7 +975,14 @@ tpm_nv_status_t tpm_nv_verify_then(const struct tpm_nv_identity *enrolled,
  * would hand a record consumer truncated bytes it has no way to notice, and an
  * over-length one would copy bytes nobody asked for. *out_len is written only
  * on success and then always equals `cap`; it exists so the contract is
- * checkable, not because the length may vary. */
+ * checkable, not because the length may vary.
+ *
+ * Returns TPM_NV_OK, any verification failure tpm_nv_verify_then can produce
+ * (MISMATCH / RECREATED / CONTRACT / BADARG / NOTFOUND / transport / TPMERR),
+ * TPM_NV_TRANSPORT when the response length differs from the request, or any
+ * status the NV_Read itself classifies -- UNINIT for a never-written index,
+ * plus RANGE / AUTH / LOCKED / ATTRS / TPMERR. The set is open: a caller needs
+ * a default arm rather than an exhaustive switch. */
 tpm_nv_status_t tpm_nv_verify_and_read(const struct tpm_nv_identity *enrolled,
                                        uint16_t offset, uint8_t *out,
                                        uint16_t cap, uint16_t *out_len);

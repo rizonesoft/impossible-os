@@ -75,7 +75,29 @@ typedef enum {
 typedef enum {
     TPM_BASELINE_OK         = 0,
     TPM_BASELINE_NO_BASELINE = 1,  /* NV index not defined / never written */
-    TPM_BASELINE_NO_TPM     = 2,   /* transport unavailable */
+    TPM_BASELINE_NO_TPM     = 2,   /* could not measure on THIS attempt. Reached
+                                    * from four distinct causes: the transport is
+                                    * unavailable; it was BUSY with another
+                                    * transaction; the operation outran the
+                                    * boot's budget; or a required PCR could not
+                                    * be snapshotted (inactive bank, bad
+                                    * argument). All of them leave the integrity
+                                    * verdict UNPUBLISHED rather than reporting a
+                                    * false tamper, which is the property this
+                                    * value exists for.
+                                    *
+                                    * Retry safety DIFFERS by cause and this
+                                    * value does not distinguish them. BUSY is
+                                    * safe to retry: nothing was submitted.
+                                    * BUDGET is NOT: the command was abandoned in
+                                    * flight and its completion is UNKNOWN, so a
+                                    * blind retry of state-changing work can
+                                    * apply it twice -- the same reason
+                                    * tpm_nv_increment refuses to retry. A caller
+                                    * that wants to retry must reconcile at the
+                                    * operation level or use an idempotent
+                                    * operation; a dedicated retryable status is
+                                    * tracked work. */
     TPM_BASELINE_CORRUPT    = 3,   /* STORED blob failed magic/version/size/crc */
     TPM_BASELINE_TPMERR     = 4,   /* TPM/NV transaction failure */
     TPM_BASELINE_BADARG     = 5,

@@ -379,6 +379,11 @@ static tpm_attest_status_t map_attest(tpm_nv_status_t s)
          * expiry means the operation ran out of the boot's patience, not that
          * the TPM failed. TPMERR would misreport a usable device. */
         case TPM_NV_BUDGET:    return TPM_ATTEST_BUSY;
+        /* Same reasoning as tpm_baseline.c and tpm_seal.c: both are hard
+         * integrity failures and are named so a future status cannot inherit
+         * this bucket silently. */
+        case TPM_NV_RECREATED:
+        case TPM_NV_CONTRACT:  return TPM_ATTEST_TPMERR;
         default:               return TPM_ATTEST_TPMERR;
     }
 }
