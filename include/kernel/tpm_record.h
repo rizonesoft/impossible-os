@@ -38,7 +38,19 @@
 #include "kernel/crypto/sha256.h"
 
 #define TPM_RECORD_MAGIC   0x43525049u /* "IPRC" little-endian */
-#define TPM_RECORD_LAYOUT  1u          /* on-NV layout revision of this header */
+/* On-NV layout revision. It is still 1 after the floor payload was widened to
+ * fill its index, and that is deliberate rather than an oversight: the narrower
+ * shape was never reachable. Nothing in production defines these indexes,
+ * installs an update authority, or calls an authorized write, so no stored
+ * record and no issued grant can exist to migrate from. Bumping the number
+ * would assert a shipped layout 1 that no machine ever held, and would owe a
+ * migration path for data that cannot exist.
+ *
+ * The moment any of those three things becomes true -- a production define, an
+ * installed authority, or a production authorized write -- this number starts
+ * describing real stored bytes, and any later layout change owes a bump AND an
+ * explicit old-format path. */
+#define TPM_RECORD_LAYOUT  1u
 #define TPM_RECORD_DIGEST  SHA256_DIGEST_LEN
 
 /* Which record a blob claims to be. Stored in the header and CHECKED against
@@ -90,10 +102,20 @@ struct tpm_record_hdr {
 };
 
 /* The A/B floor payload: the security version the loader compares a slot's
- * rollback_index against. */
+ * rollback_index against.
+ *
+ * PADDED so the whole record exactly fills TPM_NV_AB_FLOOR_SIZE, and the
+ * _Static_assert below pins that. An index's dataSize is part of its identity
+ * contract and tpm_nv_identity_match compares it for EXACT equality, so a
+ * record SMALLER than the index it lives in is not a harmless spare-room
+ * arrangement -- it is a contract that the enrolled index can never satisfy,
+ * and every verified read and authorized write would return MISMATCH forever.
+ * The reserved words are the "room the record owner can spend without an index
+ * migration" that tpm_nv.h promises: spending them changes this struct, not the
+ * index size. Every one is hashed and required to be zero. */
 struct tpm_ab_floor_payload {
     uint32_t security_version;
-    uint32_t reserved[3];  /* MUST be zero */
+    uint32_t reserved[9];  /* MUST be zero */
 };
 
 /* The baseline payload: binds the authorized generation to the exact baseline
@@ -132,8 +154,18 @@ _Static_assert(__builtin_offsetof(struct tpm_record_hdr, digest) == 24u,
                "tpm_record_hdr.digest offset pinned");
 _Static_assert(sizeof(struct tpm_record_hdr) == 56u,
                "tpm_record_hdr is a wire format; its size is pinned");
-_Static_assert(sizeof(struct tpm_ab_floor_payload) == 16u,
+_Static_assert(sizeof(struct tpm_ab_floor_payload) == 40u,
                "A/B floor payload is a wire format; its size is pinned");
+_Static_assert(__builtin_offsetof(struct tpm_ab_floor_payload, security_version) == 0u,
+               "A/B floor security_version offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_ab_floor_payload, reserved) == 4u,
+               "A/B floor reserved offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_bind_payload, blob_digest) == 0u,
+               "bind blob_digest offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_bind_payload, blob_len) == 32u,
+               "bind blob_len offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_bind_payload, reserved) == 36u,
+               "bind reserved offset pinned");
 _Static_assert(sizeof(struct tpm_baseline_bind_payload) == 48u,
                "baseline bind payload is a wire format; its size is pinned");
 

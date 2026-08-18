@@ -58,6 +58,17 @@
  * contract. */
 #define TPM_ENROLL_MANIFEST_VERSION 1u
 
+/* The record must EXACTLY fill the index the NV layer defines for it. An
+ * index's dataSize is part of its identity contract and is compared for exact
+ * equality, so a record sized smaller than its index yields a contract the
+ * enrolled index can never satisfy -- every verified read and every authorized
+ * write would return MISMATCH, forever, with nothing to point at. The two
+ * constants live in different headers and are pinned together HERE, which is
+ * the first place both are visible. Two independent reviewers found this
+ * disagreement on the same round; the assert is what stops it recurring. */
+_Static_assert(TPM_AB_FLOOR_RECORD_LEN == TPM_NV_AB_FLOOR_SIZE,
+               "A/B floor record must exactly fill its NV index");
+
 /* How an index's authPolicy is derived. */
 typedef enum {
     TPM_ENROLL_POLICY_NONE      = 0u, /* owner-auth index; authPolicy is empty */
@@ -192,8 +203,10 @@ tpm_nv_status_t tpm_authz_contract_cache_ok(const struct tpm_nv_identity *cache)
  * advancing `counter_index`.
  *
  * The whole sequence -- read the counter, verify the index identity, write,
- * read back, increment -- runs under ONE transition lock and ONE bounded
- * transport sequence. `expect_counter` is the generation the caller believes is
+ * read back, increment -- runs inside ONE bounded transport sequence, which IS
+ * the mutual exclusion (see the banner). There is no transition lock, and an
+ * earlier revision of this paragraph claimed one; a stale claim inside a
+ * security argument is exactly the sentence a maintainer would rely on. `expect_counter` is the generation the caller believes is
  * current; a disagreement is TPM_NV_MISMATCH rather than a retry, because the
  * grant was signed for one specific transition and no other.
  *

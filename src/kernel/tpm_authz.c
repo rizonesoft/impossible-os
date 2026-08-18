@@ -78,6 +78,12 @@ static const struct tpm_enroll_entry s_manifest[] = {
 
 #define AUTHZ_MANIFEST_COUNT ((uint32_t)(sizeof s_manifest / sizeof s_manifest[0]))
 
+/* A relation between two headers' constants is a compile-time claim. It used to
+ * be a runtime `if` that compared 32 against 64 and could never fire, which
+ * reads as defensive and defends nothing. */
+_Static_assert(SHA256_DIGEST_LEN <= TPM_NV_POLICY_MAX,
+               "an authPolicy digest must fit the contract's policy buffer");
+
 /* The installed authority. NULL public area = unprovisioned = every authorized
  * write refused. Written once during Phase-1 provisioning and read-only
  * thereafter; it is not touched from an interrupt and no AP mutates it. */
@@ -108,7 +114,15 @@ tpm_nv_status_t tpm_authz_set_authority(const struct tpm_authz_authority *auth)
         return TPM_NV_BADARG;
     if (!auth->policy_ref && auth->policy_ref_len != 0u)
         return TPM_NV_BADARG;
-    s_authority = *auth;
+    /* Publish the pointer LAST, with a release store. Everything a reader needs
+     * is written first, so a reader that observes a non-NULL public_area also
+     * observes the length and policyRef that describe it -- a plain multi-word
+     * struct assignment could be observed torn, with a live pointer beside a
+     * stale length. */
+    s_authority.public_len = auth->public_len;
+    s_authority.policy_ref = auth->policy_ref;
+    s_authority.policy_ref_len = auth->policy_ref_len;
+    __atomic_store_n(&s_authority.public_area, auth->public_area, __ATOMIC_RELEASE);
     return TPM_NV_OK;
 }
 
@@ -119,7 +133,7 @@ void tpm_authz_test_clear_authority(void)
      * suite that installs an authority needs an explicit way back to the
      * unprovisioned state; putting it behind KERNEL_TESTS keeps that door shut
      * in a shipping kernel. */
-    s_authority.public_area = 0;
+    __atomic_store_n(&s_authority.public_area, (const uint8_t *)0, __ATOMIC_RELEASE);
     s_authority.public_len = 0u;
     s_authority.policy_ref = 0;
     s_authority.policy_ref_len = 0u;
@@ -128,7 +142,12 @@ void tpm_authz_test_clear_authority(void)
 
 int tpm_authz_provisioned(void)
 {
-    return (s_authority.public_area != 0 && s_authority.public_len != 0u) ? 1 : 0;
+    /* ACQUIRE against the release store below. The pointer is the publication
+     * word: a reader that sees it must also see the length and policyRef that
+     * were stored before it, or it would hash the wrong number of bytes into
+     * the authority Name. tpm_seal.c solves the identical
+     * set-once-at-boot/read-later lifecycle the same way. */
+    return (__atomic_load_n(&s_authority.public_area, __ATOMIC_ACQUIRE) != 0) ? 1 : 0;
 }
 
 tpm_nv_status_t tpm_authz_authority_name(uint8_t *out, uint16_t cap,
@@ -304,9 +323,6 @@ tpm_nv_status_t tpm_authz_contract(uint32_t nv_index, struct tpm_nv_identity *ou
     if (st != TPM_NV_OK)
         return st;
 
-    if (SHA256_DIGEST_LEN > TPM_NV_POLICY_MAX)
-        return TPM_NV_CONTRACT;
-
     c.key_name = key_name;
     c.key_name_len = key_name_len;
     c.out = out->auth_policy;
@@ -397,7 +413,7 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
                                                      uint32_t *out_session)
 {
     uint8_t cmd[768], rsp[512], nonce[AUTHZ_NONCE_LEN];
-    uint8_t ticket[128];
+    uint8_t ticket[TPM2_TK_VERIFIED_MAX_LEN];
     uint8_t ahash[SHA256_DIGEST_LEN];
     uint32_t ticket_len = 0, key_handle = 0;
     uint8_t key_name_tpm[2u + SHA256_DIGEST_LEN];

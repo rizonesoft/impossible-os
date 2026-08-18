@@ -336,6 +336,14 @@ static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
          * stop, and letting it happen here would undo it downstream. */
         case TPM_NV_RECREATED:
         case TPM_NV_CONTRACT:  return TPM_BASELINE_TPMERR;
+        /* An operation that needs an update authority when none is installed is
+         * a CONFIGURATION state, not a TPM fault, and it maps to the status that
+         * says exactly that. Named explicitly because this switch promises the
+         * default arm is unreachable for every value the enum defines -- letting
+         * a new status inherit a bucket through the default is the failure that
+         * promise exists to prevent, and TPM_NV_UNAVAIL did exactly that when it
+         * was added. */
+        case TPM_NV_UNAVAIL:   return TPM_BASELINE_UNBOUND;
         /* The remaining hard NV failures, named so the default arm is
          * unreachable for every status the enum currently defines and a NEW one
          * cannot inherit a bucket silently. */

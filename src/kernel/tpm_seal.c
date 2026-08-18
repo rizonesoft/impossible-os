@@ -311,6 +311,12 @@ static tpm_seal_status_t map_nv_status(tpm_nv_status_t s)
          * bucket by accident. */
         case TPM_NV_RECREATED:
         case TPM_NV_CONTRACT:  return TPM_SEAL_TPMERR;
+        /* Added with the authorized-record work: an operation needing an update
+         * authority when none is installed. Named explicitly rather than left
+         * to the default arm, which this switch promises is unreachable for
+         * every value the enum defines. Not reachable from this module today;
+         * the mapping exists so the promise stays true. */
+        case TPM_NV_UNAVAIL:   return TPM_SEAL_TPMERR;
         default:               return TPM_SEAL_TPMERR;
     }
 }

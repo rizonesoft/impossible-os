@@ -58,7 +58,7 @@ static int payload_reserved_zero(tpm_record_kind_t kind, const uint8_t *payload,
             (const struct tpm_ab_floor_payload *)payload;
         if (payload_len != (uint32_t)sizeof(*p))
             return 0;
-        for (i = 0u; i < 3u; i++)
+        for (i = 0u; i < (uint32_t)(sizeof p->reserved / sizeof p->reserved[0]); i++)
             if (p->reserved[i] != 0u)
                 return 0;
         return 1;
@@ -68,7 +68,7 @@ static int payload_reserved_zero(tpm_record_kind_t kind, const uint8_t *payload,
             (const struct tpm_baseline_bind_payload *)payload;
         if (payload_len != (uint32_t)sizeof(*p))
             return 0;
-        for (i = 0u; i < 3u; i++)
+        for (i = 0u; i < (uint32_t)(sizeof p->reserved / sizeof p->reserved[0]); i++)
             if (p->reserved[i] != 0u)
                 return 0;
         return 1;

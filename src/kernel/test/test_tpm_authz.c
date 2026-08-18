@@ -74,12 +74,15 @@ static void test_authz_record_roundtrip(void)
     /* The header is a wire contract; its size is what a machine enrolled under
      * this layout will read back. */
     TEST_ASSERT_EQ((int)TPM_RECORD_HDR_LEN, 56, "record header is 56 bytes");
-    TEST_ASSERT_EQ((int)AZ_FLOOR_LEN, 72, "floor record is 72 bytes");
+    TEST_ASSERT_EQ((int)AZ_FLOOR_LEN, 96, "floor record is 96 bytes");
     TEST_ASSERT_EQ((int)AZ_BIND_LEN, 104, "bind record is 104 bytes");
-    /* It must fit the index the NV layer sizes for it, or enrollment defines an
-     * index the record cannot be written into. */
-    TEST_ASSERT(AZ_FLOOR_LEN <= TPM_NV_AB_FLOOR_SIZE,
-                "floor record fits its NV index");
+    /* EXACTLY fills its index, not merely fits. dataSize is part of the identity
+     * contract and is compared for exact equality, so a record smaller than its
+     * index is a contract the enrolled index can never satisfy. The old
+     * assertion used `<=`, which is the relation that let a 72-vs-96
+     * disagreement sit there looking checked. */
+    TEST_ASSERT_EQ((int)AZ_FLOOR_LEN, (int)TPM_NV_AB_FLOOR_SIZE,
+                   "floor record exactly fills its NV index");
 }
 
 static void test_authz_record_digest_covers_everything(void)
