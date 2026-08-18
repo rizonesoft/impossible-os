@@ -797,6 +797,24 @@ uint32_t tpm2_parse_start_auth_session(const uint8_t *rsp, uint32_t len)
     return handle;
 }
 
+uint32_t tpm2_rsp_object_handle(const uint8_t *rsp, uint32_t len)
+{
+    uint32_t poff, plen, handle;
+    /* The transient-object twin of tpm2_rsp_session_handle, and it exists for
+     * the same reason: when the strict parser rejects a reply the TPM already
+     * acted on, the allocated handle must still be recoverable for cleanup or
+     * it holds a slot until reboot. The TYPE check is the safety: FlushContext
+     * is valid for sessions too, so flushing a session handle named by a
+     * corrupt object reply would evict unrelated TPM state instead of cleaning
+     * up this load. */
+    if (tpm2_rsp_params(rsp, len, &poff, &plen) != 0 || plen < 4u)
+        return 0;
+    handle = tpm2_be32_get(rsp + poff);
+    if ((uint8_t)(handle >> 24) != 0x80u)   /* TPM_HT_TRANSIENT */
+        return 0;
+    return handle;
+}
+
 uint32_t tpm2_rsp_session_handle(const uint8_t *rsp, uint32_t len)
 {
     uint32_t poff, plen, handle;
@@ -1683,6 +1701,31 @@ tpm_nv_status_t tpm_nv_define_counter(uint32_t nv_index, uint32_t access_attrs)
                             (uint16_t)TPM_NV_COUNTER_SIZE, 0, 0);
 }
 
+tpm_nv_status_t tpm_nv_define_counter_policy(uint32_t nv_index,
+                                             const uint8_t *auth_policy,
+                                             uint16_t policy_len)
+{
+    /* The POLICY-authorized counter, and a SEPARATE entry point rather than a
+     * mode flag on tpm_nv_define_counter for the reason that file already gives
+     * about the two define hierarchies: a shared entry point with a mode
+     * argument is one wrong call away from provisioning the anti-rollback
+     * anchor under owner auth.
+     *
+     * OWNERWRITE is deliberately ABSENT. This index's whole purpose is that its
+     * increment -- the irreversible commit point of an authorized transition --
+     * is unreachable without the offline authority; leaving OWNERWRITE on would
+     * let ordinary OS code advance it at will and manufacture the
+     * counter-ahead-of-record state on purpose. OWNERREAD stays, because every
+     * boot must be able to READ the floor it is judged against. */
+    if (!auth_policy || policy_len == 0u || policy_len > TPM_NV_POLICY_MAX)
+        return TPM_NV_BADARG;
+    return tpm_nv_define_ex(nv_index,
+                            TPMA_NV_POLICYWRITE | TPMA_NV_OWNERREAD |
+                            TPMA_NV_TYPE(TPM_NT_COUNTER) | TPMA_NV_NO_DA,
+                            (uint16_t)TPM_NV_COUNTER_SIZE,
+                            auth_policy, policy_len);
+}
+
 tpm_nv_status_t tpm_nv_define_data(uint32_t nv_index, uint16_t data_size)
 {
     uint32_t attrs = TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA;
@@ -1799,6 +1842,16 @@ static tpm_nv_status_t nv_handles_only_op(uint32_t cc, uint32_t nv_index)
 
 tpm_nv_status_t tpm_nv_increment(uint32_t nv_index)
 {
+    /* The two anti-rollback anchors are REFUSED here, not merely expected to
+     * fail at the TPM. This wrapper authorizes with owner auth, and the anchors
+     * are provisioned POLICYWRITE precisely so that the commit point of an
+     * authorized transition cannot be reached without the offline authority.
+     * A caller reaching this path with one of them has made a layering mistake,
+     * and letting it through to be rejected by firmware would hide that mistake
+     * on every emulator whose policy enforcement is more forgiving than a real
+     * TPM's. The authorized path is tpm_authz_write_record. */
+    if (nv_index == TPM_NV_INDEX_AB_SEQ || nv_index == TPM_NV_INDEX_BASELINE_GEN)
+        return TPM_NV_AUTH;
     return nv_handles_only_op(TPM2_CC_NV_INCREMENT, nv_index);
 }
 
@@ -2134,4 +2187,325 @@ tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap)
     r = tpm2_seq_run(s_nv_work_ms, s_nv_cleanup_ms,
                      nv_delete_policy_digest_seq, &c);
     return (r != 0) ? nv_seq_start_status(r) : c.st;
+}
+
+/* ============================================================================
+ * Authorized-record-write primitives (the PolicyAuthorize construction)
+ *
+ * Marshalling only. The orchestration that drives these -- the enrollment
+ * manifest, the authority key and the write-then-increment commit -- lives in
+ * tpm_authz.c, so this file keeps its single job of turning arguments into TPM
+ * command bytes and back.
+ * ========================================================================= */
+
+tpm_nv_status_t tpm2_cphash_compute(uint32_t command_code,
+                                    const uint8_t *names, uint32_t names_len,
+                                    const uint8_t *params, uint32_t params_len,
+                                    uint8_t out[32])
+{
+    struct sha256_ctx ctx;
+    uint8_t cc[4];
+
+    if (!out)
+        return TPM_NV_BADARG;
+    /* A NULL pointer with a nonzero length is caller misuse, not an empty
+     * field: hashing zero bytes for it would silently produce a cpHash for a
+     * DIFFERENT command than the one about to be submitted, and the only
+     * symptom would be a policy failure at the TPM with nothing naming the
+     * cause. */
+    if ((!names && names_len != 0u) || (!params && params_len != 0u))
+        return TPM_NV_BADARG;
+
+    tpm2_be32_put(cc, command_code);
+    sha256_init(&ctx);
+    sha256_update(&ctx, cc, 4u);
+    if (names_len)
+        sha256_update(&ctx, names, names_len);
+    if (params_len)
+        sha256_update(&ctx, params, params_len);
+    sha256_final(&ctx, out);
+    return TPM_NV_OK;
+}
+
+uint32_t tpm2_build_policy_cphash(uint8_t *buf, uint32_t cap,
+                                  uint32_t policy_session,
+                                  const uint8_t cphash[32])
+{
+    /* header(10) + policySession(4) + cpHashA TPM2B(2 + 32). A policy
+     * assertion authorizes nothing itself, so there is no auth area. */
+    uint32_t total = 10u + 4u + 2u + SHA256_DIGEST_LEN;
+    uint32_t i;
+
+    if (!buf || !cphash || cap < total || policy_session == 0u)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_POLICY_CP_HASH);
+    tpm2_be32_put(buf + 10, policy_session);
+    tpm2_be16_put(buf + 14, (uint16_t)SHA256_DIGEST_LEN);
+    for (i = 0; i < SHA256_DIGEST_LEN; i++)
+        buf[16 + i] = cphash[i];
+    return total;
+}
+
+uint32_t tpm2_build_policy_nv(uint8_t *buf, uint32_t cap, uint32_t nv_index,
+                              uint32_t policy_session,
+                              const uint8_t *operand_b, uint16_t operand_len,
+                              uint16_t offset, uint16_t operation)
+{
+    /* header(10) + authHandle(4) + nvIndex(4) + policySession(4) +
+     * authArea(13: PW, empty owner auth) + operandB TPM2B(2 + n) +
+     * offset(2) + operation(2).
+     *
+     * policySession is a handle in the HANDLE area but needs no authorization
+     * of its own, which is why the auth area carries exactly one entry. */
+    uint32_t total = 10u + 4u + 4u + 4u + 13u + 2u + (uint32_t)operand_len + 2u + 2u;
+    uint32_t off;
+    uint16_t i;
+
+    if (!buf || cap < total || policy_session == 0u)
+        return 0;
+    if (!operand_b && operand_len != 0u)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_POLICY_NV);
+    tpm2_be32_put(buf + 10, TPM_RH_OWNER);     /* authHandle */
+    tpm2_be32_put(buf + 14, nv_index);         /* nvIndex */
+    tpm2_be32_put(buf + 18, policy_session);   /* policySession */
+    off = put_auth_area(buf, 22u, TPM_RS_PW, 0, 0, 0, 0);
+    tpm2_be16_put(buf + off, operand_len); off += 2u;
+    for (i = 0; i < operand_len; i++)
+        buf[off + i] = operand_b[i];
+    off += operand_len;
+    tpm2_be16_put(buf + off, offset); off += 2u;
+    tpm2_be16_put(buf + off, operation); off += 2u;
+    return off;
+}
+
+uint32_t tpm2_build_policy_authorize(uint8_t *buf, uint32_t cap,
+                                     uint32_t policy_session,
+                                     const uint8_t *approved_policy,
+                                     uint16_t approved_len,
+                                     const uint8_t *policy_ref,
+                                     uint16_t policy_ref_len,
+                                     const uint8_t *key_sign, uint16_t key_sign_len,
+                                     const uint8_t *ticket, uint32_t ticket_len)
+{
+    /* header(10) + policySession(4) + approvedPolicy TPM2B(2+n) +
+     * policyRef TPM2B(2+n) + keySign TPM2B_NAME(2+n) + checkTicket (already
+     * marshalled TPMT_TK_VERIFIED bytes). */
+    uint32_t total = 10u + 4u + 2u + (uint32_t)approved_len +
+                     2u + (uint32_t)policy_ref_len +
+                     2u + (uint32_t)key_sign_len + ticket_len;
+    uint32_t off;
+    uint16_t i;
+    uint32_t j;
+
+    if (!buf || cap < total || policy_session == 0u)
+        return 0;
+    /* An EMPTY approved policy or an ABSENT key Name would marshal cleanly and
+     * assert nothing: PolicyAuthorize would then re-extend the digest with a
+     * zero-length Name, which is the shape a caller reaches by forgetting to
+     * load the authority key. Refuse it here rather than at the TPM. */
+    if (!approved_policy || approved_len == 0u)
+        return 0;
+    if (!key_sign || key_sign_len == 0u)
+        return 0;
+    if (!ticket || ticket_len == 0u)
+        return 0;
+    if (!policy_ref && policy_ref_len != 0u)
+        return 0;
+
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_POLICY_AUTHORIZE);
+    tpm2_be32_put(buf + 10, policy_session);
+    off = 14u;
+    tpm2_be16_put(buf + off, approved_len); off += 2u;
+    for (i = 0; i < approved_len; i++) buf[off + i] = approved_policy[i];
+    off += approved_len;
+    tpm2_be16_put(buf + off, policy_ref_len); off += 2u;
+    for (i = 0; i < policy_ref_len; i++) buf[off + i] = policy_ref[i];
+    off += policy_ref_len;
+    tpm2_be16_put(buf + off, key_sign_len); off += 2u;
+    for (i = 0; i < key_sign_len; i++) buf[off + i] = key_sign[i];
+    off += key_sign_len;
+    for (j = 0; j < ticket_len; j++) buf[off + j] = ticket[j];
+    off += ticket_len;
+    return off;
+}
+
+uint32_t tpm2_build_load_external(uint8_t *buf, uint32_t cap,
+                                  const uint8_t *in_public, uint16_t public_len,
+                                  uint32_t hierarchy)
+{
+    /* header(10) + inPrivate TPM2B(2, empty) + inPublic TPM2B(2+n) +
+     * hierarchy(4). The EMPTY inPrivate is what selects a public-only load
+     * (Part 1 section 29.3); a hierarchy must still be named so the TPM knows
+     * which proof value a verification ticket carries. */
+    uint32_t total = 10u + 2u + 2u + (uint32_t)public_len + 4u;
+    uint32_t off;
+    uint16_t i;
+
+    if (!buf || !in_public || public_len == 0u || cap < total)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_LOAD_EXTERNAL);
+    tpm2_be16_put(buf + 10, 0u);               /* inPrivate: empty */
+    off = 12u;
+    tpm2_be16_put(buf + off, public_len); off += 2u;
+    for (i = 0; i < public_len; i++) buf[off + i] = in_public[i];
+    off += public_len;
+    tpm2_be32_put(buf + off, hierarchy); off += 4u;
+    return off;
+}
+
+tpm_nv_status_t tpm2_parse_load_external(const uint8_t *rsp, uint32_t len,
+                                         uint32_t *out_handle,
+                                         uint8_t *out_name, uint16_t name_cap,
+                                         uint16_t *out_name_len)
+{
+    uint32_t poff, plen, i;
+    uint16_t nlen;
+
+    if (!out_handle || !out_name || !out_name_len)
+        return TPM_NV_BADARG;
+    /* The object handle is in the HANDLE area, which precedes the parameters,
+     * so the handle is read from a fixed offset and the Name comes out of the
+     * session-aware parameter area. */
+    if (len < 14u)
+        return TPM_NV_TRANSPORT;
+    if (tpm2_rsp_params(rsp, len, &poff, &plen) != 0)
+        return TPM_NV_TRANSPORT;
+    /* Parameters begin AFTER the 4-byte object handle, which tpm2_rsp_params
+     * does not know about because it is command-specific. */
+    if (poff < 4u || plen < 4u + 2u)
+        return TPM_NV_TRANSPORT;
+    nlen = tpm2_be16_get(rsp + poff + 4u);
+    if (nlen == 0u || (uint32_t)nlen != plen - 4u - 2u)
+        return TPM_NV_TRANSPORT;
+    if (nlen > name_cap)
+        return TPM_NV_TRANSPORT;
+    for (i = 0; i < nlen; i++)
+        out_name[i] = rsp[poff + 4u + 2u + i];
+    *out_handle = tpm2_be32_get(rsp + poff);
+    if (*out_handle == 0u)
+        return TPM_NV_TRANSPORT;
+    *out_name_len = nlen;
+    return TPM_NV_OK;
+}
+
+uint32_t tpm2_build_verify_signature(uint8_t *buf, uint32_t cap,
+                                     uint32_t key_handle,
+                                     const uint8_t digest[32],
+                                     const uint8_t *signature, uint16_t sig_len)
+{
+    /* header(10) + keyHandle(4) + digest TPM2B(2+32) + signature (already
+     * marshalled TPMT_SIGNATURE, NOT length-prefixed). */
+    uint32_t total = 10u + 4u + 2u + SHA256_DIGEST_LEN + (uint32_t)sig_len;
+    uint32_t off;
+    uint16_t i;
+
+    if (!buf || !digest || !signature || sig_len == 0u || cap < total)
+        return 0;
+    if (key_handle == 0u)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_VERIFY_SIGNATURE);
+    tpm2_be32_put(buf + 10, key_handle);
+    tpm2_be16_put(buf + 14, (uint16_t)SHA256_DIGEST_LEN);
+    off = 16u;
+    for (i = 0; i < SHA256_DIGEST_LEN; i++) buf[off + i] = digest[i];
+    off += SHA256_DIGEST_LEN;
+    for (i = 0; i < sig_len; i++) buf[off + i] = signature[i];
+    off += sig_len;
+    return off;
+}
+
+tpm_nv_status_t tpm2_parse_verify_signature(const uint8_t *rsp, uint32_t len,
+                                            uint8_t *out_ticket, uint32_t cap,
+                                            uint32_t *out_len)
+{
+    uint32_t poff, plen, i;
+
+    if (!out_ticket || !out_len)
+        return TPM_NV_BADARG;
+    if (tpm2_rsp_params(rsp, len, &poff, &plen) != 0)
+        return TPM_NV_TRANSPORT;
+    /* The whole parameter area IS the TPMT_TK_VERIFIED, and it is handed
+     * straight back to PolicyAuthorize, so it is copied verbatim rather than
+     * decomposed. A zero-length or over-long ticket is a transport fault: the
+     * only correct response to a ticket that does not fit is to refuse the
+     * authorization, never to truncate one. */
+    if (plen == 0u || plen > cap)
+        return TPM_NV_TRANSPORT;
+    for (i = 0; i < plen; i++)
+        out_ticket[i] = rsp[poff + i];
+    *out_len = plen;
+    return TPM_NV_OK;
+}
+
+/* ---- In-sequence read variants ----
+ *
+ * The wrappers above each open their own bounded sequence, and sequences do NOT
+ * nest, so a caller that must hold ONE sequence across several reads and a write
+ * cannot use them. These do the same work inside a sequence the caller already
+ * owns. The parsing is the SAME shared code (nv_public_and_name,
+ * tpm2_parse_nv_read), so the two entry points cannot drift in what they judge:
+ * only in who owns the sequence. */
+
+tpm_nv_status_t tpm_nv_read_identity_seq(tpm2_seq_t seq, uint32_t nv_index,
+                                         struct tpm_nv_public *out_pub,
+                                         int *out_name_ok)
+{
+    uint8_t cmd[16], rsp[128];
+    struct tpm_nv_public pub;
+    uint32_t n, rlen = 0, rc = NV_RC_UNSET;
+    tpm_nv_status_t st;
+    int ok = 0;
+
+    if (!out_name_ok)
+        return TPM_NV_BADARG;
+    n = tpm2_build_nv_read_public(cmd, sizeof cmd, nv_index);
+    if (n == 0u)
+        return TPM_NV_BADARG;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+        return st;
+    if (nv_public_and_name(rsp, rlen, nv_index, &pub, &ok) != 0)
+        return TPM_NV_TRANSPORT;
+    if (out_pub) *out_pub = pub;
+    *out_name_ok = ok;
+    return TPM_NV_OK;
+}
+
+tpm_nv_status_t tpm_nv_read_counter_seq(tpm2_seq_t seq, uint32_t nv_index,
+                                        uint64_t *out)
+{
+    uint8_t cmd[64], rsp[128], buf[TPM_NV_COUNTER_SIZE];
+    uint32_t n, rlen = 0, rc = NV_RC_UNSET;
+    tpm_nv_status_t st;
+    int got;
+
+    if (!out)
+        return TPM_NV_BADARG;
+    /* authHandle is TPM_RH_OWNER, matching tpm_nv_read: these anchors grant
+     * OWNERREAD, not AUTHREAD, so authorizing with the index handle would be
+     * refused by a TPM that enforces the distinction. */
+    n = tpm2_build_nv_read(cmd, sizeof cmd, TPM_RH_OWNER, nv_index, TPM_RS_PW,
+                           (uint16_t)TPM_NV_COUNTER_SIZE, 0u);
+    if (n == 0u)
+        return TPM_NV_BADARG;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+        return st;
+    got = tpm2_parse_nv_read(rsp, rlen, buf, (uint32_t)sizeof buf);
+    /* Exactly 8 bytes. A short read is a malformed response, never a small
+     * number: decoding it would invent a counter value out of partial bytes,
+     * and every anti-rollback decision downstream is a comparison against it. */
+    if (got != (int)TPM_NV_COUNTER_SIZE)
+        return TPM_NV_TRANSPORT;
+    *out = ((uint64_t)tpm2_be32_get(buf) << 32) | (uint64_t)tpm2_be32_get(buf + 4);
+    return TPM_NV_OK;
 }

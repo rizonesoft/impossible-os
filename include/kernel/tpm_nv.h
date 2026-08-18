@@ -204,6 +204,18 @@ _Static_assert(TPMA_NV_TYPE(TPM_NT_PIN_PASS) == 0x90u,
 #define TPM_NV_INDEX_AB_SEQ       0x01800203u  /* TPM_NT_COUNTER, +1 per floor txn */
 #define TPM_NV_INDEX_AB_FLOOR     0x01800204u  /* ordinary data: the version record */
 
+/* The baseline BIND record: a small policy-protected index that authenticates
+ * the baseline blob living in the owner-writable TPM_NV_INDEX_BASELINE.
+ *
+ * An authPolicy is fixed at NV_DefineSpace and is hashed into the index Name,
+ * so the enrolled baseline index can never ACQUIRE an authorization boundary in
+ * place; the alternatives were to undefine and redefine it (opening a window
+ * with NO baseline on the machine) or to copy its owner-writable contents into
+ * a protected replacement (authenticating whatever an attacker last wrote).
+ * Binding it from the side costs one small index and neither hazard: the blob
+ * stays where it is, and a relabelled old blob fails the bind digest. */
+#define TPM_NV_INDEX_BASELINE_BIND 0x01800205u  /* policy-protected bind record */
+
 /* Bytes the A/B floor record occupies. The record LAYOUT is not this module's
  * to define; the index it lives in is, and an index cannot be defined without a
  * size. Sized to hold the paired (update sequence, security version) tuple plus
@@ -221,7 +233,8 @@ _Static_assert((TPM_NV_INDEX_OS_DATA >> 24) == TPM_HT_NV_INDEX &&
                (TPM_NV_INDEX_BASELINE >> 24) == TPM_HT_NV_INDEX &&
                (TPM_NV_INDEX_BASELINE_GEN >> 24) == TPM_HT_NV_INDEX &&
                (TPM_NV_INDEX_AB_SEQ >> 24) == TPM_HT_NV_INDEX &&
-               (TPM_NV_INDEX_AB_FLOOR >> 24) == TPM_HT_NV_INDEX,
+               (TPM_NV_INDEX_AB_FLOOR >> 24) == TPM_HT_NV_INDEX &&
+               (TPM_NV_INDEX_BASELINE_BIND >> 24) == TPM_HT_NV_INDEX,
                "TPM NV index handle outside the TPM_HT_NV_INDEX space");
 _Static_assert(TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE &&
                TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE_GEN &&
@@ -232,7 +245,12 @@ _Static_assert(TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE &&
                TPM_NV_INDEX_BASELINE != TPM_NV_INDEX_AB_FLOOR &&
                TPM_NV_INDEX_BASELINE_GEN != TPM_NV_INDEX_AB_SEQ &&
                TPM_NV_INDEX_BASELINE_GEN != TPM_NV_INDEX_AB_FLOOR &&
-               TPM_NV_INDEX_AB_SEQ != TPM_NV_INDEX_AB_FLOOR,
+               TPM_NV_INDEX_AB_SEQ != TPM_NV_INDEX_AB_FLOOR &&
+               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_OS_DATA &&
+               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_BASELINE &&
+               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_BASELINE_GEN &&
+               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_AB_SEQ &&
+               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_AB_FLOOR,
                "TPM NV index handles must be pairwise distinct");
 
 /* Wall-clock budget the session-cleanup FlushContext waits for the transport
@@ -326,6 +344,14 @@ typedef enum {
                              * which downstream maps to first enrollment, and
                              * that is exactly how a destroyed anchor gets
                              * laundered into a fresh install. */
+    TPM_NV_UNAVAIL   = 17,  /* the operation needs an update authority and none
+                             * is provisioned. Deliberately NOT an error status:
+                             * a kernel built without an authority key is
+                             * CORRECTLY refusing every authorized write, the
+                             * same way Secure Boot with an empty db refuses
+                             * every image. A caller must not retry it, must not
+                             * fall back to owner auth, and should report it as
+                             * a configuration state rather than a fault. */
 } tpm_nv_status_t;
 
 /* Classify a raw TPM2 response code into tpm_nv_status_t. Format-first: a
@@ -458,6 +484,14 @@ uint32_t tpm2_parse_start_auth_session(const uint8_t *rsp, uint32_t len);
  * session, this recovers the handle so it can be best-effort flushed rather
  * than leaked. Never use the result to authorize -- only to FlushContext. */
 uint32_t tpm2_rsp_session_handle(const uint8_t *rsp, uint32_t len);
+
+/* The transient-OBJECT twin of the above, for recovering a TPM2_LoadExternal
+ * handle whose response the strict parser rejected. Type-checked to
+ * TPM_HT_TRANSIENT (0x80) for the same reason the session extractor is checked
+ * to the session types: FlushContext accepts both, so flushing the wrong kind
+ * would evict unrelated TPM state rather than clean up this load. Never use
+ * the result to authorize -- only to FlushContext. */
+uint32_t tpm2_rsp_object_handle(const uint8_t *rsp, uint32_t len);
 
 /* TPM2_PolicyPCR(policySession, pcrDigest=empty, pcrs=<one bank+selection>).
  * The 3-byte pcr_select bitmap selects PCRs 0..23 in the `alg` bank. */
@@ -597,6 +631,20 @@ tpm_nv_status_t tpm_nv_define_ex(uint32_t nv_index, uint32_t attrs,
  * policy-authorized wrappers and belongs with the authorization construction. */
 tpm_nv_status_t tpm_nv_define_counter(uint32_t nv_index, uint32_t access_attrs);
 
+/* Define a POLICY-authorized monotonic counter: TPM_NT_COUNTER, 8 bytes, NO_DA,
+ * POLICYWRITE + OWNERREAD and the supplied authPolicy.
+ *
+ * OWNERWRITE is deliberately absent, which is the entire point: the increment
+ * of an anti-rollback anchor is the irreversible commit half of an authorized
+ * transition, and an anchor an attacker can advance at will lets them
+ * manufacture a counter-ahead-of-record state deliberately. OWNERREAD stays so
+ * every boot can read the floor it is judged against. A separate entry point
+ * rather than a mode flag on the owner-auth define, for the same reason the two
+ * define hierarchies are separate builders. */
+tpm_nv_status_t tpm_nv_define_counter_policy(uint32_t nv_index,
+                                             const uint8_t *auth_policy,
+                                             uint16_t policy_len);
+
 /* Define an owner-authorized OS data index (OWNERREAD|OWNERWRITE|NO_DA). */
 tpm_nv_status_t tpm_nv_define_data(uint32_t nv_index, uint16_t data_size);
 
@@ -640,6 +688,18 @@ tpm_nv_status_t tpm_nv_write_lock(uint32_t nv_index);
  * may land above a previous value, so "uninitialized" and "zero" are different
  * facts and conflating them is how a rollback gets laundered. */
 tpm_nv_status_t tpm_nv_read_counter(uint32_t nv_index, uint64_t *out);
+
+/* In-sequence variants of the two reads above, for a caller that must hold ONE
+ * bounded sequence across several reads and a write. Sequences do NOT nest, so
+ * the self-sequencing wrappers are unusable there and a caller reaching for one
+ * gets TPM_NV_BUSY rather than the read it asked for. Semantics are otherwise
+ * identical -- the same shared parsers judge the response -- and seq == 0
+ * submits unsequenced, exactly as tpm_session_cmd_exec_seq defines it. */
+tpm_nv_status_t tpm_nv_read_identity_seq(tpm2_seq_t seq, uint32_t nv_index,
+                                         struct tpm_nv_public *out_pub,
+                                         int *out_name_ok);
+tpm_nv_status_t tpm_nv_read_counter_seq(tpm2_seq_t seq, uint32_t nv_index,
+                                        uint64_t *out);
 
 #ifdef KERNEL_TESTS
 /* ---- Test seam (kernel unit tests only) ----
@@ -871,6 +931,134 @@ uint32_t tpm2_build_policy_command_code(uint8_t *buf, uint32_t cap,
  * flushed on every path by the same single-cleanup machinery the PCR-policy
  * digest uses. Writes 32 bytes to out (cap >= 32). */
 tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap);
+
+/* ---- Authorized-record-write primitives (the PolicyAuthorize construction) --
+ *
+ * Direct PolicySigned is NOT usable for an OFFLINE authority and this is the
+ * reason these five builders exist instead. Its aHash binds nonceTPM, which the
+ * TPM mints per session (TPM 2.0 Part 1 section 19.7.11: without nonceTPM the
+ * assertion "may be used on any policy session on any TPM"), so an authority
+ * that signs before it ever meets the TPM cannot produce one, and one that
+ * omits it signs a replayable authorization.
+ *
+ * PolicyAuthorize inverts the problem. The index's authPolicy names only the
+ * AUTHORITY KEY, permanently; the mutable half is an approved policy the
+ * authority signs offline, and Part 1 section 19.7.5 specifies that a satisfied
+ * PolicyAuthorize RESETS policyDigest to zero and re-extends it with the key's
+ * Name, so the object's authPolicy never has to change when the approved policy
+ * does. The approved policy carries PolicyCommandCode + PolicyCpHash + PolicyNV,
+ * which is what pins one command, one exact set of record bytes, and one
+ * counter generation. */
+
+#define TPM2_CC_POLICY_NV         0x00000149u
+#define TPM2_CC_LOAD_EXTERNAL     0x00000167u
+#define TPM2_CC_POLICY_AUTHORIZE  0x0000016Au
+#define TPM2_CC_POLICY_CP_HASH    0x0000016Eu
+#define TPM2_CC_VERIFY_SIGNATURE  0x00000177u
+
+/* TPMT_TK_VERIFIED tag. A "null ticket" is not zero bytes: it marshals as
+ * tag(2) || hierarchy(4) || empty digest TPM2B(2) = 8 bytes, which is what a
+ * TRIAL-session PolicyAuthorize takes when there is no signature to check. */
+#define TPM2_ST_VERIFIED          0x8022u
+#define TPM2_TK_VERIFIED_NULL_LEN 8u
+
+/* TPM_EO_* -- the comparison PolicyNV applies. Only the two orderings this
+ * layer needs are defined; adding an unused operand set would be a wire
+ * constant with no caller to keep it honest. */
+#define TPM2_EO_EQ                0x0000u
+#define TPM2_EO_UNSIGNED_GE       0x0003u
+
+/* Compute cpHash for a command, per TPM 2.0 Part 1 section 18.7 equation (16):
+ *
+ *   cpHash := H_sessionAlg(commandCode || Name1 || Name2 || Name3 || parameters)
+ *
+ * `names` is the concatenation of the Names of the handles that REQUIRE
+ * authorization, already marshalled (each is nameAlg || digest for an NV index),
+ * in command order; `params` is the marshalled parameter area with the header
+ * and the authorization area excluded.
+ *
+ * The Name of an NV index is nameAlg || H(nvPublicArea) and TPMA_NV_WRITTEN
+ * lives INSIDE that public area, so an index's Name CHANGES on its first write.
+ * A cpHash built from the enrollment-time Name therefore authorizes nothing once
+ * the index is initialized -- always pass the LIVE Name.
+ *
+ * SHA-256 only, which is the session algorithm every policy session this module
+ * opens uses. Pure; no transport. Returns TPM_NV_OK or TPM_NV_BADARG. */
+tpm_nv_status_t tpm2_cphash_compute(uint32_t command_code,
+                                    const uint8_t *names, uint32_t names_len,
+                                    const uint8_t *params, uint32_t params_len,
+                                    uint8_t out[32]);
+
+/* TPM2_PolicyCpHash(policySession, cpHashA): pins the session to ONE command
+ * with ONE exact parameter set. This is the assertion that makes an authority
+ * signature cover the record BYTES rather than merely the act of writing.
+ * Returns the marshalled length or 0. */
+uint32_t tpm2_build_policy_cphash(uint8_t *buf, uint32_t cap,
+                                  uint32_t policy_session,
+                                  const uint8_t cphash[32]);
+
+/* TPM2_PolicyNV(authHandle, nvIndex, policySession, operandB, offset, operation):
+ * asserts a comparison against an NV index's CONTENTS, which is how the
+ * approved policy names the exact counter generation it authorizes. authHandle
+ * is the owner hierarchy (empty-password auth area, as with every other
+ * owner-auth command here). Returns the marshalled length or 0. */
+uint32_t tpm2_build_policy_nv(uint8_t *buf, uint32_t cap, uint32_t nv_index,
+                              uint32_t policy_session,
+                              const uint8_t *operand_b, uint16_t operand_len,
+                              uint16_t offset, uint16_t operation);
+
+/* TPM2_PolicyAuthorize(policySession, approvedPolicy, policyRef, keySign,
+ * checkTicket): replaces the accumulated policyDigest with one derived from the
+ * authority key's Name, provided the current digest equals `approvedPolicy` and
+ * the ticket proves the authority signed it. Returns the marshalled length or 0.
+ *
+ * `key_sign` is the marshalled TPM2B_NAME of the authority key, NOT a handle:
+ * the assertion binds the key's IDENTITY, so a different key that happens to be
+ * loaded at the same handle authorizes nothing. */
+uint32_t tpm2_build_policy_authorize(uint8_t *buf, uint32_t cap,
+                                     uint32_t policy_session,
+                                     const uint8_t *approved_policy,
+                                     uint16_t approved_len,
+                                     const uint8_t *policy_ref,
+                                     uint16_t policy_ref_len,
+                                     const uint8_t *key_sign, uint16_t key_sign_len,
+                                     const uint8_t *ticket, uint32_t ticket_len);
+
+/* TPM2_LoadExternal(inPrivate=empty, inPublic, hierarchy): loads the authority's
+ * PUBLIC area so the TPM can verify its signature. Public-only load is what the
+ * empty inPrivate selects (Part 1 section 29.3), and a hierarchy MUST be named
+ * so the TPM knows which proof value to put in the verification ticket.
+ *
+ * The caller's public area must NOT carry nameAlg = TPM_ALG_NULL: Part 1
+ * section 26 says such an object has NO Name, and PolicyAuthorize binds exactly
+ * that Name. Returns the marshalled length or 0. */
+uint32_t tpm2_build_load_external(uint8_t *buf, uint32_t cap,
+                                  const uint8_t *in_public, uint16_t public_len,
+                                  uint32_t hierarchy);
+
+/* Parse a TPM2_LoadExternal response: the transient object handle plus the
+ * TPM2B_NAME the TPM computed for it. Returns TPM_NV_OK, or TPM_NV_TRANSPORT on
+ * a malformed or short reply. *out_handle is written only on success. */
+tpm_nv_status_t tpm2_parse_load_external(const uint8_t *rsp, uint32_t len,
+                                         uint32_t *out_handle,
+                                         uint8_t *out_name, uint16_t name_cap,
+                                         uint16_t *out_name_len);
+
+/* TPM2_VerifySignature(keyHandle, digest, signature): turns a detached authority
+ * signature into a TPMT_TK_VERIFIED ticket the TPM will accept from
+ * PolicyAuthorize. `signature` is a marshalled TPMT_SIGNATURE.
+ * Returns the marshalled length or 0. */
+uint32_t tpm2_build_verify_signature(uint8_t *buf, uint32_t cap,
+                                     uint32_t key_handle,
+                                     const uint8_t digest[32],
+                                     const uint8_t *signature, uint16_t sig_len);
+
+/* Parse a TPM2_VerifySignature response into the raw marshalled TPMT_TK_VERIFIED
+ * bytes, which is exactly what PolicyAuthorize wants back. Returns TPM_NV_OK, or
+ * TPM_NV_TRANSPORT on a malformed, short, or over-long reply. */
+tpm_nv_status_t tpm2_parse_verify_signature(const uint8_t *rsp, uint32_t len,
+                                            uint8_t *out_ticket, uint32_t cap,
+                                            uint32_t *out_len);
 
 /* ---- The live identity gate (call BEFORE reading an index's contents) ---- */
 

@@ -9,6 +9,7 @@
 #include "kernel/types.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_baseline.h"
+#include "kernel/tpm_authz.h"
 #include "kernel/tpm_nv.h"
 #include "kernel/crypto/sha256.h"
 #include "kernel/smbios.h"
@@ -469,6 +470,44 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
         if (out_overall)
             *out_overall = BOOT_INTEGRITY_MISMATCH;
         return TPM_BASELINE_CORRUPT;
+    }
+
+    /* AUTHENTICITY, after integrity. tpm_baseline_validate proves the blob is
+     * well-formed; it cannot prove anyone authorized it. The relabel attack
+     * produces a blob that passes every structural check -- old vulnerable
+     * content, the current generation, a correctly recomputed CRC -- so the
+     * only thing that catches it is the authenticated bind record, and a
+     * verifier that never consults one leaves the whole boundary unwired. */
+    {
+        uint64_t bind_gen = 0;
+        tpm_nv_status_t bnv;
+
+        if (tpm_authz_provisioned()) {
+            bnv = tpm_baseline_bind_verify(blob, (uint32_t)got, &bind_gen);
+            if (bnv == TPM_NV_NOTFOUND) {
+                /* No bind record on a kernel that HAS an authority: the blob is
+                 * legacy and unauthenticated. Refused, and deliberately NOT
+                 * auto-wrapped into a bind record -- the content is
+                 * owner-writable, so binding it now would authenticate whatever
+                 * an attacker last wrote and leave the boundary worse than no
+                 * boundary at all. */
+                if (out_overall)
+                    *out_overall = BOOT_INTEGRITY_MISMATCH;
+                return TPM_BASELINE_UNBOUND;
+            }
+            if (bnv != TPM_NV_OK) {
+                if (out_overall)
+                    *out_overall = BOOT_INTEGRITY_MISMATCH;
+                return (bnv == TPM_NV_MISMATCH) ? TPM_BASELINE_UNBOUND
+                                                : nv_to_baseline(bnv);
+            }
+        }
+        /* No authority provisioned: the binding boundary is not in force on
+         * this build, so the legacy path stands unchanged. Refusing here
+         * instead would report MISMATCH on every correctly-enrolled machine
+         * running a kernel that simply has no key compiled in, which is a brick
+         * rather than a security improvement -- the same reason Secure Boot
+         * with an empty db is OFF rather than refusing every image. */
     }
 
     st = tpm_baseline_snapshot(alg, &current);

@@ -109,6 +109,22 @@ typedef enum {
      * golden. Any handler that treats CORRUPT as re-enrollable must not reach
      * this value. */
     TPM_BASELINE_SELF_CORRUPT = 6,
+    /* The stored blob is well-formed but is NOT bound to an authenticated
+     * record, on a kernel whose update authority IS provisioned.
+     *
+     * Distinct from CORRUPT because the failure is authenticity, not integrity:
+     * the blob's CRC is perfect, which is exactly the attack. An owner-auth
+     * attacker can take an old vulnerable baseline, stamp the current
+     * generation on it and recompute the CRC, and every structural check
+     * passes. Only the bind record catches it, so a baseline with no bind
+     * record is refused rather than accepted as golden.
+     *
+     * Also distinct from CORRUPT in what it invites: a corrupt blob invites a
+     * re-enroll, and re-enrolling here would silently authenticate whatever an
+     * attacker last wrote. The repair is the authorized migration.
+     * The repair is the authorized migration owned by the versioned baseline
+     * growth and NV index migration work. */
+    TPM_BASELINE_UNBOUND = 7,
 } tpm_baseline_status_t;
 
 /* ---- Pure core (MMIO-free, fixture-tested) ---- */
