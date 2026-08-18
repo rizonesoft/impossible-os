@@ -13100,9 +13100,20 @@ if [ -z "$LINT24_REGION" ] || ! printf '%s' "$LINT24_REGION" | grep -q 'utest-re
         "anchors not found"
 else
     LINT23_TMP="$RLINT_TMP/lint23"
-    rm -rf "$LINT23_TMP"; mkdir -p "$LINT23_TMP/scripts"
+    rm -rf "$LINT23_TMP"; mkdir -p "$LINT23_TMP/scripts/lint" "$LINT23_TMP/scripts/todo-graph"
     printf '#!/usr/bin/env python3\nimport sys\nprint("FAKE.c: UTEST_RSN_X is defined but is not a leaf")\nsys.exit(1)\n' \
         > "$LINT23_TMP/scripts/utest-reason-lint.py"
+    # The extracted span runs "Check 24 through Summary" verbatim, and Check 28
+    # now lives inside that range too -- so this scratch dir needs its
+    # dependency closure or Check 28 legitimately ERRORs on the missing files,
+    # breaking the errors=1 assertion below that predates Check 28's existence.
+    # Same closure as `tt_install_lint`, kept minimal to this test's own scope.
+    cp "$REPO_ROOT/scripts/todo_fence.py"              "$LINT23_TMP/scripts/todo_fence.py"
+    cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$LINT23_TMP/scripts/todo-graph/cache_schema.py"
+    cp "$REPO_ROOT/scripts/lint/check_alias_staleness.py" \
+        "$LINT23_TMP/scripts/lint/check_alias_staleness.py"
+    ( cd "$LINT23_TMP" && git init -q . && git config user.email x@x \
+        && git config user.name x && git add -A && git commit -q -m x )
     LINT23_OUT="$(bash -c '
 set -euo pipefail
 RED=""; YELLOW=""; NC=""
