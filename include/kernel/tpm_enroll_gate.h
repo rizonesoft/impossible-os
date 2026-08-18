@@ -70,10 +70,16 @@ typedef enum {
     TPM_ENROLL_AUTH_NONE                = 0,  /* nothing asserted enrollment */
     TPM_ENROLL_AUTH_ESP_CONFIG_ONLY     = 1,  /* boot.conf tpm_enroll and nothing more */
     TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY  = 2,  /* NVRAM-backed recovery, no keypress yet */
-    TPM_ENROLL_AUTH_LOCAL_CONSOLE_ON_TRUSTED_CHAIN = 3,  /* the only authorizing value */
+    TPM_ENROLL_AUTH_LOCAL_CONSOLE_ON_TRUSTED_CHAIN = 3,  /* an authorizing value */
+    /* A one-shot offline-signed authorization, verified and CONSUMED before the
+     * gate was re-evaluated. Reported as its OWN value and never folded into
+     * the console one: an operator reading a log must be able to tell a
+     * keypress from a signed token, because the two answer different questions
+     * about who was present. See tpm_headless_authz.h. */
+    TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION = 4,
 } tpm_enroll_authority_t;
 
-#define TPM_ENROLL_AUTH_MAX TPM_ENROLL_AUTH_LOCAL_CONSOLE_ON_TRUSTED_CHAIN
+#define TPM_ENROLL_AUTH_MAX TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION
 
 /* Exactly why a write was refused. Distinct values, never one boolean:
  * an operator who is refused needs to know whether to set a config flag,
@@ -103,9 +109,16 @@ typedef enum {
      * differs: that one says "enable Secure Boot", this one says "boot the
      * UKI". See whole_chain_verified for why the distinction is real. */
     TPM_ENROLL_REFUSE_KERNEL_UNVERIFIED    = 14,
+    /* No console answered AND no valid headless authorization was consumed.
+     * Distinct from CONFIRM_UNAVAILABLE, which stays the verdict on a machine
+     * that never presented one: this value says a token WAS presented and did
+     * not hold, so the operator's remedy is to reissue it rather than to attach
+     * a keyboard. The specific reason is reported alongside as the headless
+     * verdict label (tpm_headless_verdict_label). */
+    TPM_ENROLL_REFUSE_HEADLESS_AUTHZ       = 15,
 } tpm_enroll_refusal_t;
 
-#define TPM_ENROLL_REFUSE_MAX TPM_ENROLL_REFUSE_KERNEL_UNVERIFIED
+#define TPM_ENROLL_REFUSE_MAX TPM_ENROLL_REFUSE_HEADLESS_AUTHZ
 
 /* Outcome of the console confirmation. An ENUM, not a bool: a timeout on
  * a headless machine and an operator pressing the wrong key are different
@@ -153,6 +166,18 @@ struct tpm_enroll_gate_inputs {
     uint8_t  replay_verdict;          /* tpm_replay_verdict_t, valid iff replay_known */
     uint8_t  tpm_enroll;              /* boot.conf opt-in (ESP-controlled) */
     uint8_t  confirm;                 /* tpm_confirm_outcome_t */
+    /* The outcome of a headless authorization that the caller ALREADY verified
+     * and consumed (tpm_headless_verdict_t). It is an OUTCOME rather than a
+     * blob on purpose: this predicate stays pure and does no TPM I/O, and the
+     * token must be spent before the gate can admit, so the consumption cannot
+     * be something the gate is trusted to do afterwards.
+     *
+     * TPM_HEADLESS_ABSENT is 0, so a zeroed struct -- which is how every
+     * existing caller and every test builds one -- leaves every existing
+     * verdict untouched. That is the state of every machine that ships
+     * without an authority key installed, and it is why the admitting verdict
+     * is deliberately NOT the zero value. */
+    uint8_t  headless_authz;
 };
 
 /* The decision. `admit` is the only field a caller may use to authorize

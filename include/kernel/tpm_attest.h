@@ -78,6 +78,8 @@ extern const uint8_t TPM_EK_POLICY_A_SHA256[TPM_EK_POLICY_A_LEN];
 #define TPM_SIG_MAX           288u  /* RSA-2048 sig (256) or ECDSA-P256 (r||s, 64) + tags */
 #define TPM_SIG_ECDSA_P256_MAX 72u  /* sigAlg(2)+hashAlg(2)+sigR(2+32)+sigS(2+32); only scheme tpm2_quote makes */
 #define TPM_AK_PUB_MAX        160u  /* marshaled AK TPMT_PUBLIC */
+#define TPM_EK_PUB_MAX        160u  /* marshaled EK TPMT_PUBLIC (ECC P-256 template is 122) */
+#define TPM_PUBLIC_MIN_LEN     10u  /* type(2)+nameAlg(2)+attrs(4)+empty authPolicy(2) */
 #define TPM_EK_CERT_MAX       1024u /* DER EK cert chunk we read from NV */
 
 /* ---- Classified outcome (degraded states never gate boot) ---- */
@@ -176,6 +178,29 @@ tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
 
 /* Marshaled AK public (TPMT_PUBLIC) captured at provisioning, for the verifier. */
 tpm_attest_status_t tpm_ak_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len);
+
+/* Marshaled EK PRIMARY public (TPMT_PUBLIC), cached for the boot.
+ *
+ * This is the STABLE device identity, and the AK deliberately is not: the AK is
+ * TPM2_Created fresh under the EK on every boot (at_provision), so a digest over
+ * it differs each time. The EK primary is derived from the endorsement seed, so
+ * it is reproducible across reboots and changes on TPM2_Clear.
+ *
+ * Creates the EK primary on first use and flushes the transient handle
+ * immediately; it does NOT provision the AK, because a caller that only needs
+ * the machine's identity should not pay a Create plus a Load for it.
+ *
+ * Returns TPM_ATTEST_OK, NO_TPM when the transport is unavailable, BADARG on a
+ * NULL buffer or one smaller than the public area, and TRANSPORT on a malformed
+ * response. */
+tpm_attest_status_t tpm_ek_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len);
+
+/* Parse the outPublic parameter of a TPM2_CreatePrimary success response.
+ * Exposed for unit tests: a wrong bound here would surface only on real
+ * firmware. Returns 0 on success, -1 on any malformed or over-long response. */
+int tpm2_parse_create_primary_public(const uint8_t *rsp, uint32_t len,
+                                     uint8_t *out, uint16_t cap,
+                                     uint16_t *out_len);
 
 /* Test seam: drop the cached AK so the next call re-provisions. Unit-test only.
  * Guarded out of release builds (release test-surface exclusion). */

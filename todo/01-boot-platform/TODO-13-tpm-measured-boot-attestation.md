@@ -60,13 +60,14 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  20   | BOOTX64.EFI on-disk self-measurement                          | §16, TODO-01 (boot_info ABI)                              |  [/]   |
 | 💎  |  21   | Authenticated NV index lifecycle and index identity           | §17, §6, §15                                              |  [/]   |
 | 💎  |  22   | Bootloader-side NV floor read (EFI_TCG2 adapter)              | §27, §28, TODO-21 §3 (selection)                          |  [/]   |
-| 💎  |  23   | Headless enrollment authorization escape hatch                | §21, §27, §15                                             |  [ ]   |
+| 💎  |  23   | Headless enrollment authorization escape hatch                | §21, §27, §15                                             |  [/]   |
 | 💎  |  24   | Bounded sequence + verified teardown for seal and attestation | §17, §8, §13                                              |  [ ]   |
 | 💎  |  25   | Field-level baseline mismatch attribution + status scoping    | §16, §18, §19                                             |  [ ]   |
 | 💎  |  26   | Baseline-blob NV fake: wrapper-level verify coverage          | §11, §18, §6                                              |  [ ]   |
 | 💎  |  27   | Authorized NV record transitions                              | §21, §15, §17                                             |  [x]   |
 | 💎  |  28   | Crash-consistent record pairing, floor APIs, read budget      | §27, §17, §6                                              |  [x]   |
 | 💎  |  29   | Authorized-record hardening and coverage residue              | §27                                                       |  [ ]   |
+| 💎  |  30   | Headless authorization transport + full-record binding        | §23, §6, §27                                              |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -870,15 +871,47 @@ Its failure mode is the opposite of §27's. §27 fails by accepting a forged rec
 
 **It is here rather than in §15 because it is the same authorization-construction problem as §27's floor record**, and it carries the same failure mode: a captured or replayed blob that authorizes an operation the operator never approved. The predecessor design this replaces was file-only authority on the ESP, which is precisely what §15 was built to remove -- so re-admitting it under a new name is the one outcome that would make things worse than the current fail-close.
 
-- [ ] Specify a one-shot signed authorization bound to device EK/AK identity, the exact current PCR set, and a TPM-backed nonce or counter, so a captured blob authorizes nothing on a second boot or a different machine.
-- [ ] Keep the signing secret and the replay state OFF the ESP; a blob an attacker can write beside the loader is file-only authority wearing a signature.
-- [ ] Bind the authorization to the exact requested operation, so a blob captured for one enrollment cannot authorize a rotation, a reset, or a different baseline.
-- [ ] Report the headless authority as its own distinct value beside the console one, never as a console confirmation. -> XREF: §15 (item: "Reported the enrollment AUTHORITY beside every verdict").
-- [ ] Keep the §15 fail-close as the default: no valid authorization present means `CONFIRM_UNAVAILABLE`, exactly as today.
-- [ ] Unit-test replay, wrong-machine, wrong-PCR-set, wrong-operation and expired-nonce as five distinct refusals, plus the accept path.
-- [ ] Commit: `"tpm: headless enrollment authorization escape hatch"`
+**Split on 2026-08-18** on a SPLIT-RECOMMENDED complexity verdict, after the design review turned three of the six original items into constructions of their own. This section owns the AUTHORIZATION and fails when a FORGED, replayed or wrong-machine blob is ACCEPTED. The ESP-to-kernel transport that carries the blob, and binding the authorization to the exact baseline record enrollment writes, are §30 -- those fail the other way round: an HONESTLY authorized enrollment writing content nobody authorized, or a correct authorization never reaching the verifier.
 
-**Test checkpoint:** a valid one-shot authorization enrolls exactly once, and the same bytes replayed on the next boot are REFUSED -- the single assertion that separates this from the file-only authority §15 removed. The same blob presented on a different device identity, against a different PCR set, or for a different operation than the one it was signed for, is refused as three distinct values rather than one generic decline, so an operator reading the log can tell a stale blob from a wrong machine. With no authorization present at all the verdict is still `CONFIRM_UNAVAILABLE`, unchanged from §15, and a control asserts the console path is untouched by any of this. Scope: this section owns the headless enrollment AUTHORITY only. Who may enroll on a console machine stays §15, baseline content stays §6, and the NV record authorization it borrows is §27. Platforms: kernel unit suites cover every refusal and the accept path; an end-to-end headless enrollment against real firmware is operator-gated (no `swtpm` on the dev host, and the bare-metal leg stays with §6's platform item).
+**The device identity is the EK, not the AK, and the design review is what caught that.** `at_provision` (`src/kernel/tpm_attest.c:493`) `TPM2_Create`s a fresh AK under the EK on every boot and caches it for that boot only, so a digest over the AK public differs every time and a pre-signed blob would be refused as wrong-machine on the correct machine. The EK primary is derived from the endorsement seed, so it is stable across reboots and changes on `TPM2_Clear` -- which is the right epoch, because a cleared TPM must not honor authorizations issued before the clear.
+
+**The hatch is INERT until an integrator provisions an authority key**, exactly as §27 shipped `tpm_baseline_enroll_bound` before its production caller existed. With no authority installed the gate behaves bit for bit as it does today, which is what makes shipping the verifier ahead of §30's transport honest rather than a half-open door.
+
+- [x] Specify a one-shot signed authorization over canonical little-endian bytes: magic, version, operation, device identity, PCR-set digest and the counter value it is bound to, followed by an Ed25519 signature over every preceding byte.
+  - Verify with `ci_crypto_verify(CI_SIG_ED25519, ...)` (`src/kernel/ci/ci_crypto.c:50`), which is already fail-closed on every missing input; the kernel holds no private key and the signing secret never enters the tree.
+  - The authority public key installs ONE-WAY and is EMPTY by default, so an unprovisioned machine has no escape hatch at all rather than a weak one.
+  - Pin the layout with `_Static_assert` on every field offset and the total size, because the blob is an external format an offline tool must reproduce byte for byte.
+- [x] Derive the device identity from the EK PRIMARY public, never the per-boot AK, and state that a `TPM2_Clear` deliberately invalidates every outstanding authorization.
+  - Shipped `tpm_ek_public_get` plus `tpm2_parse_create_primary_public`, which parses outPublic out of the CreatePrimary response and flushes the transient handle on EVERY path including the envelope-parse failure the adversarial round found leaking it.
+- [x] Read the replay counter through an authenticated index contract, not a bare `tpm_nv_read_counter`, which decodes eight bytes with no `NV_ReadPublic`, type, attribute or Name check (`src/kernel/tpm_nv.c:1863`).
+  - `TPM_NV_INDEX_HEADLESS_SEQ` with its own `s_manifest` row, read through `tpm_nv_verify_and_read`, so a replacement data index at the same handle cannot supply an attacker-chosen value.
+  - The first draft gave it a handle ALREADY held by `TPM_NV_INDEX_BASELINE_BIND`, and the existing pairwise-distinct asserts did not cover the new constant, so `tpm_enroll_lookup` would have returned the bind record's data contract and the consume would have incremented the wrong index. Caught by the adversarial round; the assert block now covers every pair.
+  - `tpm_headless_authz_provision` is REQUIRED bootstrap, not tidiness: a counter reads `UNINIT` until its first increment, so without it every authorization refuses `COUNTER_UNTRUSTED` and a fresh machine could never spend its first token.
+- [x] Consume the authorization BEFORE any baseline mutation, and treat an increment failure or an unknown completion as spent rather than as admission.
+  - The token authorizes one ATTEMPT, not one success: a reset between a successful enroll and a later increment would otherwise leave the identical blob acceptable on the next boot (`src/kernel/main/boot_interrupts.c:620`).
+- [x] Bind the authorization to the exact requested operation, so a blob captured for one enrollment cannot authorize a rotation, a reset, or a different baseline.
+- [x] Report the headless authority as its own distinct value beside the console one, never as a console confirmation. -> XREF: §15 (item: "Reported the enrollment AUTHORITY beside every verdict").
+- [x] Keep the §15 fail-close as the default: no valid authorization present means `CONFIRM_UNAVAILABLE`, exactly as today, and every existing refusal still fires ahead of the headless path.
+  - `TPM_HEADLESS_ABSENT` is deliberately the ZERO verdict, so a zeroed `tpm_enroll_gate_inputs` -- how every existing caller and test builds one -- cannot authorize. The first draft had `OK` at zero, which was fail-OPEN.
+- [x] Unit-test wrong-machine, wrong-PCR-set, wrong-operation, spent-counter and not-yet-valid as five distinct refusals, plus a forged signature, an unprovisioned authority, and the accept path as a control.
+  - 16 cases in `test_tpm_headless_authz.c` signing with the same Monocypher Ed25519 the kernel verifies with, plus 2 table-driven cases pinning the CreatePrimary parser's malformed shapes in `test_tpm_attest.c`.
+- [ ] Drive `tpm_headless_authz_authorize` end to end through a fake-TIS fixture, so the verify-then-consume ORDERING is proven rather than simulated.
+  - The predicate, the gate integration and the parser are covered; what is not is that a real acceptance reads the enrolled contract, issues EXACTLY ONE increment before returning OK, maps a failed or ambiguous increment to `CONSUME_FAILED`, and refuses the same bytes afterwards. A regression that dropped or reordered consumption would leave every current case green.
+  - Needs a fixture answering the whole conversation (CreatePrimary, the PCR snapshot, NV ReadPublic, NV_Read, NV_Increment); `test_tpm_authz.c`'s `azf_io` is the model. Raised by this section's own test-coverage round.
+  - The SAME fixture closes the other lifecycle gap: assert `at_flush_raw_if_created` actually issues a FlushContext for a response carrying a SUCCESS code and a transient handle under an invalid tag. The recovery is wired into all four post-submit paths and is pure-guarded, but only a fake that records commands can prove the flush happens. Raised by the re-adversarial round.
+- [x] Commit: `"tpm: headless enrollment authorization escape hatch"`
+
+**Test checkpoint:** a valid authorization admits enrollment on a machine with no console, and the same bytes are REFUSED once the counter has moved past the value they name -- the single pair that separates this from the file-only authority §15 removed. The same blob presented against a different EK identity, a different PCR set, or a different operation than the one it was signed for is refused as three DISTINCT values rather than one generic decline, so an operator reading the log can tell a stale blob from a wrong machine. A blob whose signature is altered by one bit is refused, and so is any blob at all while no authority is provisioned, which is the state every machine ships in. With no authorization present the verdict is still `CONFIRM_UNAVAILABLE`, unchanged from §15, and a control asserts the console path is untouched by any of this. Scope: this section owns the headless enrollment AUTHORITY and its one-shot consumption. The transport and the full-record binding are §30, who may enroll on a console machine stays §15, baseline content stays §6, and the NV record authorization it borrows is §27. Platforms: kernel unit suites cover every refusal and the accept path; an end-to-end headless enrollment against real firmware is operator-gated (no `swtpm` on the dev host, and the bare-metal leg stays with §6's platform item).
+
+> **Test runner:** `bash scripts/test.sh` (`make test-security` for this category alone) | `test_tpm_headless_authz.c`: 16 new cases -- accept, wrong device, wrong PCR set, wrong operation, stale-or-spent, not-yet-valid, bad signature, wrong authority, bad format, fail-closed defaults, unknown facts, one-way authority install, gate admit/report, gate never substitutes, console untouched, verdict labels | `test_tpm_attest.c`: 2 new cases pinning the CreatePrimary outPublic parser | 2724 kernel + 17 user PASS
+
+> **Notes:**
+> - Shipped `tpm_headless_authz.{h,c}`: a 152-byte signed authorization bound to the EK-primary digest, the PCR-set digest, the requested operation and an exact NV counter value, verified with the existing `ci_crypto_verify` Ed25519 path so the kernel holds no key material of its own.
+> - The device identity is the EK primary, not the AK: `at_provision` re-creates the AK every boot, so an AK digest would refuse a pre-signed token on the correct machine. `tpm_ek_public_get` + `tpm2_parse_create_primary_public` are the new accessors.
+> - One-shot is consume-BEFORE-mutate: `tpm_headless_authz_authorize` verifies and increments `TPM_NV_INDEX_HEADLESS_SEQ` before the gate can admit, and an ambiguous increment is spent rather than retried; `tpm_headless_authz_provision` performs the bootstrap increment a counter needs before it is readable at all.
+> - The enrollment gate gains one input, authority value 4 and refusal 15; `TPM_HEADLESS_ABSENT` is the zero verdict so a zeroed inputs struct cannot authorize, and every earlier refusal still fires ahead of the headless path.
+> - Inert until an integrator installs an authority key, so an unprovisioned machine behaves exactly as before; the ESP-to-kernel transport and the full-record binding are section 30.
+> - Canonical doc: the header banner in `include/kernel/tpm_headless_authz.h`.
 
 ---
 
@@ -1112,6 +1145,32 @@ The split is deliberate: §27's claim is that a forged record cannot be accepted
 **Test checkpoint:** the read path refuses a counter index whose identity does not match the enrolled contract, beside a control proving the enrolled one still reads. A forced BUSY, BUDGET or TRANSPORT failure at each allocating command leaves no session or transient object live, asserted on named handles rather than a flush count. `tpm_baseline_enroll_bound` is driven end to end through the fake-TIS seam and proven to bind the exact stored bytes, with a control that an unbound blob and a bound one report differently. A record that fails to parse and a corrupt enrolled contract report DIFFERENT statuses, and so do "no authority provisioned" and "authority provisioned, baseline unbound". Scope: this section owns the residue around §27's boundary, not the boundary itself. The crash-consistent pairing and the aggregate read budget are §28, first provisioning is §15, and the record authorization itself stays §27. Platforms: fake-TIS unit suites are the whole automatable surface; live swtpm is operator-gated (no `swtpm` on the dev host).
 
 ---
+## 30. Headless Authorization Transport and Full-Record Binding
+
+> **Spawned-by:** §23 (split)
+> **User impact:** on a headless server the escape hatch §23 builds cannot be used at all, because nothing carries the operator's signed authorization from the ESP to the kernel that verifies it. And once it is carried, the authorization covers the PCR set while enrollment writes a record that also contains the firmware-version hash, the ABI-manifest digest and the Secure Boot state -- so an operator who authorizes one measured state can have a different one enrolled as golden without any refusal being reported.
+
+Split out of §23 on 2026-08-18 during its design review. §23 fails when a FORGED, replayed or wrong-machine blob is ACCEPTED. This section fails the other way round, and both halves were found by the same review: an HONESTLY authorized enrollment writing content nobody authorized, and a correct authorization never reaching the verifier at all.
+
+**The binding gap is real and was verified against the tree, not inferred.** `tpm_baseline_enroll_unauthenticated` calls `tpm_baseline_snapshot` itself (`src/kernel/tpm_baseline.c:453`), so §23's verification and the write operate on two independent snapshots. Every non-PCR field of `struct tpm_baseline` is therefore enrolled without ever having been authorized, and the two snapshots leave a check-then-use gap besides.
+
+**The transport is additive, not an ABI break.** `enum boot_payload_type` documents that new values are safe to add and that unknown types are skipped by older kernels (`include/kernel/boot_info.h:1459`), so a new payload kind needs no `BOOT_INFO_VERSION` bump. That is what makes carrying the blob a bounded loader change rather than a handoff-contract change.
+
+- [ ] Carry the signed authorization from the ESP to the kernel as a new `BOOT_PAYLOAD_HEADLESS_AUTHZ` descriptor, published by the loader with the existing descriptor validation and no `BOOT_INFO_VERSION` bump.
+  - The blob on the ESP is not authority: it is signed, machine-bound and one-shot, which is exactly what separates it from the file-only authority §15 removed.
+  - A missing, oversized or malformed payload degrades to no authorization at all, never to a partial one, so the §15 fail-close still governs.
+- [ ] Build the candidate baseline ONCE and bind the authorization to a canonical digest over every security-relevant field of it, not to a PCR-set digest alone.
+  - -> XREF: 01-boot-platform/TODO-13 §6 (item: "Baseline enrollment and storage").
+  - The digest canonicalizes its own coverage the way §27's record digest does: the digest field and every padding byte are zeroed before hashing.
+- [ ] Pass those exact validated bytes into the write and re-check the digest immediately before it, rather than taking a second independent snapshot inside the enroll path.
+- [ ] Wire the production caller so a headless machine with a provisioned authority and a valid payload actually enrolls, with the console path proven untouched.
+- [ ] Unit-test a payload-absent boot, a malformed payload, and a record whose non-PCR fields differ from the authorized candidate, each beside a passing control.
+- [ ] Commit: `"tpm: headless authorization transport and full-record binding"`
+
+**Test checkpoint:** a boot carrying no payload behaves bit for bit as today, and a malformed payload is refused rather than partially honored. A candidate baseline whose firmware-version hash or ABI-manifest digest differs from the authorized one is REFUSED, which is the assertion that separates this from authorizing a PCR set and writing a record. The bytes handed to the write are proven to be the bytes the digest covered, so the check-then-use gap cannot reopen. Scope: this section owns the transport and the record binding. The authorization construction, the device identity and the one-shot counter stay §23, baseline content stays §6, and the NV record authorization stays §27. Platforms: fake-TIS unit suites plus the boot-payload validator cover the automatable surface; a live headless enrollment against real firmware is operator-gated (no `swtpm` on the dev host).
+
+---
+
 
 ## OS Comparison
 
@@ -1132,6 +1191,7 @@ The split is deliberate: §27's claim is that a forged record cannot be accepted
 | 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation          | Keylime AK quote                             | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                         |
 | 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal             | systemd-pcrlock CEL                          | ✅ §12 event-centric table + derived masks                                       |
 | ⭐  | Baseline enrollment authority          | TPM PPI physical presence          | root + interactive prompt                    | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value          |
+| ⭐  | Headless enrollment authority          | TPM PPI (needs physical presence)  | systemd-cryptenroll (needs an operator)      | ⚠️ §23 one-shot Ed25519 token: EK + PCR + counter bound                          |
 | 💎  | Boot-integrity report publication      | Measured Boot / WBCL state         | sysfs PCRs + IMA runtime                     | ✅ §18 immutable snapshot swap, copy-out readers, per-PCR detail with verdict    |
 | 💎  | Loader binary identity                 | Firmware PCR-4 Authenticode        | shim/GRUB self-measure to PCR 4/9            | ⚠️ §20 on-disk file digest on serial; PCR extend + event-log correlation are §25 |
 | 💎  | NV index identity + delete authority   | TBS index handle trust             | tpm2_nvreadpublic name; policy-delete        | ✅ §21 Name verified before any content read; POLICY_DELETE platform-only        |

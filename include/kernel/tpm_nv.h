@@ -204,6 +204,23 @@ _Static_assert(TPMA_NV_TYPE(TPM_NT_PIN_PASS) == 0x90u,
 #define TPM_NV_INDEX_AB_SEQ       0x01800203u  /* TPM_NT_COUNTER, +1 per floor txn */
 #define TPM_NV_INDEX_AB_FLOOR     0x01800204u  /* ordinary data: the version record */
 
+/* The headless-enrollment replay anchor: a TPM_NT_COUNTER whose value an
+ * offline authorization is signed against, so the same signed bytes can never
+ * admit an enrollment twice.
+ *
+ * OWNER-writable, unlike the two anchors above, and that is deliberate rather
+ * than an omission. The authorization it guards is carried by an Ed25519
+ * signature over the counter VALUE, not by a TPM policy, so owner-write buys
+ * an attacker nothing: incrementing it only SPENDS outstanding tokens, which
+ * is a denial. Forging an acceptance would need the offline private key, and
+ * rolling it back is impossible -- an NV counter cannot decrease, and a
+ * recreated one cannot restart below the highest value any NV counter has held
+ * over the TPM's lifetime. Requiring a policy write here would instead demand
+ * an offline-signed policy per increment, which is a different construction
+ * (the authorized record transitions) for a value that authorizes nothing on
+ * its own. */
+#define TPM_NV_INDEX_HEADLESS_SEQ 0x01800206u  /* TPM_NT_COUNTER, +1 per token */
+
 /* The baseline BIND record: a small policy-protected index that authenticates
  * the baseline blob living in the owner-writable TPM_NV_INDEX_BASELINE.
  *
@@ -234,7 +251,8 @@ _Static_assert((TPM_NV_INDEX_OS_DATA >> 24) == TPM_HT_NV_INDEX &&
                (TPM_NV_INDEX_BASELINE_GEN >> 24) == TPM_HT_NV_INDEX &&
                (TPM_NV_INDEX_AB_SEQ >> 24) == TPM_HT_NV_INDEX &&
                (TPM_NV_INDEX_AB_FLOOR >> 24) == TPM_HT_NV_INDEX &&
-               (TPM_NV_INDEX_BASELINE_BIND >> 24) == TPM_HT_NV_INDEX,
+               (TPM_NV_INDEX_BASELINE_BIND >> 24) == TPM_HT_NV_INDEX &&
+               (TPM_NV_INDEX_HEADLESS_SEQ >> 24) == TPM_HT_NV_INDEX,
                "TPM NV index handle outside the TPM_HT_NV_INDEX space");
 _Static_assert(TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE &&
                TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE_GEN &&
@@ -250,7 +268,13 @@ _Static_assert(TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE &&
                TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_BASELINE &&
                TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_BASELINE_GEN &&
                TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_AB_SEQ &&
-               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_AB_FLOOR,
+               TPM_NV_INDEX_BASELINE_BIND != TPM_NV_INDEX_AB_FLOOR &&
+               TPM_NV_INDEX_HEADLESS_SEQ != TPM_NV_INDEX_OS_DATA &&
+               TPM_NV_INDEX_HEADLESS_SEQ != TPM_NV_INDEX_BASELINE &&
+               TPM_NV_INDEX_HEADLESS_SEQ != TPM_NV_INDEX_BASELINE_GEN &&
+               TPM_NV_INDEX_HEADLESS_SEQ != TPM_NV_INDEX_AB_SEQ &&
+               TPM_NV_INDEX_HEADLESS_SEQ != TPM_NV_INDEX_AB_FLOOR &&
+               TPM_NV_INDEX_HEADLESS_SEQ != TPM_NV_INDEX_BASELINE_BIND,
                "TPM NV index handles must be pairwise distinct");
 
 /* Wall-clock budget the session-cleanup FlushContext waits for the transport

@@ -367,6 +367,15 @@ static uint32_t s_ak_handle;
 static uint8_t  s_ak_pub[TPM_AK_PUB_MAX];
 static uint16_t s_ak_pub_len;
 
+/* The EK PRIMARY public, cached for the boot. Separate from the AK cache and
+ * separately ready-flagged, because a caller that wants the machine's stable
+ * IDENTITY should not have to provision a signing key to get it. Published
+ * under the same s_ak_busy gate so only one attestation conversation with the
+ * TPM is ever in flight. */
+static uint8_t  s_ek_pub[TPM_EK_PUB_MAX];
+static uint16_t s_ek_pub_len;
+static volatile int s_ek_ready;
+
 static tpm_attest_status_t map_attest(tpm_nv_status_t s)
 {
     switch (s) {
@@ -415,6 +424,32 @@ static void at_flush(uint32_t handle)
         (void)tpm2_submit_waiting(cmd, n, rsp, sizeof rsp, TPM_NV_FLUSH_BUDGET_MS);
 }
 
+/* Flush an object the TPM may have CREATED even though we could not parse the
+ * response describing it.
+ *
+ * Any post-submit failure can hide a live object: the command reached the TPM,
+ * the header says SUCCESS, and only our parse of the envelope failed. If the
+ * handle is never recovered a run of malformed responses exhausts the TPM's
+ * small transient-object pool and disables attestation for the rest of the
+ * boot. Best-effort by construction -- the bytes are already known suspect, so
+ * this type-checks the handle and flushes, and a wrong guess costs one refused
+ * FlushContext rather than a leak.
+ *
+ * Every path out of a submit that does not itself return a usable handle goes
+ * through here; it exists as one function because there are four such paths and
+ * three of them originally forgot. */
+static void at_flush_raw_if_created(const uint8_t *rsp, uint32_t len)
+{
+    uint32_t raw;
+    if (!rsp || len < 14u)
+        return;                              /* no handle field was received */
+    if (tpm2_be32_get(rsp + 6) != TPM2_RC_SUCCESS)
+        return;                              /* the TPM reported a failure: nothing was created */
+    raw = tpm2_be32_get(rsp + 10);
+    if ((uint8_t)(raw >> 24) == 0x80u)       /* TPM_HT_TRANSIENT */
+        at_flush(raw);
+}
+
 /* Submit a leading-object-handle command (CreatePrimary/Load) -> transient
  * handle, 0 on failure (*out_st classified). Mirrors tpm_seal.c seal_exec_handle
  * incl. the malformed-handle recovery flush. */
@@ -431,14 +466,18 @@ static uint32_t at_exec_handle(const uint8_t *cmd, uint32_t n, tpm_nv_status_t *
     if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
     r = tpm2_submit(cmd, n, rsp, sizeof rsp);
     if (r < 0) { *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT; return 0; }
-    if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) { *out_st = TPM_NV_TRANSPORT; return 0; }
+    if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
+        /* An unparsable ENVELOPE can still carry a SUCCESS code and a live
+         * handle -- a bad tag alone reaches here -- so recovery runs before the
+         * return, not only on the handle-parse failure below. */
+        at_flush_raw_if_created(rsp, (uint32_t)r);
+        *out_st = TPM_NV_TRANSPORT;
+        return 0;
+    }
     if (rc != TPM2_RC_SUCCESS) { *out_st = tpm_nv_classify_rc(rc); return 0; }
     h = tpm2_parse_object_handle(rsp, (uint32_t)r);
     if (h == 0u) {
-        if ((uint32_t)r >= 14u) {
-            uint32_t raw = tpm2_be32_get(rsp + 10);
-            if ((uint8_t)(raw >> 24) == 0x80u) at_flush(raw);
-        }
+        at_flush_raw_if_created(rsp, (uint32_t)r);
         *out_st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -673,6 +712,140 @@ tpm_attest_status_t tpm_ak_public_get(uint8_t *out, uint16_t cap, uint16_t *out_
     return TPM_ATTEST_OK;
 }
 
+int tpm2_parse_create_primary_public(const uint8_t *rsp, uint32_t len,
+                                     uint8_t *out, uint16_t cap,
+                                     uint16_t *out_len)
+{
+    uint16_t tag, pub_len;
+    uint32_t size, rc, psize, auth_off, i;
+
+    if (out_len) *out_len = 0;
+    if (!rsp || !out)
+        return -1;
+    /* The envelope is validated here in full rather than trusted from a prior
+     * tpm2_parse_object_handle call: this function is reachable on its own, and
+     * a parser that assumes someone else already bounded the response is one
+     * refactor away from reading past it. */
+    if (tpm2_rsp_parse(rsp, len, &tag, &size, &rc) != 0 || rc != TPM2_RC_SUCCESS)
+        return -1;
+    if (tag != TPM2_ST_SESSIONS)
+        return -1;
+    if (size < 10u + 4u + 4u + 5u)          /* header + handle + psize + auth */
+        return -1;
+    psize = tpm2_be32_get(rsp + 14);        /* parameterSize, after objectHandle@10 */
+    if (psize > size - 18u)
+        return -1;
+    auth_off = 18u + psize;
+    if (size - auth_off < 5u)
+        return -1;
+    if (!tpm_session_auth_response_ok(rsp, size, auth_off))
+        return -1;
+    /* The objectHandle must be a TRANSIENT object (high byte 0x80). A success
+     * naming anything else is a malformed response, and this function's banner
+     * claims to validate the envelope in full -- so it checks the handle here
+     * rather than leaving that to whoever happens to call it next. */
+    if ((uint8_t)(tpm2_be32_get(rsp + 10) >> 24) != 0x80u)
+        return -1;
+    /* outPublic is the FIRST parameter: TPM2B_PUBLIC = size(2) + TPMT_PUBLIC. */
+    if (psize < 2u)
+        return -1;
+    pub_len = tpm2_be16_get(rsp + 18);
+    if ((uint32_t)pub_len + 2u > psize)     /* must fit inside the parameter area */
+        return -1;
+    /* A TPMT_PUBLIC cannot be shorter than type + nameAlg + attrs + an empty
+     * authPolicy. Below that it is not a truncated key, it is a response that
+     * never carried one, and hashing it would cache a device identity derived
+     * from a couple of arbitrary bytes. The full template is deliberately NOT
+     * pinned here: the identity is THIS TPM's EK, so demanding one particular
+     * type or curve would refuse legitimate firmware on the correct machine. */
+    if (pub_len < TPM_PUBLIC_MIN_LEN || pub_len > cap)
+        return -1;
+    for (i = 0; i < (uint32_t)pub_len; i++)
+        out[i] = rsp[20u + i];
+    if (out_len) *out_len = pub_len;
+    return 0;
+}
+
+/* CreatePrimary the EK, capture its public area, and flush the transient handle
+ * on EVERY path. The handle is not retained: the caller wants the identity, and
+ * a leaked transient exhausts the TPM's small object pool within a few boots of
+ * a failing path. Runs under the s_ak_busy gate, so the static response buffer
+ * is race-free and stays off the stack. */
+static tpm_attest_status_t at_capture_ek_public(void)
+{
+    static uint8_t rsp[768];
+    uint8_t cmd[256];
+    uint16_t tag, plen = 0;
+    uint32_t n, size, rc, ek;
+    int r;
+
+    s_ek_pub_len = 0u;
+    if (!tpm_transport_available())
+        return TPM_ATTEST_NO_TPM;
+    n = tpm2_build_create_primary_ek(cmd, sizeof cmd);
+    if (n == 0u)
+        return TPM_ATTEST_PROVISION_FAIL;
+    r = tpm2_submit(cmd, n, rsp, sizeof rsp);
+    if (r < 0)
+        return (r == TPM_T_ERR_BUSY) ? TPM_ATTEST_BUSY : TPM_ATTEST_TRANSPORT;
+    if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
+        /* A bad TAG lands here with a SUCCESS code and a live handle still in
+         * the response, so this path needs the same recovery as the one below.
+         * The re-adversarial round caught it missing. */
+        at_flush_raw_if_created(rsp, (uint32_t)r);
+        return TPM_ATTEST_TRANSPORT;
+    }
+    if (rc != TPM2_RC_SUCCESS)
+        return at_provision_err(tpm_nv_classify_rc(rc));
+    ek = tpm2_parse_object_handle(rsp, (uint32_t)r);
+    if (ek == 0u) {
+        at_flush_raw_if_created(rsp, (uint32_t)r);
+        return TPM_ATTEST_TRANSPORT;
+    }
+    if (tpm2_parse_create_primary_public(rsp, (uint32_t)r, s_ek_pub,
+                                         (uint16_t)sizeof s_ek_pub, &plen) != 0) {
+        at_flush(ek);
+        return TPM_ATTEST_TRANSPORT;
+    }
+    at_flush(ek);
+    s_ek_pub_len = plen;
+    return TPM_ATTEST_OK;
+}
+
+tpm_attest_status_t tpm_ek_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len)
+{
+    tpm_attest_status_t r;
+    uint16_t i;
+
+    if (out_len) *out_len = 0;
+    if (!out)
+        return TPM_ATTEST_BADARG;
+    if (!__atomic_load_n(&s_ek_ready, __ATOMIC_ACQUIRE)) {
+        if (__atomic_exchange_n(&s_ak_busy, 1, __ATOMIC_ACQ_REL))
+            return TPM_ATTEST_BUSY;         /* another CPU holds the conversation */
+        /* Re-check UNDER the gate, exactly as at_ensure_ak does: a CPU that read
+         * ready==0 above can stall while another publishes and clears busy. */
+        if (__atomic_load_n(&s_ek_ready, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
+        } else {
+            r = at_capture_ek_public();
+            if (r == TPM_ATTEST_OK)
+                __atomic_store_n(&s_ek_ready, 1, __ATOMIC_RELEASE);
+            __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
+            if (r != TPM_ATTEST_OK)
+                return r;
+        }
+    }
+    if (s_ek_pub_len == 0u)
+        return TPM_ATTEST_TRANSPORT;
+    if (s_ek_pub_len > cap)
+        return TPM_ATTEST_BADARG;
+    for (i = 0; i < s_ek_pub_len; i++)
+        out[i] = s_ek_pub[i];
+    if (out_len) *out_len = s_ek_pub_len;
+    return TPM_ATTEST_OK;
+}
+
 tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
                                      uint16_t *out_len)
 {
@@ -742,5 +915,7 @@ void tpm_attest_test_reset(void)
     s_ak_pub_len = 0u;
     __atomic_store_n(&s_ak_ready, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
+    s_ek_pub_len = 0u;
+    __atomic_store_n(&s_ek_ready, 0, __ATOMIC_RELEASE);
 }
 #endif

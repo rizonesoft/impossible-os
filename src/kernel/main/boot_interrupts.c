@@ -65,6 +65,7 @@
 #include "kernel/tpm_baseline.h"
 #include "kernel/tpm_budget.h"
 #include "kernel/tpm_enroll_gate.h"
+#include "kernel/tpm_headless_authz.h"
 #include "kernel/boot_confirm.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
@@ -613,6 +614,32 @@ void boot_phase1(void)
                 case BOOT_CONFIRM_DECLINED:    gi.confirm = TPM_CONFIRM_WRONG_KEY; break;
                 case BOOT_CONFIRM_TIMEOUT:     gi.confirm = TPM_CONFIRM_TIMEOUT; break;
                 case BOOT_CONFIRM_UNAVAILABLE: gi.confirm = TPM_CONFIRM_UNAVAILABLE; break;
+            }
+            /* HEADLESS ESCAPE HATCH. Reached only when no console answered and
+             * every non-operator condition above already held, so a signed
+             * token supplies the operator factor and nothing else.
+             *
+             * tpm_headless_authz_authorize VERIFIES AND CONSUMES in one call,
+             * before the enroll below can run: the token authorizes one
+             * attempt, and an increment that fails or whose completion is
+             * unknown comes back CONSUME_FAILED rather than being retried.
+             *
+             * No transport is spent on an ordinary machine: with no authority
+             * key installed the call returns NO_AUTHORITY without touching the
+             * TPM, and with no payload presented it returns ABSENT, which
+             * leaves the gate's verdict exactly what it was before this
+             * existed. The payload itself is not carried yet: the
+             * ESP-to-kernel headless-authorization transport is owned by the
+             * headless authorization transport and full-record binding work,
+             * which publishes it as a BOOT_PAYLOAD_HEADLESS_AUTHZ descriptor. */
+            if (gi.confirm == TPM_CONFIRM_UNAVAILABLE) {
+                gi.headless_authz = (uint8_t)tpm_headless_authz_authorize(
+                    NULL, 0u, (uint32_t)TPM_HEADLESS_OP_ENROLL_BASELINE);
+                if (gi.headless_authz != (uint8_t)TPM_HEADLESS_ABSENT) {
+                    klog(LOG_WARN, "TPM",
+                         "Headless enrollment authorization: %s",
+                         tpm_headless_verdict_label(gi.headless_authz));
+                }
             }
             tpm_enroll_gate_evaluate(&gi, &gr);
         }

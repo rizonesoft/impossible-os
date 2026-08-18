@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "kernel/tpm_enroll_gate.h"
+#include "kernel/tpm_headless_authz.h"
 #include "kernel/boot_info.h"
 #include "kernel/tpm_replay.h"
 #include "boot/boot_policy.h"
@@ -233,6 +234,33 @@ void tpm_enroll_gate_evaluate(const struct tpm_enroll_gate_inputs *in,
                         TPM_ENROLL_REFUSE_CONFIRM_TIMEOUT);
             return;
         case TPM_CONFIRM_UNAVAILABLE:
+            /* No console answered. This is the ONLY place a headless
+             * authorization can admit, and it is deliberately the last step:
+             * every refusal above -- Secure Boot, the verified kernel, the
+             * replay verdict, the sticky-NVRAM ladder -- has already had to
+             * pass, so a signed token buys an attacker exactly one factor and
+             * never substitutes for any of the others.
+             *
+             * `headless_authz` is an outcome the CALLER already verified AND
+             * CONSUMED. This predicate does no I/O, so it cannot spend the
+             * token itself; admitting on a verdict that was never spent is the
+             * ordering defect the caller-side API shape exists to prevent. */
+            if (in->headless_authz == (uint8_t)TPM_HEADLESS_OK) {
+                gate_result(out, 1, 0,
+                            TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION,
+                            TPM_ENROLL_REFUSE_NONE);
+                return;
+            }
+            /* A token was PRESENTED and did not hold: say so, because the
+             * operator's remedy is to reissue it rather than to attach a
+             * keyboard. A machine that presented nothing keeps the unchanged
+             * CONFIRM_UNAVAILABLE verdict, which is every machine that ships
+             * without an authority key installed. */
+            if (in->headless_authz != (uint8_t)TPM_HEADLESS_ABSENT) {
+                gate_result(out, 0, 0, TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY,
+                            TPM_ENROLL_REFUSE_HEADLESS_AUTHZ);
+                return;
+            }
             gate_result(out, 0, 0, TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY,
                         TPM_ENROLL_REFUSE_CONFIRM_UNAVAILABLE);
             return;
@@ -265,6 +293,7 @@ const char *tpm_enroll_refusal_label(uint8_t refusal)
         case TPM_ENROLL_REFUSE_CONFIRM_TIMEOUT:      return "confirm-timeout";
         case TPM_ENROLL_REFUSE_CONFIRM_WRONG_KEY:    return "confirm-wrong-key";
         case TPM_ENROLL_REFUSE_CONFIRM_UNAVAILABLE:  return "confirm-unavailable";
+        case TPM_ENROLL_REFUSE_HEADLESS_AUTHZ:       return "headless-authz-refused";
         default:                                     return "unknown";
     }
 }
@@ -277,6 +306,8 @@ const char *tpm_enroll_authority_label(uint8_t authority)
         case TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY: return "loader-signal-only";
         case TPM_ENROLL_AUTH_LOCAL_CONSOLE_ON_TRUSTED_CHAIN:
                                                  return "local-console-on-trusted-chain";
+        case TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION:
+                                                 return "headless-signed-authorization";
         default:                                 return "unknown";
     }
 }

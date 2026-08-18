@@ -627,6 +627,165 @@ static void test_attest_ek_cert_oversize(void)
     TEST_ASSERT_EQ((uint32_t)got, 2048u, "oversized EK cert reports the required size");
 }
 
+
+/* ---- CreatePrimary outPublic parser -----------------------------------------
+ *
+ * This parser reads a FIRMWARE response with hand-rolled bounds and feeds the
+ * device identity the headless enrollment authorization is bound to, so a
+ * wrong bound here would surface only on real hardware. Every case below is a
+ * malformed shape asserted to leave `out` untouched and `out_len` zero, beside
+ * a valid control -- without the control the whole table would pass against a
+ * parser that rejected everything.
+ */
+
+#define CPP_HANDLE 0x80000001u
+
+/* Build a CreatePrimary success response carrying `pub_len` public bytes.
+ * `psize` and `handle` are overridable so a case can corrupt exactly one
+ * field. Returns the total response length. */
+static uint32_t cpp_build(uint8_t *rsp, uint32_t cap, uint16_t pub_len,
+                          uint32_t psize, uint32_t handle, uint16_t tag,
+                          uint32_t rc)
+{
+    uint32_t size = 18u + psize + 5u;   /* + minimal one-session auth area */
+    uint32_t i;
+    if (cap < size)
+        return 0u;
+    for (i = 0; i < size; i++)
+        rsp[i] = 0u;
+    tpm2_be16_put(rsp + 0, tag);
+    tpm2_be32_put(rsp + 2, size);
+    tpm2_be32_put(rsp + 6, rc);
+    tpm2_be32_put(rsp + 10, handle);
+    tpm2_be32_put(rsp + 14, psize);
+    tpm2_be16_put(rsp + 18, pub_len);
+    for (i = 0; i < (uint32_t)pub_len; i++)
+        rsp[20u + i] = (uint8_t)(0xC0u + i);      /* recognizable public bytes */
+    /* Minimal TPMS_AUTH_RESPONSE at 18+psize: nonce(2,0) attrs(1) hmac(2,0). */
+    return size;
+}
+
+/* A well-formed response with a plausible ECC EK public area. */
+static uint32_t cpp_valid(uint8_t *rsp, uint32_t cap, uint16_t pub_len)
+{
+    return cpp_build(rsp, cap, pub_len, (uint32_t)pub_len + 2u, CPP_HANDLE,
+                     TPM2_ST_SESSIONS, TPM2_RC_SUCCESS);
+}
+
+static void test_attest_cpp_valid(void)
+{
+    uint8_t rsp[256], out[TPM_EK_PUB_MAX];
+    uint16_t out_len = 0xFFFFu;
+    uint32_t n, i;
+
+    n = cpp_valid(rsp, sizeof rsp, 122u);       /* the real ECC-P256 EK size */
+    TEST_ASSERT(n != 0u, "fixture builds a response");
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, n, out,
+                                                    (uint16_t)sizeof out, &out_len),
+                   0, "a well-formed CreatePrimary response parses");
+    TEST_ASSERT_EQ(out_len, 122u, "the full public area length is reported");
+    {
+        uint32_t bad = 0;
+        for (i = 0; i < 122u; i++) {
+            if (out[i] != (uint8_t)(0xC0u + i))
+                bad++;
+        }
+        TEST_ASSERT_EQ(bad, 0u, "the public bytes are copied verbatim");
+    }
+
+    /* Exactly at capacity is legal; one byte over is refused, never clamped. */
+    n = cpp_valid(rsp, sizeof rsp, (uint16_t)sizeof out);
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, n, out,
+                                                    (uint16_t)sizeof out, &out_len),
+                   0, "a public area exactly at capacity is accepted");
+    n = cpp_valid(rsp, sizeof rsp, (uint16_t)(sizeof out + 1u));
+    out_len = 0xFFFFu;
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, n, out,
+                                                    (uint16_t)sizeof out, &out_len),
+                   -1, "one byte over capacity is refused, not truncated");
+    TEST_ASSERT_EQ(out_len, 0u, "a refusal reports zero length");
+}
+
+static void test_attest_cpp_malformed(void)
+{
+    uint8_t rsp[256], out[TPM_EK_PUB_MAX];
+    uint16_t out_len;
+    uint32_t n;
+
+    /* Every case sets out_len to a sentinel first, so "left at zero" is a real
+     * assertion rather than a variable that was never written. */
+#define CPP_REFUSED(desc)                                                     \
+    do {                                                                      \
+        out_len = 0xFFFFu;                                                    \
+        TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, n, out,           \
+                           (uint16_t)sizeof out, &out_len), -1, desc);        \
+        TEST_ASSERT_EQ(out_len, 0u, "a refusal leaves out_len zero");          \
+    } while (0)
+
+    n = cpp_valid(rsp, sizeof rsp, 122u);
+    out_len = 0xFFFFu;
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(0, n, out,
+                                                    (uint16_t)sizeof out, &out_len),
+                   -1, "a NULL response is refused");
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, n, 0,
+                                                    (uint16_t)sizeof out, &out_len),
+                   -1, "a NULL output buffer is refused");
+
+    /* A non-success rc must never yield a public area, however well-formed the
+     * rest of the response looks. */
+    n = cpp_build(rsp, sizeof rsp, 122u, 124u, CPP_HANDLE, TPM2_ST_SESSIONS, 0x101u);
+    CPP_REFUSED("a non-success response code is refused");
+
+    n = cpp_build(rsp, sizeof rsp, 122u, 124u, CPP_HANDLE, TPM2_ST_NO_SESSIONS,
+                  TPM2_RC_SUCCESS);
+    CPP_REFUSED("a NO_SESSIONS tag is refused (CreatePrimary is session-authorized)");
+
+    /* THE HANDLE CHECK. A success naming a persistent or NULL handle is a
+     * malformed response, not an object this parser may describe. */
+    n = cpp_build(rsp, sizeof rsp, 122u, 124u, 0x81000001u, TPM2_ST_SESSIONS,
+                  TPM2_RC_SUCCESS);
+    CPP_REFUSED("a persistent (non-transient) object handle is refused");
+    n = cpp_build(rsp, sizeof rsp, 122u, 124u, 0u, TPM2_ST_SESSIONS,
+                  TPM2_RC_SUCCESS);
+    CPP_REFUSED("a zero object handle is refused");
+
+    /* parameterSize too small to hold even the TPM2B size prefix. */
+    n = cpp_build(rsp, sizeof rsp, 122u, 1u, CPP_HANDLE, TPM2_ST_SESSIONS,
+                  TPM2_RC_SUCCESS);
+    CPP_REFUSED("a parameterSize below the TPM2B prefix is refused");
+
+    /* The declared public area runs past the parameter area it lives in. */
+    n = cpp_build(rsp, sizeof rsp, 122u, 60u, CPP_HANDLE, TPM2_ST_SESSIONS,
+                  TPM2_RC_SUCCESS);
+    CPP_REFUSED("a public area crossing parameterSize is refused");
+
+    /* Shorter than any TPMT_PUBLIC can be: not a truncated key, a response
+     * that never carried one. */
+    n = cpp_valid(rsp, sizeof rsp, (uint16_t)(TPM_PUBLIC_MIN_LEN - 1u));
+    CPP_REFUSED("a public area below the minimum TPMT_PUBLIC is refused");
+    n = cpp_valid(rsp, sizeof rsp, 0u);
+    CPP_REFUSED("a zero-length public area is refused");
+
+    /* A response truncated below the fixed header + handle + psize + auth
+     * minimum cannot be parsed at all. */
+    n = cpp_valid(rsp, sizeof rsp, 122u);
+    (void)n;
+    out_len = 0xFFFFu;
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, 22u, out,
+                                                    (uint16_t)sizeof out, &out_len),
+                   -1, "a response below the structural minimum is refused");
+
+    /* Control LAST: the same fixture still parses, so none of the refusals
+     * above came from a parser that simply stopped working. */
+    n = cpp_valid(rsp, sizeof rsp, 122u);
+    out_len = 0u;
+    TEST_ASSERT_EQ(tpm2_parse_create_primary_public(rsp, n, out,
+                                                    (uint16_t)sizeof out, &out_len),
+                   0, "control: the valid response still parses");
+    TEST_ASSERT_EQ(out_len, 122u, "control: and still reports its length");
+#undef CPP_REFUSED
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
@@ -643,4 +802,8 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: quote request/response bind rejection",
                             test_attest_quote_bind_reject, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EK cert oversize rejected", test_attest_ek_cert_oversize, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: CreatePrimary outPublic parses",
+                            test_attest_cpp_valid, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: CreatePrimary outPublic malformed shapes",
+                            test_attest_cpp_malformed, TEST_CAT_SECURITY);
 }

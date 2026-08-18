@@ -475,6 +475,12 @@ From the stamped section 2 (filed 2026-08-14 by the `01-boot-platform/TODO-10 §
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
+Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX leg:
+- [ ] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
+  - Observed on the WHPX boundary leg for a change touching NO VFS, EXEC or loader code: `VFS -> PARTITION took 5725ms (target 500ms)` and `EXEC -> DESKTOP_READY took 2319ms (target 100ms)`, both `[FAIL]`, while all four KVM and TCG legs of the same image reported zero `BOOT-BUDGET` lines.
+  - The targets are wall-clock and WHPX boots roughly an order of magnitude slower than KVM (~141s against ~2s), so every WHPX run reports a red `[FAIL]` that names a phase nothing regressed. That trains a reader to skim the one signal the leg exists to produce.
+  - Not a regression and not muted: the finding is that the reporter states a platform-relative fact in absolute terms. The provenance is the header line above; this section owns the budget reporter, and the TPM work that happened to observe it has no dependency on the fix.
+
 ---
 
 ## OS Comparison

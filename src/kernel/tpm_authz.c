@@ -75,6 +75,18 @@ static const struct tpm_enroll_entry s_manifest[] = {
       TPMA_NV_POLICYWRITE | TPMA_NV_OWNERREAD | TPMA_NV_TYPE(TPM_NT_COUNTER) |
       TPMA_NV_NO_DA,
       (uint16_t)TPM_NV_COUNTER_SIZE, 0u, (uint8_t)TPM_ENROLL_POLICY_AUTHORIZE },
+
+    /* The headless-enrollment replay anchor. OWNER-writable and
+     * TPM_ENROLL_POLICY_NONE, which is the one entry here that carries no
+     * PolicyAuthorize boundary -- see the handle's own comment in tpm_nv.h for
+     * why owner-write is safe for a value that authorizes nothing by itself.
+     * It is in the manifest for the OTHER half of the contract: without an
+     * enrolled identity, a read of its value would trust whatever index
+     * happens to answer at that handle. */
+    { TPM_NV_INDEX_HEADLESS_SEQ, TPM_ALG_SHA256,
+      TPMA_NV_OWNERWRITE | TPMA_NV_OWNERREAD | TPMA_NV_TYPE(TPM_NT_COUNTER) |
+      TPMA_NV_NO_DA,
+      (uint16_t)TPM_NV_COUNTER_SIZE, 0u, (uint8_t)TPM_ENROLL_POLICY_NONE },
 };
 
 #define AUTHZ_MANIFEST_COUNT ((uint32_t)(sizeof s_manifest / sizeof s_manifest[0]))
