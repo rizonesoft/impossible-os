@@ -140,9 +140,10 @@ Bootloader reads metadata and mounts the correct slot's filesystem.
 - [x] Mount the active slot's partition (not EFI) for kernel loading -- kernel `partition_mount_filesystems(active_slot)` mounts the selected slot's IXFS as C: (`gpt_ixfs_slot` tells A from B), recording `ab_boot_mounted_slot`/`ab_boot_slot_mismatch`
 - [x] Pass `boot_info.active_slot` to kernel -- `uint8_t active_slot` (0=A, 1=B; logs render 'A'/'B') in header + mirror + manifest + doc, carved from the reserved tail (no `BOOT_INFO_VERSION` bump)
 - [x] Log: `"[BOOT] Booting Slot %c (tries=%u, successful=%u)"` -- emitted by `select_active_slot` on the metadata-valid path
-- [ ] Honor SPLIT `payload.root` in `load_kernel()` so the seeded slot-b entry resolves to its partition -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
-- [ ] Flip seeded `slot-b` from inactive to active in `bootcfg.py` `_seed_store()` once root-aware lookup ships -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
-- [ ] Kernel GPT split-brain hardening: reconcile primary/backup slot-root entries in `gpt_parse()` (`src/kernel/fs/gpt.c`), or bind the kernel mount to a bootloader-passed authoritative root LBA. Not reachable single-disk.
+- [/] Honor SPLIT `payload.root` in `load_kernel()` so the seeded slot-b entry resolves to its partition -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
+- [/] Flip seeded `slot-b` from inactive to active in `bootcfg.py` `_seed_store()` once root-aware lookup ships -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
+- [/] Kernel GPT split-brain hardening: reconcile primary/backup slot-root entries in `gpt_parse()`, or bind the kernel mount to a bootloader-passed authoritative root LBA. Blocked: not reachable single-disk
+  - Owner: [`05-storage-filesystems/TODO-13 §1`](../05-storage-filesystems/TODO-13-partition-tools-storage-suite.md) (item: "Reconcile a primary/backup GPT divergence on the READ path"), which already owns the identical-entry-array invariant `gpt_write_all` maintains. `src/kernel/fs/gpt.c` is the single edit site for both sides
 - [x] Commit: `"boot: slot selection -- boot from active slot, rollback on failure"`
 
 **Test checkpoint:** Normal boot shows `"Booting Slot A (tries=0, successful=0)"` on a fresh disk (uninitialized metadata -> factory defaults -> Slot A) or `"... successful=1"` once mark-good lands; the kernel logs `A/B: mounted slot 0 as C:`. `make test-boot` covers the selection state machine (6 cases incl. rollback + tie-breaks) + `gpt_ixfs_slot` (A/B/non-IXFS). Manual metadata corruption / unreadable blocks fail closed (`boot_fatal`).
@@ -206,8 +207,8 @@ Kernel-side API to tell the bootloader "this boot worked".
 
 - [x] `ab_boot_mark_slot_successful(active_slot)` (`partition.c`): power-fail-atomic single-copy blkdev RMW writing `successful=1, tries=0` (§7 helpers); refuses unless mounted slot == selected; durable (`blkdev_sync`-checked)
 - [/] Called at boot acceptance from the compositor first-frame steady-state; configured-acceptance-stage upgrade -> XREF: [`02-kernel-core/TODO-02 §10`](../02-kernel-core/TODO-02-kernel-configuration-policy.md)
-- [ ] Verified slot identity gate before mark-good (refuse unsigned/unverified slot); blocked on code-integrity infra -> XREF: [`02-kernel-core/TODO-19 §7`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md) (slot-boot-verification query)
-- [ ] On mark-good, advance the §8 `rollback_floor` to the active slot's `rollback_index` (never lower it) -- lands with §8
+- [/] Verified slot identity gate before mark-good (refuse unsigned/unverified slot); blocked on code-integrity infra -> XREF: [`02-kernel-core/TODO-19 §7`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md) (slot-boot-verification query)
+- [/] On mark-good, advance the §8 `rollback_floor` to the active slot's `rollback_index` (never lower it) -- lands with §8, itself blocked on the authenticated floor store -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md)
 - [x] On success: `"A/B: boot marked successful (slot %d, copy %u, gen %u)"`; write/flush failure logs + returns -1 (boot proceeds)
 - [x] Storage = GPT/disk metadata blocks (NVRAM `SetVariable` rejected per BootSticky doctrine, §1) -- writes the MD partition, not a UEFI variable
 - [x] Commit: `"kernel: mark_boot_successful -- reset try counter after successful boot"`
@@ -301,13 +302,14 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 > 2. **The floor store MUST be authenticated.** `ab_boot_meta_is_valid` checks only CRC-32 = corruption detection, NOT authenticity: anyone who can write the metadata partition can lower `rollback_floor` + recompute the CRC. CRC-metadata is a CACHED HINT, never the floor AUTHORITY. Real anti-rollback REQUIRES a monotonic / write-locked store (TODO-13 §27, on §21's index lifecycle and §17's primitives, read pre-selection by §22); selection enforcement ships WITH that store -- enforcing against an unauthenticated floor is false security.
 > 3. **Below-floor refusal is DISTINCT from retry exhaustion.** A `tries >= AB_BOOT_MAX_TRIES` slot may boot as a least-bad availability stopgap; a below-floor slot must NOT (known-vulnerable). Selection filters below-floor slots; if NO at-or-above-floor slot exists -> a `ROLLBACK_BLOCKED` refusal that routes to recovery (TODO-22), NEVER `least_bad`.
 
-- [ ] Per-slot `rollback_index` + a single `rollback_floor` -- **fields present** (§1: `ab_boot_slot.rollback_index`, `ab_boot_metadata.rollback_floor`); the comparison semantics ship with the authenticated store
-- [ ] §3 selection rejects `rollback_index < rollback_floor` as a DISTINCT `ROLLBACK_BLOCKED` state -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md) (item: "Read the floor BEFORE `select_active_slot()` decides")
+- [/] Per-slot `rollback_index` + a single `rollback_floor` -- **fields present** (§1: `ab_boot_slot.rollback_index`, `ab_boot_metadata.rollback_floor`); the comparison semantics ship with the authenticated store
+  - Blocked: the floor has no authenticated home to compare against until the anti-rollback anchors are provisioned -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md) (item: "Provision the authorized anti-rollback anchors")
+- [/] §3 selection rejects `rollback_index < rollback_floor` as a DISTINCT `ROLLBACK_BLOCKED` state -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md) (item: "Read the floor BEFORE `select_active_slot()` decides")
   - Filter below-floor slots from the normal choice; all-below-floor refuses and routes to recovery, NEVER `least_bad`.
-- [ ] Advance `rollback_floor` to the active slot's `rollback_index` ONLY after `mark_boot_successful()` AND verified slot identity -> XREF: [`02-kernel-core/TODO-19 §7`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md)
-- [ ] Store `rollback_floor` in an authenticated monotonic / write-locked TPM-NV index; CRC metadata is a cached hint -> XREF: [`TODO-13 §27`](TODO-13-tpm-measured-boot-attestation.md) (item: "Represent the A/B floor as an authenticated DATA record")
-- [ ] On rollback NEVER lower `rollback_floor` (monotonic raise only); a below-floor slot is unbootable and routes to recovery -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
-- [ ] Commit: `"boot: A/B anti-rollback -- per-slot version floor, monotonic, TPM-NV backed"`
+- [/] Advance `rollback_floor` to the active slot's `rollback_index` ONLY after `mark_boot_successful()` AND verified slot identity -> XREF: [`02-kernel-core/TODO-19 §7`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md)
+- [/] Store `rollback_floor` in an authenticated monotonic / write-locked TPM-NV index; CRC metadata is a cached hint. The record shape shipped in §27; the anchors are not provisioned -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md)
+- [/] On rollback NEVER lower `rollback_floor` (monotonic raise only); a below-floor slot is unbootable and routes to recovery -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
+- [/] Commit: `"boot: A/B anti-rollback -- per-slot version floor, monotonic, TPM-NV backed"` -- blocked with the rest of §8 on the authenticated floor store -> XREF: [`TODO-13 §22`](TODO-13-tpm-measured-boot-attestation.md)
 
 **Test checkpoint:** (when the authenticated store lands) `rollback_floor=5`, slot B `rollback_index=4`: selection refuses B as below-floor; both below floor -> `ROLLBACK_BLOCKED` + recovery (NOT least-bad). Mark slot A good at index 6 with verified identity: floor advances to 6. A test asserts `boot_rollback_raise_if_steady` does NOT mutate the A/B `rollback_floor` (independent floors). Test on: QEMU smoke + bare metal.
 

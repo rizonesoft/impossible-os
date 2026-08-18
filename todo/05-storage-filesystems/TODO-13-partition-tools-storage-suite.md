@@ -71,6 +71,8 @@ Add `gpt_partition_create`, `gpt_partition_delete`, and `gpt_partition_resize` t
 - [ ] `gpt_write_all(dev, table)`: (1) write partition entry array (LBA 2, count=128, 512 bytes each) and compute `part_entry_crc32`; (2) update `header.part_entry_crc32`; (3) write backup header (last LBA); (4) write primary header (LBA 1); return 0 or -EIO
 - [ ] `gpt_find_free_range(dev, size_lba, &start_lba)`: scan gaps between partitions (sorted by `first_lba`); return first gap ≥ `size_lba` sectors
 - [ ] `gpt_partition_set_attribute(dev, entry_idx, attr_bit, value)`: set/clear bits in `entry.attributes` (bit 2 = required, bit 60 = read-only, bit 62 = hidden, bit 63 = no-automount)
+- [ ] Reconcile a primary/backup GPT divergence on the READ path in `gpt_parse()`: the write side keeps both headers identical, so a reader that trusts the primary alone silently accepts a split-brain disk
+  - Requested by [`01-boot-platform/TODO-21 §3`](../01-boot-platform/TODO-21-ab-boot-rollback.md) (item: "Kernel GPT split-brain hardening"), where a divergent slot-root entry would mount the wrong A/B slot. Not reachable single-disk, so it needs a synthetic divergent-backup fixture rather than a live repro
 - [ ] Commit: `"fs/gpt: partition write -- create/delete/resize, dual-header CRC update, atomic write order"`
 
 ## 2. MBR Partition Write `[Sonnet]`
