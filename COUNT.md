@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     468 |     133464 |
+| **Markdown** (`.md`)        |     468 |     133486 |
 | **JSON** (`.json`)          |      16 |       2451 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1830 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **516** | **139931** |
+| **Subtotal**                | **516** | **139953** |
 
 ## Grand Total
 
 |                                |    Files |       Lines |
 | ------------------------------ | -------: | ----------: |
 | **Core code + tooling**        | **1807** | **1011681** |
-| **Supporting text + metadata** |  **516** |  **139931** |
-| **All counted text files**     | **2323** | **1151612** |
+| **Supporting text + metadata** |  **516** |  **139953** |
+| **All counted text files**     | **2323** | **1151634** |
 
 > Vendored code excluded: ~88486 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`, and the four imported Fluent System Icons CSS files)
 >
@@ -78,8 +78,8 @@
 |                                |                    Linux |                  Windows |         Impossible OS |
 | ------------------------------ | -----------------------: | -----------------------: | --------------------: |
 | **Core code + tooling lines**  |              ~28,000,000 |              ~50,000,000 |             1,011,681 |
-| **Supporting text + metadata** | not separately published | not separately published |               139,931 |
-| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |             1,151,612 |
+| **Supporting text + metadata** | not separately published | not separately published |               139,953 |
+| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |             1,151,634 |
 | **Developers**                 |            ~1,000 active |              ~5,000 peak |                     1 |
 | **Time span**                  |                 33 years |                 40 years | 5 month(s), 14 day(s) |
 
@@ -90,4 +90,4 @@
 
 ---
 
-*Last updated: 2026-08-18 08:09 · commit `b40ef3fb7`*
+*Last updated: 2026-08-18 08:20 · commit `a14decc31`*
