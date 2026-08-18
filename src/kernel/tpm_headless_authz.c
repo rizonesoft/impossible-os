@@ -51,29 +51,74 @@ static int hl_eq(const uint8_t *a, const uint8_t *b, uint32_t n)
  * interrupt, and enrollment runs single-threaded before the scheduler starts,
  * so no lock is required; the one-way install is what makes a later writer a
  * refused operation rather than a race. */
+/* THREE states, not a flag, because publication order alone does not exclude a
+ * second writer. Release-storing a flag after the key copy guarantees that a
+ * reader seeing PRESENT sees all 32 bytes -- and guarantees nothing about two
+ * callers that both observed EMPTY, interleaved their copies and both published.
+ * The reader would then hold a mixed key and the documented second-install
+ * refusal would never have fired. INSTALLING is the state that makes the
+ * check-and-install one indivisible claim; readers demand PRESENT, so a key
+ * being written is never a key that can authorize. */
+#define HL_AUTH_EMPTY      0
+#define HL_AUTH_INSTALLING 1
+#define HL_AUTH_PRESENT    2
+
 static uint8_t s_authority[TPM_HEADLESS_PUBKEY_LEN];
-static uint8_t s_authority_present;
+static volatile int s_authority_state;
 
 int tpm_headless_authz_set_authority(const uint8_t pub[TPM_HEADLESS_PUBKEY_LEN])
 {
     uint32_t i;
+    int expect = HL_AUTH_EMPTY;
+
     if (!pub)
         return -1;
-    if (s_authority_present) {
+    /* Claim the install. Exactly one caller wins the EMPTY -> INSTALLING
+     * transition; everyone else falls through to the state check below. */
+    if (!__atomic_compare_exchange_n(&s_authority_state, &expect,
+                                     HL_AUTH_INSTALLING, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        /* `expect` now holds the state that beat us. */
+        if (expect == HL_AUTH_INSTALLING)
+            return -3;              /* another install is mid-copy; retry */
         /* Re-installing the IDENTICAL key is idempotent; a different one is
          * refused, because widening who may authorize an enrollment after the
-         * fact is exactly the escalation this module must not allow. */
+         * fact is exactly the escalation this module must not allow. The
+         * acquire above orders this comparison after the winner's key copy. */
         return hl_eq(s_authority, pub, TPM_HEADLESS_PUBKEY_LEN) ? 0 : -2;
     }
     for (i = 0; i < TPM_HEADLESS_PUBKEY_LEN; i++)
         s_authority[i] = pub[i];
-    s_authority_present = 1u;
+    /* Publish LAST, with a release store: a reader that observes PRESENT also
+     * observes all 32 key bytes. */
+    __atomic_store_n(&s_authority_state, HL_AUTH_PRESENT, __ATOMIC_RELEASE);
     return 0;
 }
 
 int tpm_headless_authz_authority_present(void)
 {
-    return s_authority_present ? 1 : 0;
+    /* PRESENT only. Reporting INSTALLING as present would hand out a key that
+     * is still being written, which is the whole reason the state exists. */
+    return __atomic_load_n(&s_authority_state, __ATOMIC_ACQUIRE)
+           == HL_AUTH_PRESENT ? 1 : 0;
+}
+
+/* Snapshot the authority, and TOUCH THE KEY ONLY WHEN IT IS FINISHED.
+ *
+ * Reporting INSTALLING as absent is not sufficient on its own: a caller that
+ * then copies the buffer anyway still reads it concurrently with the winning
+ * installer's writes, which is an unsynchronized race whatever verdict it goes
+ * on to produce. The acquire load here orders the copy after the winner's
+ * release store, and every non-PRESENT state returns without reading a byte.
+ * Returns 1 and fills `out` when an authority is fully installed. */
+static int hl_authority_snapshot(uint8_t out[TPM_HEADLESS_PUBKEY_LEN])
+{
+    uint32_t i;
+    if (__atomic_load_n(&s_authority_state, __ATOMIC_ACQUIRE) != HL_AUTH_PRESENT)
+        return 0;
+    for (i = 0; i < TPM_HEADLESS_PUBKEY_LEN; i++)
+        out[i] = s_authority[i];
+    return 1;
 }
 
 #ifdef KERNEL_TESTS
@@ -82,43 +127,44 @@ void tpm_headless_authz_reset_authority_for_test(void)
     uint32_t i;
     for (i = 0; i < TPM_HEADLESS_PUBKEY_LEN; i++)
         s_authority[i] = 0u;
-    s_authority_present = 0u;
+    __atomic_store_n(&s_authority_state, HL_AUTH_EMPTY, __ATOMIC_RELEASE);
 }
 #endif
 
 /* ---- the pure predicate ----------------------------------------------------- */
 
 tpm_headless_verdict_t
-tpm_headless_authz_evaluate(const struct tpm_headless_authz_inputs *in)
+tpm_headless_authz_precheck(const uint8_t *blob, uint32_t blob_len,
+                            uint8_t authority_present,
+                            const uint8_t *authority_pub)
 {
-    const uint8_t *b;
     uint32_t op;
 
-    /* A NULL input struct means nothing could be read, which is the same
-     * observable state as no blob at all. Fail closed either way. */
-    if (!in || !in->blob || in->blob_len == 0u)
+    /* A NULL input means nothing could be read, which is the same observable
+     * state as no blob at all. Fail closed either way. */
+    if (!blob || blob_len == 0u)
         return TPM_HEADLESS_ABSENT;
 
     /* An unprovisioned machine has no escape hatch at all. Reported after the
      * absent check so an operator on a machine with no blob is told that,
      * rather than being told about a key they were never going to install. */
-    if (!in->authority_present)
+    if (!authority_present || !authority_pub)
         return TPM_HEADLESS_NO_AUTHORITY;
 
-    b = in->blob;
-    if (in->blob_len != TPM_HEADLESS_BLOB_LEN)
+    if (blob_len != TPM_HEADLESS_BLOB_LEN)
         return TPM_HEADLESS_BAD_FORMAT;
-    if (hl_le32(b + 0) != TPM_HEADLESS_MAGIC)
+    if (hl_le32(blob + TPM_HEADLESS_OFF_MAGIC) != TPM_HEADLESS_MAGIC)
         return TPM_HEADLESS_BAD_FORMAT;
-    if (hl_le16(b + 4) != (uint16_t)TPM_HEADLESS_VERSION)
+    if (hl_le16(blob + TPM_HEADLESS_OFF_VERSION) != (uint16_t)TPM_HEADLESS_VERSION)
         return TPM_HEADLESS_BAD_FORMAT;
     /* Reserved fields are rejected rather than ignored: they are the only
      * place a future version can put a binding, and a kernel that silently
      * drops bytes it does not understand would accept a blob whose extra
      * restrictions it never applied. */
-    if (hl_le16(b + 6) != 0u || hl_le32(b + 12) != 0u)
+    if (hl_le16(blob + TPM_HEADLESS_OFF_RESERVED0) != 0u ||
+        hl_le32(blob + TPM_HEADLESS_OFF_RESERVED1) != 0u)
         return TPM_HEADLESS_BAD_FORMAT;
-    op = hl_le32(b + 8);
+    op = hl_le32(blob + TPM_HEADLESS_OFF_OPERATION);
     if (op == (uint32_t)TPM_HEADLESS_OP_NONE ||
         op > (uint32_t)TPM_HEADLESS_OP_MAX)
         return TPM_HEADLESS_BAD_FORMAT;
@@ -126,22 +172,34 @@ tpm_headless_authz_evaluate(const struct tpm_headless_authz_inputs *in)
     /* AUTHENTICITY BEFORE BINDING. Until the signature verifies, every field
      * above is attacker-chosen, so reporting which binding failed first would
      * answer questions for a party that holds no key at all. */
-    if (!ci_crypto_verify(CI_SIG_ED25519, b, TPM_HEADLESS_SIGNED_LEN,
-                          b + TPM_HEADLESS_SIGNED_LEN, CI_ED25519_SIG_LEN,
-                          in->authority_pub, CI_ED25519_PUBKEY_LEN))
+    if (!ci_crypto_verify(CI_SIG_ED25519, blob, TPM_HEADLESS_SIGNED_LEN,
+                          blob + TPM_HEADLESS_OFF_SIGNATURE, CI_ED25519_SIG_LEN,
+                          authority_pub, CI_ED25519_PUBKEY_LEN))
         return TPM_HEADLESS_BAD_SIGNATURE;
+    return TPM_HEADLESS_OK;
+}
+
+/* The bindings ONLY: device identity, PCR set, operation, counter. Assumes the
+ * local half (format + signature) has ALREADY passed -- callers that have not
+ * run it themselves must go through tpm_headless_authz_evaluate below, never
+ * this directly, or a forged blob would reach a binding check unauthenticated. */
+static tpm_headless_verdict_t
+hl_evaluate_bindings(const struct tpm_headless_authz_inputs *in)
+{
+    const uint8_t *b = in->blob;
+    uint32_t op = hl_le32(b + TPM_HEADLESS_OFF_OPERATION);
 
     /* Each binding reports whether it could not be ESTABLISHED separately from
      * whether it MISMATCHED: the first is a broken TPM and the second is the
      * wrong blob, and the operator's remedy differs. */
     if (!in->device_known)
         return TPM_HEADLESS_UNKNOWN_DEVICE;
-    if (!hl_eq(b + 16, in->device_id, TPM_HEADLESS_ID_LEN))
+    if (!hl_eq(b + TPM_HEADLESS_OFF_DEVICE_ID, in->device_id, TPM_HEADLESS_ID_LEN))
         return TPM_HEADLESS_WRONG_DEVICE;
 
     if (!in->pcr_set_known)
         return TPM_HEADLESS_UNKNOWN_STATE;
-    if (!hl_eq(b + 48, in->pcr_set, TPM_HEADLESS_ID_LEN))
+    if (!hl_eq(b + TPM_HEADLESS_OFF_PCR_SET, in->pcr_set, TPM_HEADLESS_ID_LEN))
         return TPM_HEADLESS_WRONG_PCR_SET;
 
     if (op != in->operation)
@@ -150,7 +208,7 @@ tpm_headless_authz_evaluate(const struct tpm_headless_authz_inputs *in)
     if (!in->counter_known)
         return TPM_HEADLESS_COUNTER_UNTRUSTED;
     {
-        uint64_t want = hl_le64(b + 80);
+        uint64_t want = hl_le64(b + TPM_HEADLESS_OFF_COUNTER);
         /* STALE_OR_SPENT rather than "replayed": the counter also moves past a
          * token whose enrollment attempt failed, so claiming a replay would
          * name a cause that did not necessarily happen. */
@@ -160,6 +218,23 @@ tpm_headless_authz_evaluate(const struct tpm_headless_authz_inputs *in)
             return TPM_HEADLESS_NOT_YET_VALID;
     }
     return TPM_HEADLESS_OK;
+}
+
+tpm_headless_verdict_t
+tpm_headless_authz_evaluate(const struct tpm_headless_authz_inputs *in)
+{
+    tpm_headless_verdict_t local;
+
+    if (!in)
+        return TPM_HEADLESS_ABSENT;
+    /* ONE implementation of the local half, so this predicate and authorize's
+     * own early-reject path can never disagree about the refusal ordering. */
+    local = tpm_headless_authz_precheck(in->blob, in->blob_len,
+                                        in->authority_present,
+                                        in->authority_pub);
+    if (local != TPM_HEADLESS_OK)
+        return local;
+    return hl_evaluate_bindings(in);
 }
 
 const char *tpm_headless_verdict_label(uint8_t verdict)
@@ -342,20 +417,26 @@ tpm_headless_verdict_t tpm_headless_authz_authorize(const uint8_t *blob,
     uint64_t counter = 0;
     uint32_t i;
 
-    /* Cheapest checks first, and none of them touch the TPM: a boot presenting
-     * no blob on a machine with no authority must not spend a transaction. */
     for (i = 0; i < (uint32_t)sizeof in; i++)
         ((uint8_t *)&in)[i] = 0u;
     in.blob = blob;
     in.blob_len = blob_len;
     in.operation = operation;
-    in.authority_present = s_authority_present;
-    for (i = 0; i < TPM_HEADLESS_PUBKEY_LEN; i++)
-        in.authority_pub[i] = s_authority[i];
-    if (!blob || blob_len == 0u)
-        return TPM_HEADLESS_ABSENT;
-    if (!s_authority_present)
-        return TPM_HEADLESS_NO_AUTHORITY;
+    /* ONE acquire decides both whether there is an authority and whether its
+     * bytes may be read; the key is never touched unless it is finished. */
+    in.authority_present = (uint8_t)hl_authority_snapshot(in.authority_pub);
+
+    /* EVERY LOCAL CHECK RUNS BEFORE THE FIRST TPM TRANSACTION, and that
+     * ordering is the point rather than an optimization. The blob is a file an
+     * attacker can write beside the loader, so gathering the device identity,
+     * the PCR snapshot and the counter first would let anyone force a
+     * CreatePrimary, a full PCR snapshot and two NV operations on every boot
+     * with bytes they invented. After this, only a blob genuinely signed by the
+     * installed authority costs the TPM anything at all. */
+    v = tpm_headless_authz_precheck(in.blob, in.blob_len, in.authority_present,
+                                    in.authority_pub);
+    if (v != TPM_HEADLESS_OK)
+        return v;
 
     if (hl_device_id(in.device_id) == 0)
         in.device_known = 1u;
@@ -366,7 +447,10 @@ tpm_headless_verdict_t tpm_headless_authz_authorize(const uint8_t *blob,
         in.counter_known = 1u;
     }
 
-    v = tpm_headless_authz_evaluate(&in);
+    /* hl_evaluate_bindings, NOT tpm_headless_authz_evaluate: the precheck two
+     * lines up already verified the signature, and evaluate() would run the
+     * identical Ed25519 check a second time for every accepting boot. */
+    v = hl_evaluate_bindings(&in);
     if (v != TPM_HEADLESS_OK)
         return v;
 

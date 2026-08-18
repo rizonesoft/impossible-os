@@ -519,6 +519,78 @@ static void test_ha_labels(void)
                    "the headless refusal has its own label");
 }
 
+
+/* ---- the preflight, which is what keeps forged bytes off the TPM ----------- */
+
+static void test_ha_precheck_ordering(void)
+{
+    uint8_t blob[TPM_HEADLESS_BLOB_LEN];
+    uint32_t i;
+
+    ha_fixture_init();
+    ha_build(blob, TPM_HEADLESS_OP_ENROLL_BASELINE, HA_COUNTER);
+
+    /* The preflight is the gate that decides whether a blob costs the TPM
+     * anything. Everything it refuses is refused for FREE. */
+    TEST_ASSERT_EQ(tpm_headless_authz_precheck(blob, TPM_HEADLESS_BLOB_LEN, 1u, g_pub),
+                   TPM_HEADLESS_OK, "a genuinely signed blob passes the preflight");
+    TEST_ASSERT_EQ(tpm_headless_authz_precheck(0, 0u, 1u, g_pub),
+                   TPM_HEADLESS_ABSENT, "no blob is absent");
+    TEST_ASSERT_EQ(tpm_headless_authz_precheck(blob, TPM_HEADLESS_BLOB_LEN, 0u, g_pub),
+                   TPM_HEADLESS_NO_AUTHORITY, "no authority, no hatch");
+    TEST_ASSERT_EQ(tpm_headless_authz_precheck(blob, TPM_HEADLESS_BLOB_LEN, 1u, 0),
+                   TPM_HEADLESS_NO_AUTHORITY, "a NULL authority key is not an authority");
+    TEST_ASSERT_EQ(tpm_headless_authz_precheck(blob, TPM_HEADLESS_BLOB_LEN - 1u, 1u, g_pub),
+                   TPM_HEADLESS_BAD_FORMAT, "a wrong length never reaches the TPM");
+
+    /* THE ONE THAT MATTERS: bytes an attacker invented are rejected by the
+     * signature check, which needs no TPM at all. */
+    blob[TPM_HEADLESS_SIGNED_LEN] ^= 0x40u;
+    TEST_ASSERT_EQ(tpm_headless_authz_precheck(blob, TPM_HEADLESS_BLOB_LEN, 1u, g_pub),
+                   TPM_HEADLESS_BAD_SIGNATURE,
+                   "a forged signature is refused before any TPM transaction");
+
+    /* And the preflight is the SAME code the full predicate runs first, so the
+     * two can never disagree about the ordering. */
+    ha_build(blob, TPM_HEADLESS_OP_ENROLL_BASELINE, HA_COUNTER);
+    for (i = 0; i < 4u; i++) {
+        struct tpm_headless_authz_inputs in;
+        uint8_t probe[TPM_HEADLESS_BLOB_LEN];
+        uint32_t k;
+        for (k = 0; k < TPM_HEADLESS_BLOB_LEN; k++)
+            probe[k] = blob[k];
+        /* Corrupt magic, version, reserved0 and the signature in turn. */
+        if (i == 0) probe[0] ^= 0xFFu;
+        if (i == 1) ha_put16(probe + 4, 0x7FFFu);
+        if (i == 2) ha_put16(probe + 6, 1u);
+        if (i == 3) probe[TPM_HEADLESS_SIGNED_LEN + 7] ^= 0x11u;
+        ha_inputs(&in, probe, TPM_HEADLESS_OP_ENROLL_BASELINE);
+        TEST_ASSERT_EQ(tpm_headless_authz_evaluate(&in),
+                       tpm_headless_authz_precheck(probe, TPM_HEADLESS_BLOB_LEN,
+                                                   1u, g_pub),
+                       "evaluate and precheck agree on every local refusal");
+    }
+}
+
+/* The wire offsets the decoder reads must be the ones the struct declares.
+ * Asserting them here as well as in the header is what makes the _Static_asserts
+ * describe the DECODER rather than a struct nothing reads. */
+static void test_ha_wire_offsets(void)
+{
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_MAGIC, 0u, "magic at 0");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_VERSION, 4u, "version at 4");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_RESERVED0, 6u, "reserved0 at 6");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_OPERATION, 8u, "operation at 8");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_RESERVED1, 12u, "reserved1 at 12");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_DEVICE_ID, 16u, "device_id at 16");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_PCR_SET, 48u, "pcr_set at 48");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_COUNTER, 80u, "valid_at_counter at 80");
+    TEST_ASSERT_EQ(TPM_HEADLESS_OFF_SIGNATURE, TPM_HEADLESS_SIGNED_LEN,
+                   "the signature begins exactly where the signed span ends");
+    TEST_ASSERT_EQ(sizeof(struct tpm_headless_authz_blob), TPM_HEADLESS_BLOB_LEN,
+                   "the wire struct is the wire length");
+}
+
 void test_register_tpm_headless_authz(void)
 {
     test_suite_register_cat("tpm headless: accept path",
@@ -553,4 +625,8 @@ void test_register_tpm_headless_authz(void)
                             test_ha_gate_console_untouched, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: verdict labels",
                             test_ha_labels, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm headless: preflight keeps forged bytes off the TPM",
+                            test_ha_precheck_ordering, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm headless: wire offsets match the struct",
+                            test_ha_wire_offsets, TEST_CAT_SECURITY);
 }

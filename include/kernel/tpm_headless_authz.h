@@ -31,9 +31,25 @@
  * with TPM2_Create on EVERY boot and caches it for that boot only, so a digest
  * over the AK public differs each time and a pre-signed blob would be refused
  * as wrong-machine ON THE CORRECT MACHINE. The EK primary is derived from the
- * endorsement seed, so it is stable across reboots and changes on TPM2_Clear.
- * That is the right epoch: a cleared TPM must not honor authorizations issued
- * before the clear, and this binding gives that for free.
+ * Endorsement Primary Seed, which is stable across reboots.
+ *
+ * TPM2_Clear does NOT invalidate the EK, and an earlier version of this
+ * comment claimed it did -- corrected by a parity-research pass against the
+ * TCG spec and tpm2-tools documentation. TPM2_Clear resets the Storage
+ * Primary Seed and owner/lockout auth; only TPM2_ChangeEPS, a
+ * platform-hierarchy-only command, changes the seed the EK derives from. So a
+ * captured blob's device-identity binding survives a Clear on its own.
+ *
+ * What actually invalidates an outstanding authorization across a Clear is
+ * the anti-rollback anchors already rely on: TPM_NV_INDEX_HEADLESS_SEQ is an
+ * OWNER-hierarchy index, so TPM2_Clear undefines it, and the next boot's
+ * tpm_headless_authz_provision() redefines and re-increments it -- but a
+ * recreated TPM_NT_COUNTER cannot restart below the highest value ANY NV
+ * counter has held over the TPM's lifetime (the same guarantee tpm_nv.h:217
+ * and tpm_authz.c:67 already document and rely on for the record-transition
+ * anchors). A blob signed for a counter value the TPM has already passed is
+ * therefore refused STALE_OR_SPENT after a Clear exactly as it would be
+ * without one.
  *
  * ONE SHOT MEANS CONSUMED BEFORE THE MUTATION, NOT AFTER IT. The counter is
  * incremented before any baseline write, and an increment that fails or whose
@@ -68,6 +84,8 @@
 
 #include "kernel/types.h"
 #include "kernel/tpm_nv.h"   /* tpm_nv_status_t, for the provisioning verb */
+#include "kernel/ci/ci_crypto.h"  /* CI_ED25519_* -- asserted equal below */
+#include "kernel/crypto/sha256.h" /* SHA256_DIGEST_LEN -- asserted equal below */
 
 /* Wire constants. The blob is an EXTERNAL format: an offline signing tool must
  * reproduce it byte for byte, so every field offset is pinned by a
@@ -109,6 +127,21 @@ struct tpm_headless_authz_blob {
 /* Bytes the signature covers: everything up to (not including) the signature. */
 #define TPM_HEADLESS_SIGNED_LEN   88u
 #define TPM_HEADLESS_BLOB_LEN     152u
+
+/* THE DECODER READS THESE, NOT LITERALS, and that is what makes the asserts
+ * below load-bearing. Pinning offsets in a struct no production path reads
+ * protects a declaration: the parser could drift to different literals and
+ * every assert would still pass. Deriving the offsets from the struct means
+ * one edit moves the struct, the asserts and the decoder together. */
+#define TPM_HEADLESS_OFF_MAGIC     __builtin_offsetof(struct tpm_headless_authz_blob, magic)
+#define TPM_HEADLESS_OFF_VERSION   __builtin_offsetof(struct tpm_headless_authz_blob, version)
+#define TPM_HEADLESS_OFF_RESERVED0 __builtin_offsetof(struct tpm_headless_authz_blob, reserved0)
+#define TPM_HEADLESS_OFF_OPERATION __builtin_offsetof(struct tpm_headless_authz_blob, operation)
+#define TPM_HEADLESS_OFF_RESERVED1 __builtin_offsetof(struct tpm_headless_authz_blob, reserved1)
+#define TPM_HEADLESS_OFF_DEVICE_ID __builtin_offsetof(struct tpm_headless_authz_blob, device_id)
+#define TPM_HEADLESS_OFF_PCR_SET   __builtin_offsetof(struct tpm_headless_authz_blob, pcr_set)
+#define TPM_HEADLESS_OFF_COUNTER   __builtin_offsetof(struct tpm_headless_authz_blob, valid_at_counter)
+#define TPM_HEADLESS_OFF_SIGNATURE __builtin_offsetof(struct tpm_headless_authz_blob, signature)
 
 _Static_assert(__builtin_offsetof(struct tpm_headless_authz_blob, magic) == 0u,
                "headless authz wire layout: magic at 0");
@@ -169,6 +202,30 @@ typedef enum {
 
 #define TPM_HEADLESS_VERDICT_MAX TPM_HEADLESS_CONSUME_FAILED
 
+/* ABSENT == 0 is a SECURITY invariant, not a numbering accident: it is what
+ * makes a zeroed struct tpm_enroll_gate_inputs refuse. Pinned here because the
+ * enrollment gate pins TPM_REPLAY_VERIFIED == 0 for exactly the same reason,
+ * and an unpinned one had the coverage inverted relative to its use. If a
+ * future verdict were inserted such that OK became zero, this fires at compile
+ * time instead of failing OPEN on a live gate. */
+_Static_assert((int)TPM_HEADLESS_ABSENT == 0,
+               "ABSENT must be the zero verdict: a zeroed gate-inputs struct "
+               "has to read as a refusal, never as an authorization");
+_Static_assert((int)TPM_HEADLESS_OK != 0,
+               "OK must NOT be the zero verdict");
+
+/* These three relations are USED as equalities every time a blob is verified:
+ * the authority buffer is handed to ci_crypto_verify with the Ed25519 length,
+ * the signature is read at the Ed25519 length out of a field sized by this
+ * header, and sha256_final writes a digest into an ID-sized buffer. They agree
+ * today; these asserts are what keeps them agreeing across two other headers. */
+_Static_assert(TPM_HEADLESS_PUBKEY_LEN == CI_ED25519_PUBKEY_LEN,
+               "the authority key buffer must be exactly what ci_crypto reads");
+_Static_assert(TPM_HEADLESS_SIG_LEN == CI_ED25519_SIG_LEN,
+               "the signature field must be exactly what ci_crypto reads");
+_Static_assert(TPM_HEADLESS_ID_LEN == SHA256_DIGEST_LEN,
+               "an identity field must hold exactly one SHA-256 digest");
+
 /* Every input the verification decision depends on, BY VALUE. Taking a struct
  * rather than reading globals is what makes the refusal matrix unit-testable
  * without a live TPM, which matters because the dev host has no swtpm. */
@@ -198,6 +255,25 @@ struct tpm_headless_authz_inputs {
 tpm_headless_verdict_t
 tpm_headless_authz_evaluate(const struct tpm_headless_authz_inputs *in);
 
+/* The purely LOCAL half of the decision: length, magic, version, reserved
+ * bytes, operation range and the Ed25519 signature. Pure, total, and it touches
+ * no TPM.
+ *
+ * It exists so an authorization can be REJECTED BEFORE any TPM transaction is
+ * spent. The blob is attacker-writable on the ESP, so gathering the live device
+ * identity, the PCR snapshot and the counter first would let anyone force a
+ * CreatePrimary, a full PCR snapshot and two NV operations on every boot with a
+ * file they simply made up. After this check, only a blob genuinely signed by
+ * the installed authority can reach the TPM at all.
+ *
+ * tpm_headless_authz_evaluate calls this FIRST and its refusals are unchanged,
+ * so there is exactly one implementation of the ordering and no way for the two
+ * to disagree. Returns TPM_HEADLESS_OK when the local half passes. */
+tpm_headless_verdict_t
+tpm_headless_authz_precheck(const uint8_t *blob, uint32_t blob_len,
+                            uint8_t authority_present,
+                            const uint8_t *authority_pub);
+
 /* Stable label for a verdict, for logs and the integrity report. Never NULL --
  * an out-of-range value returns "unknown". */
 const char *tpm_headless_verdict_label(uint8_t verdict);
@@ -209,10 +285,15 @@ const char *tpm_headless_verdict_label(uint8_t verdict);
  * the identical key is idempotent and succeeds).
  *
  * This is a provisioning step, not something the kernel can invent: the
- * private half never enters this tree. */
+ * private half never enters this tree.
+ *
+ * The claim is INDIVISIBLE: exactly one caller wins the install, and a caller
+ * that arrives while another is mid-copy gets -3 rather than a half-written
+ * key. Release ordering alone would have let two first-installers interleave
+ * their key bytes and both report success. */
 int tpm_headless_authz_set_authority(const uint8_t pub[TPM_HEADLESS_PUBKEY_LEN]);
 
-/* 1 when an authority is installed. With no authority the escape hatch does
+/* 1 when an authority is FULLY installed -- never while one is mid-install. With no authority the escape hatch does
  * not exist and every presented blob is refused NO_AUTHORITY. */
 int tpm_headless_authz_authority_present(void);
 
