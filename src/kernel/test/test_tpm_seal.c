@@ -692,7 +692,13 @@ static void test_seal_forged_responses(void)
         st = tpm_seal_secret(secret, 16u, &blob);
     }
     tpm_t_test_restore(prev);
-    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_TRANSPORT, "malformed CreatePrimary success -> TRANSPORT");
+    /* TPMERR, not TRANSPORT: a malformed-but-rc-SUCCESS response means the
+     * command genuinely dispatched, and the best-effort raw-handle recovery
+     * below is not proof it always succeeds -- reporting the definite,
+     * non-retryable class is correct even in THIS scenario where the flush
+     * happens to succeed, because the caller cannot tell the two cases apart
+     * from the status alone and must not read either one as safe to retry. */
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_TPMERR, "malformed CreatePrimary success -> TPMERR");
     TEST_ASSERT(sf_was_flushed(0x80000001u),
                 "leaked transient handle from malformed CreatePrimary is flushed (no pool leak)");
     TEST_ASSERT(!sf_saw_cc(TPM2_CC_CREATE), "no Create attempted after a bad parent handle");

@@ -2722,7 +2722,23 @@ src/kernel/tpm_attest.c
 src/kernel/tpm_nv.c
 src/kernel/tpm_baseline.c
 src/kernel/tpm_transport.c
+include/kernel/tpm.h
+include/kernel/tpm_attest.h
+include/kernel/tpm_authz.h
+include/kernel/tpm_baseline.h
+include/kernel/tpm_nv.h
+include/kernel/tpm_pcr_alloc.h
+include/kernel/tpm_seal.h
+include/kernel/tpm_transport.h
 "
+# Adversarial review (post-ship, section 24) found the trigger covered only the
+# five .c translation units: a HEADER-ONLY change (e.g. widening
+# TPM_NV_MAX_DATA, which directly sizes stack buffers in tpm_nv.c) grows a
+# covered function's frame without ever re-running the checker, because
+# nothing in the header's own diff matched the trigger. The five modules'
+# #include list is finite and stable (grep confirms it above), so the
+# duplicate-list trade already made for the .c files extends cleanly to their
+# headers rather than needing a dependency-closure tool.
 TPM_STACK_TOUCHED=0
 for f in "${FILES[@]}"; do
     case "$f" in

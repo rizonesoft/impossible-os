@@ -701,23 +701,30 @@ void boot_phase1(void)
              * the boot calls verify exactly once, BUSY matches none of the
              * publication cases below, and a TPM that was busy for a few
              * milliseconds would leave the machine with NO integrity verdict for
-             * the entire boot. The bound is small and fixed because contention
-             * here is another CPU's in-flight TPM transaction, which completes in
-             * its own bounded sequence; this is not a wait for hardware. */
+             * the entire boot.
+             *
+             * boot_phase1 is single-CPU (APs launch in Phase 2 smp_init, see
+             * this file's own W^X comment above), so BUSY here is NOT another
+             * CPU's sequence -- it can only mean the transport gate is still
+             * held by a PRIOR TPM operation on this same CPU that has not yet
+             * released it (a bounded sequence completing its own cleanup
+             * allowance, or -- the case worth insuring against -- a bug that
+             * left the gate stuck). The retry is bounded defensive insurance
+             * for that second case, not a wait for genuine cross-CPU
+             * contention: it costs nothing on the common path (BUSY should not
+             * occur at all here) and cannot make a stuck gate worse. */
             tpm_baseline_status_t bs = TPM_BASELINE_BUSY;
             unsigned attempt;
             for (attempt = 0; attempt < TPM_BASELINE_VERIFY_RETRIES; attempt++) {
                 if (attempt != 0u) {
-                    /* Back-to-back attempts with no gap between them can all
-                     * finish faster than the competing sequence holding the
-                     * gate, so the retry improves nothing under real
-                     * contention -- BUSY means ANOTHER CPU's bounded sequence
-                     * is in flight, and that sequence needs actual wall-clock
-                     * time to complete. A short PAUSE-spin backoff (no
-                     * subsystem dependency; safe this early relative to
-                     * scheduler/timer init) gives it a real chance without
-                     * risking a sustained busy-spin -- the loop is still
-                     * bounded to TPM_BASELINE_VERIFY_RETRIES attempts total. */
+                    /* Back-to-back attempts with no gap between them give a
+                     * still-releasing prior operation no time to finish, so the
+                     * retry improves nothing without SOME gap. A short
+                     * PAUSE-spin backoff (no subsystem dependency; safe this
+                     * early relative to scheduler/timer init) gives it a real
+                     * chance without risking a sustained busy-spin -- the loop
+                     * is still bounded to TPM_BASELINE_VERIFY_RETRIES attempts
+                     * total. */
                     unsigned spin;
                     for (spin = 0; spin < TPM_BASELINE_VERIFY_BACKOFF_SPINS; spin++)
                         __asm__ volatile ("pause");

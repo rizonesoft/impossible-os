@@ -286,18 +286,6 @@ int tpm2_parse_unseal(const uint8_t *rsp, uint32_t len,
  * TPMs hold very few transient-object slots, so that lost one slot per attempt
  * until reset. Factored rather than reimplemented: a second copy of the proof
  * rules is a second copy to get wrong. */
-/* Teardown of a transient object handle, delegated to the ONE proof-requiring
- * implementation (tpm_nv_flush_handle). It spends the sequence's SEPARATE
- * cleanup allowance -- so a mandatory flush still runs after the work budget is
- * spent, which is exactly the case that used to leak -- retries, and accepts
- * only proof the handle is gone: SUCCESS, or "no such handle".
- *
- * The previous implementation submitted FlushContext with tpm2_submit_waiting
- * and DISCARDED the result, so a transient TPM_RC_RETRY or a desynchronized
- * reply left the object allocated while this returned as if it were released.
- * TPMs hold very few transient-object slots, so that lost one slot per attempt
- * until reset. Factored rather than reimplemented: a second copy of the proof
- * rules is a second copy to get wrong. */
 static void seal_flush(tpm2_seq_t seq, uint32_t handle)
 {
     tpm_nv_flush_handle(seq, handle);
@@ -356,6 +344,17 @@ static tpm_seal_status_t map_nv_status(tpm_nv_status_t s)
 static tpm_seal_status_t map_nv_status_handle(tpm_nv_status_t s)
 {
     if (s == TPM_NV_BUDGET)
+        return TPM_SEAL_TPMERR;
+    /* TRANSPORT is the SAME "dispatched, unresolved" hazard as BUDGET for
+     * every caller of this classifier: seal_exec_handle's own malformed-
+     * response branches (seal_flush_raw_if_created attempted, no handle
+     * recoverable) and the session_pending-gated trial-digest/nested-session
+     * paths BOTH only ever reach this classifier once dispatch is already
+     * confirmed. Unconditional promotion (not re-checking the dispatch flag
+     * here) is correct for the same reason it is in tpm_attest.c's
+     * at_provision_err_handle: every source of TRANSPORT reaching THIS
+     * classifier has already resolved that question before calling it. */
+    if (s == TPM_NV_TRANSPORT)
         return TPM_SEAL_TPMERR;
     return map_nv_status(s);
 }
@@ -432,40 +431,46 @@ static uint32_t seal_exec_handle(tpm2_seq_t seq, const uint8_t *cmd, uint32_t n,
     if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
     r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
     if (r < 0) {
-        /* BUDGET is named explicitly and must NOT fall into the TRANSPORT arm.
-         * Both callers of this helper (CreatePrimary, Load) map TPM_NV_BUDGET to
-         * TPM_SEAL_BUSY -- "the TPM answered, just slower than this boot will
-         * wait" -- while TRANSPORT reads as a device fault and sends an FDE
-         * caller into hard-failure recovery. Before the sequence conversion this
-         * arm could only ever see BUSY, so the distinction did not exist.
+        /* BUSY is always pre-dispatch by construction (tpm_t_seq_claim
+         * refuses on gate contention or a sticky-failed transport BEFORE any
+         * submit is attempted) -- genuinely nothing submitted, always safe. */
+        if (r == TPM_T_ERR_BUSY) {
+            *out_st = TPM_NV_BUSY;
+            return 0;
+        }
+        /* Every OTHER negative code -- BUDGET, but ALSO TIMEOUT, IO and
+         * RESPONSE -- can occur AFTER the command reached the interface
+         * (post-GO), not only before it. TIMEOUT can fire waiting for
+         * commandReady (pre-GO, safe) or waiting for the response (post-GO,
+         * unsafe); IO is a protocol violation that can be caught either side
+         * of GO; RESPONSE (malformed/oversized header) is by construction
+         * ONLY reachable after GO. The original fix special-cased BUDGET
+         * alone, leaving every one of these other post-dispatch codes falling
+         * through to the generic TRANSPORT arm with no dispatch check at
+         * all -- so a malformed response after a real CreatePrimary/Load
+         * could leak a handle exactly like an unhandled BUDGET expiry, just
+         * silently.
          *
-         * A budget expiry on a handle-PRODUCING command also leaves the outcome
-         * UNKNOWN: the TPM may have created the object and we abandoned the
-         * response, so there is no handle to flush. That is reported, not
-         * silently accepted -- it degrades on its own into a definite, classified
-         * error once the pool is exhausted (the same trade nv_flush documents),
-         * whereas poisoning the transport here would take out PCR reads too. */
+         * The dispatch check is now the FIRST question for all of them: a
+         * pre-dispatch refusal of ANY of these codes submitted nothing and is
+         * exactly as safe to retry as ordinary contention. Only a genuinely
+         * dispatched-then-failed outcome keeps its distinguishing status
+         * (BUDGET vs TRANSPORT) and its leak warning. */
+        if (!tpm2_seq_last_submit_dispatched()) {
+            *out_st = TPM_NV_BUSY;
+            return 0;
+        }
         if (r == TPM_T_ERR_BUDGET) {
-            /* Only an actually-DISPATCHED command can have created an object
-             * this caller cannot name. A pre-dispatch refusal (the cumulative
-             * budget was already spent before this call touched the
-             * interface) submitted nothing and is exactly as safe to retry as
-             * ordinary contention -- report it as BUSY, not BUDGET, so every
-             * caller of this helper (which always maps through
-             * map_nv_status_handle) gets the correct classification without
-             * having to ask separately. Only a genuinely in-flight abandonment
-             * keeps the BUDGET status that routes to the non-retryable class. */
-            if (!tpm2_seq_last_submit_dispatched()) {
-                *out_st = TPM_NV_BUSY;
-                return 0;
-            }
             *out_st = TPM_NV_BUDGET;
             klog(LOG_WARN, "TPM",
                  "seal: object-creating command abandoned on budget; "
                  "a transient slot may be held until reset");
             return 0;
         }
-        *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT;
+        *out_st = TPM_NV_TRANSPORT;
+        klog(LOG_WARN, "TPM",
+             "seal: object-creating command dispatched then failed (rc=%d); "
+             "a transient slot may be held until reset", (uint64_t)r);
         return 0;
     }
     if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
@@ -579,14 +584,22 @@ static int seal_secret_seq(tpm2_seq_t seq, void *vctx)
     /* From here ALL exits flush `primary`. */
     n = tpm2_build_create_sealed(cmd, sizeof cmd, primary, policy,
                                  (uint16_t)sizeof policy, c->secret, c->secret_len);
-    if (n == 0u) { r = TPM_SEAL_BADARG; goto out; }
+    if (n == 0u) { r = TPM_SEAL_BADARG; goto wipe_cmd; }
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
         r = map_nv_status(st);
-        goto out;
+        goto wipe_cmd;
     }
     r = (tpm2_parse_create_sealed(rsp, rlen, c->out) == 0)
             ? TPM_SEAL_OK : TPM_SEAL_TRANSPORT;
-out:
+wipe_cmd:
+    /* `cmd` carried the caller's plaintext secret (tpm2_build_create_sealed
+     * marshals it in). The submit has either consumed it or never ran, so the
+     * local copy is dead here on EVERY exit -- wipe it rather than leaving
+     * plaintext key material sitting in reused kernel stack until an unrelated
+     * later frame happens to overwrite it. rsp does not need the same
+     * treatment: it carries the TPM's own encrypted-at-rest sealed blob
+     * (outPrivate/outPublic), not the plaintext. */
+    memset(cmd, 0, sizeof cmd);
     seal_flush(seq, primary);
     c->r = r;
     return 0;
@@ -639,10 +652,33 @@ static tpm_nv_status_t seal_unseal_op(tpm2_seq_t seq, uint32_t session, void *vc
     /* Submits inside the caller's bounded sequence: that sequence already holds
      * the transport gate, so an unsequenced tpm2_submit here would bounce BUSY
      * against our own lock rather than run. */
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
-                                 &c->tpm_rc) != 0)
-        return st;
+    {
+        int exec_rc = tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp,
+                                               &rlen, &st, &c->tpm_rc);
+        /* `rsp` can carry the TPM's plaintext outData even when exec_rc != 0:
+         * an rc-SUCCESS Unseal response is fully copied into `rsp` BEFORE
+         * nv_cmd_exec_common's own structural validation (tag, parameterSize,
+         * auth-area shape) runs, so a malformed-but-genuinely-successful
+         * response (bus glitch, firmware desync) leaves the real secret in
+         * `rsp` on the FAILURE path too -- wipe before returning here, since
+         * nothing on this path still needs it. The SUCCESS path below wipes
+         * too, but only AFTER parsing extracts outData into c->out; wiping
+         * here unconditionally would zero the data before it is ever read.
+         *
+         * Return `st` (the classified status the call populated), NOT
+         * `exec_rc` (the function's own bare 0/-1 success flag) -- returning
+         * exec_rc directly here was the bug this exact rewrite introduced:
+         * every legitimate classification (POLICY_FAIL, AUTH, TRANSPORT, ...)
+         * was replaced by an implicit int-to-enum conversion of -1. */
+        if (exec_rc != 0) {
+            memset(rsp, 0, sizeof rsp);
+            return st;
+        }
+    }
     dl = tpm2_parse_unseal(rsp, rlen, c->out, c->cap);
+    /* Now safe to wipe: the plaintext (or as much of it as parsed) has already
+     * been copied out to c->out, so rsp's own copy is dead regardless of dl. */
+    memset(rsp, 0, sizeof rsp);
     if (dl < 0)
         return TPM_NV_TRANSPORT;
     if (c->out_len) *c->out_len = (uint16_t)dl;

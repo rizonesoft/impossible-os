@@ -856,9 +856,21 @@ static int tpm_t_check_args(const uint8_t *cmd, uint32_t cmd_len,
 static int tpm_t_quiesce(void)
 {
     int saved_active = s_budget_active;
+    /* The cumulative budget is deliberately disabled for this poll (the abort
+     * exists precisely because it is gone), which also means the migration
+     * backstop -- s_budget_iters, only consulted when s_budget_active -- does
+     * NOT cover this wait either. tpm_t_wait_begin's TSC-deadline mode is a
+     * raw cross-CPU comparison with no protection of its own, so a migration
+     * during THIS specific poll could stretch it unboundedly, exactly the
+     * hazard the cumulative backstop exists to bound elsewhere. Forcing the
+     * no-frequency (CPU-local iteration) path for the duration of this one
+     * poll gives it the same migration-immune property without re-enabling
+     * the cumulative budget the abort is specifically exempt from. */
+    uint64_t saved_tsc_per_ms = s_tsc_per_ms;
     int rc = 0;
 
     s_budget_active = 0;
+    s_tsc_per_ms = 0;
     if (s_iface == TPM_T_IFACE_CRB) {
         s_io->w32(TPM_CRB_REG_CANCEL, 1u);
         if (tpm_t_poll32(TPM_CRB_REG_START, TPM_CRB_START_START, 0,
@@ -874,6 +886,7 @@ static int tpm_t_quiesce(void)
                          TPM_T_TIMEOUT_B_MS) != 0)
             rc = -1;
     }
+    s_tsc_per_ms = saved_tsc_per_ms;
     s_budget_active = saved_active;
     return rc;
 }
@@ -1163,14 +1176,25 @@ int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
     rc = tpm_t_seq_claim(seq);
     if (rc != 0)
         return rc;
-    /* Reset here, not "set" -- the true dispatch point is inside
-     * tis_submit()/crb_submit(), at the GO/START write, which is the earliest
-     * moment a timeout genuinely means "the TPM may be executing this."
-     * Everything before that (the Idle->Ready handshake, writing FIFO bytes,
-     * waiting for Expect to clear) can ALSO time out via this same cumulative
-     * budget, and a timeout there means nothing was ever handed to the TPM --
-     * setting the flag any earlier than GO/START would misclassify exactly
-     * that case as "dispatched." */
+    /* Reset ONLY after claim succeeds -- NOT before the arg/claim checks. The
+     * flag is single GLOBAL state, and resetting it before claim would let a
+     * REJECTED caller (bad args, a stale/foreign token, a live token already
+     * held elsewhere) clobber it even though that caller was never admitted:
+     * the legitimate owner could have a dispatched failure in flight, not yet
+     * have read the flag, and see it wrongly zeroed by a call that never ran.
+     * Only claim succeeding proves THIS caller is the sequence's sole admitted
+     * owner, which is the same guarantee every other budget- and sequence-state
+     * static in this file relies on -- so this is the earliest point a reset
+     * cannot clobber anyone else.
+     *
+     * An ARG/SEQ refusal (returned above, before this line) leaves the flag
+     * reporting whatever an EARLIER call left, rather than resetting for this
+     * one -- accepted: those two codes come only from internally-marshaled
+     * arguments and a caller-held token, never from timing or TPM behavior, so
+     * reaching them at all is a programming bug. A stale-but-safe read in that
+     * unreachable path is a precision loss, not a correctness one; it can only
+     * ever make an indeterminate-handle classification MORE conservative, and
+     * never treats a genuine leak as safe to retry. */
     s_last_submit_dispatched = 0;
     /* Refuse BEFORE touching the interface once the budget is gone: starting a
      * command we already know cannot finish would leave the TPM mid-transfer
@@ -1217,6 +1241,15 @@ int tpm2_submit_seq_teardown(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_le
     rc = tpm_t_seq_claim(seq);
     if (rc != 0)
         return rc;
+    /* Same reset-after-claim-succeeds placement as tpm2_submit_seq, and for
+     * the same reason: resetting any earlier would let a REJECTED caller
+     * (bad args, a stale/foreign token) clobber the flag for whichever
+     * caller genuinely owns the sequence. Without this reset at all, a
+     * teardown refused by the preflight budget check below would leave
+     * s_last_submit_dispatched reporting whatever an EARLIER, unrelated
+     * submit left behind -- stale relative to THIS call, even though nothing
+     * currently reads the flag after a teardown specifically. */
+    s_last_submit_dispatched = 0;
 
     /* A teardown runs on its OWN allowance, and the work budget is saved and
      * restored around it rather than extended.

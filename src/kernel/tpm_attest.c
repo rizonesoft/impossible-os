@@ -448,6 +448,32 @@ static tpm_attest_status_t at_provision_err_handle(tpm_nv_status_t s)
             return TPM_ATTEST_BUSY;
         return TPM_ATTEST_TPMERR;
     }
+    if (s == TPM_NV_TRANSPORT) {
+        /* TRANSPORT here means the SAME "dispatched, unresolved" hazard as
+         * BUDGET above, and is UNCONDITIONALLY promoted to TPMERR -- but this
+         * is safe ONLY for at_exec_handle's own output (CreatePrimary EK,
+         * Load AK): at_exec_handle has ALREADY resolved dispatch state
+         * internally before ever choosing TRANSPORT over BUSY, so by the time
+         * TRANSPORT reaches here it is genuinely dispatch-confirmed.
+         *
+         * The OTHER caller (the direct StartAuthSession submission in
+         * at_provision) does NOT get the same treatment here -- it checks
+         * dispatch state itself, at its own call site, BEFORE calling this
+         * function, and skips this function entirely for a genuinely
+         * pre-dispatch TRANSPORT. That split is required, not merely
+         * convenient: nv_cmd_exec_common's default arm (which classifies the
+         * StartAuthSession submit) collapses BOTH pre-dispatch TPM_T_ERR_IO
+         * (a TIS Expect-bit violation before GO) and post-dispatch failures
+         * into the SAME TPM_NV_TRANSPORT, so a blanket promotion here would
+         * misclassify a genuinely safe-to-retry pre-dispatch failure as a
+         * possible handle leak. A dispatch check INSIDE this shared helper
+         * cannot fix that either: at_exec_handle's malformed-response recovery
+         * (at_flush_raw_if_created) can submit its own teardown before this
+         * helper is ever reached, so a check here would read the teardown's
+         * dispatch state, not the original command's -- unconditional
+         * promotion is the only safe default for THIS caller specifically. */
+        return TPM_ATTEST_TPMERR;
+    }
     return at_provision_err(s);
 }
 
@@ -513,38 +539,33 @@ static uint32_t at_exec_handle(tpm2_seq_t seq, const uint8_t *cmd, uint32_t n,
     if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
     r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
     if (r < 0) {
-        /* BUDGET must NOT collapse into TRANSPORT. at_provision_err maps
-         * TPM_NV_BUDGET to a retryable TPM_ATTEST_BUSY, while TRANSPORT reads as
-         * a device fault; without this arm a slow TPM would get a different,
-         * NON-retryable public status depending on WHICH provisioning command
-         * happened to cross the same sequence deadline.
-         *
-         * A budget expiry on a handle-PRODUCING command also leaves the outcome
-         * unknown -- the TPM may have created the object and we abandoned the
-         * response, so no handle exists to flush. Reported rather than silently
-         * accepted: the leak degrades on its own into a definite, classified
-         * error, whereas poisoning the transport would take out PCR reads too. */
+        /* BUSY is always pre-dispatch by construction -- genuinely nothing
+         * submitted, always safe to retry. */
+        if (r == TPM_T_ERR_BUSY) {
+            *out_st = TPM_NV_BUSY;
+            return 0;
+        }
+        /* Every OTHER negative code -- BUDGET, but ALSO TIMEOUT, IO and
+         * RESPONSE -- can occur AFTER the command reached the interface, not
+         * only before it (same reasoning as tpm_seal.c's seal_exec_handle:
+         * special-casing BUDGET alone left these other post-dispatch codes
+         * leaking silently through the generic TRANSPORT arm). The dispatch
+         * check is now the first question for all of them. */
+        if (!tpm2_seq_last_submit_dispatched()) {
+            *out_st = TPM_NV_BUSY;
+            return 0;
+        }
         if (r == TPM_T_ERR_BUDGET) {
-            /* Only an actually-DISPATCHED command can have created a handle
-             * this caller cannot name. A pre-dispatch refusal (the cumulative
-             * budget was already spent before this call touched the
-             * interface) submitted nothing and is exactly as safe to retry as
-             * ordinary contention -- report it as BUSY, not BUDGET, so every
-             * caller of this helper (which always maps through
-             * at_provision_err_handle) gets the correct classification. Only a
-             * genuinely in-flight abandonment keeps the BUDGET status that
-             * routes to the non-retryable class. */
-            if (!tpm2_seq_last_submit_dispatched()) {
-                *out_st = TPM_NV_BUSY;
-                return 0;
-            }
             *out_st = TPM_NV_BUDGET;
             klog(LOG_WARN, "TPM",
                  "attest: object-creating command abandoned on budget; "
                  "a transient slot may be held until reset");
             return 0;
         }
-        *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT;
+        *out_st = TPM_NV_TRANSPORT;
+        klog(LOG_WARN, "TPM",
+             "attest: object-creating command dispatched then failed (rc=%d); "
+             "a transient slot may be held until reset", (uint64_t)r);
         return 0;
     }
     if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
@@ -641,14 +662,43 @@ static tpm_attest_status_t at_provision(tpm2_seq_t seq)
                                       nonce, sizeof nonce);
     if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_ek; }
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
-        r = at_provision_err_handle(st);   /* StartAuthSession allocates a session */
+        /* Capture dispatch state HERE, immediately, before calling the shared
+         * classifier -- nothing runs between this submit's failure and this
+         * check. TRANSPORT specifically can be a genuinely PRE-dispatch
+         * outcome for THIS call (nv_cmd_exec_common's default arm also covers
+         * TPM_T_ERR_IO, which TIS can return for a pre-GO Expect-bit violation,
+         * not only ARG/SEQ), and nv_cmd_exec_common does not disambiguate --
+         * unlike at_provision_err_handle's OTHER caller (at_exec_handle's own
+         * output), where TRANSPORT is already dispatch-confirmed before it is
+         * returned, so the unconditional promotion inside the shared helper is
+         * correct for that caller but would be wrong here. A blanket dispatch
+         * check INSIDE the shared helper is unsafe regardless of source: this
+         * call has no intervening submit, but at_exec_handle's malformed-
+         * response recovery can run a teardown (at_flush_raw_if_created) before
+         * the helper is ever reached, which would make a check there read the
+         * teardown's dispatch state instead of the original command's. */
+        if (st == TPM_NV_TRANSPORT && !tpm2_seq_last_submit_dispatched())
+            r = TPM_ATTEST_TRANSPORT;
+        else
+            r = at_provision_err_handle(st);   /* StartAuthSession allocates a session */
         goto out_ek;
     }
     session = tpm2_parse_start_auth_session(rsp, rlen);
     if (session == 0u) {
+        /* rc was SUCCESS -- this command genuinely DISPATCHED and the TPM
+         * executed it -- so a session almost certainly exists even though the
+         * strict parser rejected the response shape. If a raw handle can be
+         * recovered it is flushed; if NOT, nothing names the session and it
+         * cannot be reported as freely retryable -- a caller looping on
+         * TRANSPORT here could allocate a second unreachable session on top of
+         * the first. Route through the SAME non-retryable classification as
+         * every other dispatched-and-unresolved handle-allocating outcome in
+         * this function (at_provision_err_handle promotes TRANSPORT to TPMERR
+         * unconditionally, which is correct here: dispatch is CONFIRMED, not
+         * merely suspected). */
         uint32_t raw = tpm2_rsp_session_handle(rsp, rlen);
         if (raw != 0u) at_flush(seq, raw);
-        r = TPM_ATTEST_TRANSPORT;
+        r = at_provision_err_handle(TPM_NV_TRANSPORT);
         goto out_ek;
     }
     /* From here flush session + ek on every path. Every stage preserves a
@@ -895,14 +945,15 @@ int tpm2_parse_create_primary_public(const uint8_t *rsp, uint32_t len,
 /* CreatePrimary the EK, capture its public area, and flush the transient handle
  * on EVERY path. The handle is not retained: the caller wants the identity, and
  * a leaked transient exhausts the TPM's small object pool within a few boots of
- * a failing path. Runs under the s_ak_busy gate, so the static response buffer
- * is race-free and stays off the stack. */
-/* Capture the EK public. CreatePrimary plus its teardown run inside their OWN
- * bounded sequence: this path is reached from tpm_ek_public_get, NOT from
- * at_provision, so it owns no sequence of its own -- and the verified teardown
- * submits on the sequence's cleanup allowance, which does not exist outside one.
- * Passing 0 here would leave every EK transient un-flushed on the success path,
- * exhausting the TPM's small object pool after a handful of calls. */
+ * a failing path.
+ *
+ * CreatePrimary plus its teardown run inside their OWN bounded sequence: this
+ * path is reached from tpm_ek_public_get, NOT from at_provision, so it owns no
+ * sequence of its own -- and the verified teardown submits on the sequence's
+ * cleanup allowance, which does not exist outside one. Passing 0 here would
+ * leave every EK transient un-flushed on the success path. Runs under the
+ * s_ak_busy gate too, so the static response buffer is race-free and stays off
+ * the stack. */
 static int at_capture_ek_public_seq(tpm2_seq_t seq, void *vctx)
 {
     tpm_attest_status_t *out = (tpm_attest_status_t *)vctx;
@@ -916,17 +967,20 @@ static int at_capture_ek_public_seq(tpm2_seq_t seq, void *vctx)
     if (n == 0u) { *out = TPM_ATTEST_PROVISION_FAIL; return 0; }
     r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
     if (r < 0) {
-        /* Same BUDGET distinction as at_exec_handle: a cumulative expiry is the
-         * retryable class, and on this object-CREATING command its completion is
-         * unknown, so the possible allocation is reported rather than dropped. */
+        /* Same BUSY-is-always-pre-dispatch and dispatch-gated classification
+         * as at_exec_handle/seal_exec_handle -- every negative code other than
+         * BUSY can occur AFTER CreatePrimary reaches the interface, not only
+         * before it, and only a genuinely dispatched failure risks an
+         * unnameable EK transient. */
+        if (r == TPM_T_ERR_BUSY) {
+            *out = TPM_ATTEST_BUSY;
+            return 0;
+        }
+        if (!tpm2_seq_last_submit_dispatched()) {
+            *out = TPM_ATTEST_BUSY;
+            return 0;
+        }
         if (r == TPM_T_ERR_BUDGET) {
-            /* Same pre-dispatch-vs-in-flight distinction as at_exec_handle:
-             * only a DISPATCHED CreatePrimary can have allocated an EK
-             * transient this caller cannot name. */
-            if (!tpm2_seq_last_submit_dispatched()) {
-                *out = TPM_ATTEST_BUSY;
-                return 0;
-            }
             klog(LOG_WARN, "TPM",
                  "attest: EK capture abandoned on budget; "
                  "a transient slot may be held until reset");
@@ -936,15 +990,24 @@ static int at_capture_ek_public_seq(tpm2_seq_t seq, void *vctx)
             *out = TPM_ATTEST_TPMERR;
             return 0;
         }
-        *out = (r == TPM_T_ERR_BUSY) ? TPM_ATTEST_BUSY : TPM_ATTEST_TRANSPORT;
+        klog(LOG_WARN, "TPM",
+             "attest: EK capture dispatched then failed (rc=%d); "
+             "a transient slot may be held until reset", (uint64_t)r);
+        *out = TPM_ATTEST_TPMERR;
         return 0;
     }
     if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
         /* A bad TAG lands here with a SUCCESS code and a live handle still in
-         * the response, so this path needs the same recovery as the one below.
-         * The re-adversarial round caught it missing. */
+         * the response, so recovery runs before the return, not only on the
+         * handle-parse failure below. r >= 0 already proves this command
+         * DISPATCHED (a response was received), so this is TPMERR, not
+         * TRANSPORT -- at_flush_raw_if_created is a BEST-EFFORT recovery, and
+         * when it cannot recover a handle (rc was not SUCCESS, or the field
+         * does not look like a transient handle), nothing names the possibly-
+         * created EK, and reporting TRANSPORT would read as an ordinary
+         * device fault a caller could reasonably retry. */
         at_flush_raw_if_created(seq, rsp, (uint32_t)r);
-        *out = TPM_ATTEST_TRANSPORT;
+        *out = TPM_ATTEST_TPMERR;
         return 0;
     }
     if (rc != TPM2_RC_SUCCESS) {
@@ -953,8 +1016,11 @@ static int at_capture_ek_public_seq(tpm2_seq_t seq, void *vctx)
     }
     ek = tpm2_parse_object_handle(rsp, (uint32_t)r);
     if (ek == 0u) {
+        /* Same reasoning as above: r >= 0 and rc == SUCCESS both confirm this
+         * dispatched and the TPM executed it, so an unrecoverable handle here
+         * is TPMERR, not TRANSPORT. */
         at_flush_raw_if_created(seq, rsp, (uint32_t)r);
-        *out = TPM_ATTEST_TRANSPORT;
+        *out = TPM_ATTEST_TPMERR;
         return 0;
     }
     if (tpm2_parse_create_primary_public(rsp, (uint32_t)r, s_ek_pub,

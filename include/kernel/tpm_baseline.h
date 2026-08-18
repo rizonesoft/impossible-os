@@ -39,11 +39,13 @@
 #define TPM_BASELINE_MAX_PCRS 9u
 
 /* Attempts the boot makes at tpm_baseline_verify while it reports
- * TPM_BASELINE_BUSY. Small and fixed: BUSY is another CPU's in-flight TPM
- * transaction, which finishes inside its own bounded sequence, so this is
- * contention backoff and never a wait on hardware. Retrying ONLY BUSY is the
- * safety property -- see the TPM_BASELINE_BUSY comment for why BUDGET must not
- * be retried blind. */
+ * TPM_BASELINE_BUSY. Small and fixed: BUSY means the transport gate is held by
+ * ANOTHER TPM sequence (cross-CPU contention on an SMP-capable caller, or a
+ * still-releasing prior operation on the SAME CPU at the current sole caller,
+ * boot_phase1, which runs single-CPU before AP bring-up) that finishes inside
+ * its own bounded sequence -- so this is contention backoff and never a wait
+ * on hardware. Retrying ONLY BUSY is the safety property -- see the
+ * TPM_BASELINE_BUSY comment for why BUDGET must not be retried blind. */
 #define TPM_BASELINE_VERIFY_RETRIES 3u
 
 /* PAUSE-instruction spins between verify retries (boot_interrupts.c). Not a
@@ -411,9 +413,11 @@ tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
  * TPM_BASELINE_IDENTITY (all MISMATCH).
  *
  * NON-VERDICT returns leave *out_overall untouched and MUST NOT be published:
- * TPM_BASELINE_NO_TPM (absent, contended, or too slow -- a machine that could
- * not measure has not failed to match), TPM_BASELINE_TPMERR (a device fault
- * that reached no conclusion) and TPM_BASELINE_BADARG.
+ * TPM_BASELINE_NO_TPM (absent or too slow -- a machine that could not measure
+ * has not failed to match), TPM_BASELINE_BUSY (transport contention -- the
+ * ONLY one of these that is safe to retry blind, since nothing was
+ * submitted), TPM_BASELINE_TPMERR (a device fault that reached no conclusion)
+ * and TPM_BASELINE_BADARG.
  *
  * The distinction is the whole point: publishing a non-verdict reports a false
  * tamper, and DROPPING a verdict leaves a detected attack invisible under
