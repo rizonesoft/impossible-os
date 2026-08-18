@@ -422,3 +422,23 @@ void klog_crash_recover(void);
  * Called after VFS mount in klog_disk_enable(). */
 void klog_crash_write_to_disk(void);
 
+/* Bounded, NULL-safe read of one recovered crash entry.
+ *
+ * The recovered-entry pool is frame-backed rather than static BSS, and its
+ * allocation failure is DEGRADED rather than fatal, so the pool can legitimately
+ * be absent at runtime and every read must be able to answer "no entry". Returns
+ * NULL when `pool` is NULL, when `index` is at or past `count`, or when `count`
+ * exceeds the pool's KLOG_RING_SIZE capacity (corrupted bookkeeping must not
+ * become an out-of-bounds read). Pure: it reads no globals, which is what makes
+ * the degraded contract assertable without calling boot infrastructure. */
+const klog_crash_entry_t *klog_recovered_at(const klog_crash_entry_t *pool,
+                                            uint32_t count, uint32_t index);
+
+/* Is a recovered set coherent enough to serialize? Non-zero when `pool` and
+ * `count` agree: a count with no pool behind it, or one past KLOG_RING_SIZE, is
+ * corrupted bookkeeping and must not be written out, because the writer's open
+ * TRUNCATES and clearing the count afterwards would discard the only in-memory
+ * copy of the previous boot's evidence. An EMPTY set (count 0) is coherent;
+ * emptiness is a separate question the caller answers first. Pure. */
+int klog_recovered_set_ok(const klog_crash_entry_t *pool, uint32_t count);
+

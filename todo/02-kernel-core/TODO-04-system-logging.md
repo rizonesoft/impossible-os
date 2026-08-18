@@ -463,6 +463,14 @@ Items moved here VERBATIM from their original, already-stamped sections, where t
 From the stamped section 9:
 - [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
 
+From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-08-18):
+- [ ] Cover the crash-recovery DEGRADED path at boot level: force ONLY the recovered-entry pool allocation to fail and assert boot continues, serial replay still happens, and no `crash_recovery.log` is written.
+  - `s_recovered` is frame-backed as of `02-kernel-core/TODO-33` section 12, so pool-absent is a reachable runtime state rather than an impossible one, and allocation failure degrades to serial-only instead of halting -> XREF: `02-kernel-core/TODO-33 §12` (item: "Convert exactly ONE assessed pool to frame-backed storage").
+  - The PURE half already ships assertions: `klog_recovered_at` and `klog_recovered_set_ok` are unit-tested in `src/kernel/test/test_klog.c`, including the absent-pool and incoherent-count refusals with a passing control beside each. What those cannot reach is the boot-level consequence.
+  - Not unit-testable as things stand: the allocation lives inside `klog_crash_recover()`, and `src/kernel/test/test_*.c` may not call live boot infrastructure. The injector itself already ships, so the gap is the CALL SITE and not the mechanism -> XREF: `00-infrastructure/TODO-03 §6` (item: "Extended to PMM: 4 `pmm_alloc_fail_*` fields in `per_cpu_data`").
+  - Also assert the overlap path, which is the harder half: a pool run that exactly or partially covers the previous crash region must be freed untouched and must NOT erase it. That case is what round 1 of this section's adversarial review caught.
+  - Assert this boot's crash REGION is still allocated afterwards. The two allocations are independent, and a regression conflating them would disable crash persistence for the NEXT boot while every existing test stayed green.
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

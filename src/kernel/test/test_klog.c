@@ -1271,6 +1271,115 @@ static void test_klog_lz4_roundtrip(void)
 
 /* ---- Registration ---- */
 
+
+/* ---------------------------------------------------------------------------
+ * klog_recovered_at -- bounded, NULL-safe access to the recovered-entry pool
+ *
+ * The pool moved from static BSS to frame-backed storage by the second tactical
+ * BSS reclamation pass in the higher-half kernel relocation roadmap,
+ * which made ABSENT a reachable state: allocation failure degrades to
+ * serial-only recovery instead of halting. These assert the contract that
+ * degrade depends on. Every refusal case is paired with a control that must
+ * SUCCEED, because a helper that returned NULL unconditionally would satisfy
+ * the refusals on its own and prove nothing.
+ * ------------------------------------------------------------------------- */
+
+static void test_klog_recovered_at_null_pool(void)
+{
+    klog_crash_entry_t probe[4];
+
+    /* The controls use IDENTICAL count and index to the refusals, so the ONLY
+     * difference between the two halves is the pool pointer. With mismatched
+     * arguments an implementation that ignored `pool` entirely and refused on
+     * count alone would satisfy every assertion here while violating the exact
+     * NULL-safe contract these tests are named for. */
+    TEST_ASSERT(klog_recovered_at((const klog_crash_entry_t *)0, 4, 0) == (const klog_crash_entry_t *)0,
+                "NULL pool refuses index 0");
+    TEST_ASSERT(klog_recovered_at((const klog_crash_entry_t *)0, 4, 3) == (const klog_crash_entry_t *)0,
+                "NULL pool refuses the last in-range index");
+    TEST_ASSERT(klog_recovered_at(probe, 4, 0) == &probe[0],
+                "control: real pool, same count and index, returns entry 0");
+    TEST_ASSERT(klog_recovered_at(probe, 4, 3) == &probe[3],
+                "control: real pool, same count and index, returns entry 3");
+    /* And at the smallest nonzero count, where a count-threshold implementation
+     * would still be accepting. */
+    TEST_ASSERT(klog_recovered_at((const klog_crash_entry_t *)0, 1, 0) == (const klog_crash_entry_t *)0,
+                "NULL pool refuses at count 1");
+    TEST_ASSERT(klog_recovered_at(probe, 1, 0) == &probe[0],
+                "control: real pool at count 1 returns entry 0");
+}
+
+static void test_klog_recovered_at_bounds(void)
+{
+    klog_crash_entry_t probe[3];
+
+    probe[0].timestamp = 11u;
+    probe[2].timestamp = 33u;
+
+    TEST_ASSERT(klog_recovered_at(probe, 3, 0) == &probe[0], "index 0 resolves");
+    TEST_ASSERT(klog_recovered_at(probe, 3, 2) == &probe[2], "last valid index resolves");
+    TEST_ASSERT_EQ(klog_recovered_at(probe, 3, 0)->timestamp, 11u,
+                   "entry 0 carries its own data");
+    TEST_ASSERT_EQ(klog_recovered_at(probe, 3, 2)->timestamp, 33u,
+                   "last entry carries its own data");
+    TEST_ASSERT(klog_recovered_at(probe, 3, 3) == (const klog_crash_entry_t *)0,
+                "index == count refused");
+    TEST_ASSERT(klog_recovered_at(probe, 3, 4) == (const klog_crash_entry_t *)0,
+                "index past count refused");
+    TEST_ASSERT(klog_recovered_at(probe, 0, 0) == (const klog_crash_entry_t *)0,
+                "count 0 refuses every index");
+    /* Unsigned extremes: neither field is signed, so the guards must hold at the
+     * top of the range rather than wrapping into an accepted comparison. */
+    TEST_ASSERT(klog_recovered_at(probe, 3, 0xFFFFFFFFu) == (const klog_crash_entry_t *)0,
+                "index UINT32_MAX refused");
+    TEST_ASSERT(klog_recovered_at(probe, 0xFFFFFFFFu, 0) == (const klog_crash_entry_t *)0,
+                "count UINT32_MAX refused");
+}
+
+/* The pure half of the DEGRADED policy: whether an absent or incoherent pool is
+ * allowed to reach the disk writer at all. The writer's open TRUNCATES and its
+ * success path clears the count, so answering this wrong loses the previous
+ * boot's evidence and reports a complete log while doing it. The boot-level half
+ * (boot continues, serial replay survives, this boot's crash region is still
+ * allocated) needs allocation-fault injection and is filed, not asserted here. */
+static void test_klog_recovered_set_ok(void)
+{
+    klog_crash_entry_t probe[2];
+
+    TEST_ASSERT(klog_recovered_set_ok((const klog_crash_entry_t *)0, 5) == 0,
+                "absent pool with a nonzero count is incoherent");
+    TEST_ASSERT(klog_recovered_set_ok((const klog_crash_entry_t *)0, 1) == 0,
+                "absent pool is incoherent at the SMALLEST nonzero count");
+    TEST_ASSERT(klog_recovered_set_ok(probe, KLOG_RING_SIZE + 1u) == 0,
+                "count past capacity is incoherent");
+    TEST_ASSERT(klog_recovered_set_ok(probe, 0xFFFFFFFFu) == 0,
+                "count UINT32_MAX is incoherent");
+    /* Controls. Without these the three refusals above would be satisfied by a
+     * predicate that rejected everything, including every writable set. */
+    TEST_ASSERT(klog_recovered_set_ok(probe, 2) != 0,
+                "control: pool with an in-range count is coherent");
+    TEST_ASSERT(klog_recovered_set_ok(probe, KLOG_RING_SIZE) != 0,
+                "control: count exactly at capacity is coherent");
+    TEST_ASSERT(klog_recovered_set_ok((const klog_crash_entry_t *)0, 0) != 0,
+                "control: absent pool with count 0 is coherent, just empty");
+}
+
+static void test_klog_recovered_at_capacity_guard(void)
+{
+    klog_crash_entry_t probe[1];
+
+    /* A count above the pool's real capacity is corrupted bookkeeping, not a
+     * larger pool, and must not be turned into an out-of-bounds read. The
+     * helper only computes an address and never dereferences, so passing a
+     * short probe with an oversized count touches no memory. */
+    TEST_ASSERT(klog_recovered_at(probe, KLOG_RING_SIZE + 1u, 0) == (const klog_crash_entry_t *)0,
+                "count past KLOG_RING_SIZE refused");
+    /* Control: exactly at capacity is legal, so the refusal above is the
+     * capacity guard firing and not an off-by-one that rejects the real max. */
+    TEST_ASSERT(klog_recovered_at(probe, KLOG_RING_SIZE, 0) == &probe[0],
+                "control: count == KLOG_RING_SIZE accepted");
+}
+
 void test_register_klog(void)
 {
     test_suite_register_cat("Klog: single-pass subsystem slot dispatch",
@@ -1333,6 +1442,10 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: ctx message match", test_klog_ctx_message_populated, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ctx timestamp advances", test_klog_ctx_timestamp_advances, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ctx POST codes", test_klog_ctx_post_codes, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: recovered_at NULL pool", test_klog_recovered_at_null_pool, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: recovered_at bounds", test_klog_recovered_at_bounds, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: recovered_at capacity guard", test_klog_recovered_at_capacity_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: recovered set coherence", test_klog_recovered_set_ok, TEST_CAT_BOOT);
 
     /* ETW tracing tests */
     test_suite_register_cat("ETW: session magic", test_etw_session_magic, TEST_CAT_ABI);

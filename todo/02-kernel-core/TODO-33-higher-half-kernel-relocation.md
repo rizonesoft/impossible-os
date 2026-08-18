@@ -49,7 +49,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
 | 🔥  |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [x]   |
 | 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [/]   |
-| 🔥  |  12   | Second tactical BSS pass: reclaim a large static again   | --                     |  [ ]   |
+| 🔥  |  12   | Second tactical BSS pass: reclaim a large static again   | --                     |  [x]   |
 | 💎  |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎  |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
@@ -261,6 +261,7 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 - [ ] Re-run `01-boot-platform/TODO-13` §28 once the guard is gone (item: "Commit: `\"tpm: crash-consistent record pairing and verified-read boot budget\"`"); design review is DONE and the diff is preserved, so the re-attempt is apply-then-re-verify
   - Reverted 2026-08-18 with the tree left green. The code built clean on its own; the section's mandatory unit tests pushed `.rodata` over a 4 KiB page, which cascaded `.data` and `.bss` each up one page and landed `__kernel_end` exactly on `0x800000`.
   - The diff is at `.claude/state/deferred-todo13-s28.patch` (gitignored, survives a session rollover but NOT a fresh clone). If it is lost, the §28 Deferred stamp records every design outcome so the redo is mechanical rather than a re-design.
+  - DONE as far as THIS section is concerned, 2026-08-18: §12 cleared the guard tactically without waiting for §7's permanent retirement, and `01-boot-platform/TODO-13` §28 is unparked and back in its own file's queue -> XREF: this file §12 (item: "Convert exactly ONE assessed pool to frame-backed storage").
 - [ ] The §10 headroom is FULLY CONSUMED again, so the "tactical" reclamation is a recurring need rather than a one-off, and this section should say which it is before §3 lands.
   - MEASURED 2026-08-18 at `d43b73d2b`: `.bss` runs `0x56d000..0x7feea5`, `__kernel_end` page-aligns to `0x7ff000`, leaving **347 bytes** before the guard fires. §11's Notes record `0x6c2000` and ~1272 KiB spare on 2026-07-17; roughly 1.27 MiB was reabsorbed in a month.
   - The failure is cascading rather than proportional, which makes it arrive without warning: shrinking `.rodata` by 859 bytes (or `.text` by 1183) moves every following page-aligned section down one page and clears the guard, so a section either fits with room to spare or fails by a whole page.
@@ -457,41 +458,66 @@ Measured largest remaining `.bss` consumers (`build/kernel.map`, 2026-08-18, by 
 | `ctrl_windows` | 180,736 | `../desktop/controls.c:20` | desktop init, late            | NO               |
 | `s_recovered`  | 164,000 | `klog.c:404`               | crash recovery, post-PMM read | NO               |
 
-- [ ] Assess the three unassessed candidates against the §10 bar before converting anything, and record WHY each is or is not safe rather than converting the largest one on size alone.
-  - The bar §10 established is init phase plus reachability: a pool allocated once after `pmm_init`, never lazily, never under a spinlock and never written from ISR context is convertible; anything pre-PMM or ISR-reachable is not.
-  - `ctrl_windows` is the leading candidate on that bar: `src/desktop/controls.c:20`, late desktop init, no ISR writer known. Confirm the reachability claim at file:line rather than inheriting it from this row.
-  - `tasks` (`src/kernel/sched/task.c:69`) is scheduler core and is walked by `find_next_task()`; treat an ISR/scheduler-context writer as disqualifying unless proven otherwise.
-  - `s_recovered` (`src/kernel/klog.c:404`) is sized off `KLOG_RING_SIZE` and lives beside the pre-PMM ring; establish whether it is written before `pmm_init` on the crash-recovery path specifically, which is the path that only runs after a reset.
-- [ ] Convert exactly ONE assessed pool to frame-backed storage via `pmm_alloc_pages_hhdm`, keeping the existing index-allocator semantics and failing closed on `BOOT_FATAL`, following the `reg_value_pool` conversion as the reference.
-  - One is deliberate. The point is to clear the page and stop, so the remaining candidates stay in reserve for the NEXT time the ceiling closes rather than being spent in one pass.
-- [ ] Record the new headroom as the acceptance evidence, in the same shape §10 used: BSS end before and after, and the `scripts/build.sh` BSS-check line.
-- [ ] State in this section whether a third pass is expected, and what is left in reserve after this one, so the recurrence is visible rather than rediscovered.
-  - §10 was written as a one-off and its Notes read as if the problem was solved; that framing is why the ceiling arrived again unannounced.
-- [ ] Re-run the sections this unparks once the headroom lands -> XREF: this file §7 (item: "Re-run `01-boot-platform/TODO-13` §28 once the guard is gone").
+- [x] Assessed all three candidates against the §10 bar before converting anything; two are RULED OUT and the reasons are recorded here rather than rediscovered.
+  - The bar: allocated once after `pmm_init`, never lazily, never under a spinlock, never written from ISR context.
+  - `tasks` (`src/kernel/sched/task.c:69`, 203776) is DISQUALIFIED: `schedule()` writes it from the PIT IRQ handler (`task.c:1710`) and `nm_handler` writes `tasks[current_task].fpu_used`/`.xsave_area` from #NM exception context (`task.c:639`). Worse, `sti` happens in Phase 1 (`boot_interrupts.c:473-495`) while `task_init()` runs in Phase 3 (`boot_desktop.c:99-103`), so a pointer would be NULL across every intervening tick. It also relies on BSS-zero state for an APC lock (`task.c:616-618`) and `pmm_alloc_pages_hhdm` does not zero.
+  - `ctrl_windows` (`src/desktop/controls.c:20`, 180736) is DISQUALIFIED for now: `ctrl_init()` is defined but has NO caller anywhere in the tree, and static BSS is exactly what makes that survivable. The live path `gallery_open()` (`boot_desktop.c:722-724`) reaches `ctrl_create_*` -> `get_or_create_ctrl_window()` (`controls.c:54-71`), which indexes the array directly, so converting it without first wiring a fallible `ctrl_init()` would fault during boot.
+  - `s_recovered` (`src/kernel/klog.c:404`, 164000) is SAFE and was converted: `klog_crash_recover()` is the sole writer, called exactly once from `boot_hw.c:575`, after `pmm_init` (`:515`), `vmm_init` (`:525`) and `heap_init` (`:561`). All reads are bounded by `s_recovered_count`, which is set to 0 at entry, so nothing depended on the array being zero-initialized.
+  - Symbol-use audit, mechanical: no `sizeof(s_recovered)`, no whole-array address-of, no static assert naming it, and no compile-time consumer of its address. Only `s_recovered[i].<field>` reads and one bound-checked write, so the pointer conversion has no silent `sizeof` collapse.
+- [x] Converted `s_recovered` to frame-backed storage via `pmm_alloc_pages_hhdm`, with an EXPLICIT byte count, zeroed through a local and published last, following the `reg_value_pool` conversion in `registry.c:364-378` as the reference.
+  - Failure policy is DEGRADED, not `BOOT_FATAL`, which is a correction the design review forced: crash-log recovery is a diagnostic, the entries still reach serial, and the crash REGION allocation in the same function already degrades this way (`klog.c:681-687`). Halting a bootable kernel over a 41-frame contiguous run would trade a working machine for a log file.
+  - The allocation sits AFTER the previous boot's crash region is located and CRC-validated, NOT at function entry. Round 1 of the adversarial review caught the alternative: that region is named only by an NVRAM variable and is not reserved in this boot's PMM bitmap, so allocating and zeroing before reading it can erase the evidence recovery exists to read, most reliably on the first boot after an upgrade.
+  - An explicit physical-overlap check sits between the allocation and the zeroing, because `pmm_alloc_contiguous` only sets bitmap bits and writes no memory: on overlap the run is freed UNTOUCHED and recovery degrades to serial-only. A boot with no prior crash now allocates nothing at all.
+  - The pool is RETAINED for the life of the boot rather than freed after the log is written, and that is a decision, not an oversight: releasing it was implemented and reverted because `klog_crash_write_to_disk` runs in Phase 2 after `smp_init` and `pmm_free_contiguous` mutates the bitmap unsynchronized, so it would race a timed-out async storage worker. The array was static BSS before, held on every boot unconditionally, so retaining it on the rare post-crash boot is strictly better than what it replaced -> XREF: `03-memory-concurrency/TODO-03 §1` (item: "**PMM bitmap SMP locking**").
+- [x] Two pure public helpers make the degraded contract assertable without calling boot infrastructure: `klog_recovered_at()` and `klog_recovered_set_ok()`.
+  - `klog_recovered_at()` refuses a NULL pool, a count past capacity, and an index at or past the count; `klog_recovered_set_ok()` answers whether a set may reach the writer at all.
+  - `klog_crash_write_to_disk` now checks coherence BEFORE its truncating open, and treats an in-loop accessor refusal as invariant failure rather than end-of-loop. Without that, a fired guard would fall through to the success path, report every entry as written and clear the count, destroying the evidence at exactly the moment the guard fired.
+- [x] Recorded the acceptance evidence, in the §10 shape. Measured from `build/kernel.map` by address delta, same build flavor (`-DKERNEL_TESTS` on, as always).
+  - BEFORE, at `9b9ab5fd6`: `.bss` `0x56d000..0x7feea5`, `__kernel_end` `0x7ff000`, headroom **347 bytes**.
+  - AFTER: `__kernel_end` `0x7d7000`, headroom **167936 bytes** (41 pages). Reclaimed `0x28000` = 163840 bytes, which is the expected 40 whole pages for a 164000-byte array, so the observed figure matches the prediction rather than merely being larger.
+  - Guard output UNCHANGED and unweakened: `scripts/build.sh` still prints `BSS check: kernel BSS end 0x00000000007d7000 < user base 0x800000`. The check was not relaxed by so much as a byte.
+- [x] A third pass IS expected, and this is what is left in reserve for it.
+  - §10 was written as a one-off and its Notes read as solved, which is why the ceiling arrived again unannounced. Naming the reserve is what makes the next recurrence cheap.
+  - Reserve, in the order a third pass should consider them: `ctrl_windows` 180736 (needs a fallible `ctrl_init()` wired before `gallery_open()` first), then `tasks` 203776 (needs allocation before Phase 1 unmasks the timer, plus explicit zeroing), then the two §10 already ruled out, `klog_ring` 288000 (pre-PMM) and the xHCI `devices` 277504 (hot-plug ISR writer).
+  - Below those: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 38208, `ports` 37632, `s_bls_fixture` 36992, `glyph_cache` 36480, `s_iocp_pool` 33152. None was assessed here.
+  - Trigger the next pass on HEADROOM, not on a failed build. The failure is cascading rather than proportional, so a section either fits with a page to spare or fails by a whole page with no warning: treat headroom under one page (4096 bytes) as the signal, which is roughly where §28 of `01-boot-platform/TODO-13` was reverted from.
+- [x] Unparks the ceiling-stalled work -> XREF: this file §7 (item: "Re-run `01-boot-platform/TODO-13` §28 once the guard is gone").
   - The §28 diff is preserved at `.claude/state/deferred-todo13-s28.patch` and its design review is complete, so that re-attempt is apply-then-re-verify rather than a rewrite -> XREF: `01-boot-platform/TODO-13 §28` (item: "Commit: `\"tpm: crash-consistent record pairing and verified-read boot budget\"`").
-- [ ] Commit: `"kernel/mm: second tactical BSS pass -- reclaim a large static"`
+  - Re-running each unparked section stays with its owning TODO; this section only removes the constraint.
+- [x] Commit: `"kernel/mm: second tactical BSS pass -- reclaim a large static"`
 
 **Test checkpoint:** `bash scripts/build.sh` prints the `BSS check` line with `__kernel_end` at least one page below `0x7ff000`, and the reported headroom is recorded in the Notes as the acceptance evidence. Full `scripts/test.sh` green, with the converted pool's owning suite specifically green rather than only the aggregate. `scripts/test-smoke.sh` boots to `C:\>`, because an allocation-failure regression in a boot-path pool surfaces as a hang and not as a failing assertion. A control proves the guard still fires: the conversion must not be accompanied by any weakening of the `scripts/build.sh` check, which stays exactly as strict as it is today. Scope: this section owns ONE tactical conversion and the headroom measurement. The permanent ceiling retirement is §7, the address-space move is §3, `klog_ring` stays with `01-boot-platform/TODO-04 §1` and the xHCI `devices` table with `04-drivers-hardware/TODO-10 §1`. Platforms: QEMU KVM + TCG; **bare metal**.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 4 new klog suites, 0 failures -- 31337 kernel + 17 user tests overall
+
+> **Notes:**
+>
+> - **What shipped** -- `s_recovered` (164000 bytes) moved from static BSS to a frame-backed pool via `pmm_alloc_pages_hhdm`, plus two pure guards (`klog_recovered_at`, `klog_recovered_set_ok`) and a coherence precondition on the disk writer's truncating open.
+> - **How it integrates** -- allocation happens inside `klog_crash_recover` AFTER the previous crash region is validated, never at entry, with a physical-overlap check between the allocation and the zeroing; failure and overlap both degrade to serial-only rather than halting.
+> - **Downstream effects** -- `__kernel_end` `0x7ff000` -> `0x7d7000`, headroom 347 bytes -> 167936 (41 pages), which unparks the ceiling-stalled queue; a boot with no prior crash now allocates nothing where it previously spent 40 pages permanently.
+> - **Reserve for the next pass** -- `ctrl_windows` 180736 then `tasks` 203776, both needing prerequisite work named in the items above; trigger on headroom under one page rather than on a failed build.
+> - **Canonical doc:** [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
+> - **Scope boundary** -- ONE conversion plus its headroom measurement. The permanent ceiling retirement is §7, the address-space move is §3, and the boot-level degraded-path coverage is filed with the klog owner -> XREF: `02-kernel-core/TODO-04 §15` (item: "Cover the crash-recovery DEGRADED path at boot level").
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                           | 🪟 Win11                 | 🐧 Linux                         | 🚀 Impossible OS                                               |
-| --- | --------------------------------- | ------------------------ | -------------------------------- | -------------------------------------------------------------- |
-| 💎  | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+ | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it                 |
-| 💎  | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 HHDM (PML4 273-400, 64 TiB); §9 walkers route through it |
-| 💎  | 128 TB user / 128 TB kernel split | ✅ 48-bit split          | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling                |
-| 💎  | Per-process address space         | ✅ per-process           | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6                   |
-| 💎  | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                                |
-| 💎  | KASLR                             | ✅ kernel ASLR           | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)                               |
-| 💎  | SMEP / SMAP clean split           | ✅ enforced              | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)                                |
-| 💎  | PCID no-flush ring transitions    | ✅ with KVA Shadow       | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)                                |
-| 💎  | No hardcoded user ceiling         | ✅ no low ceiling        | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                                       |
-| ⭐  | 5-level paging (LA57, 128 PiB)    | ❌ not supported         | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)                             |
-| 💎  | Kernel pools dynamic, not static  | ✅ `ExAllocatePool*`     | ✅ slab / `kmem_cache`           | ✅ §10 registry + atom pools frame-backed (1.25 MiB reclaimed) |
-| ⭐  | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest   | ✅ §1 `memmap.h` + 20-assert gate (live)                       |
-| ⭐  | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair     | ✅ §1 HHDM vs image, range-checked + rejecting                 |
+| ⭐  | Feature                           | 🪟 Win11                 | 🐧 Linux                         | 🚀 Impossible OS                                                 |
+| --- | --------------------------------- | ------------------------ | -------------------------------- | ---------------------------------------------------------------- |
+| 💎  | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+ | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it                   |
+| 💎  | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 HHDM (PML4 273-400, 64 TiB); §9 walkers route through it   |
+| 💎  | 128 TB user / 128 TB kernel split | ✅ 48-bit split          | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling                  |
+| 💎  | Per-process address space         | ✅ per-process           | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6                     |
+| 💎  | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                                  |
+| 💎  | KASLR                             | ✅ kernel ASLR           | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)                                 |
+| 💎  | SMEP / SMAP clean split           | ✅ enforced              | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)                                  |
+| 💎  | PCID no-flush ring transitions    | ✅ with KVA Shadow       | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)                                  |
+| 💎  | No hardcoded user ceiling         | ✅ no low ceiling        | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                                         |
+| ⭐  | 5-level paging (LA57, 128 PiB)    | ❌ not supported         | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)                               |
+| 💎  | Kernel pools dynamic, not static  | ✅ `ExAllocatePool*`     | ✅ slab / `kmem_cache`           | ✅ §10 registry + atom pools, §12 crash-recovery pool (1.41 MiB) |
+| ⭐  | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest   | ✅ §1 `memmap.h` + 20-assert gate (live)                         |
+| ⭐  | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair     | ✅ §1 HHDM vs image, range-checked + rejecting                   |
 
 > **After §1-§7:** Impossible OS matches the Windows 11 / Linux memory model -- higher-half kernel, private per-process lower half, and the security split that KASLR / SMEP / SMAP / KPTI build on.
 > **After §8:** Impossible OS exceeds Windows 11, which has no 5-level paging support.

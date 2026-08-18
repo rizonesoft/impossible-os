@@ -1,6 +1,6 @@
 {
-  "total_suites": 3075,
-  "total_assertions": 13202,
+  "total_suites": 3079,
+  "total_assertions": 13226,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
@@ -56,7 +56,7 @@
     {"file": "test_kernel_config.c", "suites": 49, "assertions": 309},
     {"file": "test_kimage.c", "suites": 6, "assertions": 62},
     {"file": "test_klibs.c", "suites": 24, "assertions": 311},
-    {"file": "test_klog.c", "suites": 42, "assertions": 159},
+    {"file": "test_klog.c", "suites": 46, "assertions": 183},
     {"file": "test_knf.c", "suites": 30, "assertions": 234},
     {"file": "test_kworker.c", "suites": 5, "assertions": 20},
     {"file": "test_mat_violation.c", "suites": 6, "assertions": 15},
