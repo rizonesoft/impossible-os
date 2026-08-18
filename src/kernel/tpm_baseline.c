@@ -298,7 +298,46 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
 }
 
 /* Map a tpm_nv_status_t to a tpm_baseline_status_t for the NV-driven wrappers. */
-static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
+int tpm_baseline_status_is_failure(tpm_baseline_status_t bs)
+{
+    return bs == TPM_BASELINE_CORRUPT || bs == TPM_BASELINE_SELF_CORRUPT ||
+           bs == TPM_BASELINE_UNBOUND || bs == TPM_BASELINE_TORN ||
+           bs == TPM_BASELINE_RELABELED || bs == TPM_BASELINE_IDENTITY;
+}
+
+tpm_baseline_status_t tpm_baseline_pairing_status(tpm_pairing_t pairing)
+{
+    switch (pairing) {
+    case TPM_PAIRING_TORN:
+    case TPM_PAIRING_UNCOMMITTED:
+    case TPM_PAIRING_IMPOSSIBLE:
+        /* All three are a record/counter disagreement: an authorized record
+         * exists and the pairing is broken. The DIRECTION picks the repair and
+         * the caller reads it from the view; this status only asserts that the
+         * repair is authorized and is never a fresh enrollment. */
+        return TPM_BASELINE_TORN;
+    case TPM_PAIRING_CURRENT:
+        /* The pairing is intact, so the record is committed and says the stored
+         * blob is not the enrolled one: the relabel attack. Reported as its own
+         * status rather than folded into UNBOUND, whose repair (authorized
+         * migration of a legacy blob) would authenticate the attacker's
+         * content. */
+        return TPM_BASELINE_RELABELED;
+    case TPM_PAIRING_BADARG:
+    default:
+        /* No pairing claim was made. This branch is reached ONLY on a
+         * TPM_NV_MISMATCH, and the sole way to get one before the pairing is
+         * computed is an index that failed its enrolled contract -- a wrong
+         * Name, a redefined index, a counter whose public area does not match
+         * the compiled manifest. That is detected tamper, so it is reported as
+         * an authenticity failure the boot PUBLISHES. It used to map to TPMERR,
+         * which the boot excludes from publication: the attack was caught and
+         * then dropped on the floor. */
+        return TPM_BASELINE_IDENTITY;
+    }
+}
+
+tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st)
 {
     switch (st) {
         case TPM_NV_OK:        return TPM_BASELINE_OK;
@@ -322,20 +361,44 @@ static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
         /* A caller-argument error is not a TPM fault, and this enum has the
          * right value for it. */
         case TPM_NV_BADARG:    return TPM_BASELINE_BADARG;
-        /* Enumerated rather than left to default: both are genuine hard
-         * failures (an illegal attribute request, or an index whose public area
-         * is not the one we asked for), and naming them stops a future status
-         * from inheriting this bucket by accident. */
-        case TPM_NV_ATTRS:
+        /* An illegal attribute request is a DEFINITION-time argument error, not
+         * a claim about an attacker. Named rather than left to default so a
+         * future status cannot inherit this bucket by accident. */
+        case TPM_NV_ATTRS:     return TPM_BASELINE_TPMERR;
+        /* MISMATCH IS CONTEXT-DEPENDENT AND STAYS OUT OF THE IDENTITY CLASS.
+         *
+         * On the VERIFY path a pre-pair MISMATCH does mean the index failed its
+         * enrolled contract -- but that path never reaches this map: it is
+         * intercepted and routed through tpm_baseline_pairing_status, whose
+         * BADARG arm is the verification-specific identity mapping.
+         *
+         * On the WRITE path the same status is produced by two benign-to-hostile
+         * conditions this map cannot tell apart: the commit counter moving
+         * between the in-sequence read and the write (`tpm_authz.c`, ordinary
+         * SMP contention on a healthy machine), and a post-write readback that
+         * differs (a write-integrity failure). Calling either of those identity
+         * tamper would make tpm_baseline_enroll_bound report an attack on a
+         * contended but perfectly healthy box, which is worse than the
+         * unpublished-verdict bug that motivated widening this arm. */
         case TPM_NV_MISMATCH:  return TPM_BASELINE_TPMERR;
-        /* Named for the reason the comment above gives, and this pair is the
-         * case it was written for. RECREATED means the anchor was destroyed and
-         * recreated; CONTRACT means the persisted identity is corrupt. Neither
-         * may EVER reach NO_BASELINE, which this file treats as a genuine first
-         * enroll -- that is precisely the laundering the identity gate exists to
-         * stop, and letting it happen here would undo it downstream. */
+        /* THE UNAMBIGUOUS IDENTITY CLASS, and it must be PUBLISHABLE.
+         *
+         * RECREATED is an anchor destroyed and recreated, which is the rollback
+         * attack itself; CONTRACT is a persisted identity that is corrupt.
+         * Neither has a benign producer in ANY context, which is what makes
+         * them safe to classify globally where MISMATCH is not.
+         *
+         * They used to map to TPMERR, and boot_phase1 excludes TPMERR from
+         * publication precisely because it means no integrity conclusion was
+         * reached -- so the attack was detected and then dropped, leaving the
+         * previous verdict standing. TPM_BASELINE_IDENTITY exists for exactly
+         * this class and IS published.
+         *
+         * Neither may EVER reach NO_BASELINE, which this file treats as a
+         * genuine first enroll: that is the laundering the identity gate exists
+         * to stop. */
         case TPM_NV_RECREATED:
-        case TPM_NV_CONTRACT:  return TPM_BASELINE_TPMERR;
+        case TPM_NV_CONTRACT:  return TPM_BASELINE_IDENTITY;
         /* An operation that needs an update authority when none is installed is
          * a CONFIGURATION state, not a TPM fault, and it maps to the status that
          * says exactly that. Named explicitly because this switch promises the
@@ -410,7 +473,7 @@ static tpm_baseline_status_t tpm_baseline_enroll_unauthenticated(uint32_t nv_ind
             gen = 1u;   /* genuine first enroll */
         } else {
             /* Index exists but is unreadable/corrupt, or a transport error. */
-            return (rd == TPM_NV_OK) ? TPM_BASELINE_CORRUPT : nv_to_baseline(rd);
+            return (rd == TPM_NV_OK) ? TPM_BASELINE_CORRUPT : tpm_baseline_nv_status(rd);
         }
     }
     b.generation = gen;
@@ -421,9 +484,9 @@ static tpm_baseline_status_t tpm_baseline_enroll_unauthenticated(uint32_t nv_ind
      * returns DEFINED, fine for re-enroll / rotation), then write the blob. */
     nv = tpm_nv_define_data(nv_index, (uint16_t)sizeof(b));
     if (nv != TPM_NV_OK && nv != TPM_NV_DEFINED)
-        return nv_to_baseline(nv);
+        return tpm_baseline_nv_status(nv);
     nv = tpm_nv_write(nv_index, 0u, (const uint8_t *)&b, (uint16_t)sizeof(b));
-    return nv_to_baseline(nv);
+    return tpm_baseline_nv_status(nv);
 }
 
 tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
@@ -472,14 +535,14 @@ tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
      * stored differently is caught here rather than at the next boot. */
     nv = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof blob, &got);
     if (nv != TPM_NV_OK)
-        return nv_to_baseline(nv);
+        return tpm_baseline_nv_status(nv);
     if (got != (uint16_t)sizeof blob || !tpm_baseline_validate(blob, got, &b))
         return TPM_BASELINE_CORRUPT;
     len = (uint32_t)got;
 
     nv = tpm_baseline_bind_write(blob, len, tr);
     if (nv != TPM_NV_OK)
-        return nv_to_baseline(nv);
+        return tpm_baseline_nv_status(nv);
     return TPM_BASELINE_OK;
 }
 
@@ -542,7 +605,7 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
 
     nv = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof(blob), &got);
     if (nv != TPM_NV_OK) {
-        st = nv_to_baseline(nv);
+        st = tpm_baseline_nv_status(nv);
         if (st == TPM_BASELINE_NO_BASELINE && out_overall)
             *out_overall = BOOT_INTEGRITY_NO_BASELINE;
         return st;
@@ -563,11 +626,16 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
      * only thing that catches it is the authenticated bind record, and a
      * verifier that never consults one leaves the whole boundary unwired. */
     {
-        uint64_t bind_gen = 0;
+        struct tpm_baseline_bind_view bview;
         tpm_nv_status_t bnv;
 
         if (tpm_authz_provisioned()) {
-            bnv = tpm_baseline_bind_verify(blob, (uint32_t)got, &bind_gen);
+            /* The VIEW rather than the strict verifier, because this is the one
+             * consumer that must distinguish a broken pairing from an
+             * unauthenticated blob: they report the same MISMATCH and demand
+             * opposite operator actions. Every other caller stays on the strict
+             * wrapper and its unchanged contract. */
+            bnv = tpm_baseline_bind_view(blob, (uint32_t)got, &bview);
             if (bnv == TPM_NV_NOTFOUND) {
                 /* No bind record on a kernel that HAS an authority: the blob is
                  * legacy and unauthenticated. Refused, and deliberately NOT
@@ -580,10 +648,21 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
                 return TPM_BASELINE_UNBOUND;
             }
             if (bnv != TPM_NV_OK) {
-                if (out_overall)
+                /* MISMATCH splits on the pairing, exhaustively, through the
+                 * PURE map so every verdict is testable without a TPM;
+                 * everything else goes through the NV map. */
+                tpm_baseline_status_t bst =
+                    (bnv == TPM_NV_MISMATCH)
+                        ? tpm_baseline_pairing_status(bview.pairing)
+                        : tpm_baseline_nv_status(bnv);
+                /* THE VERDICT IS WRITTEN ONLY FOR A STATUS THAT PRODUCES ONE.
+                 * Setting it before classifying fabricated a tamper report out
+                 * of a BUDGET, BUSY or TRANSPORT failure -- a machine that
+                 * could not measure, handed to any caller reading the
+                 * out-parameter as "this machine failed to match". */
+                if (out_overall && tpm_baseline_status_is_failure(bst))
                     *out_overall = BOOT_INTEGRITY_MISMATCH;
-                return (bnv == TPM_NV_MISMATCH) ? TPM_BASELINE_UNBOUND
-                                                : nv_to_baseline(bnv);
+                return bst;
             }
         }
         /* No authority provisioned: the binding boundary is not in force on

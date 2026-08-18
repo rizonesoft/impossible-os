@@ -956,6 +956,24 @@ static void tpm_t_seq_end(void)
     spin_unlock_irqrestore(&s_state_lock, irqf);
 }
 
+#ifdef KERNEL_TESTS
+/* Last ADMITTED sequence's work budget and generation. Written under
+ * s_state_lock once the gate is won, so a refused caller cannot overwrite the
+ * observation and two CPUs cannot interleave a partial one. */
+static uint32_t s_test_last_work_ms;
+static uint64_t s_test_last_seq_gen;
+
+void tpm_t_test_last_seq(uint32_t *out_work_ms, uint64_t *out_generation)
+{
+    uint64_t irqf;
+
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    if (out_work_ms)    *out_work_ms    = s_test_last_work_ms;
+    if (out_generation) *out_generation = s_test_last_seq_gen;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+}
+#endif
+
 int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
                  tpm2_seq_fn fn, void *ctx)
 {
@@ -973,6 +991,11 @@ int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
      * from a finished sequence can never be mistaken for this one. */
     spin_lock_irqsave(&s_state_lock, &irqf);
     token = ++s_seq_generation;
+#ifdef KERNEL_TESTS
+    /* The gate is held, so this observation belongs to exactly this sequence. */
+    s_test_last_work_ms = work_ms;
+    s_test_last_seq_gen = token;
+#endif
     s_seq_token = token;
     s_seq_cleanup_ms = cleanup_ms;
     spin_unlock_irqrestore(&s_state_lock, irqf);

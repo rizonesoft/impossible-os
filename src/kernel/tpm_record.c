@@ -236,12 +236,33 @@ tpm_record_status_t tpm_record_transition_ok(const struct tpm_record_view *cur,
     return TPM_RECORD_OK;
 }
 
+tpm_pairing_t tpm_record_pairing(const struct tpm_record_view *rec,
+                                 uint64_t counter)
+{
+    if (!rec || rec->kind == TPM_RECORD_KIND_NONE)
+        return TPM_PAIRING_BADARG;
+    if (rec->generation == counter)
+        return TPM_PAIRING_CURRENT;
+    /* Record BEHIND the commit point. Checked before the +1 arithmetic below so
+     * a saturated counter cannot wrap the comparison into the wrong branch. */
+    if (rec->generation < counter)
+        return TPM_PAIRING_TORN;
+    /* Record ahead. Exactly one ahead is the write-then-increment window; a
+     * saturated counter can never be one behind anything, so the wrap guard is
+     * on the counter rather than the record. */
+    if (counter != 0xFFFFFFFFFFFFFFFFull && rec->generation == counter + 1u)
+        return TPM_PAIRING_UNCOMMITTED;
+    return TPM_PAIRING_IMPOSSIBLE;
+}
+
 tpm_record_status_t tpm_record_counter_ok(const struct tpm_record_view *rec,
                                           uint64_t counter)
 {
-    if (!rec || rec->kind == TPM_RECORD_KIND_NONE)
+    tpm_pairing_t p = tpm_record_pairing(rec, counter);
+
+    if (p == TPM_PAIRING_BADARG)
         return TPM_RECORD_BADARG;
-    return (rec->generation == counter) ? TPM_RECORD_OK : TPM_RECORD_SKEW;
+    return (p == TPM_PAIRING_CURRENT) ? TPM_RECORD_OK : TPM_RECORD_SKEW;
 }
 
 tpm_record_status_t tpm_record_ab_floor_version(const struct tpm_record_view *rec,

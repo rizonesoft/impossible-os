@@ -29,6 +29,8 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/tpm_record.h"   /* tpm_pairing_t for the pairing-status map */
+#include "kernel/tpm_nv.h"       /* tpm_nv_status_t for the NV-status map */
 
 #define TPM_BASELINE_MAGIC    0x4C534142u  /* "BASL" little-endian */
 #define TPM_BASELINE_VERSION  1u
@@ -125,9 +127,124 @@ typedef enum {
      * The repair is the authorized migration owned by the versioned baseline
      * growth and NV index migration work. */
     TPM_BASELINE_UNBOUND = 7,
+    /* The bind record and its commit counter DISAGREE: the counter has moved
+     * past any record behind it, or a record sits ahead of a commit that never
+     * landed. Distinct from UNBOUND because the operator action is opposite.
+     * UNBOUND says no authenticated record was ever written and the repair is
+     * an authorized migration of a legacy blob. This says an authorized record
+     * WAS written and the pairing is broken.
+     *
+     * ONE THING IS COMMON TO EVERY PAIRING THAT LANDS HERE, and it is the only
+     * thing this status asserts: the repair is AUTHORIZED, and it is never a
+     * fresh enrollment -- that would overwrite the evidence of a rollback with
+     * a new golden and launder it.
+     *
+     * The repair itself is NOT common, so this status does not name one. A
+     * counter ahead of the record (TPM_PAIRING_TORN) has lost the committed
+     * bytes and needs authorized recovery. A record one ahead of the counter
+     * (TPM_PAIRING_UNCOMMITTED) is an authentic record whose commit increment
+     * never landed, which a crash produces and so does an ordinary write whose
+     * later readback, policy or increment step failed; completing that commit
+     * is a legitimate repair where recovery would be an over-reaction. Read
+     * tpm_ab_floor_read_view() / tpm_baseline_bind_view() for the direction
+     * (tpm_pairing_t) and choose on it -- the direction is exactly what those
+     * views exist to carry, and this collapsed status must never be the sole
+     * input to a repair decision. */
+    TPM_BASELINE_TORN = 8,
+    /* An authenticated bind record is CURRENT -- its pairing with the commit
+     * counter is intact -- and it says the stored blob is not the one that was
+     * enrolled. That is the relabel attack the bind record exists to catch: old
+     * vulnerable content, the current generation, a correctly recomputed CRC,
+     * every structural check passing.
+     *
+     * Split out of UNBOUND because the two operator actions are opposite, and
+     * collapsing them invited exactly the wrong one: a machine under active
+     * tamper would be told to migrate its blob, authenticating the attacker's
+     * content.
+     *
+     * NOTE, a known wart rather than a claim: UNBOUND is still OVERLOADED
+     * elsewhere. It is returned for a legacy blob with no bind record, for
+     * TPM_NV_UNAVAIL, and by both enroll entry points when no authority is
+     * provisioned. Splitting those belongs to the enroll path and is owned by
+     * section 29; the split here covers the VERIFY path only, which is the one
+     * that decides a boot's integrity verdict. */
+    TPM_BASELINE_RELABELED = 9,
+    /* The NV index behind the bind record failed its ENROLLED CONTRACT before
+     * any pairing could be computed: a wrong Name, a redefined index, a counter
+     * whose public area does not match the compiled manifest. That is detected
+     * tamper, and a publishable authenticity failure.
+     *
+     * Distinct from TPMERR, which is reserved for a failure that produced NO
+     * integrity conclusion at all. Routing an identity failure to TPMERR left
+     * an attacker-supplied index definition detected and then omitted from the
+     * boot verdict -- caught, and silently. */
+    TPM_BASELINE_IDENTITY = 10,
 } tpm_baseline_status_t;
 
 /* ---- Pure core (MMIO-free, fixture-tested) ---- */
+
+/* Map a bind-record pairing verdict onto the baseline status the boot reports.
+ *
+ * PURE, and extracted rather than left inline because this mapping is the whole
+ * recovery-routing decision: it is what decides whether an operator is told to
+ * migrate a legacy blob, complete an interrupted commit, or enter authorized
+ * recovery. Inline inside the verifier it was reachable only through a full
+ * fake-TIS fixture, so most of its enum values had no coverage at all and a
+ * regression could have routed a destroyed anchor to re-enrollment -- which
+ * launders the rollback evidence -- with every test still green.
+ *
+ * CURRENT maps to TPM_BASELINE_RELABELED, NOT to OK: this function is only
+ * consulted once the digest comparison has already failed, so an intact pairing
+ * means the record is committed and says this blob is not the enrolled one.
+ * BADARG maps to TPM_BASELINE_IDENTITY, not to TPMERR. This function is only
+ * consulted on a TPM_NV_MISMATCH, and the only MISMATCH that arrives before a
+ * pairing could be computed is an index that failed its enrolled contract --
+ * detected tamper, which the boot must PUBLISH. TPMERR is reserved for a
+ * failure that reached no conclusion at all, and the boot drops it. */
+tpm_baseline_status_t tpm_baseline_pairing_status(tpm_pairing_t pairing);
+
+/* Is this status a CONCLUSIVE INTEGRITY FAILURE on the VERIFY path?
+ *
+ * ONE rule, used both by tpm_baseline_verify to decide whether to write
+ * *out_overall and by the boot to decide whether to publish it, because the gap
+ * kept reappearing one value at a time: each new status had to be remembered in
+ * an allowlist, and a forgotten one meant a DETECTED attack left the previous
+ * verdict standing while every test stayed green. Failing to publish is silent
+ * by construction, which is why the rule lives here rather than in two
+ * hand-maintained lists.
+ *
+ * NOT included: NO_TPM and TPMERR reached no conclusion (an absent, contended
+ * or too-slow device has not failed to match), and BADARG is a caller error
+ * rather than a statement about the machine.
+ *
+ * VERIFY-PATH ONLY, and TPM_BASELINE_UNBOUND is why: on the verify path it
+ * means a blob with no authenticated bind record, but the ENROLL entry points
+ * return the same value as an ordinary configuration refusal on a healthy
+ * authority-provisioned machine. An enroll-side caller must exclude it. Pure. */
+int tpm_baseline_status_is_failure(tpm_baseline_status_t bs);
+
+/* Map an NV-layer status onto the baseline status the boot reports.
+ *
+ * PURE, and exported for the same reason as the pairing map above: this switch
+ * decides which failures the boot PUBLISHES and which it drops as
+ * inconclusive, and getting one arm wrong means a detected attack is caught and
+ * then silently discarded. Kept static, it was reachable only through full
+ * fixtures and its most security-relevant arms had no coverage.
+ *
+ * The arm that matters most: RECREATED and CONTRACT are DETECTED TAMPER with no
+ * benign producer in any context, so they map to TPM_BASELINE_IDENTITY
+ * (published), never to TPMERR (dropped) and never to NO_BASELINE (which this
+ * file treats as a genuine first enroll, and reaching it is the laundering the
+ * identity gate exists to stop).
+ *
+ * MISMATCH is deliberately NOT in that class here, and the two maps disagree
+ * about it on purpose. The WRITE path produces MISMATCH for an ordinary commit-
+ * counter race between the in-sequence read and the write, so classifying it
+ * globally as tamper would make bound enrollment report an attack on a healthy
+ * contended machine. The VERIFY path never reaches this map with a MISMATCH: it
+ * is intercepted and routed through tpm_baseline_pairing_status above, whose
+ * BADARG arm is the verification-specific identity mapping. */
+tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st);
 
 /* Finalize an assembled baseline for storage: stamps magic / version / size and
  * computes crc32 over the preceding bytes. Returns the blob size (== sizeof),
@@ -249,33 +366,25 @@ tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
                                                 const struct tpm_authz_transition *tr);
 
 /* Verify: read the blob from `nv_index`, validate it, snapshot the current
- * state, and compare. When a verdict is produced, *out_overall is set to the
- * BOOT_INTEGRITY_* value (VERIFIED on a full match, MISMATCH on any difference
- * or a corrupt blob, NO_BASELINE when the index is undefined/never written) and
- * the return is OK / CORRUPT / NO_BASELINE. On NO_TPM / TPMERR / BADARG no
- * verdict is produced and *out_overall is left unchanged -- the caller applies
- * *out_overall to the integrity report only on a verdict-producing return.
- * out_overall may be NULL.
+ * state, and compare.
  *
- * PER-PCR DETAIL. `out_pcr_status` (capacity `pcr_cap`) receives one
- * BOOT_INTEGRITY_* per golden PCR slot via tpm_baseline_compare_pcrs, and
- * *out_pcr_n the count written, so the caller can publish the overall verdict
- * and the per-PCR detail in ONE report update and they cannot disagree.
+ * VERDICT-PRODUCING returns set *out_overall to a BOOT_INTEGRITY_* value and a
+ * caller MUST publish it: TPM_BASELINE_OK (VERIFIED on a full match),
+ * TPM_BASELINE_NO_BASELINE (the index is undefined or never written),
+ * TPM_BASELINE_CORRUPT and TPM_BASELINE_SELF_CORRUPT, and the four authenticity
+ * failures TPM_BASELINE_UNBOUND, TPM_BASELINE_TORN, TPM_BASELINE_RELABELED and
+ * TPM_BASELINE_IDENTITY (all MISMATCH).
  *
- * *out_pcr_n is 0 on every path that never reached the comparison -- an absent
- * baseline, a corrupt stored blob, a corrupt kernel descriptor, a snapshot that
- * failed. That 0 means NOT EVALUATED and the caller must publish it as such;
- * treating it as "no PCR problems" would report a clean per-PCR detail for a
- * boot whose PCRs were never checked. The two out params are INDEPENDENTLY
- * optional: a status buffer with no count pointer is filled normally, and a
- * count pointer with no status buffer reports 0.
+ * NON-VERDICT returns leave *out_overall untouched and MUST NOT be published:
+ * TPM_BASELINE_NO_TPM (absent, contended, or too slow -- a machine that could
+ * not measure has not failed to match), TPM_BASELINE_TPMERR (a device fault
+ * that reached no conclusion) and TPM_BASELINE_BADARG.
  *
- * A non-NULL out_pcr_status with pcr_cap smaller than the golden PCR count is
- * BADARG with NO verdict produced, rather than a truncated detail array. A
- * clamp would hand back VERIFIED beside a partial detail whose tail publishes
- * as UNKNOWN, which is the overall-vs-per-PCR contradiction the per-PCR
- * plumbing exists to remove. Size the buffer to TPM_BASELINE_MAX_PCRS, or pass
- * NULL to decline the detail entirely. */
+ * The distinction is the whole point: publishing a non-verdict reports a false
+ * tamper, and DROPPING a verdict leaves a detected attack invisible under
+ * whatever the previous phase published. An earlier version of this comment
+ * listed only OK, CORRUPT and NO_BASELINE, and every caller written against it
+ * would silently discard the authenticity verdicts. */
 tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
                                           uint8_t *out_overall,
                                           uint8_t *out_pcr_status,

@@ -234,6 +234,83 @@ tpm_nv_status_t tpm_authz_write_record(uint32_t nv_index, uint32_t counter_index
  * lower it. */
 tpm_nv_status_t tpm_ab_floor_read(uint32_t *out_version, uint64_t *out_generation);
 
+/* ---- The published read views ----
+ *
+ * The strict readers above answer "may I use this value". These answer "what
+ * state is the anchor in", which is the question a recovery path and the
+ * bootloader both have to ask and neither can ask through a boolean status.
+ *
+ * `version_valid` / `bound` are the whole point of the shape. A pairing that is
+ * not CURRENT publishes NO usable value: the authorized write overwrites the
+ * sole record in place before the commit increment, so once an uncommitted
+ * record is observable the previously committed bytes are already gone. There
+ * is no stale-but-usable fallback to report, and a view that returned one
+ * anyway would hand a caller a value no authority ever committed. */
+struct tpm_ab_floor_view {
+    uint32_t      version;               /* valid ONLY when version_valid */
+    uint8_t       version_valid;
+    tpm_pairing_t pairing;
+    uint64_t      committed_generation;  /* what the counter reads now */
+    uint64_t      record_generation;     /* what the record claims */
+};
+
+struct tpm_baseline_bind_view {
+    uint8_t       bound;                 /* blob matches the COMMITTED record */
+    tpm_pairing_t pairing;
+    uint64_t      committed_generation;
+    uint64_t      record_generation;
+};
+
+/* Read the A/B floor and report its pairing state.
+ *
+ * TPM_NV_OK with version_valid for a CURRENT pairing. TPM_NV_MISMATCH for every
+ * other pairing, with `pairing` naming the direction: TPM_PAIRING_TORN means the
+ * commit point moved with no matching record behind it and the caller must enter
+ * authorized recovery -- never a fresh enrollment, which is how a rollback would
+ * be laundered into a first install. Any status other than OK/MISMATCH never
+ * reached the pairing check and carries no pairing claim. */
+tpm_nv_status_t tpm_ab_floor_read_view(struct tpm_ab_floor_view *out);
+
+/* Verify a baseline blob against its bind record and report the pairing state.
+ * Same contract as tpm_ab_floor_read_view; TPM_NV_NOTFOUND still means a legacy
+ * unauthenticated baseline. */
+tpm_nv_status_t tpm_baseline_bind_view(const uint8_t *blob, uint32_t blob_len,
+                                       struct tpm_baseline_bind_view *out);
+
+/* ---- The read shape the bootloader must reproduce ----
+ *
+ * The kernel reaches these bytes through tpm2_submit_seq; the bootloader has no
+ * transport of its own and must reach the SAME bytes through EFI_TCG2
+ * SubmitCommand. Two implementations of one wire format is how they drift, and
+ * the drift is invisible: a loader that verifies a slightly different command
+ * still gets an answer, just not the one the kernel would have got.
+ *
+ * So the command sequence is published as an ordered PLAN rather than described
+ * in prose. Both sides build step 0..n-1 and submit them in order; a shared
+ * fixture asserts the two byte streams are identical rather than asserting a
+ * comment. */
+typedef enum {
+    TPM_FLOOR_STEP_COUNTER_PUBLIC = 0u, /* NV_ReadPublic(counter): identity FIRST,
+                                         * because the commit decision rests on
+                                         * the counter's value and a value read
+                                         * from an unverified index proves
+                                         * nothing */
+    TPM_FLOOR_STEP_COUNTER_READ   = 1u, /* NV_Read(counter): the committed value */
+    TPM_FLOOR_STEP_RECORD_PUBLIC  = 2u, /* NV_ReadPublic(record) */
+    TPM_FLOOR_STEP_RECORD_READ    = 3u, /* NV_Read(record): the record bytes */
+    TPM_FLOOR_STEP_COUNT          = 4u,
+} tpm_floor_read_step_t;
+
+/* Marshal one step of the verified floor-read plan into `buf`.
+ *
+ * Returns the command length, or 0 for a bad step index or a buffer too small.
+ * Pure: no TPM I/O, no state. A caller executes the steps in ascending order and
+ * validates each response before issuing the next -- the ORDER is part of the
+ * contract, not an implementation detail, because an identity check that runs
+ * after the read has already trusted the bytes. */
+uint32_t tpm_ab_floor_read_plan(tpm_floor_read_step_t step, uint8_t *buf,
+                                uint32_t cap);
+
 /* Advance the floor to `new_version` under an authority grant. Refuses a
  * version BELOW the stored one locally before spending a TPM transaction, which
  * is a convenience rather than the boundary: the boundary is that the grant

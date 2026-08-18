@@ -19,6 +19,8 @@
 #include "kernel/tpm_record.h"
 #include "kernel/tpm_authz.h"
 #include "kernel/tpm_transport.h"
+#include "kernel/tpm_budget.h"
+#include "kernel/tpm_baseline.h"
 #include "kernel/crypto/sha256.h"
 #include "libc/string.h"
 
@@ -313,6 +315,483 @@ static void test_authz_counter_commit_window(void)
                    "a record far behind the counter is stale");
     TEST_ASSERT_EQ((int)tpm_record_counter_ok(0, 20u), (int)TPM_RECORD_BADARG,
                    "NULL record refused");
+}
+
+static void test_authz_boot_budget_single_deadline(void)
+{
+    struct tpm_boot_budget b;
+    uint32_t grant = 0;
+    uint32_t i;
+
+    /* THE CLAIM UNDER TEST: N records cannot each claim the full per-call
+     * budget. Three operations against a 6000 ms quota with a 3000 ms per-call
+     * budget must not be granted 9000 ms between them. */
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_OK,
+                   "the first operation is admitted");
+    TEST_ASSERT_EQ((int)grant, 3000, "and gets the full per-call budget");
+    tpm_boot_budget_charge(&b, 3000u);
+
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_OK,
+                   "the second operation is admitted");
+    TEST_ASSERT_EQ((int)grant, 3000, "with the quota exactly consumed");
+    tpm_boot_budget_charge(&b, 3000u);
+
+    /* Exhaustion is REPORTED, not a silently shortened read set. */
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_BUDGET,
+                   "the third operation is refused: the boot quota is spent");
+
+    /* THE CLAMP, isolated: a partially-spent quota grants only the remainder,
+     * never the full per-call budget. */
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    tpm_boot_budget_charge(&b, 4500u);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_OK,
+                   "an operation is admitted against the remainder");
+    TEST_ASSERT_EQ((int)grant, 1500, "and is clamped to what the BOOT has left");
+
+    /* Charging the FULL observed elapsed, not the grant: an operation that
+     * overran must not be undercounted, because those are exactly the ones the
+     * deadline exists to bound. */
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    (void)tpm_boot_budget_admit(&b, 3000u, &grant);
+    tpm_boot_budget_charge(&b, 7000u);   /* work + cleanup + an abort envelope */
+    TEST_ASSERT_EQ((int)b.overrun, 1, "an overrun is latched");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_BUDGET,
+                   "and nothing is admitted after an overrun");
+
+    /* The breadth bound holds when there is no wall clock to enforce a quota,
+     * which is the honest degraded mode: unmeasurable is not unlimited. */
+    tpm_boot_budget_init(&b, 0u, 3u);
+    for (i = 0; i < 3u; i++)
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_OK,
+                       "CONTROL: operations inside the breadth bound are admitted");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_BUDGET,
+                   "the operation count bounds a clockless boot");
+
+    /* An UNARMED ledger governs nothing, so a caller outside the boot path is
+     * never refused by a deadline nobody set up for it. */
+    memset(&b, 0, sizeof b);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_OK,
+                   "an unarmed ledger admits");
+    TEST_ASSERT_EQ((int)grant, 3000, "and does not clamp the request");
+
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(0, 3000u, &grant), (int)TPM_NV_BADARG,
+                   "a NULL ledger is refused");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 0u, &grant), (int)TPM_NV_BADARG,
+                   "a zero request is refused");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, 0), (int)TPM_NV_BADARG,
+                   "a NULL grant pointer is refused");
+
+    /* A charge must never WRAP and refund the budget. */
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    tpm_boot_budget_charge(&b, 0xFFFFFFFFu);
+    tpm_boot_budget_charge(&b, 0xFFFFFFFFu);
+    TEST_ASSERT_EQ((int)(b.spent_ms == 0xFFFFFFFFu), 1, "spent saturates rather than wrapping");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_remaining_ms(&b), 0, "and the remainder stays zero");
+
+    /* THE EQUALITY BOUNDARY, all three sides. Millisecond truncation makes an
+     * exact hit an ordinary outcome, not a corner case, and `overrun` means
+     * strictly-more-than-was-left -- so exact exhaustion must leave overrun
+     * CLEAR while still leaving nothing to admit. Keying a diagnostic off
+     * overrun alone would go silent at precisely this value. */
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    tpm_boot_budget_charge(&b, 5999u);
+    TEST_ASSERT_EQ((int)b.overrun, 0, "grant-1: under the remainder does not overrun");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_remaining_ms(&b), 1, "and leaves 1 ms");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_OK,
+                   "CONTROL: 1 ms is still admissible");
+    TEST_ASSERT_EQ((int)grant, 1, "clamped to the 1 ms that is left");
+
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    tpm_boot_budget_charge(&b, 6000u);
+    TEST_ASSERT_EQ((int)b.overrun, 0,
+                   "grant: exact exhaustion is NOT an overrun");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_remaining_ms(&b), 0, "but nothing is left");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_BUDGET,
+                   "and nothing further is admitted");
+
+    tpm_boot_budget_init(&b, 6000u, 8u);
+    tpm_boot_budget_charge(&b, 6001u);
+    TEST_ASSERT_EQ((int)b.overrun, 1, "grant+1: one millisecond over IS an overrun");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 3000u, &grant), (int)TPM_NV_BUDGET,
+                   "and nothing is admitted after it");
+}
+
+/* THE LIFECYCLE AND THE WALL CLOCK, which nothing else pins.
+ *
+ * A fake TPM answers in microseconds, so every fixture read charges 0 ms:
+ * deleting every settle call, breaking exact-exhaustion reporting, or
+ * corrupting the elapsed arithmetic would leave the whole suite green while a
+ * slow real TPM silently got independent full allowances again. The injected
+ * clock is what makes those regressions visible. */
+static void test_boot_budget_lifecycle_and_clock(void)
+{
+    struct tpm_boot_budget_test_state prev;
+    struct tpm_boot_grant g;
+    uint32_t grant = 0;
+    struct tpm_boot_budget b;
+
+    /* DISARM. Nothing else calls it, and a no-op disarm would leave Phase 1's
+     * spent quota applied to every runtime verified read -- a later mark-good
+     * or attestation refused with TPM_NV_BUDGET, forever. */
+    prev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, 1u);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_POLICY_SEQ_COST_MS, &g),
+                   (int)TPM_NV_OK, "CONTROL: the one permitted operation is admitted");
+    tpm_boot_budget_settle(&g);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_POLICY_SEQ_COST_MS, &g),
+                   (int)TPM_NV_BUDGET, "and the ledger then refuses on breadth");
+    tpm_boot_budget_disarm();
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_POLICY_SEQ_COST_MS, &g),
+                   (int)TPM_NV_OK, "a DISARMED ledger admits again");
+    TEST_ASSERT_EQ((int)g.granted_ms, (int)TPM_NV_POLICY_SEQ_COST_MS,
+                   "and does not clamp what it grants");
+    tpm_boot_budget_test_restore(prev);
+
+    /* THE WALL CLOCK. Reserve, advance the injected clock past the grant, and
+     * settle: the excess must be charged, not discarded. */
+    prev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 1000u);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_POLICY_SEQ_COST_MS, &g),
+                   (int)TPM_NV_OK, "an operation reserves its grant");
+    TEST_ASSERT_EQ((int)g.mark_ms, 1000, "against the injected clock");
+    /* Overrun the reservation by exactly the remaining quota, so the boot ends
+     * up with nothing left and must SAY so. */
+    tpm_boot_budget_test_set_clock(1, 1000u + TPM_BOOT_BUDGET_MS + 1u);
+    tpm_boot_budget_settle(&g);
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 1,
+                   "an overrun settlement latches expiry");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_POLICY_SEQ_COST_MS, &g),
+                   (int)TPM_NV_BUDGET, "and nothing is admitted afterwards");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(prev);
+
+    /* THE REFUND. An operation that comes in UNDER its reservation must return
+     * the difference, or the first read would permanently consume its whole
+     * grant and a healthy boot would run out after two fast reads. */
+    prev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 500u);
+    (void)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &g);
+    tpm_boot_budget_test_set_clock(1, 500u + 5u);      /* 5 ms of a huge grant */
+    tpm_boot_budget_settle(&g);
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 0,
+                   "a fast operation does not exhaust the boot");
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &g),
+                   (int)TPM_NV_OK, "so a second read is still admitted");
+    TEST_ASSERT_EQ((int)g.granted_ms, (int)TPM_NV_VERIFIED_READ_BUDGET_MS,
+                   "at the FULL request, because only 5 ms was actually spent");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(prev);
+
+    /* EPOCH. A settlement for a ledger that has been replaced must be dropped,
+     * not charged into its successor. */
+    prev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 100u);
+    (void)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &g);
+    tpm_boot_budget_arm();                 /* a NEW generation underneath it */
+    tpm_boot_budget_test_set_clock(1, 100u + TPM_BOOT_BUDGET_MS + 1u);
+    tpm_boot_budget_settle(&g);            /* a huge overrun, wrong epoch */
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 0,
+                   "a settlement across a re-arm is DROPPED, not charged");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(prev);
+
+    /* THE RESERVATION ITSELF. Hold grants OUTSTANDING across further
+     * admissions: without the reserve-at-admit charge, each would read the same
+     * untouched remainder and all three would be granted, which on SMP is two
+     * concurrent reads each promised the whole boot's budget. max_ops is 0 here
+     * so the refusal can only come from the reservation, never from breadth. */
+    prev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, 0u);
+    tpm_boot_budget_test_set_clock(1, 10u);
+    {
+        struct tpm_boot_grant a, b2, c, copy;
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &a),
+                       (int)TPM_NV_OK, "CONTROL: the first reservation is admitted");
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &b2),
+                       (int)TPM_NV_OK, "CONTROL: the second fits the quota too");
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &c),
+                       (int)TPM_NV_BUDGET,
+                       "the third is REFUSED: the first two are still holding the quota");
+        TEST_ASSERT_EQ((int)(a.id != b2.id), 1, "each reservation has its own id");
+
+        /* Settling A at 5 ms returns almost all of A's reservation, and only
+         * A's -- B is still outstanding and must still be held. The copy is
+         * taken BEFORE the settlement, which is what makes the replay below a
+         * real replay rather than an unknown-id lookup. */
+        tpm_boot_budget_test_set_clock(1, 15u);
+        copy = a;
+        tpm_boot_budget_settle(&a);
+        TEST_ASSERT_EQ((int)a.granted_ms, 0, "a settled grant is spent");
+        TEST_ASSERT_EQ((int)a.id, 0, "and its id is consumed");
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &c),
+                       (int)TPM_NV_OK, "so a new reservation now fits");
+
+        /* REPLAY OF A REAL, ISSUED GRANT. `copy` was taken before A settled, so
+         * it carries A's genuine id and epoch -- exactly what a caller that
+         * passed its grant around by value would still be holding. Settling it
+         * again must refund nothing; otherwise the same milliseconds come back
+         * twice and reopen budget that B and C are still holding. Using a
+         * never-issued id here would only have tested the lookup miss, and
+         * would stay green if settlement stopped clearing the real slot. */
+        tpm_boot_budget_settle(&copy);
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS,
+                                                      &c),
+                       (int)TPM_NV_BUDGET,
+                       "a replayed settlement of a REAL grant refunds nothing");
+    }
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(prev);
+
+    /* THE PER-SEQUENCE WORK CLAMP. The aggregate bounds a whole verified read;
+     * it must never widen ONE sequence past the transport's per-operation
+     * ceiling. Inlined at the call site nothing could observe the work budget
+     * passed to tpm2_seq_run, so deleting the clamp left a fast fixture green
+     * while the final read inherited the entire three-sequence grant. */
+    TEST_ASSERT_EQ((int)tpm_boot_grant_work_ms(TPM_NV_VERIFIED_READ_BUDGET_MS),
+                   (int)TPM_NV_OP_BUDGET_MS,
+                   "a full grant is clamped to the per-operation ceiling");
+    TEST_ASSERT_EQ((int)tpm_boot_grant_work_ms(TPM_NV_OP_BUDGET_MS),
+                   (int)TPM_NV_OP_BUDGET_MS, "the ceiling itself passes through");
+    TEST_ASSERT_EQ((int)tpm_boot_grant_work_ms(TPM_NV_OP_BUDGET_MS - 1u),
+                   (int)(TPM_NV_OP_BUDGET_MS - 1u),
+                   "a partial grant is NOT widened up to the ceiling");
+    TEST_ASSERT_EQ((int)tpm_boot_grant_work_ms(0u), 0,
+                   "and nothing left grants nothing");
+
+    /* ELAPSED WRAP and OPS SATURATION, both documented and neither pinned. */
+    tpm_boot_budget_test_set_clock(1, 5u);
+    TEST_ASSERT_EQ((int)tpm_boot_elapsed_ms(0xFFFFFFFAu), 11,
+                   "elapsed across the 32-bit wrap is the true delta");
+    tpm_boot_budget_test_set_clock(0, 0u);
+
+    tpm_boot_budget_init(&b, 6000u, 0u /* no breadth bound */);
+    b.ops = 0xFFFFFFFFu;
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, 100u, &grant), (int)TPM_NV_OK,
+                   "a saturated op counter still admits when no breadth bound applies");
+    TEST_ASSERT_EQ((int)(b.ops == 0xFFFFFFFFu), 1, "and the counter saturates rather than wrapping to 0");
+}
+
+/* The recovery-routing map, every enum value.
+ *
+ * This is the decision that tells an operator to migrate, to complete a commit,
+ * or to enter authorized recovery, and the three are not interchangeable: a
+ * destroyed anchor routed to re-enrollment overwrites the evidence of a
+ * rollback with a fresh golden and launders it. Inline in the verifier this was
+ * reachable only through a full fake-TIS fixture, so most of these values had
+ * no coverage at all. */
+static void test_baseline_pairing_status_map(void)
+{
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_CURRENT),
+                   (int)TPM_BASELINE_RELABELED,
+                   "an intact pairing whose digest failed is the RELABEL attack, "
+                   "never a legacy blob to migrate");
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_TORN),
+                   (int)TPM_BASELINE_TORN,
+                   "a counter ahead of its record routes to authorized recovery");
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_UNCOMMITTED),
+                   (int)TPM_BASELINE_TORN,
+                   "an uncommitted record is a broken pairing, not a usable value");
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_IMPOSSIBLE),
+                   (int)TPM_BASELINE_TORN,
+                   "a record more than one step ahead is a broken pairing too");
+    /* This branch is reached ONLY on a MISMATCH, and the only MISMATCH that
+     * arrives before a pairing is computed is an index that failed its enrolled
+     * contract. That is detected tamper, so it must be an authenticity failure
+     * the boot PUBLISHES -- not TPMERR, which the boot excludes precisely
+     * because TPMERR means no conclusion was reached. */
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_BADARG),
+                   (int)TPM_BASELINE_IDENTITY,
+                   "a pre-pair identity failure is a publishable authenticity verdict");
+    TEST_ASSERT_EQ((int)(TPM_BASELINE_IDENTITY != TPM_BASELINE_TPMERR), 1,
+                   "and is NOT the no-conclusion status the boot drops");
+
+    /* An out-of-range value must land on the same fail-closed answer rather
+     * than falling through to something a caller would act on. */
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status((tpm_pairing_t)99),
+                   (int)TPM_BASELINE_IDENTITY,
+                   "an unenumerated pairing fails closed");
+
+    /* THE VERDICT PREDICATE, which decides both whether tpm_baseline_verify
+     * writes *out_overall and whether the boot publishes it. A status that
+     * reached NO conclusion must never be treated as a failure: doing so turns
+     * a slow, contended or absent TPM into a tamper report. */
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_NO_TPM), 0,
+                   "could-not-measure is NOT an integrity failure");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_TPMERR), 0,
+                   "nor is a device fault that reached no conclusion");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_BADARG), 0,
+                   "nor is a caller error");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_OK), 0,
+                   "and success is obviously not one");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_TORN), 1,
+                   "CONTROL: a broken pairing IS one");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_RELABELED), 1,
+                   "CONTROL: so is a relabelled blob");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_IDENTITY), 1,
+                   "CONTROL: so is a wrong index");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_UNBOUND), 1,
+                   "CONTROL: and so is an unauthenticated blob, on the VERIFY path");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_CORRUPT), 1,
+                   "a corrupt STORED baseline is a publication-critical failure");
+    TEST_ASSERT_EQ((int)tpm_baseline_status_is_failure(TPM_BASELINE_SELF_CORRUPT), 1,
+                   "and so is this kernel's own corrupt ABI identity");
+
+    /* The three authenticity failures must stay DISTINCT values: collapsing any
+     * pair is what would tell a machine under active tamper to migrate or
+     * re-enroll its blob. */
+    TEST_ASSERT_EQ((int)(TPM_BASELINE_RELABELED != TPM_BASELINE_UNBOUND), 1,
+                   "the relabel attack and a legacy blob are different statuses");
+    TEST_ASSERT_EQ((int)(TPM_BASELINE_TORN != TPM_BASELINE_RELABELED), 1,
+                   "a broken pairing and a relabelled blob are different statuses");
+    TEST_ASSERT_EQ((int)(TPM_BASELINE_IDENTITY != TPM_BASELINE_UNBOUND), 1,
+                   "a wrong index and a legacy blob are different statuses");
+}
+
+/* The NV-status map, on the arms that decide PUBLICATION.
+ *
+ * A detected index recreation is the rollback attack itself. Routing it to
+ * TPMERR left it caught and then discarded, because boot_phase1 excludes
+ * TPMERR from publication on the (correct) grounds that it means no conclusion
+ * was reached. Every arm below is a claim about whether the boot will speak. */
+static void test_baseline_nv_status_map(void)
+{
+    /* THE PRE-PAIR AUTHENTICITY CLASS: detected tamper, and PUBLISHED. */
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_RECREATED),
+                   (int)TPM_BASELINE_IDENTITY,
+                   "a destroyed-and-recreated anchor is a published authenticity failure");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_CONTRACT),
+                   (int)TPM_BASELINE_IDENTITY,
+                   "and so is a corrupt persisted identity");
+
+    /* None of them may reach NO_BASELINE, which this file treats as a genuine
+     * first enroll -- that is exactly the laundering the gate exists to stop. */
+    TEST_ASSERT_EQ((int)(tpm_baseline_nv_status(TPM_NV_RECREATED) !=
+                         TPM_BASELINE_NO_BASELINE), 1,
+                   "a recreated anchor is NEVER read as a first enroll");
+
+    /* COULD-NOT-MEASURE: deliberately unpublished, so a slow or contended TPM
+     * never reports a false tamper. The CONTROL for the class above -- without
+     * it, mapping everything to IDENTITY would satisfy those assertions. */
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_BUDGET),
+                   (int)TPM_BASELINE_NO_TPM,
+                   "CONTROL: a budget expiry stays unpublished, not a tamper claim");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_BUSY),
+                   (int)TPM_BASELINE_NO_TPM,
+                   "CONTROL: so does ordinary transport contention");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_TRANSPORT),
+                   (int)TPM_BASELINE_NO_TPM,
+                   "CONTROL: and an absent transport");
+
+    /* The remaining named arms, so a future status cannot inherit a bucket. */
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_OK), (int)TPM_BASELINE_OK,
+                   "CONTROL: success maps to success");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_NOTFOUND),
+                   (int)TPM_BASELINE_NO_BASELINE, "an undefined index has no baseline");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_BADARG),
+                   (int)TPM_BASELINE_BADARG, "a caller error is not a TPM fault");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_UNAVAIL),
+                   (int)TPM_BASELINE_UNBOUND, "no authority is a configuration state");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_ATTRS),
+                   (int)TPM_BASELINE_TPMERR,
+                   "an illegal attribute request stays a device-shaped fault");
+
+    /* MISMATCH IS CONTEXT-DEPENDENT, and the two maps must disagree about it
+     * ON PURPOSE. Globally it stays TPMERR because the WRITE path produces it
+     * for an ordinary counter race on a healthy SMP box, and calling that
+     * tamper is worse than the bug that tempted the widening. The VERIFY path
+     * reaches the identity verdict through the pairing map instead, which only
+     * ever sees a MISMATCH that arrived before a pairing could be computed. */
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_MISMATCH),
+                   (int)TPM_BASELINE_TPMERR,
+                   "a write-path MISMATCH is NOT identity tamper: a counter race is benign");
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_BADARG),
+                   (int)TPM_BASELINE_IDENTITY,
+                   "while the verify path still reports identity tamper for its own MISMATCH");
+    TEST_ASSERT_EQ((int)(tpm_baseline_nv_status(TPM_NV_MISMATCH) !=
+                         tpm_baseline_pairing_status(TPM_PAIRING_BADARG)), 1,
+                   "the two maps disagree about MISMATCH deliberately, not by drift");
+}
+
+/* The aggregate deadline must bound LATENCY, not merely account for it.
+ *
+ * A verified read runs sequences that cannot be subdivided: tpm_authz_contract
+ * arms fixed per-operation constants, so once a sequence starts it can spend
+ * its whole work plus cleanup whatever the remainder was. Admission therefore
+ * has to refuse a read whose remainder cannot pay for even one sequence. */
+static void test_boot_budget_indivisible_sequence(void)
+{
+    struct tpm_boot_budget b;
+    uint32_t grant = 0;
+
+    /* CONTROL: a full quota grants at least one whole sequence. */
+    tpm_boot_budget_init(&b, TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, TPM_NV_VERIFIED_READ_BUDGET_MS,
+                                              &grant), (int)TPM_NV_OK,
+                   "CONTROL: a fresh boot quota admits a verified read");
+    TEST_ASSERT_EQ((int)(grant >= TPM_NV_POLICY_SEQ_COST_MS), 1,
+                   "CONTROL: and the grant covers at least one whole sequence");
+
+    /* A remainder ONE MILLISECOND short of a sequence still admits -- the
+     * ledger's job is the clamp, and refusing on the shortfall is the CALLER's
+     * check, because only the caller knows a sequence is what it is about to
+     * start. The assertion pins that division of labour so a future edit
+     * cannot quietly move the refusal and leave both sides assuming the other
+     * does it. */
+    tpm_boot_budget_init(&b, TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_charge(&b, TPM_BOOT_BUDGET_MS - (TPM_NV_POLICY_SEQ_COST_MS - 1u));
+    TEST_ASSERT_EQ((int)tpm_boot_budget_admit(&b, TPM_NV_VERIFIED_READ_BUDGET_MS,
+                                              &grant), (int)TPM_NV_OK,
+                   "the ledger still admits against a short remainder");
+    TEST_ASSERT_EQ((int)grant, (int)(TPM_NV_POLICY_SEQ_COST_MS - 1u),
+                   "clamped to exactly the short remainder");
+    TEST_ASSERT_EQ((int)(grant < TPM_NV_POLICY_SEQ_COST_MS), 1,
+                   "which is the shortfall the read path refuses on");
+
+    /* The constants must keep the relation the design rests on: a boot quota
+     * that could not fund a whole read would clamp every first admission. */
+    TEST_ASSERT_EQ((int)(TPM_BOOT_BUDGET_MS >= TPM_NV_VERIFIED_READ_BUDGET_MS), 1,
+                   "the boot quota funds at least one whole verified read");
+    TEST_ASSERT_EQ((int)(TPM_NV_VERIFIED_READ_BUDGET_MS >= TPM_NV_POLICY_SEQ_COST_MS), 1,
+                   "and a read's request funds at least one whole sequence");
+}
+
+static void test_authz_pairing_direction(void)
+{
+    uint8_t rec[AZ_FLOOR_LEN];
+    struct tpm_record_view v;
+    const uint32_t plen = (uint32_t)sizeof(struct tpm_ab_floor_payload);
+
+    (void)az_build_floor(rec, sizeof rec, 20u, 7u);
+    (void)tpm_record_parse(rec, AZ_FLOOR_LEN, TPM_RECORD_KIND_AB_FLOOR, plen, &v);
+
+    /* The strict gate collapses every direction into SKEW; this classifier is
+     * what recovery routing needs, because the two directions demand opposite
+     * actions. The CONTROL is load-bearing: a classifier that answered TORN for
+     * everything would satisfy the TORN assertion on its own. */
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 20u), (int)TPM_PAIRING_CURRENT,
+                   "CONTROL: a record matching the counter is CURRENT");
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 19u), (int)TPM_PAIRING_UNCOMMITTED,
+                   "one AHEAD of the counter is the write-then-increment window");
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 21u), (int)TPM_PAIRING_TORN,
+                   "the counter one ahead of the record is a TORN pairing");
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 9999u), (int)TPM_PAIRING_TORN,
+                   "a counter far ahead is TORN, not a fresh install");
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 18u), (int)TPM_PAIRING_IMPOSSIBLE,
+                   "two ahead of the counter cannot come from one grant");
+    TEST_ASSERT_EQ((int)tpm_record_pairing(0, 20u), (int)TPM_PAIRING_BADARG,
+                   "NULL record refused");
+
+    /* A saturated counter must not wrap the +1 into a false UNCOMMITTED. */
+    (void)az_build_floor(rec, sizeof rec, 0xFFFFFFFFFFFFFFFFull, 7u);
+    (void)tpm_record_parse(rec, AZ_FLOOR_LEN, TPM_RECORD_KIND_AB_FLOOR, plen, &v);
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 0xFFFFFFFFFFFFFFFFull),
+                   (int)TPM_PAIRING_CURRENT, "CONTROL: saturated == saturated is CURRENT");
+    TEST_ASSERT_EQ((int)tpm_record_pairing(&v, 0xFFFFFFFFFFFFFFFEull),
+                   (int)TPM_PAIRING_UNCOMMITTED, "saturated record one ahead is the window");
+
+    /* The strict gate's own contract over these same inputs is NOT re-asserted
+     * here: test_authz_counter_commit_window already pins counter_ok to SKEW in
+     * both directions, and duplicating it would only add a second place to
+     * update when the contract changes. */
 }
 
 static void test_authz_baseline_relabel_refused(void)
@@ -833,6 +1312,44 @@ static uint32_t azf_increments;              /* NV_Increment commands executed *
 static uint32_t azf_flushes;                 /* FlushContext commands executed */
 static uint32_t azf_loads;                   /* LoadExternal commands executed */
 static int      azf_report_unwritten;        /* 1 = report WRITTEN clear (recreated) */
+/* 1 = the COUNTER's NV_Read answers TPM_RC_NV_UNINITIALIZED while the RECORD
+ * still reads normally. That is the shape a destroyed-and-recreated commit
+ * counter has BEFORE the attacker increments it, and it cannot be produced with
+ * the blanket azf_fail_cc control because both reads share one command code. */
+static int      azf_counter_uninit;
+/* Nonzero = NV_ReadPublic for THIS index answers NOTFOUND, i.e. the index is
+ * DELETED rather than recreated. Distinct from azf_counter_uninit: a deleted
+ * index fails the identity read, a recreated one passes it and fails the value
+ * read, and they are different attacker moves against the same anchor. */
+static uint32_t azf_absent_index;
+static uint32_t azf_absent_index2;           /* a SECOND absent index */
+/* Nonzero = report a public area for THIS index whose dataSize does not match
+ * the compiled manifest, leaving every other index correct. The Name stays
+ * self-consistent with the reported public area, so the Name check passes and
+ * the CONTRACT comparison is what fails -- which is the only way to reach the
+ * counter-identity match. Forcing NV_ReadPublic to fail outright (the absent
+ * controls above) exits before that comparison and cannot pin it. */
+static uint32_t azf_wrong_contract_index;
+/* Nonzero = the RECORD's NV_Read answers this rc while its NV_ReadPublic still
+ * succeeds. The two commands are separately failable on a real TPM (and on an
+ * inconsistent one), and only this reaches the post-ReadPublic record-loss
+ * path. */
+static uint32_t azf_record_read_rc;
+/* Advance the injected budget clock by this many ms at the START of every TPM
+ * sequence (exactly one TPM2_CC_START_AUTH_SESSION each), so a fixture can make
+ * a sequence "take" wall-clock time. A fake TPM answers in microseconds, so
+ * without this the read path's between-sequence deadline guards can never fire
+ * and deleting them stays green. */
+static uint32_t azf_clock_step_ms;
+/* PER-SEQUENCE steps, applied in order, used where a uniform step cannot reach
+ * the state under test. Guard 2 protects `grant_ms -= spent_ms` from
+ * underflowing, and a uniform step can only reach spent == grant exactly, where
+ * the subtraction is 0 and the transport refuses anyway -- so the guard's
+ * removal is invisible. Different steps per sequence reach spent > grant, where
+ * the underflow hands the read a full budget it never earned. */
+static uint32_t azf_clock_steps[4];
+static uint32_t azf_clock_step_n;
+static uint32_t azf_clock_ms;
 /* A VALIDATING fixture, not a permissive one. A fake that answers SUCCESS to
  * every policy command cannot fail when the aHash construction, the key Name
  * framing or the counter-Name cpHash regress -- the control would still pass and
@@ -967,6 +1484,8 @@ static void azf_public_for(uint32_t idx, uint32_t *attrs, uint16_t *size)
     *attrs = e->attrs | ((e->expect_written && !azf_report_unwritten)
                          ? TPMA_NV_WRITTEN : 0u);
     *size = e->data_size;
+    if (azf_wrong_contract_index != 0u && idx == azf_wrong_contract_index)
+        *size = (uint16_t)(e->data_size + 8u);   /* not what the manifest enrolls */
 }
 
 /* The Name the fake REPORTS for an index. The independent cpHash check below
@@ -1016,6 +1535,16 @@ static void azf_build_response(void)
     uint32_t cc = tpm2_be32_get(azf_cmd + 6);
     uint32_t rc = TPM2_RC_SUCCESS;
     if (azf_seen_n < 48u) azf_seen[azf_seen_n++] = cc;
+    if (cc == TPM2_CC_START_AUTH_SESSION) {
+        uint32_t step = azf_clock_step_ms;
+        if (azf_clock_step_n < 4u && azf_clock_steps[azf_clock_step_n] != 0u)
+            step = azf_clock_steps[azf_clock_step_n];
+        if (azf_clock_step_n < 4u) azf_clock_step_n++;
+        if (step != 0u) {
+            azf_clock_ms += step;
+            tpm_boot_budget_test_set_clock(1, azf_clock_ms);
+        }
+    }
     if (azf_fail_cc != 0u && cc == azf_fail_cc)
         rc = azf_fail_rc;
     memset(azf_rsp, 0, AZF_CAP);
@@ -1028,6 +1557,11 @@ static void azf_build_response(void)
          * self-consistency check is genuinely exercised. */
         uint32_t idx = tpm2_be32_get(azf_cmd + 10);
         uint32_t attrs; uint16_t dsz;
+        if ((azf_absent_index != 0u && idx == azf_absent_index) ||
+            (azf_absent_index2 != 0u && idx == azf_absent_index2)) {
+            azf_hdr_only(0x0000018Bu);   /* TPM_RC_HANDLE -> NOTFOUND */
+            return;
+        }
         uint32_t pl = SHA256_DIGEST_LEN, pubsize = 14u + pl, i;
         struct tpm_nv_public pub;
         uint8_t name[64];
@@ -1070,11 +1604,18 @@ static void azf_build_response(void)
          * as a transport fault. */
         uint16_t want = tpm2_be16_get(azf_cmd + 31);
         uint32_t i;
+        if (want == (uint16_t)TPM_NV_COUNTER_SIZE && azf_counter_uninit) {
+            azf_hdr_only(TPM2_RC_NV_UNINITIALIZED);
+            return;
+        }
         if (want == (uint16_t)TPM_NV_COUNTER_SIZE) {
             tpm2_be16_put(azf_rsp + 14, 8u);
             for (i = 0; i < 8u; i++)
                 azf_rsp[16 + i] = (uint8_t)((azf_counter >> (56u - 8u * i)) & 0xFFu);
             azf_session_rsp(rc, 10u);
+        } else if (azf_record_read_rc != 0u) {
+            azf_hdr_only(azf_record_read_rc);
+            return;
         } else {
             uint32_t n = (want < azf_record_len) ? (uint32_t)want : azf_record_len;
             tpm2_be16_put(azf_rsp + 14, (uint16_t)n);
@@ -1420,6 +1961,19 @@ static const struct tpm_t_io azf_io = { azf_r8, azf_w8, azf_r32, azf_w32 };
 /* A minimal TPMT_PUBLIC for the authority, plus the Name the fake will echo. */
 static uint8_t azf_pub[16];
 
+/* How many TPM SEQUENCES ran: exactly one TPM2_CC_START_AUTH_SESSION each. It
+ * is the only observable that separates "refused after the first derivation"
+ * from "refused after the second", which both report TPM_NV_BUDGET -- so
+ * without it a mutation removing either between-sequence guard hides behind the
+ * other and the suite stays green. */
+static uint32_t azf_sequences(void)
+{
+    uint32_t i, n = 0u;
+    for (i = 0u; i < azf_seen_n; i++)
+        if (azf_seen[i] == TPM2_CC_START_AUTH_SESSION) n++;
+    return n;
+}
+
 static void azf_reset(uint32_t fail_cc, uint32_t fail_rc)
 {
     uint8_t digest[SHA256_DIGEST_LEN];
@@ -1432,6 +1986,16 @@ static void azf_reset(uint32_t fail_cc, uint32_t fail_rc)
     azf_record_len = 0u;
     azf_writes = 0; azf_increments = 0; azf_flushes = 0; azf_loads = 0;
     azf_report_unwritten = 0;
+    azf_counter_uninit = 0;
+    azf_absent_index = 0u;
+    azf_absent_index2 = 0u;
+    azf_wrong_contract_index = 0u;
+    azf_record_read_rc = 0u;
+    azf_clock_step_ms = 0u;
+    azf_clock_steps[0] = azf_clock_steps[1] = 0u;
+    azf_clock_steps[2] = azf_clock_steps[3] = 0u;
+    azf_clock_step_n = 0u;
+    azf_clock_ms = 0u;
     azf_have_cphash = 0; azf_have_ticket = 0; azf_rejects = 0;
     memset(azf_sess, 0, sizeof azf_sess);
     azf_next_session = 0;
@@ -1736,6 +2300,130 @@ static void test_authz_e2e_uncommitted_record_not_current(void)
                    "an uncommitted record is NOT the floor");
 }
 
+static void test_authz_e2e_torn_pairing_detected(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_ab_floor_view view;
+    tpm_nv_status_t st;
+
+    /* CONTROL FIRST. Without it a detector that fired on every state would pass
+     * the torn assertion below on its own. */
+    azf_reset(0u, 0u);
+    azf_counter = 30u;
+    azf_record_len = az_build_floor(azf_record, AZ_FLOOR_LEN, 30u, 400u);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_ab_floor_read_view(&view);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "CONTROL: an intact pairing verifies cleanly");
+    TEST_ASSERT_EQ((int)view.pairing, (int)TPM_PAIRING_CURRENT,
+                   "CONTROL: the intact pairing is CURRENT");
+    TEST_ASSERT_EQ((int)view.version_valid, 1, "CONTROL: the version is published");
+    TEST_ASSERT_EQ((int)view.version, 400, "CONTROL: the committed version is reported");
+
+    /* THE TORN PAIRING: the commit counter advanced with no matching record
+     * behind it. Detected rather than trusted -- treating the advance as
+     * evidence the record is current is exactly how a rollback is laundered. */
+    azf_reset(0u, 0u);
+    azf_counter = 31u;
+    azf_record_len = az_build_floor(azf_record, AZ_FLOOR_LEN, 30u, 400u);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_ab_floor_read_view(&view);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH, "a torn pairing is not usable");
+    TEST_ASSERT_EQ((int)view.pairing, (int)TPM_PAIRING_TORN,
+                   "the counter-ahead direction is reported as TORN");
+    TEST_ASSERT_EQ((int)view.committed_generation, 31, "the counter value is reported");
+    TEST_ASSERT_EQ((int)view.record_generation, 30, "the record generation is reported");
+    /* NO usable value is published. The authorized write overwrote the sole
+     * record in place, so there is no committed value left to fall back on --
+     * publishing one here would hand a caller bytes no authority committed. */
+    TEST_ASSERT_EQ((int)view.version_valid, 0,
+                   "a torn pairing publishes NO version");
+    TEST_ASSERT_EQ((int)view.version, 0, "and the version field stays zero");
+
+    /* The opposite direction stays distinguishable from it. */
+    azf_reset(0u, 0u);
+    azf_counter = 30u;
+    azf_record_len = az_build_floor(azf_record, AZ_FLOOR_LEN, 31u, 900u);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_ab_floor_read_view(&view);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH, "an uncommitted record is not usable");
+    TEST_ASSERT_EQ((int)view.pairing, (int)TPM_PAIRING_UNCOMMITTED,
+                   "the record-ahead direction is UNCOMMITTED, not TORN");
+    TEST_ASSERT_EQ((int)view.version_valid, 0,
+                   "an uncommitted record publishes NO version either");
+
+    /* And the STRICT wrapper's contract is unchanged: shipped consumers
+     * classify on MISMATCH and must keep seeing exactly that. */
+    {
+        uint32_t version = 0xFFFFFFFFu;
+        azf_reset(0u, 0u);
+        azf_counter = 31u;
+        azf_record_len = az_build_floor(azf_record, AZ_FLOOR_LEN, 30u, 400u);
+        prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+        azf_install_authority();
+        st = tpm_ab_floor_read(&version, 0);
+        tpm_authz_test_clear_authority();
+        tpm_t_test_restore(prev);
+        TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH,
+                       "strict reader still reports MISMATCH for a torn pairing");
+    }
+}
+
+static void test_authz_floor_read_plan_matches_sequence(void)
+{
+    uint8_t plan[64], direct[64];
+    uint32_t pn, dn;
+
+    /* The loader has no tpm2_submit() and must reach these same bytes through
+     * EFI_TCG2 SubmitCommand. Asserting the published plan against the builders
+     * the in-sequence path uses is what stops the two from drifting once the
+     * loader has its own executor -- a comment could not. */
+    pn = tpm_ab_floor_read_plan(TPM_FLOOR_STEP_COUNTER_PUBLIC, plan, sizeof plan);
+    dn = tpm2_build_nv_read_public(direct, sizeof direct, TPM_NV_INDEX_AB_SEQ);
+    TEST_ASSERT_EQ((int)pn, (int)dn, "counter ReadPublic length matches the sequence path");
+    TEST_ASSERT_EQ(memcmp(plan, direct, pn), 0, "counter ReadPublic bytes match");
+
+    pn = tpm_ab_floor_read_plan(TPM_FLOOR_STEP_COUNTER_READ, plan, sizeof plan);
+    dn = tpm2_build_nv_read(direct, sizeof direct, TPM_RH_OWNER, TPM_NV_INDEX_AB_SEQ,
+                            TPM_RS_PW, (uint16_t)TPM_NV_COUNTER_SIZE, 0u);
+    TEST_ASSERT_EQ((int)pn, (int)dn, "counter NV_Read length matches the sequence path");
+    TEST_ASSERT_EQ(memcmp(plan, direct, pn), 0, "counter NV_Read bytes match");
+
+    pn = tpm_ab_floor_read_plan(TPM_FLOOR_STEP_RECORD_PUBLIC, plan, sizeof plan);
+    dn = tpm2_build_nv_read_public(direct, sizeof direct, TPM_NV_INDEX_AB_FLOOR);
+    TEST_ASSERT_EQ((int)pn, (int)dn, "record ReadPublic length matches the sequence path");
+    TEST_ASSERT_EQ(memcmp(plan, direct, pn), 0, "record ReadPublic bytes match");
+
+    pn = tpm_ab_floor_read_plan(TPM_FLOOR_STEP_RECORD_READ, plan, sizeof plan);
+    dn = tpm2_build_nv_read(direct, sizeof direct, TPM_RH_OWNER, TPM_NV_INDEX_AB_FLOOR,
+                            TPM_RS_PW, (uint16_t)TPM_AB_FLOOR_RECORD_LEN, 0u);
+    TEST_ASSERT_EQ((int)pn, (int)dn, "record NV_Read length matches the sequence path");
+    TEST_ASSERT_EQ(memcmp(plan, direct, pn), 0, "record NV_Read bytes match");
+
+    /* The two indices must not collapse to the same command: a plan that
+     * marshalled one index for both steps would pass every equality above if
+     * the direct builders were fed the same index by mistake. */
+    pn = tpm_ab_floor_read_plan(TPM_FLOOR_STEP_COUNTER_PUBLIC, plan, sizeof plan);
+    dn = tpm_ab_floor_read_plan(TPM_FLOOR_STEP_RECORD_PUBLIC, direct, sizeof direct);
+    TEST_ASSERT_EQ((int)(pn == dn && memcmp(plan, direct, pn) == 0), 0,
+                   "the counter and record ReadPublic commands are distinct");
+
+    TEST_ASSERT_EQ((int)tpm_ab_floor_read_plan(TPM_FLOOR_STEP_COUNT, plan, sizeof plan),
+                   0, "an out-of-range step marshals nothing");
+    TEST_ASSERT_EQ((int)tpm_ab_floor_read_plan(TPM_FLOOR_STEP_COUNTER_READ, plan, 4u),
+                   0, "a buffer too small marshals nothing");
+    TEST_ASSERT_EQ((int)tpm_ab_floor_read_plan(TPM_FLOOR_STEP_COUNTER_READ, 0, 64u),
+                   0, "a NULL buffer marshals nothing");
+}
+
 static void test_authz_e2e_forged_record_refused(void)
 {
     struct tpm_t_test_state prev;
@@ -1982,6 +2670,447 @@ static void test_authz_e2e_bind_verify(void)
                    "NULL blob refused");
     TEST_ASSERT_EQ((int)tpm_baseline_bind_verify(blob, 0u, 0), (int)TPM_NV_BADARG,
                    "zero-length blob refused");
+}
+
+/* The aggregate ledger against the REAL read path.
+ *
+ * The pure fixture above proves the arithmetic. This proves the arithmetic is
+ * actually WIRED: that a verified read consults the boot ledger at all, that a
+ * refusal propagates out of tpm_baseline_bind_verify rather than being absorbed
+ * into a shorter read set, and that the refusal is visible afterwards through
+ * tpm_boot_budget_expired().
+ *
+ * The BREADTH bound is what the refusal is driven with, deliberately. A
+ * wall-clock exhaustion against the fake TIS would depend on how long the
+ * fixture's own commands happen to take, so it would assert a race rather than
+ * a rule; the clock arithmetic is fully covered by the pure fixture, and the
+ * breadth bound exercises the identical admission path. */
+static void test_authz_e2e_boot_budget_bounds_verified_read(void)
+{
+    static const uint8_t blob[64] = { 0x11, 0x22, 0x33 };
+    struct tpm_t_test_state prev;
+    struct tpm_boot_budget_test_state bprev;
+    tpm_nv_status_t st;
+    /* Whatever the live ledger's expiry state is when the suite reaches here.
+     * Asserting a LITERAL 0 at the end would assert a property of the ambient
+     * boot rather than of the restore, and would flip the moment the boot
+     * legitimately exhausted its own allowance. */
+    const int ambient_expired = tpm_boot_budget_expired();
+
+    /* CONTROL: the same read, under the real boot quota, succeeds. Without it
+     * the refusal below would also pass against a read that never worked. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "CONTROL: a verified read inside the boot allowance succeeds");
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 0,
+                   "CONTROL: and reports no expiry");
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* Now the same read against a ledger that allows exactly ONE operation.
+     * The first is admitted, the second is refused, and the refusal is the
+     * READ's answer -- not a quietly truncated set of records. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(0u /* clockless */, 1u);
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "the first verified read is admitted");
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_BUDGET,
+                   "the second is REFUSED by the aggregate ledger");
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 1,
+                   "and the boot can report that it ran out, not that it was clean");
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* THE PER-SEQUENCE CLAMP, at the call site. The pure helper is asserted in
+     * the ledger fixture; this proves the read path actually CALLS it. The read
+     * runs under a full boot quota, so its remaining grant is far above the
+     * per-operation ceiling: without the clamp the final sequence would inherit
+     * the whole three-sequence allowance, and a fake TPM that answers instantly
+     * would never notice. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(TPM_BOOT_BUDGET_MS, TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 0u);
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "CONTROL: the read completes");
+    {
+        uint32_t work = 0; uint64_t gen = 0, gen2 = 0;
+        tpm_t_test_last_seq(&work, &gen);
+        TEST_ASSERT_EQ((int)work, (int)TPM_NV_OP_BUDGET_MS,
+                       "and its final sequence got the per-operation ceiling, "
+                       "not the whole aggregate grant");
+        TEST_ASSERT_EQ((int)(gen != 0u), 1,
+                       "observed against a real admitted sequence generation");
+        tpm_t_test_last_seq(0, &gen2);
+        TEST_ASSERT_EQ((int)(gen == gen2), 1,
+                       "and the observation is stable, not a racing write");
+    }
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* THE SHORT-GRANT REFUSAL, through the REAL read path.
+     *
+     * The pure fixture proves admission CAN return a grant smaller than one
+     * indivisible sequence; only this proves the read then refuses on it.
+     * Without it, deleting the pre-sequence check or its expiry latch would
+     * stay green while the boot started a full-price TPM sequence it could not
+     * afford. Zero commands is the assertion that makes "refuses BEFORE
+     * starting" mean something. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(TPM_NV_POLICY_SEQ_COST_MS - 1u,
+                                         TPM_BOOT_BUDGET_OPS);
+    azf_seen_n = 0u;
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_BUDGET,
+                   "a grant too small for one sequence REFUSES the read");
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 1,
+                   "and records that the boot ran out, not that it was clean");
+    TEST_ASSERT_EQ((int)azf_seen_n, 0,
+                   "refusing BEFORE starting: no TPM command was issued");
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* THE BETWEEN-SEQUENCE GUARDS, driven by pacing the injected clock one step
+     * per TPM sequence. A verified read runs three indivisible sequences, and
+     * the guards between them are what stop it starting one it can no longer
+     * afford. Nothing else reaches them: the short-grant case above returns
+     * before any command, and the pure ledger tests never enter the read path.
+     *
+     * Quota is two sequence-costs, so admission grants exactly that. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(2u * TPM_NV_POLICY_SEQ_COST_MS,
+                                         TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 0u);
+    /* One whole sequence-cost per sequence: after the FIRST contract the
+     * remainder is exactly one cost, which is the PASSING boundary; after the
+     * second it is zero and the read must refuse. */
+    azf_clock_step_ms = TPM_NV_POLICY_SEQ_COST_MS;
+    azf_seen_n = 0u;
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_BUDGET,
+                   "a read whose derivations consumed the grant refuses mid-way");
+    TEST_ASSERT_EQ((int)azf_sequences(), 2,
+                   "after EXACTLY TWO sequences -- guard 2, having passed guard 1 at its boundary");
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), 1,
+                   "and records the exhaustion rather than reporting a clean boot");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* THE FIRST GUARD SPECIFICALLY. The case above leaves exactly one sequence
+     * cost after the first derivation, which is the PASSING boundary, so it
+     * refuses at the second guard and proves nothing about the first -- a
+     * mutation removing guard 1 survived it. Stepping slightly MORE than a
+     * sequence cost leaves less than one behind the first derivation, which is
+     * the only condition guard 1 answers. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(2u * TPM_NV_POLICY_SEQ_COST_MS,
+                                         TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 0u);
+    azf_clock_step_ms = TPM_NV_POLICY_SEQ_COST_MS + 1000u;
+    azf_seen_n = 0u;
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_BUDGET,
+                   "a first derivation that overruns refuses before the second");
+    TEST_ASSERT_EQ((int)azf_sequences(), 1,
+                   "and refuses after EXACTLY ONE sequence -- guard 1, not guard 2");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* GUARD 2 SPECIFICALLY, at the state a uniform step cannot reach. Guard 2
+     * exists to stop `grant_ms -= spent_ms` underflowing when the derivations
+     * overran the grant outright; at spent == grant the subtraction is 0 and
+     * the transport refuses anyway, so only spent > grant exposes it. The steps
+     * pass guard 1 at its boundary and then blow past the grant. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(2u * TPM_NV_POLICY_SEQ_COST_MS,
+                                         TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 0u);
+    azf_clock_steps[0] = TPM_NV_POLICY_SEQ_COST_MS;          /* guard 1 passes */
+    azf_clock_steps[1] = TPM_NV_POLICY_SEQ_COST_MS + 1000u;  /* spent > grant */
+    azf_seen_n = 0u;
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_BUDGET,
+                   "derivations that overran the grant refuse rather than underflowing it");
+    TEST_ASSERT_EQ((int)azf_sequences(), 2,
+                   "and the read sequence is never started");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* CONTROL for the pacing itself: identical fixture, clock NOT advanced, so
+     * the same read completes. Without this the assertion above would pass for
+     * a fixture that simply broke the read. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(2u * TPM_NV_POLICY_SEQ_COST_MS,
+                                         TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 0u);
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "CONTROL: the same read with a still clock completes");
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* SETTLEMENT ON AN ERROR PATH. A read that fails AFTER admission must
+     * return its reservation, or one TPM error permanently consumes a whole
+     * three-sequence grant and every later verified read is refused a budget it
+     * never spent. The clock is held still, so a correct settlement refunds
+     * essentially all of it. */
+    azf_reset(TPM2_CC_NV_READ, 0x0000018Bu /* HANDLE */);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    bprev = tpm_boot_budget_test_install(TPM_NV_VERIFIED_READ_BUDGET_MS,
+                                         TPM_BOOT_BUDGET_OPS);
+    tpm_boot_budget_test_set_clock(1, 0u);
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    TEST_ASSERT_EQ((int)(st != TPM_NV_OK), 1,
+                   "CONTROL: the fixture really did fail the read");
+    TEST_ASSERT_EQ((int)(st != TPM_NV_BUDGET), 1,
+                   "and failed for its own reason, not by running out of budget");
+    {
+        struct tpm_boot_grant after;
+        TEST_ASSERT_EQ((int)tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS,
+                                                      &after),
+                       (int)TPM_NV_OK,
+                       "a failed read RETURNS its reservation");
+        TEST_ASSERT_EQ((int)after.granted_ms, (int)TPM_NV_VERIFIED_READ_BUDGET_MS,
+                       "in full, because no wall-clock time was actually spent");
+    }
+    tpm_boot_budget_test_set_clock(0, 0u);
+    tpm_boot_budget_test_restore(bprev);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+
+    /* The ledger is RESTORED, so a suite run cannot leave the live boot's
+     * allowance perturbed for whatever runs after it -- the fixture drove it to
+     * expired and it must come back exactly as it was found. */
+    TEST_ASSERT_EQ(tpm_boot_budget_expired(), ambient_expired,
+                   "the live ledger's expiry state is restored after the fixture");
+}
+
+/* A LOST COMMIT ANCHOR IS NOT A LEGACY MACHINE.
+ *
+ * The rollback attack does not need the attacker to increment anything. Destroy
+ * the commit counter and redefine it byte-identically: its manifest contract
+ * has expect_written 0 (a TPM_NT_COUNTER legitimately reads unwritten until its
+ * first increment), so the identity check passes and the value read answers
+ * TPM_RC_NV_UNINITIALIZED. Collapsing that into the same no-record answer a
+ * genuinely un-enrolled machine gives made verification recommend MIGRATION --
+ * which authenticates the current owner-writable blob and launders the rollback
+ * evidence. The RECORD is what tells the two apart. */
+static void test_authz_e2e_lost_commit_anchor(void)
+{
+    static const uint8_t blob[64] = { 0x11, 0x22, 0x33 };
+    struct tpm_t_test_state prev;
+    tpm_nv_status_t st;
+
+    /* CONTROL: intact anchors verify. Without it, a fixture that broke the read
+     * outright would satisfy the refusal below on its own. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "CONTROL: an intact pairing verifies");
+
+    /* THE ATTACK: the record survives, its commit counter reads uninitialized. */
+    azf_reset(0u, 0u);
+    azf_counter_uninit = 1;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECREATED,
+                   "a record with no commit anchor behind it is a RECREATED anchor");
+    TEST_ASSERT_EQ((int)(st != TPM_NV_NOTFOUND), 1,
+                   "and is NEVER the legacy no-record answer that invites migration");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(st), (int)TPM_BASELINE_IDENTITY,
+                   "so the boot publishes it as an authenticity failure");
+
+    /* THE SIMPLER ATTACK: the counter index is DELETED outright, so it fails
+     * the identity read rather than the value read. Deferring only the value
+     * read left this taking the legacy path -- the easier move, misclassified. */
+    azf_reset(0u, 0u);
+    azf_absent_index = TPM_NV_INDEX_BASELINE_GEN;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECREATED,
+                   "a DELETED commit counter behind a surviving record is tamper");
+    TEST_ASSERT_EQ((int)(st != TPM_NV_NOTFOUND), 1,
+                   "and is NEVER the legacy answer either");
+
+    /* THE COUNTER'S IDENTITY MATCH, which nothing else reaches. Only the
+     * COUNTER's definition is corrupted; the record's stays correct, and the
+     * reported Name stays self-consistent with the corrupted public area, so
+     * the Name check passes and the manifest-contract comparison is what
+     * refuses. The absent controls above force NV_ReadPublic to fail outright
+     * and exit before that comparison, so deleting the match stayed green. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_wrong_contract_index = TPM_NV_INDEX_BASELINE_GEN;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH,
+                   "a counter whose definition is not the enrolled one is REFUSED");
+    TEST_ASSERT_EQ((int)(st != TPM_NV_NOTFOUND), 1,
+                   "and not mistaken for an absent anchor");
+    /* The verdict is reached through the VERIFY-path map, not the global one:
+     * tpm_baseline_verify intercepts a MISMATCH and routes it on the pairing,
+     * which is BADARG here because the refusal landed before any pairing could
+     * be computed. The global map deliberately leaves MISMATCH as TPMERR,
+     * because the WRITE path produces it for a benign counter race. */
+    TEST_ASSERT_EQ((int)tpm_baseline_pairing_status(TPM_PAIRING_BADARG),
+                   (int)TPM_BASELINE_IDENTITY,
+                   "so verification publishes it as an authenticity failure");
+
+    /* CONTROL: the identical fixture with the counter definition CORRECT
+     * verifies, so the refusal above is the contract check and not the harness. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "CONTROL: the enrolled counter definition verifies");
+
+    /* THE MIRROR CASE: the RECORD is gone and its commit counter survives with a
+     * VALUE. A counter only reads a value once a transition committed, and a
+     * transition writes the record BEFORE it increments, so a live counter
+     * proves a record once existed. Reporting absence would invite the same
+     * migration the counter-side deferral exists to prevent. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;                                 /* the counter is live */
+    azf_absent_index = TPM_NV_INDEX_BASELINE_BIND;    /* the record is gone */
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECREATED,
+                   "a DESTROYED record behind a live commit counter is tamper");
+    TEST_ASSERT_EQ((int)(st != TPM_NV_NOTFOUND), 1,
+                   "and never the legacy answer that invites migration");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(st), (int)TPM_BASELINE_IDENTITY,
+                   "so the boot publishes it as an authenticity failure");
+
+    /* RECORD LOSS AFTER ITS IDENTITY PASSED. ReadPublic proves the index
+     * exists, matches the manifest and is WRITTEN; the NV_Read that follows
+     * then says "not found". That is a record destroyed between two commands,
+     * or a TPM answering inconsistently -- never a machine that was simply
+     * never enrolled, which is what the legacy answer would invite. */
+    azf_reset(0u, 0u);
+    azf_counter = 6u;
+    azf_record_len = az_build_bind(azf_record, AZ_BIND_LEN, 6u, blob,
+                                   (uint32_t)sizeof blob);
+    azf_record_read_rc = 0x0000018Bu;   /* HANDLE -> NOTFOUND, on NV_Read only */
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECREATED,
+                   "a record that vanishes after its identity passed is tamper");
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(st), (int)TPM_BASELINE_IDENTITY,
+                   "and is published, not routed to migration");
+
+    /* BOTH anchors genuinely ABSENT is the un-enrolled machine, and it MUST
+     * still reach the legacy answer -- the assertion that stops the fixes above
+     * from being implemented as "always report tamper".
+     *
+     * Both indices are driven to NOTFOUND at NV_ReadPublic, and the assertion is
+     * the EXACT status. An earlier version of this control left both indices
+     * present and asserted only `!= RECREATED`, which a transport error, a
+     * MISMATCH or a BADARG would all have satisfied while never once exercising
+     * the two-NOTFOUND path it claimed to cover. */
+    azf_reset(0u, 0u);
+    azf_absent_index  = TPM_NV_INDEX_BASELINE_GEN;
+    azf_absent_index2 = TPM_NV_INDEX_BASELINE_BIND;
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    st = tpm_baseline_bind_verify(blob, (uint32_t)sizeof blob, 0);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_NOTFOUND,
+                   "CONTROL: a machine missing BOTH anchors is the legacy answer, exactly");
 }
 
 static void test_authz_contract_cache(void)
@@ -2332,6 +3461,24 @@ void test_register_tpm_authz(void)
                             test_authz_first_record_generation, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz counter commit window",
                             test_authz_counter_commit_window, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz pairing direction",
+                            test_authz_pairing_direction, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline pairing status map",
+                            test_baseline_pairing_status_map, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz e2e lost commit anchor",
+                            test_authz_e2e_lost_commit_anchor, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline nv status map",
+                            test_baseline_nv_status_map, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: boot budget lifecycle and clock",
+                            test_boot_budget_lifecycle_and_clock, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: boot budget indivisible sequence",
+                            test_boot_budget_indivisible_sequence, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz boot read budget accounting",
+                            test_authz_boot_budget_single_deadline, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz torn pairing detected",
+                            test_authz_e2e_torn_pairing_detected, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz floor read plan matches sequence",
+                            test_authz_floor_read_plan_matches_sequence, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz baseline relabel refused",
                             test_authz_baseline_relabel_refused, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz cpHash binding",
@@ -2376,6 +3523,9 @@ void test_register_tpm_authz(void)
                             test_authz_e2e_no_handle_leak_on_failure, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz e2e bind verify",
                             test_authz_e2e_bind_verify, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz e2e boot budget bounds verified read",
+                            test_authz_e2e_boot_budget_bounds_verified_read,
+                            TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz contract cache guard",
                             test_authz_contract_cache, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz grant well-formedness",

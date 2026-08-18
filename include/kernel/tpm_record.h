@@ -201,9 +201,17 @@ tpm_record_status_t tpm_record_parse(const uint8_t *buf, uint32_t len,
                                      uint32_t want_payload_len,
                                      struct tpm_record_view *out);
 
-/* Serialize a record: writes the header, copies the payload, zeroes the
- * reserved bytes and stamps the canonical digest. `cap` must be exactly
- * TPM_RECORD_HDR_LEN + payload_len. Returns TPM_RECORD_OK or BADARG. Pure. */
+/* Serialize a record: writes the header, zeroes the HEADER's reserved field,
+ * copies the payload verbatim and stamps the canonical digest. `cap` must be
+ * exactly TPM_RECORD_HDR_LEN + payload_len. Returns TPM_RECORD_OK or BADARG.
+ * Pure.
+ *
+ * The PAYLOAD's own kind-specific reserved words are NOT normalized: a payload
+ * carrying a nonzero one is REFUSED with BADARG rather than quietly cleaned.
+ * That is deliberate -- the reserved words are covered by the digest, so
+ * rewriting a caller's bytes would sign something the caller did not build --
+ * but this comment used to promise normalization, and a caller written against
+ * it got BADARG where it expected a serialized record. */
 tpm_record_status_t tpm_record_build(uint8_t *buf, uint32_t cap,
                                      tpm_record_kind_t kind, uint64_t generation,
                                      const uint8_t *payload, uint32_t payload_len);
@@ -228,21 +236,70 @@ tpm_record_status_t tpm_record_build(uint8_t *buf, uint32_t cap,
 tpm_record_status_t tpm_record_transition_ok(const struct tpm_record_view *cur,
                                              const struct tpm_record_view *next);
 
-/* Judge a record against the NV counter that commits it.
+/* How a record and its committing counter stand relative to each other.
  *
- * `counter` is the value the bound TPM_NT_COUNTER reads NOW. A record whose
- * generation equals it is CURRENT (TPM_RECORD_OK). A record one AHEAD of the
- * counter is a written-but-uncommitted transition, reported as TPM_RECORD_SKEW
- * rather than accepted -- write-then-increment makes that window legitimate,
- * and the reader's job is to keep using the committed value rather than to
- * trust bytes the commit point has not reached yet. Anything else is
- * TPM_RECORD_SKEW as well: a record BEHIND the counter is stale, and a record
- * more than one ahead cannot have come from a single authorized step.
+ * Deliberately a separate type from tpm_record_status_t: the DIRECTION of a
+ * disagreement decides what the caller does next, and one SKEW value cannot
+ * carry it. A record AHEAD of the counter is a transition that never committed;
+ * a counter AHEAD of the record is a commit whose record is gone or stale. The
+ * first is abandoned, the second must reach authorized recovery rather than a
+ * fresh enrollment, and conflating them is exactly how a rollback would be
+ * laundered into a first install. */
+typedef enum {
+    TPM_PAIRING_CURRENT     = 0u, /* generation == counter: committed and usable */
+    TPM_PAIRING_UNCOMMITTED = 1u, /* generation == counter + 1: written under an
+                                   * authorized grant, commit increment never
+                                   * landed. This yields NO usable value at all:
+                                   * the authorized write overwrites the sole
+                                   * record in place at offset 0, so the previous
+                                   * committed record is already gone by the time
+                                   * this state is observable. Strict readers
+                                   * refuse it rather than reporting a stale
+                                   * value they do not have. */
+    TPM_PAIRING_TORN        = 2u, /* counter > generation: the commit point moved
+                                   * with no matching record behind it. A CLASS,
+                                   * not one cause -- the write-then-increment
+                                   * order means a crash inside one transition
+                                   * cannot produce it, but a destroyed record
+                                   * index, a crash between two transitions, and
+                                   * a byte-identical recreated counter index
+                                   * all can. They are not separable from the
+                                   * outside, and they do not need to be: the
+                                   * required response to every one of them is
+                                   * authorized recovery rather than a fresh
+                                   * enrollment. */
+    TPM_PAIRING_IMPOSSIBLE  = 3u, /* generation > counter + 1: more than one
+                                   * authorized step ahead of the commit point,
+                                   * which no single grant can produce */
+    TPM_PAIRING_BADARG      = 4u, /* NULL view, or a view that never parsed */
+} tpm_pairing_t;
+
+/* Classify a record against the NV counter that commits it. Pure.
  *
- * Detecting the counter-ahead-of-record direction (a torn pairing) and choosing
- * the recovery for it belongs to the crash-consistency owner, not here; this
- * function reports the disagreement rather than resolving it.
- * That belongs to the crash-consistent record pairing work, not here.
+ * `counter` is the value the bound TPM_NT_COUNTER reads NOW.
+ *
+ * A TORN verdict names a CLASS of causes, not one. A TPM_NT_COUNTER restarts at
+ * or above the largest value any NV counter on that TPM has ever held (TPM 2.0
+ * Part 1 section 37.2.6.3), so a counter index that was destroyed and recreated
+ * reads far above a surviving record and classifies TORN alongside a genuine
+ * torn pairing. Every cause in the class takes the same action -- authorized
+ * recovery, never a fresh enrollment -- so the verdict is actionable without
+ * separating them.
+ *
+ * What the caller must still do is establish the counter INDEX identity against
+ * its enrolled contract, so that an index of the wrong SHAPE cannot supply the
+ * value at all; tpm_authz.c does that inside the same bounded sequence as the
+ * read, before the counter is trusted. */
+tpm_pairing_t tpm_record_pairing(const struct tpm_record_view *rec,
+                                 uint64_t counter);
+
+/* Judge a record against the NV counter that commits it -- the strict gate.
+ *
+ * TPM_RECORD_OK only for TPM_PAIRING_CURRENT; every other pairing, in either
+ * direction, is TPM_RECORD_SKEW. A caller that must ACT on the direction uses
+ * tpm_record_pairing() instead. Keeping the strict gate directionless is what
+ * stops a reader that only asks "is this the committed record" from ever
+ * treating a directional value as success.
  *
  * Returns TPM_RECORD_OK / BADARG / TPM_RECORD_SKEW. Pure. */
 tpm_record_status_t tpm_record_counter_ok(const struct tpm_record_view *rec,

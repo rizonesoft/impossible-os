@@ -12,6 +12,7 @@
 #include "kernel/tpm_nv.h"
 #include "kernel/tpm_record.h"
 #include "kernel/tpm_transport.h"
+#include "kernel/tpm_budget.h"
 #include "kernel/crypto/sha256.h"
 #include "libc/string.h"
 
@@ -788,6 +789,7 @@ tpm_nv_status_t tpm_authz_write_record(uint32_t nv_index, uint32_t counter_index
 
 struct authz_read_ctx {
     const struct tpm_nv_identity *contract;
+    const struct tpm_nv_identity *counter_contract;
     uint32_t        counter_index;
     uint8_t        *buf;
     uint16_t        cap;
@@ -801,17 +803,98 @@ static int authz_read_seq(tpm2_seq_t seq, void *vctx)
     uint8_t cmd[64], rsp[512];
     struct tpm_nv_public pub;
     uint32_t n, rlen = 0, rc = 0;
-    tpm_nv_status_t st;
+    tpm_nv_status_t st, counter_gone = TPM_NV_OK;
     int name_ok = 0, got;
 
-    st = tpm_nv_read_counter_seq(seq, c->counter_index, &c->counter);
-    if (st != TPM_NV_OK) { c->st = st; return 0; }
+    /* THE COUNTER'S IDENTITY, BEFORE ITS VALUE. The whole commit decision rests
+     * on this number, and the read path used to take it from an index it had
+     * never identified -- while the WRITE path verifies the counter contract
+     * before building a cpHash over its Name, for the reason its own comment
+     * gives: a Name is meaningful only once the index behind it is the enrolled
+     * one. This closes that asymmetry.
+     *
+     * WHAT IT BUYS, precisely: an index whose DEFINITION is not the enrolled
+     * one -- wrong type, size, nameAlg or attributes -- can no longer supply
+     * the committed generation. What it does NOT resolve is a byte-identical
+     * recreate: for a counter the manifest sets expect_written 0 on purpose
+     * (a TPM_NT_COUNTER reads unwritten until its first increment), so the
+     * WRITTEN bit cannot separate a recreated counter from an enrolled one the
+     * way it does for a record index.
+     *
+     * That residual ambiguity does not change what a caller must DO. A
+     * TPM_NT_COUNTER restarts at or above the highest value any NV counter on
+     * the TPM has ever held (TPM 2.0 Part 1 section 37.2.6.3), so a recreated
+     * counter reads ABOVE a surviving record and lands in TPM_PAIRING_TORN --
+     * the same verdict a genuinely torn pairing produces, and the response to
+     * both is authorized recovery rather than a fresh enrollment. TORN is
+     * therefore honest about being a class, not a single cause. */
+    /* THE DEFERRAL COVERS ABSENCE WHEREVER IT SURFACES, and that is the whole
+     * rule: a DELETED counter fails this NV_ReadPublic, while a byte-identically
+     * RECREATED one passes it and fails the NV_Read below. Deferring only the
+     * second left the first -- the simpler attack -- taking the legacy path.
+     *
+     * An absent commit counter means one of two OPPOSITE things, and the
+     * counter cannot tell them apart; the RECORD can. With no record either,
+     * this machine was simply never enrolled. With a record present, the commit
+     * anchor behind an enrolled record is GONE, which is exactly the rollback
+     * attack -- and the attacker need never increment anything to reach it.
+     * Concluding here collapsed both into the legacy no-record answer, so
+     * verification recommended MIGRATION, which would authenticate the current
+     * owner-writable blob and launder the rollback evidence.
+     *
+     * Only ABSENCE is deferred. A Name that does not verify, or a definition
+     * that does not match the manifest, is a definite identity failure with
+     * nothing left to disambiguate, and it still returns immediately. */
+    st = tpm_nv_read_identity_seq(seq, c->counter_index, &pub, &name_ok);
+    if (st == TPM_NV_NOTFOUND || st == TPM_NV_UNINIT) {
+        counter_gone = st;
+        c->counter = 0u;
+    } else if (st != TPM_NV_OK) {
+        c->st = st;
+        return 0;
+    }
 
+    if (counter_gone == TPM_NV_OK) {
+        if (!name_ok) { c->st = TPM_NV_MISMATCH; return 0; }
+        st = tpm_nv_identity_match(c->counter_contract, &pub);
+        if (st != TPM_NV_OK) { c->st = st; return 0; }
+        /* Manifest-driven, exactly as the record index's check is. Currently
+         * inert for the two counter anchors because their expect_written is 0;
+         * it is here so the rule travels with the contract rather than with
+         * this call site, and it is NOT the counter recreation detector. */
+        if (c->counter_contract->expect_written && !(pub.attrs & TPMA_NV_WRITTEN)) {
+            c->st = TPM_NV_RECREATED;
+            return 0;
+        }
+
+        st = tpm_nv_read_counter_seq(seq, c->counter_index, &c->counter);
+        if (st == TPM_NV_NOTFOUND || st == TPM_NV_UNINIT) {
+            counter_gone = st;
+            c->counter = 0u;
+        } else if (st != TPM_NV_OK) {
+            c->st = st;
+            return 0;
+        }
+    }
+
+    name_ok = 0;
     /* Identity BEFORE contents, in the same sequence. A Name check that runs
      * after the read has already trusted the bytes, and one that runs in its own
      * sequence has already expired by the time the read happens. */
     st = tpm_nv_read_identity_seq(seq, c->contract->nv_index, &pub, &name_ok);
-    if (st != TPM_NV_OK) { c->st = st; return 0; }
+    if (st != TPM_NV_OK) {
+        /* THE MIRROR CASE. A record that is ABSENT while its commit counter
+         * holds a VALUE is a DESTROYED record, not a machine that was never
+         * enrolled: a counter reads a value only once a transition committed,
+         * and a transition writes the record BEFORE it increments. Reporting
+         * absence here would invite the same migration the deferral above
+         * exists to prevent. */
+        if ((st == TPM_NV_NOTFOUND || st == TPM_NV_UNINIT) &&
+            counter_gone == TPM_NV_OK)
+            st = TPM_NV_RECREATED;
+        c->st = st;
+        return 0;
+    }
     if (!name_ok) { c->st = TPM_NV_MISMATCH; return 0; }
     st = tpm_nv_identity_match(c->contract, &pub);
     if (st != TPM_NV_OK) { c->st = st; return 0; }
@@ -836,6 +919,16 @@ static int authz_read_seq(tpm2_seq_t seq, void *vctx)
                            c->contract->nv_index, TPM_RS_PW, c->cap, 0u);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+        /* ABSENCE HERE IS NOT ABSENCE OF AN ENROLLMENT. The ReadPublic just
+         * above proved this index exists, matches its enrolled contract and is
+         * WRITTEN; a read that then answers "not found" or "never written"
+         * describes a record destroyed between the two commands, or a TPM
+         * answering inconsistently. Propagating it unchanged let the caller
+         * collapse it into the legacy no-record result and invite migration --
+         * the same laundering the counter-side deferral exists to stop, one
+         * command further along. */
+        if (st == TPM_NV_NOTFOUND || st == TPM_NV_UNINIT)
+            st = TPM_NV_RECREATED;
         c->st = st;
         return 0;
     }
@@ -844,6 +937,17 @@ static int authz_read_seq(tpm2_seq_t seq, void *vctx)
      * check anyway, but reporting TRANSPORT here says what actually happened
      * rather than blaming the record for a truncated response. */
     c->st = (got == (int)c->cap) ? TPM_NV_OK : TPM_NV_TRANSPORT;
+
+    /* NOW the deferred counter verdict can be resolved: the record is present
+     * and readable, so an absent commit anchor is a LOST anchor rather than a
+     * machine that was never enrolled. RECREATED, not NOTFOUND -- an identity
+     * failure the boot publishes and routes to authorized recovery.
+     *
+     * If the record read failed instead, its own status stands: a machine
+     * missing BOTH anchors is the legacy/never-enrolled case, and that is the
+     * one reading that legitimately invites migration. */
+    if (c->st == TPM_NV_OK && counter_gone != TPM_NV_OK)
+        c->st = TPM_NV_RECREATED;
     return 0;
 }
 
@@ -855,28 +959,124 @@ static tpm_nv_status_t authz_read_record(uint32_t nv_index, uint32_t counter_ind
                                          uint32_t want_payload_len,
                                          uint8_t *buf, uint16_t cap,
                                          struct tpm_record_view *out_view,
-                                         uint64_t *out_counter)
+                                         uint64_t *out_counter,
+                                         tpm_pairing_t *out_pairing)
 {
-    struct tpm_nv_identity contract;
+    struct tpm_nv_identity contract, counter_contract;
     struct authz_read_ctx c;
     tpm_nv_status_t st;
     tpm_record_status_t rs;
+    tpm_pairing_t pairing;
+    struct tpm_boot_grant grant;
+    uint32_t grant_ms, spent_ms;
     int r;
 
-    st = tpm_authz_contract(nv_index, &contract);
+    if (out_pairing)
+        *out_pairing = TPM_PAIRING_BADARG;
+
+    /* The aggregate boot deadline, taken BEFORE any TPM work rather than just
+     * before the read.
+     *
+     * A verified read is not one sequence. Each authorized index derives its
+     * policy contract through a tpm2_seq_run of its own (tpm_authz_contract),
+     * so admitting after those two derivations would let a verified read spend
+     * two full uncharged sequences and still report compliance -- an aggregate
+     * ledger that starts after most of the work is not an aggregate ledger.
+     * The mark is taken here for the same reason: the charge must cover
+     * everything the read caused, not just its last sequence.
+     *
+     * Exhaustion is REPORTED here rather than silently shortening the set of
+     * records the boot reads. */
+    st = tpm_boot_budget_admit_one(TPM_NV_VERIFIED_READ_BUDGET_MS, &grant);
     if (st != TPM_NV_OK)
         return st;
-    if (contract.data_size != cap)
+    grant_ms = grant.granted_ms;
+    /* The grant is clamped to the boot remainder, so it can come back smaller
+     * than the very first sequence this read must run. Refusing here spends
+     * nothing that is not immediately settled back; starting anyway would spend
+     * a full indivisible sequence against a remainder that could not pay for
+     * it. The settle is what returns the reservation. */
+    if (grant_ms < TPM_NV_POLICY_SEQ_COST_MS) {
+        tpm_boot_budget_settle(&grant);
+        tpm_boot_budget_note_expiry();
+        return TPM_NV_BUDGET;
+    }
+
+    st = tpm_authz_contract(nv_index, &contract);
+    if (st != TPM_NV_OK) {
+        tpm_boot_budget_settle(&grant);
+        return st;
+    }
+    if (contract.data_size != cap) {
+        tpm_boot_budget_settle(&grant);
         return TPM_NV_BADARG;
+    }
+
+    /* Re-check the grant BETWEEN the derivations. tpm_authz_contract arms its
+     * own per-operation budget and cannot be handed ours without changing a
+     * contract several callers share, so the grant cannot bound a derivation
+     * from the inside. Checking between them bounds the OVERSHOOT to one
+     * derivation instead of two plus the read, and the charge below makes even
+     * that overshoot visible to the next admission. */
+    /* REFUSE BEFORE STARTING, not after overrunning. tpm_authz_contract runs a
+     * tpm2_seq_run with fixed per-operation constants and cannot be handed a
+     * smaller allowance without changing a contract several callers share, so
+     * the sequence is INDIVISIBLE from here: once it starts it can spend its
+     * full work plus cleanup regardless of what is left. Checking that the
+     * whole cost still fits is what makes the aggregate a bound on latency
+     * rather than an accounting of it after the fact. */
+    spent_ms = tpm_boot_elapsed_ms(grant.mark_ms);
+    if (spent_ms >= grant_ms ||
+        (grant_ms - spent_ms) < TPM_NV_POLICY_SEQ_COST_MS) {
+        tpm_boot_budget_settle(&grant);
+        /* The refusal happened HERE, against the grant, not at an admission,
+         * so the ledger would not otherwise record that this boot ran out. */
+        tpm_boot_budget_note_expiry();
+        return TPM_NV_BUDGET;
+    }
+
+    /* Derived from the compiled manifest, never read from storage -- the same
+     * rule the record index's contract follows, and the reason the identity
+     * check below is worth anything. */
+    st = tpm_authz_contract(counter_index, &counter_contract);
+    if (st != TPM_NV_OK) {
+        tpm_boot_budget_settle(&grant);
+        return st;
+    }
+
+    /* Same indivisibility check before the READ sequence, at the READ's price.
+     * It opens no session and calls no teardown, so demanding a cleanup reserve
+     * here would refuse a read that fits perfectly well. */
+    spent_ms = tpm_boot_elapsed_ms(grant.mark_ms);
+    if (spent_ms >= grant_ms ||
+        (grant_ms - spent_ms) < TPM_NV_READ_SEQ_COST_MS) {
+        tpm_boot_budget_settle(&grant);
+        tpm_boot_budget_note_expiry();
+        return TPM_NV_BUDGET;
+    }
+    grant_ms -= spent_ms;
+    /* The aggregate grant bounds the whole verified read; it does NOT widen a
+     * single sequence. Through the pure helper so the relation is assertable
+     * rather than buried here. */
+    grant_ms = tpm_boot_grant_work_ms(grant_ms);
 
     c.contract = &contract;
+    c.counter_contract = &counter_contract;
     c.counter_index = counter_index;
     c.buf = buf;
     c.cap = cap;
     c.counter = 0u;
     c.st = TPM_NV_TRANSPORT;
-    r = tpm2_seq_run(TPM_NV_OP_BUDGET_MS, TPM_NV_OP_CLEANUP_BUDGET_MS,
-                     authz_read_seq, &c);
+    /* The cleanup reserve is passed through unclamped. It is not part of the
+     * work quota and must never be traded for a tighter deadline: a mandatory
+     * FlushContext that cannot run leaks a session handle out of the TPM's
+     * small pool until reboot, which is worse than the overrun it would buy. */
+    r = tpm2_seq_run(grant_ms, TPM_NV_OP_CLEANUP_BUDGET_MS, authz_read_seq, &c);
+    /* Charge the FULL observed span -- both contract derivations, the read's
+     * work, its cleanup and any abort envelope. Charging only the grant would
+     * undercount exactly the operations that overran, which is the population
+     * the deadline exists to bound. */
+    tpm_boot_budget_settle(&grant);
     if (r != 0)
         return TPM_NV_BUSY;
     if (c.st != TPM_NV_OK)
@@ -889,37 +1089,123 @@ static tpm_nv_status_t authz_read_record(uint32_t nv_index, uint32_t counter_ind
     if (rs != TPM_RECORD_OK)
         return TPM_NV_CONTRACT;
 
-    /* The commit check. A record one AHEAD of the counter is the legitimate
-     * write-then-increment window: the transition was authorized and written
-     * but never committed, so the committed value is still the old one and this
-     * record is NOT the answer. Reporting MISMATCH keeps a half-finished update
-     * from moving the floor in either direction. */
-    if (tpm_record_counter_ok(out_view, c.counter) != TPM_RECORD_OK)
-        return TPM_NV_MISMATCH;
+    /* The commit check. The DIRECTION is reported separately for callers that
+     * must act on it (recovery routing), while the status stays MISMATCH for
+     * every non-current pairing: shipped strict readers classify on MISMATCH,
+     * and leaking a directional status into that path would silently change
+     * how they route a half-finished update. */
+    pairing = tpm_record_pairing(out_view, c.counter);
+    if (out_pairing)
+        *out_pairing = pairing;
     if (out_counter)
         *out_counter = c.counter;
+    if (pairing != TPM_PAIRING_CURRENT)
+        return TPM_NV_MISMATCH;
+    return TPM_NV_OK;
+}
+
+uint32_t tpm_ab_floor_read_plan(tpm_floor_read_step_t step, uint8_t *buf,
+                                uint32_t cap)
+{
+    if (!buf)
+        return 0u;
+
+    /* Every arm below marshals with the SAME builder and the SAME arguments the
+     * in-sequence path uses, so the plan is a published NAME for that byte
+     * stream rather than a second implementation of it. The shared fixture in
+     * the test suite asserts the two are byte-identical, which is what keeps
+     * them from drifting once the loader has its own executor. */
+    switch (step) {
+    case TPM_FLOOR_STEP_COUNTER_PUBLIC:
+        return tpm2_build_nv_read_public(buf, cap, TPM_NV_INDEX_AB_SEQ);
+    case TPM_FLOOR_STEP_COUNTER_READ:
+        /* OWNERREAD, so authHandle is the owner hierarchy -- these anchors do
+         * not grant AUTHREAD, and a TPM that enforces the distinction refuses
+         * the index handle. Exactly TPM_NV_COUNTER_SIZE: a short read would
+         * invent a counter value out of partial bytes. */
+        return tpm2_build_nv_read(buf, cap, TPM_RH_OWNER, TPM_NV_INDEX_AB_SEQ,
+                                  TPM_RS_PW, (uint16_t)TPM_NV_COUNTER_SIZE, 0u);
+    case TPM_FLOOR_STEP_RECORD_PUBLIC:
+        return tpm2_build_nv_read_public(buf, cap, TPM_NV_INDEX_AB_FLOOR);
+    case TPM_FLOOR_STEP_RECORD_READ:
+        return tpm2_build_nv_read(buf, cap, TPM_RH_OWNER, TPM_NV_INDEX_AB_FLOOR,
+                                  TPM_RS_PW, (uint16_t)TPM_AB_FLOOR_RECORD_LEN,
+                                  0u);
+    default:
+        return 0u;
+    }
+}
+
+tpm_nv_status_t tpm_ab_floor_read_view(struct tpm_ab_floor_view *out)
+{
+    uint8_t buf[TPM_AB_FLOOR_RECORD_LEN];
+    struct tpm_record_view view = { 0 };
+    uint64_t counter = 0;
+    tpm_pairing_t pairing = TPM_PAIRING_BADARG;
+    tpm_nv_status_t st;
+
+    if (!out)
+        return TPM_NV_BADARG;
+    memset(out, 0, sizeof *out);
+    out->pairing = TPM_PAIRING_BADARG;
+
+    st = authz_read_record(TPM_NV_INDEX_AB_FLOOR, TPM_NV_INDEX_AB_SEQ,
+                           TPM_RECORD_KIND_AB_FLOOR,
+                           (uint32_t)sizeof(struct tpm_ab_floor_payload),
+                           buf, (uint16_t)sizeof buf, &view, &counter,
+                           &pairing);
+    /* Anything that never reached the pairing check (transport, identity,
+     * recreation, a record that would not parse) is reported as-is with no
+     * pairing claim: there is nothing to pair. */
+    if (st != TPM_NV_OK && st != TPM_NV_MISMATCH)
+        return st;
+
+    /* A pre-pair MISMATCH -- a counter or record identity that failed its
+     * enrolled contract -- returns before tpm_record_parse ever fills `view`,
+     * so there is no record generation to report and reading one would publish
+     * uninitialized kernel stack under conditions the TPM's answer chooses. The
+     * pairing stays BADARG, which is the caller's signal that no pairing claim
+     * was made, and the generations stay zero rather than garbage. */
+    if (pairing == TPM_PAIRING_BADARG)
+        return (st == TPM_NV_OK) ? TPM_NV_MISMATCH : st;
+
+    out->pairing            = pairing;
+    out->committed_generation = counter;
+    out->record_generation  = view.generation;
+
+    /* THE VERSION IS PUBLISHED ONLY FOR A CURRENT PAIRING, and this is the
+     * whole reason the view exists rather than an out-param on the strict read.
+     * An UNCOMMITTED record is not a stale-but-usable floor that a caller may
+     * fall back on: the authorized write overwrote the sole record in place
+     * before the commit increment, so by the time this state is observable the
+     * previously committed bytes are already gone. Publishing the candidate's
+     * version here would hand a consumer -- kernel or loader -- a floor no
+     * authority ever committed. */
+    if (pairing != TPM_PAIRING_CURRENT)
+        return TPM_NV_MISMATCH;
+    if (tpm_record_ab_floor_version(&view, &out->version) != TPM_RECORD_OK)
+        return TPM_NV_CONTRACT;
+    out->version_valid = 1u;
     return TPM_NV_OK;
 }
 
 tpm_nv_status_t tpm_ab_floor_read(uint32_t *out_version, uint64_t *out_generation)
 {
-    uint8_t buf[TPM_AB_FLOOR_RECORD_LEN];
-    struct tpm_record_view view;
-    uint64_t counter = 0;
+    struct tpm_ab_floor_view v;
     tpm_nv_status_t st;
 
     if (!out_version)
         return TPM_NV_BADARG;
-    st = authz_read_record(TPM_NV_INDEX_AB_FLOOR, TPM_NV_INDEX_AB_SEQ,
-                           TPM_RECORD_KIND_AB_FLOOR,
-                           (uint32_t)sizeof(struct tpm_ab_floor_payload),
-                           buf, (uint16_t)sizeof buf, &view, &counter);
+    /* Strict wrapper: OK only for a CURRENT pairing, and every other pairing
+     * collapses back to MISMATCH exactly as it did before the view existed.
+     * Shipped consumers classify on MISMATCH, so the directional verdict stays
+     * behind the view API rather than changing their routing underneath them. */
+    st = tpm_ab_floor_read_view(&v);
     if (st != TPM_NV_OK)
         return st;
-    if (tpm_record_ab_floor_version(&view, out_version) != TPM_RECORD_OK)
-        return TPM_NV_CONTRACT;
+    *out_version = v.version;
     if (out_generation)
-        *out_generation = counter;
+        *out_generation = v.committed_generation;
     return TPM_NV_OK;
 }
 
@@ -968,31 +1254,52 @@ tpm_nv_status_t tpm_ab_floor_advance(uint32_t new_version,
                                   record, (uint16_t)sizeof record, counter, tr);
 }
 
-tpm_nv_status_t tpm_baseline_bind_verify(const uint8_t *blob, uint32_t blob_len,
-                                         uint64_t *out_generation)
+tpm_nv_status_t tpm_baseline_bind_view(const uint8_t *blob, uint32_t blob_len,
+                                       struct tpm_baseline_bind_view *out)
 {
     uint8_t buf[TPM_BASELINE_BIND_LEN];
     uint8_t digest[SHA256_DIGEST_LEN];
-    struct tpm_record_view view;
+    struct tpm_record_view view = { 0 };
     const struct tpm_baseline_bind_payload *p;
     uint64_t counter = 0;
+    tpm_pairing_t pairing = TPM_PAIRING_BADARG;
     tpm_nv_status_t st;
 
-    if (!blob || blob_len == 0u)
+    if (!blob || blob_len == 0u || !out)
         return TPM_NV_BADARG;
+    memset(out, 0, sizeof *out);
+    out->pairing = TPM_PAIRING_BADARG;
 
     st = authz_read_record(TPM_NV_INDEX_BASELINE_BIND, TPM_NV_INDEX_BASELINE_GEN,
                            TPM_RECORD_KIND_BASELINE,
                            (uint32_t)sizeof(struct tpm_baseline_bind_payload),
-                           buf, (uint16_t)sizeof buf, &view, &counter);
+                           buf, (uint16_t)sizeof buf, &view, &counter,
+                           &pairing);
     /* NO bind record is a LEGACY, unauthenticated baseline. It is reported, not
      * accepted and not auto-wrapped: the blob it would wrap is owner-writable,
      * so binding it now would authenticate whatever an attacker last wrote and
      * leave the boundary worse than no boundary. Migration is section 19's. */
     if (st == TPM_NV_NOTFOUND || st == TPM_NV_UNINIT)
         return TPM_NV_NOTFOUND;
-    if (st != TPM_NV_OK)
+    if (st != TPM_NV_OK && st != TPM_NV_MISMATCH)
         return st;
+
+    /* Same pre-pair guard as the floor view: an identity mismatch returns
+     * before the record is parsed, so `view` holds nothing and its generation
+     * must not be published. */
+    if (pairing == TPM_PAIRING_BADARG)
+        return (st == TPM_NV_OK) ? TPM_NV_MISMATCH : st;
+
+    out->pairing              = pairing;
+    out->committed_generation = counter;
+    out->record_generation    = view.generation;
+
+    /* A non-current pairing is answered on the pairing alone. Comparing the
+     * blob against an uncommitted or torn record would produce a "matches" or
+     * "does not match" verdict about a record no authority committed, and a
+     * caller reading only the digest result would act on it. */
+    if (pairing != TPM_PAIRING_CURRENT)
+        return TPM_NV_MISMATCH;
 
     p = (const struct tpm_baseline_bind_payload *)view.payload;
     if (p->blob_len != blob_len)
@@ -1000,8 +1307,24 @@ tpm_nv_status_t tpm_baseline_bind_verify(const uint8_t *blob, uint32_t blob_len,
     sha256(blob, blob_len, digest);
     if (memcmp(digest, p->blob_digest, SHA256_DIGEST_LEN) != 0)
         return TPM_NV_MISMATCH;
+    out->bound = 1u;
+    return TPM_NV_OK;
+}
+
+tpm_nv_status_t tpm_baseline_bind_verify(const uint8_t *blob, uint32_t blob_len,
+                                         uint64_t *out_generation)
+{
+    struct tpm_baseline_bind_view v;
+    tpm_nv_status_t st;
+
+    /* Strict wrapper, contract-compatible with the shipped consumers: every
+     * non-current pairing stays MISMATCH and the directional verdict is reached
+     * only through tpm_baseline_bind_view(). */
+    st = tpm_baseline_bind_view(blob, blob_len, &v);
+    if (st != TPM_NV_OK)
+        return st;
     if (out_generation)
-        *out_generation = counter;
+        *out_generation = v.committed_generation;
     return TPM_NV_OK;
 }
 

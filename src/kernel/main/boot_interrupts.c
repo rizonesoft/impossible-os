@@ -63,6 +63,7 @@
 #include "kernel/tpm_replay.h"
 #include "kernel/tpm_nv.h"
 #include "kernel/tpm_baseline.h"
+#include "kernel/tpm_budget.h"
 #include "kernel/tpm_enroll_gate.h"
 #include "kernel/boot_confirm.h"
 #include "kernel/cpuid_platform.h"
@@ -560,6 +561,14 @@ void boot_phase1(void)
          * for the trust model. Otherwise verify the current state against the
          * stored baseline and publish the verdict (the replay TAMPER above
          * already outranks a baseline match). */
+        /* ONE deadline for every verified NV read this boot performs, armed
+         * before the first of them. Each verified read costs two TPM
+         * transactions where an unverified read cost one, and every logical NV
+         * operation otherwise arms its OWN per-call budget -- so without an
+         * aggregate the reads below can each claim the full allowance and blow
+         * the boot between them while no individual bound is exceeded. */
+        tpm_boot_budget_arm();
+
         struct tpm_enroll_gate_inputs gi = {
             .boot_path               = g_boot_info.boot_path,
             .boot_reason             = g_boot_info.boot_reason,
@@ -614,13 +623,30 @@ void boot_phase1(void)
             klog(LOG_WARN, "TPM",
                  "Baseline enroll (authority %s): status %d",
                  tpm_enroll_authority_label(gr.authority), (uint64_t)bs);
-            /* An enroll that failed because THIS KERNEL's own ABI identity is
-             * corrupt is a hard integrity failure, not a diagnostic. Only the
-             * verify branch below publishes a status, and it runs exclusively
-             * under !admit, so without this the enrolling boot would log the
-             * corruption and carry on under whatever status preceded it. */
-            if (bs == TPM_BASELINE_SELF_CORRUPT)
+            /* AN ENROLLING BOOT RUNS INSTEAD OF VERIFICATION, so anything it
+             * detects is the only chance this boot has to report it -- the
+             * verify branch below runs exclusively under !admit. Without this
+             * the enrolling boot logged a corrupt baseline, a wrong index
+             * definition, or its own corrupt ABI identity and then carried on
+             * under whatever status preceded it.
+             *
+             * The define call's own TPM_NV_MISMATCH is deliberately NOT part of
+             * this class: globally that status also covers a benign commit-
+             * counter race, and widening it is the regression the write path
+             * already paid for. */
+            /* UNBOUND is EXCLUDED here and only here: tpm_baseline_enroll
+             * returns it as an ordinary configuration refusal on a healthy
+             * authority-provisioned machine, so publishing MISMATCH for it
+             * would report tamper on a working box. On the verify path below
+             * it genuinely is a verdict. */
+            if (tpm_baseline_status_is_failure(bs) &&
+                bs != TPM_BASELINE_UNBOUND) {
+                klog(LOG_ERROR, "TPM",
+                     "Baseline enroll detected an integrity failure (status %d): "
+                     "not a clean first install",
+                     (uint64_t)bs);
                 tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0);
+            }
         } else if (g_boot_info.config.tpm_enroll) {
             /* Only report a refusal when enrollment was actually requested;
              * every ordinary boot refuses at CONFIG_DISABLED and saying so
@@ -644,10 +670,60 @@ void boot_phase1(void)
              * detail, so a reader can never catch the report with a fresh
              * verdict beside stale per-PCR values. A non-verdict return
              * (NO_TPM / TPMERR / BADARG) publishes nothing at all -- a machine
-             * that could not measure has not failed to match. */
+             * that could not measure has not failed to match.
+             *
+             * EVERY AUTHENTICITY VERDICT IS A VERDICT. TORN, RELABELED and
+             * UNBOUND all mean tpm_baseline_verify reached a conclusion and set
+             * `overall` to MISMATCH; only the repair differs. Leaving any of
+             * them unpublished lets a detected failure boot under whatever
+             * Phase 0 published, which is the one outcome that must never read
+             * as untampered -- and RELABELED is precisely the attack the bind
+             * record exists to catch. */
             if (bs == TPM_BASELINE_OK || bs == TPM_BASELINE_NO_BASELINE ||
-                bs == TPM_BASELINE_CORRUPT || bs == TPM_BASELINE_SELF_CORRUPT)
+                tpm_baseline_status_is_failure(bs))
                 tpm_integrity_publish_baseline(overall, pcr_status, pcr_n);
+
+            /* The three repairs are opposite, so they are named separately
+             * rather than left for an operator to infer from one status. */
+            if (bs == TPM_BASELINE_TORN)
+                /* Deliberately does NOT name one repair. This status collapses
+                 * three directions -- an uncommitted write, a torn pairing, an
+                 * impossible one -- and the enum's own contract says the
+                 * direction decides the repair. Completing an interrupted
+                 * commit and entering authorized recovery are different
+                 * actions, and prescribing the second for the first is
+                 * destructive over-recovery. The direction lives in the view's
+                 * tpm_pairing_t; tpm_baseline_verify does not yet pass it out,
+                 * which is filed. What IS safe to say unconditionally is the
+                 * one thing every direction shares. */
+                klog(LOG_ERROR, "TPM",
+                     "Baseline bind record and its commit counter DISAGREE: "
+                     "repair is AUTHORIZED and never a fresh enrollment");
+            else if (bs == TPM_BASELINE_RELABELED)
+                klog(LOG_ERROR, "TPM",
+                     "Baseline blob does NOT match its committed bind record: "
+                     "content was replaced under a valid record");
+            else if (bs == TPM_BASELINE_UNBOUND)
+                klog(LOG_WARN, "TPM",
+                     "Baseline has no authenticated bind record (legacy): "
+                     "authorized migration required, never auto-binding");
+            else if (bs == TPM_BASELINE_IDENTITY)
+                klog(LOG_ERROR, "TPM",
+                     "Baseline NV index failed its enrolled contract: the index "
+                     "answering is NOT the one enrolled");
+
+            /* Budget expiry collapses into NO_TPM by design (tpm_baseline.c
+             * nv_to_baseline): a TPM that merely answered too slowly must leave
+             * the verdict unpublished rather than report a false tamper. That
+             * is right for the VERDICT and useless for DIAGNOSIS, so the one
+             * fact the collapse destroys is logged here. Without it an
+             * exhausted boot is indistinguishable from a machine with no TPM at
+             * all. */
+            if (bs == TPM_BASELINE_NO_TPM && tpm_boot_budget_expired())
+                klog(LOG_WARN, "TPM",
+                     "Boot verified-read budget EXHAUSTED (%u ms aggregate): "
+                     "integrity verdict is UNVERIFIED, not clean",
+                     (uint64_t)TPM_BOOT_BUDGET_MS);
         }
         {
             struct boot_integrity_report ir;
@@ -655,6 +731,13 @@ void boot_phase1(void)
             klog(LOG_INFO, "TPM", "Boot integrity status: %s",
                  tpm_integrity_status_label(&ir));
         }
+
+        /* The deadline ends where the boot's verified reads end. Nothing else
+         * ends a boot, so leaving it armed would apply Phase 1's spent quota to
+         * every verified read the machine performs afterwards -- a runtime
+         * mark-good or a later attestation would be refused with a budget the
+         * boot, not they, had used up. */
+        tpm_boot_budget_disarm();
     }
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);

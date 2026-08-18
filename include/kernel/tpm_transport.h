@@ -314,6 +314,23 @@ struct tpm_t_test_state {
 struct tpm_t_test_state tpm_t_test_install(const struct tpm_t_io *io,
                                            int iface, int fast);
 
+/* The work_ms of the most recent SUCCESSFULLY ADMITTED tpm2_seq_run, together
+ * with the sequence generation it belonged to.
+ *
+ * A sequence's work budget is otherwise unobservable: a fake TPM answers
+ * instantly, so a caller that passed a budget three times larger than intended
+ * behaves identically and every suite stays green. The aggregate verified-read boot
+ * deadline (kernel/tpm_budget.h) clamps the final read sequence back to
+ * TPM_NV_OP_BUDGET_MS, and this is what lets that clamp be asserted rather than
+ * assumed.
+ *
+ * Recorded under the transport state lock and only once the sequence gate has
+ * been won, so a caller that was refused BUSY never overwrites the observation,
+ * and two CPUs cannot interleave a half-written one. The generation is returned
+ * alongside it so a fixture can prove it is reading the sequence it drove and
+ * not a later unrelated one. */
+void tpm_t_test_last_seq(uint32_t *out_work_ms, uint64_t *out_generation);
+
 /* Restore a snapshot captured by tpm_t_test_install(), putting back every
  * mutated field (io/iface/available/failed/fast/busy). Use this at test
  * teardown instead of re-installing with forced (NONE, 0) args. */
