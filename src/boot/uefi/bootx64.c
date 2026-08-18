@@ -15009,6 +15009,10 @@ static void net_http_probe(EFI_HANDLE dev_handle)
 
 #define SELF_MEASURE_SIZE_CAP   (8u * 1024u * 1024u) /* the shipped image is ~344 KB */
 #define SELF_MEASURE_CHUNK      (64u * 1024u)
+/* 256 CHAR16 covers every ESP path a loader is launched from with room to spare
+ * (`\EFI\BOOT\BOOTX64.EFI` is 21). It is a hard bound, not a truncation point:
+ * dpfp_extract returns DPFP_OVERFLOW and the measurement reports ABSENT, per the
+ * parse-buffer rule that a silently shortened path is worse than no path. */
 #define SELF_MEASURE_PATH_CHARS 256u
 #define SELF_MEASURE_DP_CAP     8192u   /* same bound net_dp_validated_size uses */
 
@@ -15043,6 +15047,8 @@ enum self_measure_status {
     SELF_MEASURE_NO_MEMORY,
     SELF_MEASURE_READ_FAILED,
     SELF_MEASURE_SHORT_READ,    /* file ended before FileSize bytes were read */
+    SELF_MEASURE_TRAILING_BYTES,/* data remained after the declared FileSize */
+    SELF_MEASURE_INFO_MALFORMED,/* GetInfo succeeded into a buffer too small to hold FileSize */
     SELF_MEASURE_SELFTEST_FAILED, /* the hash itself is wrong; publish nothing */
 };
 
@@ -15075,6 +15081,8 @@ static const char *self_measure_status_name(UINT8 st)
     case SELF_MEASURE_NO_MEMORY:       return "alloc-failed";
     case SELF_MEASURE_READ_FAILED:     return "read-failed";
     case SELF_MEASURE_SHORT_READ:      return "short-read";
+    case SELF_MEASURE_TRAILING_BYTES:  return "trailing-bytes";
+    case SELF_MEASURE_INFO_MALFORMED:  return "getinfo-malformed";
     case SELF_MEASURE_SELFTEST_FAILED: return "sha256-selftest-failed";
     default:                           return "unknown";
     }
@@ -15132,8 +15140,20 @@ static enum self_measure_status self_measure_hash_file(EFI_FILE_PROTOCOL *file,
                    ? (UINTN)remaining : (UINTN)SELF_MEASURE_CHUNK;
         UINTN got = want;
 
+        /* EXACT EFI_SUCCESS, not !EFI_ERROR: EFI_ERROR tests the high error bit
+         * only, so a positive WARNING status would pass it and let degraded
+         * firmware contribute bytes to a digest published as trustworthy. Every
+         * non-success here is a refusal instead. */
         status = file->Read(file, &got, chunk);
-        if (EFI_ERROR(status)) {
+        if (status != EFI_SUCCESS) {
+            gBS->FreePool(chunk);
+            return SELF_MEASURE_READ_FAILED;
+        }
+        /* UEFI 2.10 spec 13.5.2 says Read never returns more than requested, but
+         * `got` is firmware-written and this is a bare-metal target: taking it on
+         * trust would hash past the chunk allocation and underflow `remaining`.
+         * A firmware that violates the contract gets a refusal, not a read. */
+        if (got > want) {
             gBS->FreePool(chunk);
             return SELF_MEASURE_READ_FAILED;
         }
@@ -15147,6 +15167,30 @@ static enum self_measure_status self_measure_hash_file(EFI_FILE_PROTOCOL *file,
         sha256b_update(&ctx, chunk, (UINT64)got);
         remaining -= (UINT64)got;
     }
+    /* FileSize is metadata, not proof of EOF. A stale or hostile under-report
+     * would let the loop finish "successfully" over a PREFIX of the real file,
+     * and a prefix digest is indistinguishable from the whole-file one. One
+     * bounded probe past the declared end settles it: any byte still readable
+     * there means the declared length was not the file. */
+    {
+        UINTN probe_len = 1u;
+        UINT8 probe_byte = 0u;
+
+        status = file->Read(file, &probe_len, &probe_byte);
+        if (status != EFI_SUCCESS) {
+            /* The probe is the ONLY evidence that FileSize was not
+             * under-reported, so a failed probe leaves EOF UNVERIFIED. Reading
+             * that as EOF would publish a possible prefix digest as complete,
+             * which is the single outcome this whole path exists to prevent. */
+            gBS->FreePool(chunk);
+            return SELF_MEASURE_READ_FAILED;
+        }
+        if (probe_len != 0u) {
+            gBS->FreePool(chunk);
+            return SELF_MEASURE_TRAILING_BYTES;
+        }
+    }
+
     sha256b_final(&ctx, out);
     gBS->FreePool(chunk);
 
@@ -15212,15 +15256,25 @@ static void self_measure_run(void)
     }
 
     {
+        /* FileSize lives at offset 8, so the buffer must be able to HOLD it
+         * before it is read. Both sizes here are firmware-written: the probe
+         * result decides the allocation and the second call may lower it. A
+         * provider returning success into a 4-byte buffer would otherwise have
+         * its neighbouring pool bytes read as a file size, and a plausible one
+         * under the 8 MiB cap would drive a false successful measurement. */
+        const UINTN info_min = (UINTN)__builtin_offsetof(EFI_FILE_INFO, FileSize)
+                             + (UINTN)sizeof(UINT64);
+        UINTN info_cap = 0;
         UINTN info_size = 0;
         VOID *info_buf = (VOID *)0;
 
         status = file->GetInfo(file, &file_info_guid, &info_size, (VOID *)0);
-        if (status != EFI_BUFFER_TOO_SMALL || info_size == 0u) {
+        if (status != EFI_BUFFER_TOO_SMALL || info_size < info_min) {
             g_self_measure.status = (UINT8)SELF_MEASURE_INFO_FAILED;
             goto close_and_report;
         }
-        status = gBS->AllocatePool(EfiLoaderData, info_size, &info_buf);
+        info_cap = info_size;
+        status = gBS->AllocatePool(EfiLoaderData, info_cap, &info_buf);
         if (EFI_ERROR(status) || !info_buf) {
             g_self_measure.status = (UINT8)SELF_MEASURE_NO_MEMORY;
             goto close_and_report;
@@ -15229,6 +15283,11 @@ static void self_measure_run(void)
         if (EFI_ERROR(status)) {
             gBS->FreePool(info_buf);
             g_self_measure.status = (UINT8)SELF_MEASURE_INFO_FAILED;
+            goto close_and_report;
+        }
+        if (info_size < info_min || info_size > info_cap) {
+            gBS->FreePool(info_buf);
+            g_self_measure.status = (UINT8)SELF_MEASURE_INFO_MALFORMED;
             goto close_and_report;
         }
         file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
