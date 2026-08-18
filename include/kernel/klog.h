@@ -378,6 +378,17 @@ typedef struct {
 _Static_assert(sizeof(klog_crash_entry_t) == 164,
                "klog_crash_entry_t serialized layout must stay 164 bytes");
 
+/* Most entries the crash REGION can actually hold, and therefore the most the
+ * recovery path can ever produce. Derived from the region rather than from
+ * KLOG_RING_SIZE because the two are different bounds: the ring holds 1000
+ * entries in RAM, while 128 KiB of region minus its header holds 799 of them.
+ * Sizing the recovered-entry pool by the ring constant over-allocated 9 frames
+ * that nothing could ever fill. `klog_crash_persist` already clamps to this
+ * same arithmetic, so the two sides agree by construction. */
+#define KLOG_RECOVERED_MAX \
+    ((uint32_t)((KLOG_CRASH_PAGES * 4096u - sizeof(klog_crash_header_t)) / \
+                sizeof(klog_crash_entry_t)))
+
 /* Persist ring buffer to reserved physical memory (no kmalloc, no VFS).
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
@@ -428,14 +439,14 @@ void klog_crash_write_to_disk(void);
  * allocation failure is DEGRADED rather than fatal, so the pool can legitimately
  * be absent at runtime and every read must be able to answer "no entry". Returns
  * NULL when `pool` is NULL, when `index` is at or past `count`, or when `count`
- * exceeds the pool's KLOG_RING_SIZE capacity (corrupted bookkeeping must not
+ * exceeds the pool's KLOG_RECOVERED_MAX capacity (corrupted bookkeeping must not
  * become an out-of-bounds read). Pure: it reads no globals, which is what makes
  * the degraded contract assertable without calling boot infrastructure. */
 const klog_crash_entry_t *klog_recovered_at(const klog_crash_entry_t *pool,
                                             uint32_t count, uint32_t index);
 
 /* Is a recovered set coherent enough to serialize? Non-zero when `pool` and
- * `count` agree: a count with no pool behind it, or one past KLOG_RING_SIZE, is
+ * `count` agree: a count with no pool behind it, or one past KLOG_RECOVERED_MAX, is
  * corrupted bookkeeping and must not be written out, because the writer's open
  * TRUNCATES and clearing the count afterwards would discard the only in-memory
  * copy of the previous boot's evidence. An EMPTY set (count 0) is coherent;

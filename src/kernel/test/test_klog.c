@@ -1350,7 +1350,7 @@ static void test_klog_recovered_set_ok(void)
                 "absent pool with a nonzero count is incoherent");
     TEST_ASSERT(klog_recovered_set_ok((const klog_crash_entry_t *)0, 1) == 0,
                 "absent pool is incoherent at the SMALLEST nonzero count");
-    TEST_ASSERT(klog_recovered_set_ok(probe, KLOG_RING_SIZE + 1u) == 0,
+    TEST_ASSERT(klog_recovered_set_ok(probe, KLOG_RECOVERED_MAX + 1u) == 0,
                 "count past capacity is incoherent");
     TEST_ASSERT(klog_recovered_set_ok(probe, 0xFFFFFFFFu) == 0,
                 "count UINT32_MAX is incoherent");
@@ -1358,7 +1358,7 @@ static void test_klog_recovered_set_ok(void)
      * predicate that rejected everything, including every writable set. */
     TEST_ASSERT(klog_recovered_set_ok(probe, 2) != 0,
                 "control: pool with an in-range count is coherent");
-    TEST_ASSERT(klog_recovered_set_ok(probe, KLOG_RING_SIZE) != 0,
+    TEST_ASSERT(klog_recovered_set_ok(probe, KLOG_RECOVERED_MAX) != 0,
                 "control: count exactly at capacity is coherent");
     TEST_ASSERT(klog_recovered_set_ok((const klog_crash_entry_t *)0, 0) != 0,
                 "control: absent pool with count 0 is coherent, just empty");
@@ -1372,12 +1372,12 @@ static void test_klog_recovered_at_capacity_guard(void)
      * larger pool, and must not be turned into an out-of-bounds read. The
      * helper only computes an address and never dereferences, so passing a
      * short probe with an oversized count touches no memory. */
-    TEST_ASSERT(klog_recovered_at(probe, KLOG_RING_SIZE + 1u, 0) == (const klog_crash_entry_t *)0,
-                "count past KLOG_RING_SIZE refused");
+    TEST_ASSERT(klog_recovered_at(probe, KLOG_RECOVERED_MAX + 1u, 0) == (const klog_crash_entry_t *)0,
+                "count past KLOG_RECOVERED_MAX refused");
     /* Control: exactly at capacity is legal, so the refusal above is the
      * capacity guard firing and not an off-by-one that rejects the real max. */
-    TEST_ASSERT(klog_recovered_at(probe, KLOG_RING_SIZE, 0) == &probe[0],
-                "control: count == KLOG_RING_SIZE accepted");
+    TEST_ASSERT(klog_recovered_at(probe, KLOG_RECOVERED_MAX, 0) == &probe[0],
+                "control: count == KLOG_RECOVERED_MAX accepted");
 }
 
 void test_register_klog(void)

@@ -470,6 +470,7 @@ From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-
   - Not unit-testable as things stand: the allocation lives inside `klog_crash_recover()`, and `src/kernel/test/test_*.c` may not call live boot infrastructure. The injector itself already ships, so the gap is the CALL SITE and not the mechanism -> XREF: `00-infrastructure/TODO-03 §6` (item: "Extended to PMM: 4 `pmm_alloc_fail_*` fields in `per_cpu_data`").
   - Also assert the overlap path, which is the harder half: a pool run that exactly or partially covers the previous crash region must be freed untouched and must NOT erase it. That case is what round 1 of this section's adversarial review caught.
   - Assert this boot's crash REGION is still allocated afterwards. The two allocations are independent, and a regression conflating them would disable crash persistence for the NEXT boot while every existing test stayed green.
+  - Cover the allocation-PRIORITY path specifically, under a constrained contiguous heap: the 41-frame recovered pool is taken before the 32-frame crash region, so a fragmentation test must prove recovery can never leave this boot with crash logging unarmed, and that the fallback which releases the pool actually re-arms it.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
