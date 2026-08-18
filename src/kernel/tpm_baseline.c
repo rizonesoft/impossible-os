@@ -349,7 +349,26 @@ static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
     }
 }
 
+/* The bare owner-auth write. Kept as a separate INTERNAL entry point so the
+ * authorized path can reuse it without tripping the guard that exists to stop
+ * an UNauthorized caller reaching it. */
+static tpm_baseline_status_t tpm_baseline_enroll_unauthenticated(uint32_t nv_index,
+                                                                 uint16_t alg);
+
 tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
+{
+    /* REFUSE the unauthenticated path once an authority is provisioned: this
+     * function writes the blob under owner auth and nothing else, so completing
+     * it would leave the bind record describing the PREVIOUS blob and the very
+     * next verify would report UNBOUND. tpm_baseline_enroll_bound is the
+     * authorized path. */
+    if (tpm_authz_provisioned())
+        return TPM_BASELINE_UNBOUND;
+    return tpm_baseline_enroll_unauthenticated(nv_index, alg);
+}
+
+static tpm_baseline_status_t tpm_baseline_enroll_unauthenticated(uint32_t nv_index,
+                                                                 uint16_t alg)
 {
     struct tpm_baseline b;
     uint8_t old_blob[sizeof(struct tpm_baseline)];
@@ -397,6 +416,63 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
         return nv_to_baseline(nv);
     nv = tpm_nv_write(nv_index, 0u, (const uint8_t *)&b, (uint16_t)sizeof(b));
     return nv_to_baseline(nv);
+}
+
+tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
+                                                const struct tpm_authz_transition *tr)
+{
+    struct tpm_baseline b;
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    uint16_t got = 0;
+    uint32_t len;
+    tpm_baseline_status_t st;
+    tpm_nv_status_t nv;
+
+    if (!tr)
+        return TPM_BASELINE_BADARG;
+    if (!tpm_authz_provisioned())
+        return TPM_BASELINE_UNBOUND;
+    /* Validate the GRANT before touching NV. A non-NULL transition used to be
+     * enough to reach the owner write, with the grant's structure only checked
+     * later inside the bind -- so an invalid or stale grant changed the
+     * baseline and was refused afterwards, which is the wrong order for an
+     * operation whose first half is not undoable. */
+    if (tpm_authz_grant_wellformed(tr) != TPM_NV_OK)
+        return TPM_BASELINE_BADARG;
+
+    /* Blob FIRST, bind SECOND, and the order is the safety. The bind record's
+     * digest covers the blob, so a bind that lands describes bytes already on
+     * the device. If the bind fails, verify reports UNBOUND or MISMATCH and the
+     * machine is fail-closed against a blob nobody authorized -- which is
+     * recoverable by re-binding. Binding first would authenticate a blob that
+     * may never be written. */
+    st = tpm_baseline_enroll_unauthenticated(nv_index, alg);
+    if (st != TPM_BASELINE_OK)
+        return st;
+
+    /* Bind the bytes that are ACTUALLY ON THE DEVICE, by reading them back.
+     *
+     * The first version of this function took a SECOND snapshot and bound that,
+     * which could never match: the stored blob carries the monotonic generation
+     * the enroll assigned and a fresh snapshot's generation is zero, so every
+     * successful rotation would have produced a baseline its own verifier
+     * rejects. Re-deriving the bytes is the wrong instrument even where it looks
+     * equivalent -- the bind record's whole claim is about what is STORED, so it
+     * has to be computed from what is stored.
+     *
+     * The readback validates too, so a write the TPM reported as successful but
+     * stored differently is caught here rather than at the next boot. */
+    nv = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof blob, &got);
+    if (nv != TPM_NV_OK)
+        return nv_to_baseline(nv);
+    if (got != (uint16_t)sizeof blob || !tpm_baseline_validate(blob, got, &b))
+        return TPM_BASELINE_CORRUPT;
+    len = (uint32_t)got;
+
+    nv = tpm_baseline_bind_write(blob, len, tr);
+    if (nv != TPM_NV_OK)
+        return nv_to_baseline(nv);
+    return TPM_BASELINE_OK;
 }
 
 tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,

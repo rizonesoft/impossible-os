@@ -116,11 +116,30 @@ struct tpm_authz_transition {
     struct tpm_authz_grant commit; /* authorizes NV_Increment of the counter */
 };
 
-/* Install the authority for this boot. Pure bookkeeping; no transport. Passing
- * NULL clears it back to unprovisioned, which is what the tests use to prove the
- * fail-closed path. Returns TPM_NV_OK or TPM_NV_BADARG (a non-NULL authority
- * with an empty public area is a misconfiguration, not an unprovisioning). */
+/* Is this transition structurally usable? Both halves must carry an approved
+ * policy of the right size and a signature. Exported for a consumer whose first
+ * act is irreversible: it must be able to refuse a malformed grant BEFORE the
+ * mutation, not after. Returns TPM_NV_OK or TPM_NV_BADARG. Pure. */
+tpm_nv_status_t tpm_authz_grant_wellformed(const struct tpm_authz_transition *tr);
+
+/* Install the authority for this boot. ONE-WAY: once an authority is installed
+ * this returns TPM_NV_AUTH for every later call, including a NULL one.
+ *
+ * That is the enforcement behind everything else here. Both the plain baseline
+ * enroll's refusal and the verifier's bind check ask tpm_authz_provisioned(),
+ * so a clearable authority would make the whole boundary optional to any caller
+ * that could reach this setter. Rotating a live authority key is a separate
+ * question with its own authorization, not a store.
+ *
+ * Returns TPM_NV_OK, TPM_NV_AUTH when an authority is already installed, or
+ * TPM_NV_BADARG when the argument is a misconfiguration (empty or too-short
+ * public area, or a NULL policyRef carrying a length). Pure; no transport. */
 tpm_nv_status_t tpm_authz_set_authority(const struct tpm_authz_authority *auth);
+
+#ifdef KERNEL_TESTS
+/* Test-only teardown, because the setter above is deliberately one-way. */
+void tpm_authz_test_clear_authority(void);
+#endif
 
 /* 1 when an authority is installed. A caller deciding whether an authorized
  * rotation is even offerable asks this rather than attempting one and reading

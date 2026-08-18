@@ -701,6 +701,18 @@ tpm_nv_status_t tpm_nv_read_identity_seq(tpm2_seq_t seq, uint32_t nv_index,
 tpm_nv_status_t tpm_nv_read_counter_seq(tpm2_seq_t seq, uint32_t nv_index,
                                         uint64_t *out);
 
+/* Verified teardown of ONE handle (session or transient object) inside an open
+ * sequence. Spends the sequence's separate cleanup allowance, retries a bounded
+ * number of times, and accepts only proof that the handle is gone: SUCCESS, or
+ * "no such handle". An unproven teardown is logged and the transport is left
+ * usable rather than disabled.
+ *
+ * Any code that allocates a TPM handle must release it through THIS, not
+ * through a bare FlushContext on the ordinary work budget: that path cannot run
+ * once the work budget is spent, and discarding its result turns a transient
+ * TPM_RC_RETRY into a permanent leak from a very small pool. */
+void tpm_nv_flush_handle(tpm2_seq_t seq, uint32_t handle);
+
 #ifdef KERNEL_TESTS
 /* ---- Test seam (kernel unit tests only) ----
  * Shrink the per-operation budget so the expiry / cleanup-reserve paths are
@@ -961,12 +973,23 @@ tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap);
  * TRIAL-session PolicyAuthorize takes when there is no signature to check. */
 #define TPM2_ST_VERIFIED          0x8022u
 #define TPM2_TK_VERIFIED_NULL_LEN 8u
+/* Upper bound on a marshalled TPMT_TK_VERIFIED: tag(2) + hierarchy(4) +
+ * digest TPM2B(2 + at most a 64-byte hash). A builder that trusted an unbounded
+ * length could wrap its total and write past its own buffer, so the bound is
+ * declared here rather than left to whatever the current parser happens to
+ * produce. */
+#define TPM2_TK_VERIFIED_MAX_LEN  72u
 
 /* TPM_EO_* -- the comparison PolicyNV applies. Only the two orderings this
  * layer needs are defined; adding an unused operand set would be a wire
  * constant with no caller to keep it honest. */
 #define TPM2_EO_EQ                0x0000u
-#define TPM2_EO_UNSIGNED_GE       0x0003u
+/* TPM_EO assigns 0x0003 to UNSIGNED_GT and 0x0007 to UNSIGNED_GE; an earlier
+ * revision of this header gave GE the GT value, which no current caller used
+ * and which would have silently enforced a strict comparison for whoever
+ * reached for it next. Both are defined so the pair is checkable. */
+#define TPM2_EO_UNSIGNED_GT       0x0003u
+#define TPM2_EO_UNSIGNED_GE       0x0007u
 
 /* Compute cpHash for a command, per TPM 2.0 Part 1 section 18.7 equation (16):
  *

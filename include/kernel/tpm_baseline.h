@@ -222,6 +222,32 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
  * check the recovery + enroll config gate first. */
 tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg);
 
+/* Enroll or rotate a baseline AND its authenticated bind record, as one
+ * operation. This is the only correct path once an update authority is
+ * provisioned: tpm_baseline_enroll writes the blob under owner auth and nothing
+ * else, so using it after a bind exists would leave the bind describing the
+ * PREVIOUS blob and the next verify would report TPM_BASELINE_UNBOUND. That is
+ * why the plain enroll now REFUSES with UNBOUND while an authority is
+ * installed, rather than quietly breaking the machine it was asked to update.
+ *
+ * Order is blob then bind, deliberately: the bind digest covers the blob, so a
+ * bind that lands describes bytes already on the device, and a bind that fails
+ * leaves the machine fail-closed and re-bindable rather than authenticating a
+ * blob that may never have been written.
+ *
+ * The bind is computed over the blob READ BACK from the index, never over a
+ * freshly derived one. Re-deriving looks equivalent and is not: the stored
+ * blob carries the generation the enroll assigned, so a second snapshot would
+ * bind bytes that can never match and every rotation would verify as a
+ * mismatch.
+ *
+ * Returns TPM_BASELINE_OK, TPM_BASELINE_BADARG on a NULL transition,
+ * TPM_BASELINE_UNBOUND when no authority is provisioned, or whatever the
+ * enroll or the authorized bind reports. */
+struct tpm_authz_transition;
+tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
+                                                const struct tpm_authz_transition *tr);
+
 /* Verify: read the blob from `nv_index`, validate it, snapshot the current
  * state, and compare. When a verdict is produced, *out_overall is set to the
  * BOOT_INTEGRITY_* value (VERIFIED on a full match, MISMATCH on any difference

@@ -85,13 +85,17 @@ static struct tpm_authz_authority s_authority;
 
 tpm_nv_status_t tpm_authz_set_authority(const struct tpm_authz_authority *auth)
 {
-    if (!auth) {
-        s_authority.public_area = 0;
-        s_authority.public_len = 0u;
-        s_authority.policy_ref = 0;
-        s_authority.policy_ref_len = 0u;
-        return TPM_NV_OK;
-    }
+    /* ONE-WAY. Both tpm_baseline_enroll's refusal and tpm_baseline_verify's
+     * bind check key off tpm_authz_provisioned(), so a caller that could clear
+     * or replace the authority could turn the entire boundary off at runtime --
+     * which would make every guarantee above conditional on nobody reaching
+     * this setter. An earlier revision only ASSERTED write-once in a comment.
+     * Replacing a live authority is a key-rotation question with its own
+     * authorization, not a plain store. */
+    if (tpm_authz_provisioned())
+        return TPM_NV_AUTH;
+    if (!auth)
+        return TPM_NV_OK;   /* already unprovisioned; nothing to clear */
     /* A non-NULL authority with nothing in it is a MISCONFIGURATION, not a
      * request to unprovision: accepting it would install an authority whose
      * Name is the hash of zero bytes and quietly make every grant check
@@ -107,6 +111,20 @@ tpm_nv_status_t tpm_authz_set_authority(const struct tpm_authz_authority *auth)
     s_authority = *auth;
     return TPM_NV_OK;
 }
+
+#ifdef KERNEL_TESTS
+void tpm_authz_test_clear_authority(void)
+{
+    /* Test-only teardown. The production setter is one-way on purpose, so a
+     * suite that installs an authority needs an explicit way back to the
+     * unprovisioned state; putting it behind KERNEL_TESTS keeps that door shut
+     * in a shipping kernel. */
+    s_authority.public_area = 0;
+    s_authority.public_len = 0u;
+    s_authority.policy_ref = 0;
+    s_authority.policy_ref_len = 0u;
+}
+#endif
 
 int tpm_authz_provisioned(void)
 {
@@ -205,12 +223,8 @@ static int authz_policy_digest_seq(tpm2_seq_t seq, void *vctx)
          * parser rejected. Recover the raw handle for cleanup rather than
          * leaking it for the rest of the boot. */
         uint32_t leaked = tpm2_rsp_session_handle(rsp, rlen);
-        if (leaked != 0u) {
-            n = tpm2_build_flush_context(cmd, sizeof cmd, leaked);
-            if (n != 0u)
-                (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp,
-                                               &rlen, &st, &rc);
-        }
+        if (leaked != 0u)
+            tpm_nv_flush_handle(seq, leaked);
         c->st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -246,11 +260,11 @@ static int authz_policy_digest_seq(tpm2_seq_t seq, void *vctx)
     c->st = (dlen == (int)SHA256_DIGEST_LEN) ? TPM_NV_OK : TPM_NV_TRANSPORT;
 
 flush:
-    /* Single cleanup on every path: an abandoned trial session otherwise holds
-     * a TPM session slot for the rest of the boot, and TPMs have very few. */
-    n = tpm2_build_flush_context(cmd, sizeof cmd, session);
-    if (n != 0u)
-        (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc);
+    /* Single cleanup on every path, through the VERIFIED teardown: an abandoned
+     * trial session otherwise holds a TPM session slot for the rest of the boot,
+     * and a bare FlushContext on the work budget cannot even run once that
+     * budget is spent. */
+    tpm_nv_flush_handle(seq, session);
     return 0;
 }
 
@@ -459,12 +473,8 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
     session = tpm2_parse_start_auth_session(rsp, rlen);
     if (session == 0u) {
         uint32_t leaked = tpm2_rsp_session_handle(rsp, rlen);
-        if (leaked != 0u) {
-            n = tpm2_build_flush_context(cmd, sizeof cmd, leaked);
-            if (n != 0u)
-                (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp,
-                                               &rlen, &st, &rc);
-        }
+        if (leaked != 0u)
+            tpm_nv_flush_handle(seq, leaked);
         st = TPM_NV_TRANSPORT;
         goto flush_key;
     }
@@ -500,28 +510,15 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
     /* The loaded key has done its job the moment the ticket is consumed, so it
      * is flushed here rather than held for the rest of the sequence: TPMs have
      * very few transient object slots and the caller still has work to do. */
-    n = tpm2_build_flush_context(cmd, sizeof cmd, key_handle);
-    if (n != 0u)
-        (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc);
+    tpm_nv_flush_handle(seq, key_handle);
     *out_session = session;
     return TPM_NV_OK;
 
 flush_all:
-    n = tpm2_build_flush_context(cmd, sizeof cmd, session);
-    if (n != 0u) {
-        tpm_nv_status_t ignored; uint32_t irc = 0, irl = 0;
-        (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &irl,
-                                       &ignored, &irc);
-    }
+    tpm_nv_flush_handle(seq, session);
 flush_key:
-    if (key_handle != 0u) {
-        n = tpm2_build_flush_context(cmd, sizeof cmd, key_handle);
-        if (n != 0u) {
-            tpm_nv_status_t ignored; uint32_t irc = 0, irl = 0;
-            (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &irl,
-                                           &ignored, &irc);
-        }
-    }
+    if (key_handle != 0u)
+        tpm_nv_flush_handle(seq, key_handle);
     return st;
 }
 
@@ -561,6 +558,20 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
     if (!name_ok) { c->st = TPM_NV_MISMATCH; return 0; }
     st = tpm_nv_identity_match(c->contract, &pub);
     if (st != TPM_NV_OK) { c->st = st; return 0; }
+
+    /* THE LIFECYCLE CHECK, and it is not optional. tpm_nv_identity_match
+     * normalizes TPMA_NV_WRITTEN away because it is not a definition property,
+     * so a byte-identical destroy-and-recreate passes it: the definition IS the
+     * enrolled one, because the attacker copied it. What separates the two is
+     * that a freshly defined index reads back UNWRITTEN.
+     *
+     * Without this a read falls through to an NV_Read reporting UNINIT, and
+     * UNINIT downstream means "no record yet" -- which is exactly how a
+     * destroyed anchor gets laundered into a first enrollment. */
+    if (c->contract->expect_written && !(pub.attrs & TPMA_NV_WRITTEN)) {
+        c->st = TPM_NV_RECREATED;
+        return 0;
+    }
 
     /* cpHash covers commandCode || Name(authHandle) || Name(nvIndex) ||
      * parameters. For NV_Write both handles are the index itself, so its live
@@ -607,9 +618,7 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
 
     /* The policy session is consumed by the command it authorized, so it is
      * flushed before the readback rather than reused. */
-    n = tpm2_build_flush_context(cmd, sizeof cmd, session);
-    if (n != 0u)
-        (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc);
+    tpm_nv_flush_handle(seq, session);
     session = 0u;
 
     /* 4. Read the bytes back before committing to them. A write the TPM
@@ -672,11 +681,8 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
     c->st = TPM_NV_OK;
 
 flush:
-    if (session != 0u) {
-        n = tpm2_build_flush_context(cmd, sizeof cmd, session);
-        if (n != 0u)
-            (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc);
-    }
+    if (session != 0u)
+        tpm_nv_flush_handle(seq, session);
     return 0;
 }
 
@@ -684,6 +690,16 @@ static int grant_ok(const struct tpm_authz_grant *g)
 {
     return g && g->approved_policy && g->approved_len == SHA256_DIGEST_LEN &&
            g->signature && g->sig_len != 0u;
+}
+
+tpm_nv_status_t tpm_authz_grant_wellformed(const struct tpm_authz_transition *tr)
+{
+    /* Exported so a consumer whose first act is IRREVERSIBLE can check the
+     * grant before it mutates anything, rather than discovering the grant was
+     * malformed after the write it cannot take back. */
+    if (!tr || !grant_ok(&tr->write) || !grant_ok(&tr->commit))
+        return TPM_NV_BADARG;
+    return TPM_NV_OK;
 }
 
 tpm_nv_status_t tpm_authz_write_record(uint32_t nv_index, uint32_t counter_index,
@@ -783,6 +799,20 @@ static int authz_read_seq(tpm2_seq_t seq, void *vctx)
     if (!name_ok) { c->st = TPM_NV_MISMATCH; return 0; }
     st = tpm_nv_identity_match(c->contract, &pub);
     if (st != TPM_NV_OK) { c->st = st; return 0; }
+
+    /* THE LIFECYCLE CHECK, and it is not optional. tpm_nv_identity_match
+     * normalizes TPMA_NV_WRITTEN away because it is not a definition property,
+     * so a byte-identical destroy-and-recreate passes it: the definition IS the
+     * enrolled one, because the attacker copied it. What separates the two is
+     * that a freshly defined index reads back UNWRITTEN.
+     *
+     * Without this a read falls through to an NV_Read reporting UNINIT, and
+     * UNINIT downstream means "no record yet" -- which is exactly how a
+     * destroyed anchor gets laundered into a first enrollment. */
+    if (c->contract->expect_written && !(pub.attrs & TPMA_NV_WRITTEN)) {
+        c->st = TPM_NV_RECREATED;
+        return 0;
+    }
 
     /* OWNERREAD, so authHandle is the owner hierarchy. The index handle would
      * be AUTHREAD, which these contracts deliberately do not grant. */
@@ -891,28 +921,25 @@ tpm_nv_status_t tpm_ab_floor_advance(uint32_t new_version,
     if (!tpm_authz_provisioned())
         return TPM_NV_UNAVAIL;
 
+    /* An ADVANCE requires a floor to advance FROM. Every non-OK status is
+     * returned as itself, including NOTFOUND and UNINIT.
+     *
+     * An earlier draft treated those two as "no floor yet" and wrote a fresh
+     * record over them, which is the laundering this section exists to stop: a
+     * destroyed anchor and an unprovisioned one are indistinguishable from
+     * here, so writing a first floor on top of either hands an attacker the
+     * recovery path. First provisioning is a DIFFERENT operation -- define the
+     * index under its authPolicy, then make the first authorized write -- and
+     * an advance may not perform it by accident.
+     *
+     * The version refusal below is a convenience, not the boundary: the
+     * boundary is that the authority granted THIS record, and a lower version
+     * reaching the TPM would fail there too. */
     st = tpm_ab_floor_read(&cur_version, &counter);
-    if (st == TPM_NV_OK) {
-        /* Local refusal BEFORE spending a transaction. This is a convenience,
-         * not the boundary: the boundary is that the authority granted THIS
-         * record, and a lower version reaching the TPM would fail there too. */
-        if (new_version < cur_version)
-            return TPM_NV_MISMATCH;
-    } else if (st != TPM_NV_UNINIT && st != TPM_NV_NOTFOUND) {
-        /* Anything other than "no floor yet" is a real failure and must not be
-         * papered over by writing a fresh floor on top of it -- that is how a
-         * rollback gets laundered into a first install. */
+    if (st != TPM_NV_OK)
         return st;
-    } else {
-        /* No floor yet: the counter still has to be read, because the record's
-         * generation must be the value the counter will hold AFTER the commit
-         * and a fresh counter does not start at zero. */
-        st = tpm_nv_read_counter(TPM_NV_INDEX_AB_SEQ, &counter);
-        if (st == TPM_NV_UNINIT)
-            counter = 0u;
-        else if (st != TPM_NV_OK)
-            return st;
-    }
+    if (new_version < cur_version)
+        return TPM_NV_MISMATCH;
 
     memset(&payload, 0, sizeof payload);
     payload.security_version = new_version;
@@ -975,10 +1002,13 @@ tpm_nv_status_t tpm_baseline_bind_write(const uint8_t *blob, uint32_t blob_len,
     if (!tpm_authz_provisioned())
         return TPM_NV_UNAVAIL;
 
+    /* Same rule as the floor: a counter that cannot be read is not a counter at
+     * zero. UNINIT is reported rather than synthesized, because the first
+     * increment of a recreated index may land far above any previous value, and
+     * conflating "never incremented" with "zero" is how a rollback is laundered
+     * -- which is exactly what tpm_nv_read_counter's own contract says. */
     st = tpm_nv_read_counter(TPM_NV_INDEX_BASELINE_GEN, &counter);
-    if (st == TPM_NV_UNINIT)
-        counter = 0u;
-    else if (st != TPM_NV_OK)
+    if (st != TPM_NV_OK)
         return st;
 
     memset(&payload, 0, sizeof payload);

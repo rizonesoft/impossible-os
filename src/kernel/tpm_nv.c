@@ -2295,14 +2295,25 @@ uint32_t tpm2_build_policy_authorize(uint8_t *buf, uint32_t cap,
     /* header(10) + policySession(4) + approvedPolicy TPM2B(2+n) +
      * policyRef TPM2B(2+n) + keySign TPM2B_NAME(2+n) + checkTicket (already
      * marshalled TPMT_TK_VERIFIED bytes). */
-    uint32_t total = 10u + 4u + 2u + (uint32_t)approved_len +
-                     2u + (uint32_t)policy_ref_len +
-                     2u + (uint32_t)key_sign_len + ticket_len;
+    uint32_t total;
     uint32_t off;
     uint16_t i;
     uint32_t j;
 
-    if (!buf || cap < total || policy_session == 0u)
+    if (!buf || policy_session == 0u)
+        return 0;
+    /* BOUND the ticket before it enters the arithmetic. ticket_len is a
+     * uint32_t and every other term is a uint16_t, so an unbounded value wraps
+     * `total` below `cap`, sails through the capacity check, and the copy loop
+     * then writes past the buffer. This function is exported, so "the parser
+     * only ever produces small tickets" is not a safety argument -- the bound
+     * belongs here, ahead of the addition it protects. */
+    if (ticket_len == 0u || ticket_len > TPM2_TK_VERIFIED_MAX_LEN)
+        return 0;
+    total = 10u + 4u + 2u + (uint32_t)approved_len +
+            2u + (uint32_t)policy_ref_len +
+            2u + (uint32_t)key_sign_len + ticket_len;
+    if (cap < total)
         return 0;
     /* An EMPTY approved policy or an ABSENT key Name would marshal cleanly and
      * assert nothing: PolicyAuthorize would then re-extend the digest with a
@@ -2312,7 +2323,7 @@ uint32_t tpm2_build_policy_authorize(uint8_t *buf, uint32_t cap,
         return 0;
     if (!key_sign || key_sign_len == 0u)
         return 0;
-    if (!ticket || ticket_len == 0u)
+    if (!ticket)
         return 0;
     if (!policy_ref && policy_ref_len != 0u)
         return 0;
@@ -2446,6 +2457,18 @@ tpm_nv_status_t tpm2_parse_verify_signature(const uint8_t *rsp, uint32_t len,
         out_ticket[i] = rsp[poff + i];
     *out_len = plen;
     return TPM_NV_OK;
+}
+
+void tpm_nv_flush_handle(tpm2_seq_t seq, uint32_t handle)
+{
+    /* The ONE teardown. Exported rather than reimplemented because the
+     * discipline is the whole value: it spends the sequence's separate CLEANUP
+     * allowance (so a mandatory flush is still possible after the work budget
+     * expires), it retries, and it accepts only PROOF -- SUCCESS, or "no such
+     * handle". A caller that submits FlushContext through the ordinary path and
+     * discards the result leaks a handle on every budget expiry or transient
+     * retry, and TPMs have very few object and session slots. */
+    nv_flush(seq, handle);
 }
 
 /* ---- In-sequence read variants ----
