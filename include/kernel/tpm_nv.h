@@ -41,12 +41,15 @@
 
 /* ---- Permanent / reserved handles (TPM 2.0 Part 2) ---- */
 #define TPM_RH_OWNER     0x40000001u  /* storage (owner) hierarchy */
+#define TPM_RH_PLATFORM  0x4000000Cu  /* platform hierarchy */
 #define TPM_RH_NULL      0x40000007u  /* null hierarchy / no key */
 #define TPM_RS_PW        0x40000009u  /* password authorization session */
 
 /* ---- NV / session command codes (TPM 2.0 Part 2) ---- */
+#define TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL 0x0000011Fu
 #define TPM2_CC_NV_UNDEFINE_SPACE 0x00000122u
 #define TPM2_CC_NV_DEFINE_SPACE   0x0000012Au
+#define TPM2_CC_POLICY_COMMAND_CODE 0x0000016Cu
 #define TPM2_CC_NV_INCREMENT      0x00000134u
 #define TPM2_CC_NV_WRITE          0x00000137u
 #define TPM2_CC_NV_WRITE_LOCK     0x00000138u
@@ -179,6 +182,58 @@ _Static_assert(TPMA_NV_TYPE(TPM_NT_PIN_PASS) == 0x90u,
 #define TPM_NV_INDEX_OS_DATA  0x01800200u
 #define TPM_NV_INDEX_BASELINE 0x01800201u
 
+/* ---- The two anti-rollback anchors, and why they are never one value ----
+ *
+ * BASELINE_GEN is a TPM_NT_COUNTER that advances by EXACTLY ONE per authorized
+ * baseline rotation and stays bound to the blob it describes. AB_SEQ is a
+ * separate TPM_NT_COUNTER that advances by exactly one per authorized A/B floor
+ * transaction. Sharing one counter between them would make each consumer's
+ * invariant unenforceable: a baseline rotation would silently satisfy a floor
+ * advance and vice versa, so "the counter moved" would stop meaning "MY record
+ * was authorized to change".
+ *
+ * AB_FLOOR is deliberately NOT a counter. The A/B security version may JUMP
+ * (a fresh install at version 500, an upgrade skipping releases), and a TPM
+ * counter can only be advanced one step at a time by TPM2_NV_Increment -- so a
+ * counter cannot represent the value at all. The VALUE lives in this ordinary
+ * authenticated DATA index and the UPDATE SEQUENCE lives in AB_SEQ; the record
+ * content and the authorization that binds the two are owned elsewhere (the
+ * authorized-record-transition work), not by this module. */
+#define TPM_NV_INDEX_BASELINE_GEN 0x01800202u  /* TPM_NT_COUNTER, +1 per rotation */
+#define TPM_NV_INDEX_AB_SEQ       0x01800203u  /* TPM_NT_COUNTER, +1 per floor txn */
+#define TPM_NV_INDEX_AB_FLOOR     0x01800204u  /* ordinary data: the version record */
+
+/* Bytes the A/B floor record occupies. The record LAYOUT is not this module's
+ * to define; the index it lives in is, and an index cannot be defined without a
+ * size. Sized to hold the paired (update sequence, security version) tuple plus
+ * the digest that authorizes the transition, with room the record owner can
+ * spend without an index migration. */
+#define TPM_NV_AB_FLOOR_SIZE 96u
+
+/* Owner-defined NV indices live in the TPM_HT_NV_INDEX space: the high byte of
+ * the handle is TPM_HT_NV_INDEX (0x01). A handle outside it is not an NV index
+ * at all, and every handle above must be DISTINCT -- two anchors sharing a
+ * handle is precisely the collapse the two-index contract exists to prevent,
+ * and it would be invisible at runtime because both would simply work. */
+#define TPM_HT_NV_INDEX 0x01u
+_Static_assert((TPM_NV_INDEX_OS_DATA >> 24) == TPM_HT_NV_INDEX &&
+               (TPM_NV_INDEX_BASELINE >> 24) == TPM_HT_NV_INDEX &&
+               (TPM_NV_INDEX_BASELINE_GEN >> 24) == TPM_HT_NV_INDEX &&
+               (TPM_NV_INDEX_AB_SEQ >> 24) == TPM_HT_NV_INDEX &&
+               (TPM_NV_INDEX_AB_FLOOR >> 24) == TPM_HT_NV_INDEX,
+               "TPM NV index handle outside the TPM_HT_NV_INDEX space");
+_Static_assert(TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE &&
+               TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_BASELINE_GEN &&
+               TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_AB_SEQ &&
+               TPM_NV_INDEX_OS_DATA != TPM_NV_INDEX_AB_FLOOR &&
+               TPM_NV_INDEX_BASELINE != TPM_NV_INDEX_BASELINE_GEN &&
+               TPM_NV_INDEX_BASELINE != TPM_NV_INDEX_AB_SEQ &&
+               TPM_NV_INDEX_BASELINE != TPM_NV_INDEX_AB_FLOOR &&
+               TPM_NV_INDEX_BASELINE_GEN != TPM_NV_INDEX_AB_SEQ &&
+               TPM_NV_INDEX_BASELINE_GEN != TPM_NV_INDEX_AB_FLOOR &&
+               TPM_NV_INDEX_AB_SEQ != TPM_NV_INDEX_AB_FLOOR,
+               "TPM NV index handles must be pairwise distinct");
+
 /* Wall-clock budget the session-cleanup FlushContext waits for the transport
  * busy gate to clear (matches the longest contending sequence -- the RNG
  * bounded-collect budget). Bounds the no-leak cleanup wait. */
@@ -245,6 +300,23 @@ typedef enum {
                              * the transport stays usable. */
     TPM_NV_MISMATCH  = 14,  /* index exists with a DIFFERENT public area than the
                              * one requested -- never silently reused */
+    TPM_NV_CONTRACT  = 15,  /* the ENROLLED identity contract is itself
+                             * malformed. Distinct from BADARG on purpose:
+                             * BADARG means the CALLER passed something wrong
+                             * and no transaction was issued, whereas this means
+                             * PERSISTED state is corrupt, which is an
+                             * authorized-recovery question rather than a
+                             * programming error, and can be reported after a
+                             * transaction has already run. */
+    TPM_NV_RECREATED = 16,  /* the index is present, its Name is consistent and
+                             * its DEFINITION matches the enrolled contract, but
+                             * enrollment recorded it as written and the live
+                             * index is not -- so it was destroyed and recreated.
+                             * Never conflate this with TPM_NV_UNINIT: an
+                             * uninitialized index reads as "no record yet",
+                             * which downstream maps to first enrollment, and
+                             * that is exactly how a destroyed anchor gets
+                             * laundered into a fresh install. */
 } tpm_nv_status_t;
 
 /* Classify a raw TPM2 response code into tpm_nv_status_t. Format-first: a
@@ -417,6 +489,17 @@ void tpm_nv_baseline_pcr_select(uint8_t out_sel[3]);
  * one validator gates every session-authorized success. */
 int tpm_session_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_off);
 
+/* Same, for a command carrying n_sessions authorizations. A TPM2 response
+ * carries exactly as many TPMS_AUTH_RESPONSE structures as the command carried
+ * authorizations, so a two-authorization command (NV_UndefineSpaceSpecial: the
+ * index under its own policy, then the platform hierarchy) answers with TWO --
+ * and the one-session validator above rejects that success as malformed. The
+ * count is a property of the COMMAND, so it is supplied by the builder's caller
+ * rather than guessed from the response. n_sessions == 0 is a caller error and
+ * returns 0. tpm_session_auth_response_ok is exactly this at n_sessions 1. */
+int tpm_session_auth_response_n_ok(const uint8_t *rsp, uint32_t size,
+                                   uint32_t auth_off, uint32_t n_sessions);
+
 /* Submit one session-authorized TPM2 command and classify the response. On
  * TPM_NV_OK leaves rsp intact (+ *out_rlen) for the caller to parse; validates
  * the response code AND, for ST_SESSIONS successes, the response auth area.
@@ -441,6 +524,19 @@ int tpm_session_cmd_exec_seq(tpm2_seq_t seq,
                              const uint8_t *cmd, uint32_t n, uint8_t *rsp,
                              uint32_t cap, uint32_t *out_rlen,
                              tpm_nv_status_t *out_st, uint32_t *out_rc);
+
+/* Same, for a command carrying n_sessions authorizations: the success-path
+ * response-envelope check requires exactly that many TPMS_AUTH_RESPONSE
+ * structures. Every other path is identical, and tpm_session_cmd_exec_seq is
+ * this at n_sessions 1. Exists because a two-authorization command
+ * (NV_UndefineSpaceSpecial) would otherwise have EVERY real success rejected as
+ * a malformed envelope -- a failure that only appears against firmware that
+ * actually executes the command. */
+int tpm_session_cmd_exec_seq_n(tpm2_seq_t seq,
+                               const uint8_t *cmd, uint32_t n, uint8_t *rsp,
+                               uint32_t cap, uint32_t *out_rlen,
+                               tpm_nv_status_t *out_st, uint32_t *out_rc,
+                               uint32_t n_sessions);
 
 /* Callback invoked under an open real PolicyPCR session: build + submit + parse
  * the authorized op using `session`; return its status. `seq` is the bounded
@@ -544,3 +640,299 @@ void tpm_nv_test_reset_op_budget(void);
 /* Read an index's public size + attributes (no auth). */
 tpm_nv_status_t tpm_nv_read_public(uint32_t nv_index, uint16_t *out_size,
                                    uint32_t *out_attrs);
+
+/* ============================================================================
+ * Index IDENTITY and LIFECYCLE (the authorization boundary the index carries)
+ *
+ * Everything above authorizes an OPERATION on a handle. Nothing above proves
+ * the handle still names the index that was enrolled: the handle number is a
+ * value the CALLER supplies, and an attacker who can undefine and redefine an
+ * index gets a fresh one, at the same handle, answering every cooperative
+ * check. This block is the identity and lifecycle half.
+ *
+ * Two facts drive the whole design and both are easy to get backwards:
+ *
+ *   1. A Name is NOT stable across the index's first write. The TPM2 Name of
+ *      an NV index is nameAlg || H(marshalled TPMS_NV_PUBLIC), and
+ *      TPMA_NV_WRITTEN lives inside those attributes -- so the Name CHANGES the
+ *      first time the index is written, and again when a lock status flips.
+ *      Enrolling one Name and demanding it forever would reject the legitimate
+ *      initialized index. So identity is checked at two levels: the live Name
+ *      must be self-consistent with the live public area (a TPM that
+ *      contradicts itself is a transport fault), and the ENROLLED contract is
+ *      compared over normalized definition fields with the TPM-maintained
+ *      status bits masked off, plus an EXPLICIT expected-written state.
+ *
+ *   2. Name equality does NOT detect recreation. An attacker who redefines the
+ *      index with a byte-identical public area produces a byte-identical Name.
+ *      What betrays the recreation is that a freshly defined index has
+ *      TPMA_NV_WRITTEN CLEAR: an anchor that enrollment recorded as WRITTEN and
+ *      that now reads back unwritten was destroyed and recreated, whatever its
+ *      Name says. That is the signal, and it is why the expected-written state
+ *      is part of the enrolled contract rather than a detail.
+ *
+ * What this block deliberately does NOT do is decide that a machine suffered a
+ * legitimate TPM clear or replacement. A replaced TPM and an attacker who
+ * deleted the anchor present the SAME observations, so inferring a benign clear
+ * from them would hand the attacker the recovery path. The classifier reports
+ * RECOVERY_REQUIRED and stops; clearing that state is an authorized transition
+ * backed by evidence this module does not hold.
+ * ========================================================================= */
+
+/* nameAlg(2) + one nameAlg digest. SHA-256 is the only bank this module
+ * computes, so 2 + 32. */
+#define TPM_NV_NAME_MAX 34u
+
+/* Compute the TPM2 Name of an NV index: nameAlg (big-endian UINT16) followed by
+ * H_nameAlg over the marshalled TPMS_NV_PUBLIC -- nvIndex(4) nameAlg(2)
+ * attributes(4) authPolicy TPM2B(2 + N) dataSize(2), and NOT the TPM2B_NV_PUBLIC
+ * size prefix that wraps it on the wire. Pure; no transport.
+ *
+ * `pub` supplies nameAlg, attributes, authPolicy and dataSize; nv_index is
+ * passed separately because struct tpm_nv_public does not carry it (the parser
+ * has already bound the response to the requested index by the time one exists).
+ * Only TPM_ALG_SHA256 is supported -- another nameAlg is refused rather than
+ * silently hashed with the wrong algorithm, which would produce a plausible
+ * Name that matches nothing. Returns the Name length (34) or -1. */
+int tpm2_nv_name_compute(uint32_t nv_index, const struct tpm_nv_public *pub,
+                         uint8_t *out, uint32_t cap);
+
+/* Extract the trailing TPM2B_NAME of a TPM2_NV_ReadPublic response -- the field
+ * tpm2_parse_nv_read_public already bounds and then discards. Runs that strict
+ * parser first, so a success here is over a fully validated response. Returns
+ * the name length (0 when the TPM reported an empty name) or -1. An empty name
+ * is a legal parse and a failed IDENTITY check; the two are kept separate so a
+ * caller cannot mistake "the TPM told us nothing" for "the name matched". */
+int tpm2_parse_nv_name(const uint8_t *rsp, uint32_t len, uint32_t nv_index,
+                       uint8_t *out, uint32_t cap);
+
+/* The enrolled identity contract for one index. Everything here is a
+ * DEFINITION property: `attrs` is normalized (TPMA_NV_STATUS_MASK cleared), so
+ * it survives the index being written and locked, and the mutable half is
+ * carried explicitly by expect_written. */
+struct tpm_nv_identity {
+    uint32_t nv_index;
+    uint16_t name_alg;
+    uint32_t attrs;        /* normalized: TPMA_NV_STATUS_MASK bits are 0 */
+    uint16_t data_size;
+    uint16_t policy_len;
+    uint8_t  auth_policy[TPM_NV_POLICY_MAX];
+    uint8_t  expect_written; /* 1 = the anchor was written at enrollment */
+};
+
+/* Build an enrolled identity from an observed public area. Normalizes attrs and
+ * records expect_written as supplied by the caller (the enroller knows whether
+ * it wrote the index; the public area only says whether it is written NOW).
+ * Returns TPM_NV_OK, or TPM_NV_BADARG on a NULL argument or an authPolicy
+ * longer than the contract can hold. Pure; no transport. */
+tpm_nv_status_t tpm_nv_identity_from_public(uint32_t nv_index,
+                                            const struct tpm_nv_public *pub,
+                                            int expect_written,
+                                            struct tpm_nv_identity *out);
+
+/* Compare an observed public area against an enrolled contract, over normalized
+ * definition fields only. Returns TPM_NV_OK on a match, TPM_NV_MISMATCH on any
+ * disagreement, TPM_NV_BADARG on a NULL argument, and TPM_NV_CONTRACT when
+ * either side carries an authPolicy longer than TPM_NV_POLICY_MAX -- the
+ * contract is exported for PERSISTENCE, so one read back from storage is
+ * untrusted input, and a corrupt one is an authorized-recovery question rather
+ * than API misuse. Deliberately does NOT judge
+ * the written state -- that is a LIFECYCLE fact, and folding it in here would
+ * report a destroyed-and-recreated anchor as a definition mismatch, which reads
+ * as a provisioning error rather than an attack. Pure; no transport. */
+tpm_nv_status_t tpm_nv_identity_match(const struct tpm_nv_identity *enrolled,
+                                      const struct tpm_nv_public *observed);
+
+/* What the caller learned about an anchor on this boot. Every field is an
+ * OBSERVATION, never a conclusion. */
+struct tpm_nv_lifecycle_obs {
+    int      enrolled;       /* an enrolled contract exists for this anchor */
+    int      index_present;  /* ReadPublic found the index */
+    int      identity_ok;    /* observed public area matches the contract */
+    int      name_ok;        /* live Name is self-consistent with the live public area */
+    int      written;        /* TPMA_NV_WRITTEN is set on the live index */
+    int      expect_written; /* enrollment recorded this anchor as written */
+    /* An anchor that HAS a counter must not be judged without it. These are two
+     * separate facts on purpose: "this anchor is counter-backed" is a property
+     * of the ENROLLMENT, and "we managed to read it" is a property of this
+     * BOOT. Collapsing them into one flag makes a failed counter read
+     * indistinguishable from an anchor that never had a counter, and that
+     * reads as ACCEPT -- missing evidence passing as evidence of safety. */
+    int      counter_required; /* enrollment says this anchor is counter-backed */
+    int      counter_known;  /* counter_value below was actually read */
+    uint64_t counter_value;  /* live counter, when counter_known */
+    uint64_t enrolled_counter; /* counter value enrollment recorded */
+};
+
+typedef enum {
+    TPM_NV_LIFECYCLE_ACCEPT            = 0,
+    /* Enrollment says this anchor was written; the live index is unwritten.
+     * A freshly defined index is unwritten, so the anchor was destroyed and
+     * recreated -- the attack the Name alone cannot see. */
+    TPM_NV_LIFECYCLE_REFUSE_RECREATED  = 1,
+    /* The live public area is not the enrolled definition, or the TPM's own
+     * Name disagrees with the public area it just reported. */
+    TPM_NV_LIFECYCLE_REFUSE_IDENTITY   = 2,
+    /* The live counter is below what enrollment recorded. */
+    TPM_NV_LIFECYCLE_REFUSE_ROLLBACK   = 3,
+    /* The anchor is enrolled and the index is GONE. A replaced or cleared TPM
+     * and an attacker who deleted the index are indistinguishable from here, so
+     * this is a halt, not a diagnosis: clearing it requires an authorized
+     * transition backed by evidence this module does not hold. Never treat it
+     * as a benign clear, and never re-enroll over it -- that is exactly how a
+     * rollback gets laundered into a fresh install. */
+    TPM_NV_LIFECYCLE_RECOVERY_REQUIRED = 4,
+    /* Nothing is enrolled: a first provisioning, not a verdict about an
+     * existing anchor. */
+    TPM_NV_LIFECYCLE_UNENROLLED        = 5,
+    /* A counter-backed anchor whose counter could not be read. The index is
+     * present and its identity holds, but the anti-rollback evidence is
+     * MISSING, and missing evidence is not evidence of safety. Distinct from
+     * RECOVERY_REQUIRED, which is about an ABSENT index: here the anchor is
+     * intact and the read has to be retried or the boot refused. */
+    TPM_NV_LIFECYCLE_REFUSE_INCOMPLETE = 6,
+} tpm_nv_lifecycle_t;
+
+/* Classify one anchor's observations. Pure, total, and deliberately blind to
+ * everything except its argument -- it can classify observations, it cannot
+ * establish their cause, and pretending otherwise is what turns the recovery
+ * path into an attack surface. Returns UNENROLLED for a NULL argument, which is
+ * the only answer that asserts nothing about an anchor. */
+tpm_nv_lifecycle_t tpm_nv_lifecycle_classify(const struct tpm_nv_lifecycle_obs *o);
+
+/* ---- Platform-authorized define (the ONLY path to POLICY_DELETE) ----
+ *
+ * Kept as a separate builder and a separate validator from the owner-auth
+ * define rather than a hierarchy parameter threaded through both: the owner
+ * path must not be ABLE to reach these attributes, and a shared entry point
+ * with a mode flag is one wrong argument away from admitting them. */
+
+/* Validate a define request's attributes for a PLATFORM-authorized define.
+ * Identical to tpm_nv_attrs_valid except that TPMA_NV_POLICY_DELETE and
+ * TPMA_NV_PLATFORMCREATE are permitted, and POLICY_DELETE additionally REQUIRES
+ * an authPolicy: the whole point of the attribute is that deletion is
+ * authorized by the index's own policy, so an index carrying it with no policy
+ * could never be deleted by anyone. has_auth_policy is 1 when the define
+ * supplies one. Returns TPM_NV_OK or TPM_NV_ATTRS. Pure; no transport. */
+tpm_nv_status_t tpm_nv_attrs_valid_platform(uint32_t attrs, uint16_t data_size,
+                                            uint16_t name_alg,
+                                            int has_auth_policy);
+
+/* TPM2_NV_DefineSpace under PLATFORM auth. Same wire shape as
+ * tpm2_build_nv_define with TPM_RH_PLATFORM as the authHandle, validated with
+ * tpm_nv_attrs_valid_platform. Returns the marshalled length or 0. */
+uint32_t tpm2_build_nv_define_platform(uint8_t *buf, uint32_t cap, uint32_t nv_index,
+                                       uint32_t attrs, uint16_t name_alg,
+                                       const uint8_t *auth_policy,
+                                       uint16_t auth_policy_len,
+                                       uint16_t data_size);
+
+/* TPM2_NV_UndefineSpaceSpecial: delete an index carrying
+ * TPMA_NV_POLICY_DELETE. TWO authorized handles in order -- nvIndex, authorized
+ * by a POLICY session satisfying the index's own authPolicy, then
+ * TPM_RH_PLATFORM, authorized by platformAuth -- and therefore TWO
+ * authorization areas and two response sessions. No parameters. Returns the
+ * marshalled length or 0. */
+uint32_t tpm2_build_nv_undefine_special(uint8_t *buf, uint32_t cap,
+                                        uint32_t nv_index,
+                                        uint32_t policy_session);
+
+/* TPM2_PolicyCommandCode(policySession, code): binds a policy to ONE command,
+ * so a delete policy authorizes deletion and nothing else. Without it the
+ * index's authPolicy would authorize every policy-gated operation on the index,
+ * which for a POLICY_DELETE anchor means the policy that permits deletion also
+ * permits writing it. Returns the marshalled length or 0. */
+uint32_t tpm2_build_policy_command_code(uint8_t *buf, uint32_t cap,
+                                        uint32_t policy_session, uint32_t code);
+
+/* Compute the authPolicy digest for a delete policy: a TRIAL session running
+ * PolicyCommandCode(TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL) then PolicyGetDigest,
+ * flushed on every path by the same single-cleanup machinery the PCR-policy
+ * digest uses. Writes 32 bytes to out (cap >= 32). */
+tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap);
+
+/* ---- The live identity gate (call BEFORE reading an index's contents) ---- */
+
+/* Read an index's live public area together with the Name the TPM reports for
+ * it, and cross-check the two: *out_name_ok is 1 only when the Name recomputed
+ * from the reported public area equals the reported TPM2B_NAME. A TPM that
+ * reports a Name inconsistent with its own public area has contradicted itself,
+ * which is a transport-level fault rather than a policy decision, so the fact is
+ * REPORTED here and judged by the caller. An EMPTY reported name is name_ok 0,
+ * never a pass. Either out pointer may be NULL. */
+tpm_nv_status_t tpm_nv_read_identity(uint32_t nv_index,
+                                     struct tpm_nv_public *out_pub,
+                                     int *out_name_ok);
+
+/* The gate itself: read the live identity and judge it against an enrolled
+ * contract, WITHOUT reading a single content byte. Ordering is the whole point
+ * -- a Name check that runs after the read has already trusted the bytes.
+ * Returns TPM_NV_OK when the index is the enrolled one, TPM_NV_MISMATCH when it
+ * is not (a failed self-consistency check, or a definition that no longer
+ * matches), TPM_NV_NOTFOUND when the index is gone, or the underlying transport
+ * status. out_pub (may be NULL) receives the observed public area on success so
+ * a caller can feed tpm_nv_lifecycle_classify without a second read. */
+tpm_nv_status_t tpm_nv_verify_identity(const struct tpm_nv_identity *enrolled,
+                                       struct tpm_nv_public *out_pub);
+
+/* Run `op` on an index whose identity was verified IN THE SAME bounded
+ * transport sequence as the operation.
+ *
+ * tpm_nv_verify_identity above answers "is this the enrolled index RIGHT NOW",
+ * and that answer EXPIRES when its sequence closes: the transport gate is
+ * released, another CPU can undefine and recreate the index, and a following
+ * read consumes bytes the gate never approved. Verifying and then reading in
+ * two sequences is a check-then-use race, not an ordering guarantee -- so a
+ * caller that reads CONTENTS after verifying uses this instead. `op` MUST
+ * submit through tpm_session_cmd_exec_seq() with the supplied `seq`; a bare
+ * tpm2_submit would deadlock against the gate the sequence already holds.
+ *
+ * The LIFECYCLE state is enforced here too, not just the definition:
+ * tpm_nv_identity_match normalizes TPMA_NV_WRITTEN away (it is not a definition
+ * property), so an index recreated with a byte-identical public area passes
+ * both the Name and the definition check. This path additionally compares the
+ * live written state against the contract's expect_written and returns
+ * TPM_NV_RECREATED without invoking `op`. Without that the op's NV_Read would
+ * return TPM_RC_NV_UNINITIALIZED, which downstream reads as "no record yet".
+ *
+ * `pub` is the verified public area, so `op` need not re-read it. Returns the
+ * op's status, or the verification failure (TPM_NV_MISMATCH / TPM_NV_RECREATED /
+ * TPM_NV_NOTFOUND / transport) WITHOUT ever invoking `op`. */
+/* `nv_index` is the handle whose identity was just verified, and it is passed
+ * explicitly so an op never has to name a handle of its own: an op that
+ * hardcodes one is operating on an index this call did NOT verify, and the
+ * sequence would happily serialize that mistake. Prefer
+ * tpm_nv_verify_and_read() below, which owns the handle outright and removes
+ * the opportunity; reach for this callback only when the operation is not a
+ * plain read. */
+typedef tpm_nv_status_t (*tpm_nv_verified_op_fn)(tpm2_seq_t seq,
+                                                 uint32_t nv_index,
+                                                 const struct tpm_nv_public *pub,
+                                                 void *ctx);
+tpm_nv_status_t tpm_nv_verify_then(const struct tpm_nv_identity *enrolled,
+                                   tpm_nv_verified_op_fn op, void *ctx);
+
+/* Verify the enrolled identity and read the index's contents, as ONE bounded
+ * sequence, against the ENROLLED handle only.
+ *
+ * This is the API a content reader should use, and the reason it exists rather
+ * than a documented obligation on tpm_nv_verify_then: the callback form cannot
+ * stop an op from submitting against a DIFFERENT index, so a caller mix-up
+ * among the anchors would read unverified bytes while the verification
+ * reported success. Here the handle is the module's, not the caller's -- there
+ * is no argument to get wrong.
+ *
+ * Owner-auth read (TPM_RS_PW), so it suits the ordinary data anchors. A
+ * policy-protected index needs the policy-session form and belongs with the
+ * consumer that holds the policy.
+ *
+ * The transfer is EXACT: a `cap` above TPM_NV_MAX_DATA is TPM_NV_BADARG rather
+ * than a silent clamp, and a response whose length differs from the requested
+ * `cap` is TPM_NV_TRANSPORT rather than a success. A short read reported as OK
+ * would hand a record consumer truncated bytes it has no way to notice, and an
+ * over-length one would copy bytes nobody asked for. *out_len is written only
+ * on success and then always equals `cap`; it exists so the contract is
+ * checkable, not because the length may vary. */
+tpm_nv_status_t tpm_nv_verify_and_read(const struct tpm_nv_identity *enrolled,
+                                       uint16_t offset, uint8_t *out,
+                                       uint16_t cap, uint16_t *out_len);

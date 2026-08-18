@@ -12,6 +12,7 @@
 #include "kernel/tpm_nv.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_pcr_alloc.h"
+#include "kernel/crypto/sha256.h"
 #include "libc/string.h"
 
 /* ---- RC classification (format-first; never wedges) ---- */
@@ -303,6 +304,13 @@ static uint16_t nvf_public_size;       /* dataSize an NV_ReadPublic success repo
 static uint16_t nvf_public_name_alg;   /* nameAlg an NV_ReadPublic reports (0 = SHA-256) */
 static uint16_t nvf_public_policy_len; /* authPolicy length an NV_ReadPublic reports */
 static uint8_t  nvf_public_policy_fill;/* byte the reported authPolicy is filled with */
+static uint32_t nvf_special_sessions;  /* TPMS_AUTH_RESPONSE count an
+                                        * UndefineSpaceSpecial success returns */
+static int      nvf_public_name_mode;  /* TPM2B_NAME an NV_ReadPublic reports:
+                                        * 0 = empty (what the fake served before
+                                        * anything consumed the field), 1 = the
+                                        * real Name of the reported public area,
+                                        * 2 = a well-formed but WRONG Name */
 static uint32_t nvf_stall_after_go;    /* withhold dataAvail for N status reads AFTER
                                         * the command was dispatched: the abandoned
                                         * mid-flight case quiescence must clean up */
@@ -352,6 +360,23 @@ static void nvf_build_response(void)
         tpm2_be32_put(nvf_rsp + 6, rc);
         tpm2_be16_put(nvf_rsp + 10, 32u);          /* 32-byte policyDigest */
         nvf_rsp_len = 44u;
+    } else if (rc == TPM2_RC_SUCCESS &&
+               cc == TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL) {
+        /* TWO authorizations in, TWO TPMS_AUTH_RESPONSE structures out. A
+         * conforming TPM answers with exactly as many sessions as the command
+         * carried, so this is the shape a real successful special-delete has --
+         * and the shape the one-session validator rejects. nvf_special_sessions
+         * lets a test serve the WRONG count to prove the check is live. */
+        uint32_t nsess = nvf_special_sessions;
+        uint32_t area = 5u * nsess;   /* nonceTPM(2,0) + attrs(1) + hmac(2,0) */
+        uint32_t k;
+        tpm2_be16_put(nvf_rsp + 0, TPM2_ST_SESSIONS);
+        tpm2_be32_put(nvf_rsp + 2, 10u + 4u + area);
+        tpm2_be32_put(nvf_rsp + 6, rc);
+        tpm2_be32_put(nvf_rsp + 10, 0u);   /* parameterSize: no parameters */
+        for (k = 0; k < area; k++)
+            nvf_rsp[14 + k] = 0u;
+        nvf_rsp_len = 14u + area;
     } else if (rc == TPM2_RC_SUCCESS && cc == TPM2_CC_NV_READ_PUBLIC) {
         /* TPM2B_NV_PUBLIC{ nvIndex(4) nameAlg(2) attrs(4) policy TPM2B(2,empty)
          * dataSize(2) } + TPM2B_NAME(2, empty). ST_NO_SESSIONS: ReadPublic takes
@@ -372,8 +397,32 @@ static void nvf_build_response(void)
         for (i = 0; i < pl; i++)
             nvf_rsp[24 + i] = nvf_public_policy_fill;
         tpm2_be16_put(nvf_rsp + 24 + pl, nvf_public_size);
-        tpm2_be16_put(nvf_rsp + 26 + pl, 0u);      /* TPM2B_NAME (empty) */
-        nvf_rsp_len = 28u + pl;
+        if (nvf_public_name_mode == 0) {
+            tpm2_be16_put(nvf_rsp + 26 + pl, 0u);  /* TPM2B_NAME (empty) */
+            nvf_rsp_len = 28u + pl;
+        } else {
+            /* Serve the REAL Name for the public area just reported, so the
+             * identity path has something to consume. Mode 2 corrupts one byte
+             * AFTER computing it, which is the shape a substituted index
+             * presents: a well-formed name that is not this index's. */
+            struct tpm_nv_public np;
+            uint8_t nm[TPM_NV_NAME_MAX];
+            uint32_t k;
+            np.data_size = nvf_public_size;
+            np.attrs = nvf_public_attrs;
+            np.name_alg = nvf_public_name_alg ? nvf_public_name_alg : TPM_ALG_SHA256;
+            np.policy_len = (uint16_t)pl;
+            for (k = 0; k < sizeof np.auth_policy; k++)
+                np.auth_policy[k] = (k < pl) ? nvf_public_policy_fill : 0u;
+            (void)tpm2_nv_name_compute(idx, &np, nm, sizeof nm);
+            if (nvf_public_name_mode == 2)
+                nm[TPM_NV_NAME_MAX - 1u] ^= 0xFFu;
+            tpm2_be16_put(nvf_rsp + 26 + pl, (uint16_t)TPM_NV_NAME_MAX);
+            for (k = 0; k < TPM_NV_NAME_MAX; k++)
+                nvf_rsp[28 + pl + k] = nm[k];
+            tpm2_be32_put(nvf_rsp + 2, 14u + pubsize + TPM_NV_NAME_MAX);
+            nvf_rsp_len = 28u + pl + TPM_NV_NAME_MAX;
+        }
     } else if (rc == TPM2_RC_SUCCESS && cc == TPM2_CC_NV_READ) {
         /* size 25 = header(10) + parameterSize(4) + TPM2B(2+4) + 5-byte auth
          * area (nv_exec now requires the response auth area, F-AD1). */
@@ -573,6 +622,8 @@ static void nvf_reset(uint32_t fail_cc, uint32_t fail_rc)
     nvf_public_name_alg = 0;
     nvf_public_policy_len = 0;
     nvf_public_policy_fill = 0;
+    nvf_public_name_mode = 0;
+    nvf_special_sessions = 2u;
     nvf_stall_after_go = 0;
     nvf_abort_refused = 0;
 }
@@ -2185,6 +2236,1245 @@ static void test_nv_teardown_and_bounds(void)
                    "the same stalling TPM completes inside the real budget");
 }
 
+/* ---- Index identity: TPM2 Name computation ----
+ *
+ * The oracle is INDEPENDENT of the module's marshaller: the test hand-writes
+ * the TPMS_NV_PUBLIC byte layout and hashes it with sha256() directly, so a
+ * mistake in tpm2_nv_name_compute's field order or widths shows up as a
+ * mismatch rather than being echoed back. sha256() itself is pinned by the
+ * FIPS 180-4 vectors in test_sha256.c. */
+
+static void nvid_fill_public(struct tpm_nv_public *p, uint16_t policy_len,
+                             uint8_t fill)
+{
+    uint32_t i;
+    p->data_size = 412u;
+    p->attrs = TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA;
+    p->name_alg = TPM_ALG_SHA256;
+    p->policy_len = policy_len;
+    for (i = 0; i < sizeof p->auth_policy; i++)
+        p->auth_policy[i] = (i < policy_len) ? fill : 0u;
+}
+
+/* Arm the fake to report a public area matching nvid_fill_public, with a REAL
+ * Name, so the live identity paths have something consistent to consume. */
+static void nvid_arm_public(uint32_t attrs)
+{
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = attrs;
+    nvf_public_size = 412u;
+    nvf_public_policy_len = 32u;
+    nvf_public_policy_fill = 0x5Au;
+    nvf_public_name_mode = 1;
+}
+
+
+static void test_nv_name_compute(void)
+{
+    struct tpm_nv_public pub, other;
+    uint8_t name[TPM_NV_NAME_MAX], name2[TPM_NV_NAME_MAX];
+    uint8_t oracle[64], expect[TPM_NV_NAME_MAX];
+    uint32_t off = 0, i;
+    int n;
+
+    nvid_fill_public(&pub, 32u, 0x5Au);
+
+    n = tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &pub, name, sizeof name);
+    TEST_ASSERT_EQ(n, (int)TPM_NV_NAME_MAX, "Name is nameAlg(2) + one SHA-256 digest");
+    TEST_ASSERT_EQ((int)tpm2_be16_get(name), (int)TPM_ALG_SHA256,
+                   "Name is prefixed with the literal nameAlg");
+
+    /* Independent oracle: hand-marshal TPMS_NV_PUBLIC and hash it here.
+     * nvIndex(4) nameAlg(2) attributes(4) authPolicy TPM2B(2+N) dataSize(2),
+     * and deliberately NOT the TPM2B_NV_PUBLIC size prefix. */
+    tpm2_be32_put(oracle + off, TPM_NV_INDEX_BASELINE); off += 4u;
+    tpm2_be16_put(oracle + off, TPM_ALG_SHA256); off += 2u;
+    tpm2_be32_put(oracle + off, pub.attrs); off += 4u;
+    tpm2_be16_put(oracle + off, 32u); off += 2u;
+    for (i = 0; i < 32u; i++) oracle[off + i] = 0x5Au;
+    off += 32u;
+    tpm2_be16_put(oracle + off, 412u); off += 2u;
+    TEST_ASSERT_EQ((int)off, 46, "hand-marshalled TPMS_NV_PUBLIC is 46 bytes here");
+    tpm2_be16_put(expect, TPM_ALG_SHA256);
+    sha256(oracle, off, expect + 2u);
+    TEST_ASSERT_EQ(memcmp(name, expect, TPM_NV_NAME_MAX), 0,
+                   "computed Name matches the independently marshalled oracle");
+
+    /* Differential: the Name must move when ANY definition field moves. A Name
+     * that ignored a field would still pass the oracle above if the test and
+     * the module happened to share the same omission, so each field is
+     * perturbed separately. */
+    n = tpm2_nv_name_compute(TPM_NV_INDEX_OS_DATA, &pub, name2, sizeof name2);
+    TEST_ASSERT_EQ(n, (int)TPM_NV_NAME_MAX, "second Name computes");
+    TEST_ASSERT(memcmp(name, name2, TPM_NV_NAME_MAX) != 0,
+                "a different nvIndex yields a different Name");
+
+    other = pub; other.attrs |= TPMA_NV_WRITEDEFINE;
+    (void)tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &other, name2, sizeof name2);
+    TEST_ASSERT(memcmp(name, name2, TPM_NV_NAME_MAX) != 0,
+                "different attributes yield a different Name");
+
+    other = pub; other.data_size = 413u;
+    (void)tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &other, name2, sizeof name2);
+    TEST_ASSERT(memcmp(name, name2, TPM_NV_NAME_MAX) != 0,
+                "a different dataSize yields a different Name");
+
+    other = pub; other.auth_policy[0] ^= 0xFFu;
+    (void)tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &other, name2, sizeof name2);
+    TEST_ASSERT(memcmp(name, name2, TPM_NV_NAME_MAX) != 0,
+                "a different authPolicy yields a different Name");
+
+    other = pub; other.policy_len = 0u;
+    (void)tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &other, name2, sizeof name2);
+    TEST_ASSERT(memcmp(name, name2, TPM_NV_NAME_MAX) != 0,
+                "an absent authPolicy yields a different Name");
+
+    /* TPMA_NV_WRITTEN is INSIDE the hashed attributes, so the Name changes the
+     * first time the index is written. This is the fact the enrolled contract
+     * is normalized against; if it ever stopped being true the identity design
+     * would be over-strict rather than wrong, so it is pinned here. */
+    other = pub; other.attrs |= TPMA_NV_WRITTEN;
+    (void)tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &other, name2, sizeof name2);
+    TEST_ASSERT(memcmp(name, name2, TPM_NV_NAME_MAX) != 0,
+                "TPMA_NV_WRITTEN is part of the Name: it changes on first write");
+
+    /* Refusals, each a control against the helper simply always succeeding. */
+    other = pub; other.name_alg = 0x000Cu;   /* SHA-384: not computed here */
+    TEST_ASSERT_EQ(tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &other, name2,
+                                        sizeof name2), -1,
+                   "a nameAlg this module cannot hash is refused, not mis-hashed");
+    TEST_ASSERT_EQ(tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &pub, name2,
+                                        TPM_NV_NAME_MAX - 1u), -1,
+                   "a short output buffer is refused");
+    TEST_ASSERT_EQ(tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, 0, name2,
+                                        sizeof name2), -1,
+                   "a NULL public area is refused");
+}
+
+/* ---- Enrolled identity contract ---- */
+
+static void test_nv_identity_contract(void)
+{
+    struct tpm_nv_public pub, live;
+    struct tpm_nv_identity id;
+
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "identity builds from a public area");
+    TEST_ASSERT_EQ((int)(id.attrs & TPMA_NV_STATUS_MASK), 0,
+                   "enrolled attrs are normalized: no TPM-maintained status bits");
+    TEST_ASSERT_EQ((int)id.expect_written, 1, "expect_written is recorded explicitly");
+    TEST_ASSERT_EQ((int)id.nv_index, (int)TPM_NV_INDEX_BASELINE, "handle recorded");
+
+    /* The whole point of normalizing: the contract must survive the index being
+     * written and locked, because those bits are not part of the definition. */
+    live = pub;
+    live.attrs |= TPMA_NV_WRITTEN | TPMA_NV_WRITELOCKED | TPMA_NV_READLOCKED;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &live), (int)TPM_NV_OK,
+                   "a written and locked index still matches its enrolled contract");
+
+    /* Enrolling FROM a written index must produce the same normalized contract,
+     * so enrollment time does not silently change the rule. */
+    {
+        struct tpm_nv_identity id2;
+        TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE,
+                                                        &live, 1, &id2),
+                       (int)TPM_NV_OK, "identity builds from a written index");
+        TEST_ASSERT_EQ((int)id2.attrs, (int)id.attrs,
+                       "normalization makes enrollment order irrelevant");
+    }
+
+    /* Every definition field is load-bearing: each disagreement is a MISMATCH. */
+    live = pub; live.attrs |= TPMA_NV_WRITEDEFINE;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &live), (int)TPM_NV_MISMATCH,
+                   "a changed definition attribute is a mismatch");
+    live = pub; live.data_size = 413u;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &live), (int)TPM_NV_MISMATCH,
+                   "a changed dataSize is a mismatch");
+    live = pub; live.name_alg = 0x000Cu;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &live), (int)TPM_NV_MISMATCH,
+                   "a changed nameAlg is a mismatch");
+    live = pub; live.auth_policy[7] ^= 0xFFu;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &live), (int)TPM_NV_MISMATCH,
+                   "a changed authPolicy is a mismatch");
+    live = pub; live.policy_len = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &live), (int)TPM_NV_MISMATCH,
+                   "a removed authPolicy is a mismatch");
+
+    /* Control: without this the mismatch assertions above would all pass
+     * against a comparator that refuses everything. */
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &pub), (int)TPM_NV_OK,
+                   "control: the unchanged public area MATCHES");
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(0, &pub), (int)TPM_NV_BADARG,
+                   "NULL contract is BADARG, not a silent match");
+}
+
+/* ---- Lifecycle classification ---- */
+
+static void nvlc_good(struct tpm_nv_lifecycle_obs *o)
+{
+    /* Zero FIRST, so a field added to the observation struct later cannot be
+     * read indeterminate by a test that clears its companion flag -- which is
+     * exactly what happened when counter_required was added and this fixture
+     * was not. */
+    memset(o, 0, sizeof *o);
+    o->enrolled = 1;
+    o->index_present = 1;
+    o->identity_ok = 1;
+    o->name_ok = 1;
+    o->written = 1;
+    o->expect_written = 1;
+    o->counter_required = 1;
+    o->counter_known = 1;
+    o->counter_value = 42u;
+    o->enrolled_counter = 42u;
+}
+
+static void test_nv_lifecycle_classify(void)
+{
+    struct tpm_nv_lifecycle_obs o;
+
+    /* Control FIRST: every refusal below is worthless without proof that the
+     * healthy anchor is ACCEPTED. */
+    nvlc_good(&o);
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o), (int)TPM_NV_LIFECYCLE_ACCEPT,
+                   "control: a healthy enrolled anchor is ACCEPTED");
+    nvlc_good(&o); o.counter_value = 43u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o), (int)TPM_NV_LIFECYCLE_ACCEPT,
+                   "control: an ADVANCED counter is accepted, not read as tampering");
+
+    /* The undefine/redefine attack: identity and Name both still match, because
+     * a byte-identical public area produces a byte-identical Name. Only the
+     * cleared WRITTEN bit betrays it. */
+    nvlc_good(&o); o.written = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_RECREATED,
+                   "an enrolled-written anchor reading back UNWRITTEN was recreated");
+
+    nvlc_good(&o); o.identity_ok = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_IDENTITY,
+                   "a public area that left the contract is an identity refusal");
+    nvlc_good(&o); o.name_ok = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_IDENTITY,
+                   "a TPM contradicting its own Name is an identity refusal");
+
+    nvlc_good(&o); o.counter_value = 41u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_ROLLBACK,
+                   "a counter below the enrolled value is a rollback refusal");
+
+    /* The ambiguous case is reported ambiguous. It must NOT resolve to ACCEPT
+     * (which would let a deletion launder into a fresh install) and must not
+     * silently claim a benign TPM clear. */
+    nvlc_good(&o); o.index_present = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_RECOVERY_REQUIRED,
+                   "an enrolled anchor whose index is GONE requires authorized recovery");
+
+    /* Ordering: identity is judged before the recreation signal, so a
+     * substituted index is not mislabelled as a recreation of the enrolled one. */
+    nvlc_good(&o); o.identity_ok = 0; o.written = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_IDENTITY,
+                   "identity outranks the recreation signal when both fire");
+    /* And absence outranks everything: nothing else can be observed. */
+    nvlc_good(&o); o.index_present = 0; o.identity_ok = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_RECOVERY_REQUIRED,
+                   "an absent index cannot be judged on identity it does not have");
+
+    /* Never-enrolled is a provisioning state, not a verdict about an anchor. */
+    nvlc_good(&o); o.enrolled = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_UNENROLLED,
+                   "nothing enrolled is UNENROLLED, not ACCEPT");
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(0),
+                   (int)TPM_NV_LIFECYCLE_UNENROLLED,
+                   "a NULL observation asserts nothing about an anchor");
+
+    /* An anchor enrolled as NOT-yet-written is legitimately unwritten. */
+    nvlc_good(&o); o.expect_written = 0; o.written = 0;
+    o.counter_required = 0; o.counter_known = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o), (int)TPM_NV_LIFECYCLE_ACCEPT,
+                   "an anchor enrolled unwritten is accepted while still unwritten");
+}
+
+/* ---- Two indexes, separate contracts ---- */
+
+static void test_nv_two_index_separation(void)
+{
+    uint8_t a[96], b[96];
+    uint32_t na, nb;
+
+    /* The invariant is that the two anchors are DISTINCT indexes on the wire.
+     * A later change collapsing them into one shared counter fails here rather
+     * than silently making each consumer's invariant unenforceable. */
+    TEST_ASSERT(TPM_NV_INDEX_BASELINE_GEN != TPM_NV_INDEX_AB_SEQ,
+                "baseline generation and A/B update sequence are separate handles");
+    TEST_ASSERT(TPM_NV_INDEX_AB_FLOOR != TPM_NV_INDEX_AB_SEQ,
+                "the A/B floor RECORD is a separate index from its sequence counter");
+
+    na = tpm2_build_nv_define(a, sizeof a, TPM_NV_INDEX_BASELINE_GEN,
+                              TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE |
+                              TPMA_NV_NO_DA | TPMA_NV_TYPE(TPM_NT_COUNTER),
+                              TPM_ALG_SHA256, 0, 0, (uint16_t)TPM_NV_COUNTER_SIZE);
+    nb = tpm2_build_nv_define(b, sizeof b, TPM_NV_INDEX_AB_SEQ,
+                              TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE |
+                              TPMA_NV_NO_DA | TPMA_NV_TYPE(TPM_NT_COUNTER),
+                              TPM_ALG_SHA256, 0, 0, (uint16_t)TPM_NV_COUNTER_SIZE);
+    TEST_ASSERT(na > 0u && nb > 0u, "both counter defines marshal");
+    TEST_ASSERT_EQ((int)na, (int)nb, "the two counter defines are the same shape");
+    /* nvIndex sits in the TPMS_NV_PUBLIC: header(10) + authHandle(4)
+     * + authArea(13) + authValue(2) + nvPublic size(2) = offset 31. */
+    TEST_ASSERT(tpm2_be32_get(a + 31) != tpm2_be32_get(b + 31),
+                "the marshalled commands name DIFFERENT indexes");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(a + 31), (int)TPM_NV_INDEX_BASELINE_GEN,
+                   "the generation counter define names the generation handle");
+
+    /* The floor RECORD is an ordinary data index, never a counter: a TPM
+     * counter moves by exactly one per NV_Increment, so it cannot represent a
+     * security version that jumps. */
+    nb = tpm2_build_nv_define(b, sizeof b, TPM_NV_INDEX_AB_FLOOR,
+                              TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA,
+                              TPM_ALG_SHA256, 0, 0, (uint16_t)TPM_NV_AB_FLOOR_SIZE);
+    TEST_ASSERT(nb > 0u, "the floor record define marshals as an ordinary index");
+    TEST_ASSERT_EQ((int)TPMA_NV_GET_TYPE(tpm2_be32_get(b + 31 + 6u)),
+                   (int)TPM_NT_ORDINARY,
+                   "the floor record is TPM_NT_ORDINARY, not a counter");
+    TEST_ASSERT_EQ((int)tpm2_be16_get(b + 31 + 12u), (int)TPM_NV_AB_FLOOR_SIZE,
+                   "the floor record is defined at its declared size");
+}
+
+/* ---- Platform-authorized define and POLICY_DELETE admission ---- */
+
+static void test_nv_platform_define_attrs(void)
+{
+    uint32_t base = TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA;
+    uint8_t buf[96], policy[32];
+    uint32_t n, i;
+
+    for (i = 0; i < 32u; i++) policy[i] = (uint8_t)i;
+
+    /* The owner path must stay unable to reach either attribute. That is the
+     * boundary: a shared entry point with a mode flag is one wrong argument
+     * away from admitting them under owner auth, where firmware refuses them. */
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(base | TPMA_NV_POLICY_DELETE, 96u,
+                                           TPM_ALG_SHA256),
+                   (int)TPM_NV_ATTRS, "owner validator still refuses POLICY_DELETE");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid(base | TPMA_NV_PLATFORMCREATE, 96u,
+                                           TPM_ALG_SHA256),
+                   (int)TPM_NV_ATTRS, "owner validator still refuses PLATFORMCREATE");
+    TEST_ASSERT_EQ((int)tpm2_build_nv_define(buf, sizeof buf, TPM_NV_INDEX_BASELINE,
+                                             base | TPMA_NV_POLICY_DELETE,
+                                             TPM_ALG_SHA256, policy, 32u, 96u),
+                   0, "the owner define BUILDER refuses POLICY_DELETE outright");
+
+    /* Platform path: admitted, but only in a shape that can actually be used. */
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(base | TPMA_NV_PLATFORMCREATE |
+                                                    TPMA_NV_POLICY_DELETE, 96u,
+                                                    TPM_ALG_SHA256, 1),
+                   (int)TPM_NV_OK,
+                   "POLICY_DELETE is admitted under platform auth WITH a policy");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(base | TPMA_NV_PLATFORMCREATE |
+                                                    TPMA_NV_POLICY_DELETE, 96u,
+                                                    TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS,
+                   "POLICY_DELETE with NO authPolicy would be undeletable: refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(base | TPMA_NV_POLICY_DELETE,
+                                                    96u, TPM_ALG_SHA256, 1),
+                   (int)TPM_NV_ATTRS,
+                   "a platform define must state PLATFORMCREATE");
+    /* Control: the platform validator is not simply permissive. It inherits
+     * every shared rule, so a reserved bit and a bad counter size still fail. */
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(base | TPMA_NV_PLATFORMCREATE |
+                                                    TPMA_NV_RESERVED_MASK, 96u,
+                                                    TPM_ALG_SHA256, 1),
+                   (int)TPM_NV_ATTRS,
+                   "the platform validator still refuses reserved bits");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(base | TPMA_NV_PLATFORMCREATE |
+                                                    TPMA_NV_TYPE(TPM_NT_COUNTER),
+                                                    7u, TPM_ALG_SHA256, 1),
+                   (int)TPM_NV_ATTRS,
+                   "the platform validator still enforces the counter size");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(base | TPMA_NV_PLATFORMCREATE,
+                                                    96u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_OK,
+                   "control: a plain platform define with no POLICY_DELETE is legal");
+
+    /* And the wire: the ONLY difference from the owner define is the
+     * authHandle, which is what makes the platform hierarchy the authorizer. */
+    n = tpm2_build_nv_define_platform(buf, sizeof buf, TPM_NV_INDEX_BASELINE,
+                                      base | TPMA_NV_PLATFORMCREATE |
+                                      TPMA_NV_POLICY_DELETE,
+                                      TPM_ALG_SHA256, policy, 32u, 96u);
+    TEST_ASSERT(n > 0u, "the platform define marshals");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 6), (int)TPM2_CC_NV_DEFINE_SPACE,
+                   "platform define is still NV_DefineSpace");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 10), (int)TPM_RH_PLATFORM,
+                   "platform define authorizes with TPM_RH_PLATFORM");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 31), (int)TPM_NV_INDEX_BASELINE,
+                   "platform define names the requested index");
+}
+
+/* ---- NV_UndefineSpaceSpecial and PolicyCommandCode marshalling ---- */
+
+static void test_nv_undefine_special_marshal(void)
+{
+    uint8_t buf[96];
+    uint32_t n, area1;
+    const uint32_t sess = 0x03000000u;
+
+    n = tpm2_build_nv_undefine_special(buf, sizeof buf, TPM_NV_INDEX_BASELINE, sess);
+    TEST_ASSERT(n > 0u, "UndefineSpaceSpecial marshals");
+    TEST_ASSERT_EQ((int)tpm2_be16_get(buf + 0), (int)TPM2_ST_SESSIONS,
+                   "session-tagged");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 2), (int)n,
+                   "declared size equals the marshalled length");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 6),
+                   (int)TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL, "command code");
+    /* Handle ORDER is normative: nvIndex (authorized by its own policy) then
+     * the platform hierarchy. Swapped, each secret authorizes the wrong
+     * object -- and the TPM would refuse, so this cannot be caught late. */
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 10), (int)TPM_NV_INDEX_BASELINE,
+                   "handle 1 is the index being deleted");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 14), (int)TPM_RH_PLATFORM,
+                   "handle 2 is the platform hierarchy");
+    area1 = 4u + 2u + 1u + 2u;
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 18), (int)(area1 * 2u),
+                   "authorizationSize covers BOTH authorization areas");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 22), (int)sess,
+                   "the first authorization is the index policy session");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 22 + area1), (int)TPM_RS_PW,
+                   "the second authorization is the platform password session");
+    TEST_ASSERT_EQ((int)n, (int)(22u + area1 * 2u),
+                   "no parameters follow the two authorization areas");
+
+    /* Refusals: a shape that could only ever be rejected by the TPM is
+     * rejected locally instead. */
+    TEST_ASSERT_EQ((int)tpm2_build_nv_undefine_special(buf, sizeof buf,
+                                                       TPM_NV_INDEX_BASELINE,
+                                                       TPM_RS_PW),
+                   0, "a password handle cannot satisfy an index authPolicy");
+    TEST_ASSERT_EQ((int)tpm2_build_nv_undefine_special(buf, sizeof buf,
+                                                       TPM_NV_INDEX_BASELINE, 0u),
+                   0, "a zero policy session is refused");
+    TEST_ASSERT_EQ((int)tpm2_build_nv_undefine_special(buf, 8u,
+                                                       TPM_NV_INDEX_BASELINE, sess),
+                   0, "a too-small buffer is refused");
+}
+
+static void test_nv_policy_command_code_marshal(void)
+{
+    uint8_t buf[32];
+    uint32_t n;
+    const uint32_t sess = 0x03000001u;
+
+    n = tpm2_build_policy_command_code(buf, sizeof buf, sess,
+                                       TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL);
+    TEST_ASSERT_EQ((int)n, 18, "PolicyCommandCode is header(10) + session(4) + code(4)");
+    /* A policy ASSERTION authorizes nothing, it only updates the session's
+     * policyDigest, so it carries no authorization area. */
+    TEST_ASSERT_EQ((int)tpm2_be16_get(buf + 0), (int)TPM2_ST_NO_SESSIONS,
+                   "PolicyCommandCode carries no authorization area");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 2), (int)n, "declared size");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 6), (int)TPM2_CC_POLICY_COMMAND_CODE,
+                   "command code");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 10), (int)sess, "policySession handle");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(buf + 14),
+                   (int)TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL,
+                   "the restricted command code is the delete command");
+    TEST_ASSERT_EQ((int)tpm2_build_policy_command_code(buf, sizeof buf, 0u,
+                                                       TPM2_CC_NV_READ),
+                   0, "a zero policy session is refused");
+    TEST_ASSERT_EQ((int)tpm2_build_policy_command_code(buf, 4u, sess,
+                                                       TPM2_CC_NV_READ),
+                   0, "a too-small buffer is refused");
+}
+
+/* ---- Multi-session response validation ---- */
+
+static void test_nv_auth_response_sessions(void)
+{
+    uint8_t rsp[64];
+    uint32_t off = 0, one;
+
+    /* Two minimal TPMS_AUTH_RESPONSE structures: nonceTPM(2,0) +
+     * sessionAttributes(1) + hmac(2,0) = 5 bytes each. */
+    memset(rsp, 0, sizeof rsp);
+    one = 5u;
+    off = 2u * one;
+
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, off, 0u, 2u), 1,
+                   "two well-formed sessions validate at n_sessions 2");
+    /* The regression this exists for: the one-session validator rejects a
+     * legitimate two-authorization success as malformed. */
+    TEST_ASSERT_EQ(tpm_session_auth_response_ok(rsp, off, 0u), 0,
+                   "the one-session validator rejects a two-session response");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, one, 0u, 2u), 0,
+                   "one session where two were authorized is rejected");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, off + 1u, 0u, 2u), 0,
+                   "a trailing byte after two sessions is rejected");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, off, 0u, 3u), 0,
+                   "three sessions where two exist is rejected");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, off, 0u, 0u), 0,
+                   "n_sessions 0 is a caller error, not a vacuous pass");
+    /* Control: the single-session path is unchanged. */
+    TEST_ASSERT_EQ(tpm_session_auth_response_ok(rsp, one, 0u), 1,
+                   "control: one well-formed session still validates");
+    TEST_ASSERT_EQ(tpm_session_auth_response_n_ok(rsp, one, 0u, 1u), 1,
+                   "control: n_ok at 1 agrees with the one-session validator");
+}
+
+/* ---- Live identity path through the fake transport ---- */
+
+static void test_nv_live_identity(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_nv_public pub;
+    struct tpm_nv_identity id;
+    tpm_nv_status_t st;
+    int name_ok = -1;
+
+    /* The fake now serves the REAL Name of the public area it reports, which is
+     * what makes the identity path testable at all: it served an EMPTY name for
+     * as long as nothing consumed the field. */
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                       TPMA_NV_WRITTEN;
+    nvf_public_size = 412u;
+    nvf_public_policy_len = 32u;
+    nvf_public_policy_fill = 0x5Au;
+    nvf_public_name_mode = 1;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_read_identity(TPM_NV_INDEX_BASELINE, &pub, &name_ok);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "read_identity succeeds");
+    TEST_ASSERT_EQ(name_ok, 1, "the reported Name is consistent with the public area");
+    TEST_ASSERT_EQ((int)pub.data_size, 412, "the public area came back");
+
+    /* A well-formed but WRONG Name: the shape a substituted index presents. */
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                       TPMA_NV_WRITTEN;
+    nvf_public_size = 412u;
+    nvf_public_policy_len = 32u;
+    nvf_public_policy_fill = 0x5Au;
+    nvf_public_name_mode = 2;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_read_identity(TPM_NV_INDEX_BASELINE, &pub, &name_ok);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "the read itself still succeeds");
+    TEST_ASSERT_EQ(name_ok, 0, "a Name that does not match the public area FAILS");
+
+    /* An EMPTY name is a failed identity check, never a pass -- exactly the
+     * value the fake served before this section, so a regression to ignoring
+     * the field shows up here. */
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA;
+    nvf_public_size = 412u;
+    nvf_public_name_mode = 0;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_read_identity(TPM_NV_INDEX_BASELINE, &pub, &name_ok);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "the read succeeds with an empty name");
+    TEST_ASSERT_EQ(name_ok, 0, "an EMPTY reported Name is not a pass");
+
+    /* The gate: verify against an enrolled contract WITHOUT reading contents. */
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "enroll the contract");
+
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                       TPMA_NV_WRITTEN;
+    nvf_public_size = 412u;
+    nvf_public_policy_len = 32u;
+    nvf_public_policy_fill = 0x5Au;
+    nvf_public_name_mode = 1;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_identity(&id, 0);
+    tpm_t_test_restore(prev);
+    /* Control: without this every refusal below passes against a gate that
+     * refuses everything. The live index is WRITTEN and the enrolled contract
+     * was taken from an unwritten one, which must NOT matter. */
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "control: the enrolled index verifies even once written");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 0,
+                   "the identity gate reads NO contents: ordering is the point");
+
+    /* A different definition at the same handle is a MISMATCH, and the handle
+     * number was never the thing being trusted. */
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA;
+    nvf_public_size = 412u;
+    nvf_public_policy_len = 32u;
+    nvf_public_policy_fill = 0x5Au;
+    nvf_public_name_mode = 1;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_identity(&id, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH,
+                   "a redefined index answering the same handle is refused");
+
+    /* A self-inconsistent TPM is a mismatch even when the definition agrees. */
+    nvf_reset(0u, 0u);
+    nvf_public_attrs = TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA;
+    nvf_public_size = 412u;
+    nvf_public_policy_len = 32u;
+    nvf_public_policy_fill = 0x5Au;
+    nvf_public_name_mode = 2;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_identity(&id, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH,
+                   "a TPM whose Name contradicts its public area is refused");
+
+    /* A missing index surfaces as NOTFOUND so the caller can reach the
+     * ambiguous recovery state rather than reading it as a definition change. */
+    nvf_reset(TPM2_CC_NV_READ_PUBLIC, 0x0000018Bu /* HANDLE */);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_identity(&id, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_NOTFOUND,
+                   "an absent index is NOTFOUND, not MISMATCH");
+    /* The standalone gate enforces the SAME lifecycle contract as the atomic
+     * path. If it did not, a caller would get OK here and a refusal there for
+     * the same index, and this gate's documented meaning of OK would be false. */
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_identity(&id, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECREATED,
+                   "the standalone gate also refuses a recreated unwritten anchor");
+
+    TEST_ASSERT_EQ((int)tpm_nv_verify_identity(0, 0), (int)TPM_NV_BADARG,
+                   "a NULL contract is BADARG");
+}
+
+/* ---- Delete-policy digest through the fake ---- */
+
+static void test_nv_delete_policy_digest(void)
+{
+    struct tpm_t_test_state prev;
+    uint8_t digest[32];
+    tpm_nv_status_t st;
+
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_delete_policy_digest(digest, sizeof digest);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "the delete policy digest computes");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_POLICY_COMMAND_CODE), 1,
+                   "the trial session asserts PolicyCommandCode");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_POLICY_PCR), 0,
+                   "a delete policy is NOT a PCR policy");
+    /* The session-leak discipline is the same single cleanup as the PCR flow,
+     * and a trial session must be flushed even on the success path. */
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_FLUSH_CONTEXT), 1,
+                   "the trial session is flushed on the success path");
+
+    /* A failure AFTER the session exists must still flush it. */
+    nvf_reset(TPM2_CC_POLICY_COMMAND_CODE, 0x0000099Du /* POLICY_FAIL */);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_delete_policy_digest(digest, sizeof digest);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_AUTH, "the policy failure is classified");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_FLUSH_CONTEXT), 1,
+                   "the session is flushed on the failure path too");
+
+    /* What the policy IS: command-scoped. PolicyCommandCode is the only
+     * assertion in it, so the session restricts the authorization to the delete
+     * and nothing else. */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    (void)tpm_nv_delete_policy_digest(digest, sizeof digest);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(nvf_cc_count(TPM2_CC_POLICY_COMMAND_CODE), 1,
+                   "the policy asserts the command-code restriction exactly once");
+
+    /* What the policy is NOT: authentication. PolicyCommandCode carries no
+     * secret, so the digest is reproducible by anyone -- two independent
+     * computations agree, which is the property an authenticated policy would
+     * NOT have. This assertion exists so nobody reads the delete policy as a
+     * trust boundary; making deletion unreachable from the OS path needs a
+     * signed assertion, tracked as open work in the section. */
+    {
+        uint8_t again[32];
+        uint32_t i;
+        int same = 1;
+        nvf_reset(0u, 0u);
+        prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+        (void)tpm_nv_delete_policy_digest(again, sizeof again);
+        tpm_t_test_restore(prev);
+        for (i = 0; i < sizeof again; i++)
+            if (again[i] != digest[i]) { same = 0; break; }
+        TEST_ASSERT_EQ(same, 1,
+                       "the delete policy is reproducible: it scopes, it does NOT authenticate");
+    }
+
+    TEST_ASSERT_EQ((int)tpm_nv_delete_policy_digest(digest, 31u),
+                   (int)TPM_NV_BADARG, "a short output buffer is refused");
+    TEST_ASSERT_EQ((int)tpm_nv_delete_policy_digest(0, 32u),
+                   (int)TPM_NV_BADARG, "a NULL output is refused");
+}
+
+/* ---- End-to-end: the two-session delete actually EXECUTES ----
+ *
+ * The builder and the response validator were tested separately, which left the
+ * one thing that matters untested: whether the command survives the executor.
+ * A wrong session count keeps every isolated test green while every real
+ * firmware success is rejected as TPM_NV_TRANSPORT. */
+
+static void test_nv_undefine_special_exec(void)
+{
+    struct tpm_t_test_state prev;
+    uint8_t cmd[96], rsp[128];
+    uint32_t n, rlen = 0;
+    tpm_nv_status_t st = TPM_NV_TRANSPORT;
+    int r;
+
+    n = tpm2_build_nv_undefine_special(cmd, sizeof cmd, TPM_NV_INDEX_BASELINE,
+                                       0x03000000u);
+    TEST_ASSERT(n > 0u, "the special delete marshals");
+
+    /* The real shape: two authorizations in, two response sessions out. */
+    nvf_reset(0u, 0u);
+    nvf_special_sessions = 2u;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_session_cmd_exec_seq_n(0, cmd, n, rsp, sizeof rsp, &rlen, &st, 0, 2u);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(r, 0, "a two-session success EXECUTES through the n-session path");
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "and classifies OK, not TRANSPORT");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL), 1,
+                   "the special delete reached the transport");
+
+    /* The regression this whole seam exists for: the SAME response through the
+     * one-session executor must be refused, proving the count is load-bearing
+     * rather than decorative. */
+    nvf_reset(0u, 0u);
+    nvf_special_sessions = 2u;
+    st = TPM_NV_OK;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_session_cmd_exec_seq(0, cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(r, -1, "the same response through the ONE-session path is refused");
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
+                   "a session-count mismatch is a malformed envelope");
+
+    /* And the converse: a TPM that answers with only ONE session where two were
+     * authorized is refused, so the check is not merely counting upward. */
+    nvf_reset(0u, 0u);
+    nvf_special_sessions = 1u;
+    st = TPM_NV_OK;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_session_cmd_exec_seq_n(0, cmd, n, rsp, sizeof rsp, &rlen, &st, 0, 2u);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(r, -1, "one session where two were authorized is refused");
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT, "and classified as malformed");
+
+    /* n_sessions 0 is a caller error at the executor, not a vacuous success. */
+    st = TPM_NV_OK;
+    r = tpm_session_cmd_exec_seq_n(0, cmd, n, rsp, sizeof rsp, &rlen, &st, 0, 0u);
+    TEST_ASSERT_EQ(r, -1, "n_sessions 0 is refused by the executor");
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_BADARG, "and reported as BADARG");
+}
+
+/* ---- Verified-operation atomicity ----
+ *
+ * tpm_nv_verify_identity's answer expires when its sequence closes, so a read
+ * issued afterwards is a check-then-use race. tpm_nv_verify_then exists to hold
+ * ONE sequence across the verification and the operation; these assertions pin
+ * that the op runs only after a passing verification, and never after a failing
+ * one. */
+
+static int vt_calls;
+static int vt_saw_read_public_first;
+
+static uint32_t vt_seen_index;
+
+static tpm_nv_status_t vt_op(tpm2_seq_t seq, uint32_t nv_index,
+                             const struct tpm_nv_public *pub, void *ctx)
+{
+    uint8_t cmd[64], rsp[128];
+    uint32_t n, rlen = 0;
+    tpm_nv_status_t st;
+    (void)ctx;
+    vt_calls++;
+    vt_seen_index = nv_index;
+    /* The verification must already have happened, in this same sequence. */
+    vt_saw_read_public_first = nvf_saw_cc(TPM2_CC_NV_READ_PUBLIC);
+    if (!pub)
+        return TPM_NV_BADARG;
+    /* Operate on the handle the API VERIFIED, never one of our own -- an op
+     * naming its own index is operating on something this call never checked. */
+    n = tpm2_build_nv_read(cmd, sizeof cmd, TPM_RH_OWNER, nv_index,
+                           TPM_RS_PW, 4u, 0u);
+    if (n == 0u)
+        return TPM_NV_BADARG;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
+        return st;
+    return TPM_NV_OK;
+}
+
+static void test_nv_verify_then_atomicity(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_nv_public pub;
+    struct tpm_nv_identity id;
+    tpm_nv_status_t st;
+
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "enroll the contract");
+
+    /* Control FIRST: the op RUNS on a verified index, and runs after the
+     * ReadPublic rather than before it. */
+    vt_calls = 0; vt_saw_read_public_first = 0;
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                    TPMA_NV_WRITTEN);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_then(&id, vt_op, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "control: the verified op runs and succeeds");
+    TEST_ASSERT_EQ(vt_calls, 1, "control: the op was invoked exactly once");
+    TEST_ASSERT_EQ(vt_saw_read_public_first, 1,
+                   "the identity was established BEFORE the op ran");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 1,
+                   "the op's content read happened in the same sequence");
+    TEST_ASSERT_EQ((int)vt_seen_index, (int)TPM_NV_INDEX_BASELINE,
+                   "the op is handed the VERIFIED handle, so it need not name one");
+
+    /* A definition that no longer matches: the op must NEVER run. */
+    vt_calls = 0;
+    nvid_arm_public(TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_then(&id, vt_op, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH, "a redefined index is refused");
+    TEST_ASSERT_EQ(vt_calls, 0, "the op did NOT run on a failed identity");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 0, "and no content was read");
+
+    /* A self-inconsistent Name: same refusal, op still never runs. */
+    vt_calls = 0;
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA);
+    nvf_public_name_mode = 2;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_then(&id, vt_op, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH, "an inconsistent Name is refused");
+    TEST_ASSERT_EQ(vt_calls, 0, "the op did NOT run on a failed Name check");
+
+    /* An absent index: refused before the op, and reported as NOTFOUND so the
+     * caller can reach the ambiguous recovery state. */
+    vt_calls = 0;
+    nvf_reset(TPM2_CC_NV_READ_PUBLIC, 0x0000018Bu /* HANDLE */);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_then(&id, vt_op, 0);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_NOTFOUND, "an absent index is NOTFOUND");
+    TEST_ASSERT_EQ(vt_calls, 0, "the op did NOT run on an absent index");
+
+    TEST_ASSERT_EQ((int)tpm_nv_verify_then(0, vt_op, 0), (int)TPM_NV_BADARG,
+                   "a NULL contract is BADARG");
+    TEST_ASSERT_EQ((int)tpm_nv_verify_then(&id, 0, 0), (int)TPM_NV_BADARG,
+                   "a NULL op is BADARG");
+}
+
+/* ---- Lifecycle precedence: every pair of simultaneously-true conditions ----
+ *
+ * Each refusal was pinned on its own, which leaves the ORDER between them free
+ * to change silently. Order is not cosmetic here: it decides which remediation
+ * the caller reaches, and the wrong one can route an attack to the recovery
+ * path. */
+
+static void test_nv_lifecycle_precedence(void)
+{
+    struct tpm_nv_lifecycle_obs o;
+
+    /* Absence outranks everything: nothing else can even be observed. */
+    nvlc_good(&o); o.index_present = 0; o.name_ok = 0; o.identity_ok = 0;
+    o.written = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_RECOVERY_REQUIRED,
+                   "absence outranks identity, recreation and rollback together");
+    nvlc_good(&o); o.index_present = 0; o.written = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_RECOVERY_REQUIRED,
+                   "absence outranks recreation");
+    nvlc_good(&o); o.index_present = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_RECOVERY_REQUIRED,
+                   "absence outranks rollback");
+
+    /* Identity outranks recreation and rollback: a substituted index must not
+     * be reported as a recreation of the enrolled one, which would name the
+     * wrong anchor in the refusal. */
+    nvlc_good(&o); o.identity_ok = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_IDENTITY,
+                   "identity outranks rollback");
+    nvlc_good(&o); o.name_ok = 0; o.written = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_IDENTITY,
+                   "a failed Name outranks recreation and rollback");
+
+    /* Recreation outranks rollback: a recreated counter has no comparable
+     * value, so reporting a rollback would be describing arithmetic on a
+     * number that does not mean what the comparison assumes. */
+    nvlc_good(&o); o.written = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_RECREATED,
+                   "recreation outranks rollback");
+    nvlc_good(&o); o.written = 0; o.counter_required = 1; o.counter_known = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_RECREATED,
+                   "recreation outranks an incomplete counter read");
+    /* Control for the line above: with the recreation signal removed, the SAME
+     * observation must reach REFUSE_INCOMPLETE. Without it the precedence
+     * assertion would pass even if the incomplete rule did not exist. */
+    nvlc_good(&o); o.counter_required = 1; o.counter_known = 0;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_INCOMPLETE,
+                   "control: the incomplete condition really is present");
+
+    /* Unenrolled outranks every refusal: with no contract there is nothing to
+     * refuse against, and inventing one would refuse a first provisioning. */
+    nvlc_good(&o); o.enrolled = 0; o.identity_ok = 0; o.written = 0;
+    o.index_present = 0; o.counter_value = 0u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_UNENROLLED,
+                   "unenrolled outranks every refusal");
+}
+
+/* ---- Fail-closed on missing anti-rollback evidence ---- */
+
+static void test_nv_lifecycle_incomplete_counter(void)
+{
+    struct tpm_nv_lifecycle_obs o;
+
+    /* The fail-open shape: a counter-backed anchor whose counter could not be
+     * read used to fall through to ACCEPT, so an attacker who merely makes the
+     * read FAIL got the same verdict as a healthy machine. */
+    nvlc_good(&o); o.counter_required = 1; o.counter_known = 0;
+    o.enrolled_counter = 42u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_INCOMPLETE,
+                   "a required counter that could not be read is REFUSED");
+
+    /* Control: the same anchor WITH the counter read is accepted, so the
+     * refusal is about the missing evidence and not about the flag existing. */
+    nvlc_good(&o); o.counter_required = 1; o.counter_known = 1;
+    o.counter_value = 42u; o.enrolled_counter = 42u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o), (int)TPM_NV_LIFECYCLE_ACCEPT,
+                   "control: a required counter that WAS read is accepted");
+    nvlc_good(&o); o.counter_required = 1; o.counter_known = 1;
+    o.counter_value = 41u; o.enrolled_counter = 42u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o),
+                   (int)TPM_NV_LIFECYCLE_REFUSE_ROLLBACK,
+                   "a required counter below enrollment is still a rollback");
+
+    /* An anchor that is genuinely NOT counter-backed is unaffected: the two
+     * flags are separate facts precisely so this case stays ACCEPT. */
+    nvlc_good(&o); o.counter_required = 0; o.counter_known = 0;
+    o.enrolled_counter = 42u;
+    TEST_ASSERT_EQ((int)tpm_nv_lifecycle_classify(&o), (int)TPM_NV_LIFECYCLE_ACCEPT,
+                   "an anchor with no counter is not refused for lacking one");
+}
+
+/* ---- Platform validator inherits the WHOLE shared rule set ---- */
+
+static void test_nv_platform_validator_inheritance(void)
+{
+    const uint32_t pc = TPMA_NV_PLATFORMCREATE;
+    const uint32_t rw = TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE;
+
+    /* Each of these is refused by the shared validator, and the platform
+     * validator must not become a way around any of them. Proving only the
+     * reserved-bit and counter-size rules left the rest free to drift. */
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc | TPMA_NV_WRITTEN, 96u,
+                                                    TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: TPM-maintained status bits refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(TPMA_NV_OWNERREAD | pc, 96u,
+                                                    TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: a write-authorization bit is required");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(TPMA_NV_OWNERWRITE | pc, 96u,
+                                                    TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: a read-authorization bit is required");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc |
+                                                    TPMA_NV_TYPE(TPM_NT_PIN_PASS),
+                                                    8u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: PIN index types refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc | TPMA_NV_WRITEALL |
+                                                    TPMA_NV_TYPE(TPM_NT_COUNTER),
+                                                    8u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: WRITEALL on a counter refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc | TPMA_NV_CLEAR_STCLEAR |
+                                                    TPMA_NV_TYPE(TPM_NT_COUNTER),
+                                                    8u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS,
+                   "inherits: CLEAR_STCLEAR on a counter refused (resettable anchor)");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc |
+                                                    TPMA_NV_TYPE(TPM_NT_EXTEND),
+                                                    31u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: an EXTEND index is one digest");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc, 0u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: a zero-size ordinary index refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc, 4097u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: an oversized ordinary index refused");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc | 0x00000060u, 96u,
+                                                    TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_ATTRS, "inherits: an undefined TPM_NT value refused");
+
+    /* Controls at each boundary, so the refusals above are about the rule and
+     * not about the validator rejecting everything. */
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc, 1u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_OK, "control: the smallest ordinary index is legal");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc, 4096u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_OK, "control: the largest ordinary index is legal");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc |
+                                                    TPMA_NV_TYPE(TPM_NT_COUNTER),
+                                                    8u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_OK, "control: a legal platform counter is accepted");
+    TEST_ASSERT_EQ((int)tpm_nv_attrs_valid_platform(rw | pc |
+                                                    TPMA_NV_TYPE(TPM_NT_EXTEND),
+                                                    32u, TPM_ALG_SHA256, 0),
+                   (int)TPM_NV_OK, "control: a correctly sized EXTEND index is legal");
+}
+
+/* ---- Name and parse boundaries ---- */
+
+static void test_nv_name_boundaries(void)
+{
+    struct tpm_nv_public pub;
+    uint8_t name[TPM_NV_NAME_MAX];
+
+    /* An absent authPolicy is a legal public area, not a degenerate one. */
+    nvid_fill_public(&pub, 0u, 0u);
+    TEST_ASSERT_EQ(tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &pub, name,
+                                        sizeof name),
+                   (int)TPM_NV_NAME_MAX, "policy_len 0 computes a Name");
+
+    /* The largest authPolicy the contract can hold must still fit the
+     * marshalling buffer -- this is the boundary that would overflow it. */
+    nvid_fill_public(&pub, (uint16_t)TPM_NV_POLICY_MAX, 0xC3u);
+    TEST_ASSERT_EQ(tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &pub, name,
+                                        sizeof name),
+                   (int)TPM_NV_NAME_MAX, "policy_len at TPM_NV_POLICY_MAX computes");
+
+    /* One byte past it is refused rather than truncated: a truncated policy
+     * would compare equal to a different policy sharing its prefix. */
+    pub.policy_len = (uint16_t)(TPM_NV_POLICY_MAX + 1u);
+    TEST_ASSERT_EQ(tpm2_nv_name_compute(TPM_NV_INDEX_BASELINE, &pub, name,
+                                        sizeof name),
+                   -1, "policy_len past TPM_NV_POLICY_MAX is refused");
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    0),
+                   (int)TPM_NV_BADARG, "a NULL identity output is BADARG");
+    {
+        struct tpm_nv_identity id;
+        TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub,
+                                                        1, &id),
+                       (int)TPM_NV_BADARG,
+                       "an oversized authPolicy cannot be enrolled");
+        TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, 0, 1,
+                                                        &id),
+                       (int)TPM_NV_BADARG, "a NULL public area is BADARG");
+    }
+}
+
+/* ---- The handle-owning verified read ----
+ *
+ * tpm_nv_verify_then cannot stop an op from submitting against a DIFFERENT
+ * index than the one verified, which is why the read form owns the handle
+ * outright: there is no argument for a caller to get wrong. */
+
+static void test_nv_verify_and_read(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_nv_public pub;
+    struct tpm_nv_identity id;
+    uint8_t buf[32];
+    uint16_t got = 0xFFFFu;
+    tpm_nv_status_t st;
+
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "enroll the contract");
+
+    /* Control: a verified index reads, and the read names the ENROLLED handle
+     * -- taken from the contract, never from a caller argument. The transfer is
+     * EXACT, so cap is the fake's payload length (4) rather than the buffer
+     * size; asking for more than the TPM returns is a refusal, asserted below. */
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                    TPMA_NV_WRITTEN);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_and_read(&id, 0u, buf, 4u, &got);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "control: a verified index reads");
+    TEST_ASSERT_EQ((int)got, 4, "an exact transfer reports exactly what was asked");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 1, "exactly one content read");
+    /* NV_Read handle area: header(10) + authHandle(4) + nvIndex(4). */
+    TEST_ASSERT_EQ((int)tpm2_be32_get(nvf_cmd + 14), (int)TPM_NV_INDEX_BASELINE,
+                   "the content read targets the ENROLLED handle, not another anchor");
+
+    /* A different anchor's contract reads THAT anchor, proving the handle
+     * follows the contract rather than being fixed in the code. */
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_AB_FLOOR, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "enroll a second anchor");
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                    TPMA_NV_WRITTEN);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_and_read(&id, 0u, buf, 4u, &got);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "the second anchor reads");
+    TEST_ASSERT_EQ((int)tpm2_be32_get(nvf_cmd + 14), (int)TPM_NV_INDEX_AB_FLOOR,
+                   "the read follows the contract's handle");
+
+    /* A failed verification must read NOTHING and must not report a length. */
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "re-enroll the first anchor");
+    got = 0xFFFFu;
+    nvid_arm_public(TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_NO_DA);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_and_read(&id, 0u, buf, 4u, &got);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_MISMATCH, "a redefined index is refused");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 0, "and NO contents were read");
+    TEST_ASSERT_EQ((int)got, 0xFFFF,
+                   "out_len is untouched on failure, never a stale length");
+
+    /* A SHORT response is a refusal, not a quiet partial success. Asking for 8
+     * bytes from a fake that returns 4 is exactly the shape that used to be
+     * reported OK, leaving a record consumer with truncated bytes it had no way
+     * to notice. */
+    got = 0xFFFFu;
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                    TPMA_NV_WRITTEN);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_and_read(&id, 0u, buf, 8u, &got);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
+                   "a response shorter than requested is a malformed response");
+    TEST_ASSERT_EQ((int)got, 0xFFFF, "and out_len stays untouched");
+
+    /* An OVER-LENGTH response is refused for the same reason: the requested
+     * size and the output bound are one number, so extra bytes are never
+     * copied. The fake serves 8 where 4 were asked for. */
+    got = 0xFFFFu;
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA |
+                    TPMA_NV_WRITTEN);
+    nvf_read_payload_len = 8u;
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_and_read(&id, 0u, buf, 4u, &got);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
+                   "a response longer than requested is refused, not truncated");
+    TEST_ASSERT_EQ((int)got, 0xFFFF, "and out_len stays untouched");
+
+    /* THE attack this section exists to refuse, through the consumer API.
+     * The recreated index has a BYTE-IDENTICAL public area, so its Name and its
+     * definition both match; only TPMA_NV_WRITTEN is clear. It must be refused
+     * BEFORE any NV_Read -- and refused as RECREATED, not left to surface as
+     * TPM_NV_UNINIT, which the baseline layer maps to NO_BASELINE and would
+     * therefore launder a destroyed anchor into a first enrollment. */
+    got = 0xFFFFu;
+    nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_nv_verify_and_read(&id, 0u, buf, 4u, &got);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECREATED,
+                   "a same-definition UNWRITTEN index is refused as RECREATED");
+    TEST_ASSERT(st != TPM_NV_UNINIT,
+                "and never as UNINIT, which downstream reads as first enrollment");
+    TEST_ASSERT_EQ(nvf_saw_cc(TPM2_CC_NV_READ), 0,
+                   "the recreated index is refused BEFORE any content read");
+    TEST_ASSERT_EQ((int)got, 0xFFFF, "and out_len stays untouched");
+
+    /* Control: an anchor enrolled as NOT written is legitimately unwritten, so
+     * the same live public area must be ACCEPTED against that contract. Without
+     * this the refusal above would pass against a gate that refuses every
+     * unwritten index regardless of what enrollment recorded. */
+    {
+        struct tpm_nv_identity unwritten;
+        TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE,
+                                                        &pub, 0, &unwritten),
+                       (int)TPM_NV_OK, "enroll an anchor as not-yet-written");
+        nvid_arm_public(TPMA_NV_POLICYREAD | TPMA_NV_POLICYWRITE | TPMA_NV_NO_DA);
+        prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+        st = tpm_nv_verify_and_read(&unwritten, 0u, buf, 4u, &got);
+        tpm_t_test_restore(prev);
+        TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                       "control: an anchor enrolled unwritten reads while unwritten");
+    }
+
+    TEST_ASSERT_EQ((int)tpm_nv_verify_and_read(0, 0u, buf, 4u, &got),
+                   (int)TPM_NV_BADARG, "a NULL contract is BADARG");
+    TEST_ASSERT_EQ((int)tpm_nv_verify_and_read(&id, 0u, 0, 4u, &got),
+                   (int)TPM_NV_BADARG, "a NULL output is BADARG");
+    TEST_ASSERT_EQ((int)tpm_nv_verify_and_read(&id, 0u, buf, 0u, &got),
+                   (int)TPM_NV_BADARG, "a zero capacity is BADARG");
+    /* A cap past the single-transfer maximum is a REFUSAL rather than a silent
+     * clamp: clamping is what let the request and the output bound disagree. */
+    TEST_ASSERT_EQ((int)tpm_nv_verify_and_read(&id, 0u, buf,
+                                               (uint16_t)(TPM_NV_MAX_DATA + 1u),
+                                               &got),
+                   (int)TPM_NV_BADARG, "a cap past TPM_NV_MAX_DATA is refused");
+}
+
+/* ---- A persisted contract is untrusted input ---- */
+
+static void test_nv_identity_persisted_bounds(void)
+{
+    struct tpm_nv_public pub;
+    struct tpm_nv_identity id;
+
+    nvid_fill_public(&pub, 32u, 0x5Au);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "enroll a well-formed contract");
+
+    /* struct tpm_nv_identity is EXPORTED so a record layer can persist it, so a
+     * contract read back from storage is untrusted like any other input. An
+     * oversized policy_len must be a refusal, not a walk past auth_policy[64]
+     * on both sides of the comparison. */
+    id.policy_len = (uint16_t)(TPM_NV_POLICY_MAX + 1u);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &pub), (int)TPM_NV_CONTRACT,
+                   "an oversized ENROLLED policy_len is refused before comparing");
+
+    id.policy_len = 32u;
+    pub.policy_len = (uint16_t)(TPM_NV_POLICY_MAX + 1u);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &pub), (int)TPM_NV_CONTRACT,
+                   "an oversized OBSERVED policy_len is refused before comparing");
+
+    /* CONTRACT is deliberately NOT BADARG: corrupt persisted state is an
+     * authorized-recovery question, while BADARG is documented as a caller
+     * error with no transaction issued. A consumer choosing between halting on
+     * an invariant violation and entering recovery needs them distinguishable,
+     * and NULL is still the caller's mistake. */
+    TEST_ASSERT(TPM_NV_CONTRACT != TPM_NV_BADARG,
+                "a corrupt persisted contract is not a caller argument error");
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(0, &pub), (int)TPM_NV_BADARG,
+                   "a NULL argument IS still BADARG");
+
+    /* Controls at the boundary: exactly TPM_NV_POLICY_MAX is legal on both
+     * sides, so the refusals above are about the overrun and not about the
+     * comparator rejecting large policies. */
+    nvid_fill_public(&pub, (uint16_t)TPM_NV_POLICY_MAX, 0xC3u);
+    TEST_ASSERT_EQ((int)tpm_nv_identity_from_public(TPM_NV_INDEX_BASELINE, &pub, 1,
+                                                    &id),
+                   (int)TPM_NV_OK, "control: a max-length policy enrolls");
+    TEST_ASSERT_EQ((int)tpm_nv_identity_match(&id, &pub), (int)TPM_NV_OK,
+                   "control: a max-length policy compares equal to itself");
+}
+
 void test_register_tpm_nv(void)
 {
     test_suite_register_cat("tpm: NV rc classification", test_nv_classify_rc, TEST_CAT_SECURITY);
@@ -2209,4 +3499,28 @@ void test_register_tpm_nv(void)
     test_suite_register_cat("tpm: NV bounded-sequence budget", test_nv_sequence_budget, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV abandoned session outcome", test_nv_session_unknown_outcome, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV teardown proof + wrapper bounds", test_nv_teardown_and_bounds, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV index Name computation", test_nv_name_compute, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV enrolled identity contract", test_nv_identity_contract, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV lifecycle classification", test_nv_lifecycle_classify, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV two-index separation", test_nv_two_index_separation, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV platform define + POLICY_DELETE",
+                            test_nv_platform_define_attrs, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV UndefineSpaceSpecial marshal",
+                            test_nv_undefine_special_marshal, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV PolicyCommandCode marshal",
+                            test_nv_policy_command_code_marshal, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV multi-session response validation",
+                            test_nv_auth_response_sessions, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV live identity gate", test_nv_live_identity, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV delete-policy digest", test_nv_delete_policy_digest, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV special-delete execution", test_nv_undefine_special_exec, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV verified-operation atomicity", test_nv_verify_then_atomicity, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV lifecycle precedence", test_nv_lifecycle_precedence, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV incomplete counter evidence",
+                            test_nv_lifecycle_incomplete_counter, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV platform validator inheritance",
+                            test_nv_platform_validator_inheritance, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV Name boundaries", test_nv_name_boundaries, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV verified read owns the handle", test_nv_verify_and_read, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV persisted contract bounds", test_nv_identity_persisted_bounds, TEST_CAT_SECURITY);
 }

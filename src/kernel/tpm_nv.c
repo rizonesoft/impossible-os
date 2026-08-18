@@ -26,6 +26,7 @@
 #include "kernel/tpm_nv.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_pcr_alloc.h"
+#include "kernel/crypto/sha256.h"
 #include "kernel/klog.h"
 #include "libc/string.h"
 
@@ -145,6 +146,191 @@ tpm_nv_status_t tpm_nv_attrs_valid(uint32_t attrs, uint16_t data_size,
     }
 }
 
+tpm_nv_status_t tpm_nv_attrs_valid_platform(uint32_t attrs, uint16_t data_size,
+                                            uint16_t name_alg,
+                                            int has_auth_policy)
+{
+    /* Re-run the shared rules with the two platform-only attributes removed, so
+     * this validator inherits every Reserved-bit / TPM_NT / status-bit / size
+     * rule instead of restating them (a restatement is where the two would
+     * drift apart, and the drift would be permissive). */
+    uint32_t shared = attrs & ~(TPMA_NV_POLICY_DELETE | TPMA_NV_PLATFORMCREATE);
+    tpm_nv_status_t st = tpm_nv_attrs_valid(shared, data_size, name_alg);
+    if (st != TPM_NV_OK)
+        return st;
+    /* POLICY_DELETE means "this index is deleted through its OWN authPolicy,
+     * not through the hierarchy that created it". With no authPolicy there is
+     * no such authorization, so the index could never be deleted by anyone --
+     * a permanently undeletable index is a provisioning mistake, not a policy. */
+    if ((attrs & TPMA_NV_POLICY_DELETE) && !has_auth_policy)
+        return TPM_NV_ATTRS;
+    /* A platform-authorized define describes a platform-created index, and the
+     * point of that hierarchy here is precisely that TPM2_Clear does NOT remove
+     * its indices -- an anchor that an owner clear could delete is not an
+     * anchor. Requiring the caller to state it is safe under both readings of
+     * the attribute: if firmware sets it implicitly the caller has merely
+     * agreed, and if firmware demands consistency with the authHandle the
+     * caller is correct. Leaving it unset is the only reading that could
+     * produce a define which validates locally and is refused on real
+     * firmware. */
+    if ((attrs & TPMA_NV_PLATFORMCREATE) == 0u)
+        return TPM_NV_ATTRS;
+    return TPM_NV_OK;
+}
+
+/* ---- Index identity: the TPM2 Name ---- */
+
+int tpm2_nv_name_compute(uint32_t nv_index, const struct tpm_nv_public *pub,
+                         uint8_t *out, uint32_t cap)
+{
+    /* TPMS_NV_PUBLIC: nvIndex(4) nameAlg(2) attributes(4) authPolicy TPM2B(2+N)
+     * dataSize(2). The TPM2B_NV_PUBLIC size prefix that wraps this on the wire
+     * is NOT part of the hashed bytes -- including it would produce a
+     * well-formed digest that matches no TPM. */
+    uint8_t marshalled[4u + 2u + 4u + 2u + TPM_NV_POLICY_MAX + 2u];
+    uint32_t off = 0;
+    uint16_t i;
+
+    if (!pub || !out || cap < TPM_NV_NAME_MAX)
+        return -1;
+    /* SHA-256 is the only bank this module hashes. Another nameAlg is refused
+     * rather than hashed with the wrong algorithm, which would yield a
+     * plausible-looking Name that can never match the TPM's. */
+    if (pub->name_alg != TPM_ALG_SHA256)
+        return -1;
+    if ((uint32_t)pub->policy_len > TPM_NV_POLICY_MAX)
+        return -1;
+
+    tpm2_be32_put(marshalled + off, nv_index); off += 4u;
+    tpm2_be16_put(marshalled + off, pub->name_alg); off += 2u;
+    tpm2_be32_put(marshalled + off, pub->attrs); off += 4u;
+    tpm2_be16_put(marshalled + off, pub->policy_len); off += 2u;
+    for (i = 0; i < pub->policy_len; i++)
+        marshalled[off + i] = pub->auth_policy[i];
+    off += pub->policy_len;
+    tpm2_be16_put(marshalled + off, pub->data_size); off += 2u;
+
+    tpm2_be16_put(out, pub->name_alg);
+    sha256(marshalled, off, out + 2u);
+    return (int)TPM_NV_NAME_MAX;
+}
+
+int tpm2_parse_nv_name(const uint8_t *rsp, uint32_t len, uint32_t nv_index,
+                       uint8_t *out, uint32_t cap)
+{
+    uint32_t poff, plen;
+    uint16_t pubsize, name_len, i;
+
+    if (!out)
+        return -1;
+    /* The strict parser has already bounded the public area and required exact
+     * parameter consumption, so re-deriving the offsets here is over validated
+     * bytes rather than duplicating the validation. */
+    if (tpm2_parse_nv_read_public(rsp, len, nv_index, 0, 0) != 0)
+        return -1;
+    if (tpm2_rsp_params(rsp, len, &poff, &plen) != 0 || plen < 2u)
+        return -1;
+    pubsize = tpm2_be16_get(rsp + poff);
+    name_len = tpm2_be16_get(rsp + poff + 2u + pubsize);
+    if ((uint32_t)name_len > cap)
+        return -1;
+    for (i = 0; i < name_len; i++)
+        out[i] = rsp[poff + 2u + pubsize + 2u + i];
+    return (int)name_len;
+}
+
+tpm_nv_status_t tpm_nv_identity_from_public(uint32_t nv_index,
+                                            const struct tpm_nv_public *pub,
+                                            int expect_written,
+                                            struct tpm_nv_identity *out)
+{
+    uint16_t i;
+    if (!pub || !out)
+        return TPM_NV_BADARG;
+    if ((uint32_t)pub->policy_len > TPM_NV_POLICY_MAX)
+        return TPM_NV_BADARG;
+    out->nv_index = nv_index;
+    out->name_alg = pub->name_alg;
+    /* NORMALIZED: the TPM maintains WRITELOCKED / READLOCKED / WRITTEN, so they
+     * are not part of the DEFINITION and an enrolled contract carrying them
+     * would stop matching the moment the index is written or locked. The
+     * written half is carried explicitly below instead of being smuggled in
+     * through the attribute word. */
+    out->attrs = pub->attrs & ~TPMA_NV_STATUS_MASK;
+    out->data_size = pub->data_size;
+    out->policy_len = pub->policy_len;
+    for (i = 0; i < TPM_NV_POLICY_MAX; i++)
+        out->auth_policy[i] = (i < pub->policy_len) ? pub->auth_policy[i] : 0u;
+    out->expect_written = expect_written ? 1u : 0u;
+    return TPM_NV_OK;
+}
+
+tpm_nv_status_t tpm_nv_identity_match(const struct tpm_nv_identity *enrolled,
+                                      const struct tpm_nv_public *observed)
+{
+    uint16_t i;
+    if (!enrolled || !observed)
+        return TPM_NV_BADARG;
+    /* The contract is EXPORTED for persistence, so a deserialized one is
+     * untrusted input like any other. Bounding policy_len before it is used as
+     * a loop bound is what keeps a corrupt contract a refusal instead of an
+     * out-of-bounds read past both auth_policy arrays. */
+    if ((uint32_t)enrolled->policy_len > TPM_NV_POLICY_MAX ||
+        (uint32_t)observed->policy_len > TPM_NV_POLICY_MAX)
+        return TPM_NV_CONTRACT;
+    if (enrolled->name_alg != observed->name_alg)
+        return TPM_NV_MISMATCH;
+    if (enrolled->attrs != (observed->attrs & ~TPMA_NV_STATUS_MASK))
+        return TPM_NV_MISMATCH;
+    if (enrolled->data_size != observed->data_size)
+        return TPM_NV_MISMATCH;
+    if (enrolled->policy_len != observed->policy_len)
+        return TPM_NV_MISMATCH;
+    /* The authPolicy IS the access-control rule, so a difference here is a
+     * different index however well the rest agrees. */
+    for (i = 0; i < enrolled->policy_len; i++)
+        if (enrolled->auth_policy[i] != observed->auth_policy[i])
+            return TPM_NV_MISMATCH;
+    return TPM_NV_OK;
+}
+
+tpm_nv_lifecycle_t tpm_nv_lifecycle_classify(const struct tpm_nv_lifecycle_obs *o)
+{
+    if (!o || !o->enrolled)
+        return TPM_NV_LIFECYCLE_UNENROLLED;
+    /* An enrolled anchor whose index is GONE is the ambiguous case, and it is
+     * reported as ambiguous. A replaced or cleared TPM and an attacker who
+     * deleted the anchor produce identical observations from here, so choosing
+     * either reading would be a guess: calling it a clear hands the attacker
+     * the recovery path, and calling it an attack fails a real hardware
+     * replacement. The caller resolves it with authorized evidence. */
+    if (!o->index_present)
+        return TPM_NV_LIFECYCLE_RECOVERY_REQUIRED;
+    /* Identity first, and BEFORE any judgement that depends on the index being
+     * the enrolled one. A TPM whose reported Name disagrees with the public
+     * area it reported alongside it has contradicted itself; an index whose
+     * definition no longer matches the contract is a different index. */
+    if (!o->name_ok || !o->identity_ok)
+        return TPM_NV_LIFECYCLE_REFUSE_IDENTITY;
+    /* The recreation detector. A freshly defined index has TPMA_NV_WRITTEN
+     * CLEAR, and an attacker who redefines with a byte-identical public area
+     * produces a byte-identical Name -- so this, not the Name, is what sees the
+     * undefine/redefine. Ordered BEFORE the counter comparison because a
+     * recreated counter has no meaningful value to compare yet. */
+    if (o->expect_written && !o->written)
+        return TPM_NV_LIFECYCLE_REFUSE_RECREATED;
+    /* A counter-backed anchor whose counter could not be read is REFUSED, not
+     * accepted. Gating the comparison on counter_known alone and falling
+     * through to ACCEPT made a failed counter read indistinguishable from an
+     * anchor that never had a counter -- a fail-open anti-rollback decision,
+     * and the exact shape an attacker gets by making the read fail. */
+    if (o->counter_required && !o->counter_known)
+        return TPM_NV_LIFECYCLE_REFUSE_INCOMPLETE;
+    if (o->counter_known && o->counter_value < o->enrolled_counter)
+        return TPM_NV_LIFECYCLE_REFUSE_ROLLBACK;
+    return TPM_NV_LIFECYCLE_ACCEPT;
+}
+
 /* ---- Marshaling helpers ---- */
 
 /* Append a one-session authorization area at off. Layout:
@@ -175,16 +361,21 @@ static uint32_t put_auth_area(uint8_t *buf, uint32_t off, uint32_t session,
     return off;
 }
 
-uint32_t tpm2_build_nv_define(uint8_t *buf, uint32_t cap, uint32_t nv_index,
-                              uint32_t attrs, uint16_t name_alg,
-                              const uint8_t *auth_policy, uint16_t auth_policy_len,
-                              uint16_t data_size)
+/* One marshaller for both define hierarchies. The only differences are the
+ * authHandle and WHICH attribute validator gates it, so they are parameters
+ * rather than a second near-identical builder whose auth area would drift. */
+static uint32_t nv_build_define_common(uint8_t *buf, uint32_t cap, uint32_t auth_handle,
+                                       uint32_t nv_index, uint32_t attrs,
+                                       uint16_t name_alg, const uint8_t *auth_policy,
+                                       uint16_t auth_policy_len, uint16_t data_size,
+                                       int platform)
 {
     /* header(10) + authHandle(4) + authArea(13: PW session, empty owner pw)
      * + authValue TPM2B(2, empty) + TPM2B_NV_PUBLIC(2 + inner). */
     uint32_t inner = 4u + 2u + 4u + (2u + (uint32_t)auth_policy_len) + 2u;
     uint32_t total = 10u + 4u + 13u + 2u + 2u + inner;
     uint32_t off, i;
+    tpm_nv_status_t vst;
     if (!buf || cap < total || data_size == 0u ||
         (auth_policy_len != 0u && !auth_policy))
         return 0;
@@ -192,7 +383,11 @@ uint32_t tpm2_build_nv_define(uint8_t *buf, uint32_t cap, uint32_t nv_index,
      * TPM_NV_ATTRS by name, but no caller gets to marshal an illegal shape --
      * including a DIRECT caller of this builder, which is an exported symbol
      * and not only the wrappers' private back end. */
-    if (tpm_nv_attrs_valid(attrs, data_size, name_alg) != TPM_NV_OK)
+    vst = platform
+              ? tpm_nv_attrs_valid_platform(attrs, data_size, name_alg,
+                                            auth_policy_len != 0u)
+              : tpm_nv_attrs_valid(attrs, data_size, name_alg);
+    if (vst != TPM_NV_OK)
         return 0;
     /* An authPolicy is absent or exactly one nameAlg digest. Enforced here as
      * well as in tpm_nv_define_ex so the request path cannot be bypassed by
@@ -203,8 +398,8 @@ uint32_t tpm2_build_nv_define(uint8_t *buf, uint32_t cap, uint32_t nv_index,
     tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
     tpm2_be32_put(buf + 2, total);
     tpm2_be32_put(buf + 6, TPM2_CC_NV_DEFINE_SPACE);
-    tpm2_be32_put(buf + 10, TPM_RH_OWNER);                 /* authHandle */
-    off = put_auth_area(buf, 14u, TPM_RS_PW, 0, 0, 0, 0);  /* owner pw (empty) */
+    tpm2_be32_put(buf + 10, auth_handle);                  /* authHandle */
+    off = put_auth_area(buf, 14u, TPM_RS_PW, 0, 0, 0, 0);  /* hierarchy pw (empty) */
     tpm2_be16_put(buf + off, 0u); off += 2u;               /* auth (index authValue) empty */
     tpm2_be16_put(buf + off, (uint16_t)inner); off += 2u;  /* nvPublic size */
     tpm2_be32_put(buf + off, nv_index); off += 4u;         /* nvIndex */
@@ -215,6 +410,82 @@ uint32_t tpm2_build_nv_define(uint8_t *buf, uint32_t cap, uint32_t nv_index,
     off += auth_policy_len;
     tpm2_be16_put(buf + off, data_size); off += 2u;        /* dataSize */
     return off;
+}
+
+uint32_t tpm2_build_nv_define(uint8_t *buf, uint32_t cap, uint32_t nv_index,
+                              uint32_t attrs, uint16_t name_alg,
+                              const uint8_t *auth_policy, uint16_t auth_policy_len,
+                              uint16_t data_size)
+{
+    return nv_build_define_common(buf, cap, TPM_RH_OWNER, nv_index, attrs, name_alg,
+                                  auth_policy, auth_policy_len, data_size, 0);
+}
+
+uint32_t tpm2_build_nv_define_platform(uint8_t *buf, uint32_t cap, uint32_t nv_index,
+                                       uint32_t attrs, uint16_t name_alg,
+                                       const uint8_t *auth_policy,
+                                       uint16_t auth_policy_len,
+                                       uint16_t data_size)
+{
+    return nv_build_define_common(buf, cap, TPM_RH_PLATFORM, nv_index, attrs, name_alg,
+                                  auth_policy, auth_policy_len, data_size, 1);
+}
+
+uint32_t tpm2_build_nv_undefine_special(uint8_t *buf, uint32_t cap,
+                                        uint32_t nv_index,
+                                        uint32_t policy_session)
+{
+    /* header(10) + nvIndex(4) + platform(4) + authorizationSize(4) + TWO auth
+     * areas. The index is authorized by a real POLICY session satisfying its own
+     * authPolicy (13 bytes: handle + empty nonce + attrs + empty hmac); the
+     * platform hierarchy is authorized by the password session (13 bytes).
+     * put_auth_area writes its own 4-byte authorizationSize per area, so the
+     * combined area is written once here and the per-area prefix is not reused. */
+    uint32_t area1 = 4u + 2u + 1u + 2u;   /* handle + nonce(0) + attrs + hmac(0) */
+    uint32_t area2 = area1;
+    uint32_t total = 10u + 4u + 4u + 4u + area1 + area2;
+    uint32_t off;
+    /* A password handle cannot satisfy an index authPolicy, and a policy handle
+     * of 0 is never valid -- both would marshal a command that can only ever be
+     * refused, so they are refused locally instead. */
+    if (!buf || cap < total || policy_session == 0u || policy_session == TPM_RS_PW)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL);
+    /* Handle order is normative: nvIndex first (ADMIN role, satisfied by the
+     * index's own policy), platform second. Swapping them authorizes the wrong
+     * object with the wrong secret. */
+    tpm2_be32_put(buf + 10, nv_index);
+    tpm2_be32_put(buf + 14, TPM_RH_PLATFORM);
+    tpm2_be32_put(buf + 18, area1 + area2);   /* combined authorizationSize */
+    off = 22u;
+    /* Each entry is the auth-area BODY (no per-entry size prefix). */
+    tpm2_be32_put(buf + off, policy_session); off += 4u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;   /* nonceCaller (empty) */
+    buf[off] = 0x01u; off += 1u;               /* continueSession on the policy session */
+    tpm2_be16_put(buf + off, 0u); off += 2u;   /* hmac (empty) */
+    tpm2_be32_put(buf + off, TPM_RS_PW); off += 4u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;   /* nonce (empty) */
+    buf[off] = 0x00u; off += 1u;               /* password session: no continueSession */
+    tpm2_be16_put(buf + off, 0u); off += 2u;   /* platformAuth (empty) */
+    return off;
+}
+
+uint32_t tpm2_build_policy_command_code(uint8_t *buf, uint32_t cap,
+                                        uint32_t policy_session, uint32_t code)
+{
+    /* header(10) + policySession(4) + code(4). No auth area: a policy-assertion
+     * command authorizes nothing, it only updates the session's policyDigest. */
+    uint32_t total = 10u + 4u + 4u;
+    if (!buf || cap < total || policy_session == 0u)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_POLICY_COMMAND_CODE);
+    tpm2_be32_put(buf + 10, policy_session);
+    tpm2_be32_put(buf + 14, code);
+    return total;
 }
 
 uint32_t tpm2_build_nv_undefine(uint8_t *buf, uint32_t cap, uint32_t nv_index)
@@ -599,21 +870,36 @@ void tpm_nv_baseline_pcr_select(uint8_t out_sel[3])
  * A length that fits inside the response but exceeds this is malformed. */
 #define TPM2B_HA_MAX 64u
 
-int tpm_session_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_off)
+int tpm_session_auth_response_n_ok(const uint8_t *rsp, uint32_t size,
+                                   uint32_t auth_off, uint32_t n_sessions)
 {
     uint32_t off = auth_off;
+    uint32_t i;
     uint16_t nonce_n, hmac_n;
-    if (size < off + 2u) return 0;
-    nonce_n = tpm2_be16_get(rsp + off); off += 2u;
-    if ((uint32_t)nonce_n > TPM2B_HA_MAX || (uint32_t)nonce_n > size - off) return 0;
-    off += nonce_n;
-    if (size < off + 1u) return 0;          /* sessionAttributes */
-    off += 1u;
-    if (size < off + 2u) return 0;
-    hmac_n = tpm2_be16_get(rsp + off); off += 2u;
-    if ((uint32_t)hmac_n > TPM2B_HA_MAX || (uint32_t)hmac_n > size - off) return 0;
-    off += hmac_n;
-    return (off == size) ? 1 : 0;           /* exactly one session, no trailing bytes */
+    /* A command with no authorizations has no auth area to validate, so asking
+     * this function about one is a caller error rather than a vacuous pass. */
+    if (n_sessions == 0u) return 0;
+    for (i = 0; i < n_sessions; i++) {
+        if (size < off + 2u) return 0;
+        nonce_n = tpm2_be16_get(rsp + off); off += 2u;
+        if ((uint32_t)nonce_n > TPM2B_HA_MAX || (uint32_t)nonce_n > size - off) return 0;
+        off += nonce_n;
+        if (size < off + 1u) return 0;      /* sessionAttributes */
+        off += 1u;
+        if (size < off + 2u) return 0;
+        hmac_n = tpm2_be16_get(rsp + off); off += 2u;
+        if ((uint32_t)hmac_n > TPM2B_HA_MAX || (uint32_t)hmac_n > size - off) return 0;
+        off += hmac_n;
+    }
+    /* EXACTLY n_sessions: no trailing bytes, and no session past the count the
+     * command authorized. Consuming a prefix and ignoring the rest would accept
+     * a response carrying an extra, unexamined authorization area. */
+    return (off == size) ? 1 : 0;
+}
+
+int tpm_session_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_off)
+{
+    return tpm_session_auth_response_n_ok(rsp, size, auth_off, 1u);
 }
 
 /* Submit one command and classify the response code. On TPM_NV_OK leaves rsp
@@ -627,14 +913,29 @@ int tpm_session_cmd_exec(const uint8_t *cmd, uint32_t n, uint8_t *rsp, uint32_t 
 static int nv_cmd_exec_common(tpm2_seq_t seq, int teardown,
                               const uint8_t *cmd, uint32_t n, uint8_t *rsp,
                               uint32_t cap, uint32_t *out_rlen,
-                              tpm_nv_status_t *out_st, uint32_t *out_rc);
+                              tpm_nv_status_t *out_st, uint32_t *out_rc,
+                              uint32_t n_sessions);
 
 int tpm_session_cmd_exec_seq(tpm2_seq_t seq,
                              const uint8_t *cmd, uint32_t n, uint8_t *rsp,
                              uint32_t cap, uint32_t *out_rlen,
                              tpm_nv_status_t *out_st, uint32_t *out_rc)
 {
-    return nv_cmd_exec_common(seq, 0, cmd, n, rsp, cap, out_rlen, out_st, out_rc);
+    return nv_cmd_exec_common(seq, 0, cmd, n, rsp, cap, out_rlen, out_st, out_rc, 1u);
+}
+
+int tpm_session_cmd_exec_seq_n(tpm2_seq_t seq,
+                               const uint8_t *cmd, uint32_t n, uint8_t *rsp,
+                               uint32_t cap, uint32_t *out_rlen,
+                               tpm_nv_status_t *out_st, uint32_t *out_rc,
+                               uint32_t n_sessions)
+{
+    if (n_sessions == 0u) {
+        *out_st = TPM_NV_BADARG;
+        return -1;
+    }
+    return nv_cmd_exec_common(seq, 0, cmd, n, rsp, cap, out_rlen, out_st, out_rc,
+                              n_sessions);
 }
 
 /* Same, but submitted on the sequence's teardown allowance. */
@@ -644,13 +945,14 @@ static int tpm_session_cmd_exec_teardown(tpm2_seq_t seq,
                                          uint32_t *out_rlen,
                                          tpm_nv_status_t *out_st, uint32_t *out_rc)
 {
-    return nv_cmd_exec_common(seq, 1, cmd, n, rsp, cap, out_rlen, out_st, out_rc);
+    return nv_cmd_exec_common(seq, 1, cmd, n, rsp, cap, out_rlen, out_st, out_rc, 1u);
 }
 
 static int nv_cmd_exec_common(tpm2_seq_t seq, int teardown,
                               const uint8_t *cmd, uint32_t n, uint8_t *rsp,
                               uint32_t cap, uint32_t *out_rlen,
-                              tpm_nv_status_t *out_st, uint32_t *out_rc)
+                              tpm_nv_status_t *out_st, uint32_t *out_rc,
+                              uint32_t n_sessions)
 {
     int r;
     uint16_t tag;
@@ -706,12 +1008,18 @@ static int nv_cmd_exec_common(tpm2_seq_t seq, int teardown,
      * the response, so a physical bus interposer that forges a well-formed
      * ST_SESSIONS success is NOT defended here -- that needs salted/bound HMAC
      * sessions + parameter encryption (BitLocker-style bus protection), a
-     * separate transport-wide feature tracked as a TODO-13 section-8 follow-up. */
+     * separate transport-wide feature tracked as a TODO-13 section-8 follow-up.
+     *
+     * The response carries exactly as many TPMS_AUTH_RESPONSE structures as the
+     * COMMAND carried authorizations, so the count comes from the caller (which
+     * built the command) rather than from the response (which is the thing
+     * being validated). Every NV command here authorizes once;
+     * NV_UndefineSpaceSpecial authorizes twice. */
     if (tpm2_be16_get(cmd) == TPM2_ST_SESSIONS) {
         uint32_t poff, plen;
         if (tag != TPM2_ST_SESSIONS ||
             tpm2_rsp_params(rsp, (uint32_t)r, &poff, &plen) != 0 ||
-            !tpm_session_auth_response_ok(rsp, size, poff + plen)) {
+            !tpm_session_auth_response_n_ok(rsp, size, poff + plen, n_sessions)) {
             *out_st = TPM_NV_TRANSPORT;
             return -1;
         }
@@ -1481,4 +1789,303 @@ tpm_nv_status_t tpm_nv_read_public(uint32_t nv_index, uint16_t *out_size,
     if (tpm2_parse_nv_read_public(rsp, rlen, nv_index, out_size, out_attrs) != 0)
         return TPM_NV_TRANSPORT;
     return TPM_NV_OK;
+}
+
+/* ---- The live identity gate ---- */
+
+tpm_nv_status_t tpm_nv_read_identity(uint32_t nv_index,
+                                     struct tpm_nv_public *out_pub,
+                                     int *out_name_ok)
+{
+    uint8_t cmd[16], rsp[128];
+    uint8_t reported[TPM_NV_NAME_MAX], computed[TPM_NV_NAME_MAX];
+    struct tpm_nv_public pub;
+    uint32_t n, rlen = 0;
+    int name_len, computed_len, ok = 0, i;
+    tpm_nv_status_t st;
+
+    n = tpm2_build_nv_read_public(cmd, sizeof cmd, nv_index);
+    if (n == 0u)
+        return TPM_NV_BADARG;
+    st = nv_exec_bounded(cmd, n, rsp, sizeof rsp, &rlen);
+    if (st != TPM_NV_OK)
+        return st;
+    if (tpm2_parse_nv_public_full(rsp, rlen, nv_index, &pub) != 0)
+        return TPM_NV_TRANSPORT;
+    name_len = tpm2_parse_nv_name(rsp, rlen, nv_index, reported, sizeof reported);
+    computed_len = tpm2_nv_name_compute(nv_index, &pub, computed, sizeof computed);
+    /* An empty or absent reported name is NOT a pass: it is precisely the shape
+     * that let every earlier caller ignore the field. Length equality is
+     * checked before the bytes so a short name cannot match a prefix. */
+    if (name_len > 0 && computed_len == name_len) {
+        ok = 1;
+        for (i = 0; i < name_len; i++)
+            if (reported[i] != computed[i]) { ok = 0; break; }
+    }
+    if (out_pub) *out_pub = pub;
+    if (out_name_ok) *out_name_ok = ok;
+    return TPM_NV_OK;
+}
+
+/* Standalone identity check. Its answer describes the index AT THE MOMENT its
+ * sequence ran and expires when that sequence closes, so a caller that goes on
+ * to read CONTENTS must use tpm_nv_verify_then() instead. */
+tpm_nv_status_t tpm_nv_verify_identity(const struct tpm_nv_identity *enrolled,
+                                       struct tpm_nv_public *out_pub)
+{
+    struct tpm_nv_public pub;
+    int name_ok = 0;
+    tpm_nv_status_t st;
+
+    if (!enrolled)
+        return TPM_NV_BADARG;
+    st = tpm_nv_read_identity(enrolled->nv_index, &pub, &name_ok);
+    if (st != TPM_NV_OK)
+        return st;          /* NOTFOUND, transport, budget: reported as-is */
+    if (!name_ok)
+        return TPM_NV_MISMATCH;
+    st = tpm_nv_identity_match(enrolled, &pub);
+    if (st != TPM_NV_OK)
+        return st;
+    /* The SAME lifecycle check the atomic path makes. Diverging here would make
+     * this gate report OK for a byte-identical recreated anchor while
+     * tpm_nv_verify_then refuses it -- a trap for the next caller, and one that
+     * contradicts this function's own documented meaning of OK. */
+    if (enrolled->expect_written && (pub.attrs & TPMA_NV_WRITTEN) == 0u)
+        return TPM_NV_RECREATED;
+    if (out_pub) *out_pub = pub;
+    return TPM_NV_OK;
+}
+
+/* ---- Verified operation: identity and the op share ONE sequence ---- */
+
+struct nv_verify_then_ctx {
+    const struct tpm_nv_identity *enrolled;
+    tpm_nv_verified_op_fn         op;
+    void                         *ctx;
+    tpm_nv_status_t               st;
+};
+
+/* Everything here runs inside the CALLER's sequence, which is the whole point:
+ * the transport gate is held across ReadPublic, the Name and identity checks,
+ * and the op. Doing the verification in its own sequence would release the gate
+ * in between, and the approval would describe an index another CPU is free to
+ * have replaced before the op runs. */
+static int nv_verify_then_seq(tpm2_seq_t seq, void *vctx)
+{
+    struct nv_verify_then_ctx *c = (struct nv_verify_then_ctx *)vctx;
+    uint8_t cmd[16], rsp[128];
+    uint8_t reported[TPM_NV_NAME_MAX], computed[TPM_NV_NAME_MAX];
+    struct tpm_nv_public pub;
+    uint32_t n, rlen = 0;
+    int name_len, computed_len, ok = 0, i;
+    tpm_nv_status_t st;
+
+    n = tpm2_build_nv_read_public(cmd, sizeof cmd, c->enrolled->nv_index);
+    if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+        c->st = st;
+        return 0;
+    }
+    if (tpm2_parse_nv_public_full(rsp, rlen, c->enrolled->nv_index, &pub) != 0) {
+        c->st = TPM_NV_TRANSPORT;
+        return 0;
+    }
+    name_len = tpm2_parse_nv_name(rsp, rlen, c->enrolled->nv_index, reported,
+                                  sizeof reported);
+    computed_len = tpm2_nv_name_compute(c->enrolled->nv_index, &pub, computed,
+                                        sizeof computed);
+    if (name_len > 0 && computed_len == name_len) {
+        ok = 1;
+        for (i = 0; i < name_len; i++)
+            if (reported[i] != computed[i]) { ok = 0; break; }
+    }
+    if (!ok) { c->st = TPM_NV_MISMATCH; return 0; }
+    st = tpm_nv_identity_match(c->enrolled, &pub);
+    if (st != TPM_NV_OK) { c->st = st; return 0; }
+    /* Identity alone is NOT enough, and this is the gap that would let the very
+     * attack this module exists to refuse reach the content read.
+     * tpm_nv_identity_match deliberately normalizes TPMA_NV_WRITTEN away,
+     * because it is TPM-maintained state rather than a definition property --
+     * so an index destroyed and recreated with a byte-identical public area
+     * passes both the Name check and the definition match. The cleared WRITTEN
+     * bit is the only thing that betrays it, so it is checked HERE, before the
+     * op runs.
+     *
+     * Letting the op proceed would not merely be a missed refusal: its NV_Read
+     * returns TPM_RC_NV_UNINITIALIZED, which the baseline layer maps to
+     * NO_BASELINE, i.e. "no record yet" -- so a destroyed anchor would be
+     * laundered into a first enrollment. */
+    if (c->enrolled->expect_written && (pub.attrs & TPMA_NV_WRITTEN) == 0u) {
+        c->st = TPM_NV_RECREATED;
+        return 0;
+    }
+    /* Only now, and still inside the same sequence. */
+    c->st = c->op(seq, c->enrolled->nv_index, &pub, c->ctx);
+    return 0;
+}
+
+tpm_nv_status_t tpm_nv_verify_then(const struct tpm_nv_identity *enrolled,
+                                   tpm_nv_verified_op_fn op, void *ctx)
+{
+    struct nv_verify_then_ctx c;
+    int r;
+
+    if (!enrolled || !op)
+        return TPM_NV_BADARG;
+    c.enrolled = enrolled; c.op = op; c.ctx = ctx; c.st = TPM_NV_TRANSPORT;
+    r = tpm2_seq_run(s_nv_work_ms, s_nv_cleanup_ms, nv_verify_then_seq, &c);
+    return (r != 0) ? nv_seq_start_status(r) : c.st;
+}
+
+/* The handle-owning read. `nv_index` comes from the verified contract and is
+ * never a caller argument, so there is no way to verify one index and read
+ * another. */
+struct nv_verified_read_ctx {
+    uint16_t  offset;
+    uint8_t  *out;
+    uint16_t  cap;
+    uint16_t  got;
+};
+
+static tpm_nv_status_t nv_verified_read_op(tpm2_seq_t seq, uint32_t nv_index,
+                                           const struct tpm_nv_public *pub,
+                                           void *vctx)
+{
+    struct nv_verified_read_ctx *c = (struct nv_verified_read_ctx *)vctx;
+    uint8_t cmd[64], rsp[TPM_NV_MAX_DATA + 128u];
+    uint32_t n, rlen = 0;
+    tpm_nv_status_t st;
+    int got;
+    uint16_t want = c->cap;
+
+    (void)pub;
+    /* The requested size and the output bound are the SAME number. Requesting
+     * min(cap, MAX) and then parsing with cap let a response LONGER than the
+     * request be copied in full, and a SHORTER one be reported as success --
+     * handing a record consumer bytes it never asked for, or silently fewer
+     * than it needs. */
+    if (want == 0u || (uint32_t)want > TPM_NV_MAX_DATA)
+        return TPM_NV_BADARG;
+    n = tpm2_build_nv_read(cmd, sizeof cmd, TPM_RH_OWNER, nv_index, TPM_RS_PW,
+                           want, c->offset);
+    if (n == 0u)
+        return TPM_NV_BADARG;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
+        return st;
+    got = tpm2_parse_nv_read(rsp, rlen, c->out, want);
+    if (got < 0)
+        return TPM_NV_TRANSPORT;
+    /* A conforming NV_Read returns exactly the requested size, so anything else
+     * is a malformed response rather than a partial transfer to paper over. */
+    if ((uint16_t)got != want)
+        return TPM_NV_TRANSPORT;
+    c->got = (uint16_t)got;
+    return TPM_NV_OK;
+}
+
+tpm_nv_status_t tpm_nv_verify_and_read(const struct tpm_nv_identity *enrolled,
+                                       uint16_t offset, uint8_t *out,
+                                       uint16_t cap, uint16_t *out_len)
+{
+    struct nv_verified_read_ctx c;
+    tpm_nv_status_t st;
+
+    if (!enrolled || !out || cap == 0u || (uint32_t)cap > TPM_NV_MAX_DATA)
+        return TPM_NV_BADARG;
+    c.offset = offset; c.out = out; c.cap = cap; c.got = 0;
+    st = tpm_nv_verify_then(enrolled, nv_verified_read_op, &c);
+    /* *out_len is set only on success, so a failed read never leaves a caller
+     * reading a stale or partial length as if it described fresh bytes. */
+    if (st == TPM_NV_OK && out_len)
+        *out_len = c.got;
+    return st;
+}
+
+/* ---- Delete-policy digest (trial session, PolicyCommandCode) ---- */
+
+static int nv_delete_policy_digest_seq(tpm2_seq_t seq, void *vctx)
+{
+    struct nv_digest_ctx *c = (struct nv_digest_ctx *)vctx;
+    uint8_t cmd[64], rsp[128], nonce[16];
+    uint32_t session, n, rlen = 0, sas_rc;
+    tpm_nv_status_t st;
+
+    /* nonceCaller is not security-relevant for a trial policy digest. */
+    memset(nonce, 0xA5, sizeof nonce);
+    n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_TRIAL,
+                                      TPM_ALG_SHA256, nonce, sizeof nonce);
+    if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
+    sas_rc = NV_RC_UNSET;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
+                                 &sas_rc) != 0) {
+        nv_session_failure_guard(seq, st, sas_rc);
+        c->st = st;
+        return 0;
+    }
+    session = tpm2_parse_start_auth_session(rsp, rlen);
+    if (session == 0u) {
+        /* Same two leak categories as the PCR trial flow: recover the raw
+         * handle where one exists, log where none can be. */
+        uint32_t raw = tpm2_rsp_session_handle(rsp, rlen);
+        if (raw != 0u)
+            nv_flush(seq, raw);
+        else
+            klog(LOG_WARN, "TPM",
+                 "session created but its handle is unrecoverable; slot may be held");
+        c->st = TPM_NV_TRANSPORT;
+        return 0;
+    }
+    /* From here ALL exits flush `session`. */
+    n = tpm2_build_policy_command_code(cmd, sizeof cmd, session,
+                                       TPM2_CC_NV_UNDEFINE_SPACE_SPECIAL);
+    if (n == 0u) { st = TPM_NV_BADARG; goto out; }
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
+        goto out;
+    n = tpm2_build_policy_get_digest(cmd, sizeof cmd, session);
+    if (n == 0u) { st = TPM_NV_BADARG; goto out; }
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
+        goto out;
+    st = (tpm2_parse_policy_get_digest(rsp, rlen, c->out, c->cap) == 32)
+             ? TPM_NV_OK : TPM_NV_TRANSPORT;
+out:
+    nv_flush(seq, session);
+    c->st = st;
+    return 0;
+}
+
+/* IMPORTANT -- what this policy is, and what it is NOT.
+ *
+ * PolicyCommandCode SCOPES an authorization to one command. It does not
+ * AUTHENTICATE anyone: the assertion carries no secret, so any caller can open
+ * a trial session and reproduce this exact digest. A policy consisting only of
+ * PolicyCommandCode therefore says "whoever can reach this index may delete it,
+ * and may do nothing else with this policy" -- which is a useful restriction
+ * and NOT a trust boundary.
+ *
+ * Consequently this digest alone does NOT make deletion unreachable from the
+ * ordinary OS path, and must not be presented as if it did. Closing that needs
+ * an authenticated assertion (PolicySigned, or PolicyAuthorize over a signed
+ * policy) combined with this one, plus a real platform authorization rather
+ * than the empty platformAuth the builder currently sends. Neither PolicySigned
+ * nor any signed-policy machinery exists in this tree yet; the section TODO
+ * carries that as open work with its owner named.
+ *
+ * The detector that DOES hold without it is the counter: a recreated
+ * TPM_NT_COUNTER cannot restart below the highest value the TPM has ever held,
+ * and a recreated index reads back with TPMA_NV_WRITTEN clear. Both are
+ * enforced above. Neither covers a delete-recreate-WRITE against an ordinary
+ * data index, which is why record authorization is a separate construction. */
+tpm_nv_status_t tpm_nv_delete_policy_digest(uint8_t *out, uint32_t cap)
+{
+    struct nv_digest_ctx c;
+    int r;
+
+    if (!out || cap < 32u)
+        return TPM_NV_BADARG;
+    c.alg = TPM_ALG_SHA256; c.sel = 0; c.out = out; c.cap = cap;
+    c.st = TPM_NV_TRANSPORT;
+    r = tpm2_seq_run(s_nv_work_ms, s_nv_cleanup_ms,
+                     nv_delete_policy_digest_seq, &c);
+    return (r != 0) ? nv_seq_start_status(r) : c.st;
 }
