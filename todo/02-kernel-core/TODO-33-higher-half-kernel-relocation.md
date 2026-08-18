@@ -49,6 +49,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
 | 🔥  |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [x]   |
 | 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [/]   |
+| 🔥  |  12   | Second tactical BSS pass: reclaim a large static again   | --                     |  [ ]   |
 | 💎  |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎  |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
@@ -265,6 +266,7 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
   - The failure is cascading rather than proportional, which makes it arrive without warning: shrinking `.rodata` by 859 bytes (or `.text` by 1183) moves every following page-aligned section down one page and clears the guard, so a section either fits with room to spare or fails by a whole page.
   - A second §10-shaped pass would need NEW targets: the three pools this file's conversion table nominated are already converted (`reg_value_pool`, `reg_key_pool` and `s_atoms` are now pointers, 24 bytes apart in `.bss`), so the table is spent and describes finished work.
   - The largest remaining `.bss` consumers, measured from `build/kernel.map`, are `klog_ring` 288000, `devices` 277504, `tasks` 203776, `ctrl_windows` 180736 and `s_recovered` 164000. The table already rules out the first two (pre-PMM, and hot-plug-ISR reachable); the last three are unassessed and are where a second pass would have to look.
+  - ANSWERED 2026-08-18: it is recurring, and the tactical route now has its own unblocked owner rather than sitting as a note inside this deferred section -> XREF: this file §12 (item: "Assess the three unassessed candidates against the §10 bar").
 - [ ] Commit: `"mm: retire 0x800000 user-base ceiling -- user owns the lower half"`
 
 **Test checkpoint:** User programs load + run at the new base; `bash scripts/build.sh clean` -> `=== BUILD OK ===` with the BSS guard removed; no `user_range.h` static-assert failures. Test on: QEMU WHPX + TCG; **bare metal**.
@@ -432,6 +434,44 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 > **Accepted:** [H] `TODO-24 §9` is parked section-wide although `NtAlpcCancelMessage` (3 args) and `AlpcBasicInformation` SetInformation (4 args) fit the existing transport and now have headroom; the oracle reads the whole section as DONE (reason: item-level restructure, owner is §9) -> XREF: `02-kernel-core/TODO-24 §9` (item: "**Split the section-level park" at line 452)
 > **Accepted:** [M] `TODO-22 §24` likewise parks independent, now-runnable work (measured budget, lookup cache, the documented CAS double-free hardening) behind the usercopy blocker that only three of its items need (reason: item-level restructure, owner is §24) -> XREF: `02-kernel-core/TODO-22 §24` (item: "**Split the section-level park.**" at line 843)
 > **Quality reviewed:** 2026-07-17 | Codex 3x (adversarial, consistency, perf) | 5M fixed, 1H+1M accepted-XREF | scope: N/A (TODO-only status sweep, no code)
+
+---
+
+## 12. Second Tactical BSS Reclamation Pass
+
+> **Spawned-by:** root
+
+The `0x800000` ceiling is live again and it is stopping kernel work today. MEASURED 2026-08-18 at `9b9ab5fd6`: `.bss` runs `0x56d000..0x7feea5`, `__kernel_end` page-aligns to `0x7ff000`, and there are **347 bytes** of headroom before `scripts/build.sh` fails the build. §10 bought 1280 KiB on 2026-07-17 and roughly 1.27 MiB was reabsorbed in a month, so the reclamation is a RECURRING need rather than the one-off §10 was written as. §7 owns the permanent retirement and is cascade-blocked on §3, which is operator-deferred; this section is the tactical route that depends on nothing.
+
+**What a user hits if this is not done:** nothing ships. The failure is cascading rather than proportional, so a section either fits with room to spare or fails by a whole page with no warning: 01-boot-platform/TODO-13 §28 was implemented, design-reviewed and building clean, and was reverted purely because its mandatory unit tests moved `.rodata` across a page boundary. Every remaining kernel section in the repo is one page of `.rodata` away from the same revert.
+
+**Why this is not §10 again and not byte-golf.** §10's nomination table is SPENT: `reg_value_pool`, `reg_key_pool` and `s_atoms` are already pointers (24 bytes apart in `.bss`). The alternative route, shortening assertion messages to claw back the ~859 bytes, degrades diagnostics to buy one page and this file already records it as a route that failed on the very next section. A single large static converted to frame-backed storage buys ~500x what the stalled sections need, using the pattern §10 and §9 already proved in tree.
+
+Measured largest remaining `.bss` consumers (`build/kernel.map`, 2026-08-18, by address delta):
+
+| Symbol         |    Size | Home                       | Init phase                    | Assessed?        |
+| -------------- | ------: | -------------------------- | ----------------------------- | ---------------- |
+| `klog_ring`    | 288,000 | `klog.c:78`                | pre-PMM                       | ruled out by §10 |
+| `devices`      | 277,504 | `xhci_dev.c:31`            | phase 2 + hot-plug ISR        | ruled out by §10 |
+| `tasks`        | 203,776 | `sched/task.c:69`          | scheduler core                | NO               |
+| `ctrl_windows` | 180,736 | `../desktop/controls.c:20` | desktop init, late            | NO               |
+| `s_recovered`  | 164,000 | `klog.c:404`               | crash recovery, post-PMM read | NO               |
+
+- [ ] Assess the three unassessed candidates against the §10 bar before converting anything, and record WHY each is or is not safe rather than converting the largest one on size alone.
+  - The bar §10 established is init phase plus reachability: a pool allocated once after `pmm_init`, never lazily, never under a spinlock and never written from ISR context is convertible; anything pre-PMM or ISR-reachable is not.
+  - `ctrl_windows` is the leading candidate on that bar: `src/desktop/controls.c:20`, late desktop init, no ISR writer known. Confirm the reachability claim at file:line rather than inheriting it from this row.
+  - `tasks` (`src/kernel/sched/task.c:69`) is scheduler core and is walked by `find_next_task()`; treat an ISR/scheduler-context writer as disqualifying unless proven otherwise.
+  - `s_recovered` (`src/kernel/klog.c:404`) is sized off `KLOG_RING_SIZE` and lives beside the pre-PMM ring; establish whether it is written before `pmm_init` on the crash-recovery path specifically, which is the path that only runs after a reset.
+- [ ] Convert exactly ONE assessed pool to frame-backed storage via `pmm_alloc_pages_hhdm`, keeping the existing index-allocator semantics and failing closed on `BOOT_FATAL`, following the `reg_value_pool` conversion as the reference.
+  - One is deliberate. The point is to clear the page and stop, so the remaining candidates stay in reserve for the NEXT time the ceiling closes rather than being spent in one pass.
+- [ ] Record the new headroom as the acceptance evidence, in the same shape §10 used: BSS end before and after, and the `scripts/build.sh` BSS-check line.
+- [ ] State in this section whether a third pass is expected, and what is left in reserve after this one, so the recurrence is visible rather than rediscovered.
+  - §10 was written as a one-off and its Notes read as if the problem was solved; that framing is why the ceiling arrived again unannounced.
+- [ ] Re-run the sections this unparks once the headroom lands -> XREF: this file §7 (item: "Re-run `01-boot-platform/TODO-13` §28 once the guard is gone").
+  - The §28 diff is preserved at `.claude/state/deferred-todo13-s28.patch` and its design review is complete, so that re-attempt is apply-then-re-verify rather than a rewrite -> XREF: `01-boot-platform/TODO-13 §28` (item: "Commit: `\"tpm: crash-consistent record pairing and verified-read boot budget\"`").
+- [ ] Commit: `"kernel/mm: second tactical BSS pass -- reclaim a large static"`
+
+**Test checkpoint:** `bash scripts/build.sh` prints the `BSS check` line with `__kernel_end` at least one page below `0x7ff000`, and the reported headroom is recorded in the Notes as the acceptance evidence. Full `scripts/test.sh` green, with the converted pool's owning suite specifically green rather than only the aggregate. `scripts/test-smoke.sh` boots to `C:\>`, because an allocation-failure regression in a boot-path pool surfaces as a hang and not as a failing assertion. A control proves the guard still fires: the conversion must not be accompanied by any weakening of the `scripts/build.sh` check, which stays exactly as strict as it is today. Scope: this section owns ONE tactical conversion and the headroom measurement. The permanent ceiling retirement is §7, the address-space move is §3, `klog_ring` stays with `01-boot-platform/TODO-04 §1` and the xHCI `devices` table with `04-drivers-hardware/TODO-10 §1`. Platforms: QEMU KVM + TCG; **bare metal**.
 
 ---
 
