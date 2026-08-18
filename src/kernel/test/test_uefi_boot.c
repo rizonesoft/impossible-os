@@ -19,6 +19,9 @@
 #include "registry.h"
 #include "boot/uki_cmdline_check.h"
 #include "boot/uki_cmdline_media_role.h"
+#include "boot/sha256_boot.h"
+#include "boot/devpath_filepath.h"
+#include "kernel/crypto/sha256.h"
 
 /* ---- UEFI Runtime Services ---- */
 
@@ -907,6 +910,347 @@ static void test_media_role_uki_cmdline_rejections(void)
 
 /* Registration */
 
+
+/* ---- Loader self-measurement primitives (measured-boot attribution) ----
+ * Both headers are compiled INTO BOOTX64.EFI, where nothing can test them: the
+ * loader has no harness and firmware will not hand it a malformed device path
+ * on demand. They are pure and header-only precisely so the assertions can live
+ * here instead. */
+
+/* The two copies must agree on their output size before a byte-wise comparison
+ * between them means anything: iterating one length over the other's buffer
+ * would either read past it or leave bytes unchecked. This file is the only
+ * place both headers are visible, so it is the only place the pin can live. */
+_Static_assert(SHA256B_DIGEST_LEN == SHA256_DIGEST_LEN,
+    "loader and kernel SHA-256 digest lengths must match");
+_Static_assert(SHA256B_BLOCK_LEN == SHA256_BLOCK_LEN,
+    "loader and kernel SHA-256 block lengths must match");
+
+/* The loader's SHA-256 is a second copy of the kernel's. A differential test is
+ * what keeps them one algorithm; the KAT below is what stops both from being
+ * wrong together. */
+static void test_sha256_boot_matches_kernel(void)
+{
+    static const unsigned int lens[] = { 0u, 1u, 3u, 55u, 56u, 63u, 64u, 65u, 1000u };
+    static unsigned char msg[1000];
+    unsigned char boot_digest[SHA256B_DIGEST_LEN];
+    uint8_t kern_digest[SHA256_DIGEST_LEN];
+    unsigned int i, n, mismatches = 0;
+
+    for (i = 0; i < 1000u; i++)
+        msg[i] = (unsigned char)(i * 31u + 7u);
+
+    for (n = 0; n < (unsigned int)(sizeof(lens) / sizeof(lens[0])); n++) {
+        sha256b(msg, (unsigned long long)lens[n], boot_digest);
+        sha256(msg, lens[n], kern_digest);
+        for (i = 0; i < SHA256B_DIGEST_LEN; i++) {
+            if (boot_digest[i] != (unsigned char)kern_digest[i])
+                mismatches++;
+        }
+    }
+    TEST_ASSERT_EQ((int)mismatches, 0,
+        "loader sha256b matches kernel sha256 over 9 lengths incl. both padding branches");
+}
+
+/* Known-answer, not just agreement: two implementations can agree and both be
+ * wrong. Runs the same two vectors the loader runs before it trusts itself. */
+static void test_sha256_boot_selftest_vectors(void)
+{
+    TEST_ASSERT_EQ(sha256b_selftest(), 1,
+                   "sha256b_selftest passes the FIPS 180-4 abc + 56-byte vectors");
+}
+
+/* The loader streams the file in 64 KiB chunks, so chunked and one-shot must be
+ * identical or the digest depends on the read size rather than the file. */
+static void test_sha256_boot_streaming_equals_oneshot(void)
+{
+    static const unsigned int chunks[] = { 1u, 63u, 64u, 65u, 127u };
+    static unsigned char msg[600];
+    unsigned char oneshot[SHA256B_DIGEST_LEN];
+    unsigned char streamed[SHA256B_DIGEST_LEN];
+    unsigned int i, c, mismatches = 0;
+
+    for (i = 0; i < 600u; i++)
+        msg[i] = (unsigned char)(i ^ 0x5Au);
+    sha256b(msg, 600ull, oneshot);
+
+    for (c = 0; c < (unsigned int)(sizeof(chunks) / sizeof(chunks[0])); c++) {
+        struct sha256b_ctx ctx;
+        unsigned int off = 0;
+
+        sha256b_init(&ctx);
+        while (off < 600u) {
+            unsigned int take = chunks[c];
+            if (off + take > 600u)
+                take = 600u - off;
+            sha256b_update(&ctx, &msg[off], (unsigned long long)take);
+            off += take;
+        }
+        sha256b_final(&ctx, streamed);
+        for (i = 0; i < SHA256B_DIGEST_LEN; i++) {
+            if (streamed[i] != oneshot[i])
+                mismatches++;
+        }
+    }
+    TEST_ASSERT_EQ((int)mismatches, 0,
+        "sha256b chunked updates (1/63/64/65/127 B) equal the one-shot digest");
+}
+
+/* --- device-path FILEPATH parser fixtures --- */
+
+/* Append one device-path node. `text` is ASCII widened to CHAR16; pass NULL for
+ * a payload-free node. Returns the new offset. */
+static unsigned int dpfix_node(unsigned char *buf, unsigned int off,
+                               unsigned char type, unsigned char subtype,
+                               const char *text, int with_nul)
+{
+    unsigned int chars = 0;
+    unsigned int len;
+    unsigned int i;
+
+    if (text) {
+        while (text[chars])
+            chars++;
+        if (with_nul)
+            chars++;
+    }
+    len = 4u + chars * 2u;
+    buf[off + 0u] = type;
+    buf[off + 1u] = subtype;
+    buf[off + 2u] = (unsigned char)(len & 0xFFu);
+    buf[off + 3u] = (unsigned char)((len >> 8) & 0xFFu);
+    for (i = 0; i < chars; i++) {
+        unsigned short ch = (unsigned short)(unsigned char)text[i];
+        buf[off + 4u + i * 2u] = (unsigned char)(ch & 0xFFu);
+        buf[off + 5u + i * 2u] = (unsigned char)((ch >> 8) & 0xFFu);
+    }
+    return off + len;
+}
+
+/* Compare a CHAR16 result against ASCII. */
+static int dpfix_equals(const unsigned short *got, const char *want)
+{
+    unsigned int i = 0;
+
+    while (want[i]) {
+        if (got[i] != (unsigned short)(unsigned char)want[i])
+            return 0;
+        i++;
+    }
+    return got[i] == 0;
+}
+
+static void test_dpfp_single_node_path(void)
+{
+    unsigned char buf[128];
+    unsigned short out[64];
+    unsigned int end;
+    enum dpfp_status st;
+
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH,
+                     "\\EFI\\BOOT\\BOOTX64.EFI", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+
+    st = dpfp_extract(buf, end, out, 64u);
+    TEST_ASSERT(st == DPFP_OK && dpfix_equals(out, "\\EFI\\BOOT\\BOOTX64.EFI"),
+                "dpfp_extract returns the ESP-relative path from a single FILEPATH node");
+}
+
+static void test_dpfp_accepts_missing_terminator(void)
+{
+    unsigned char buf[128];
+    unsigned short out[64];
+    unsigned int end;
+    enum dpfp_status st;
+
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH,
+                     "\\EFI\\BOOT\\BOOTX64.EFI", 0);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+
+    st = dpfp_extract(buf, end, out, 64u);
+    TEST_ASSERT(st == DPFP_OK && dpfix_equals(out, "\\EFI\\BOOT\\BOOTX64.EFI"),
+                "dpfp_extract accepts a FILEPATH node whose string is not NUL terminated");
+}
+
+static void test_dpfp_joins_multiple_nodes(void)
+{
+    unsigned char buf[192];
+    unsigned short out[64];
+    unsigned int end;
+    enum dpfp_status st;
+
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\EFI\\BOOT", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "BOOTX64.EFI", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+
+    st = dpfp_extract(buf, end, out, 64u);
+    TEST_ASSERT(st == DPFP_OK && dpfix_equals(out, "\\EFI\\BOOT\\BOOTX64.EFI"),
+                "dpfp_extract joins two FILEPATH nodes with exactly one separator");
+}
+
+/* All four separator combinations at a node boundary. UEFI 2.10 spec 10.3.5.4
+ * concatenation must collapse a doubled separator: an empty path component is a
+ * different path, and Open would fail on a device path that was valid. */
+static void test_dpfp_separator_combinations(void)
+{
+    unsigned char buf[192];
+    unsigned short out[64];
+    unsigned int end;
+    int ok = 0;
+
+    /* neither side carries a separator -> one is inserted */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "EFI", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "BOOT", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_OK && dpfix_equals(out, "EFI\\BOOT"))
+        ok++;
+
+    /* trailing separator only -> copied as-is */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "EFI\\", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "BOOT", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_OK && dpfix_equals(out, "EFI\\BOOT"))
+        ok++;
+
+    /* leading separator only -> copied as-is */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "EFI", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\BOOT", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_OK && dpfix_equals(out, "EFI\\BOOT"))
+        ok++;
+
+    /* BOTH sides carry one -> collapsed to a single separator */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "EFI\\", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\BOOT", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_OK && dpfix_equals(out, "EFI\\BOOT"))
+        ok++;
+
+    TEST_ASSERT_EQ(ok, 4,
+        "dpfp_extract yields EFI\\BOOT for all four node-boundary separator combinations");
+}
+
+static void test_dpfp_rejects_embedded_nul(void)
+{
+    unsigned char buf[128];
+    unsigned short out[64];
+    unsigned int end;
+    enum dpfp_status st;
+
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\EFI\\X", 1);
+    /* Widen the node by two characters behind the NUL the helper just wrote. */
+    buf[2] = (unsigned char)((4u + 8u * 2u) & 0xFFu);
+    buf[3] = 0u;
+    buf[4u + 7u * 2u + 0u] = 'Y'; buf[4u + 7u * 2u + 1u] = 0u;
+    end += 2u;
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+
+    st = dpfp_extract(buf, end, out, 64u);
+    TEST_ASSERT(st == DPFP_EMBEDDED_NUL && out[0] == 0,
+                "dpfp_extract refuses a NUL with characters behind it and empties the output");
+}
+
+static void test_dpfp_rejects_malformed_lengths(void)
+{
+    unsigned char buf[64];
+    unsigned short out[32];
+    int refusals = 0;
+
+    /* length < 4 */
+    buf[0] = DPFP_TYPE_MEDIA; buf[1] = DPFP_SUBTYPE_FILEPATH; buf[2] = 3u; buf[3] = 0u;
+    if (dpfp_extract(buf, 8u, out, 32u) == DPFP_BAD_NODE && out[0] == 0)
+        refusals++;
+
+    /* length runs past the measured object */
+    buf[2] = 64u; buf[3] = 0u;
+    if (dpfp_extract(buf, 8u, out, 32u) == DPFP_BAD_NODE)
+        refusals++;
+
+    /* odd payload: a CHAR16 string cannot have an odd byte count */
+    buf[2] = 7u; buf[3] = 0u;
+    if (dpfp_extract(buf, 8u, out, 32u) == DPFP_BAD_NODE)
+        refusals++;
+
+    TEST_ASSERT_EQ(refusals, 3,
+        "dpfp_extract refuses length < 4, a node past the measure, and an odd payload");
+}
+
+static void test_dpfp_rejects_ambiguous_shapes(void)
+{
+    unsigned char buf[128];
+    unsigned short out[64];
+    unsigned int end;
+    int refusals = 0;
+
+    /* END_INSTANCE: which instance carries the file is undefined */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\A", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_INSTANCE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_MULTI_INSTANCE && out[0] == 0)
+        refusals++;
+
+    /* A messaging URI node: an HTTP-booted loader is not a file on a volume */
+    end = dpfix_node(buf, 0u, 0x03u, 0x18u, "http://boot/x.efi", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_UNSUPPORTED)
+        refusals++;
+
+    /* No END node at all */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\A", 1);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_NO_END)
+        refusals++;
+
+    /* Well formed, but carries no path */
+    end = dpfix_node(buf, 0u, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+    if (dpfp_extract(buf, end, out, 64u) == DPFP_NONE)
+        refusals++;
+
+    TEST_ASSERT_EQ(refusals, 4,
+        "dpfp_extract refuses END_INSTANCE, a non-FILEPATH node, a missing END and an empty path");
+}
+
+static void test_dpfp_bounds_output_buffer(void)
+{
+    unsigned char buf[128];
+    unsigned short small[4];
+    unsigned short exact[7];
+    unsigned int end;
+    enum dpfp_status over, fits;
+
+    end = dpfix_node(buf, 0u, DPFP_TYPE_MEDIA, DPFP_SUBTYPE_FILEPATH, "\\ABCDE", 1);
+    end = dpfix_node(buf, end, DPFP_TYPE_END, DPFP_SUBTYPE_END_ENTIRE, (const char *)0, 0);
+
+    over = dpfp_extract(buf, end, small, 4u);
+    /* Control: 6 characters plus the terminator fit in exactly 7 units, so the
+     * overflow refusal above is a bound rather than an off-by-one. */
+    fits = dpfp_extract(buf, end, exact, 7u);
+
+    TEST_ASSERT(over == DPFP_OVERFLOW && small[0] == 0
+                && fits == DPFP_OK && dpfix_equals(exact, "\\ABCDE"),
+                "dpfp_extract refuses an overlong path and accepts one that exactly fits");
+}
+
+static void test_dpfp_rejects_bad_arguments(void)
+{
+    unsigned char buf[8];
+    unsigned short out[8];
+    int refusals = 0;
+
+    buf[0] = DPFP_TYPE_END; buf[1] = DPFP_SUBTYPE_END_ENTIRE; buf[2] = 4u; buf[3] = 0u;
+
+    if (dpfp_extract((const void *)0, 4u, out, 8u) == DPFP_BADARG)
+        refusals++;
+    if (dpfp_extract(buf, 4u, (unsigned short *)0, 8u) == DPFP_BADARG)
+        refusals++;
+    if (dpfp_extract(buf, 4u, out, 0u) == DPFP_BADARG)
+        refusals++;
+    if (dpfp_extract(buf, 3u, out, 8u) == DPFP_SHORT && out[0] == 0)
+        refusals++;
+
+    TEST_ASSERT_EQ(refusals, 4,
+        "dpfp_extract refuses NULL path, NULL output, zero capacity and a sub-header measure");
+}
+
+
 void test_register_uefi_boot(void)
 {
     test_suite_register_cat("UEFI: runtime available",
@@ -994,6 +1338,31 @@ void test_register_uefi_boot(void)
                             test_media_role_uki_cmdline, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline media_role rejects garbage",
                             test_media_role_uki_cmdline_rejections, TEST_CAT_BOOT);
+    /* Loader self-measurement primitives (measured-boot attribution) */
+    test_suite_register_cat("Self-measure: sha256b matches kernel sha256",
+                            test_sha256_boot_matches_kernel, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: sha256b FIPS vectors",
+                            test_sha256_boot_selftest_vectors, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: sha256b chunked equals one-shot",
+                            test_sha256_boot_streaming_equals_oneshot, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath single FILEPATH node",
+                            test_dpfp_single_node_path, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath missing terminator",
+                            test_dpfp_accepts_missing_terminator, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath joins nodes",
+                            test_dpfp_joins_multiple_nodes, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath separator combinations",
+                            test_dpfp_separator_combinations, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath embedded NUL refused",
+                            test_dpfp_rejects_embedded_nul, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath malformed lengths refused",
+                            test_dpfp_rejects_malformed_lengths, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath ambiguous shapes refused",
+                            test_dpfp_rejects_ambiguous_shapes, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath output bound",
+                            test_dpfp_bounds_output_buffer, TEST_CAT_BOOT);
+    test_suite_register_cat("Self-measure: devpath bad arguments refused",
+                            test_dpfp_rejects_bad_arguments, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

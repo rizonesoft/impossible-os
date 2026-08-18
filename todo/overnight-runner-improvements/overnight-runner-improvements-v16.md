@@ -47,6 +47,15 @@ Every change below carries a refusal-direction control (a case that must still b
       - Suggested repair: before joining a pair, refuse (or join with no space) when the left line ends on a token-continuing character and the right begins on one -- a trailing `/`, `-`, `(`, `[`, `_`, `\` against a following non-space token. A whole-file scan for the shape found 7 candidates in this file, of which 1 was a true mid-token break, so the check is cheap and low-noise.
       - Refusal direction: a line legitimately ending in `--` or `+` followed by prose must still join with its space (6 of the 7 candidates were exactly that), so the rule keys on the CHARACTER CLASS, not merely on "ends in punctuation".
 
+- [ ] A `boot_info` field cannot be added unattended at all, so the loader self-measurement shipped without its kernel carriage (operator-applied: ABI machinery)
+      - Observed 2026-08-18 implementing `01-boot-platform/TODO-13` section 20. `tools/boot-info-manifest/check-doc-coverage.py:462` (`check_manifest_completeness`) refuses any `struct boot_info` field lacking an `F()` row in `dump-fields.inc` AND an ownership-matrix row, so adding a field without editing that file FAILS the build rather than merely going untracked.
+      - `receipt_surface_guard.py` blocks `tools/boot-info-manifest/*` as ABI machinery, and there is no reserved region to hide in either: `_loader_vars_pad` is fully consumed by the v21/v22 carves and only `config._pad[142]` is large enough, which is the boot.conf mirror and the wrong home for a loader measurement.
+      - Net: any section whose deliverable ends in `boot_info` is unfinishable by the run, not merely awkward. This is a real boundary rather than a defect, and the note exists so the next such section parks the carriage EARLY instead of designing around it twice. The operator half here is two `F()` rows, an ownership-matrix row, a `BOOT_INFO_VERSION` bump in both headers and one assignment from `g_self_measure`.
+- [ ] The loader sub-make lists bootx64.o prerequisites by hand, so a new shared header is invisible to incremental builds (operator-applied: `Makefile*`)
+      - Observed 2026-08-18 adding `include/boot/sha256_boot.h` and `include/boot/devpath_filepath.h`, both compiled into BOOTX64.EFI from `bootx64.c`. `Makefile:483-503` and `src/boot/uefi/Makefile` `bootx64.o` both enumerate headers explicitly; the kernel side does not have this problem because `Makefile:28` uses `-MMD -MP`.
+      - Consequence, checked separately from the mechanism: an edit to ONE of those headers alone leaves `bootx64.o` and the SIGNED `BOOTX64.EFI` stale, so the smoke oracle would verify a loader built from the previous header. Every commit so far also touched `bootx64.c`, so nothing stale has shipped.
+      - The durable fix is `-MMD -MP` in the loader sub-make rather than two more hand-maintained lines, since the next shared header repeats this exactly.
+
 ## Carried forward from v15 -- open
 
 - [ ] `subagent_audit` duration arm is dead; the enabler is shipped and its ANSWER is now the next step

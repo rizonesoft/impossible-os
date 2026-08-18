@@ -27,6 +27,8 @@
 #include "elf_bootproto.h"
 #include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
 #include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
+#include "../../../include/boot/sha256_boot.h"     /* SHA-256 for the loader self-measurement */
+#include "../../../include/boot/devpath_filepath.h" /* bounded LoadedImage FilePath parser */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
@@ -12039,6 +12041,9 @@ static inline void post_code16(UINT16 code)
  * + OsIndicationsSupported (UEFI 2.10 spec 3.1.3 / 3.1.4 / 8.5.4). */
 #define POST16_BL_BOOT_VAR_EXT    0xB0A2
 #define POST16_BL_BOOT_VAR_EXT_OK 0xB0A3
+/* BOOTX64.EFI on-disk self-measurement (measured-boot loader attribution). */
+#define POST16_BL_SELF_MEASURE    0xB0A4
+#define POST16_BL_SELF_MEASURE_OK 0xB0A5
 
 /* PE/COFF structures for UKI section walk.
  * Reference: Microsoft PE/COFF Specification, MS-DOS stub at offset 0,
@@ -14980,6 +14985,306 @@ static void net_http_probe(EFI_HANDLE dev_handle)
     gBS->FreePages((EFI_PHYSICAL_ADDRESS)(UINTN)cbuf, cpages);
 }
 
+/* === BOOTX64.EFI on-disk self-measurement ================================
+ * WHAT IS MEASURED, AND WHAT THAT CLAIM IS WORTH. This hashes the ESP FILE the
+ * running loader was launched from, reopened through the loaded-image
+ * DeviceHandle + FilePath. It is NOT proof of the bytes the firmware executed:
+ * the file can be replaced between LoadImage and this reopen, and a volume can
+ * be remounted so the same path resolves elsewhere. Binding a digest to the
+ * EXECUTED image needs the firmware measurement (PCR 4, EV_EFI_BOOT_SERVICES_
+ * APPLICATION), which is separate work; every name here says FILE for that
+ * reason, and a consumer must not upgrade the claim.
+ *
+ * WHY NOT THE RESIDENT IMAGE RANGE. EFI_LOADED_IMAGE_PROTOCOL hands back a
+ * RELOCATED ImageBase whose relocations are already applied and whose data
+ * sections mutate as the loader runs, so hashing it yields a different digest
+ * for the same binary on every boot and destroys the attribution entirely.
+ *
+ * FAILURE IS ABSENCE, NEVER A SUBSTITUTE. Every path that cannot produce the
+ * real digest reports ABSENT with a distinct status and boots on. A loader that
+ * refused to boot because it could not measure itself would convert an
+ * observability feature into a brick, and a fallback digest (resident range, a
+ * partial read) would be worse than absence: it looks exactly like the real
+ * answer. */
+
+#define SELF_MEASURE_SIZE_CAP   (8u * 1024u * 1024u) /* the shipped image is ~344 KB */
+#define SELF_MEASURE_CHUNK      (64u * 1024u)
+#define SELF_MEASURE_PATH_CHARS 256u
+#define SELF_MEASURE_DP_CAP     8192u   /* same bound net_dp_validated_size uses */
+
+/* The pure parser spells its node constants out (it also compiles in kernel test
+ * context, where efi.h must not be included). Pin them against efi.h here, which
+ * is the one place both are visible. */
+_Static_assert(DPFP_TYPE_MEDIA == EFI_DP_TYPE_MEDIA,
+    "devpath_filepath MEDIA type must match efi.h");
+_Static_assert(DPFP_TYPE_END == EFI_DP_TYPE_END,
+    "devpath_filepath END type must match efi.h");
+_Static_assert(DPFP_SUBTYPE_END_ENTIRE == EFI_DP_SUBTYPE_END_ENTIRE,
+    "devpath_filepath END_ENTIRE subtype must match efi.h");
+_Static_assert(DPFP_SUBTYPE_END_INSTANCE == EFI_DP_SUBTYPE_END_INSTANCE,
+    "devpath_filepath END_INSTANCE subtype must match efi.h");
+_Static_assert(DPFP_SUBTYPE_FILEPATH == EFI_DP_MEDIA_FILEPATH,
+    "devpath_filepath FILEPATH subtype must match efi.h");
+
+enum self_measure_status {
+    /* Zero is NOT success. The record is a zero-initialized global, and a boot
+     * path that never reaches the measurement would otherwise present as
+     * status=ok with present=0 -- two fields disagreeing, which is exactly the
+     * contradiction a consumer reading one of them would resolve wrongly. */
+    SELF_MEASURE_NOT_RUN = 0,
+    SELF_MEASURE_OK,
+    SELF_MEASURE_NO_DEVICE,     /* NULL DeviceHandle (pure HTTP/PXE boot) */
+    SELF_MEASURE_NO_PATH,       /* FilePath absent, unmeasurable or not a file path */
+    SELF_MEASURE_NO_FS,         /* no SimpleFS on the boot device */
+    SELF_MEASURE_OPEN_FAILED,
+    SELF_MEASURE_INFO_FAILED,
+    SELF_MEASURE_EMPTY,         /* zero-length file: nothing honest to hash */
+    SELF_MEASURE_TOO_LARGE,     /* above SELF_MEASURE_SIZE_CAP */
+    SELF_MEASURE_NO_MEMORY,
+    SELF_MEASURE_READ_FAILED,
+    SELF_MEASURE_SHORT_READ,    /* file ended before FileSize bytes were read */
+    SELF_MEASURE_SELFTEST_FAILED, /* the hash itself is wrong; publish nothing */
+};
+
+/* Published for the kernel handoff. The boot_info carriage is NOT wired yet:
+ * adding a boot_info field requires an F() row in
+ * tools/boot-info-manifest/dump-fields.inc (its completeness check refuses a
+ * field without one) and that file is operator-only machinery. Until then this
+ * record is the loader-side source of truth and the serial line below is how it
+ * leaves the machine. */
+static struct {
+    UINT8  digest[SHA256B_DIGEST_LEN];
+    UINT8  present;                 /* 1 = digest holds a real measurement */
+    UINT8  status;                  /* enum self_measure_status; 0 = never ran */
+    UINT64 measured_bytes;
+    UINT64 tsc_delta;
+} g_self_measure;
+
+static const char *self_measure_status_name(UINT8 st)
+{
+    switch (st) {
+    case SELF_MEASURE_NOT_RUN:         return "not-run";
+    case SELF_MEASURE_OK:              return "ok";
+    case SELF_MEASURE_NO_DEVICE:       return "no-device-handle";
+    case SELF_MEASURE_NO_PATH:         return "no-file-path";
+    case SELF_MEASURE_NO_FS:           return "no-filesystem";
+    case SELF_MEASURE_OPEN_FAILED:     return "open-failed";
+    case SELF_MEASURE_INFO_FAILED:     return "getinfo-failed";
+    case SELF_MEASURE_EMPTY:           return "empty-file";
+    case SELF_MEASURE_TOO_LARGE:       return "over-size-cap";
+    case SELF_MEASURE_NO_MEMORY:       return "alloc-failed";
+    case SELF_MEASURE_READ_FAILED:     return "read-failed";
+    case SELF_MEASURE_SHORT_READ:      return "short-read";
+    case SELF_MEASURE_SELFTEST_FAILED: return "sha256-selftest-failed";
+    default:                           return "unknown";
+    }
+}
+
+/* Resolve the ESP-relative path of the running loader. The device path is
+ * firmware-owned, so its length comes from GetDevicePathSize and never from a
+ * self-walk (bootx64.c net_dp_validated_size records why); a missing utilities
+ * protocol or a degenerate measure means "do not trust this path" and the
+ * measurement reports ABSENT rather than parsing heuristically. */
+static enum self_measure_status self_measure_resolve_path(CHAR16 *out, UINTN out_chars)
+{
+    EFI_GUID dpu_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
+    EFI_STATUS status;
+    UINTN dp_size;
+
+    if (!g_boot_image_file_path)
+        return SELF_MEASURE_NO_PATH;
+
+    status = gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
+    if (EFI_ERROR(status) || !dpu || !dpu->GetDevicePathSize)
+        return SELF_MEASURE_NO_PATH;
+
+    dp_size = dpu->GetDevicePathSize(g_boot_image_file_path);
+    if (dp_size < 4u || dp_size > SELF_MEASURE_DP_CAP)
+        return SELF_MEASURE_NO_PATH;
+
+    if (dpfp_extract(g_boot_image_file_path, (__SIZE_TYPE__)dp_size,
+                     out, (__SIZE_TYPE__)out_chars) != DPFP_OK)
+        return SELF_MEASURE_NO_PATH;
+
+    return SELF_MEASURE_OK;
+}
+
+/* Hash the loader file in one forward pass over bounded chunks. `file` is
+ * already open and positioned at 0. */
+static enum self_measure_status self_measure_hash_file(EFI_FILE_PROTOCOL *file,
+                                                       UINT64 file_size,
+                                                       UINT8 out[SHA256B_DIGEST_LEN],
+                                                       UINT64 *out_bytes)
+{
+    struct sha256b_ctx ctx;
+    VOID *chunk = (VOID *)0;
+    EFI_STATUS status;
+    UINT64 remaining = file_size;
+
+    status = gBS->AllocatePool(EfiLoaderData, (UINTN)SELF_MEASURE_CHUNK, &chunk);
+    if (EFI_ERROR(status) || !chunk)
+        return SELF_MEASURE_NO_MEMORY;
+
+    sha256b_init(&ctx);
+    while (remaining > 0u) {
+        UINTN want = (remaining < (UINT64)SELF_MEASURE_CHUNK)
+                   ? (UINTN)remaining : (UINTN)SELF_MEASURE_CHUNK;
+        UINTN got = want;
+
+        status = file->Read(file, &got, chunk);
+        if (EFI_ERROR(status)) {
+            gBS->FreePool(chunk);
+            return SELF_MEASURE_READ_FAILED;
+        }
+        if (got == 0u) {
+            /* FileSize said there were more bytes. Hashing what we got would
+             * publish a prefix digest that is indistinguishable from the real
+             * one, so this is a refusal. */
+            gBS->FreePool(chunk);
+            return SELF_MEASURE_SHORT_READ;
+        }
+        sha256b_update(&ctx, chunk, (UINT64)got);
+        remaining -= (UINT64)got;
+    }
+    sha256b_final(&ctx, out);
+    gBS->FreePool(chunk);
+
+    *out_bytes = file_size;
+    return SELF_MEASURE_OK;
+}
+
+/* Measure the running loader and record the result in g_self_measure. Must run
+ * pre-ExitBootServices: every call below is a Boot Service or a protocol. */
+static void self_measure_run(void)
+{
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    EFI_FILE_PROTOCOL *root_dir = (EFI_FILE_PROTOCOL *)0;
+    EFI_FILE_PROTOCOL *file = (EFI_FILE_PROTOCOL *)0;
+    CHAR16 path[SELF_MEASURE_PATH_CHARS];
+    enum self_measure_status st;
+    EFI_STATUS status;
+    UINT64 file_size = 0;
+    UINT64 tsc_start;
+    UINTN i;
+
+    post_code16(POST16_BL_SELF_MEASURE);
+    tsc_start = boot_rdtsc();
+    g_self_measure.present = 0;
+    g_self_measure.measured_bytes = 0;
+    g_self_measure.tsc_delta = 0;
+    for (i = 0; i < SHA256B_DIGEST_LEN; i++)
+        g_self_measure.digest[i] = 0;
+
+    /* The hash itself is verified before anything it produces is believed. */
+    if (!sha256b_selftest()) {
+        g_self_measure.status = (UINT8)SELF_MEASURE_SELFTEST_FAILED;
+        goto report;
+    }
+    if (!g_boot_device_handle) {
+        g_self_measure.status = (UINT8)SELF_MEASURE_NO_DEVICE;
+        goto report;
+    }
+
+    st = self_measure_resolve_path(path, (UINTN)SELF_MEASURE_PATH_CHARS);
+    if (st != SELF_MEASURE_OK) {
+        g_self_measure.status = (UINT8)st;
+        goto report;
+    }
+
+    status = gBS->HandleProtocol(g_boot_device_handle, &fs_guid, (VOID **)&fs);
+    if (EFI_ERROR(status) || !fs) {
+        g_self_measure.status = (UINT8)SELF_MEASURE_NO_FS;
+        goto report;
+    }
+    status = fs->OpenVolume(fs, &root_dir);
+    if (EFI_ERROR(status) || !root_dir) {
+        g_self_measure.status = (UINT8)SELF_MEASURE_NO_FS;
+        goto report;
+    }
+    status = root_dir->Open(root_dir, &file, path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !file) {
+        root_dir->Close(root_dir);
+        g_self_measure.status = (UINT8)SELF_MEASURE_OPEN_FAILED;
+        goto report;
+    }
+
+    {
+        UINTN info_size = 0;
+        VOID *info_buf = (VOID *)0;
+
+        status = file->GetInfo(file, &file_info_guid, &info_size, (VOID *)0);
+        if (status != EFI_BUFFER_TOO_SMALL || info_size == 0u) {
+            g_self_measure.status = (UINT8)SELF_MEASURE_INFO_FAILED;
+            goto close_and_report;
+        }
+        status = gBS->AllocatePool(EfiLoaderData, info_size, &info_buf);
+        if (EFI_ERROR(status) || !info_buf) {
+            g_self_measure.status = (UINT8)SELF_MEASURE_NO_MEMORY;
+            goto close_and_report;
+        }
+        status = file->GetInfo(file, &file_info_guid, &info_size, info_buf);
+        if (EFI_ERROR(status)) {
+            gBS->FreePool(info_buf);
+            g_self_measure.status = (UINT8)SELF_MEASURE_INFO_FAILED;
+            goto close_and_report;
+        }
+        file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
+        gBS->FreePool(info_buf);
+    }
+
+    if (file_size == 0u) {
+        g_self_measure.status = (UINT8)SELF_MEASURE_EMPTY;
+        goto close_and_report;
+    }
+    /* The cap is a bound on boot latency, not a correctness check: an image
+     * this large is not one we built. Refusing beats silently hashing a prefix
+     * or lengthening every boot as the binary grows. */
+    if (file_size > (UINT64)SELF_MEASURE_SIZE_CAP) {
+        g_self_measure.status = (UINT8)SELF_MEASURE_TOO_LARGE;
+        goto close_and_report;
+    }
+
+    st = self_measure_hash_file(file, file_size, g_self_measure.digest,
+                                &g_self_measure.measured_bytes);
+    g_self_measure.status = (UINT8)st;
+    if (st == SELF_MEASURE_OK)
+        g_self_measure.present = 1;
+
+close_and_report:
+    if (file)
+        file->Close(file);
+    if (root_dir)
+        root_dir->Close(root_dir);
+
+report:
+    g_self_measure.tsc_delta = boot_rdtsc() - tsc_start;
+
+    /* One greppable line, pre-ExitBootServices. scripts/test-smoke.sh compares
+     * the digest and byte count against an independently computed hash of the
+     * staged BOOTX64.EFI, which is what turns this from a determinism check
+     * into proof that the right file was hashed in full. */
+    serial_early_print("[BOOT] self-measure: status=");
+    serial_early_print(self_measure_status_name(g_self_measure.status));
+    if (g_self_measure.present) {
+        serial_early_print(" bytes=");
+        serial_early_print_uint((UINT32)g_self_measure.measured_bytes);
+        serial_early_print(" tsc=");
+        serial_early_print_hex64(g_self_measure.tsc_delta);
+        serial_early_print(" sha256=");
+        for (i = 0; i < SHA256B_DIGEST_LEN; i += 2u) {
+            serial_early_print_hex16((UINT16)(((UINT16)g_self_measure.digest[i] << 8)
+                                            | (UINT16)g_self_measure.digest[i + 1u]));
+        }
+        serial_early_print("\n");
+        post_code16(POST16_BL_SELF_MEASURE_OK);
+    } else {
+        serial_early_print(" digest=ABSENT\n");
+    }
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -15199,6 +15504,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             /* No POST16_BL_BOOT_DEV_OK -- last POST stays at 0xB090
              * so a POST card shows the lookup did not succeed. */
         }
+
+        /* Measure the loader file while DeviceHandle and FilePath are in hand
+         * and Boot Services are live. UNCONDITIONAL, including the branch where
+         * LoadedImage itself was unavailable: that path leaves both globals
+         * cleared, so the measurement reports an explicit ABSENT with a named
+         * reason instead of leaving the record silently untouched. Never fatal;
+         * see self_measure_run(). */
+        self_measure_run();
     }
 
     /*: Populate boot device path from DevicePathToText protocol.

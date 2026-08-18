@@ -459,6 +459,61 @@ if [ "$PATTERN_FAIL" = true ]; then
     FAIL_REASON="Boot pattern check failed (see MISSING/UNEXPECTED above)"
 fi
 
+# ---- Loader self-measurement oracle ---------------------------------------
+#
+# The loader hashes the ESP file it was launched from and prints the digest.
+# Comparing legs against each other would prove only DETERMINISM: four equal
+# outputs are equally consistent with hashing the wrong file, a prefix, or a
+# constant. So the check here is against an INDEPENDENTLY computed hash of the
+# exact loader binary this build staged, plus its byte count -- which a
+# prefix-only read or a wrong-file open cannot satisfy.
+#
+# Which file: the Makefile stages $(UEFI_EFI_SIGNED) when a MOK key exists and
+# build/tools/BOOTX64.EFI otherwise, and under the shim chain-load layout that
+# same binary is staged as grubx64.efi. In every layout it is the file the
+# running loader was launched from, so one variable covers all three.
+SELF_MEASURE_LINE="$(grep -F -- '[BOOT] self-measure:' "$STRIPPED_LOG" 2>/dev/null | head -1)"
+if [ -z "$SELF_MEASURE_LINE" ]; then
+    echo -e "  ${RED}MISSING:${NC} [BOOT] self-measure: line absent from serial"
+    BOOT_FAILED=true
+    FAIL_REASON="${FAIL_REASON:-Loader self-measurement did not report}"
+else
+    # MOK_KEY mirrors the Makefile default and honours the same override, so an
+    # externally keyed build does not hash the unsigned loader while the disk
+    # staged the signed one.
+    SMOKE_MOK_KEY="${MOK_KEY:-keys/MOK.key}"
+    LOADER_FILE="$BUILD/tools/BOOTX64.EFI"
+    if [ -f "$SMOKE_MOK_KEY" ] && [ -f "$BUILD/tools/BOOTX64.signed.efi" ]; then
+        LOADER_FILE="$BUILD/tools/BOOTX64.signed.efi"
+    fi
+    # Validate the WHOLE line against the emitted schema before extracting
+    # anything: field order, decimal byte count, 16 uppercase TSC digits and 64
+    # uppercase digest digits, in that exact order. Matching fields "anywhere on
+    # the line" would let the producer/consumer format drift silently.
+    SELF_MEASURE_SCHEMA='^\[BOOT\] self-measure: status=ok bytes=[0-9]{1,20} tsc=[0-9A-F]{16} sha256=[0-9A-F]{64}$'
+    SELF_MEASURE_BODY="$(printf '%s' "$SELF_MEASURE_LINE" | sed 's/\r$//')"
+    if [ ! -f "$LOADER_FILE" ]; then
+        echo -e "  ${YELLOW}self-measure:${NC} $LOADER_FILE absent -- oracle skipped (advisory)"
+    elif ! printf '%s' "$SELF_MEASURE_BODY" | grep -qE -- "$SELF_MEASURE_SCHEMA"; then
+        echo -e "  ${RED}MISSING:${NC} self-measure line is not a schema-valid success: $SELF_MEASURE_BODY"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-Loader self-measurement reported ABSENT or off-schema}"
+    else
+        REPORTED_SHA="$(printf '%s' "$SELF_MEASURE_BODY" | sed -n 's/.* sha256=\([0-9A-F]\{64\}\)$/\1/p' | tr 'A-F' 'a-f')"
+        REPORTED_BYTES="$(printf '%s' "$SELF_MEASURE_BODY" | sed -n 's/.* bytes=\([0-9]\{1,20\}\) .*/\1/p')"
+        ORACLE_SHA="$(sha256sum "$LOADER_FILE" | cut -d' ' -f1)"
+        ORACLE_BYTES="$(wc -c < "$LOADER_FILE" | tr -d ' ')"
+        if [ "$REPORTED_SHA" = "$ORACLE_SHA" ] && [ "$REPORTED_BYTES" = "$ORACLE_BYTES" ]; then
+            echo -e "  ${GREEN}✓${NC} self-measure matches $LOADER_FILE ($ORACLE_BYTES bytes)"
+        else
+            echo -e "  ${RED}MISMATCH:${NC} self-measure ${REPORTED_SHA:0:16}.../${REPORTED_BYTES} B"
+            echo -e "  ${DIM}  oracle  ${ORACLE_SHA:0:16}.../${ORACLE_BYTES} B ($LOADER_FILE)${NC}"
+            BOOT_FAILED=true
+            FAIL_REASON="${FAIL_REASON:-Loader self-measurement does not match the staged binary}"
+        fi
+    fi
+fi
+
 # ---- Log cleanliness: ANY unexpected [FAIL] fails the run -------------------
 #
 # FAIL_PATTERNS above is a nine-string allowlist of FATAL signatures. It is an

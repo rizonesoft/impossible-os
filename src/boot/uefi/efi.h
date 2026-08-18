@@ -1005,6 +1005,11 @@ typedef struct {
 #define EFI_DP_MEDIA_HARDDRIVE   0x01
 
 #define EFI_DP_SUBTYPE_END_ENTIRE 0xFF
+/* UEFI 2.10 spec Table 10-1 / 10.3.5.4. Added so include/boot/devpath_filepath.h,
+ * which must also compile without efi.h, can be pinned against these rather than
+ * carrying two unpinned literals. */
+#define EFI_DP_SUBTYPE_END_INSTANCE 0x01
+#define EFI_DP_MEDIA_FILEPATH       0x04
 
 /* --- Device Path To Text Protocol (human-readable device path) --- */
 
