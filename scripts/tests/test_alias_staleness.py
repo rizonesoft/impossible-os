@@ -512,7 +512,15 @@ def main() -> int:
         # unparseable shim: this one goes through `scan_python`, the fail-closed
         # branch whose whole point is that a file it cannot read is not a file
         # with no callers in it.
-        root = build_tree(pathlib.Path(d), {"scripts/broken.py": "def (:\n"})
+        # MUST name todo_fence, or the cheap pre-parse filter added in the
+        # post-ship review skips the file before ever reaching the broken
+        # syntax, and this fixture would stop proving anything.
+        root = build_tree(pathlib.Path(d), {
+            "scripts/broken.py": "import todo_fence\ndef (:\n",
+            "scripts/c.py":
+                "import todo_fence as tf\n"
+                "def go():\n    return tf.gamma(1)\n",
+        })
         r = subprocess.run([sys.executable, CHECKER, str(root)],
                            capture_output=True, text=True)
         # ADVISORY, not fatal. The scan reads the working tree while a
@@ -585,6 +593,78 @@ def main() -> int:
         })
         dead, _, unknown, _ = verdicts(root)
         check("naming the shim file is not consuming it", not unknown and not dead)
+
+    # ---- 18. round-8 (post-ship review) findings -------------------------
+    with tempfile.TemporaryDirectory() as d:
+        root = build_tree(pathlib.Path(d), {
+            "scripts/c.py":
+                "import todo_fence as tf\n"
+                "def use(mod, /):\n    return mod.alpha([])\n"
+                "def go():\n    return use(tf)\n",
+        })
+        dead, _, unknown, _ = verdicts(root)
+        check("a positional-only parameter carries the shim through",
+              "alpha" not in dead and not unknown)
+
+    with tempfile.TemporaryDirectory() as d:
+        root = build_tree(pathlib.Path(d), {
+            "scripts/c.py":
+                "import todo_fence as tf\n"
+                "def use(*args):\n    return args[0].alpha([])\n"
+                "def go():\n    return use(tf)\n",
+        })
+        dead, _, unknown, _ = verdicts(root)
+        # A `*args` absorption is genuinely opaque to this scanner -- it cannot
+        # see through the tuple subscript -- so UNKNOWN is the correct answer,
+        # not a resolved hit.
+        # `dead` here is the raw classification, not main()'s suppressed
+        # output (test 15/16 above already pin that suppression); what matters
+        # for THIS shape is that it raises uncertainty at all.
+        check("*args raises uncertainty rather than silence", bool(unknown))
+
+    with tempfile.TemporaryDirectory() as d:
+        # A chain deliberately deeper than the 8-iteration cap, in strict
+        # reverse-definition order so each pass resolves exactly one more hop.
+        lines = ["import todo_fence as tf\n", "def h0(m):\n    return m.alpha([])\n"]
+        for i in range(1, 20):
+            lines.append(f"def h{i}(m):\n    return h{i-1}(m)\n")
+        lines.append("def go():\n    return h19(tf)\n")
+        root = build_tree(pathlib.Path(d), {"scripts/c.py": "".join(lines)})
+        dead, _, unknown, _ = verdicts(root)
+        check("a chain past the propagation cap raises uncertainty",
+              bool(unknown))
+
+    # ---- 19. round-9 (re-review) findings --------------------------------
+    with tempfile.TemporaryDirectory() as d:
+        # `"todo_" "fence"` folds to the AST constant "todo_fence" at parse
+        # time; it never appears as a contiguous substring in the SOURCE text,
+        # so a bare `"todo_fence" in text` pre-parse filter skipped the file
+        # before ever reaching the parse that would have resolved it.
+        # The path argument DELIBERATELY does not spell "todo_fence" either
+        # (a variable, not a literal) -- otherwise that string alone would
+        # satisfy the plain substring check and the fixture would prove
+        # nothing about the concatenation gap specifically.
+        root = build_tree(pathlib.Path(d), {
+            "scripts/c.py":
+                "import importlib.util, pathlib\n"
+                "_p = pathlib.Path('scripts') / (chr(116)+'odo_fence.py')\n"
+                "spec = importlib.util.spec_from_file_location(\n"
+                "    'todo_' 'fence', _p)\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                "def go():\n    return mod.alpha([])\n",
+        })
+        dead, _, unknown, _ = verdicts(root)
+        check("an implicitly-concatenated shim name is still recognised",
+              "alpha" not in dead and not unknown)
+
+    with tempfile.TemporaryDirectory() as d:
+        # A file with neither "todo_fence" nor anything shaped like it must
+        # still be skipped -- the whole point of the filter.
+        root = build_tree(pathlib.Path(d), {"scripts/unrelated.py":
+            "def noop():\n    return 1\n"})
+        dead, tonly, unknown, drift = verdicts(root)
+        check("an unrelated file raises nothing at all", not unknown)
 
     if _FAILS:
         for f in _FAILS:

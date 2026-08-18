@@ -169,7 +169,7 @@ _TT_TRIG_LSP_MCP='^(scripts/lsp-mcp/|scripts/machines/|scripts/test-tooling\.sh$
 # (Check 16, agent-runner-class, Check 6) -- one missing dependency reads as a
 # broad, unrelated lint breakage, which is exactly how long it took to diagnose.
 tt_install_lint() {                     # $1 = scratch repo root
-    mkdir -p "$1/scripts/todo-graph"
+    mkdir -p "$1/scripts/todo-graph" "$1/scripts/lint"
     cp "$REPO_ROOT/scripts/lint.sh"                    "$1/scripts/lint.sh"
     cp "$REPO_ROOT/scripts/todo_fence.py"              "$1/scripts/todo_fence.py"
     cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$1/scripts/todo-graph/cache_schema.py"
@@ -178,6 +178,13 @@ tt_install_lint() {                     # $1 = scratch repo root
     # would make every scratch repo report errors it has nothing to do with.
     # Same closure argument as the three above, found the same way.
     cp "$REPO_ROOT/scripts/todo-reflow.py"             "$1/scripts/todo-reflow.py"
+    # Check 28's own dependency closure. Section 49's post-ship review argued
+    # the RIGHT fix for a scratch repo missing this file is to give it the
+    # file, same as the three lines above -- not to make lint.sh tolerate a
+    # missing checker, which would let the check silently disappear from a
+    # REAL checkout too. Copying it here is what lets the missing-file branch
+    # in lint.sh stay a hard ERROR.
+    cp "$REPO_ROOT/scripts/lint/check_alias_staleness.py" "$1/scripts/lint/check_alias_staleness.py"
     chmod +x "$1/scripts/lint.sh"
 }
 

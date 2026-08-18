@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse an alias in `scripts/todo_fence.py` that has outlived its reason.
+"""Report an alias in `scripts/todo_fence.py` that has outlived its reason.
 
 WHAT THE CLASS IS. `todo_fence` is a shim: most of its exports are one-line
 wrappers forwarding to `scripts/todo-graph/cache_schema.py`. Sections 36, 38,
@@ -48,10 +48,17 @@ dead and invite deleting them. A heredoc cannot be resolved the way a module
 can, so a shell hit counts only FOR liveness, never against it, and only in a
 file that names `todo_fence` at all.
 
-THE CLOSURE IS THE TRACKED TREE, not a directory whitelist. An earlier design
-scanned `scripts/` and `.claude/hooks/`; 37 tracked Python and shell files live
-outside those two, nothing stops one of them loading the shim by path, and such
-a caller would be invisible and its export reported DEAD.
+THE CLOSURE IS EVERY TRACKED `.py`/`.sh` FILE, not a directory whitelist. An
+earlier design scanned `scripts/` and `.claude/hooks/`; 37 tracked Python and
+shell files live outside those two, nothing stops one of them loading the shim
+by path, and such a caller would have been invisible with its export reported
+DEAD. The closure STOPS at those two extensions, honestly: a consumer written
+in an extensionless script or another tracked format is outside what this
+checker enumerates at all, produces no UNKNOWN, and is a residual false-DEAD
+risk no different in kind from the undecidable-reachability residual the
+section already records -- Python's own consumer population is what the class
+was mined from, and widening the file-type scan is future work, not a promise
+made here.
 """
 from __future__ import annotations
 
@@ -303,10 +310,43 @@ def _shim_bound_names(tree: ast.AST, loaders: set[str],
     return bound, unknown
 
 
+def _mentions_shim(text: str) -> bool:
+    """True if `text` could name `todo_fence` under ANY binding this scanner
+    resolves -- the cheap pre-parse gate that skips `ast.parse` on a file that
+    cannot possibly be a consumer.
+
+    NOT a bare substring check. Python folds adjacent string literals at parse
+    time -- `"todo_" "fence"` and `"todo_fence"` are the SAME AST constant --
+    so a contiguous-token test misses a loader spec written that way and would
+    skip the file before ever reaching the parse that would have resolved it.
+    A regex tolerating whitespace/quotes/concatenation between the two halves
+    costs a few more false CANDIDATES (an extra `ast.parse` each), which is the
+    safe direction to be wrong in; a false SKIP costs a false DEAD.
+    """
+    if "todo_fence" in text:
+        return True
+    gap = "['\"\\s+]*"
+    return re.search("todo_" + gap + "fence", text) is not None
+
+
 def scan_python(path: Path, rel: str, exports: set[str]) -> tuple[set[str], list[str]]:
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
-    except (SyntaxError, UnicodeDecodeError) as exc:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        return set(), [f"cannot read {rel}: {exc}"]
+    # SKIP THE PARSE for a file that cannot possibly reference the shim. No
+    # binding shape this scanner resolves omits the literal `todo_fence`
+    # somewhere, so a file without it cannot hide a reference under ANY of the
+    # names this checker knows how to follow. Measured on the tracked tree:
+    # 271 Python files, 13 contain the token, and `ast.parse`-ing all 271
+    # anyway cost ~3.7 of the checker's ~4s. This also closes most of the
+    # "tracked tree" overstatement below -- a candidate that never mentions the
+    # module cannot be a consumer under this checker's own resolution rules.
+    if not _mentions_shim(text):
+        return set(), []
+    try:
+        tree = ast.parse(text, filename=rel)
+    except SyntaxError as exc:
         # UNCERTAINTY, not a malfunction, and the distinction is load-bearing at
         # commit time. This scan reads the WORKING TREE while a pre-commit lint
         # judges the INDEX, so an unrelated file left temporarily invalid in the
@@ -379,13 +419,28 @@ def scan_python(path: Path, rel: str, exports: set[str]) -> tuple[set[str], list
                 callee = funcs.get(node.func.id)
                 if callee is None:
                     continue
-                params = [a.arg for a in callee.args.args]
+                # POSITIONAL-ONLY PARAMETERS FIRST: `def use(mod, /)` stores
+                # `mod` in `args.posonlyargs`, not `args.args`, and this used to
+                # count only the latter -- so a call through a positional-only
+                # parameter matched no name at all and vanished with neither a
+                # hit nor uncertainty.
+                params = [a.arg for a in callee.args.posonlyargs] \
+                       + [a.arg for a in callee.args.args]
                 for i, a in enumerate(node.args):
-                    if isinstance(a, ast.Name) and a.id in seeded[id(scope)] \
-                            and i < len(params) \
-                            and params[i] not in seeded[id(callee)]:
-                        seeded[id(callee)].add(params[i])
-                        changed = True
+                    if not (isinstance(a, ast.Name) and a.id in seeded[id(scope)]):
+                        continue
+                    if i < len(params):
+                        if params[i] not in seeded[id(callee)]:
+                            seeded[id(callee)].add(params[i])
+                            changed = True
+                    elif callee.args.vararg is not None:
+                        # `*args` absorbs it, and this file cannot see through a
+                        # tuple subscript to know which position it landed at.
+                        unknown.append(f"shim module passed into {node.func.id!r} "
+                                       f"via *{callee.args.vararg.arg}")
+                    else:
+                        unknown.append(f"shim module passed to {node.func.id!r} "
+                                       f"past its declared parameters")
                 # KEYWORDS TOO. Following positions only left `helper(mod=tf)`
                 # silently unaccounted: the call is to a LOCAL function, so the
                 # opaque-escape check skips it on the grounds that propagation
@@ -406,6 +461,13 @@ def scan_python(path: Path, rel: str, exports: set[str]) -> tuple[set[str], list
                                        f"{k.arg or '**'} into {node.func.id!r}")
         if not changed:
             break
+    else:
+        # THE CAP WAS REACHED WHILE STILL CHANGING. An 8-deep helper chain is
+        # not hypothetical in a repo whose own tooling nests loaders this way,
+        # and stopping silently there is a false DEAD for anything past the
+        # cap -- so the run says it stopped rather than claiming completeness.
+        unknown.append("binding propagation did not reach a fixpoint within "
+                       "8 iterations (a helper chain deeper than 8)")
 
     for scope in scopes:
         bound = seeded[id(scope)]

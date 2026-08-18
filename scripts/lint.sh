@@ -2648,8 +2648,20 @@ fi
 if [ "${SKIP_LINT_ALIAS_STALENESS:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 28 (alias-staleness) skipped via SKIP_LINT_ALIAS_STALENESS=1"
     WARNINGS=$((WARNINGS + 1))
-elif [ -f "$REPO_ROOT/scripts/lint/check_alias_staleness.py" ] \
-     && [ -f "$REPO_ROOT/scripts/todo_fence.py" ]; then
+elif [ ! -f "$REPO_ROOT/scripts/lint/check_alias_staleness.py" ] \
+     || [ ! -f "$REPO_ROOT/scripts/todo_fence.py" ]; then
+    # A hard ERROR, not a silent no-op and not a warning. A missing checker or
+    # shim means Check 28 has quietly dropped out of lint -- exactly the
+    # alias-staleness shape this class is about, one level up -- and CI must
+    # not stay green on that. The correct fix for a sandboxed fixture that
+    # legitimately omits the file is to GIVE it the file
+    # (`scripts/test-tooling.sh`'s `tt_install_lint()` now copies
+    # `check_alias_staleness.py` alongside the shim it already carries), not to
+    # weaken this gate; a downgrade to WARNING was tried and reverted for
+    # exactly that reason (post-ship review, section 49).
+    echo -e "${RED}error${NC}: Check 28 (alias-staleness) checker or shim file missing (scripts/lint/check_alias_staleness.py or scripts/todo_fence.py) -- the check cannot run"
+    ERRORS=$((ERRORS + 1))
+else
     LINT28_OUT="$(mktemp -t lint-alias-staleness.XXXXXX)"
     LINT28_RC=0
     python3 "$REPO_ROOT/scripts/lint/check_alias_staleness.py" "$REPO_ROOT" \

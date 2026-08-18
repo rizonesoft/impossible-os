@@ -3639,8 +3639,10 @@ def unclosed_reason(terminal):
     HERE RATHER THAN IN THE SHIM, because the validator lives beside this module
     and cannot reach `scripts/todo_fence.py` without a `sys.path` insertion that
     would make every later plain-name import in the process resolve against
-    `scripts/`. `todo_fence.unclosed_reason` now delegates to this, so the four
-    gates, the producer and the validator all quote the same sentence.
+    `scripts/`. The four gates and the validator all quote THIS sentence via
+    `ScanResult.unclosed_reason()`; `todo_fence` no longer wraps it as a free
+    function (retired in TODO-06 section 49 -- it had no caller of its own,
+    only its own test).
 
     TAKES THE TERMINAL VALUE, not a pair of booleans. The message has to tell an
     author WHICH delimiter to close and WHERE it opened -- naming the wrong one
