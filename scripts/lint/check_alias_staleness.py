@@ -82,12 +82,51 @@ class CheckerFailed(Exception):
     """
 
 
+class NotAGitRepo(Exception):
+    """`root` is not inside a git worktree -- NOT a checker malfunction.
+
+    `scripts/test-tooling.sh` runs `lint.sh` against dozens of scratch
+    directories that are never `git init`-ed (they only need a couple of files
+    on disk, not commit history), and this checker's whole notion of "the
+    tracked tree" is git-shaped. Treating a bare directory as FATAL made Check
+    28 abort the ENTIRE lint run in every one of those sandboxes -- a real
+    regression, caught by the pre-push tooling gate rather than a hand review.
+    """
+
+
+def _in_git_worktree(root: Path) -> bool:
+    """True iff `root` or an ancestor carries a `.git` entry.
+
+    A FILESYSTEM check, not a git-stderr check. Matching on stderr TEXT was
+    tried and is wrong two ways at once: it is locale-dependent (a non-English
+    git produces a different message, missing the match and recreating the
+    FATAL-in-a-sandbox regression this replaces), and it is over-broad (`git
+    -C root ... ` with `GIT_DIR` pointed elsewhere prints the SAME "not a git
+    repository" wording against a `root` that genuinely IS a valid repo,
+    silently disarming the fail-closed contract). Checking the filesystem
+    directly depends on neither. A `.git` FILE, not just a directory, covers a
+    submodule.
+    """
+    cur = root
+    while True:
+        if (cur / ".git").exists():
+            return True
+        if cur.parent == cur:
+            return False
+        cur = cur.parent
+
+
 def _tracked(root: Path) -> list[str]:
     """Every tracked `.py`/`.sh` path, so the closure cannot silently narrow."""
+    if not _in_git_worktree(root):
+        raise NotAGitRepo(str(root))
     r = subprocess.run(["git", "-C", str(root), "ls-files", "*.py", "*.sh"],
                        capture_output=True, text=True, check=False)
     if r.returncode != 0:
-        raise CheckerFailed("git ls-files failed")
+        # A `.git` entry exists but `ls-files` still failed -- corrupt tree,
+        # permissions, an unsupported git version. Unconditionally FATAL; the
+        # "ordinary bare directory" case was already ruled out above.
+        raise CheckerFailed(f"git ls-files failed: {r.stderr.strip()[:200]}")
     return [p for p in r.stdout.split("\n") if p]
 
 
@@ -724,10 +763,18 @@ def analyse(root: Path):
 def main(argv: list[str]) -> int:
     root = Path(argv[1] if len(argv) > 1 else ".").resolve()
     if not (root / SHIM_REL).is_file():
-        print(f"[check_alias_staleness] missing {SHIM_REL}")
-        return 2
-
-    names, live, testonly, unknown, drift = analyse(root)
+        # Not FATAL: lint.sh already gates on this file existing before it ever
+        # invokes the checker, so this path is reachable only from a standalone
+        # or test invocation against a root that genuinely lacks the shim --
+        # advisory, same as every other "nothing to say" outcome.
+        print(f"[check_alias_staleness] {SHIM_REL} not found under {root}")
+        return 1
+    try:
+        names, live, testonly, unknown, drift = analyse(root)
+    except NotAGitRepo:
+        # Nothing to report: the tracked-tree closure this checker reasons
+        # about does not exist here. Not a finding, not a malfunction.
+        return 0
 
     dead = [n for n in names if not live[n] and not testonly[n]]
     only_tests = [n for n in names if not live[n] and testonly[n]]

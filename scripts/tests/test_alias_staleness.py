@@ -25,6 +25,7 @@ soundness fixtures below all pin the second kind.
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import subprocess
 import sys
@@ -665,6 +666,39 @@ def main() -> int:
             "def noop():\n    return 1\n"})
         dead, tonly, unknown, drift = verdicts(root)
         check("an unrelated file raises nothing at all", not unknown)
+
+    # ---- 20. no `.git` at all is NOT a checker malfunction ---------------
+    # `scripts/test-tooling.sh`'s stamp-completeness fixtures run `lint.sh`
+    # against a scratch directory with no `git init` at all -- a common,
+    # deliberate shape, not an anomaly -- and a FATAL there aborted the whole
+    # lint run over every one of them (caught by the pre-push tooling gate).
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "scripts" / "todo-graph").mkdir(parents=True)
+        (root / "scripts" / "todo_fence.py").write_text(SHIM)
+        (root / "scripts" / "todo-graph" / "cache_schema.py").write_text(TARGET)
+        # Deliberately NO `git init`.
+        r = subprocess.run([sys.executable, CHECKER, str(root)],
+                           capture_output=True, text=True)
+        check("a directory with no git repo exits 0, not FATAL",
+              r.returncode == 0 and "FATAL" not in r.stdout)
+
+    # ---- 21. a REAL repo whose git invocation fails is still FATAL --------
+    # The no-repo detection is a FILESYSTEM check (a `.git` entry), never a
+    # match on git's stderr wording -- text matching was tried first and
+    # rejected: it is locale-dependent, AND a valid repo with `GIT_DIR`
+    # pointed elsewhere prints THE SAME "not a git repository" wording, which
+    # would have silently disarmed this exact case.
+    with tempfile.TemporaryDirectory() as d:
+        root = build_tree(pathlib.Path(d), {
+            "scripts/c.py": "import todo_fence\n",
+        })
+        env = dict(os.environ)
+        env["GIT_DIR"] = "/definitely-missing-nowhere"
+        r = subprocess.run([sys.executable, CHECKER, str(root)],
+                           capture_output=True, text=True, env=env)
+        check("a real repo with a corrupted GIT_DIR stays FATAL",
+              r.returncode == 3 and "FATAL" in r.stdout)
 
     if _FAILS:
         for f in _FAILS:
