@@ -1751,6 +1751,93 @@ static int seq_probe_use_captured(tpm2_seq_t seq, void *ctx)
     return 0;
 }
 
+struct seq_dispatch_probe_ctx {
+    int rc;
+    int dispatched;
+};
+
+/* Same NV_Increment shape as seq_probe_submit above, plus a dispatch-flag
+ * capture immediately after the submit -- while it is still valid, since
+ * nothing else calls tpm2_submit_seq in between. */
+static int seq_probe_submit_dispatch(tpm2_seq_t seq, void *ctx)
+{
+    uint8_t cmd[40], rsp[64];
+    uint32_t n = tpm2_build_nv_increment(cmd, sizeof cmd, TPM_RH_OWNER,
+                                         TPM_NV_INDEX_OS_DATA, TPM_RS_PW);
+    struct seq_dispatch_probe_ctx *out = (struct seq_dispatch_probe_ctx *)ctx;
+    out->rc = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
+    out->dispatched = tpm2_seq_last_submit_dispatched();
+    return 0;
+}
+
+/* tpm2_seq_last_submit_dispatched() is the primitive section 24 built to
+ * distinguish "the cumulative budget was already spent before this command
+ * touched the interface" (genuinely safe to retry) from "the command was
+ * written and its response abandoned" (completion unknown). Both cases return
+ * the SAME TPM_T_ERR_BUDGET from tpm2_submit_seq, so a caller cannot tell them
+ * apart without this. Tested here, once, at the transport layer, rather than
+ * timing-dependently through every handle-allocating call site above it. */
+static void test_seq_last_submit_dispatched(void)
+{
+    struct tpm_t_test_state prev;
+    struct seq_dispatch_probe_ctx out;
+    int r;
+
+    /* Pre-dispatch refusal: work_ms=0 means the cumulative budget is already
+     * spent before the FIRST submit in the sequence ever touches the
+     * interface -- tpm_t_budget_spent() refuses inside tpm2_submit_seq before
+     * tpm_t_submit_txn is ever called. */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    out.rc = 0; out.dispatched = -1;
+    r = tpm2_seq_run(0u, 1000u, seq_probe_submit_dispatch, &out);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(r, 0,
+                   "the sequence itself runs; the CALLBACK reports the "
+                   "refusal, not tpm2_seq_run's own return");
+    TEST_ASSERT_EQ(out.rc, TPM_T_ERR_BUDGET,
+                   "submit refuses with BUDGET before touching the interface");
+    TEST_ASSERT_EQ(out.dispatched, 0,
+                   "a pre-dispatch refusal reports dispatched=0: nothing was "
+                   "ever submitted");
+
+    /* CONTROL: a normal, generously-budgeted submit that actually reaches the
+     * fake interface must report dispatched=1. Without this, dispatched=0
+     * would trivially "pass" the assertion above for the wrong reason (a
+     * getter that always returns 0 would satisfy it too). */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    out.rc = -1; out.dispatched = -1;
+    r = tpm2_seq_run(60000u, 1000u, seq_probe_submit_dispatch, &out);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ(r, 0, "the sequence runs to completion");
+    TEST_ASSERT(out.rc >= 0,
+                "CONTROL: a generous budget lets the command actually submit "
+                "and succeed");
+    TEST_ASSERT_EQ(out.dispatched, 1,
+                   "CONTROL: a command that reaches the interface reports "
+                   "dispatched=1");
+
+    /* A THIRD case -- the cumulative budget expiring WHILE WAITING for the
+     * Ready handshake, before GO is ever written -- is what the fix in this
+     * round actually targets (moving the dispatch write from "before
+     * tpm_t_submit_txn" to "immediately before the GO/START register write"),
+     * but it cannot be reproduced deterministically through this fixture: the
+     * KERNEL_TESTS fast-timeout seam (tpm_t_test_install) forces EVERY local
+     * wait to exactly TPM_T_FAST_TEST_ITERS (64) ticks regardless of test
+     * budget, while the smallest whole-millisecond cumulative budget
+     * (work_ms=1) already arms >= 50,000 ticks (TPM_T_NOFREQ_ITERS_PER_MS) --
+     * so the local 64-tick cap always wins first and the wait ends in a plain
+     * TIMEOUT before the cumulative check ever gets a chance to fire. work_ms=0
+     * reaches only the pre-check case already covered above. The fix is
+     * instead verified by INSPECTION: the write is the immediate next
+     * statement before the unconditional MMIO/port register write in both
+     * tis_submit and crb_submit (src/kernel/tpm_transport.c), with no
+     * intervening statement that could itself fail -- so "flag set" and "GO/
+     * START written" are the same instant by construction, not merely by
+     * proximity. */
+}
+
 static void test_nv_sequence_budget(void)
 {
     struct tpm_t_test_state prev;
@@ -3589,6 +3676,7 @@ void test_register_tpm_nv(void)
     test_suite_register_cat("tpm: NV define public-area mismatch", test_nv_define_mismatch, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV bounded-sequence budget", test_nv_sequence_budget, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV abandoned session outcome", test_nv_session_unknown_outcome, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: sequence submit dispatch flag", test_seq_last_submit_dispatched, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV teardown proof + wrapper bounds", test_nv_teardown_and_bounds, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV index Name computation", test_nv_name_compute, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV enrolled identity contract", test_nv_identity_contract, TEST_CAT_SECURITY);

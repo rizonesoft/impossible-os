@@ -23,6 +23,7 @@
 #include "kernel/tpm.h"
 #include "kernel/tpm_nv.h"
 #include "kernel/tpm_seal.h"
+#include "kernel/klog.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_pcr_alloc.h"
 #include "libc/string.h"
@@ -273,19 +274,33 @@ int tpm2_parse_unseal(const uint8_t *rsp, uint32_t len,
 
 /* ---- Transport plumbing ---- */
 
-/* Best-effort single teardown for a transient object / session handle. Uses the
- * bounded-wait submit so transient transport contention cannot abandon the
- * handle (a leaked object/session erodes the TPM's small pool until reboot). */
-static void seal_flush(uint32_t handle)
+/* Teardown of a transient object handle, delegated to the ONE proof-requiring
+ * implementation (tpm_nv_flush_handle). It spends the sequence's SEPARATE
+ * cleanup allowance -- so a mandatory flush still runs after the work budget is
+ * spent, which is exactly the case that used to leak -- retries, and accepts
+ * only proof the handle is gone: SUCCESS, or "no such handle".
+ *
+ * The previous implementation submitted FlushContext with tpm2_submit_waiting
+ * and DISCARDED the result, so a transient TPM_RC_RETRY or a desynchronized
+ * reply left the object allocated while this returned as if it were released.
+ * TPMs hold very few transient-object slots, so that lost one slot per attempt
+ * until reset. Factored rather than reimplemented: a second copy of the proof
+ * rules is a second copy to get wrong. */
+/* Teardown of a transient object handle, delegated to the ONE proof-requiring
+ * implementation (tpm_nv_flush_handle). It spends the sequence's SEPARATE
+ * cleanup allowance -- so a mandatory flush still runs after the work budget is
+ * spent, which is exactly the case that used to leak -- retries, and accepts
+ * only proof the handle is gone: SUCCESS, or "no such handle".
+ *
+ * The previous implementation submitted FlushContext with tpm2_submit_waiting
+ * and DISCARDED the result, so a transient TPM_RC_RETRY or a desynchronized
+ * reply left the object allocated while this returned as if it were released.
+ * TPMs hold very few transient-object slots, so that lost one slot per attempt
+ * until reset. Factored rather than reimplemented: a second copy of the proof
+ * rules is a second copy to get wrong. */
+static void seal_flush(tpm2_seq_t seq, uint32_t handle)
 {
-    uint8_t cmd[16], rsp[16];
-    uint32_t n;
-    if (handle == 0u)
-        return;
-    n = tpm2_build_flush_context(cmd, sizeof cmd, handle);
-    if (n == 0u)
-        return;
-    (void)tpm2_submit_waiting(cmd, n, rsp, sizeof rsp, TPM_NV_FLUSH_BUDGET_MS);
+    tpm_nv_flush_handle(seq, handle);
 }
 
 /* Map the shared seam's NV status onto a seal status. AUTH is mapped by the
@@ -321,6 +336,30 @@ static tpm_seal_status_t map_nv_status(tpm_nv_status_t s)
     }
 }
 
+/* Like map_nv_status, for a stage that ALLOCATES a handle the caller cannot
+ * name on failure (CreatePrimary, Load). The one difference is BUDGET: a
+ * cumulative-budget expiry mid-command has UNKNOWN completion -- the TPM may
+ * have executed it -- and map_nv_status's BUDGET->BUSY arm tells the caller to
+ * retry, which for these two commands specifically means possibly allocating a
+ * SECOND handle on top of an unnameable first one. Unlike ordinary transport
+ * contention (BUSY: nothing was submitted, retry is genuinely free), a caller
+ * looping on seal/unseal (FDE unlock, a userspace client) can compound this
+ * across an unbounded number of attempts, which the boot-only internal callers
+ * of the equivalent NV-layer path do not do.
+ *
+ * Reported as TPMERR: not literally a device fault, but the caller-facing
+ * contract that matters is the same one TPMERR already carries -- do not
+ * blind-retry, something needs attention. The object pool is small enough that
+ * repeated indeterminate outcomes degrade on their own into a DEFINITE refusal
+ * (the TPM's own resource-exhaustion response code) within a few attempts,
+ * which is visible and terminal without inventing a new status value. */
+static tpm_seal_status_t map_nv_status_handle(tpm_nv_status_t s)
+{
+    if (s == TPM_NV_BUDGET)
+        return TPM_SEAL_TPMERR;
+    return map_nv_status(s);
+}
+
 /* Recovery handoff -- one registered handler, invoked on unseal failure. Stored
  * atomically: it is set during single-threaded boot init but read by any later
  * consumer, so the load/store are atomic (SMP-safe). */
@@ -348,26 +387,93 @@ static void seal_report_failure(struct tpm_unseal_result *result,
         h(r);
 }
 
+/* Flush a transient object the TPM may have CREATED even though the envelope
+ * describing it failed to PARSE. Mirrors tpm_attest.c's at_flush_raw_if_created
+ * exactly: the command reached the TPM and the fixed-offset rc field says
+ * SUCCESS, but tpm2_rsp_parse's stricter structural checks rejected the rest of
+ * the response -- so the object is real and unreachable through the normal
+ * parser. Without this, seal_exec_handle's parse-failure branch has no
+ * equivalent: every malformed-but-successful CreatePrimary/Load reply leaks its
+ * handle silently, where attest.c's identical shape already recovers it. */
+static void seal_flush_raw_if_created(tpm2_seq_t seq, const uint8_t *rsp, uint32_t len)
+{
+    uint32_t raw;
+    if (!rsp || len < 14u)
+        return;                              /* no handle field was received */
+    if (tpm2_be32_get(rsp + 6) != TPM2_RC_SUCCESS)
+        return;                              /* the TPM reported a failure: nothing was created */
+    raw = tpm2_be32_get(rsp + 10);
+    if ((uint8_t)(raw >> 24) == 0x80u)       /* TPM_HT_TRANSIENT */
+        seal_flush(seq, raw);
+}
+
 /* Submit a command whose SUCCESS response carries a leading object-handle area
  * (CreatePrimary / Load) and return that transient handle, 0 on failure with
  * *out_st classified. These responses put objectHandle BEFORE parameterSize, so
  * tpm_session_cmd_exec's parameter/auth validation (which assumes no handle
  * area) does NOT apply -- the fixed-offset handle parser is the validation, and
  * the rc is classified directly here. */
-static uint32_t seal_exec_handle(const uint8_t *cmd, uint32_t n,
+static uint32_t seal_exec_handle(tpm2_seq_t seq, const uint8_t *cmd, uint32_t n,
                                  tpm_nv_status_t *out_st, uint32_t *out_rc)
 {
-    uint8_t rsp[512];
+    /* Static (off-stack), and the bounded sequence is what makes it safe:
+     * tpm2_seq_run admits ONE sequence at a time for the whole transport (a
+     * second caller gets TPM_T_ERR_BUSY rather than running), sequences do not
+     * nest, and every caller of this helper submits from inside one. So there is
+     * exactly one live user of this buffer at any instant. Keeping 512 bytes off
+     * the stack matters because this sits on the module's DEEPEST chain --
+     * tpm_seal_secret -> tpm2_seq_run -> seal_secret_seq -> seal_create_primary
+     * -> here -- against an 8 KiB kernel task stack. Same reasoning, and the
+     * same gate-shaped justification, as at_exec_handle in tpm_attest.c. */
+    static uint8_t rsp[512];
     uint16_t tag;
     uint32_t size, rc, h;
     int r;
     if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
-    r = tpm2_submit(cmd, n, rsp, sizeof rsp);
+    r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
     if (r < 0) {
+        /* BUDGET is named explicitly and must NOT fall into the TRANSPORT arm.
+         * Both callers of this helper (CreatePrimary, Load) map TPM_NV_BUDGET to
+         * TPM_SEAL_BUSY -- "the TPM answered, just slower than this boot will
+         * wait" -- while TRANSPORT reads as a device fault and sends an FDE
+         * caller into hard-failure recovery. Before the sequence conversion this
+         * arm could only ever see BUSY, so the distinction did not exist.
+         *
+         * A budget expiry on a handle-PRODUCING command also leaves the outcome
+         * UNKNOWN: the TPM may have created the object and we abandoned the
+         * response, so there is no handle to flush. That is reported, not
+         * silently accepted -- it degrades on its own into a definite, classified
+         * error once the pool is exhausted (the same trade nv_flush documents),
+         * whereas poisoning the transport here would take out PCR reads too. */
+        if (r == TPM_T_ERR_BUDGET) {
+            /* Only an actually-DISPATCHED command can have created an object
+             * this caller cannot name. A pre-dispatch refusal (the cumulative
+             * budget was already spent before this call touched the
+             * interface) submitted nothing and is exactly as safe to retry as
+             * ordinary contention -- report it as BUSY, not BUDGET, so every
+             * caller of this helper (which always maps through
+             * map_nv_status_handle) gets the correct classification without
+             * having to ask separately. Only a genuinely in-flight abandonment
+             * keeps the BUDGET status that routes to the non-retryable class. */
+            if (!tpm2_seq_last_submit_dispatched()) {
+                *out_st = TPM_NV_BUSY;
+                return 0;
+            }
+            *out_st = TPM_NV_BUDGET;
+            klog(LOG_WARN, "TPM",
+                 "seal: object-creating command abandoned on budget; "
+                 "a transient slot may be held until reset");
+            return 0;
+        }
         *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT;
         return 0;
     }
     if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
+        /* An unparsable ENVELOPE can still carry a SUCCESS code and a live
+         * handle -- a bad tag alone reaches here -- so recovery runs before the
+         * return, not only on the handle-parse failure below (mirrors
+         * at_exec_handle in tpm_attest.c). */
+        seal_flush_raw_if_created(seq, rsp, (uint32_t)r);
         *out_st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -386,7 +492,7 @@ static uint32_t seal_exec_handle(const uint8_t *cmd, uint32_t n,
         if ((uint32_t)r >= 14u) {
             uint32_t raw = tpm2_be32_get(rsp + 10);
             if ((uint8_t)(raw >> 24) == 0x80u)
-                seal_flush(raw);
+                seal_flush(seq, raw);
         }
         *out_st = TPM_NV_TRANSPORT;
         return 0;
@@ -396,52 +502,113 @@ static uint32_t seal_exec_handle(const uint8_t *cmd, uint32_t n,
 }
 
 /* Deterministically (re)create the SRK storage parent and return its handle. */
-static uint32_t seal_create_primary(tpm_nv_status_t *out_st, uint32_t *out_rc)
+static uint32_t seal_create_primary(tpm2_seq_t seq, tpm_nv_status_t *out_st,
+                                    uint32_t *out_rc)
 {
     uint8_t cmd[96];
     uint32_t n = tpm2_build_create_primary_srk(cmd, sizeof cmd);
-    return seal_exec_handle(cmd, n, out_st, out_rc);
+    return seal_exec_handle(seq, cmd, n, out_st, out_rc);
 }
 
-tpm_seal_status_t tpm_seal_secret(const uint8_t *secret, uint16_t secret_len,
-                                  struct tpm_sealed_blob *out)
+/* ---- Seal as ONE bounded sequence ----
+ *
+ * The seal and unseal flows each run 3-4 transport transactions. Before the
+ * conversion every one of them took the transport gate separately and started
+ * its own per-command PTP timeout, so a slow-but-responsive TPM could spend that
+ * timeout three or four times over inside what a caller sees as one operation --
+ * and each released gate was a window for another CPU's transaction to
+ * interleave. Holding ONE sequence caps the SUM of every wait and keeps the
+ * whole flow atomic against other TPM users, which is the property the bounded-
+ * sequence NV work gave the NV path (see include/kernel/tpm_nv.h) and this
+ * conversion extends to seal and unseal.
+ *
+ * Every helper reached from inside these callbacks MUST take the sequence token:
+ * a bare tpm2_submit / tpm_session_cmd_exec inside an open sequence does not
+ * deadlock, it bounces off our OWN busy gate and surfaces as a spurious
+ * TPM_NV_BUSY that reads like TPM contention rather than a caller bug. */
+struct seal_secret_ctx {
+    const uint8_t          *secret;
+    uint16_t                secret_len;
+    struct tpm_sealed_blob *out;
+    tpm_seal_status_t       r;
+};
+
+static int seal_secret_seq(tpm2_seq_t seq, void *vctx)
 {
-    uint8_t cmd[TPM_SEAL_SECRET_MAX + 128u], rsp[768];
+    struct seal_secret_ctx *c = (struct seal_secret_ctx *)vctx;
+    /* rsp is static for the same reason as seal_exec_handle's: one sequence runs
+     * at a time, so one user. It is the largest single buffer on the seal chain
+     * and the reason this frame led the module before it moved off-stack. */
+    static uint8_t rsp[768];
+    uint8_t cmd[TPM_SEAL_SECRET_MAX + 128u];
     uint8_t policy[32], sel[3];
     uint32_t mask, primary, n, rlen = 0;
     tpm_nv_status_t st;
     tpm_seal_status_t r;
 
+    mask = tpm_pcr_seal_mask();
+    if (mask == 0u) {                        /* misconfigured table: refuse a no-bind seal */
+        c->r = TPM_SEAL_BADARG;
+        return 0;
+    }
+    tpm_pcr_mask_to_select(mask, sel);
+
+    /* authPolicy = trial PolicyPCR(seal mask) digest. The _seq variant is
+     * REQUIRED: tpm_policy_pcr_digest opens its own sequence, which cannot nest
+     * inside this one and would refuse the whole seal with BUSY. */
+    {
+        int session_pending = 0;
+        st = tpm_policy_pcr_digest_seq(seq, TPM_ALG_SHA256, sel, policy,
+                                       sizeof policy, &session_pending);
+        if (st != TPM_NV_OK) {
+            /* This trial session opens its OWN internal StartAuthSession
+             * (tpm_nv.c) before this flow's own CreatePrimary. session_pending
+             * flags the one exit where THAT session may be allocated and
+             * unreachable, so it needs the same non-retryable classification
+             * as an outer handle-allocating stage. */
+            c->r = session_pending ? map_nv_status_handle(st) : map_nv_status(st);
+            return 0;
+        }
+    }
+
+    primary = seal_create_primary(seq, &st, 0);  /* seal does not report; no rc needed */
+    if (primary == 0u) {
+        c->r = map_nv_status_handle(st);   /* CreatePrimary allocates a handle */
+        return 0;
+    }
+    /* From here ALL exits flush `primary`. */
+    n = tpm2_build_create_sealed(cmd, sizeof cmd, primary, policy,
+                                 (uint16_t)sizeof policy, c->secret, c->secret_len);
+    if (n == 0u) { r = TPM_SEAL_BADARG; goto out; }
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+        r = map_nv_status(st);
+        goto out;
+    }
+    r = (tpm2_parse_create_sealed(rsp, rlen, c->out) == 0)
+            ? TPM_SEAL_OK : TPM_SEAL_TRANSPORT;
+out:
+    seal_flush(seq, primary);
+    c->r = r;
+    return 0;
+}
+
+tpm_seal_status_t tpm_seal_secret(const uint8_t *secret, uint16_t secret_len,
+                                  struct tpm_sealed_blob *out)
+{
+    struct seal_secret_ctx c;
+    int rc;
+
     if (!secret || secret_len == 0u || secret_len > TPM_SEAL_SECRET_MAX || !out)
         return TPM_SEAL_BADARG;
     if (!tpm_transport_available())
         return TPM_SEAL_NO_TPM;
-    mask = tpm_pcr_seal_mask();
-    if (mask == 0u)                          /* misconfigured table: refuse a no-bind seal */
-        return TPM_SEAL_BADARG;
-    tpm_pcr_mask_to_select(mask, sel);
-
-    /* authPolicy = trial PolicyPCR(seal mask) digest (self-cleaning session). */
-    st = tpm_policy_pcr_digest(TPM_ALG_SHA256, sel, policy, sizeof policy);
-    if (st != TPM_NV_OK)
-        return map_nv_status(st);
-
-    primary = seal_create_primary(&st, 0);   /* seal does not report; no rc needed */
-    if (primary == 0u)
-        return map_nv_status(st);
-    /* From here ALL exits flush `primary`. */
-    n = tpm2_build_create_sealed(cmd, sizeof cmd, primary, policy,
-                                 (uint16_t)sizeof policy, secret, secret_len);
-    if (n == 0u) { r = TPM_SEAL_BADARG; goto out; }
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
-        r = map_nv_status(st);
-        goto out;
-    }
-    r = (tpm2_parse_create_sealed(rsp, rlen, out) == 0)
-            ? TPM_SEAL_OK : TPM_SEAL_TRANSPORT;
-out:
-    seal_flush(primary);
-    return r;
+    c.secret = secret; c.secret_len = secret_len; c.out = out;
+    c.r = TPM_SEAL_TRANSPORT;
+    rc = tpm2_seq_run(tpm_nv_op_budget_ms(), tpm_nv_op_cleanup_ms(),
+                      seal_secret_seq, &c);
+    /* A sequence that never STARTED reports why: another sequence or transaction
+     * holds the transport (BUSY), not a device fault. */
+    return (rc != 0) ? map_nv_status(tpm_nv_seq_start_status(rc)) : c.r;
 }
 
 /* Unseal op run UNDER the open policy session (PolicyPCR already satisfied). */
@@ -482,17 +649,91 @@ static tpm_nv_status_t seal_unseal_op(tpm2_seq_t seq, uint32_t session, void *vc
     return TPM_NV_OK;
 }
 
+struct seal_unseal_run_ctx {
+    const struct tpm_sealed_blob *blob;
+    uint8_t                      *out;
+    uint16_t                      cap;
+    uint16_t                     *out_len;
+    tpm_seal_status_t             r;
+    uint32_t                      report_rc;   /* raw rc to report, per stage */
+};
+
+static int unseal_secret_seq(tpm2_seq_t seq, void *vctx)
+{
+    struct seal_unseal_run_ctx *c = (struct seal_unseal_run_ctx *)vctx;
+    uint8_t cmd[TPM_SEAL_PRIV_MAX + TPM_SEAL_PUB_MAX + 64u];
+    uint8_t sel[3];
+    uint32_t mask, primary, object, n, stage_rc = 0u;
+    tpm_nv_status_t st;
+    struct seal_unseal_ctx ctx;
+
+    mask = tpm_pcr_seal_mask();
+    if (mask == 0u) {
+        c->r = TPM_SEAL_BADARG;
+        return 0;
+    }
+    tpm_pcr_mask_to_select(mask, sel);
+
+    primary = seal_create_primary(seq, &st, &stage_rc);
+    if (primary == 0u) {
+        c->r = map_nv_status_handle(st);   /* CreatePrimary allocates a handle */
+        c->report_rc = stage_rc;             /* raw rc for diagnosis */
+        return 0;
+    }
+    /* Load the object under the parent, then drop the parent immediately -- the
+     * loaded object is self-standing for Unseal. Load's response carries a
+     * leading object-handle area (same shape as CreatePrimary). */
+    stage_rc = 0u;
+    n = tpm2_build_load(cmd, sizeof cmd, primary, c->blob);
+    object = seal_exec_handle(seq, cmd, n, &st, &stage_rc);
+    seal_flush(seq, primary);                /* parent no longer needed */
+    if (object == 0u) {
+        c->r = map_nv_status_handle(st);   /* Load allocates a handle */
+        c->report_rc = stage_rc;
+        return 0;
+    }
+
+    /* Unseal under a real PolicyPCR session over the seal mask. A PCR mismatch
+     * surfaces as TPM_RC_POLICY_FAIL -> TPM_NV_AUTH from the op -> POLICY_FAIL.
+     * The _seq variant is REQUIRED here: this flow already owns the sequence, so
+     * the self-sequencing tpm_policy_session_run would refuse against our own
+     * gate and report contention that does not exist. */
+    ctx.item = object; ctx.out = c->out; ctx.cap = c->cap; ctx.out_len = c->out_len;
+    ctx.tpm_rc = 0u;
+    {
+        int session_pending = 0;
+        st = tpm_policy_session_run_seq(seq, TPM_ALG_SHA256, sel, seal_unseal_op,
+                                        &ctx, &session_pending);
+        seal_flush(seq, object);
+
+        if (st == TPM_NV_OK)
+            c->r = TPM_SEAL_OK;
+        else if (st == TPM_NV_AUTH)
+            /* AUTH covers both TPM_RC_POLICY_FAIL and TPM_RC_AUTH_FAIL. Only a
+             * POLICY_FAIL raised by the Unseal command itself means PCR drift (the
+             * recoverable "boot a different config" case); an AUTH_FAIL, or an AUTH
+             * from the PolicyPCR setup stage (ctx.tpm_rc stays 0 there), is a
+             * different condition and must NOT be misdiagnosed as PCR drift to the
+             * recovery UX. Discriminate on the raw rc captured from the Unseal stage. */
+            c->r = ((ctx.tpm_rc & 0xBFu) == TPM2_RC_F1_POLICY_FAIL)
+                       ? TPM_SEAL_POLICY_FAIL : TPM_SEAL_AUTH_FAIL;
+        else
+            /* This policy session opens its OWN internal StartAuthSession
+             * (tpm_nv.c) before the Unseal op runs. session_pending flags the
+             * one exit where THAT session may be allocated and unreachable. */
+            c->r = session_pending ? map_nv_status_handle(st) : map_nv_status(st);
+    }
+    c->report_rc = ctx.tpm_rc;
+    return 0;
+}
+
 tpm_seal_status_t tpm_unseal_secret(const struct tpm_sealed_blob *blob,
                                     tpm_seal_domain_t domain,
                                     uint8_t *out, uint16_t cap, uint16_t *out_len,
                                     struct tpm_unseal_result *result)
 {
-    uint8_t cmd[TPM_SEAL_PRIV_MAX + TPM_SEAL_PUB_MAX + 64u];
-    uint8_t sel[3];
-    uint32_t mask, primary, object, n, stage_rc = 0u;
-    tpm_nv_status_t st;
-    tpm_seal_status_t r;
-    struct seal_unseal_ctx ctx;
+    struct seal_unseal_run_ctx c;
+    int rc;
 
     if (out_len) *out_len = 0;
     if (!blob || !out || cap == 0u || cap > TPM_SEAL_SECRET_MAX ||
@@ -505,54 +746,17 @@ tpm_seal_status_t tpm_unseal_secret(const struct tpm_sealed_blob *blob,
         seal_report_failure(result, TPM_SEAL_NO_TPM, 0u, domain);
         return TPM_SEAL_NO_TPM;
     }
-    mask = tpm_pcr_seal_mask();
-    if (mask == 0u) {
-        seal_report_failure(result, TPM_SEAL_BADARG, 0u, domain);
-        return TPM_SEAL_BADARG;
-    }
-    tpm_pcr_mask_to_select(mask, sel);
-
-    primary = seal_create_primary(&st, &stage_rc);
-    if (primary == 0u) {
-        r = map_nv_status(st);
-        seal_report_failure(result, r, stage_rc, domain);  /* raw rc for diagnosis */
-        return r;
-    }
-    /* Load the object under the parent, then drop the parent immediately -- the
-     * loaded object is self-standing for Unseal. Load's response carries a
-     * leading object-handle area (same shape as CreatePrimary). */
-    stage_rc = 0u;
-    n = tpm2_build_load(cmd, sizeof cmd, primary, blob);
-    object = seal_exec_handle(cmd, n, &st, &stage_rc);
-    seal_flush(primary);                     /* parent no longer needed */
-    if (object == 0u) {
-        r = map_nv_status(st);
-        seal_report_failure(result, r, stage_rc, domain);
-        return r;
-    }
-
-    /* Unseal under a real PolicyPCR session over the seal mask. A PCR mismatch
-     * surfaces as TPM_RC_POLICY_FAIL -> TPM_NV_AUTH from the op -> POLICY_FAIL. */
-    ctx.item = object; ctx.out = out; ctx.cap = cap; ctx.out_len = out_len;
-    ctx.tpm_rc = 0u;
-    st = tpm_policy_session_run(TPM_ALG_SHA256, sel, seal_unseal_op, &ctx);
-    seal_flush(object);
-
-    if (st == TPM_NV_OK)
-        r = TPM_SEAL_OK;
-    else if (st == TPM_NV_AUTH)
-        /* AUTH covers both TPM_RC_POLICY_FAIL and TPM_RC_AUTH_FAIL. Only a
-         * POLICY_FAIL raised by the Unseal command itself means PCR drift (the
-         * recoverable "boot a different config" case); an AUTH_FAIL, or an AUTH
-         * from the PolicyPCR setup stage (ctx.tpm_rc stays 0 there), is a
-         * different condition and must NOT be misdiagnosed as PCR drift to the
-         * recovery UX. Discriminate on the raw rc captured from the Unseal stage. */
-        r = ((ctx.tpm_rc & 0xBFu) == TPM2_RC_F1_POLICY_FAIL)
-                ? TPM_SEAL_POLICY_FAIL : TPM_SEAL_AUTH_FAIL;
-    else
-        r = map_nv_status(st);
-    seal_report_failure(result, r, ctx.tpm_rc, domain);
-    return r;
+    c.blob = blob; c.out = out; c.cap = cap; c.out_len = out_len;
+    c.r = TPM_SEAL_TRANSPORT; c.report_rc = 0u;
+    rc = tpm2_seq_run(tpm_nv_op_budget_ms(), tpm_nv_op_cleanup_ms(),
+                      unseal_secret_seq, &c);
+    if (rc != 0)
+        c.r = map_nv_status(tpm_nv_seq_start_status(rc));
+    /* Reported on EVERY path, exactly as before the conversion: the structured
+     * result is what the FDE recovery UX reads, and a failed sequence START is
+     * as much a failure to report as a failed Unseal. */
+    seal_report_failure(result, c.r, c.report_rc, domain);
+    return c.r;
 }
 
 /* ---- Forward-API hooks (domain-tagged wrappers; stub consumers) ---- */

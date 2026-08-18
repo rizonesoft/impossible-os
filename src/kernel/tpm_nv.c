@@ -1330,6 +1330,12 @@ struct nv_digest_ctx {
     uint8_t       *out;
     uint32_t       cap;
     tpm_nv_status_t st;
+    /* Set ONLY when the flow's own StartAuthSession submit itself failed --
+     * before any session was named -- so its completion is unknown and no
+     * flush is possible from here. Every OTHER exit path either never opened a
+     * session or already owns a NAMED one that gets proof-requiring nv_flush on
+     * every remaining exit, so it does not need this flag. */
+    int session_pending;
 };
 
 /* The trial-session digest flow, running inside a sequence the CALLER owns.
@@ -1355,6 +1361,14 @@ static int nv_policy_pcr_digest_seq(tpm2_seq_t seq, void *vctx)
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
                                  &sas_rc) != 0) {
         nv_session_failure_guard(seq, st, sas_rc);
+        /* This exit is the ONLY one where a session may have been created and
+         * is NOT named -- no handle exists yet to flush -- BUT only when the
+         * command actually reached the TPM. A cumulative-budget refusal BEFORE
+         * dispatch (tpm2_seq_last_submit_dispatched() false) genuinely
+         * submitted nothing, and is exactly as safe to retry as ordinary gate
+         * contention; only an in-flight abandonment leaves a real unknown. */
+        if (tpm2_seq_last_submit_dispatched())
+            c->session_pending = 1;
         c->st = st;
         return 0;
     }
@@ -1365,13 +1379,18 @@ static int nv_policy_pcr_digest_seq(tpm2_seq_t seq, void *vctx)
          * strict parser will not hand us a handle to authorize with. Recover
          * the raw handle and flush it. If NO handle can be recovered the
          * session is unreachable, which is the second of the two leak
-         * categories the header names; it is logged, like the first. */
+         * categories the header names; it is logged, like the first. A parsed
+         * SUCCESS means the command unconditionally dispatched, so this branch
+         * always sets session_pending when unrecoverable -- no dispatch check
+         * needed here. */
         uint32_t raw = tpm2_rsp_session_handle(rsp, rlen);
         if (raw != 0u)
             nv_flush(seq, raw);
-        else
+        else {
             klog(LOG_WARN, "TPM",
                  "session created but its handle is unrecoverable; slot may be held");
+            c->session_pending = 1;
+        }
         c->st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -1424,6 +1443,9 @@ struct nv_session_run_ctx {
     tpm_policy_op_fn  op;
     void             *ctx;
     tpm_nv_status_t   st;
+    /* Same meaning as nv_digest_ctx.session_pending: set only when THIS flow's
+     * own StartAuthSession submit failed before a session was named. */
+    int               session_pending;
 };
 
 static int nv_policy_session_run_seq(tpm2_seq_t seq, void *vctx)
@@ -1441,6 +1463,10 @@ static int nv_policy_session_run_seq(tpm2_seq_t seq, void *vctx)
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
                                  &sas_rc) != 0) {
         nv_session_failure_guard(seq, st, sas_rc);
+        /* Same "no named handle to flush from here, only if dispatched" case
+         * as nv_policy_pcr_digest_seq's identical branch. */
+        if (tpm2_seq_last_submit_dispatched())
+            c->session_pending = 1;
         c->st = st;
         return 0;
     }
@@ -1451,13 +1477,16 @@ static int nv_policy_session_run_seq(tpm2_seq_t seq, void *vctx)
          * strict parser will not hand us a handle to authorize with. Recover
          * the raw handle and flush it. If NO handle can be recovered the
          * session is unreachable, which is the second of the two leak
-         * categories the header names; it is logged, like the first. */
+         * categories the header names; it is logged, like the first. A parsed
+         * SUCCESS means the command unconditionally dispatched. */
         uint32_t raw = tpm2_rsp_session_handle(rsp, rlen);
         if (raw != 0u)
             nv_flush(seq, raw);
-        else
+        else {
             klog(LOG_WARN, "TPM",
                  "session created but its handle is unrecoverable; slot may be held");
+            c->session_pending = 1;
+        }
         c->st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -1486,6 +1515,50 @@ tpm_nv_status_t tpm_policy_session_run(uint16_t alg, const uint8_t sel[3],
                      nv_policy_session_run_seq, &c);
     return (r != 0) ? nv_seq_start_status(r) : c.st;
 }
+
+tpm_nv_status_t tpm_policy_session_run_seq(tpm2_seq_t seq, uint16_t alg,
+                                           const uint8_t sel[3],
+                                           tpm_policy_op_fn op, void *ctx,
+                                           int *out_session_pending)
+{
+    struct nv_session_run_ctx c;
+
+    /* The SAME body the self-sequencing wrapper above runs, minus the
+     * tpm2_seq_run that opens a sequence -- because a caller that already owns
+     * one cannot nest. Sharing the body is the whole point: the session
+     * teardown, the malformed-handle recovery and the StartAuthSession failure
+     * guard are the hard parts, and a second copy of them would drift. */
+    if (!sel || !op)
+        return TPM_NV_BADARG;
+    c.alg = alg; c.sel = sel; c.op = op; c.ctx = ctx; c.st = TPM_NV_TRANSPORT;
+    c.session_pending = 0;
+    (void)nv_policy_session_run_seq(seq, &c);
+    if (out_session_pending) *out_session_pending = c.session_pending;
+    return c.st;
+}
+
+tpm_nv_status_t tpm_policy_pcr_digest_seq(tpm2_seq_t seq, uint16_t alg,
+                                          const uint8_t sel[3],
+                                          uint8_t *out, uint32_t cap,
+                                          int *out_session_pending)
+{
+    struct nv_digest_ctx c;
+    if (!out || !sel || cap < 32u)
+        return TPM_NV_BADARG;
+    c.alg = alg; c.sel = sel; c.out = out; c.cap = cap; c.st = TPM_NV_TRANSPORT;
+    c.session_pending = 0;
+    (void)nv_policy_pcr_digest_seq(seq, &c);
+    if (out_session_pending) *out_session_pending = c.session_pending;
+    return c.st;
+}
+
+tpm_nv_status_t tpm_nv_seq_start_status(int rc)
+{
+    return nv_seq_start_status(rc);
+}
+
+uint32_t tpm_nv_op_budget_ms(void)     { return s_nv_work_ms; }
+uint32_t tpm_nv_op_cleanup_ms(void)    { return s_nv_cleanup_ms; }
 
 /* ---- NV policy ops over the shared seam ---- */
 

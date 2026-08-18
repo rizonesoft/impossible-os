@@ -351,13 +351,16 @@ tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st)
          * right for a TPM that answered too slowly for the boot's patience.
          * TPMERR would instead read as a device fault. */
         case TPM_NV_BUDGET:    return TPM_BASELINE_NO_TPM;
-        /* BUSY is TRANSIENT -- another transaction held the transport -- and
-         * belongs with BUDGET for the same reason: the machine could not
-         * measure on THIS attempt, which must leave the verdict unpublished
-         * rather than report a device fault. Seal and attestation already
-         * preserve BUSY as retryable; routing it to TPMERR here would make one
-         * consumer call ordinary contention a permanent failure. */
-        case TPM_NV_BUSY:      return TPM_BASELINE_NO_TPM;
+        /* BUSY is TRANSIENT and, uniquely in this enum, RETRY-SAFE: the
+         * transport gate refused before anything was submitted, so nothing
+         * executed and asking again cannot double-apply. It gets its own status
+         * rather than sharing NO_TPM, which reads as an absent or broken TPM --
+         * seal and attestation have always preserved BUSY as retryable, and this
+         * layer was the one consumer turning ordinary contention into a
+         * measurement the boot gave up on. The verdict still stays unpublished
+         * on this attempt; the difference is that a caller can now take another
+         * one. */
+        case TPM_NV_BUSY:      return TPM_BASELINE_BUSY;
         /* A caller-argument error is not a TPM fault, and this enum has the
          * right value for it. */
         case TPM_NV_BADARG:    return TPM_BASELINE_BADARG;

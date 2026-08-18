@@ -164,6 +164,32 @@ int tpm2_seq_run(uint32_t work_ms, uint32_t cleanup_ms,
 int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
                     uint8_t *rsp, uint32_t rsp_cap);
 
+/* Did the MOST RECENT tpm2_submit_seq() call actually reach TIS GO / CRB START
+ * -- the true dispatch point, past every wait that can time out with nothing
+ * ever handed to the TPM? A caller that must classify a TPM_T_ERR_BUDGET
+ * result needs this: tpm2_submit_seq returns the SAME code whether the
+ * cumulative budget was already spent BEFORE this call touched the interface
+ * (nothing submitted, genuinely safe to retry) or the command was dispatched
+ * and then abandoned mid-transaction (completion unknown -- a caller retrying
+ * a handle-allocating command risks a second unnameable handle on top of an
+ * unproven first one).
+ *
+ * CONTRACT (load-bearing, not advisory): call this ONLY as the immediate next
+ * statement after your own tpm2_submit_seq() failure, with NOTHING else able
+ * to submit in between -- it is single global "last call" state, not scoped
+ * to a caller or a token. Every current consumer (tpm_seal.c's
+ * seal_exec_handle, tpm_attest.c's at_exec_handle / at_capture_ek_public_seq /
+ * at_provision_err_handle, and tpm_nv.c's two nested-session StartAuthSession
+ * branches) satisfies this by reading it as literally the next line after the
+ * failing call, with only a pure/logging helper (no submit) between. A caller
+ * that cannot make the same guarantee -- e.g. anything that might run ANOTHER
+ * submit, even a teardown, before reading this -- must NOT rely on it; there
+ * is deliberately no per-call token because the exact 3 real consumers do not
+ * need one and a signature change here ripples through
+ * tpm_session_cmd_exec_seq's 30+ existing callers for a hazard none of them
+ * can hit. */
+int tpm2_seq_last_submit_dispatched(void);
+
 /* Submit a mandatory TEARDOWN command (FlushContext) inside the sequence, on
  * the RESERVED allowance rather than on whatever the work phase left.
  *

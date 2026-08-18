@@ -268,6 +268,18 @@ static uint16_t sf_secret_len;
 static int      sf_unseal_noauth;    /* emit Unseal success with NO auth area (F1) */
 static int      sf_unseal_nosession; /* emit Unseal success as ST_NO_SESSIONS (F-A1) */
 static int      sf_handle_malformed; /* emit CreatePrimary/Load success: handle present, bad envelope (F-A2) */
+static int      sf_fail_times;     /* how many times sf_fail_cc still fails; <0 = forever.
+                                    * A TRANSIENT failure that eventually clears is what
+                                    * separates "retried and succeeded" from "gave up". */
+static uint32_t sf_stall_reads;    /* withhold COMMAND_READY for N status reads: a
+                                    * slow-but-responsive TPM, which is exactly what a
+                                    * cumulative budget exists to bound (and what a
+                                    * per-command timeout does NOT). */
+static uint32_t sf_stall_after_go;  /* withhold DATA_AVAIL for N status reads
+                                    * AFTER the command was dispatched (mirrors
+                                    * test_tpm_nv.c's nvf_stall_after_go): the
+                                    * abandoned-mid-flight case, distinct from
+                                    * sf_stall_reads' before-dispatch stall. */
 
 #define SF_REG_STS   0x018u
 #define SF_REG_FIFO  0x024u
@@ -298,7 +310,11 @@ static void sf_build_response(void)
         sf_flush_n++;
         if (sf_flushed_n < 16u) sf_flushed[sf_flushed_n++] = tpm2_be32_get(sf_cmd + 10);
     }
-    if (sf_fail_cc != 0u && cc == sf_fail_cc) rc = sf_fail_rc;
+    if (sf_fail_cc != 0u && cc == sf_fail_cc && sf_fail_times != 0) {
+        rc = sf_fail_rc;
+        if (sf_fail_times > 0)
+            sf_fail_times--;       /* transient: clears after this many attempts */
+    }
     memset(sf_rsp, 0, SF_CAP);
 
     if (rc != TPM2_RC_SUCCESS) {
@@ -420,6 +436,20 @@ static uint32_t sf_r32(uint32_t off)
     if (off != SF_REG_STS)
         return 0;
     sts = SF_STS_VALID;
+    /* A slow-but-RESPONSIVE TPM: withhold commandReady for N status polls, then
+     * behave normally. This is the shape a cumulative budget exists to bound --
+     * every individual command still completes well inside its own PTP timeout,
+     * so a per-command bound never fires, while the SUM across a multi-command
+     * flow runs away. Modelling it as an outright timeout instead would prove
+     * nothing about the sequence conversion. */
+    if (sf_stall_reads > 0u) {
+        sf_stall_reads--;
+        return (uint32_t)sts | (32u << 8);
+    }
+    if (sf_executed && sf_stall_after_go > 0u) {
+        sf_stall_after_go--;
+        return (uint32_t)sts | (32u << 8);
+    }
     if (sf_ready && !sf_executed && sf_cmd_len == 0)
         sts |= SF_STS_COMMAND_READY;
     if (!sf_executed && sf_cmd_len > 0 && sf_cmd_len < sf_cmd_expect)
@@ -456,6 +486,9 @@ static void sf_reset(uint32_t fail_cc, uint32_t fail_rc)
     sf_ready = 0; sf_executed = 0;
     sf_seen_n = 0; sf_flush_n = 0; sf_flushed_n = 0;
     sf_fail_cc = fail_cc; sf_fail_rc = fail_rc;
+    sf_fail_times = -1;            /* default: fails forever, the prior behaviour */
+    sf_stall_reads = 0;
+    sf_stall_after_go = 0;
     sf_secret_len = 16;
     sf_unseal_noauth = 0;
     sf_unseal_nosession = 0;
@@ -679,8 +712,221 @@ static void test_seal_forged_responses(void)
     TEST_ASSERT_EQ((uint32_t)got, 0u, "empty unseal returns no data");
 }
 
+
+/* ---- Section 24: bounded sequence + verified teardown on the seal path ----
+ *
+ * The three properties section 17 proved for the NV path, asserted here for the
+ * two flows this section converted. Each is written so that reverting the
+ * conversion fails it: a CONTROL run proves the fixture itself is not simply
+ * refusing everything, and the teardown assertions count FlushContext COMMANDS
+ * rather than reading the operation's return value, because the defect being
+ * guarded against is precisely one that leaves the return value looking fine.
+ */
+
+/* ONE budget across the WHOLE operation, not one per command.
+ *
+ * Before the conversion, seal ran CreatePrimary, Create and two flushes as
+ * separate transactions, each arming its own per-command PTP timeout. A TPM slow
+ * enough to burn most of a timeout per command stayed inside every individual
+ * bound while the operation as a whole ran unboundedly long. The fixture stalls
+ * a fixed number of status polls per command, so the only thing that can
+ * terminate the flow early is a CUMULATIVE bound. */
+static void test_seal_one_budget_per_operation(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_sealed_blob blob;
+    tpm_seal_status_t st;
+    uint8_t secret[16];
+    uint16_t i;
+
+    for (i = 0; i < 16u; i++) secret[i] = (uint8_t)(0x40u + i);
+
+    /* CONTROL FIRST. The same stalling TPM must SUCCEED under a generous
+     * budget. Without this, a seal that refused everything for an unrelated
+     * reason would satisfy the expiry assertion below and prove nothing. */
+    sf_reset(0u, 0u);
+    sf_stall_reads = 6u;
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(60000u, 1000u);
+    st = tpm_seal_secret(secret, (uint16_t)sizeof secret, &blob);
+    tpm_nv_test_reset_op_budget();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_OK,
+                   "CONTROL: a slow-but-responsive TPM still seals inside a "
+                   "generous budget");
+
+    /* Budget already spent BEFORE the trial session's own StartAuthSession
+     * ever touches the interface (sf_stall_reads only delays commandReady,
+     * which the pre-dispatch check never reaches): nothing was submitted, so
+     * this is exactly as safe to retry as ordinary gate contention. */
+    sf_reset(0u, 0u);
+    sf_stall_reads = 6u;
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(0u, 1000u);
+    st = tpm_seal_secret(secret, (uint16_t)sizeof secret, &blob);
+    tpm_nv_test_reset_op_budget();
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_BUSY,
+                   "a pre-dispatch budget refusal reports the retryable class: "
+                   "nothing was ever submitted");
+    /* Checked BEFORE restore: tpm_transport_available() reflects the
+     * INSTALLED fake here, not whatever real (or absent) device the test
+     * harness restores to afterward. */
+    TEST_ASSERT_EQ(tpm_transport_available(), 1,
+                   "a budget expiry never sticky-fails the transport");
+    tpm_t_test_restore(prev);
+
+    /* The genuinely-in-flight (dispatched, then abandoned) case for a
+     * handle-allocating command is proven at the transport layer instead of
+     * here: test_seq_last_submit_dispatched (test_tpm_nv.c) is a deterministic,
+     * timing-independent test of tpm2_seq_last_submit_dispatched() itself --
+     * the primitive both TPMERR arms above are gated on -- because reaching
+     * "dispatched, then the cumulative budget expires mid-wait" through this
+     * fixture requires an unbounded stall count with no reliable bound (a
+     * work_ms budget large enough to survive the pre-dispatch check makes the
+     * exact expiry point a real-time race no fixed iteration count can pin,
+     * and an unbounded one risks a hung test). The classification wiring
+     * itself -- map_nv_status_handle special-cases exactly TPM_NV_BUDGET, and
+     * the pre-dispatch case above proves the code path that must NOT take
+     * that branch (seal_exec_handle reports BUSY, not BUDGET, when nothing
+     * dispatched) -- is verified by code inspection plus the transport-layer
+     * test proving the underlying signal is correct in both directions;
+     * end-to-end reproduction of the in-flight case is what fixture timing
+     * cannot pin reliably. */
+}
+
+/* The same bound covers UNSEAL, which is the FDE-unlock path and the one a user
+ * actually feels. It is a separate assertion rather than a loop because unseal
+ * runs a DIFFERENT command set (CreatePrimary, Load, StartAuthSession, PolicyPCR,
+ * Unseal, and two flushes) through a nested policy-session helper, and that
+ * helper is exactly where a missed _seq conversion would strand the flow. */
+static void test_unseal_one_budget_per_operation(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_sealed_blob blob;
+    struct tpm_unseal_result res;
+    uint8_t out[32];
+    uint16_t got = 0;
+    tpm_seal_status_t st;
+
+    /* A blob the fixture will accept; contents are irrelevant to the bound. */
+    memset(&blob, 0, sizeof blob);
+    blob.priv_len = 32u; blob.pub_len = 32u;
+
+    sf_reset(0u, 0u);
+    sf_stall_reads = 6u;
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(60000u, 1000u);
+    st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_FDE, out,
+                           (uint16_t)sizeof out, &got, &res);
+    tpm_nv_test_reset_op_budget();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_OK,
+                   "CONTROL: a slow-but-responsive TPM still unseals inside a "
+                   "generous budget");
+
+    /* Pre-dispatch: budget already spent before CreatePrimary (the first
+     * command) ever touches the interface. Nothing was submitted, so this is
+     * exactly as safe to retry as ordinary gate contention. */
+    sf_reset(0u, 0u);
+    sf_stall_reads = 6u;
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(0u, 1000u);
+    st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_FDE, out,
+                           (uint16_t)sizeof out, &got, &res);
+    tpm_nv_test_reset_op_budget();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_BUSY,
+                   "a pre-dispatch budget refusal reports the retryable "
+                   "class: nothing was ever submitted");
+    TEST_ASSERT_EQ((int)res.status, (int)TPM_SEAL_BUSY,
+                   "the structured recovery result carries the same verdict");
+
+    /* The genuinely-in-flight case is proven at the transport layer
+     * (test_seq_last_submit_dispatched, test_tpm_nv.c) rather than here -- see
+     * the identical rationale in test_seal_one_budget_per_operation above. */
+}
+
+/* A TEARDOWN REQUIRES PROOF, and a transient warning is retried.
+ *
+ * The old seal_flush submitted FlushContext and discarded the result, so a
+ * TPM_RC_RETRY left the object allocated while the code proceeded as though it
+ * were released. Asserted by COUNTING FlushContext commands rather than by the
+ * operation's return value, because the whole defect is that the return value
+ * looked correct while a slot leaked. */
+static void test_seal_teardown_requires_proof(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_sealed_blob blob;
+    tpm_seal_status_t st;
+    uint8_t secret[16];
+    uint32_t flushes_clean, flushes_retried;
+    uint16_t i;
+
+    for (i = 0; i < 16u; i++) secret[i] = (uint8_t)(0x40u + i);
+
+    /* BASELINE: a TPM that proves the flush first time. */
+    sf_reset(0u, 0u);
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_seal_secret(secret, (uint16_t)sizeof secret, &blob);
+    flushes_clean = sf_flush_n;
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_OK, "CONTROL: a clean seal succeeds");
+    /* TWO, and naming both is the point of the control: seal releases the SRK
+     * primary it created AND the trial policy session that computed the
+     * authPolicy digest. Asserting the exact number pins the handle inventory,
+     * so a future change that leaks one (or opens a third without releasing it)
+     * fails here rather than silently eroding the TPM's object pool. */
+    TEST_ASSERT_EQ((int)flushes_clean, 2,
+                   "CONTROL: a clean seal proves exactly two teardowns -- the "
+                   "trial policy session and the SRK primary");
+
+    /* TRANSIENT WARNING: the first FlushContext answers TPM_RC_RETRY, which is
+     * NOT proof -- the session is exactly where it was. The teardown must try
+     * again, and the second attempt succeeds. More than one FlushContext is the
+     * observable that separates "retried" from "accepted the first answer". */
+    sf_reset(TPM2_CC_FLUSH_CONTEXT, TPM2_RC_RETRY);
+    sf_fail_times = 1;                 /* transient: clears after one attempt */
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_seal_secret(secret, (uint16_t)sizeof secret, &blob);
+    flushes_retried = sf_flush_n;
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_OK,
+                   "a transient teardown warning does not fail the seal itself");
+    TEST_ASSERT(flushes_retried > flushes_clean,
+                "a transient TPM_RC_RETRY is RETRIED, not accepted as proof");
+
+    /* NEVER PROVEN: FlushContext answers RETRY forever. The teardown must give
+     * up after a BOUNDED number of attempts -- it must neither loop without end
+     * nor stop after one -- and it must REPORT rather than escalate: the seal
+     * still succeeds and the transport stays usable, because poisoning it would
+     * take out PCR reads that never opened a handle at all. */
+    sf_reset(TPM2_CC_FLUSH_CONTEXT, TPM2_RC_RETRY);
+    sf_fail_times = -1;                /* never clears */
+    prev = tpm_t_test_install(&sf_io, TPM_T_IFACE_TIS, 1);
+    st = tpm_seal_secret(secret, (uint16_t)sizeof secret, &blob);
+    TEST_ASSERT(sf_flush_n > flushes_clean,
+                "an unproven teardown retries rather than accepting one answer");
+    /* Bounded RELATIVE to the clean handle inventory rather than against a bare
+     * constant: each handle gets its own bounded retry allowance, so the ceiling
+     * is per-teardown, not per-operation. Hardcoding TPM_NV_FLUSH_RETRIES here
+     * would assert that the whole operation shares one allowance, which is not
+     * the contract and fails the moment a flow releases a second handle. */
+    TEST_ASSERT(sf_flush_n <= flushes_clean * TPM_NV_FLUSH_RETRIES,
+                "and the retry is BOUNDED per handle, never an unbounded loop");
+    TEST_ASSERT_EQ(tpm_transport_available(), 1,
+                   "an unproven teardown is REPORTED, not escalated into a "
+                   "transport-wide outage");
+    tpm_t_test_restore(prev);
+}
+
 void test_register_tpm_seal(void)
 {
+    test_suite_register_cat("tpm: seal one budget per operation",
+                            test_seal_one_budget_per_operation, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: unseal one budget per operation",
+                            test_unseal_one_budget_per_operation, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: seal teardown requires proof",
+                            test_seal_teardown_requires_proof, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: seal CreatePrimary marshal", test_seal_build_create_primary, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: seal Create marshal", test_seal_build_create_sealed, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: seal Load/Unseal marshal", test_seal_build_load_unseal, TEST_CAT_SECURITY);

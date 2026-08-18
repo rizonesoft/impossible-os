@@ -2695,6 +2695,84 @@ else
 fi
 
 # ============================================================================
+# Check 29: TPM per-function stack-frame ceiling
+# ============================================================================
+# The TPM modules marshal TPM2 buffers sized by protocol maxima, not by what the
+# calling context can afford, and they chain three-to-four frames deep against
+# 8 KiB kernel task stacks. A frame that outgrows its budget fails no build, no
+# test and no QEMU boot -- it takes out a guard page on real hardware, on
+# whichever path happens to be deepest at the time.
+#
+# Runs ONLY when the commit touches a covered module or the checker itself: it
+# compiles five translation units with -fstack-usage (~2s), which is real cost to
+# put on every unrelated commit. The trigger below is a HARDCODED duplicate of
+# the checker's own MODULES list, not derived from it: deriving it by parsing
+# tpm-stack-check.py made the trigger (and the "checker missing but module
+# changed" fail-closed ERROR two blocks down) depend on the checker existing to
+# compute at all, which is exactly backwards for a fail-closed gate -- delete
+# the checker and the trigger silently goes empty instead of firing. A short,
+# stable duplicate costs a manual sync on the rare day MODULES changes; that is
+# the honest trade against a derivation that fails exactly when fail-closed
+# behavior matters most.
+#
+# Skip via SKIP_LINT_TPM_STACK=1.
+TPM_STACK_COVERED_MODULES="
+src/kernel/tpm_seal.c
+src/kernel/tpm_attest.c
+src/kernel/tpm_nv.c
+src/kernel/tpm_baseline.c
+src/kernel/tpm_transport.c
+"
+TPM_STACK_TOUCHED=0
+for f in "${FILES[@]}"; do
+    case "$f" in
+        scripts/tpm-stack-check.py) TPM_STACK_TOUCHED=1 ;;
+    esac
+    for m in $TPM_STACK_COVERED_MODULES; do
+        [ "$f" = "$m" ] && TPM_STACK_TOUCHED=1
+    done
+done
+
+if [ "${SKIP_LINT_TPM_STACK:-}" = "1" ]; then
+    if [ "$TPM_STACK_TOUCHED" = "1" ]; then
+        echo -e "${YELLOW}warn${NC}: Check 29 (tpm-stack) skipped via SKIP_LINT_TPM_STACK=1"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+elif [ "$TPM_STACK_TOUCHED" = "1" ]; then
+    if [ ! -f "$REPO_ROOT/scripts/tpm-stack-check.py" ]; then
+        # A commit touching a covered module with the checker GONE is the one
+        # case that must not pass quietly: the gate would have dropped out of
+        # lint exactly where it is needed.
+        echo -e "${RED}error${NC}: Check 29 (tpm-stack) scripts/tpm-stack-check.py is missing but a covered TPM module changed"
+        ERRORS=$((ERRORS + 1))
+    else
+        TPM_STACK_OUT=$(mktemp)
+        # `|| true` is load-bearing under `set -e`: without it a rc-1 verdict
+        # (the checker's normal way of REPORTING a violation) kills lint.sh
+        # before it can print the finding or the summary, so a real failure
+        # looked like a silent truncated run.
+        TPM_STACK_RC=0
+        python3 "$REPO_ROOT/scripts/tpm-stack-check.py" > "$TPM_STACK_OUT" 2>&1 \
+            || TPM_STACK_RC=$?
+        if [ "$TPM_STACK_RC" = "0" ]; then
+            echo -e "${DIM}ok${NC}: Check 29 (tpm-stack) $(grep -m1 'tpm-stack-check:' "$TPM_STACK_OUT" || echo 'clean')"
+        elif [ "$TPM_STACK_RC" = "1" ]; then
+            while IFS= read -r _l29; do
+                echo -e "${RED}error${NC}: Check 29 (tpm-stack) $_l29"
+            done < <(grep -E '^[[:space:]]+src/kernel/' "$TPM_STACK_OUT" || true)
+            ERRORS=$((ERRORS + 1))
+        else
+            # FAIL CLOSED ON THE MECHANISM. rc 0 and rc 1 are the tool speaking;
+            # anything else means it never got to speak, and a check that could
+            # not run proves nothing.
+            echo -e "${RED}error${NC}: Check 29 (tpm-stack) checker did not run to completion (rc $TPM_STACK_RC)"
+            ERRORS=$((ERRORS + 1))
+        fi
+        rm -f "$TPM_STACK_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

@@ -38,6 +38,23 @@
 /* Golden digests are stored for the measured-boot PCR set {0..7, 11}. */
 #define TPM_BASELINE_MAX_PCRS 9u
 
+/* Attempts the boot makes at tpm_baseline_verify while it reports
+ * TPM_BASELINE_BUSY. Small and fixed: BUSY is another CPU's in-flight TPM
+ * transaction, which finishes inside its own bounded sequence, so this is
+ * contention backoff and never a wait on hardware. Retrying ONLY BUSY is the
+ * safety property -- see the TPM_BASELINE_BUSY comment for why BUDGET must not
+ * be retried blind. */
+#define TPM_BASELINE_VERIFY_RETRIES 3u
+
+/* PAUSE-instruction spins between verify retries (boot_interrupts.c). Not a
+ * calibrated real-time delay -- just enough cycles to give a competing CPU's
+ * in-flight bounded sequence room to progress before the next attempt, which a
+ * zero-gap retry loop cannot do. Kept small and bounded (no subsystem
+ * dependency: works before mono_clock or the scheduler is up) so the total
+ * cost across TPM_BASELINE_VERIFY_RETRIES attempts stays a bounded spin, not a
+ * wait for hardware. */
+#define TPM_BASELINE_VERIFY_BACKOFF_SPINS 20000u
+
 /* One golden PCR slot (SHA-256 bank). */
 struct tpm_baseline_pcr {
     uint8_t index;                       /* PCR index */
@@ -88,18 +105,20 @@ typedef enum {
                                     * false tamper, which is the property this
                                     * value exists for.
                                     *
-                                    * Retry safety DIFFERS by cause and this
-                                    * value does not distinguish them. BUSY is
-                                    * safe to retry: nothing was submitted.
-                                    * BUDGET is NOT: the command was abandoned in
-                                    * flight and its completion is UNKNOWN, so a
-                                    * blind retry of state-changing work can
-                                    * apply it twice -- the same reason
-                                    * tpm_nv_increment refuses to retry. A caller
-                                    * that wants to retry must reconcile at the
-                                    * operation level or use an idempotent
-                                    * operation; a dedicated retryable status is
-                                    * tracked work. */
+                                    * Retry safety DIFFERS by cause, which is why
+                                    * the retry-SAFE cause no longer lands here:
+                                    * transport contention now reports
+                                    * TPM_BASELINE_BUSY. What remains under
+                                    * NO_TPM is deliberately NOT retryable --
+                                    * BUDGET abandoned the command in flight with
+                                    * its completion UNKNOWN, so a blind retry of
+                                    * state-changing work can apply it twice (the
+                                    * same reason tpm_nv_increment refuses to
+                                    * retry), and an unavailable transport or an
+                                    * unsnapshottable PCR will not change on the
+                                    * next call either. A caller wanting to retry
+                                    * past a BUDGET must reconcile at the
+                                    * operation level or use an idempotent one. */
     TPM_BASELINE_CORRUPT    = 3,   /* STORED blob failed magic/version/size/crc */
     TPM_BASELINE_TPMERR     = 4,   /* TPM/NV transaction failure */
     TPM_BASELINE_BADARG     = 5,
@@ -179,6 +198,22 @@ typedef enum {
      * an attacker-supplied index definition detected and then omitted from the
      * boot verdict -- caught, and silently. */
     TPM_BASELINE_IDENTITY = 10,
+    /* Transport CONTENTION -- another transaction held the TPM -- and the ONLY
+     * value in this enum that is safe to retry blind.
+     *
+     * Split out of NO_TPM because the two are operationally opposite even though
+     * both leave the verdict unpublished on the attempt that produced them.
+     * NO_TPM says "this machine could not measure", which an operator reads as a
+     * missing or broken TPM; BUSY says "nothing was submitted, ask again".
+     * Collapsing contention into NO_TPM made a momentarily busy TPM
+     * indistinguishable from an absent one, so the boot abandoned its integrity
+     * verdict for the WHOLE boot over a condition that clears in milliseconds.
+     *
+     * BUDGET deliberately does NOT map here. It looks equally transient and is
+     * not: the command was abandoned IN FLIGHT and may have executed, so a blind
+     * retry is exactly what must not happen. Only "the TPM never received it" is
+     * retry-safe, and BUSY is the sole status that guarantees it. */
+    TPM_BASELINE_BUSY = 11,
 } tpm_baseline_status_t;
 
 /* ---- Pure core (MMIO-free, fixture-tested) ---- */

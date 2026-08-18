@@ -176,6 +176,21 @@ _Static_assert(TPMA_NV_TYPE(TPM_NT_PIN_PASS) == 0x90u,
 #define TPM2_RC_F1_SIZE      0x00000095u
 #define TPM2_RC_F1_POLICY_FAIL 0x0000009Du
 
+/* TPM 2.0 Part 2, Table 17 (TPM_RC): the RC_WARN class. These are TRANSIENT --
+ * the command did not execute and the TPM's state is unchanged -- which is
+ * exactly why a teardown must NOT accept one as proof that a handle was
+ * released. nv_flush names them in prose; defining them keeps that prose
+ * checkable and gives the teardown tests a real code to inject rather than an
+ * arbitrary non-success value.
+ *
+ * Deliberately NOT used to enumerate "which codes are retryable": nv_flush
+ * retries on anything UNPROVEN precisely so that a warning code missing from a
+ * hand-maintained list cannot turn into a leak. */
+#define TPM2_RC_WARN_BASE 0x00000900u
+#define TPM2_RC_YIELDED   (TPM2_RC_WARN_BASE + 0x08u)  /* 0x908 */
+#define TPM2_RC_TESTING   (TPM2_RC_WARN_BASE + 0x0Au)  /* 0x90A */
+#define TPM2_RC_RETRY     (TPM2_RC_WARN_BASE + 0x22u)  /* 0x922 */
+
 /* ---- Default OS-owned NV index handles (callers may override) ----
  * Owner-defined NV indices live in the TPM_HT_NV_INDEX space (0x01xxxxxx).
  * Section 6 selects the production handle; these defaults keep the data and
@@ -624,11 +639,55 @@ typedef tpm_nv_status_t (*tpm_policy_op_fn)(tpm2_seq_t seq, uint32_t session,
 tpm_nv_status_t tpm_policy_session_run(uint16_t alg, const uint8_t sel[3],
                                        tpm_policy_op_fn op, void *ctx);
 
+/* In-sequence variant, for a caller that already owns a bounded sequence and
+ * must keep the WHOLE flow inside it -- sealing runs CreatePrimary and Load
+ * before the policy session, and sequences do NOT nest, so the self-sequencing
+ * wrapper above would refuse with TPM_NV_BUSY against the caller's own gate.
+ * Runs the identical body (same teardown, same malformed-handle recovery); only
+ * the sequence ownership differs.
+ *
+ * *out_session_pending (may be NULL) is set to 1 when this call's own
+ * StartAuthSession submit itself failed with an INDETERMINATE outcome -- no
+ * session was ever named, so nothing here could flush it. A caller that maps
+ * this function's failure status must not treat that specific case as freely
+ * retryable (a returned TPM_NV_BUDGET may mean a session was allocated and is
+ * now unreachable); every other failure already flushes a NAMED session on
+ * every remaining exit and is exactly as retryable as its status says. */
+tpm_nv_status_t tpm_policy_session_run_seq(tpm2_seq_t seq, uint16_t alg,
+                                           const uint8_t sel[3],
+                                           tpm_policy_op_fn op, void *ctx,
+                                           int *out_session_pending);
+
 /* Compute the authPolicy digest for a PolicyPCR over `sel` in bank `alg` via a
  * TRIAL session (StartAuthSession(TRIAL) + PolicyPCR + PolicyGetDigest + flush).
  * Writes the 32-byte SHA-256 policy digest to out (cap >= 32). */
 tpm_nv_status_t tpm_policy_pcr_digest(uint16_t alg, const uint8_t sel[3],
                                       uint8_t *out, uint32_t cap);
+
+/* In-sequence variant of the trial-session digest, for the same reason as
+ * tpm_policy_session_run_seq: tpm_seal_secret needs the authPolicy digest and
+ * the Create that consumes it inside ONE budget. *out_session_pending carries
+ * the SAME "no named handle to flush yet" meaning as the sibling above. */
+tpm_nv_status_t tpm_policy_pcr_digest_seq(tpm2_seq_t seq, uint16_t alg,
+                                          const uint8_t sel[3],
+                                          uint8_t *out, uint32_t cap,
+                                          int *out_session_pending);
+
+/* Classify a tpm2_seq_run() START failure (a negative TPM_T_ERR_*) as an NV
+ * status. Exported so every module that opens its own sequence reports a failed
+ * start identically -- BUSY stays BUSY rather than collapsing to TRANSPORT,
+ * which is what lets a caller tell contention from a device fault. */
+tpm_nv_status_t tpm_nv_seq_start_status(int rc);
+
+/* The LIVE per-operation sequence budget, in ms. Every TPM module that opens its
+ * own sequence reads it from here rather than using TPM_NV_OP_BUDGET_MS
+ * directly, so the whole subsystem shares ONE budget and the KERNEL_TESTS seam
+ * (tpm_nv_test_set_op_budget) reaches seal and attestation too -- otherwise a
+ * budget-expiry test could only ever be written against the NV path, and the
+ * converted flows' cumulative bound would be untestable without spending real
+ * seconds against a 3-second deadline. */
+uint32_t tpm_nv_op_budget_ms(void);
+uint32_t tpm_nv_op_cleanup_ms(void);
 
 /* ---- High-level wrappers (Phase-1 transport; not ISR-safe) ---- */
 

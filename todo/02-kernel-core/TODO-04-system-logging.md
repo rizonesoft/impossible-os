@@ -184,7 +184,7 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 > - A failed stage rename returns the real size and leaves the live log AND every rotated generation untouched -- no truncate, no per-retry generation churn. `MaxSize`/`MaxRotated` from registry with `val_size`-validated REG_DWORD reads.
 > - Rotation unit test deferred (kernel image is at its BSS page budget); covered by 3-round adversarial review + the boot smoke test for now.
 > **Verified:** 2026-06-21 | ship `4879f6a3` + review fixes | 9/10 items | build OK | smoke PASS (TCG 2.58s); 3212 kernel + 16 user PASS
-> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 581)
+> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 590)
 > **Deferred:** [M] no-RTC serial-log rotation deletes by seq, not recency (filed 2026-06-27 from TODO-08 §5 review; cap bounds growth so not a leak) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 175)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+3M+1L fixed | scope: kernel-code-quality
 

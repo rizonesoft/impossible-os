@@ -21,6 +21,7 @@
 #include "kernel/tpm_attest.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_pcr_alloc.h"
+#include "kernel/klog.h"
 #include "libc/string.h"
 
 /* The well-known EK authPolicy (PolicyA), SHA-256, from the TCG EK Credential
@@ -410,18 +411,63 @@ static tpm_attest_status_t at_provision_err(tpm_nv_status_t s)
 {
     if (s == TPM_NV_BUSY)      return TPM_ATTEST_BUSY;
     if (s == TPM_NV_TRANSPORT) return TPM_ATTEST_TRANSPORT;
+    /* BUDGET means the TPM answered, just slower than this boot will wait -- the
+     * same transient class as BUSY, and the caller may retry. Reporting it as
+     * PROVISION_FAIL would tell a caller the device cannot provision at all, so
+     * a momentarily slow TPM would permanently disable attestation. Named here
+     * because the sequence conversion made it REACHABLE: before it, no
+     * provisioning command could ever return a cumulative-budget expiry. */
+    if (s == TPM_NV_BUDGET)    return TPM_ATTEST_BUSY;
     return TPM_ATTEST_PROVISION_FAIL;
 }
 
-static void at_flush(uint32_t handle)
+/* Like at_provision_err, for a stage that ALLOCATES a handle the caller cannot
+ * name on failure (CreatePrimary EK, StartAuthSession, Load AK). BUDGET here
+ * means the command's completion is UNKNOWN -- unlike Create (which returns
+ * encrypted blobs, not a handle) or PolicySecret (which authorizes an EXISTING
+ * session), these three commands can leave a session or transient object
+ * allocated with no handle to flush. Reporting BUSY would tell a caller
+ * (tpm2_quote's own retry loop, or a userspace attestation client) to retry
+ * immediately, which for THESE stages risks allocating a SECOND unnameable
+ * handle on top of the first. Same TPMERR trade as tpm_seal.c's
+ * map_nv_status_handle: not a literal device fault, but "do not blind-retry",
+ * and the small object/session pool turns repeated indeterminate outcomes into
+ * a definite, visible refusal within a few attempts on its own. */
+static tpm_attest_status_t at_provision_err_handle(tpm_nv_status_t s)
 {
-    uint8_t cmd[16], rsp[16];
-    uint32_t n;
-    if (handle == 0u)
-        return;
-    n = tpm2_build_flush_context(cmd, sizeof cmd, handle);
-    if (n != 0u)
-        (void)tpm2_submit_waiting(cmd, n, rsp, sizeof rsp, TPM_NV_FLUSH_BUDGET_MS);
+    if (s == TPM_NV_BUDGET) {
+        /* Same pre-dispatch-vs-in-flight distinction as at_exec_handle. The
+         * StartAuthSession call site (via tpm_session_cmd_exec_seq /
+         * nv_cmd_exec_common, tpm_nv.c) does NOT disambiguate BUDGET before
+         * returning here, unlike at_exec_handle's own CreatePrimary/Load
+         * callers -- so the check belongs here too, and checking it
+         * unconditionally is safe for every caller: nothing submits another
+         * command between the failing submit and this call, so the flag still
+         * reflects THAT submit either way. */
+        if (!tpm2_seq_last_submit_dispatched())
+            return TPM_ATTEST_BUSY;
+        return TPM_ATTEST_TPMERR;
+    }
+    return at_provision_err(s);
+}
+
+/* Teardown, delegated to the ONE proof-requiring implementation. The previous
+ * body submitted FlushContext and DISCARDED the result, so a transient
+ * TPM_RC_RETRY / YIELDED / TESTING -- or a wrong-envelope reply -- left the
+ * session or transient object ALLOCATED while this returned as though it had
+ * been released. That is the exact defect the bounded-sequence NV work fixed in
+ * nv_flush (tpm_nv.c), and it was
+ * still live here: every attestation attempt could lose one of the TPM's few
+ * slots, until StartAuthSession began refusing outright.
+ *
+ * tpm_nv_flush_handle spends the sequence's SEPARATE cleanup allowance, so it
+ * still runs after the work budget is spent (a single hard deadline would leave
+ * a started session unflushable), retries within that allowance, and accepts
+ * only proof: SUCCESS, or "no such handle". Factored rather than reimplemented
+ * -- a second copy of the proof rules is a second copy to get wrong. */
+static void at_flush(tpm2_seq_t seq, uint32_t handle)
+{
+    tpm_nv_flush_handle(seq, handle);
 }
 
 /* Flush an object the TPM may have CREATED even though we could not parse the
@@ -438,7 +484,7 @@ static void at_flush(uint32_t handle)
  * Every path out of a submit that does not itself return a usable handle goes
  * through here; it exists as one function because there are four such paths and
  * three of them originally forgot. */
-static void at_flush_raw_if_created(const uint8_t *rsp, uint32_t len)
+static void at_flush_raw_if_created(tpm2_seq_t seq, const uint8_t *rsp, uint32_t len)
 {
     uint32_t raw;
     if (!rsp || len < 14u)
@@ -447,13 +493,14 @@ static void at_flush_raw_if_created(const uint8_t *rsp, uint32_t len)
         return;                              /* the TPM reported a failure: nothing was created */
     raw = tpm2_be32_get(rsp + 10);
     if ((uint8_t)(raw >> 24) == 0x80u)       /* TPM_HT_TRANSIENT */
-        at_flush(raw);
+        at_flush(seq, raw);
 }
 
 /* Submit a leading-object-handle command (CreatePrimary/Load) -> transient
  * handle, 0 on failure (*out_st classified). Mirrors tpm_seal.c seal_exec_handle
  * incl. the malformed-handle recovery flush. */
-static uint32_t at_exec_handle(const uint8_t *cmd, uint32_t n, tpm_nv_status_t *out_st)
+static uint32_t at_exec_handle(tpm2_seq_t seq, const uint8_t *cmd, uint32_t n,
+                              tpm_nv_status_t *out_st)
 {
     /* Static (off-stack): at_exec_handle is reached ONLY from at_provision, which
      * runs under the s_ak_busy mutual-exclusion gate (one CPU at a time), so a
@@ -464,20 +511,54 @@ static uint32_t at_exec_handle(const uint8_t *cmd, uint32_t n, tpm_nv_status_t *
     uint32_t size, rc, h;
     int r;
     if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
-    r = tpm2_submit(cmd, n, rsp, sizeof rsp);
-    if (r < 0) { *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT; return 0; }
+    r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
+    if (r < 0) {
+        /* BUDGET must NOT collapse into TRANSPORT. at_provision_err maps
+         * TPM_NV_BUDGET to a retryable TPM_ATTEST_BUSY, while TRANSPORT reads as
+         * a device fault; without this arm a slow TPM would get a different,
+         * NON-retryable public status depending on WHICH provisioning command
+         * happened to cross the same sequence deadline.
+         *
+         * A budget expiry on a handle-PRODUCING command also leaves the outcome
+         * unknown -- the TPM may have created the object and we abandoned the
+         * response, so no handle exists to flush. Reported rather than silently
+         * accepted: the leak degrades on its own into a definite, classified
+         * error, whereas poisoning the transport would take out PCR reads too. */
+        if (r == TPM_T_ERR_BUDGET) {
+            /* Only an actually-DISPATCHED command can have created a handle
+             * this caller cannot name. A pre-dispatch refusal (the cumulative
+             * budget was already spent before this call touched the
+             * interface) submitted nothing and is exactly as safe to retry as
+             * ordinary contention -- report it as BUSY, not BUDGET, so every
+             * caller of this helper (which always maps through
+             * at_provision_err_handle) gets the correct classification. Only a
+             * genuinely in-flight abandonment keeps the BUDGET status that
+             * routes to the non-retryable class. */
+            if (!tpm2_seq_last_submit_dispatched()) {
+                *out_st = TPM_NV_BUSY;
+                return 0;
+            }
+            *out_st = TPM_NV_BUDGET;
+            klog(LOG_WARN, "TPM",
+                 "attest: object-creating command abandoned on budget; "
+                 "a transient slot may be held until reset");
+            return 0;
+        }
+        *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT;
+        return 0;
+    }
     if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
         /* An unparsable ENVELOPE can still carry a SUCCESS code and a live
          * handle -- a bad tag alone reaches here -- so recovery runs before the
          * return, not only on the handle-parse failure below. */
-        at_flush_raw_if_created(rsp, (uint32_t)r);
+        at_flush_raw_if_created(seq, rsp, (uint32_t)r);
         *out_st = TPM_NV_TRANSPORT;
         return 0;
     }
     if (rc != TPM2_RC_SUCCESS) { *out_st = tpm_nv_classify_rc(rc); return 0; }
     h = tpm2_parse_object_handle(rsp, (uint32_t)r);
     if (h == 0u) {
-        at_flush_raw_if_created(rsp, (uint32_t)r);
+        at_flush_raw_if_created(seq, rsp, (uint32_t)r);
         *out_st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -488,7 +569,7 @@ static uint32_t at_exec_handle(const uint8_t *cmd, uint32_t n, tpm_nv_status_t *
 /* (Re)satisfy the EK authPolicy on `session` via PolicySecret(endorsement). A
  * policy session's digest is CONSUMED on each authorized use, so this MUST run
  * before EVERY EK-authorized command (Create AND Load of the AK). */
-static tpm_nv_status_t at_policy_secret(uint32_t session)
+static tpm_nv_status_t at_policy_secret(tpm2_seq_t seq, uint32_t session)
 {
     uint8_t cmd[48], rsp[64];
     uint32_t n, rlen = 0;
@@ -496,7 +577,11 @@ static tpm_nv_status_t at_policy_secret(uint32_t session)
     n = tpm2_build_policy_secret(cmd, sizeof cmd, TPM_RH_ENDORSEMENT, session);
     if (n == 0u)
         return TPM_NV_BADARG;
-    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
+    /* In-sequence: an unsequenced submit here would bounce off the caller's own
+     * transport gate and report a spurious TPM_NV_BUSY, which reads as TPM
+     * contention rather than a caller bug. Both PolicySecret calls in
+     * at_provision reach this. */
+    (void)tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
     return st;
 }
 
@@ -530,7 +615,7 @@ static uint32_t at_build_load(uint8_t *buf, uint32_t cap, uint32_t parent,
 
 /* Provision the EK + AK once; cache the AK handle + public. Single-cleanup:
  * EK + session are flushed on EVERY path; the AK stays loaded on success. */
-static tpm_attest_status_t at_provision(void)
+static tpm_attest_status_t at_provision(tpm2_seq_t seq)
 {
     /* rsp is static (off-stack): at_provision runs only under the s_ak_busy gate
      * (single CPU), so the shared response buffer is race-free and the deep
@@ -547,22 +632,22 @@ static tpm_attest_status_t at_provision(void)
         return TPM_ATTEST_NO_TPM;
     /* 1. CreatePrimary the EK under the endorsement hierarchy. */
     n = tpm2_build_create_primary_ek(cmd, sizeof cmd);
-    ek = at_exec_handle(cmd, n, &st);
+    ek = at_exec_handle(seq, cmd, n, &st);
     if (ek == 0u)
-        return at_provision_err(st);
+        return at_provision_err_handle(st);   /* CreatePrimary allocates a handle */
     /* 2. Open a real POLICY session. */
     memset(nonce, 0xA5, sizeof nonce);
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY, TPM_ALG_SHA256,
                                       nonce, sizeof nonce);
     if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_ek; }
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
-        r = at_provision_err(st);
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+        r = at_provision_err_handle(st);   /* StartAuthSession allocates a session */
         goto out_ek;
     }
     session = tpm2_parse_start_auth_session(rsp, rlen);
     if (session == 0u) {
         uint32_t raw = tpm2_rsp_session_handle(rsp, rlen);
-        if (raw != 0u) at_flush(raw);
+        if (raw != 0u) at_flush(seq, raw);
         r = TPM_ATTEST_TRANSPORT;
         goto out_ek;
     }
@@ -570,38 +655,79 @@ static tpm_attest_status_t at_provision(void)
      * retryable BUSY/TRANSPORT (at_provision_err) rather than collapsing it to a
      * permanent PROVISION_FAIL. */
     /* 3. Satisfy the EK policy for Create. */
-    st = at_policy_secret(session);
+    st = at_policy_secret(seq, session);
     if (st != TPM_NV_OK) { r = at_provision_err(st); goto out_session; }
     /* 4. Create the AK under the EK (parent auth = the policy session). */
     n = tpm2_build_create_ak_signing(cmd, sizeof cmd, ek, session);
     if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
         r = at_provision_err(st); goto out_session;
     }
     if (tpm2_parse_create_sealed(rsp, rlen, &blob) != 0 || blob.pub_len > TPM_AK_PUB_MAX) {
         r = TPM_ATTEST_TRANSPORT; goto out_session;
     }
     /* 5. RE-satisfy the EK policy -- the session was consumed by Create. */
-    st = at_policy_secret(session);
+    st = at_policy_secret(seq, session);
     if (st != TPM_NV_OK) { r = at_provision_err(st); goto out_session; }
     /* 6. Load the AK under the EK, authorized by the policy session. A Load of a
      * near-max AK blob (priv+pub up to the parser caps) overflows the 256-byte
      * cmd buffer, so Load gets its own blob-sized buffer. */
     {
-        uint8_t lcmd[TPM_SEAL_PRIV_MAX + TPM_SEAL_PUB_MAX + 64u];
+        /* Static for the same gate-shaped reason as this file's response
+         * buffers: provisioning runs inside ONE bounded sequence (and under
+         * s_ak_busy besides), so there is a single live user. At 480 bytes on
+         * the deepest attestation chain that is worth keeping off an 8 KiB
+         * stack. */
+        static uint8_t lcmd[TPM_SEAL_PRIV_MAX + TPM_SEAL_PUB_MAX + 64u];
         n = at_build_load(lcmd, sizeof lcmd, ek, session, &blob);
-        ak = at_exec_handle(lcmd, n, &st);
+        ak = at_exec_handle(seq, lcmd, n, &st);
     }
-    if (ak == 0u) { r = at_provision_err(st); goto out_session; }
+    if (ak == 0u) { r = at_provision_err_handle(st); goto out_session; }  /* Load allocates a handle */
     /* Cache the AK handle + public (the Create outPublic IS the AK TPMT_PUBLIC). */
     for (i = 0; i < blob.pub_len; i++) s_ak_pub[i] = blob.pub[i];
     s_ak_pub_len = blob.pub_len;
     s_ak_handle = ak;
     r = TPM_ATTEST_OK;
 out_session:
-    at_flush(session);
+    at_flush(seq, session);
 out_ek:
-    at_flush(ek);
+    /* The EK transient is released here; the AK deliberately stays LOADED past
+     * the end of the sequence (s_ak_handle). A sequence bounds TIMING and gate
+     * ownership, not handle lifetime -- re-provisioning the AK per quote would
+     * cost six commands each time. */
+    at_flush(seq, ek);
+    return r;
+}
+
+/* Run the six-command provisioning flow as ONE bounded sequence.
+ *
+ * Before this, each of CreatePrimary, StartAuthSession, PolicySecret, Create,
+ * PolicySecret and Load took the transport gate separately and armed its own
+ * per-command PTP timeout, so a slow-but-responsive TPM could spend that timeout
+ * six times over inside what a caller sees as one operation -- and every
+ * released gate was a window for another CPU's transaction to interleave
+ * mid-provision. One sequence caps the SUM of every wait and makes the flow
+ * atomic against other TPM users.
+ *
+ * The transport gate IS held for the whole flow, which is what makes it atomic.
+ * That is affordable here because provisioning happens ONCE per boot (guarded by
+ * s_ak_ready) and the sequence is bounded: a concurrent PCR read gets a prompt
+ * TPM_T_ERR_BUSY rather than an unbounded block, which is the same answer it
+ * would have got from any single command in the old unsequenced flow. */
+static int at_provision_seq(tpm2_seq_t seq, void *vctx)
+{
+    tpm_attest_status_t *out = (tpm_attest_status_t *)vctx;
+    *out = at_provision(seq);
+    return 0;
+}
+
+static tpm_attest_status_t at_provision_run(void)
+{
+    tpm_attest_status_t r = TPM_ATTEST_TRANSPORT;
+    int rc = tpm2_seq_run(tpm_nv_op_budget_ms(), tpm_nv_op_cleanup_ms(),
+                          at_provision_seq, &r);
+    if (rc != 0)
+        return at_provision_err(tpm_nv_seq_start_status(rc));
     return r;
 }
 
@@ -623,7 +749,7 @@ static tpm_attest_status_t at_ensure_ak(void)
         __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
         return TPM_ATTEST_OK;
     }
-    r = at_provision();
+    r = at_provision_run();
     if (r == TPM_ATTEST_OK)
         __atomic_store_n(&s_ak_ready, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
@@ -771,45 +897,91 @@ int tpm2_parse_create_primary_public(const uint8_t *rsp, uint32_t len,
  * a leaked transient exhausts the TPM's small object pool within a few boots of
  * a failing path. Runs under the s_ak_busy gate, so the static response buffer
  * is race-free and stays off the stack. */
-static tpm_attest_status_t at_capture_ek_public(void)
+/* Capture the EK public. CreatePrimary plus its teardown run inside their OWN
+ * bounded sequence: this path is reached from tpm_ek_public_get, NOT from
+ * at_provision, so it owns no sequence of its own -- and the verified teardown
+ * submits on the sequence's cleanup allowance, which does not exist outside one.
+ * Passing 0 here would leave every EK transient un-flushed on the success path,
+ * exhausting the TPM's small object pool after a handful of calls. */
+static int at_capture_ek_public_seq(tpm2_seq_t seq, void *vctx)
 {
+    tpm_attest_status_t *out = (tpm_attest_status_t *)vctx;
     static uint8_t rsp[768];
     uint8_t cmd[256];
     uint16_t tag, plen = 0;
     uint32_t n, size, rc, ek;
     int r;
 
-    s_ek_pub_len = 0u;
-    if (!tpm_transport_available())
-        return TPM_ATTEST_NO_TPM;
     n = tpm2_build_create_primary_ek(cmd, sizeof cmd);
-    if (n == 0u)
-        return TPM_ATTEST_PROVISION_FAIL;
-    r = tpm2_submit(cmd, n, rsp, sizeof rsp);
-    if (r < 0)
-        return (r == TPM_T_ERR_BUSY) ? TPM_ATTEST_BUSY : TPM_ATTEST_TRANSPORT;
+    if (n == 0u) { *out = TPM_ATTEST_PROVISION_FAIL; return 0; }
+    r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
+    if (r < 0) {
+        /* Same BUDGET distinction as at_exec_handle: a cumulative expiry is the
+         * retryable class, and on this object-CREATING command its completion is
+         * unknown, so the possible allocation is reported rather than dropped. */
+        if (r == TPM_T_ERR_BUDGET) {
+            /* Same pre-dispatch-vs-in-flight distinction as at_exec_handle:
+             * only a DISPATCHED CreatePrimary can have allocated an EK
+             * transient this caller cannot name. */
+            if (!tpm2_seq_last_submit_dispatched()) {
+                *out = TPM_ATTEST_BUSY;
+                return 0;
+            }
+            klog(LOG_WARN, "TPM",
+                 "attest: EK capture abandoned on budget; "
+                 "a transient slot may be held until reset");
+            /* TPMERR, not BUSY: CreatePrimary DISPATCHED and allocates a
+             * handle, and this budget expiry's completion is unknown -- see
+             * at_provision_err_handle for the full rationale. */
+            *out = TPM_ATTEST_TPMERR;
+            return 0;
+        }
+        *out = (r == TPM_T_ERR_BUSY) ? TPM_ATTEST_BUSY : TPM_ATTEST_TRANSPORT;
+        return 0;
+    }
     if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) {
         /* A bad TAG lands here with a SUCCESS code and a live handle still in
          * the response, so this path needs the same recovery as the one below.
          * The re-adversarial round caught it missing. */
-        at_flush_raw_if_created(rsp, (uint32_t)r);
-        return TPM_ATTEST_TRANSPORT;
+        at_flush_raw_if_created(seq, rsp, (uint32_t)r);
+        *out = TPM_ATTEST_TRANSPORT;
+        return 0;
     }
-    if (rc != TPM2_RC_SUCCESS)
-        return at_provision_err(tpm_nv_classify_rc(rc));
+    if (rc != TPM2_RC_SUCCESS) {
+        *out = at_provision_err(tpm_nv_classify_rc(rc));
+        return 0;
+    }
     ek = tpm2_parse_object_handle(rsp, (uint32_t)r);
     if (ek == 0u) {
-        at_flush_raw_if_created(rsp, (uint32_t)r);
-        return TPM_ATTEST_TRANSPORT;
+        at_flush_raw_if_created(seq, rsp, (uint32_t)r);
+        *out = TPM_ATTEST_TRANSPORT;
+        return 0;
     }
     if (tpm2_parse_create_primary_public(rsp, (uint32_t)r, s_ek_pub,
                                          (uint16_t)sizeof s_ek_pub, &plen) != 0) {
-        at_flush(ek);
-        return TPM_ATTEST_TRANSPORT;
+        at_flush(seq, ek);
+        *out = TPM_ATTEST_TRANSPORT;
+        return 0;
     }
-    at_flush(ek);
+    at_flush(seq, ek);
     s_ek_pub_len = plen;
-    return TPM_ATTEST_OK;
+    *out = TPM_ATTEST_OK;
+    return 0;
+}
+
+static tpm_attest_status_t at_capture_ek_public(void)
+{
+    tpm_attest_status_t r = TPM_ATTEST_TRANSPORT;
+    int rc;
+
+    s_ek_pub_len = 0u;
+    if (!tpm_transport_available())
+        return TPM_ATTEST_NO_TPM;
+    rc = tpm2_seq_run(tpm_nv_op_budget_ms(), tpm_nv_op_cleanup_ms(),
+                      at_capture_ek_public_seq, &r);
+    if (rc != 0)
+        return at_provision_err(tpm_nv_seq_start_status(rc));
+    return r;
 }
 
 tpm_attest_status_t tpm_ek_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len)

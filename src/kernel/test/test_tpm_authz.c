@@ -674,9 +674,27 @@ static void test_baseline_nv_status_map(void)
     TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_BUDGET),
                    (int)TPM_BASELINE_NO_TPM,
                    "CONTROL: a budget expiry stays unpublished, not a tamper claim");
+    /* CONTENTION IS THE ONE RETRY-SAFE CAUSE, and it is no longer NO_TPM.
+     * The gate refused before anything was submitted, so nothing executed and
+     * another attempt cannot double-apply -- which is what lets the boot retry
+     * instead of abandoning its integrity verdict over a condition that clears
+     * in milliseconds. It still publishes nothing on THIS attempt. */
     TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_BUSY),
-                   (int)TPM_BASELINE_NO_TPM,
-                   "CONTROL: so does ordinary transport contention");
+                   (int)TPM_BASELINE_BUSY,
+                   "ordinary transport contention is retryable, not an absent TPM");
+    /* The SPLIT is the property, so assert the two are distinguishable rather
+     * than only that each maps somewhere. Collapsing them again would make a
+     * momentarily busy TPM indistinguishable from a missing one, which is the
+     * bug this mapping was changed to fix. */
+    TEST_ASSERT_EQ((int)(TPM_BASELINE_BUSY != TPM_BASELINE_NO_TPM), 1,
+                   "contention and could-not-measure are separately reportable");
+    /* And the ASYMMETRY is deliberate, not an oversight: BUDGET looks equally
+     * transient and is NOT retry-safe, because the command was abandoned in
+     * flight and may have executed. If a later change routes BUDGET here too,
+     * this fails -- which is the point. */
+    TEST_ASSERT_EQ((int)(tpm_baseline_nv_status(TPM_NV_BUDGET) !=
+                         TPM_BASELINE_BUSY), 1,
+                   "a budget expiry is NEVER reported as blind-retryable");
     TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_TRANSPORT),
                    (int)TPM_BASELINE_NO_TPM,
                    "CONTROL: and an absent transport");

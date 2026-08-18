@@ -361,6 +361,16 @@ static uint32_t af_load_auth;         /* the auth handle the Load command carrie
 static uint8_t  af_quote_pcr0 = 0xFFu;             /* fake CC_QUOTE pcrSelect byte 0 (corrupt to test the bind check) */
 static uint16_t af_quote_hashalg = TPM_ALG_SHA256; /* fake CC_QUOTE sig hashAlg (corrupt to test the bind check) */
 static uint16_t af_quote_bankalg = TPM_ALG_SHA256; /* fake CC_QUOTE PCR-bank hashAlg (corrupt to test the bank bind) */
+static uint32_t af_stall_reads;   /* withhold commandReady for N status polls: a
+                                   * slow-but-responsive TPM, exactly the shape a
+                                   * cumulative sequence budget exists to bound. */
+static uint32_t af_stall_after_go; /* withhold dataAvail for N status polls AFTER
+                                    * the command was dispatched (mirrors
+                                    * test_tpm_nv.c's nvf_stall_after_go): the
+                                    * abandoned-mid-flight case. */
+static uint32_t af_fail_cc;       /* command code to fail with af_fail_rc */
+static uint32_t af_fail_rc;
+static int      af_fail_times;    /* remaining failures; <0 = forever */
 
 #define AF_REG_STS  0x018u
 #define AF_REG_FIFO 0x024u
@@ -390,13 +400,36 @@ static void af_build_response(void)
     if (cc == TPM2_CC_LOAD) af_load_auth = tpm2_be32_get(af_cmd + 18);
     memset(af_rsp, 0, AF_CAP);
 
+    if (af_fail_cc != 0u && cc == af_fail_cc && af_fail_times != 0) {
+        if (af_fail_times > 0) af_fail_times--;
+        /* A TRANSIENT-WARNING response: a bare ST_NO_SESSIONS header carrying
+         * the injected rc, which is exactly the shape a real FlushContext
+         * warning takes (it carries no auth area either way). */
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_NO_SESSIONS);
+        tpm2_be32_put(af_rsp + 2, 10u);
+        tpm2_be32_put(af_rsp + 6, af_fail_rc);
+        af_rsp_len = 10u;
+        return;
+    }
+
     if (cc == TPM2_CC_CREATE_PRIMARY || cc == TPM2_CC_LOAD) {
-        /* leading objectHandle(4) + parameterSize(4)=0 + auth(5). */
+        /* leading objectHandle(4) + parameterSize(4) + auth(5). CreatePrimary
+         * carries a real TPM2B_PUBLIC in its parameters (a plausible ECC-P256
+         * EK size) so tpm2_parse_create_primary_public -- reached only from EK
+         * capture, not from at_provision's handle-only path -- has a well-formed
+         * outPublic to parse; Load has no such payload (psize stays 0). */
+        uint16_t pub_len = (cc == TPM2_CC_CREATE_PRIMARY) ? 122u : 0u;
+        uint32_t psize = (pub_len != 0u) ? (uint32_t)pub_len + 2u : 0u;
         tpm2_be16_put(af_rsp + 0, TPM2_ST_SESSIONS);
         tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
         tpm2_be32_put(af_rsp + 10, (cc == TPM2_CC_CREATE_PRIMARY) ? 0x80000001u : 0x80000002u);
-        tpm2_be32_put(af_rsp + 14, 0u);
-        off = af_put_auth(18u);
+        tpm2_be32_put(af_rsp + 14, psize);
+        if (pub_len != 0u) {
+            tpm2_be16_put(af_rsp + 18, pub_len);
+            for (i = 0; i < (uint32_t)pub_len; i++)
+                af_rsp[20u + i] = (uint8_t)(0xC0u + i);
+        }
+        off = af_put_auth(18u + psize);
         tpm2_be32_put(af_rsp + 2, off);
         af_rsp_len = off;
     } else if (cc == TPM2_CC_START_AUTH_SESSION) {
@@ -502,6 +535,11 @@ static uint32_t af_r32(uint32_t o)
     uint8_t s;
     if (o != AF_REG_STS) return 0;
     s = AF_STS_VALID;
+    if (af_stall_reads > 0u) { af_stall_reads--; return (uint32_t)s | (32u << 8); }
+    if (af_executed && af_stall_after_go > 0u) {
+        af_stall_after_go--;
+        return (uint32_t)s | (32u << 8);
+    }
     if (af_ready && !af_executed && af_cmd_len == 0) s |= AF_STS_CMD_READY;
     if (!af_executed && af_cmd_len > 0 && af_cmd_len < af_cmd_expect) s |= AF_STS_EXPECT;
     if (af_executed && af_rsp_pos < af_rsp_len) s |= AF_STS_DATA_AVAIL;
@@ -531,6 +569,9 @@ static void af_reset(void)
     af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0; af_load_auth = 0;
     af_quote_pcr0 = 0xFFu; af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = TPM_ALG_SHA256;
     bq_digest_len = 32u;
+    af_stall_reads = 0u;
+    af_stall_after_go = 0u;
+    af_fail_cc = 0u; af_fail_rc = 0u; af_fail_times = -1;
     tpm_attest_test_reset();
 }
 
@@ -786,8 +827,171 @@ static void test_attest_cpp_malformed(void)
 #undef CPP_REFUSED
 }
 
+
+/* ---- Section 24: bounded sequence + verified teardown on attestation ----
+ *
+ * The same three properties asserted in test_tpm_seal.c, for the six-command
+ * AK provisioning flow (at_provision) and the EK-capture path
+ * (at_capture_ek_public). Reuses the fake TIS harness's existing af_flush_n /
+ * af_policy_secret_n counters -- the teardown properties are checked by
+ * COUNTING commands, never by the return value alone.
+ */
+
+/* ONE budget across all six provisioning commands (CreatePrimary EK,
+ * StartAuthSession, PolicySecret x2, Create AK, Load), not one per command. */
+static void test_attest_provision_one_budget(void)
+{
+    struct tpm_t_test_state prev;
+    tpm_attest_status_t r;
+    uint8_t nonce[20], sig[128], att_out[8];
+    struct tpm_quote_attest att;
+    uint32_t slen = 0, i;
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x11u + i);
+    (void)att_out;
+
+    /* CONTROL: the same stalling TPM still completes provisioning under a
+     * generous budget. */
+    af_reset();
+    af_stall_reads = 4u;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(60000u, 1000u);
+    memset(&att, 0, sizeof att);
+    r = tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen);
+    tpm_nv_test_reset_op_budget();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_OK,
+                   "CONTROL: a slow-but-responsive TPM still provisions+quotes "
+                   "inside a generous budget");
+
+    /* Pre-dispatch: budget already spent before CreatePrimary EK (the first
+     * provisioning command) ever touches the interface. Nothing was
+     * submitted, so this is exactly as safe to retry as ordinary contention. */
+    af_reset();
+    af_stall_reads = 4u;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(0u, 1000u);
+    memset(&att, 0, sizeof att);
+    r = tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen);
+    tpm_nv_test_reset_op_budget();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_BUSY,
+                   "a pre-dispatch budget refusal reports the retryable "
+                   "class: nothing was ever submitted");
+
+    /* The genuinely-in-flight case (dispatched, then abandoned) is proven at
+     * the transport layer instead of here: test_seq_last_submit_dispatched
+     * (test_tpm_nv.c) deterministically tests tpm2_seq_last_submit_dispatched()
+     * itself -- the primitive at_provision_err_handle/at_exec_handle gate on --
+     * because reaching that exact real-time race through this fixture has no
+     * reliable bound (see test_seal_one_budget_per_operation for the full
+     * rationale; identical here). */
+}
+
+/* EK capture (tpm_ek_public_get, reached before any AK exists) is its own
+ * bounded sequence and its own verified teardown -- it is NOT part of
+ * at_provision, so a missed conversion here would leave every EK-capture call
+ * leaking a transient handle on success while the return value read OK. */
+static void test_attest_ek_capture_one_budget_and_teardown(void)
+{
+    struct tpm_t_test_state prev;
+    tpm_attest_status_t r;
+    uint8_t pub[256];
+    uint16_t pub_len = 0;
+
+    af_reset();
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_ek_public_get(pub, sizeof pub, &pub_len);
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_OK, "CONTROL: EK capture succeeds");
+    TEST_ASSERT_EQ((int)af_flush_n, 1,
+                   "a clean EK capture proves exactly one teardown -- the EK "
+                   "transient it created");
+
+    /* Pre-dispatch: budget already spent before CreatePrimary ever touches the
+     * interface. Nothing was submitted, so this is exactly as safe to retry
+     * as ordinary contention -- not TRANSPORT either (a device-fault reading
+     * would send a caller into hard-failure recovery). */
+    af_reset();
+    af_stall_reads = 4u;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    tpm_nv_test_set_op_budget(0u, 1000u);
+    r = tpm_ek_public_get(pub, sizeof pub, &pub_len);
+    tpm_nv_test_reset_op_budget();
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_BUSY,
+                   "a pre-dispatch budget refusal reports the retryable "
+                   "class: nothing was ever submitted");
+
+    /* The genuinely-in-flight case is proven at the transport layer
+     * (test_seq_last_submit_dispatched, test_tpm_nv.c) -- see
+     * test_attest_provision_one_budget for the full rationale; identical
+     * here. */
+}
+
+/* A TEARDOWN REQUIRES PROOF on the attestation side too: the old at_flush
+ * submitted FlushContext and discarded the result, so a TPM_RC_RETRY left the
+ * EK transient allocated while the code proceeded as though it were released.
+ * Verified via the SAME transient-then-clears shape as the seal test, checking
+ * the FLUSH COUNT rather than the operation's return value. */
+static void test_attest_teardown_requires_proof(void)
+{
+    struct tpm_t_test_state prev;
+    tpm_attest_status_t r;
+    uint8_t pub[256];
+    uint16_t pub_len = 0;
+    uint32_t flushes_clean, flushes_retried;
+
+    /* BASELINE: a TPM that proves the flush first time. */
+    af_reset();
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_ek_public_get(pub, sizeof pub, &pub_len);
+    flushes_clean = af_flush_n;
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_OK, "CONTROL: a clean capture succeeds");
+    TEST_ASSERT_EQ((int)flushes_clean, 1,
+                   "CONTROL: a proven EK teardown costs exactly one FlushContext");
+
+    /* TRANSIENT WARNING, once: FlushContext answers TPM2_RC_RETRY on its first
+     * attempt then succeeds. More than one FlushContext is the observable that
+     * separates "retried" from "accepted the first answer as proof". */
+    af_reset();
+    af_fail_cc = TPM2_CC_FLUSH_CONTEXT; af_fail_rc = TPM2_RC_RETRY; af_fail_times = 1;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_ek_public_get(pub, sizeof pub, &pub_len);
+    flushes_retried = af_flush_n;
+    tpm_t_test_restore(prev);
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_OK,
+                   "a transient teardown warning does not fail the capture itself");
+    TEST_ASSERT(flushes_retried > flushes_clean,
+                "a transient TPM_RC_RETRY is RETRIED, not accepted as proof");
+
+    /* NEVER PROVEN: bounded retry, then REPORT rather than escalate -- the
+     * capture still succeeds (the public area was already read) and the
+     * transport stays usable, because poisoning it would take out PCR reads
+     * that never opened a handle at all. */
+    af_reset();
+    af_fail_cc = TPM2_CC_FLUSH_CONTEXT; af_fail_rc = TPM2_RC_RETRY; af_fail_times = -1;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    r = tpm_ek_public_get(pub, sizeof pub, &pub_len);
+    TEST_ASSERT(af_flush_n > 1u,
+                "an unproven EK teardown retries rather than accepting one answer");
+    TEST_ASSERT(af_flush_n <= TPM_NV_FLUSH_RETRIES,
+                "and the retry is BOUNDED, never an unbounded loop");
+    TEST_ASSERT_EQ(tpm_transport_available(), 1,
+                   "an unproven teardown is REPORTED, not escalated into a "
+                   "transport-wide outage");
+    tpm_t_test_restore(prev);
+}
+
 void test_register_tpm_attest(void)
 {
+    test_suite_register_cat("tpm: attestation provision one budget",
+                            test_attest_provision_one_budget, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: EK capture one budget and teardown",
+                            test_attest_ek_capture_one_budget_and_teardown,
+                            TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attestation teardown requires proof",
+                            test_attest_teardown_requires_proof, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PolicySecret marshal", test_attest_build_policy_secret, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: AK signing-key marshal", test_attest_build_ak, TEST_CAT_SECURITY);

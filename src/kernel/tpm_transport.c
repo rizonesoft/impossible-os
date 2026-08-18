@@ -81,6 +81,20 @@
 /* Poll loop iteration cap per ms when the TSC frequency is unknown
  * (boot_timing reported 0); keeps deadlines bounded without a clock. */
 #define TPM_T_NOFREQ_ITERS_PER_MS 50000u
+
+/* Multiplier applied to the iteration count when it serves as the MIGRATION
+ * BACKSTOP beside a TSC deadline (tpm_t_budget_arm).
+ *
+ * A larger multiplier defeats the bounded-sequence promise it sits beside: for
+ * the 3000ms work budget every seal/attest sequence arms, a 10x slack lets a
+ * migrated sequence poll for ~30 real seconds before the backstop -- not the
+ * TSC deadline -- finally ends it, which is a caller-visible stall a "bounded
+ * sequence" is supposed to rule out, not merely an edge case. 2x keeps a
+ * safety margin over the SAME calibration TPM_T_NOFREQ_ITERS_PER_MS already
+ * uses, unconditionally, for the "no TSC frequency known at all" fallback -- a
+ * bound this codebase already ships and trusts not to fire early on real
+ * hardware -- while cutting the worst case to ~6 seconds instead of ~30. */
+#define TPM_T_MIGRATION_BACKSTOP_SLACK 2u
 /* Fast-timeout iteration cap for unit tests (whole wait, not per ms). */
 #define TPM_T_FAST_TEST_ITERS 64u
 
@@ -103,6 +117,20 @@ static int s_failed;           /* sticky wedge flag (s_state_lock) */
 static int s_fast_timeouts;    /* unit tests only */
 static uint32_t s_test_busy_ticks; /* unit tests: report the gate busy for N waiting-acquire ticks */
 static uint64_t s_tsc_per_ms;  /* 0 = unknown frequency */
+/* Whether the MOST RECENT tpm2_submit_seq() call actually reached the true
+ * dispatch point -- TIS GO or CRB START -- inside tis_submit()/crb_submit().
+ * Everything before that point (the Ready handshake, FIFO writes, waiting for
+ * Expect to clear) can ALSO time out via the same cumulative budget, and a
+ * timeout there means nothing was ever handed to the TPM; only a timeout from
+ * GO/START onward means execution may have started. Safe as a bare static:
+ * sequences admit exactly one caller at a time for the whole transport and do
+ * not nest, so there is never a second submitter to race against -- the same
+ * invariant every other budget- and sequence-state static in this file
+ * already relies on. Read via tpm2_seq_last_submit_dispatched() ONLY
+ * immediately after your OWN failing submit, before issuing (or letting
+ * anything else issue) another one -- it reports only the single most recent
+ * call, with no per-caller identity. */
+static int s_last_submit_dispatched;
 
 static volatile uint8_t *s_tis_base;   /* mapped TIS locality 0 window */
 static volatile uint8_t *s_crb_base;   /* mapped CRB control area */
@@ -272,17 +300,21 @@ static int tpm_t_wait_tick(struct tpm_t_wait *w)
 {
     __asm__ volatile ("pause");
     if (s_budget_active) {
-        if (s_budget_deadline) {
-            if (tpm_t_rdtsc() >= s_budget_deadline) {
-                s_budget_expired = 1;
-                return 0;
-            }
-        } else {
-            if (s_budget_iters == 0) {
-                s_budget_expired = 1;
-                return 0;
-            }
-            s_budget_iters--;
+        /* BOTH limits bind, and the iteration counter is decremented in either
+         * mode. In TSC mode it is the migration backstop described in
+         * tpm_t_budget_arm: the deadline is a raw cross-CPU TSC comparison that
+         * a migration can invalidate, so a CPU-local iteration count is what
+         * keeps the sequence bounded when it does. Previously the two modes were
+         * exclusive and TSC mode armed no iteration limit at all, leaving the
+         * bound resting entirely on a comparison that migration can break. */
+        if (s_budget_iters == 0u) {
+            s_budget_expired = 1;
+            return 0;
+        }
+        s_budget_iters--;
+        if (s_budget_deadline && tpm_t_rdtsc() >= s_budget_deadline) {
+            s_budget_expired = 1;
+            return 0;
         }
     }
     if (w->deadline)
@@ -664,7 +696,13 @@ static int tis_submit(const uint8_t *cmd, uint32_t cmd_len,
     if (sts & TPM_TIS_STS_EXPECT)
         return TPM_T_ERR_IO;
 
-    /* Execute. */
+    /* Execute. THIS is the true dispatch point: every wait before it (Ready
+     * handshake, FIFO writes, Expect) can time out with nothing ever handed to
+     * the TPM, and only a timeout from HERE onward means execution may have
+     * started. Set immediately before the write, not after -- the write itself
+     * cannot fail, so "before" and "after" are equivalent here, but "before"
+     * keeps the invariant textually obvious at the one line that matters. */
+    s_last_submit_dispatched = 1;
     s_io->w32(TPM_TIS_REG_STS, TPM_TIS_STS_GO);
     if (tpm_t_poll32(TPM_TIS_REG_STS,
                      TPM_TIS_STS_VALID | TPM_TIS_STS_DATA_AVAIL,
@@ -745,6 +783,10 @@ static int crb_submit(const uint8_t *cmd, uint32_t cmd_len,
     for (i = 0; i < cmd_len; i++)
         s_crb_cmd[i] = cmd[i];
 
+    /* Same "true dispatch point" rule as tis_submit's GO write: the cmdReady
+     * handshake above can time out with nothing handed to the TPM, and only a
+     * timeout from HERE onward means execution may have started. */
+    s_last_submit_dispatched = 1;
     s_io->w32(TPM_CRB_REG_START, TPM_CRB_START_START);
     if (tpm_t_poll32(TPM_CRB_REG_START, TPM_CRB_START_START, 0,
                      TPM_T_TIMEOUT_B_MS) != 0)
@@ -885,7 +927,35 @@ static void tpm_t_budget_arm(uint32_t ms)
     s_budget_expired = 0;
     if (s_tsc_per_ms) {
         s_budget_deadline = tpm_t_rdtsc() + (uint64_t)ms * s_tsc_per_ms;
-        s_budget_iters = 0;
+        /* A BACKSTOP, not a second budget -- and the reason it exists is thread
+         * migration.
+         *
+         * tpm2_seq_run explicitly permits its owner to migrate, and the deadline
+         * above is a RAW RDTSC value compared later against whatever CPU the
+         * owner is running on then. Nothing in this tree makes those comparable:
+         * `per_cpu_data.tsc_offset` exists for exactly this correction and is
+         * READ by rdtsc_ns() (mono_clock.c) but is never ASSIGNED anywhere, so
+         * the only "corrected" reader in the tree corrects by zero. Computing a
+         * real offset is cross-CPU TSC synchronization, which belongs to the
+         * bare-metal hardening roadmap and not to a TPM module.
+         *
+         * The DANGEROUS direction is migrating onto a CPU whose TSC lags: the
+         * deadline then sits further in the future than it should and the
+         * sequence over-runs its bound, which is the one property the whole
+         * bounded-sequence design exists to guarantee. (Migrating onto a leading
+         * TSC merely expires early, which is already reported as BUDGET and is
+         * safe.)
+         *
+         * So the deadline does NOT have to survive migration; the BOUND does.
+         * Arming the iteration counter alongside it gives a second, entirely
+         * CPU-LOCAL limit on the number of poll iterations the sequence may
+         * spend, and whichever limit is reached first ends the wait. The count
+         * is deliberately generous (an order of magnitude above what the
+         * deadline should allow) so it never pre-empts the deadline on a healthy
+         * machine and binds only when TSC comparison has stopped being
+         * meaningful. */
+        s_budget_iters = (uint64_t)ms * TPM_T_NOFREQ_ITERS_PER_MS
+                                      * TPM_T_MIGRATION_BACKSTOP_SLACK;
     } else {
         s_budget_deadline = 0;
         s_budget_iters = (uint64_t)ms * TPM_T_NOFREQ_ITERS_PER_MS;
@@ -909,9 +979,15 @@ static int tpm_t_budget_spent(void)
         return 0;
     if (s_budget_expired)
         return 1;
+    /* Same both-limits rule as tpm_t_wait_tick: a spent iteration backstop is a
+     * spent budget whether or not the deadline has been reached, because in TSC
+     * mode reaching it means the deadline comparison has stopped bounding
+     * anything. This is a pure query, so it never decrements. */
+    if (s_budget_iters == 0u)
+        return 1;
     if (s_budget_deadline)
         return (tpm_t_rdtsc() >= s_budget_deadline) ? 1 : 0;
-    return (s_budget_iters == 0u) ? 1 : 0;
+    return 0;
 }
 
 static int tpm_t_seq_begin(uint32_t budget_ms)
@@ -1087,9 +1163,22 @@ int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
     rc = tpm_t_seq_claim(seq);
     if (rc != 0)
         return rc;
+    /* Reset here, not "set" -- the true dispatch point is inside
+     * tis_submit()/crb_submit(), at the GO/START write, which is the earliest
+     * moment a timeout genuinely means "the TPM may be executing this."
+     * Everything before that (the Idle->Ready handshake, writing FIFO bytes,
+     * waiting for Expect to clear) can ALSO time out via this same cumulative
+     * budget, and a timeout there means nothing was ever handed to the TPM --
+     * setting the flag any earlier than GO/START would misclassify exactly
+     * that case as "dispatched." */
+    s_last_submit_dispatched = 0;
     /* Refuse BEFORE touching the interface once the budget is gone: starting a
      * command we already know cannot finish would leave the TPM mid-transfer
-     * for the abort path to clean up, for nothing. */
+     * for the abort path to clean up, for nothing. This is also why a caller
+     * needing to know "did anything reach the TPM" cannot infer it from
+     * TPM_T_ERR_BUDGET alone -- tpm_t_submit_txn's own in-flight expiry
+     * returns the SAME code, and only s_last_submit_dispatched tells the two
+     * apart. */
     if (tpm_t_budget_spent()) {
         tpm_t_seq_release();
         return TPM_T_ERR_BUDGET;
@@ -1097,6 +1186,11 @@ int tpm2_submit_seq(tpm2_seq_t seq, const uint8_t *cmd, uint32_t cmd_len,
     rc = tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
     tpm_t_seq_release();
     return rc;
+}
+
+int tpm2_seq_last_submit_dispatched(void)
+{
+    return s_last_submit_dispatched;
 }
 
 #ifdef KERNEL_TESTS

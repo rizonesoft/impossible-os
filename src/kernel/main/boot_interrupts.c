@@ -689,10 +689,49 @@ void boot_phase1(void)
             uint8_t overall = 0;
             uint8_t pcr_status[BOOT_INTEGRITY_MAX_PCRS];
             uint8_t pcr_n = 0;
-            tpm_baseline_status_t bs =
-                tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
-                                    pcr_status, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
-                                    &pcr_n);
+            /* Verify, retrying ONLY transport contention.
+             *
+             * TPM_BASELINE_BUSY means the transport gate refused before anything
+             * was submitted, so nothing executed and another attempt cannot
+             * double-apply. It is the only status in the enum with that
+             * guarantee -- BUDGET abandoned a command in flight with unknown
+             * completion and is deliberately NOT retried here.
+             *
+             * Without this the whole point of splitting BUSY out would be lost:
+             * the boot calls verify exactly once, BUSY matches none of the
+             * publication cases below, and a TPM that was busy for a few
+             * milliseconds would leave the machine with NO integrity verdict for
+             * the entire boot. The bound is small and fixed because contention
+             * here is another CPU's in-flight TPM transaction, which completes in
+             * its own bounded sequence; this is not a wait for hardware. */
+            tpm_baseline_status_t bs = TPM_BASELINE_BUSY;
+            unsigned attempt;
+            for (attempt = 0; attempt < TPM_BASELINE_VERIFY_RETRIES; attempt++) {
+                if (attempt != 0u) {
+                    /* Back-to-back attempts with no gap between them can all
+                     * finish faster than the competing sequence holding the
+                     * gate, so the retry improves nothing under real
+                     * contention -- BUSY means ANOTHER CPU's bounded sequence
+                     * is in flight, and that sequence needs actual wall-clock
+                     * time to complete. A short PAUSE-spin backoff (no
+                     * subsystem dependency; safe this early relative to
+                     * scheduler/timer init) gives it a real chance without
+                     * risking a sustained busy-spin -- the loop is still
+                     * bounded to TPM_BASELINE_VERIFY_RETRIES attempts total. */
+                    unsigned spin;
+                    for (spin = 0; spin < TPM_BASELINE_VERIFY_BACKOFF_SPINS; spin++)
+                        __asm__ volatile ("pause");
+                }
+                bs = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                         &overall, pcr_status,
+                                         (uint8_t)BOOT_INTEGRITY_MAX_PCRS, &pcr_n);
+                if (bs != TPM_BASELINE_BUSY)
+                    break;
+            }
+            if (bs == TPM_BASELINE_BUSY)
+                klog(LOG_WARN, "TPM",
+                     "Baseline verify contended on every attempt; "
+                     "integrity verdict unpublished for this boot");
             /* One publication carries the overall verdict AND the per-PCR
              * detail, so a reader can never catch the report with a fresh
              * verdict beside stale per-PCR values. A non-verdict return
