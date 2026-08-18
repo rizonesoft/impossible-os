@@ -20,6 +20,11 @@ At five cycles this deserves a decision rather than a sixth restatement. Either 
 
 <!-- The run files here. Nothing yet: v16 opened at close-out, before the next arm. -->
 
+- [ ] I dumped an unfiltered `skill-progress.json` walk and paid ~5K tokens to read one line (below the 2% bar; recorded as EXCLUDED, kept for the reasoning lesson)
+      - OBSERVED 2026-08-18 diagnosing the section-commit-gate misfire on TODO-13 section 22. I needed ONE fact: whether a non-orphaned `review-todo-section` entry existed. The probe I wrote printed every matching key, which is ~130 rows of orphaned history, because the file accumulates an entry per review ever run.
+      - The filter I actually wanted was one clause I already knew: `if not v.get('compaction_orphaned')`. I had even printed that field in the loop, so the information needed to bound the output was in the probe I wrote.
+      - Measured cost is roughly 5K tokens against a session far above 250K, so this sits UNDER the >= 2% filing bar and is not proposed as work. It is recorded because the capture file asks for approaches committed to too early, and because the shape generalises: when a state file is append-only per event, any `for k,v in d.items()` walk is unbounded by construction and the filter belongs in the probe rather than in the reading.
+
 ## Standing measurement obligations
 
 Carried from v15 with baselines. A measurement without one is an anecdote.
