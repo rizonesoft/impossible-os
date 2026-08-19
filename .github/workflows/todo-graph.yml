@@ -159,76 +159,70 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          # A QUERY FAILURE IS NOT AN ABSENCE. Swallowing both into "" let a
-          # transient API/auth/rate-limit error fall back to the push's
-          # before-SHA: if the previous push's gate had failed or been
-          # cancelled and this push carries no resolver change, the range
-          # collapses, the byte-identical early exit fires, and this run
-          # becomes the new green baseline -- laundering the unadjudicated
-          # push permanently (Codex adversarial, section 16). Fail the job
-          # instead; a gate that cannot establish its own range has not run.
-          if ! raw="$(gh run list --workflow=todo-graph.yml \
-                        --branch main --status success --limit 50 \
-                        --json headSha,conclusion 2>&1)"; then
-              echo "::error::last-gated-SHA query failed; refusing to guess a base"
-              echo "$raw"
-              exit 1
-          fi
-          # jq is guarded too. Under `set -uo pipefail` without -e a failed jq
-          # merely yields an empty string and the script carries on -- the same
-          # failure-as-absence collapse the gh guard above exists to stop, one
-          # line later (Codex adversarial round 2, section 16).
-          # Take the whole candidate SET, not `.[0]`. Which entry is newest is
-          # decided below by git, not by the order the API happened to return.
-          if ! shas="$(printf '%s' "$raw" | jq -r 'map(select(.conclusion=="success")) | .[].headSha')"; then
-              echo "::error::could not parse the last-gated-SHA query result"
-              exit 1
-          fi
-          if [ -z "${shas:-}" ]; then
-              # A genuinely empty API result means no successful run exists yet.
-              # That is the ONLY case where deriving a base is legitimate.
-              echo "sha=" >>"$GITHUB_OUTPUT"
-              echo "no prior successful run; the gate will derive a base"
-          else
-              # DO NOT TRUST THE API'S RETURN ORDER. Observed 2026-08-19 (run
-              # 32255498885): this query returned a success from 2026-08-04 as
-              # `.[0]` while fifteen newer successes existed, so the gate took a
-              # base 440 commits back whose tree predates the snapshot protocol
-              # entirely, could not read its constants, and died INFRASTRUCTURE
-              # -- a red job with nothing wrong in the tree (the same gate exits
-              # 0 against the true last green). Ordering is the API's business
-              # and it got it wrong; ancestry and distance are OURS, and git
-              # answers both exactly. Pick the candidate CLOSEST to HEAD by
-              # commit topology, which is immune to both a mis-ordered and a
-              # partially-stale response.
-              #
-              # A candidate that is not an ancestor of HEAD is SKIPPED rather
-              # than fatal: after a force-push the rewritten SHAs are exactly
-              # the ones to walk past. Only an entirely ancestor-less set means
-              # the gate cannot establish its range, and that stays fatal for
-              # the original reason -- falling back to HEAD~1 would let a
-              # regression older than one commit become the next green baseline.
-              sha=""
-              best=-1
-              for cand in $shas; do
-                  git rev-parse --verify --quiet "${cand}^{commit}" >/dev/null 2>&1 \
-                      || git fetch --no-tags --quiet origin "$cand" 2>/dev/null || true
-                  git merge-base --is-ancestor "$cand" HEAD 2>/dev/null || continue
-                  dist="$(git rev-list --count "${cand}..HEAD" 2>/dev/null)" || continue
-                  [ -n "$dist" ] || continue
-                  if [ "$best" -lt 0 ] || [ "$dist" -lt "$best" ]; then
-                      best="$dist"
-                      sha="$cand"
-                  fi
-              done
-              if [ -z "$sha" ]; then
-                  echo "::error::no previously gated SHA is an ancestor of HEAD even after fetch -- history was rewritten. Refusing to silently gate a shorter range."
+          # THE FILTERED RUNS LISTING IS NOT TRUSTWORTHY HERE, and this step
+          # used to be built on it. `gh run list --workflow=... --status success`
+          # is served from a search index that returned, from inside this
+          # runner, a set containing only ANCIENT successes -- twice, with a
+          # different ancient set each time (runs 32255498885 and the 13:15
+          # run on 2026-08-19, which picked bases 440 and 1095 commits back
+          # while a success three commits back existed). Sorting or
+          # topology-ranking that set cannot help: the recent entries are
+          # absent from it, not merely mis-ordered. The same query answers
+          # correctly from a workstation, so this is an environment-dependent
+          # index, not a wrong query -- which makes it exactly the thing a
+          # gate must not depend on.
+          #
+          # Ask an EXACT question instead. A per-commit `?head_sha=` lookup is
+          # a direct read rather than an index search, and it is the shape
+          # that was verified to answer correctly. Walk back along first-parent
+          # from HEAD and stop at the first commit whose most recent run of
+          # THIS workflow concluded success; that commit is the last gated SHA
+          # by construction.
+          #
+          # A commit with NO run is NOT a stopping point. Pushes land several
+          # commits at a time and only the tip is built, so an un-run commit
+          # was never adjudicated and the range must extend past it -- treating
+          # it as a base is the range collapse this step exists to prevent.
+          base=""
+          walked=0
+          for cand in $(git rev-list --first-parent -n 60 HEAD 2>/dev/null); do
+              [ "$cand" = "$(git rev-parse HEAD)" ] && continue
+              walked=$((walked + 1))
+              # A QUERY FAILURE IS NOT AN ABSENCE. Swallowing a transient
+              # API/auth/rate-limit error into "no run here" would silently
+              # walk PAST an adjudicated commit and gate a longer range on a
+              # guess; worse, a run of failures would walk off the window and
+              # report a rewritten history that did not happen.
+              if ! raw="$(gh api "repos/{owner}/{repo}/actions/workflows/todo-graph.yml/runs?head_sha=${cand}&per_page=20" 2>&1)"; then
+                  echo "::error::run lookup for $cand failed; refusing to guess a base"
+                  echo "$raw"
                   exit 1
               fi
-              echo "sha=$sha" >>"$GITHUB_OUTPUT"
-              echo "last gated SHA: $sha ($best commit(s) back)"
+              if ! concl="$(printf '%s' "$raw" | jq -r '[.workflow_runs[] | select(.conclusion != null and .conclusion != "")] | .[0].conclusion // empty')"; then
+                  echo "::error::could not parse the run lookup for $cand"
+                  exit 1
+              fi
+              if [ "${concl:-}" = "success" ]; then
+                  base="$cand"
+                  break
+              fi
+          done
+          if [ -n "$base" ]; then
+              echo "sha=$base" >>"$GITHUB_OUTPUT"
+              echo "last gated SHA: $base ($walked commit(s) back)"
+          elif [ "$walked" -eq 0 ]; then
+              # HEAD is the first commit on this branch: there is genuinely no
+              # earlier commit to gate against. That is the ONLY case where
+              # deriving a base is legitimate.
+              echo "sha=" >>"$GITHUB_OUTPUT"
+              echo "no earlier commit; the gate will derive a base"
+          else
+              # Every one of the last 60 commits either never ran or did not
+              # pass. Falling back to a near base would let a regression older
+              # than that base become the next green baseline, so refuse.
+              echo "::error::no successful run of this workflow in the last $walked commit(s) -- the gate cannot establish its range. Fix the oldest failure first."
+              exit 1
           fi
-
       - name: Resolver identity gate
         env:
           IDENTITY_GATE_LAST_GATED_SHA: ${{ steps.lastgreen.outputs.sha }}
