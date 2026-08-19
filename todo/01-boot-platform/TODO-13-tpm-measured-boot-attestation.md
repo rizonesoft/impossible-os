@@ -71,6 +71,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  31   | Loader digest correlation with the firmware PCR 4 measurement | §1, §20, §25                                              |  [ ]   |
 | 💎  |  32   | Authorized-record fake-TIS coverage residue                   | §29, §27, §28                                             |  [ ]   |
 | 💎  |  33   | PCR-layer contention loses its retry                          | §29, §25                                                  |  [ ]   |
+| 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -923,13 +924,13 @@ Its failure mode is the opposite of §27's. §27 fails by accepting a forged rec
 > - The device identity is the EK primary, not the AK: `at_provision` re-creates the AK every boot. One-shot is consume-BEFORE-mutate against `TPM_NV_INDEX_HEADLESS_SEQ`, read through its enrolled contract; `tpm_headless_authz_provision` bootstraps a counter's first increment.
 > - The authority install is a three-state atomic claim (`HL_AUTH_EMPTY`/`INSTALLING`/`PRESENT`), and every reader snapshots the key only after observing `PRESENT` -- two review rounds each found a narrower race in the first two attempts (competing installers, then an unsynchronized read during install).
 > - The enrollment gate gains one input, authority value 4 and refusal 15; `TPM_HEADLESS_ABSENT` is the zero verdict so a zeroed inputs struct cannot authorize, and every earlier refusal still fires ahead of the headless path.
-> - Inert until an integrator installs an authority key; the ESP-to-kernel transport, binding to the full baseline record, and the aggregate-boot-budget admission are section 30.
+> - Inert until an integrator installs an authority key; the ESP-to-kernel transport and the binding to the full baseline record are section 30; revocation, the durable verdict record and the aggregate-boot-budget admission are section 34.
 > - Canonical doc: the header banner in `include/kernel/tpm_headless_authz.h`.
 > **Verified:** 2026-08-18 | commit `152d90b3f` | 9/9 items | build OK | security suite 2744 kernel + 17 user PASS | full suite 31655 kernel + 17 user PASS | smoke matrix 4/4 legs
-> **Accepted:** [L] two independent baseline snapshots (authorization vs enroll) are not proven identical -> XREF: 01-boot-platform/TODO-13 §30 (item: "Build the candidate baseline ONCE and bind the authorization to a canonical digest over every security-relevant field of it" at line 1195)
+> **Accepted:** [L] two independent baseline snapshots (authorization vs enroll) are not proven identical -> XREF: 01-boot-platform/TODO-13 §30 (item: "Build the candidate baseline ONCE and bind the authorization to a canonical digest over every security-relevant field of it" at line 1265)
 > **Accepted:** [L] `tpm_headless_authz_provision`/`_next_counter`/`_authorize` and `tpm_ek_public_get` have no unit-test assertion (need a live TPM; no swtpm on the dev host) -> XREF: 01-boot-platform/TODO-13 §30 (item: "Drive `tpm_headless_authz_authorize` end to end through a fake-TIS fixture" -- moved here from a stamped §23)
-> **Accepted:** [M] the installed authority key has no revocation path if its private half is compromised -> XREF: 01-boot-platform/TODO-13 §30 (item: "Give the installed authority a revocation path" at line 1202)
-> **Accepted:** [M] a headless authorization attempt has no durable record an absent operator can read -> XREF: 01-boot-platform/TODO-13 §30 (item: "Give a headless authorization attempt a durable record distinct from `klog`" at line 1205)
+> **Accepted:** [M] the installed authority key has no revocation path if its private half is compromised -> XREF: 01-boot-platform/TODO-13 §34 (item: "Give the installed authority a revocation path" at line 1368)
+> **Accepted:** [M] a headless authorization attempt has no durable record an absent operator can read -> XREF: 01-boot-platform/TODO-13 §34 (item: "Give a headless authorization attempt a durable record distinct from `klog`" at line 1371)
 > **Quality reviewed:** 2026-08-18 | Codex 10x (adversarial x2, consistency x2, perf x3, re-adversarial x3) + kernel-quality-auditor | 2H+7M fixed, 4 open | scope: kernel-code-quality
 
 ---
@@ -1242,7 +1243,7 @@ The split is deliberate: §27's claim is that a forged record cannot be accepted
 > Scope boundary: this section changed no authorization decision. The fake-TIS coverage residue, including directional pairing propagation, is §32.
 > **Verified:** 2026-08-19 | commit `c27ae53e2` | 8/8 items | build OK | 32318 kernel + 17 user tests, smoke matrix 4/4, mutation-verified per guard
 > **Accepted:** [M] The positive out_pairing path has no coverage: deleting the MISMATCH-arm assignment leaves the suite green -> XREF: 01-boot-platform/TODO-13 §32 (item: "Drive the pairing DIRECTION through `tpm_baseline_verify_detail`'s `out_pairing` end to end" at line 1330)
-> **Accepted:** [M] The authorized-write chain measures 4968 bytes of frames, latent until a caller is wired -> XREF: 01-boot-platform/TODO-13 §30 (item: "Move the authorized-write path's large buffers off the stack before wiring a caller that is not the Phase-1 boot path" at line 1281)
+> **Accepted:** [M] The authorized-write chain measures 4968 bytes of frames, latent until a caller is wired -> XREF: 01-boot-platform/TODO-13 §30 (item: "Move the authorized-write path's large buffers off the stack before wiring a caller that is not the Phase-1 boot path" at line 1272)
 > **Deferred:** [M] PCR-layer contention collapses into TPM_BASELINE_NO_TPM, so a retry-safe condition is reported as retry-unsafe and the boot's bounded retry never fires for it -> XREF: 01-boot-platform/TODO-13 §33 (item: "Return `TPM_BASELINE_BUSY` when the ONLY reason the set is incomplete is contention, so the existing bounded retry loop covers it" at line 1352)
 > **Quality reviewed:** 2026-08-19 | Codex 19x (design, adversarial x3, test-coverage, consistency x3, perf x3, re-adversarial x8) | 2H+16M+10L fixed, 2 accepted + 1 deferred | scope: kernel-code-quality
 
@@ -1256,6 +1257,8 @@ Split out of §23 on 2026-08-18 during its design review. §23 fails when a FORG
 
 **The binding gap is real and was verified against the tree, not inferred.** `tpm_baseline_enroll_unauthenticated` calls `tpm_baseline_snapshot` itself (`src/kernel/tpm_baseline.c:453`), so §23's verification and the write operate on two independent snapshots. Every non-PCR field of `struct tpm_baseline` is therefore enrolled without ever having been authorized, and the two snapshots leave a check-then-use gap besides.
 
+**Split again on 2026-08-19** on a SPLIT-RECOMMENDED complexity verdict at ten work items. The authority's LIFECYCLE -- revocation after a key compromise, a durable verdict an absent operator can read, and admission against the aggregate boot budget -- moved verbatim to §34 -> XREF: 01-boot-platform/TODO-13 §34 (item: "Give the installed authority a revocation path"). This section keeps the transport, the full-record binding, the production caller and its stack cost.
+
 **The transport is additive, not an ABI break.** `enum boot_payload_type` documents that new values are safe to add and that unknown types are skipped by older kernels (`include/kernel/boot_info.h:1459`), so a new payload kind needs no `BOOT_INFO_VERSION` bump. That is what makes carrying the blob a bounded loader change rather than a handoff-contract change.
 
 - [ ] Carry the signed authorization from the ESP to the kernel as a new `BOOT_PAYLOAD_HEADLESS_AUTHZ` descriptor, published by the loader with the existing descriptor validation and no `BOOT_INFO_VERSION` bump.
@@ -1268,16 +1271,6 @@ Split out of §23 on 2026-08-18 during its design review. §23 fails when a FORG
 - [ ] Wire the production caller so a headless machine with a provisioned authority and a valid payload actually enrolls, with the console path proven untouched.
 - [ ] Drive `tpm_headless_authz_authorize` end to end through a fake-TIS fixture, so the verify-then-consume ORDERING §23 built is proven rather than simulated.
   - Needs the same `azf_io`-style fixture `test_tpm_authz.c` uses, extended for CreatePrimary and the PCR snapshot. Moved here from §23 (which is stamped) rather than left in a closed section -- filed here because the production caller this section wires is the natural point to drive the fixture through.
-- [ ] Give the installed authority a revocation path: a compromised private key today has no recovery short of re-imaging every machine that carries its public half, because `tpm_headless_authz_set_authority` is a permanent one-way install.
-  - The nearest precedent in this tree is Secure Boot's dbx/KEK revocation, which exists for exactly this class of problem. A generation counter or explicit revocation record, communicated over the same ESP transport this section already builds, is the natural shape.
-  - Raised by §23's parity research round.
-- [ ] Give a headless authorization attempt a durable record distinct from `klog`, that an operator can read without physical console access.
-  - The whole point of the escape hatch is that no operator is present to watch the serial line, so `klog(LOG_WARN, "TPM", "Headless enrollment authorization: %s", ...)` is not evidence anyone will ever see. A record surviving in NVRAM or on the ESP, naming the verdict and the counter value, belongs with this section's production wiring.
-  - Raised by §23's parity research round.
-- [ ] Admit the whole headless authorization attempt against the AGGREGATE boot budget, and settle its observed duration.
-  - `tpm_boot_budget_admit_one` has exactly ONE caller today (`src/kernel/tpm_authz.c:1002`), so the EK `CreatePrimary`, the PCR snapshot, the verified counter read and the increment each spend their own per-operation budget while the aggregate ledger sees none of it and cannot report expiry.
-  - Not a live exposure while §23's preflight stands: only a blob genuinely signed by the installed authority reaches the TPM at all, and the path is unreachable until this section carries a payload. It becomes real the moment the transport lands, which is why it is filed here rather than left with the authorization. -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
-  - Raised by §23's performance round.
 - [ ] Move the authorized-write path's large buffers off the stack before wiring a caller that is not the Phase-1 boot path.
   - MEASURED at §29 (`llvm-objdump` prologues): `tpm_authz_write_record` 312 + `authz_write_seq` 3112 + `authz_open_authorized_session` 1544 = 4968 bytes before the transport frames. LATENT rather than live: nothing outside the tests calls the authorized write today, so the figure describes whatever caller this section wires FIRST -- about a third of the 16 KiB BSP boot stack, or about two thirds of an 8 KiB `TASK_STACK_SIZE` thread stack, with a guard page below -> XREF: 01-boot-platform/TODO-13 §29 (item: "Size the authorized-write response buffer against the record size it advertises").
   - Filed HERE rather than in §29 because this section is the one that wires a production caller for authorized enrollment, which is the moment the thread-stack case stops being hypothetical. THREE of `authz_write_seq`'s buffers are `TPM_NV_MAX_DATA`-derived and grow together (`rsp`, `params`, `readback`), so a record-contract growth moves the frame.
@@ -1285,7 +1278,7 @@ Split out of §23 on 2026-08-18 during its design review. §23 fails when a FORG
 - [ ] Unit-test a payload-absent boot, a malformed payload, and a record whose non-PCR fields differ from the authorized candidate, each beside a passing control.
 - [ ] Commit: `"tpm: headless authorization transport and full-record binding"`
 
-**Test checkpoint:** a boot carrying no payload behaves bit for bit as today, and a malformed payload is refused rather than partially honored. A candidate baseline whose firmware-version hash or ABI-manifest digest differs from the authorized one is REFUSED, which is the assertion that separates this from authorizing a PCR set and writing a record. The bytes handed to the write are proven to be the bytes the digest covered, so the check-then-use gap cannot reopen. Scope: this section owns the transport and the record binding. The authorization construction, the device identity and the one-shot counter stay §23, baseline content stays §6, and the NV record authorization stays §27. Platforms: fake-TIS unit suites plus the boot-payload validator cover the automatable surface; a live headless enrollment against real firmware is operator-gated (no `swtpm` on the dev host).
+**Test checkpoint:** a boot carrying no payload behaves bit for bit as today, and a malformed payload is refused rather than partially honored. A candidate baseline whose firmware-version hash or ABI-manifest digest differs from the authorized one is REFUSED, which is the assertion that separates this from authorizing a PCR set and writing a record. The bytes handed to the write are proven to be the bytes the digest covered, so the check-then-use gap cannot reopen. Scope: this section owns the transport and the record binding. The authorization construction, the device identity and the one-shot counter stay §23, baseline content stays §6, the NV record authorization stays §27, and revocation, the durable verdict record and the aggregate budget are §34. Platforms: fake-TIS unit suites plus the boot-payload validator cover the automatable surface; a live headless enrollment against real firmware is operator-gated (no `swtpm` on the dev host).
 
 ---
 
@@ -1363,6 +1356,35 @@ Found by §29's post-commit adversarial round, which caught a comment claiming c
 - [ ] Commit: `"tpm: report PCR-layer contention as retryable"`
 
 **Test checkpoint:** a fixture that makes one PCR read return `TPM_PCR_BUSY` while the rest succeed produces `TPM_BASELINE_BUSY` and is retried by the boot's existing loop; the same fixture with an INACTIVE bank instead produces `TPM_BASELINE_NO_TPM` and is not retried; a fixture mixing both reports NO_TPM, because a boot that genuinely cannot measure part of its set must not be told to ask again. Scope: this section owns the snapshot path's status only. The NV-layer BUSY split shipped with the bounded-sequence work, the retry loop itself is already in `boot_interrupts.c`, and the authorized-record statuses are §29. Platforms: kernel unit suites; no TPM required.
+
+---
+
+## 34. Headless Authority Lifecycle: Revocation, Durable Verdict and Aggregate Budget
+
+> **Spawned-by:** §30 (split)
+
+Split out of §30 on 2026-08-19 on a SPLIT-RECOMMENDED complexity verdict (ten work items). §30 owns making the escape hatch REACHABLE and binding the authorization to the whole record it enrolls. This section owns what happens to that authority afterwards: withdrawing it when its private half is compromised, leaving evidence an absent operator can actually read, and admitting the whole attempt against the AGGREGATE boot budget instead of three unrelated per-operation ones. The halves fail differently, which is why they are separable: §30 fails as "the wrong measured state was enrolled, or the authorization never arrived", this one as "the right thing was enrolled and nobody can revoke it, prove it happened, or bound how long it took".
+
+All three items were raised by §23's review rounds and filed into §30 when §23 split; they are moved here rather than re-created, and §23's `Accepted:` stamps are retargeted to this section in the same edit.
+
+- [ ] Give the installed authority a revocation path: a compromised private key today has no recovery short of re-imaging every machine that carries its public half, because `tpm_headless_authz_set_authority` is a permanent one-way install.
+  - The nearest precedent in this tree is Secure Boot's dbx/KEK revocation, which exists for exactly this class of problem. A generation counter or explicit revocation record, communicated over the same ESP transport this section already builds, is the natural shape.
+  - Raised by §23's parity research round.
+- [ ] Give a headless authorization attempt a durable record distinct from `klog`, that an operator can read without physical console access.
+  - The whole point of the escape hatch is that no operator is present to watch the serial line, so `klog(LOG_WARN, "TPM", "Headless enrollment authorization: %s", ...)` is not evidence anyone will ever see. A record surviving in NVRAM or on the ESP, naming the verdict and the counter value, belongs with this section's production wiring.
+  - Raised by §23's parity research round.
+- [ ] Admit the whole headless authorization attempt against the AGGREGATE boot budget, and settle its observed duration.
+  - `tpm_boot_budget_admit_one` has exactly ONE caller today (`src/kernel/tpm_authz.c:1002`), so the EK `CreatePrimary`, the PCR snapshot, the verified counter read and the increment each spend their own per-operation budget while the aggregate ledger sees none of it and cannot report expiry.
+  - Not a live exposure while §23's preflight stands: only a blob genuinely signed by the installed authority reaches the TPM at all, and the path is unreachable until this section carries a payload. It becomes real the moment the transport lands, which is why it is filed here rather than left with the authorization. -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
+  - Raised by §23's performance round.
+
+- [ ] Unit-test the lifecycle surface, each case beside a passing control.
+  - A revoked authority is REFUSED while an unrevoked one on the same machine still admits, so revocation is the discriminator rather than a second failure path.
+  - A refused and an admitted attempt each leave a record readable without a serial console, naming the verdict and the counter value.
+  - An attempt that exhausts the AGGREGATE budget reports expiry even though no single operation exceeded its own.
+- [ ] Commit: `"tpm: headless authority revocation, durable verdict record and aggregate budget"`
+
+**Test checkpoint:** an authority whose revocation record names it is REFUSED by `tpm_headless_authz_authorize` while an unrevoked authority on the same machine still admits, so revocation is proven to be the discriminator rather than a second failure path. Both verdicts survive into a record readable without a serial console, and the record names the counter value so an operator can tell one attempt from a replay of it. The aggregate ledger sees ONE admission covering the EK `CreatePrimary`, the PCR snapshot, the verified counter read and the increment, and reports expiry when that aggregate is exhausted even though no single operation exceeded its own budget. Scope: this section owns the authority's lifecycle only. The ESP transport, the full-record binding and the production caller are §30, the authorization construction and one-shot counter stay §23, and the NV record authorization stays §27. Platforms: fake-TIS unit suites; a live revocation against real firmware is operator-gated (no `swtpm` on the dev host).
 
 ---
 
