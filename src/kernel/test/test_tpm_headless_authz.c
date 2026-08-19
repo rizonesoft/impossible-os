@@ -21,6 +21,7 @@
 #include "kernel/tpm_transport.h"
 #include "kernel/mm/memmap.h"
 #include "kernel/kchecksum.h"
+#include "kernel/tpm_authz.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/crypto/sha256.h"
 #include "libs/monocypher/monocypher-ed25519.h"
@@ -1495,6 +1496,63 @@ static void test_ha_take_refuses_bad_length_untouched(void)
 }
 
 
+
+/* THE TOKEN IS NEVER SPENT ON A REFUSAL THAT WAS KNOWABLE LOCALLY.
+ *
+ * tpm_baseline_enroll_headless refuses AUTHREQ whenever an update authority is
+ * provisioned, and that predicate is a plain atomic load with no TPM I/O -- so
+ * on such a machine a headless attempt used to verify the token, IRREVERSIBLY
+ * CONSUME it, and only then hit a refusal it could have made first. Every boot
+ * burned one of the operator's one-shot authorizations for nothing. */
+static void test_ha_prepare_refuses_before_spending_on_provisioned(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_authz_authority a;
+    struct tpm_baseline cand;
+    uint8_t apub[16];
+    uint8_t blob[TPM_HEADLESS_BLOB_LEN];
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    uint32_t op = 0u, n_after;
+    tpm_headless_verdict_t v;
+    int installed;
+
+    ha_fixture_init();
+    tpm_fake_tis_reset();
+    prev = tpm_t_test_install(tpm_fake_tis_io(), TPM_T_IFACE_TIS, 1);
+    tpm_headless_authz_reset_authority_for_test();
+    tpm_authz_test_clear_authority();
+
+    ha_build(blob, TPM_HEADLESS_OP_ENROLL_BASELINE, HA_COUNTER);
+    TEST_ASSERT_EQ(tpm_headless_authz_set_authority(g_pub), 0,
+                   "the signing authority installs");
+
+    memset(apub, 0x5C, sizeof apub);
+    tpm2_be16_put(apub + 0, 0x0001u);
+    tpm2_be16_put(apub + 2, TPM_ALG_SHA256);
+    memset(&a, 0, sizeof a);
+    a.public_area = apub;
+    a.public_len = (uint16_t)sizeof apub;
+    installed = (tpm_authz_set_authority(&a) == TPM_NV_OK);
+
+    v = tpm_headless_enroll_prepare(blob, TPM_HEADLESS_BLOB_LEN,
+                                    TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &cand, tid, &op);
+    n_after = tpm_fake_tis_log_count();
+
+    tpm_authz_test_clear_authority();
+    tpm_headless_authz_reset_authority_for_test();
+    tpm_t_test_restore(prev);
+
+    TEST_ASSERT_EQ(installed, 1, "the update authority installs");
+    TEST_ASSERT_EQ((int)v, (int)TPM_HEADLESS_UNKNOWN_STATE,
+                   "a provisioned update authority refuses the headless "
+                   "preparation, so no transition is ever prepared");
+    TEST_ASSERT_EQ(n_after, 0u,
+                   "and the refusal costs ZERO TPM commands -- in particular "
+                   "the one-shot counter is never incremented, so the "
+                   "operator's token survives a machine that can never use it");
+}
+
 void test_register_tpm_headless_authz(void)
 {
     test_suite_register_cat("tpm headless: accept path",
@@ -1543,6 +1601,8 @@ void test_register_tpm_headless_authz(void)
                             test_ha_take_refuses_bad_length_untouched, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: take refuses corrupt payload",
                             test_ha_take_refuses_corrupt_payload, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm headless: prepare refuses before spending",
+                            test_ha_prepare_refuses_before_spending_on_provisioned, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: payload class labels",
                             test_ha_class_labels, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: payload classification",

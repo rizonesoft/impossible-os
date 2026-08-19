@@ -495,6 +495,23 @@ typedef enum {
      * before section 29 -- one status for two states whose operator actions are
      * "install an authority" and "use the authorized path". */
     TPM_BASELINE_AUTHREQ = 14,
+    /* AN AUTHORIZED WRITE WAS REFUSED because the transition it describes is
+     * no longer the transition the machine is in: the candidate's digest no
+     * longer matches, or the predecessor moved between the authorization and
+     * the write. Published as a MISMATCH, and that is the whole point of
+     * naming it.
+     *
+     * It was TPM_BASELINE_BADARG, which is a CONFIGURATION-shaped status the
+     * boot's enroll call site routes through its "nothing was measured" branch
+     * -- so the ONE case this construction exists to detect, a stale token
+     * trying to reinstall older golden content, was reported as an opaque
+     * status number with no verdict published and no repair text. An enrolling
+     * boot skips verification entirely, so that was also the only chance the
+     * boot had to say anything about it.
+     *
+     * BADARG keeps its narrow meaning: a caller passed NULL or a malformed
+     * candidate, which is API misuse rather than evidence about the machine. */
+    TPM_BASELINE_TRANSITION = 15,
 } tpm_baseline_status_t;
 
 /* ---- Pure core (MMIO-free, fixture-tested) ---- */

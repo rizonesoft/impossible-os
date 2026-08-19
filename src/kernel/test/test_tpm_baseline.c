@@ -2488,8 +2488,15 @@ static void test_baseline_headless_transition_mismatch(void)
 
     TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
     TEST_ASSERT_EQ(derived, 1, "the transition is describable");
-    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
-                   "a digest that does not describe this transition is refused");
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_TRANSITION,
+                   "a digest that does not describe this transition is refused "
+                   "with its OWN status, not the configuration-shaped BADARG");
+    TEST_ASSERT_EQ(tpm_baseline_status_is_failure(TPM_BASELINE_TRANSITION), 1,
+                   "and that status is an integrity FAILURE, so the boot "
+                   "publishes a verdict instead of continuing silently");
+    TEST_ASSERT_EQ(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_TRANSITION)
+                       != (const char *)0, 1,
+                   "and it names a repair the operator can act on");
     TEST_ASSERT_EQ(writes, 0u, "a refused transition writes nothing");
     TEST_ASSERT_EQ(defines, 0u, "a refused transition defines nothing");
 }
@@ -2532,8 +2539,10 @@ static void test_baseline_headless_predecessor_moved(void)
     TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
     TEST_ASSERT_EQ((int)st_ok, (int)TPM_BASELINE_OK,
                    "against the authorized predecessor the token is accepted");
-    TEST_ASSERT_EQ((int)st_moved, (int)TPM_BASELINE_BADARG,
-                   "the same token is refused once the predecessor has moved");
+    TEST_ASSERT_EQ((int)st_moved, (int)TPM_BASELINE_TRANSITION,
+                   "the same token is refused once the predecessor has moved, "
+                   "and the refusal is the named ROLLBACK status rather than a "
+                   "configuration state the boot would report as nothing");
     TEST_ASSERT_EQ(writes_after_refusal, 0u,
                    "a refused rollback writes nothing");
 }

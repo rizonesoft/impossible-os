@@ -1,6 +1,6 @@
 {
-  "total_suites": 3167,
-  "total_assertions": 13937,
+  "total_suites": 3168,
+  "total_assertions": 13943,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
@@ -99,10 +99,10 @@
     {"file": "test_tpm_attest.c", "suites": 16, "assertions": 140},
     {"file": "test_tpm_attest_report.c", "suites": 3, "assertions": 63},
     {"file": "test_tpm_authz.c", "suites": 50, "assertions": 479},
-    {"file": "test_tpm_baseline.c", "suites": 38, "assertions": 400},
+    {"file": "test_tpm_baseline.c", "suites": 38, "assertions": 402},
     {"file": "test_tpm_enroll_gate.c", "suites": 17, "assertions": 78},
     {"file": "test_tpm_event_log.c", "suites": 9, "assertions": 29},
-    {"file": "test_tpm_headless_authz.c", "suites": 34, "assertions": 181},
+    {"file": "test_tpm_headless_authz.c", "suites": 35, "assertions": 185},
     {"file": "test_tpm_nv.c", "suites": 42, "assertions": 509},
     {"file": "test_tpm_pcr_alloc.c", "suites": 4, "assertions": 20},
     {"file": "test_tpm_replay.c", "suites": 12, "assertions": 92},

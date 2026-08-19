@@ -213,6 +213,12 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_CSPRNG_OK        0x1057
 #define POST16_BOOT_SEED        0x1058  /* boot_info seed payload consume */
 #define POST16_BOOT_SEED_OK     0x1059
+/* Headless enrollment authorization take (Phase 1). Bracketed like the seed
+ * beside it and for the same reason: the take dereferences a raw physical
+ * address from the payload table and memsets it, so a fault inside the copy
+ * or the wipe would otherwise land with no port-80 narrowing at all. */
+#define POST16_BOOT_HL_AUTHZ    0x105A
+#define POST16_BOOT_HL_AUTHZ_OK 0x105B
 #define POST16_KBD              0x1060
 #define POST16_KBD_OK           0x1061
 #define POST16_MOUSE            0x1070

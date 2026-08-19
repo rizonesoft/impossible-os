@@ -107,6 +107,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  28   | Cross-boot evidence durability across a reset (§23) | §23        |  [x]   |
 | 💎  |  29   | Abandoned-reservation reclamation on park (§26)     | §26        |  [x]   |
 | 💎  |  30   | Nested abort after the async branch stops as async  | §27, §29   |  [x]   |
+| 💎  |  31   | Guard page under the BSP boot stack                 | §2         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -1251,6 +1252,30 @@ Found by the kernel-quality auditor during the §29 review and CONFIRMED at file
 > **Accepted:** [M] only the handoff ENVELOPE is validated, so an SPCR-reported vendor base cannot be trusted and is refused (reason: integrity for the payload body affects every scalar in boot_info, not these two fields) -> XREF: `01-boot-platform/TODO-01 §23` (item: "Once the body is checked, revisit the consumers that narrowed themselves to compensate, starting with the SPCR base" at line 837)
 > **Accepted:** [M] the bootloader-reported `serial_baud` is still not adopted, now that the handoff is readable at all (reason: it is the one field that can make a working console worse, and the serial line rate belongs to the KD protocol section) -> XREF: `02-kernel-core/TODO-29 §1` (item: "Decide whether the bootloader-reported `g_boot_info.serial_baud` is adopted, now that the handoff is readable at all" at line 97)
 > **Quality reviewed:** 2026-08-15 | Codex 15x (design, test-coverage x2, adversarial x5, consistency x2, perf x2, re-adversarial x3) + kernel-quality-auditor + concurrency-evidence-mapper | 14H+18M+4L fixed, 0 open | scope: kernel-code-quality
+
+---
+
+## 31. Guard Page Under the BSP Boot Stack
+
+> **Spawned-by:** root
+> **User impact:** a Phase-0/1 stack overflow on the BSP silently corrupts whatever BSS sits next to the boot stack and the machine continues into a wrong state, instead of stopping at a labelled guard fault. It is the one stack in the system without that net, and it is the one running the code that has no console yet to report anything.
+
+Every other stack in this kernel is guarded. CLAUDE.md's Safety Gates list guard pages at "kernel task stacks (bottom), AP stacks (bottom), IST stacks (DF/NMI/MCE, bottom), heap end, user ELF range end", and §2 of this file allocates each IST stack as 8 KiB usable plus a 4 KiB guard installed by `ist_alloc` (`src/kernel/gdt.c`). The BSP boot stack is the exception: it is a plain `BSP_BOOT_STACK_SIZE` (16 KiB) BSS array in `src/kernel/main/boot_hw.c`, with no page alignment and no PTE cleared below it, so an overflow writes into neighbouring BSS rather than faulting.
+
+VERIFIED 2026-08-19 by the kernel-quality auditor during the TPM headless-authorization review, which grepped the symbol and found only its declaration and the `stack_top` computation -- no `vmm_install_guard_page` call anywhere near it. The finding was raised because that section added ~444 bytes of Phase-1 locals and a headless enrollment chain whose peak was estimated near 4 KiB; nothing there overflows, and that is exactly the point -- the margin is what is protecting the boot today, not a mechanism.
+
+The failure is worse than an ordinary overflow because of WHERE it happens: Phase 0 runs before `sti`, before klog is fully live, and a corrupted neighbour usually surfaces much later as an unrelated symptom. A labelled guard fault ("GUARD: BSP boot stack overflow") turns a silent miscompare into a named line on serial.
+
+- [ ] Page-align the BSP boot stack and install a guard page below it, so an overflow faults with a label instead of corrupting BSS.
+  - The allocation is a BSS array today, so it needs either page alignment plus a cleared PTE once paging is live, or a move to the same PMM-backed shape `ist_alloc` uses. Whichever, the guard must be installed at the earliest point the page tables allow, and the window before that must be stated.
+  - Register the label in the page-fault handler's guard table beside the existing entries, so the fault names this stack rather than reporting a generic page fault.
+- [ ] State the measured Phase-0/1 peak usage against the 16 KiB size, so the margin is a number rather than an assumption.
+  - The deepest known chain is the headless enrollment path (`tpm_baseline_enroll_headless` -> `baseline_write_candidate` -> `tpm_baseline_predecessor` plus the NV command/response buffers), estimated near 4 KiB by struct arithmetic and not yet measured with `llvm-objdump`.
+- [ ] Do the same audit for any other stack that is a bare array rather than a guarded allocation, so this is closed as a class rather than one instance.
+- [ ] Unit-test what is testable: the stack's alignment and the guard entry's presence in the guard table. An actual overflow is a bare-metal validation item, not a unit test.
+- [ ] Commit: `"boot: guard page under the BSP boot stack"`
+
+**Test checkpoint:** the BSP boot stack is page-aligned, the page below it is not present, and the guard table carries an entry naming it; a deliberate recursion in a debug build faults with that label on serial rather than continuing. Scope: this section owns the BSP boot stack's guard only; IST stacks are §2, task and AP stacks are already guarded, and the heap and user-range guards are unchanged. Platforms: QEMU for the fault label, bare metal for the acceptance run.
 
 ---
 

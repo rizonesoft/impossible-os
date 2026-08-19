@@ -25,6 +25,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/kchecksum.h"
 #include "kernel/klog.h"
+#include "kernel/boot_init.h"   /* POST16_BOOT_HL_AUTHZ -- Phase-1 boot path */
 #include "kernel/tpm_headless_authz.h"
 #include "kernel/boot_headless_authz.h"
 #include "libc/string.h"
@@ -107,12 +108,14 @@ uint32_t boot_headless_authz_take_from(struct boot_info *info,
     uint32_t idx;
     uint32_t accepted = 0;
 
+    POST16(POST16_BOOT_HL_AUTHZ);
+
     if (out_blob)
         *out_blob = (const uint8_t *)0;
-    if (!info)
+    if (!info || s_taken) {
+        POST16(POST16_BOOT_HL_AUTHZ_OK);
         return 0;
-    if (s_taken)
-        return 0;
+    }
     s_taken = 1;
 
     /* Walk EVERY descriptor of this type, not just the first. Retiring one
@@ -194,6 +197,8 @@ uint32_t boot_headless_authz_take_from(struct boot_info *info,
                    (size_t)TPM_HEADLESS_BLOB_LEN);
         d->flags &= ~(uint32_t)BOOT_PAYLOAD_FLAG_VALID;
     }
+
+    POST16(POST16_BOOT_HL_AUTHZ_OK);
 
     if (!accepted)
         return 0;

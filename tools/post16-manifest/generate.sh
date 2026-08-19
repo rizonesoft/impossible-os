@@ -160,8 +160,6 @@ POST16_REQUIRED_NAMES=(
     POST16_BL_KIND_VALIDATE_OK
     POST16_BL_AB_SELECT
     POST16_BL_AB_SELECT_OK
-    POST16_BL_HL_AUTHZ
-    POST16_BL_HL_AUTHZ_OK
 )
 
 # Optional set: POST16 codes that ARE emitted by the bootloader but are
@@ -173,6 +171,8 @@ POST16_REQUIRED_NAMES=(
 # Every entry needs a short reason so future maintainers know WHY it's
 # optional rather than required. Format: NAME=reason
 POST16_OPTIONAL_REASONS=(
+    "POST16_BL_HL_AUTHZ=scenario-dependent: headless-authorization publish is gated on boot.conf tpm_enroll, so an ordinary boot emits nothing (the marker itself costs polled-UART time)"
+    "POST16_BL_HL_AUTHZ_OK=scenario-dependent: paired with POST16_BL_HL_AUTHZ, emitted only on a boot that requested enrollment"
     "POST16_BL_FALLBACK=scenario-dependent: boot-device fallback chain"
     "POST16_BL_FALLBACK_OK=scenario-dependent: boot-device fallback chain"
     "POST16_BL_ROLLBACK_REFUSE=scenario-dependent: anti-rollback halts only on downgrade attack"

@@ -7,6 +7,7 @@
 #include "kernel/tpm_headless_authz.h"
 #include "kernel/tpm_enroll_gate.h"
 #include "kernel/tpm_baseline.h"
+#include "kernel/tpm_authz.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_attest.h"
 #include "kernel/tpm_authz.h"
@@ -402,6 +403,19 @@ tpm_headless_enroll_prepare(const uint8_t *blob, uint32_t blob_len,
     v = tpm_headless_authz_precheck_installed(blob, blob_len);
     if (v != TPM_HEADLESS_OK)
         return v;
+
+    /* AND A LOCAL CONFIGURATION REFUSAL BEFORE THE TOKEN CAN BE SPENT.
+     * tpm_baseline_enroll_headless refuses TPM_BASELINE_AUTHREQ whenever an
+     * update authority is provisioned, and tpm_authz_provisioned() is a plain
+     * atomic load with no TPM I/O -- so it is knowable HERE, before the caller
+     * reaches the consuming authorize. Left until after the consume, every
+     * headless attempt on such a machine irreversibly burned a signed one-shot
+     * token on an enrollment that could never succeed, which is the exact
+     * "reject before spending" principle this module already applies to the
+     * signature. Returning UNKNOWN_STATE leaves the transition unprepared, so
+     * the bindings refuse before tpm_nv_increment is ever reached. */
+    if (tpm_authz_provisioned())
+        return TPM_HEADLESS_UNKNOWN_STATE;
 
     if (tpm_baseline_snapshot(alg, out_cand) != TPM_BASELINE_OK)
         return TPM_HEADLESS_UNKNOWN_STATE;

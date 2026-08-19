@@ -154,6 +154,16 @@ const char *tpm_baseline_status_repair(uint8_t status)
         case TPM_BASELINE_AUTHREQ:
             return "An update authority IS provisioned: use the AUTHORIZED "
                    "enroll path, which rewrites the bind record with the blob";
+        case TPM_BASELINE_TRANSITION:
+            /* Names the ROLLBACK explicitly, because the operator's remedy is
+             * to reissue the authorization against the CURRENT state and the
+             * obvious wrong move -- retrying the same token -- can never work.
+             * Read it as evidence, not as a broken machine: the refusal is the
+             * defence doing its job. */
+            return "The authorization describes a different transition than "
+                   "this machine is in: the measured state or the stored "
+                   "baseline changed since it was issued. Reissue it against "
+                   "the CURRENT baseline; the same token will never apply";
         case TPM_BASELINE_CORRUPT:
             /* NOT "re-enroll to repair it". The enroll path reads the existing
              * blob back and validates it BEFORE writing, so it refuses on the
@@ -474,7 +484,7 @@ int tpm_baseline_status_is_failure(tpm_baseline_status_t bs)
     return bs == TPM_BASELINE_CORRUPT || bs == TPM_BASELINE_SELF_CORRUPT ||
            bs == TPM_BASELINE_UNBOUND || bs == TPM_BASELINE_TORN ||
            bs == TPM_BASELINE_RELABELED || bs == TPM_BASELINE_IDENTITY ||
-           bs == TPM_BASELINE_RECORD;
+           bs == TPM_BASELINE_RECORD || bs == TPM_BASELINE_TRANSITION;
 }
 
 const char *tpm_baseline_pairing_repair(tpm_pairing_t pairing)
@@ -880,9 +890,15 @@ static tpm_baseline_status_t baseline_write_candidate(uint32_t nv_index,
             return TPM_BASELINE_BADARG;
         /* Plain comparison: both operands are public digests and the
          * authenticity decision was already made by the Ed25519 check in the
-         * authorization path. Same rationale as hl_eq in tpm_headless_authz.c. */
+         * authorization path. Same rationale as hl_eq in tpm_headless_authz.c.
+         *
+         * TRANSITION, not BADARG. This is the detection this whole
+         * construction exists for -- a stale token whose predecessor moved --
+         * and BADARG is routed by the boot as a configuration state with no
+         * verdict and no repair text, which would make the one case worth
+         * shouting about the quietest thing the enroll path can do. */
         if (memcmp(want, expect_transition, sizeof want) != 0)
-            return TPM_BASELINE_BADARG;
+            return TPM_BASELINE_TRANSITION;
     }
 
     b.generation = gen;

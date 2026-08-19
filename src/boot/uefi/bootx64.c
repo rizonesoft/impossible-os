@@ -10512,6 +10512,25 @@ static void publish_headless_authz_payload(void)
     UINT32 idx;
     struct boot_payload_desc *d;
 
+    /* NOTHING AT ALL ON A BOOT THAT NEVER ASKED TO ENROLL -- not the
+     * filesystem work, and not the POST markers either.
+     *
+     * `tpm_enroll` defaults to 0, so without this gate every ordinary boot on
+     * every machine paid two synchronous firmware Open() attempts (the vendor
+     * directory and the volume root) for a file that is almost never there,
+     * pre-ExitBootServices where the cost is boot latency the operator sees.
+     *
+     * The gate is ahead of post_code16 rather than after it because this
+     * bootloader's post_code16 is not just an I/O-port write: it also emits
+     * "[BOOT] POST 0xNNNN" through the POLLED UART, so an entry/exit pair on
+     * the inactive path is real serial time on every boot -- around 10 ms at
+     * the 38400-baud fallback. A marker for a feature the boot did not request
+     * is exactly the kind of unconditional cost this gate exists to remove,
+     * which is why the two codes are OPTIONAL in the POST16 manifest rather
+     * than required. */
+    if (!g_boot_info_ptr->config.tpm_enroll)
+        return;
+
     post_code16(POST16_BL_HL_AUTHZ);
 
     status = locate_boot_fs(&fs);
@@ -10536,9 +10555,15 @@ static void publish_headless_authz_payload(void)
                                 EFI_FILE_MODE_READ, 0);
     }
     if (EFI_ERROR(status)) {
-        /* The ordinary case: no operator ever placed one. Silent by design --
-         * a warning on every boot of every machine would train operators to
-         * ignore the line that matters. */
+        /* SAY SO. This is only reached on a boot that ASKED to enroll, so an
+         * absent authorization is a fact the operator needs rather than noise
+         * on every machine -- it is the difference between "this boot will
+         * wait for a console" and "the file I placed was not found". The
+         * enrollment gate refuses either way; this line is what tells an
+         * operator which of the two happened. */
+        serial_early_print("[BOOT] headless authz: no authorization file on "
+                           "the ESP (tpm_enroll is set; enrollment will need "
+                           "a console)\n");
         root_dir->Close(root_dir);
         post_code16(POST16_BL_HL_AUTHZ_OK);
         return;
