@@ -313,7 +313,12 @@ static tpm_seal_status_t map_nv_status(tpm_nv_status_t s)
          * failures, and naming them stops a future status from inheriting this
          * bucket by accident. */
         case TPM_NV_RECREATED:
-        case TPM_NV_CONTRACT:  return TPM_SEAL_TPMERR;
+        case TPM_NV_CONTRACT:
+        /* A record that failed to PARSE lands here with the enrolled
+         * contract's own corruption: this layer has no separate action
+         * for either, and naming it keeps the default arm unreachable
+         * for every value the NV enum defines. */
+        case TPM_NV_RECORD:    return TPM_SEAL_TPMERR;
         /* Added with the authorized-record work: an operation needing an update
          * authority when none is installed. Named explicitly rather than left
          * to the default arm, which this switch promises is unreachable for

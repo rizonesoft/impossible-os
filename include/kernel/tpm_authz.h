@@ -150,6 +150,15 @@ tpm_nv_status_t tpm_authz_set_authority(const struct tpm_authz_authority *auth);
 #ifdef KERNEL_TESTS
 /* Test-only teardown, because the setter above is deliberately one-way. */
 void tpm_authz_test_clear_authority(void);
+
+/* How many allocating commands this kernel abandoned with an UNKNOWN outcome
+ * -- a session or transient object the TPM may hold until reset, whose handle
+ * arrived in a reply nobody could read. Test-only because the production
+ * consumer is the klog warning raised at the same moment; the counter exists so
+ * a suite can assert the CLASSIFICATION, in particular that an ordinary refusal
+ * (the TPM answered and said no) is NOT counted. */
+uint32_t tpm_authz_test_unknown_alloc(void);
+void tpm_authz_test_reset_unknown_alloc(void);
 #endif
 
 /* 1 when an authority is installed. A caller deciding whether an authorized

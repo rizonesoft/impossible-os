@@ -139,6 +139,21 @@ const char *tpm_baseline_status_repair(uint8_t status)
         case TPM_BASELINE_IDENTITY:
             return "Baseline NV index failed its enrolled contract: the index "
                    "answering is NOT the one enrolled";
+        case TPM_BASELINE_RECORD:
+            /* Deliberately NOT the IDENTITY line. The index answering IS the
+             * enrolled one -- it passed the contract check before this was
+             * reached -- so sending the operator to hunt a substituted index
+             * would send them somewhere the fault is not. */
+            return "Baseline authentication RECORD does not parse: the enrolled "
+                   "index answered and its stored record bytes are corrupt";
+        case TPM_BASELINE_NOAUTH:
+            /* A configuration state, so this reads as an instruction rather
+             * than an alarm: nothing was measured and nothing failed. */
+            return "No update authority is provisioned: install one before an "
+                   "authorized enrollment or rotation can be attempted";
+        case TPM_BASELINE_AUTHREQ:
+            return "An update authority IS provisioned: use the AUTHORIZED "
+                   "enroll path, which rewrites the bind record with the blob";
         case TPM_BASELINE_CORRUPT:
             /* NOT "re-enroll to repair it". The enroll path reads the existing
              * blob back and validates it BEFORE writing, so it refuses on the
@@ -449,9 +464,51 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
 /* Map a tpm_nv_status_t to a tpm_baseline_status_t for the NV-driven wrappers. */
 int tpm_baseline_status_is_failure(tpm_baseline_status_t bs)
 {
+    /* TPM_BASELINE_NOAUTH and TPM_BASELINE_AUTHREQ are deliberately ABSENT.
+     * They are CONFIGURATION states -- no authority installed, or the wrong
+     * enroll entry point for a machine that has one -- and neither says
+     * anything about whether this boot matches its baseline. Including them
+     * would publish MISMATCH on a healthy machine, which is precisely why the
+     * boot's enroll call site used to carry a hand-written exclusion for the
+     * overloaded UNBOUND value those two were split out of. */
     return bs == TPM_BASELINE_CORRUPT || bs == TPM_BASELINE_SELF_CORRUPT ||
            bs == TPM_BASELINE_UNBOUND || bs == TPM_BASELINE_TORN ||
-           bs == TPM_BASELINE_RELABELED || bs == TPM_BASELINE_IDENTITY;
+           bs == TPM_BASELINE_RELABELED || bs == TPM_BASELINE_IDENTITY ||
+           bs == TPM_BASELINE_RECORD;
+}
+
+const char *tpm_baseline_pairing_repair(tpm_pairing_t pairing)
+{
+    switch (pairing) {
+    case TPM_PAIRING_UNCOMMITTED:
+        /* An AUTHENTIC record whose commit increment never landed -- a crash
+         * during the write, or an ordinary write whose readback, policy or
+         * increment step failed. Completing the commit is the repair, and
+         * recovery here would overwrite a record an authority did sign. */
+        return "record is one ahead of its counter: COMPLETE the interrupted "
+               "commit; full recovery here would discard an authentic record";
+    case TPM_PAIRING_TORN:
+        /* The counter moved past the record, so the bytes that counter commits
+         * to are gone. Nothing on the device can be completed into a valid
+         * pairing. */
+        return "counter is ahead of the record: the committed bytes are LOST; "
+               "authorized recovery, never a fresh enrollment";
+    case TPM_PAIRING_IMPOSSIBLE:
+        /* More than one increment behind, which no single interrupted write can
+         * produce. Reported as its own line rather than folded into TORN
+         * because the recovery is the same and the DIAGNOSIS is not: this is
+         * evidence of something other than a crash. */
+        return "record is more than one generation ahead of its counter: no "
+               "single interrupted write produces this; authorized recovery";
+    case TPM_PAIRING_CURRENT:
+    case TPM_PAIRING_BADARG:
+    default:
+        /* CURRENT needs no repair, and BADARG means no pairing was ever
+         * computed. Returning NULL rather than a reassuring string is
+         * deliberate: a caller must not print "nothing to repair" for a
+         * direction that was never evaluated. */
+        return (const char *)0;
+    }
 }
 
 tpm_baseline_status_t tpm_baseline_pairing_status(tpm_pairing_t pairing)
@@ -551,6 +608,11 @@ tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st)
          * to stop. */
         case TPM_NV_RECREATED:
         case TPM_NV_CONTRACT:  return TPM_BASELINE_IDENTITY;
+        /* Corrupt persisted RECORD bytes on an index that PASSED its identity
+         * contract. Published like IDENTITY, named separately from it, because
+         * the repair the operator is handed differs: one hunts a substituted
+         * index, the other recovers a record on the right one. */
+        case TPM_NV_RECORD:    return TPM_BASELINE_RECORD;
         /* An operation that needs an update authority when none is installed is
          * a CONFIGURATION state, not a TPM fault, and it maps to the status that
          * says exactly that. Named explicitly because this switch promises the
@@ -558,7 +620,7 @@ tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st)
          * a new status inherit a bucket through the default is the failure that
          * promise exists to prevent, and TPM_NV_UNAVAIL did exactly that when it
          * was added. */
-        case TPM_NV_UNAVAIL:   return TPM_BASELINE_UNBOUND;
+        case TPM_NV_UNAVAIL:   return TPM_BASELINE_NOAUTH;
         /* The remaining hard NV failures, named so the default arm is
          * unreachable for every status the enum currently defines and a NEW one
          * cannot inherit a bucket silently. */
@@ -586,7 +648,7 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
      * next verify would report UNBOUND. tpm_baseline_enroll_bound is the
      * authorized path. */
     if (tpm_authz_provisioned())
-        return TPM_BASELINE_UNBOUND;
+        return TPM_BASELINE_AUTHREQ;
     return tpm_baseline_enroll_unauthenticated(nv_index, alg);
 }
 
@@ -654,7 +716,7 @@ tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
     if (!tr)
         return TPM_BASELINE_BADARG;
     if (!tpm_authz_provisioned())
-        return TPM_BASELINE_UNBOUND;
+        return TPM_BASELINE_NOAUTH;
     /* Validate the GRANT before touching NV. A non-NULL transition used to be
      * enough to reach the owner write, with the grant's structure only checked
      * later inside the bind -- so an invalid or stale grant changed the
@@ -706,7 +768,8 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
 {
     return tpm_baseline_verify_detail(nv_index, alg, out_overall, out_pcr_status,
                                       pcr_cap, out_pcr_n,
-                                      (struct tpm_baseline_mismatch *)0);
+                                      (struct tpm_baseline_mismatch *)0,
+                                      (tpm_pairing_t *)0);
 }
 
 tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg,
@@ -714,7 +777,8 @@ tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg
                                                  uint8_t *out_pcr_status,
                                                  uint8_t pcr_cap,
                                                  uint8_t *out_pcr_n,
-                                                 struct tpm_baseline_mismatch *out_cause)
+                                                 struct tpm_baseline_mismatch *out_cause,
+                                                 tpm_pairing_t *out_pairing)
 {
     uint8_t blob[sizeof(struct tpm_baseline)];
     struct tpm_baseline current;
@@ -737,6 +801,12 @@ tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg
      * across boots would otherwise read the previous call's cause beside this
      * call's status. */
     baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_NONE, 0u, 0u);
+    /* And the same rule again for the pairing direction. BADARG is this enum's
+     * "no pairing claim was made", so it is the honest value on every path that
+     * never consults a bind record -- which is most of them, including every
+     * boot on a kernel with no authority provisioned. */
+    if (out_pairing)
+        *out_pairing = TPM_PAIRING_BADARG;
 
     /* THIS KERNEL's identity is checked BEFORE the NV lookup, for the same
      * reason snapshot checks it before the PCR reads: it does not depend on
@@ -825,6 +895,16 @@ tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg
                     (bnv == TPM_NV_MISMATCH)
                         ? tpm_baseline_pairing_status(bview.pairing)
                         : tpm_baseline_nv_status(bnv);
+                /* PUBLISH THE DIRECTION, not just the collapsed status. Only
+                 * the MISMATCH arm computed one; every other arm is an NV-layer
+                 * failure that reached no pairing, so it keeps the sentinel and
+                 * a caller cannot mistake a transport fault for a torn anchor.
+                 * The verifier used to discard this outright, which left the
+                 * boot able to log only the sentence all three directions
+                 * share -- and completing an interrupted commit versus entering
+                 * authorized recovery is exactly the choice it hid. */
+                if (out_pairing && bnv == TPM_NV_MISMATCH)
+                    *out_pairing = bview.pairing;
                 /* THE VERDICT IS WRITTEN ONLY FOR A STATUS THAT PRODUCES ONE.
                  * Setting it before classifying fabricated a tamper report out
                  * of a BUDGET, BUSY or TRANSPORT failure -- a machine that

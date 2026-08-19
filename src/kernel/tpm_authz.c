@@ -14,6 +14,7 @@
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm_budget.h"
 #include "kernel/crypto/sha256.h"
+#include "kernel/klog.h"
 #include "libc/string.h"
 
 /* nonceCaller for the sessions this module opens. It is not the authorization:
@@ -219,6 +220,78 @@ struct authz_policy_ctx {
     tpm_nv_status_t st;
 };
 
+/* Count of allocating commands this kernel abandoned with an UNKNOWN outcome:
+ * the TPM may hold a session or a transient object whose handle nobody could
+ * read. ATOMIC because the authorized paths run under a transport sequence but
+ * this counter is read from outside one, and a torn read would understate a
+ * leak. Monotonic by design -- it is evidence that a slot MAY be held until
+ * reset, and nothing in this file can prove one was later released. */
+static uint32_t s_authz_unknown_alloc;
+
+/* EXEC-failure accounting for a command that may have allocated a handle.
+ *
+ * The PARSE-failure branch of each of these commands recovers the raw handle
+ * and flushes it, because the TPM reported success and the reply merely failed
+ * a strict parser. The EXEC-failure branch cannot do that: either the TPM
+ * refused (nothing exists) or nothing readable came back (nothing is nameable).
+ * So the available action is to CLASSIFY, and to refuse to read the unknown
+ * case as clean.
+ *
+ * `raw_rc` MUST have been reset to TPM_NV_RC_UNSET immediately before the
+ * submission whose failure is being classified; a value left by an earlier
+ * command in the same flow would classify this failure on somebody else's
+ * evidence, and TPM2_RC_SUCCESS is 0, so a zero-initialized slot silently reads
+ * as "executed successfully" rather than as "no answer".
+ *
+ * A pre-dispatch refusal (the cumulative budget expiring before the command
+ * reached the transport) submitted nothing and is as safe as ordinary gate
+ * contention, which is why the dispatch check is part of the condition rather
+ * than an afterthought. Returns 1 when a handle MAY be outstanding. */
+static int authz_alloc_failure_note(uint32_t raw_rc, const char *what)
+{
+    if (tpm_nv_outcome_is_definite_refusal(raw_rc))
+        return 0;                     /* the TPM refused it; nothing allocated */
+    if (!tpm2_seq_last_submit_dispatched())
+        return 0;                     /* never reached the TPM at all */
+    __atomic_fetch_add(&s_authz_unknown_alloc, 1u, __ATOMIC_RELAXED);
+    /* Same trade the NV layer makes: an unnameable handle is a leak that
+     * reports itself once the pool runs out, and disabling the transport over
+     * it would break unrelated TPM use without recovering anything. */
+    klog(LOG_WARN, "TPM",
+         "Authorized %s outcome UNKNOWN: a TPM slot may be held until reset",
+         what);
+    return 1;
+}
+
+#ifdef KERNEL_TESTS
+uint32_t tpm_authz_test_unknown_alloc(void)
+{
+    return __atomic_load_n(&s_authz_unknown_alloc, __ATOMIC_RELAXED);
+}
+
+void tpm_authz_test_reset_unknown_alloc(void)
+{
+    __atomic_store_n(&s_authz_unknown_alloc, 0u, __ATOMIC_RELAXED);
+}
+#endif
+
+/* PARSE-failure accounting for an allocating command the TPM reported SUCCESS
+ * for. The caller has already tried to recover the raw handle and flush it;
+ * this is the branch where it could not, so the resource exists and is
+ * unreachable.
+ *
+ * No dispatch check and no rc classification here, unlike the exec-failure
+ * note: a parsed SUCCESS means the command reached the TPM and ran, so the
+ * allocation is not in doubt -- only its handle is. Silence here was the exact
+ * shape of the gap this section set out to close, one branch further along. */
+static void authz_unrecoverable_handle(const char *what)
+{
+    __atomic_fetch_add(&s_authz_unknown_alloc, 1u, __ATOMIC_RELAXED);
+    klog(LOG_WARN, "TPM",
+         "Authorized %s created but its handle is UNRECOVERABLE: the slot is "
+         "held until reset", what);
+}
+
 /* Marshal the NULL TPMT_TK_VERIFIED a trial PolicyAuthorize takes:
  * tag || hierarchy || empty digest. */
 static void authz_null_ticket(uint8_t t[TPM2_TK_VERIFIED_NULL_LEN])
@@ -234,7 +307,7 @@ static int authz_policy_digest_seq(tpm2_seq_t seq, void *vctx)
     uint8_t cmd[512], rsp[256], nonce[AUTHZ_NONCE_LEN];
     uint8_t zero[AUTHZ_ZERO_DIGEST_LEN];
     uint8_t ticket[TPM2_TK_VERIFIED_NULL_LEN];
-    uint32_t session, n, rlen = 0, rc = 0;
+    uint32_t session, n, rlen = 0, rc = TPM_NV_RC_UNSET;
     tpm_nv_status_t st;
     int dlen;
 
@@ -245,7 +318,11 @@ static int authz_policy_digest_seq(tpm2_seq_t seq, void *vctx)
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_TRIAL,
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
+    rc = TPM_NV_RC_UNSET;
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+        /* The trial session is the one allocating command on this flow, so a
+         * failure here is the only place it can be abandoned unnamed. */
+        (void)authz_alloc_failure_note(rc, "trial session");
         c->st = st;
         return 0;
     }
@@ -257,6 +334,8 @@ static int authz_policy_digest_seq(tpm2_seq_t seq, void *vctx)
         uint32_t leaked = tpm2_rsp_session_handle(rsp, rlen);
         if (leaked != 0u)
             tpm_nv_flush_handle(seq, leaked);
+        else
+            authz_unrecoverable_handle("trial session");
         c->st = TPM_NV_TRANSPORT;
         return 0;
     }
@@ -444,8 +523,14 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
                                  s_authority.public_len, TPM_RH_OWNER);
     if (n == 0u)
         return TPM_NV_BADARG;
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    rc = TPM_NV_RC_UNSET;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+        /* LoadExternal allocates a TRANSIENT OBJECT. The parse-failure branch
+         * below recovers and flushes it; this branch has no reply to recover
+         * from, so all it can do is classify and say so. */
+        (void)authz_alloc_failure_note(rc, "authority key load");
         return st;
+    }
     st = tpm2_parse_load_external(rsp, rlen, &key_handle,
                                   key_name_tpm, (uint16_t)sizeof key_name_tpm,
                                   &key_name_tpm_len);
@@ -456,6 +541,8 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
          * and repeated failures exhaust the pool and disable authorization
          * entirely. */
         key_handle = tpm2_rsp_object_handle(rsp, rlen);
+        if (key_handle == 0u)
+            authz_unrecoverable_handle("authority key object");
         goto flush_key;
     }
 
@@ -497,13 +584,22 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY,
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_key; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    rc = TPM_NV_RC_UNSET;
+    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+        /* flush_key releases the object loaded ABOVE; it says nothing about the
+         * session THIS command may have allocated, which is the gap the note
+         * closes. Both matter: the object is nameable and gets flushed, the
+         * session is not and gets reported. */
+        (void)authz_alloc_failure_note(rc, "policy session");
         goto flush_key;
+    }
     session = tpm2_parse_start_auth_session(rsp, rlen);
     if (session == 0u) {
         uint32_t leaked = tpm2_rsp_session_handle(rsp, rlen);
         if (leaked != 0u)
             tpm_nv_flush_handle(seq, leaked);
+        else
+            authz_unrecoverable_handle("policy session");
         st = TPM_NV_TRANSPORT;
         goto flush_key;
     }
@@ -554,7 +650,17 @@ flush_key:
 static int authz_write_seq(tpm2_seq_t seq, void *vctx)
 {
     struct authz_write_ctx *c = (struct authz_write_ctx *)vctx;
-    uint8_t cmd[1024], rsp[512];
+    /* rsp is sized against the RECORD SIZE THIS FUNCTION ADVERTISES, not
+     * against the two record shapes that happen to be compiled in today.
+     * tpm_authz_write_record accepts any record_len up to TPM_NV_MAX_DATA, and
+     * the readback below is an NV_Read whose response is
+     * header(10) + parameterSize(4) + TPM2B_MAX_NV_BUFFER(2 + record_len) +
+     * a full one-session auth area (~69). At the maximum that is 528 bytes
+     * before the auth area, so the previous 512 could not hold it: a manifest
+     * grown past ~437 bytes would have surfaced as an unexplained transport
+     * error rather than a named refusal. TPM_NV_MAX_DATA + 128 is the same
+     * arithmetic the NV layer's own policy-op helper uses for this shape. */
+    uint8_t cmd[1024], rsp[TPM_NV_MAX_DATA + 128u];
     uint8_t names[2u * (2u + SHA256_DIGEST_LEN)];
     uint8_t cnames[2u * (2u + SHA256_DIGEST_LEN)];
     uint8_t params[16u + TPM_NV_MAX_DATA];
@@ -1097,9 +1203,17 @@ static tpm_nv_status_t authz_read_record(uint32_t nv_index, uint32_t counter_ind
     rs = tpm_record_parse(buf, cap, want_kind, want_payload_len, out_view);
     /* A record that does not parse is CORRUPT PERSISTED STATE, not caller
      * misuse: it is an authorized-recovery question, which is exactly the
-     * distinction TPM_NV_CONTRACT carries and TPM_NV_BADARG does not. */
+     * distinction TPM_NV_RECORD carries and TPM_NV_BADARG does not.
+     *
+     * RECORD and not CONTRACT, which this returned until section 29. Both are
+     * corrupt persisted state, but they name DIFFERENT objects: a CONTRACT
+     * failure says the index answering is not the one enrolled, and the
+     * operator diagnosis built on it says exactly that. Reaching here means the
+     * enrolled index passed its identity check and answered -- the bytes it
+     * holds are simply not a record -- so reporting CONTRACT sent an operator
+     * hunting a substituted index that is not there. */
     if (rs != TPM_RECORD_OK)
-        return TPM_NV_CONTRACT;
+        return TPM_NV_RECORD;
 
     /* The commit check. The DIRECTION is reported separately for callers that
      * must act on it (recovery routing), while the status stays MISMATCH for
@@ -1195,8 +1309,11 @@ tpm_nv_status_t tpm_ab_floor_read_view(struct tpm_ab_floor_view *out)
      * authority ever committed. */
     if (pairing != TPM_PAIRING_CURRENT)
         return TPM_NV_MISMATCH;
+    /* Same split as the parse above: the record was accepted structurally and
+     * its PAYLOAD is the thing that will not yield a version, which is the
+     * record's problem and not the enrolled contract's. */
     if (tpm_record_ab_floor_version(&view, &out->version) != TPM_RECORD_OK)
-        return TPM_NV_CONTRACT;
+        return TPM_NV_RECORD;
     out->version_valid = 1u;
     return TPM_NV_OK;
 }
@@ -1272,7 +1389,14 @@ tpm_nv_status_t tpm_baseline_bind_view(const uint8_t *blob, uint32_t blob_len,
     uint8_t buf[TPM_BASELINE_BIND_LEN];
     uint8_t digest[SHA256_DIGEST_LEN];
     struct tpm_record_view view = { 0 };
-    const struct tpm_baseline_bind_payload *p;
+    /* A COPY, not a pointer cast over view.payload. The payload points into
+     * `buf` above, a plain uint8_t array with no alignment guarantee, while
+     * this struct carries 4-byte members -- a type-pun x86-64 happens to
+     * tolerate and the planned ARM64 port may not. memcpy states the intent,
+     * costs one 40-byte copy on a path that has just done a TPM round trip,
+     * and is the only shape that stays correct if the record layout ever puts
+     * the payload at an odd offset. */
+    struct tpm_baseline_bind_payload p;
     uint64_t counter = 0;
     tpm_pairing_t pairing = TPM_PAIRING_BADARG;
     tpm_nv_status_t st;
@@ -1313,11 +1437,14 @@ tpm_nv_status_t tpm_baseline_bind_view(const uint8_t *blob, uint32_t blob_len,
     if (pairing != TPM_PAIRING_CURRENT)
         return TPM_NV_MISMATCH;
 
-    p = (const struct tpm_baseline_bind_payload *)view.payload;
-    if (p->blob_len != blob_len)
+    /* The payload length was pinned at the read: authz_read_record was asked
+     * for exactly sizeof(struct tpm_baseline_bind_payload) and refuses any
+     * record that does not carry it, so this copy cannot over-read the view. */
+    memcpy(&p, view.payload, sizeof p);
+    if (p.blob_len != blob_len)
         return TPM_NV_MISMATCH;
     sha256(blob, blob_len, digest);
-    if (memcmp(digest, p->blob_digest, SHA256_DIGEST_LEN) != 0)
+    if (memcmp(digest, p.blob_digest, SHA256_DIGEST_LEN) != 0)
         return TPM_NV_MISMATCH;
     out->bound = 1u;
     return TPM_NV_OK;

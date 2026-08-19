@@ -339,6 +339,39 @@ typedef enum {
      * retry is exactly what must not happen. Only "the TPM never received it" is
      * retry-safe, and BUSY is the sole status that guarantees it. */
     TPM_BASELINE_BUSY = 11,
+    /* The enrolled index answered and passed its identity contract, and the
+     * RECORD BYTES it holds do not parse. Published as a MISMATCH exactly as
+     * IDENTITY is -- corrupt persisted authentication state is not a clean
+     * boot -- but named separately because the two send an operator to
+     * different places: IDENTITY says the index answering is not the enrolled
+     * one, while this says the enrolled one is answering with rubbish.
+     *
+     * It was IDENTITY until section 29, and the verdict was right while the
+     * diagnosis was not: an operator following the IDENTITY repair went looking
+     * for a substituted or redefined index that was never there. */
+    TPM_BASELINE_RECORD = 12,
+    /* NO UPDATE AUTHORITY IS PROVISIONED, and an operation that requires one
+     * was asked for. A CONFIGURATION state, not a verdict about the machine:
+     * nothing was measured, nothing failed to match, and the boot must not
+     * publish anything for it.
+     *
+     * Split out of UNBOUND, which was carrying this along with a real verify
+     * verdict. The collapse was load-bearing in the wrong direction: because
+     * UNBOUND is a published integrity failure, the boot's enroll call site had
+     * to special-case it by name to avoid reporting tamper on a healthy machine
+     * whose enroll merely refused, and that exception is exactly the kind of
+     * hand-maintained exclusion this file removes elsewhere. */
+    TPM_BASELINE_NOAUTH = 13,
+    /* AN UPDATE AUTHORITY IS PROVISIONED, so the UNAUTHENTICATED enroll entry
+     * point refuses: it writes the blob under owner auth and nothing else, so
+     * completing it would leave the bind record describing the PREVIOUS blob
+     * and the very next verify would report UNBOUND. The authorized path is
+     * tpm_baseline_enroll_bound.
+     *
+     * The exact OPPOSITE configuration to NOAUTH, and both returned UNBOUND
+     * before section 29 -- one status for two states whose operator actions are
+     * "install an authority" and "use the authorized path". */
+    TPM_BASELINE_AUTHREQ = 14,
 } tpm_baseline_status_t;
 
 /* ---- Pure core (MMIO-free, fixture-tested) ---- */
@@ -362,6 +395,19 @@ typedef enum {
  * detected tamper, which the boot must PUBLISH. TPMERR is reserved for a
  * failure that reached no conclusion at all, and the boot drops it. */
 tpm_baseline_status_t tpm_baseline_pairing_status(tpm_pairing_t pairing);
+
+/* The DIRECTION-SPECIFIC repair for a pairing that is not CURRENT, or NULL when
+ * the pairing names no repair (CURRENT, or a pairing that was never computed).
+ *
+ * This is the half tpm_baseline_status_repair cannot give: TPM_BASELINE_TORN
+ * deliberately collapses three directions whose repairs are opposite, so its
+ * line says only the one thing they share. Completing an interrupted commit and
+ * entering authorized recovery are different actions, and prescribing recovery
+ * for an uncommitted write is destructive over-recovery -- it overwrites an
+ * authentic record whose commit increment merely failed. A caller that has the
+ * direction reports BOTH lines; a caller that does not still gets the shared
+ * one, unchanged. Pure. */
+const char *tpm_baseline_pairing_repair(tpm_pairing_t pairing);
 
 /* Is this status a CONCLUSIVE INTEGRITY FAILURE on the VERIFY path?
  *
@@ -584,10 +630,20 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
  * leave NONE rather than a stale cause from a previous boot's call. Only
  * TPM_BASELINE_OK can report a cause other than NONE, because it is the only
  * status reached by actually comparing two baselines: the authenticity
- * failures are MISMATCH verdicts whose reason is the STATUS, not a field. */
+ * failures are MISMATCH verdicts whose reason is the STATUS, not a field.
+ *
+ * `out_pairing` is optional and FAIL-CLOSED on the same terms: it is set to
+ * TPM_PAIRING_BADARG -- "no pairing claim was made" -- before any return, and
+ * carries a real direction only where one was computed. It exists because
+ * TPM_BASELINE_TORN collapses UNCOMMITTED, TORN and IMPOSSIBLE, whose repairs
+ * are opposite; the verifier already computes the direction and used to discard
+ * it, leaving a consumer able to log only the one sentence every direction
+ * shares. Pass it to tpm_baseline_pairing_repair for the direction-specific
+ * line. A NULL here changes nothing else about the call. */
 tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg,
                                                  uint8_t *out_overall,
                                                  uint8_t *out_pcr_status,
                                                  uint8_t pcr_cap,
                                                  uint8_t *out_pcr_n,
-                                                 struct tpm_baseline_mismatch *out_cause);
+                                                 struct tpm_baseline_mismatch *out_cause,
+                                                 tpm_pairing_t *out_pairing);

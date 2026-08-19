@@ -1240,6 +1240,12 @@ static void test_baseline_verify_detail_no_transport(void)
     uint8_t overall = 0xEEu;
     uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
     uint8_t pcr_n = 0xEEu;
+    /* POISONED with a real direction, not with zero. Zero is
+     * TPM_PAIRING_CURRENT -- a healthy committed anchor -- so a test that left
+     * this zeroed would read a deleted sentinel-write as a pass. TORN is the
+     * value whose survival would be actively dangerous: it routes an operator
+     * to destructive recovery. */
+    tpm_pairing_t pairing = TPM_PAIRING_TORN;
     tpm_baseline_status_t st;
 
     memset(pcr_status, 0xEE, sizeof(pcr_status));
@@ -1248,7 +1254,7 @@ static void test_baseline_verify_detail_no_transport(void)
 
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
                                     pcr_status, (uint8_t)TPM_BASELINE_MAX_PCRS,
-                                    &pcr_n, &m);
+                                    &pcr_n, &m, &pairing);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
                    "no transport still verifies to NO_TPM through the detail wrapper");
@@ -1262,11 +1268,13 @@ static void test_baseline_verify_detail_no_transport(void)
                    "the detail wrapper keeps the not-evaluated per-PCR contract");
     TEST_ASSERT_EQ(overall, 0xEEu,
                    "the detail wrapper still publishes no verdict on a non-verdict return");
+    TEST_ASSERT_EQ((int)pairing, (int)TPM_PAIRING_BADARG,
+                   "a path that consulted no bind record claims NO pairing direction");
 
     /* A NULL cause pointer is "no detail wanted" and must not fault. */
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     (uint8_t *)0, (uint8_t *)0, 0u, (uint8_t *)0,
-                                    (struct tpm_baseline_mismatch *)0);
+                                    (struct tpm_baseline_mismatch *)0, (tpm_pairing_t *)0);
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
                    "a NULL cause pointer is accepted on the no-transport path");
 
@@ -1280,9 +1288,10 @@ static void test_baseline_verify_detail_no_transport(void)
     memset(pcr_status, 0xEE, sizeof(pcr_status));
     overall = 0xEEu;
     pcr_n = 0xEEu;
+    pairing = TPM_PAIRING_TORN;
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
                                     pcr_status,
-                                    (uint8_t)(TPM_BASELINE_MAX_PCRS - 1u), &pcr_n, &m);
+                                    (uint8_t)(TPM_BASELINE_MAX_PCRS - 1u), &pcr_n, &m, &pairing);
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
                    "a buffer too small for the measured set is refused outright");
     TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
@@ -1297,6 +1306,8 @@ static void test_baseline_verify_detail_no_transport(void)
                    "the undersized refusal reports nothing evaluated");
     TEST_ASSERT_EQ(overall, 0xEEu,
                    "a BADARG return publishes no verdict");
+    TEST_ASSERT_EQ((int)pairing, (int)TPM_PAIRING_BADARG,
+                   "and the undersized refusal clears the pairing direction too");
     TEST_ASSERT_EQ(pcr_status[0], 0xEEu,
                    "a refused call writes no per-PCR status");
 
@@ -1312,22 +1323,27 @@ static void test_baseline_verify_detail_no_transport(void)
  * today. */
 static void test_baseline_status_repair(void)
 {
-    static const tpm_baseline_status_t failures[6] = {
+    /* RECORD is in this table, not beside it: it is a publishing failure like
+     * the other six, and the whole point of splitting it out of IDENTITY was
+     * that their guidance must differ. The all-pairs distinctness loop below is
+     * what enforces that, so adding it here is the assertion. */
+    static const tpm_baseline_status_t failures[7] = {
         TPM_BASELINE_TORN, TPM_BASELINE_RELABELED, TPM_BASELINE_UNBOUND,
-        TPM_BASELINE_IDENTITY, TPM_BASELINE_CORRUPT, TPM_BASELINE_SELF_CORRUPT
+        TPM_BASELINE_IDENTITY, TPM_BASELINE_CORRUPT, TPM_BASELINE_SELF_CORRUPT,
+        TPM_BASELINE_RECORD
     };
-    const char *texts[6];
+    const char *texts[7];
     uint32_t i, j;
 
-    for (i = 0; i < 6u; i++) {
+    for (i = 0; i < 7u; i++) {
         texts[i] = tpm_baseline_status_repair((uint8_t)failures[i]);
         TEST_ASSERT(texts[i] != (const char *)0,
                     "every MISMATCH-publishing failure status has guidance");
         TEST_ASSERT(tpm_baseline_status_is_failure(failures[i]) != 0,
                     "control: each of these really is a failure status");
     }
-    for (i = 0; i < 6u; i++)
-        for (j = i + 1u; j < 6u; j++)
+    for (i = 0; i < 7u; i++)
+        for (j = i + 1u; j < 7u; j++)
             TEST_ASSERT(strcmp(texts[i], texts[j]) != 0,
                         "no two failure statuses share guidance");
 
@@ -1356,11 +1372,38 @@ static void test_baseline_status_repair(void)
     TEST_ASSERT(tpm_baseline_status_repair(200u) == (const char *)0,
                 "an out-of-range status yields no guidance rather than a stray pointer");
 
+    /* THE TWO CONFIGURATION STATES. They are not failures, so they are absent
+     * from the table above -- but they DO carry guidance, because each names an
+     * action, and the actions are opposite: install an authority, or use the
+     * authorized path. A shared line would be as wrong here as it would be in
+     * the failure table, so they are asserted distinct from each other and from
+     * every failure text. */
+    {
+        const char *noauth = tpm_baseline_status_repair((uint8_t)TPM_BASELINE_NOAUTH);
+        const char *authreq = tpm_baseline_status_repair((uint8_t)TPM_BASELINE_AUTHREQ);
+        TEST_ASSERT(noauth != (const char *)0,
+                    "no authority provisioned names its action");
+        TEST_ASSERT(authreq != (const char *)0,
+                    "the wrong enroll entry point names its action");
+        TEST_ASSERT(strcmp(noauth, authreq) != 0,
+                    "installing an authority is not the same as using the authorized path");
+        for (i = 0; i < 7u; i++) {
+            TEST_ASSERT(strcmp(noauth, texts[i]) != 0,
+                        "a configuration state does not borrow failure guidance");
+            TEST_ASSERT(strcmp(authreq, texts[i]) != 0,
+                        "nor does the other one");
+        }
+        TEST_ASSERT_EQ(tpm_baseline_status_is_failure(TPM_BASELINE_NOAUTH), 0,
+                       "CONTROL: and neither is classed as an integrity failure");
+        TEST_ASSERT_EQ(tpm_baseline_status_is_failure(TPM_BASELINE_AUTHREQ), 0,
+                       "CONTROL: including the one the boot enroll path returns");
+    }
+
     /* Both call sites render these into a klog entry that TRUNCATES at
      * message[256], and the enrollment path wraps the longest prefix around
      * them. A truncated safety instruction is worse than none -- "do NOT" can
      * be exactly what gets cut -- so the composite is bounded here. */
-    for (i = 0; i < 6u; i++) {
+    for (i = 0; i < 7u; i++) {
         const uint32_t rendered =
             (uint32_t)strlen("Baseline enroll integrity failure (status 99): "
                              "not a clean first install -- ") +
@@ -1573,7 +1616,7 @@ static void test_baseline_verify_match(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "a matching baseline verifies");
@@ -1623,7 +1666,7 @@ static void test_baseline_verify_pcr_mismatch(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK,
@@ -1670,7 +1713,7 @@ static void test_baseline_verify_scalar_mismatch(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "a scalar mismatch still compares");
@@ -1711,7 +1754,7 @@ static void test_baseline_verify_abi_mismatch(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "an ABI change still compares");
@@ -1743,7 +1786,7 @@ static void test_baseline_verify_no_baseline(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_BASELINE,
@@ -1785,7 +1828,7 @@ static void test_baseline_verify_corrupt(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_CORRUPT,
@@ -1823,7 +1866,7 @@ static void test_baseline_verify_snapshot_fail(void)
     st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
                                     &overall, pcr_status,
                                     (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
-                                    &cause);
+                                    &cause, (tpm_pairing_t *)0);
     bv_close(&f);
 
     TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,

@@ -661,13 +661,14 @@ void boot_phase1(void)
              * this class: globally that status also covers a benign commit-
              * counter race, and widening it is the regression the write path
              * already paid for. */
-            /* UNBOUND is EXCLUDED here and only here: tpm_baseline_enroll
-             * returns it as an ordinary configuration refusal on a healthy
-             * authority-provisioned machine, so publishing MISMATCH for it
-             * would report tamper on a working box. On the verify path below
-             * it genuinely is a verdict. */
-            if (tpm_baseline_status_is_failure(bs) &&
-                bs != TPM_BASELINE_UNBOUND) {
+            /* NO exclusion list here any more. tpm_baseline_enroll used to
+             * return the same UNBOUND this predicate publishes as tamper, so
+             * this call site had to name and exclude it -- a hand-maintained
+             * exception of exactly the kind the shared predicate exists to
+             * remove. The refusal is now TPM_BASELINE_AUTHREQ, a configuration
+             * state the predicate does not class as a failure, so the general
+             * rule is correct here without help. */
+            if (tpm_baseline_status_is_failure(bs)) {
                 /* The same named diagnosis the verification path gives. This
                  * printed only `status %d` before, so a corrupt KERNEL
                  * identity found during enrollment -- the one status whose
@@ -681,6 +682,24 @@ void boot_phase1(void)
                      repair ? " -- " : "",
                      repair ? repair : "");
                 tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0);
+            } else if (bs != TPM_BASELINE_OK) {
+                /* A NON-FAILURE that is also not success is a CONFIGURATION
+                 * state -- no authority installed, or an authority installed
+                 * and the unauthenticated path used. Each names an action, and
+                 * without this the enroll refused for a fixable reason while
+                 * the operator was handed a bare status number.
+                 *
+                 * Deliberately NOT a named list of statuses: splitting the
+                 * overloaded UNBOUND was what let this call site delete its one
+                 * hand-maintained exclusion, and a list here would reintroduce
+                 * that a status at a time. Anything carrying guidance but no
+                 * verdict prints its guidance, and nothing is published,
+                 * because nothing was measured. */
+                const char *repair = tpm_baseline_status_repair((uint8_t)bs);
+                if (repair)
+                    klog(LOG_WARN, "TPM",
+                         "Baseline enroll refused (status %d): %s",
+                         (uint64_t)bs, repair);
             }
         } else if (g_boot_info.config.tpm_enroll) {
             /* Only report a refusal when enrollment was actually requested;
@@ -701,6 +720,10 @@ void boot_phase1(void)
              * below is bounded by a constant, so a future edit setting that
              * constant to 0 would leave this read without ever calling verify. */
             struct tpm_baseline_mismatch cause = { 0, 0, 0, 0 };
+            /* Same reason as `cause`: a bounded retry loop that never runs must
+             * leave this reading "no pairing claim was made", not zero -- which
+             * is TPM_PAIRING_CURRENT and would read as a healthy anchor. */
+            tpm_pairing_t pairing = TPM_PAIRING_BADARG;
             /* Verify, retrying ONLY transport contention.
              *
              * TPM_BASELINE_BUSY means the transport gate refused before anything
@@ -745,7 +768,7 @@ void boot_phase1(void)
                                                 TPM_ALG_SHA256,
                                                 &overall, pcr_status,
                                                 (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
-                                                &pcr_n, &cause);
+                                                &pcr_n, &cause, &pairing);
                 if (bs != TPM_BASELINE_BUSY)
                     break;
             }
@@ -821,9 +844,19 @@ void boot_phase1(void)
              * healthy machine, while the rest are integrity failures. */
             {
                 const char *repair = tpm_baseline_status_repair((uint8_t)bs);
+                const char *dir = tpm_baseline_pairing_repair(pairing);
                 if (repair)
                     klog(bs == TPM_BASELINE_UNBOUND ? LOG_WARN : LOG_ERROR,
                          "TPM", "%s", repair);
+                /* THE DIRECTION, on its own line, because the status above
+                 * deliberately names only what every direction shares. This is
+                 * the difference between telling an operator to complete an
+                 * interrupted commit and telling them to enter recovery, which
+                 * for an uncommitted record destroys an authentic one. NULL for
+                 * every status that computed no pairing, so an ordinary boot
+                 * prints nothing extra. */
+                if (dir)
+                    klog(LOG_ERROR, "TPM", "%s", dir);
             }
 
             /* Budget expiry collapses into NO_TPM by design (tpm_baseline.c

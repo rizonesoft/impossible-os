@@ -1100,18 +1100,13 @@ static int nv_cmd_exec_common(tpm2_seq_t seq, int teardown,
     return 0;
 }
 
-/* Sentinel for "tpm_session_cmd_exec_seq never parsed a response header", which
- * it signals by leaving *out_rc untouched. No real TPM response code can be
- * 0xFFFFFFFF (the format-1 encoding bounds it well below that). */
-#define NV_RC_UNSET 0xFFFFFFFFu
-
 /* 1 when a failed command definitely allocated nothing, so the transport is
  * safe to keep: the TPM returned a parsed response REFUSING it. Anything else
  * (no header parsed, or a structurally invalid rc-success) means the command
  * may have executed and its result is unknown. */
-static int nv_outcome_is_definite_refusal(uint32_t raw_rc)
+int tpm_nv_outcome_is_definite_refusal(uint32_t raw_rc)
 {
-    return (raw_rc != NV_RC_UNSET && raw_rc != TPM2_RC_SUCCESS) ? 1 : 0;
+    return (raw_rc != TPM_NV_RC_UNSET && raw_rc != TPM2_RC_SUCCESS) ? 1 : 0;
 }
 
 /* The single teardown for every started session, and it VERIFIES itself.
@@ -1173,7 +1168,7 @@ static void nv_flush(tpm2_seq_t seq, uint32_t handle)
      * reaching the same conclusion. An unproven teardown is then REPORTED, not
      * escalated -- see the note at the end of this function. */
     for (attempt = 0; attempt < TPM_NV_FLUSH_RETRIES; attempt++) {
-        uint32_t rlen = 0, raw_rc = NV_RC_UNSET;
+        uint32_t rlen = 0, raw_rc = TPM_NV_RC_UNSET;
         tpm_nv_status_t st;
         int exec_ok = (tpm_session_cmd_exec_teardown(seq, cmd, n, rsp, sizeof rsp,
                                                      &rlen, &st, &raw_rc) == 0);
@@ -1236,7 +1231,7 @@ static void nv_session_failure_guard(tpm2_seq_t seq, tpm_nv_status_t st,
                                      uint32_t raw_rc)
 {
     (void)seq; (void)st;
-    if (nv_outcome_is_definite_refusal(raw_rc))
+    if (tpm_nv_outcome_is_definite_refusal(raw_rc))
         return;                       /* the TPM refused it; nothing allocated */
     /* Same trade as nv_flush(): an unnameable session is a leak that reports
      * itself once the pool runs out, and disabling the transport over it would
@@ -1357,7 +1352,7 @@ static int nv_policy_pcr_digest_seq(tpm2_seq_t seq, void *vctx)
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_TRIAL,
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
-    sas_rc = NV_RC_UNSET;
+    sas_rc = TPM_NV_RC_UNSET;
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
                                  &sas_rc) != 0) {
         nv_session_failure_guard(seq, st, sas_rc);
@@ -1459,7 +1454,7 @@ static int nv_policy_session_run_seq(tpm2_seq_t seq, void *vctx)
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY,
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
-    sas_rc = NV_RC_UNSET;
+    sas_rc = TPM_NV_RC_UNSET;
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
                                  &sas_rc) != 0) {
         nv_session_failure_guard(seq, st, sas_rc);
@@ -2188,7 +2183,7 @@ static int nv_delete_policy_digest_seq(tpm2_seq_t seq, void *vctx)
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_TRIAL,
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
-    sas_rc = NV_RC_UNSET;
+    sas_rc = TPM_NV_RC_UNSET;
     if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st,
                                  &sas_rc) != 0) {
         nv_session_failure_guard(seq, st, sas_rc);
@@ -2559,7 +2554,7 @@ tpm_nv_status_t tpm_nv_read_identity_seq(tpm2_seq_t seq, uint32_t nv_index,
 {
     uint8_t cmd[16], rsp[128];
     struct tpm_nv_public pub;
-    uint32_t n, rlen = 0, rc = NV_RC_UNSET;
+    uint32_t n, rlen = 0, rc = TPM_NV_RC_UNSET;
     tpm_nv_status_t st;
     int ok = 0;
 
@@ -2581,7 +2576,7 @@ tpm_nv_status_t tpm_nv_read_counter_seq(tpm2_seq_t seq, uint32_t nv_index,
                                         uint64_t *out)
 {
     uint8_t cmd[64], rsp[128], buf[TPM_NV_COUNTER_SIZE];
-    uint32_t n, rlen = 0, rc = NV_RC_UNSET;
+    uint32_t n, rlen = 0, rc = TPM_NV_RC_UNSET;
     tpm_nv_status_t st;
     int got;
 

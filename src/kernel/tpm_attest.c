@@ -393,7 +393,12 @@ static tpm_attest_status_t map_attest(tpm_nv_status_t s)
          * integrity failures and are named so a future status cannot inherit
          * this bucket silently. */
         case TPM_NV_RECREATED:
-        case TPM_NV_CONTRACT:  return TPM_ATTEST_TPMERR;
+        case TPM_NV_CONTRACT:
+        /* A record that failed to PARSE lands here with the enrolled
+         * contract's own corruption: this layer has no separate action
+         * for either, and naming it keeps the default arm unreachable
+         * for every value the NV enum defines. */
+        case TPM_NV_RECORD:    return TPM_ATTEST_TPMERR;
         /* Added with the authorized-record work: an operation needing an update
          * authority when none is installed. Named explicitly rather than left
          * to the default arm, which this switch promises is unreachable for

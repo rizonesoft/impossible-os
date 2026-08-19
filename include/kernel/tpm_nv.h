@@ -391,7 +391,43 @@ typedef enum {
                              * every image. A caller must not retry it, must not
                              * fall back to owner auth, and should report it as
                              * a configuration state rather than a fault. */
+    TPM_NV_RECORD    = 18,  /* a persisted authorized RECORD failed to PARSE.
+                             * Split out of TPM_NV_CONTRACT, which means the
+                             * ENROLLED identity contract is malformed: the two
+                             * are different objects with different repairs. A
+                             * CONTRACT failure says the index answering is not
+                             * the one enrolled; this says the enrolled index
+                             * answered and the bytes it holds are not a record.
+                             * Both are corrupt persisted state and both are an
+                             * authorized-recovery question, which is why they
+                             * were conflated -- but a reader handed one status
+                             * for both cannot tell which object to recover. */
 } tpm_nv_status_t;
+
+/* Sentinel for "the exec wrapper never parsed a response header", which it
+ * signals by leaving its *out_rc untouched. No real TPM response code can be
+ * 0xFFFFFFFF (the format-1 encoding bounds it well below that).
+ *
+ * PUBLIC because the classification below is only sound when every caller
+ * initializes its rc slot to this value BEFORE each submission: a stale rc left
+ * by an earlier command in the same flow would classify the NEXT command's
+ * failure on evidence that does not belong to it. */
+#define TPM_NV_RC_UNSET 0xFFFFFFFFu
+
+/* 1 when a FAILED command definitely allocated nothing, so no handle can be
+ * outstanding: the TPM returned a parsed response REFUSING it. Anything else
+ * (no header parsed at all, or a structurally invalid rc-success) leaves the
+ * outcome UNKNOWN -- the command may have executed and allocated a session or a
+ * transient object whose handle sits in a reply nobody could read.
+ *
+ * PURE, and exported rather than left file-local because the NV layer and the
+ * authorized-record layer must answer the same question the same way: an
+ * exec-failure path that skips this classification silently holds a slot in the
+ * TPM's small pool until reset, and repeated failures disable the operation
+ * entirely. The unknown case is NOT recoverable by flushing -- there is no
+ * handle to name -- so classifying it, reporting it and refusing to read it as
+ * clean is the whole available action. */
+int tpm_nv_outcome_is_definite_refusal(uint32_t raw_rc);
 
 /* Classify a raw TPM2 response code into tpm_nv_status_t. Format-first: a
  * format-0 code (bit 7 clear) is exact-compared against the NV warning/error

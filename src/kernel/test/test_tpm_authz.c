@@ -706,8 +706,23 @@ static void test_baseline_nv_status_map(void)
                    (int)TPM_BASELINE_NO_BASELINE, "an undefined index has no baseline");
     TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_BADARG),
                    (int)TPM_BASELINE_BADARG, "a caller error is not a TPM fault");
+    /* NOAUTH and not UNBOUND: the assertion's own name says configuration
+     * state, and UNBOUND is a PUBLISHED integrity failure. Pinning the two
+     * together is what forced the boot's enroll call site to carry a named
+     * exclusion for UNBOUND. */
     TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_UNAVAIL),
-                   (int)TPM_BASELINE_UNBOUND, "no authority is a configuration state");
+                   (int)TPM_BASELINE_NOAUTH, "no authority is a configuration state");
+    TEST_ASSERT_EQ(tpm_baseline_status_is_failure(TPM_BASELINE_NOAUTH), 0,
+                   "no authority provisioned is not an integrity failure");
+    TEST_ASSERT_EQ(tpm_baseline_status_is_failure(TPM_BASELINE_AUTHREQ), 0,
+                   "the wrong enroll entry point is not an integrity failure");
+    /* The other half of the split: corrupt record BYTES stay a published
+     * failure, because a boot whose authentication record does not parse has
+     * not verified anything. */
+    TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_RECORD),
+                   (int)TPM_BASELINE_RECORD, "a corrupt record is its own status");
+    TEST_ASSERT_EQ(tpm_baseline_status_is_failure(TPM_BASELINE_RECORD), 1,
+                   "a corrupt authentication record IS published");
     TEST_ASSERT_EQ((int)tpm_baseline_nv_status(TPM_NV_ATTRS),
                    (int)TPM_BASELINE_TPMERR,
                    "an illegal attribute request stays a device-shaped fault");
@@ -1321,6 +1336,21 @@ static int      azf_ready, azf_executed;
 static uint32_t azf_seen[48];
 static uint32_t azf_seen_n;
 static uint32_t azf_fail_cc, azf_fail_rc;
+/* MALFORM control: unlike azf_fail_cc, which makes the TPM REFUSE a command,
+ * this lets the command EXECUTE -- the fake allocates its handle and keeps it
+ * live -- and then damages the reply. That is the only way to reach the two
+ * unknown-outcome branches, because both require the allocation to have
+ * happened while the handle is unreadable.
+ *   AZF_MALFORM_TRUNC  reply claims success and carries no handle
+ *   AZF_MALFORM_DROP   no reply at all, so no response header ever parses
+ * azf_malform_nth selects WHICH occurrence of the command code is damaged
+ * (1-based), which is required because one authorized write opens several
+ * StartAuthSession commands and only an occurrence selector can reach the
+ * later ones. */
+#define AZF_MALFORM_TRUNC 1u
+#define AZF_MALFORM_DROP  2u
+static uint32_t azf_malform_cc, azf_malform_mode, azf_malform_nth;
+static uint32_t azf_malform_seen;   /* occurrences of azf_malform_cc so far */
 static uint64_t azf_counter;                 /* what an 8-byte NV_Read reports */
 static uint8_t  azf_record[192];             /* what a record NV_Read reports */
 static uint32_t azf_record_len;
@@ -1548,6 +1578,32 @@ static int azf_cphash_matches(uint32_t cc, uint32_t idx,
     return memcmp(want, azf_pinned_cphash, SHA256_DIGEST_LEN) == 0;
 }
 
+/* Damage the reply for the selected occurrence of a command code, AFTER the
+ * handler has already allocated whatever the command allocates. Returns 1 when
+ * it took over the response, so the caller returns immediately. */
+static int azf_malform_take(uint32_t cc)
+{
+    if (azf_malform_cc == 0u || cc != azf_malform_cc)
+        return 0;
+    azf_malform_seen++;
+    if (azf_malform_seen != azf_malform_nth)
+        return 0;
+    if (azf_malform_mode == AZF_MALFORM_DROP) {
+        /* Nothing comes back at all, so no response header ever parses and the
+         * caller's rc slot keeps its unset sentinel. */
+        azf_rsp_len = 0u;
+        return 1;
+    }
+    /* TRUNCATE: a well-formed SUCCESS header and nothing after it. The strict
+     * parser rejects it and the raw-handle recovery finds no handle either,
+     * which is precisely the unreachable-allocation case. */
+    tpm2_be16_put(azf_rsp + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(azf_rsp + 2, 10u);
+    tpm2_be32_put(azf_rsp + 6, TPM2_RC_SUCCESS);
+    azf_rsp_len = 10u;
+    return 1;
+}
+
 static void azf_build_response(void)
 {
     uint32_t cc = tpm2_be32_get(azf_cmd + 6);
@@ -1664,6 +1720,9 @@ static void azf_build_response(void)
         tpm2_be32_put(azf_rsp + 10, handle);
         tpm2_be16_put(azf_rsp + 14, 16u);
         azf_rsp_len = 32u;
+        /* AFTER the session is live in the fake, so a damaged reply leaves a
+         * real allocation behind exactly as a real TPM would. */
+        (void)azf_malform_take(cc);
         return;
     }
     if (cc == TPM2_CC_POLICY_COMMAND_CODE) {
@@ -1706,6 +1765,8 @@ static void azf_build_response(void)
         for (i = 0; i < 34u; i++)
             azf_rsp[16 + i] = azf_key_name[i];
         azf_rsp_len = 10u + 4u + 2u + 34u;
+        /* AFTER azf_obj_live is set, for the same reason as the session arm. */
+        (void)azf_malform_take(cc);
         return;
     }
     if (cc == TPM2_CC_VERIFY_SIGNATURE) {
@@ -2000,6 +2061,8 @@ static void azf_reset(uint32_t fail_cc, uint32_t fail_rc)
     azf_ready = 0; azf_executed = 0;
     azf_seen_n = 0;
     azf_fail_cc = fail_cc; azf_fail_rc = fail_rc;
+    azf_malform_cc = 0u; azf_malform_mode = 0u; azf_malform_nth = 0u;
+    azf_malform_seen = 0u;
     azf_counter = 0u;
     azf_record_len = 0u;
     azf_writes = 0; azf_increments = 0; azf_flushes = 0; azf_loads = 0;
@@ -2463,8 +2526,13 @@ static void test_authz_e2e_forged_record_refused(void)
     tpm_t_test_restore(prev);
 
     /* Corrupt PERSISTED state, not caller misuse: an authorized-recovery
-     * question, which is exactly what TPM_NV_CONTRACT carries. */
-    TEST_ASSERT_EQ((int)st, (int)TPM_NV_CONTRACT,
+     * question, which is exactly what TPM_NV_RECORD carries.
+     *
+     * RECORD and not CONTRACT. The index answering here passed its identity
+     * contract -- the fixture serves the enrolled one -- and only its stored
+     * BYTES were edited, so CONTRACT would have sent an operator hunting a
+     * substituted index that is not there. */
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_RECORD,
                    "a record edited in place is refused, not reported");
 }
 
@@ -2621,6 +2689,214 @@ static void test_authz_e2e_no_handle_leak_on_failure(void)
     TEST_ASSERT_EQ((int)azf_increments, 0, "the commit was refused");
     TEST_ASSERT_EQ(azf_any_handle_live(), 0,
                    "no handle survives a failure on the commit half");
+}
+
+/* How many times `cc` was submitted during the last flow. */
+static uint32_t azf_seen_count(uint32_t cc)
+{
+    uint32_t i, n = 0u;
+    for (i = 0u; i < azf_seen_n; i++)
+        if (azf_seen[i] == cc)
+            n++;
+    return n;
+}
+
+/* One authorized floor advance, with the fixture armed however the caller left
+ * it. Factored out because the accounting tests run it many times over. */
+static void azf_run_floor_advance(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_authz_transition tr;
+    uint8_t approved_w[SHA256_DIGEST_LEN], approved_c[SHA256_DIGEST_LEN], sig[8];
+
+    memset(&tr, 0, sizeof tr);
+    azf_counter = 4u;
+    azf_record_len = az_build_floor(azf_record, AZ_FLOOR_LEN, 4u, 1u);
+    azf_arm_floor_advance(&tr, approved_w, approved_c, sig, 4u, 2u);
+
+    prev = tpm_t_test_install(&azf_io, TPM_T_IFACE_TIS, 1);
+    azf_install_authority();
+    (void)tpm_ab_floor_advance(2u, &tr);
+    tpm_authz_test_clear_authority();
+    tpm_t_test_restore(prev);
+}
+
+/* An allocating command REFUSED by the TPM with a parsed response code.
+ *
+ * The assertion that matters is the negative one: a refusal must NOT be counted
+ * as an unknown outcome. The unknown counter drives an operator-facing warning
+ * that a TPM slot is held until reset, and a counter that also fired on every
+ * ordinary policy refusal would train an operator to ignore it. */
+static void test_authz_alloc_refusal_no_handles(void)
+{
+    static const uint32_t alloc_cc[2] = {
+        TPM2_CC_START_AUTH_SESSION,
+        TPM2_CC_LOAD_EXTERNAL,
+    };
+    uint32_t i;
+
+    for (i = 0u; i < 2u; i++) {
+        azf_reset(alloc_cc[i], AZF_RC_POLICY_FAIL);
+        tpm_authz_test_reset_unknown_alloc();
+        azf_run_floor_advance();
+
+        TEST_ASSERT_EQ((int)azf_writes, 0, "a refused allocation writes nothing");
+        TEST_ASSERT_EQ((int)azf_increments, 0, "and commits nothing");
+        TEST_ASSERT_EQ(azf_any_handle_live(), 0,
+                       "no session or object handle survives a refused allocation");
+        TEST_ASSERT_EQ((int)tpm_authz_test_unknown_alloc(), 0,
+                       "a REFUSAL is not an unknown outcome: the TPM answered");
+    }
+}
+
+/* THE POSITIVE HALF, and the one that pins the guards to their CALL SITES.
+ *
+ * A refusal-only test cannot do that: a refused command allocates nothing, so
+ * deleting a guard leaves every refusal assertion passing. These cases let the
+ * command EXECUTE -- the fake allocates and keeps the handle -- and then damage
+ * the reply, which is the only shape that reaches the unknown-outcome branches.
+ *
+ * Both damage modes are covered because they enter through different branches:
+ * DROP fails the exec with no parsed rc, TRUNC succeeds and fails the strict
+ * parser with no recoverable handle. Every occurrence of each allocating
+ * command is swept, so a guard missing from ANY call site fails this test. */
+static void test_authz_unknown_alloc_accounted(void)
+{
+    uint32_t sessions, loads, nth, mode, m;
+    static const uint32_t modes[2] = { AZF_MALFORM_DROP, AZF_MALFORM_TRUNC };
+
+    /* A clean run first, to learn how many times each allocating command is
+     * submitted. Sweeping a hardcoded count would silently stop covering a
+     * call site the day the flow gains or loses one. */
+    azf_reset(0u, 0u);
+    tpm_authz_test_reset_unknown_alloc();
+    azf_run_floor_advance();
+    sessions = azf_seen_count(TPM2_CC_START_AUTH_SESSION);
+    loads    = azf_seen_count(TPM2_CC_LOAD_EXTERNAL);
+    TEST_ASSERT(sessions >= 2u,
+                "the authorized advance opens at least a trial and a policy session");
+    TEST_ASSERT(loads >= 1u, "and loads the authority key at least once");
+    TEST_ASSERT_EQ((int)tpm_authz_test_unknown_alloc(), 0,
+                   "CONTROL: a clean advance reports no unknown allocation");
+
+    for (m = 0u; m < 2u; m++) {
+        mode = modes[m];
+        for (nth = 1u; nth <= sessions; nth++) {
+            azf_reset(0u, 0u);
+            azf_malform_cc = TPM2_CC_START_AUTH_SESSION;
+            azf_malform_mode = mode;
+            azf_malform_nth = nth;
+            tpm_authz_test_reset_unknown_alloc();
+            azf_run_floor_advance();
+            TEST_ASSERT_EQ((int)tpm_authz_test_unknown_alloc(), 1,
+                           "every StartAuthSession call site accounts its unknown outcome");
+        }
+        for (nth = 1u; nth <= loads; nth++) {
+            azf_reset(0u, 0u);
+            azf_malform_cc = TPM2_CC_LOAD_EXTERNAL;
+            azf_malform_mode = mode;
+            azf_malform_nth = nth;
+            tpm_authz_test_reset_unknown_alloc();
+            azf_run_floor_advance();
+            TEST_ASSERT_EQ((int)tpm_authz_test_unknown_alloc(), 1,
+                           "every LoadExternal call site accounts its unknown outcome");
+        }
+    }
+
+    /* And the report is not vacuous: under TRUNC the fake really is still
+     * holding the allocation the warning describes. This is the assertion that
+     * separates "we told the operator a slot may be held" from "nothing was
+     * ever allocated and the warning is noise". */
+    azf_reset(0u, 0u);
+    azf_malform_cc = TPM2_CC_LOAD_EXTERNAL;
+    azf_malform_mode = AZF_MALFORM_TRUNC;
+    azf_malform_nth = 1u;
+    tpm_authz_test_reset_unknown_alloc();
+    azf_run_floor_advance();
+    TEST_ASSERT_EQ((int)tpm_authz_test_unknown_alloc(), 1,
+                   "the unreachable object is reported");
+    TEST_ASSERT_EQ(azf_any_handle_live(), 1,
+                   "and it really is still held: the warning describes a real leak");
+}
+
+/* The classification the exec-failure paths run on, tested where it is pure.
+ *
+ * The rule is asymmetric on purpose: only a PARSED response code that is not
+ * success proves nothing was allocated. Everything else -- no header read at
+ * all, or a response claiming success that the strict parser rejected -- leaves
+ * a handle possibly live and unnameable. */
+static void test_authz_outcome_classification(void)
+{
+    TEST_ASSERT_EQ(tpm_nv_outcome_is_definite_refusal(AZF_RC_POLICY_FAIL), 1,
+                   "a parsed failure code means the TPM allocated nothing");
+    TEST_ASSERT_EQ(tpm_nv_outcome_is_definite_refusal(TPM_NV_RC_UNSET), 0,
+                   "no response header parsed leaves the outcome UNKNOWN");
+    /* THE ARM THAT MATTERS MOST, because 0 is what a zero-initialized rc slot
+     * holds: success must not read as a refusal, or a caller that forgot to
+     * reset its slot would classify every failure as safe. */
+    TEST_ASSERT_EQ(tpm_nv_outcome_is_definite_refusal(TPM2_RC_SUCCESS), 0,
+                   "a success code is not a refusal, whatever the exec returned");
+}
+
+/* The two configuration refusals the enroll entry points make, which shared one
+ * status with a published integrity failure until section 29. Neither touches
+ * the transport: both guards run before any NV work. */
+static void test_baseline_enroll_auth_refusals(void)
+{
+    struct tpm_authz_transition tr;
+    tpm_baseline_status_t st;
+
+    memset(&tr, 0, sizeof tr);
+
+    /* No authority installed: the AUTHORIZED path has nothing to authorize
+     * with. */
+    tpm_authz_test_clear_authority();
+    st = tpm_baseline_enroll_bound(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &tr);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NOAUTH,
+                   "the authorized enroll refuses with NOAUTH when none is installed");
+
+    /* Authority installed: the UNAUTHENTICATED path must refuse, because it
+     * would leave the bind record describing the previous blob. */
+    azf_install_authority();
+    st = tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
+    tpm_authz_test_clear_authority();
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_AUTHREQ,
+                   "the plain enroll refuses with AUTHREQ once an authority exists");
+
+    /* The pair is the point: opposite configurations, opposite operator
+     * actions, so they must not be the same value. */
+    TEST_ASSERT((int)TPM_BASELINE_NOAUTH != (int)TPM_BASELINE_AUTHREQ,
+                "the two refusals are distinguishable");
+}
+
+/* The direction-specific repair, which TPM_BASELINE_TORN deliberately does not
+ * carry: it collapses three pairings whose repairs are opposite. */
+static void test_baseline_pairing_repair(void)
+{
+    const char *unc = tpm_baseline_pairing_repair(TPM_PAIRING_UNCOMMITTED);
+    const char *torn = tpm_baseline_pairing_repair(TPM_PAIRING_TORN);
+    const char *imp = tpm_baseline_pairing_repair(TPM_PAIRING_IMPOSSIBLE);
+
+    TEST_ASSERT(unc != 0, "an uncommitted record names its repair");
+    TEST_ASSERT(torn != 0, "a torn pairing names its repair");
+    TEST_ASSERT(imp != 0, "an impossible pairing names its repair");
+    /* DISTINCT BY CONTENT, not by pointer. Completing an interrupted commit and
+     * entering authorized recovery are opposite actions, and handing the second
+     * to the first destroys an authentic record -- so the assertion has to fail
+     * when two directions carry the same SENTENCE. A pointer comparison does
+     * not: identical literals may or may not be merged by the compiler, so it
+     * would pass over a copy-paste that gave two directions one repair. */
+    TEST_ASSERT(strcmp(unc, torn) != 0, "completing a commit is not recovery");
+    TEST_ASSERT(strcmp(torn, imp) != 0,
+                "a torn pairing and an impossible one differ");
+    TEST_ASSERT(strcmp(unc, imp) != 0,
+                "an uncommitted record and an impossible pairing differ");
+    /* NULL, not a reassuring string: a caller must never print "nothing to
+     * repair" for a direction that was never computed. */
+    TEST_ASSERT_EQ(tpm_baseline_pairing_repair(TPM_PAIRING_CURRENT) == 0, 1,
+                   "a current pairing needs no repair");
+    TEST_ASSERT_EQ(tpm_baseline_pairing_repair(TPM_PAIRING_BADARG) == 0, 1,
+                   "an uncomputed pairing names no repair");
 }
 
 static void test_authz_e2e_bind_verify(void)
@@ -3556,4 +3832,14 @@ void test_register_tpm_authz(void)
                             test_authz_record_parser_bounds, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: authz write-record input guards",
                             test_authz_write_record_input_guards, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz refused allocation leaks no handle",
+                            test_authz_alloc_refusal_no_handles, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz unknown allocation accounted per call site",
+                            test_authz_unknown_alloc_accounted, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: authz exec-failure outcome classification",
+                            test_authz_outcome_classification, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline enroll authority refusals",
+                            test_baseline_enroll_auth_refusals, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline pairing repair direction",
+                            test_baseline_pairing_repair, TEST_CAT_SECURITY);
 }

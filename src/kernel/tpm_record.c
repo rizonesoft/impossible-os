@@ -8,6 +8,7 @@
  * ============================================================================ */
 
 #include "kernel/tpm_record.h"
+#include "libc/string.h"
 
 /* Digest coverage is defined by ZEROING the digest field, not by skipping it.
  * Skipping would leave the 32 bytes outside the hash entirely, so an attacker
@@ -53,23 +54,28 @@ static int payload_reserved_zero(tpm_record_kind_t kind, const uint8_t *payload,
 {
     uint32_t i;
 
+    /* COPIES into aligned locals, never casts over `payload`. Every record
+     * buffer in the tree is a plain uint8_t array with no alignment guarantee,
+     * while these payloads carry 4-byte members: x86-64 tolerates the unaligned
+     * access and the planned ARM64 port need not. Each length is checked
+     * exactly BEFORE its copy, so neither can over-read. */
     if (kind == TPM_RECORD_KIND_AB_FLOOR) {
-        const struct tpm_ab_floor_payload *p =
-            (const struct tpm_ab_floor_payload *)payload;
-        if (payload_len != (uint32_t)sizeof(*p))
+        struct tpm_ab_floor_payload p;
+        if (payload_len != (uint32_t)sizeof p)
             return 0;
-        for (i = 0u; i < (uint32_t)(sizeof p->reserved / sizeof p->reserved[0]); i++)
-            if (p->reserved[i] != 0u)
+        memcpy(&p, payload, sizeof p);
+        for (i = 0u; i < (uint32_t)(sizeof p.reserved / sizeof p.reserved[0]); i++)
+            if (p.reserved[i] != 0u)
                 return 0;
         return 1;
     }
     if (kind == TPM_RECORD_KIND_BASELINE) {
-        const struct tpm_baseline_bind_payload *p =
-            (const struct tpm_baseline_bind_payload *)payload;
-        if (payload_len != (uint32_t)sizeof(*p))
+        struct tpm_baseline_bind_payload p;
+        if (payload_len != (uint32_t)sizeof p)
             return 0;
-        for (i = 0u; i < (uint32_t)(sizeof p->reserved / sizeof p->reserved[0]); i++)
-            if (p->reserved[i] != 0u)
+        memcpy(&p, payload, sizeof p);
+        for (i = 0u; i < (uint32_t)(sizeof p.reserved / sizeof p.reserved[0]); i++)
+            if (p.reserved[i] != 0u)
                 return 0;
         return 1;
     }
@@ -82,6 +88,7 @@ tpm_record_status_t tpm_record_parse(const uint8_t *buf, uint32_t len,
                                      struct tpm_record_view *out)
 {
     const struct tpm_record_hdr *h;
+    struct tpm_record_hdr hv;
     uint8_t want[TPM_RECORD_DIGEST];
     tpm_record_status_t st;
 
@@ -95,7 +102,10 @@ tpm_record_status_t tpm_record_parse(const uint8_t *buf, uint32_t len,
     if (len != TPM_RECORD_HDR_LEN + want_payload_len)
         return TPM_RECORD_MALFORMED;
 
-    h = (const struct tpm_record_hdr *)buf;
+    /* Same rule as the payload copies above: the exact total length was
+     * checked immediately before this, so the header copy cannot over-read. */
+    memcpy(&hv, buf, sizeof hv);
+    h = &hv;
     if (h->magic != TPM_RECORD_MAGIC || h->layout != (uint16_t)TPM_RECORD_LAYOUT)
         return TPM_RECORD_MALFORMED;
     if (h->reserved != 0u)
@@ -137,6 +147,7 @@ tpm_record_status_t tpm_record_build(uint8_t *buf, uint32_t cap,
                                      const uint8_t *payload, uint32_t payload_len)
 {
     struct tpm_record_hdr *h;
+    struct tpm_record_hdr hv;
     uint32_t i;
 
     if (!buf || !payload || kind == TPM_RECORD_KIND_NONE)
@@ -153,7 +164,9 @@ tpm_record_status_t tpm_record_build(uint8_t *buf, uint32_t cap,
     if (!payload_reserved_zero(kind, payload, payload_len))
         return TPM_RECORD_BADARG;
 
-    h = (struct tpm_record_hdr *)buf;
+    /* Built in an aligned local and copied out, for the same reason the parse
+     * above reads into one: `buf` is a caller-supplied byte array. */
+    h = &hv;
     h->magic       = TPM_RECORD_MAGIC;
     h->layout      = (uint16_t)TPM_RECORD_LAYOUT;
     h->kind        = (uint16_t)kind;
@@ -162,10 +175,15 @@ tpm_record_status_t tpm_record_build(uint8_t *buf, uint32_t cap,
     h->reserved    = 0u;
     for (i = 0u; i < TPM_RECORD_DIGEST; i++)
         h->digest[i] = 0u;
+    memcpy(buf, h, sizeof *h);
     for (i = 0u; i < payload_len; i++)
         buf[TPM_RECORD_HDR_LEN + i] = payload[i];
 
-    return tpm_record_digest_compute(buf, cap, h->digest);
+    /* The digest is computed over the BUFFER and written straight into it at
+     * the header's digest offset. The local is stale from here on, and copying
+     * it out again would overwrite the digest with the zeroes above. */
+    return tpm_record_digest_compute(
+        buf, cap, buf + __builtin_offsetof(struct tpm_record_hdr, digest));
 }
 
 /* The kind-specific "did the value move backwards" test. The floor's ordering
@@ -176,20 +194,19 @@ static int value_regressed(const struct tpm_record_view *cur,
                            const struct tpm_record_view *next)
 {
     if (cur->kind == TPM_RECORD_KIND_AB_FLOOR) {
-        const struct tpm_ab_floor_payload *a;
-        const struct tpm_ab_floor_payload *b;
+        struct tpm_ab_floor_payload a, b;
         /* A view is normally produced by tpm_record_parse, which pins the
          * payload length for the kind -- but this is a public entry point and a
          * hand-built view must not be able to steer a read past its buffer. A
          * view too short to hold the ordering field cannot be judged, so it is
          * treated as a regression rather than waved through. */
         if (!cur->payload || !next->payload ||
-            cur->payload_len != (uint32_t)sizeof(*a) ||
-            next->payload_len != (uint32_t)sizeof(*b))
+            cur->payload_len != (uint32_t)sizeof a ||
+            next->payload_len != (uint32_t)sizeof b)
             return 1;
-        a = (const struct tpm_ab_floor_payload *)cur->payload;
-        b = (const struct tpm_ab_floor_payload *)next->payload;
-        return b->security_version < a->security_version;
+        memcpy(&a, cur->payload, sizeof a);
+        memcpy(&b, next->payload, sizeof b);
+        return b.security_version < a.security_version;
     }
     return 0;
 }
@@ -268,13 +285,13 @@ tpm_record_status_t tpm_record_counter_ok(const struct tpm_record_view *rec,
 tpm_record_status_t tpm_record_ab_floor_version(const struct tpm_record_view *rec,
                                                 uint32_t *out_version)
 {
-    const struct tpm_ab_floor_payload *p;
+    struct tpm_ab_floor_payload p;
 
     if (!rec || !out_version || rec->kind != TPM_RECORD_KIND_AB_FLOOR)
         return TPM_RECORD_BADARG;
-    if (!rec->payload || rec->payload_len != (uint32_t)sizeof(*p))
+    if (!rec->payload || rec->payload_len != (uint32_t)sizeof p)
         return TPM_RECORD_MALFORMED;
-    p = (const struct tpm_ab_floor_payload *)rec->payload;
-    *out_version = p->security_version;
+    memcpy(&p, rec->payload, sizeof p);
+    *out_version = p.security_version;
     return TPM_RECORD_OK;
 }
