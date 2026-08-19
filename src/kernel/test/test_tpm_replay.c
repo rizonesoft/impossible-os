@@ -364,7 +364,12 @@ static void test_integrity_status_scope(void)
     TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "field") == (char *)0,
                 "the mismatch scope promises no differing field");
     TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "authenticity") != (char *)0,
-                "the mismatch scope admits the corrupt/unauthenticated case");
+                "the mismatch scope admits the unauthenticated case");
+    /* INTEGRITY as well as authenticity: TPM_BASELINE_CORRUPT is a
+     * magic/version/size/CRC failure of the stored blob, which is integrity,
+     * and a scope naming only authenticity is false for it. */
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "integrity") != (char *)0,
+                "the mismatch scope admits structural corruption too");
     /* The THIRD kind is the one that must never be missed. A SELF_CORRUPT
      * verdict also publishes MISMATCH, and its recovery path is not the stored
      * baseline's: the party that would produce a new golden is itself the thing
@@ -373,6 +378,25 @@ static void test_integrity_status_scope(void)
     TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "kernel's own identity")
                 != (char *)0,
                 "the mismatch scope covers a corrupt kernel identity as well");
+
+    /* The scope strings ride the Phase-1 boot log, where serial_write holds its
+     * lock with interrupts off for the whole string. A verbose first draft cost
+     * 8-17 ms of interrupt-off wire time at 115200 baud; the trim is a
+     * correctness-preserving budget, so bound it here rather than trusting
+     * prose not to grow back. */
+    {
+        const uint8_t all[6] = {
+            BOOT_INTEGRITY_UNKNOWN, BOOT_INTEGRITY_VERIFIED, BOOT_INTEGRITY_MISMATCH,
+            BOOT_INTEGRITY_NO_TPM, BOOT_INTEGRITY_NO_BASELINE, BOOT_INTEGRITY_NO_CRYPTO
+        };
+        uint32_t q;
+        for (q = 0; q < 6u; q++) {
+            r.overall_status = all[q];
+            TEST_ASSERT(strlen(tpm_integrity_status_scope(&r)) <= 120u,
+                        "every scope sentence stays inside the boot-serial budget");
+        }
+        r.overall_status = BOOT_INTEGRITY_MISMATCH;
+    }
 
     /* The NO_TPM scope must not claim nothing was measured: the event count is
      * filled before the no-TPM branch is taken, so a NO_TPM report can carry a
@@ -435,6 +459,199 @@ static void test_integrity_status_scope(void)
     }
 }
 
+/* The renamed baseline predicate. It had no test under either name, and it is
+ * the programmatic twin of the label: a caller that branches on it is making
+ * the same trust decision a reader makes from the string, so it must agree with
+ * the report exactly and never read a non-VERIFIED status as success. */
+static void test_integrity_baseline_verified(void)
+{
+    struct boot_integrity_report r;
+    struct boot_integrity_report saved;
+    const uint8_t not_verified[5] = {
+        BOOT_INTEGRITY_UNKNOWN, BOOT_INTEGRITY_MISMATCH, BOOT_INTEGRITY_NO_TPM,
+        BOOT_INTEGRITY_NO_BASELINE, BOOT_INTEGRITY_NO_CRYPTO
+    };
+    uint32_t i;
+
+    /* Save and restore the published report: this test republishes, and a
+     * later test reading a report this one left behind would be a cross-test
+     * dependency rather than a fixture. */
+    tpm_integrity_report_copy(&saved);
+
+    memset(&r, 0, sizeof(r));
+    r.tpm_version = 2u;
+    r.overall_status = BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_test_republish(&r);
+    TEST_ASSERT_EQ(tpm_integrity_baseline_verified(), 1,
+                   "a VERIFIED report reads as baseline-verified");
+
+    for (i = 0; i < 5u; i++) {
+        r.overall_status = not_verified[i];
+        tpm_integrity_test_republish(&r);
+        TEST_ASSERT_EQ(tpm_integrity_baseline_verified(), 0,
+                       "no non-VERIFIED status reads as baseline-verified");
+    }
+
+    /* A replay TAMPER pins MISMATCH, so the predicate must refuse even when the
+     * baseline itself compared clean -- the one combination where a caller
+     * could otherwise read success off a tampered boot. */
+    r.overall_status = BOOT_INTEGRITY_VERIFIED;
+    r.replay_verdict = (uint8_t)TPM_REPLAY_TAMPER;
+    tpm_integrity_test_republish(&r);
+    TEST_ASSERT_EQ(tpm_integrity_baseline_verified(), 0,
+                   "a tampered event log is never baseline-verified");
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "event-log-tamper", 17) == 0,
+                "control: the label reads the same combination as tamper");
+
+    tpm_integrity_test_republish(&saved);
+}
+
+/* The PCR-list renderer, extracted from boot_phase1() so its bound and its
+ * three-way result are reachable at all. The third outcome is the one worth
+ * having: a report with no per-PCR slots must NOT be rendered as "no PCR
+ * differs", which beside a pcr-digest cause would be both self-contradictory
+ * and exculpatory. */
+static void test_render_mismatched_pcrs(void)
+{
+    struct boot_integrity_report r;
+    char buf[BOOT_INTEGRITY_PCRLIST_MAX];
+    uint32_t i;
+
+    memset(&r, 0, sizeof(r));
+
+    /* No detail published at all -> -1, never 0. */
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   -1, "a report with no PCR slots reports no-detail, not no-mismatch");
+    TEST_ASSERT_EQ((uint32_t)buf[0], 0u, "the no-detail path still terminates the buffer");
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(
+                       (const struct boot_integrity_report *)0, buf,
+                       (uint32_t)sizeof buf), -1, "a NULL report is no-detail");
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, (char *)0,
+                                                        (uint32_t)sizeof buf), -1,
+                   "a NULL buffer is refused rather than faulting");
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, 0u), -1,
+                   "a zero capacity is refused");
+
+    /* A PHASE-0 report is the trap: it carries the full measured set with every
+     * slot NO_CRYPTO, so a count-based evaluation test would call it evaluated
+     * and report "no PCR differs" about a comparison that never ran. */
+    r.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        r.pcrs[i].pcr_index = (uint8_t)(i < 8u ? i : 11u);
+        r.pcrs[i].status = BOOT_INTEGRITY_NO_CRYPTO;
+    }
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   -1, "a Phase-0 NO_CRYPTO report is no-detail, not no-mismatch");
+    /* UNKNOWN slots are equally unevaluated. */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        r.pcrs[i].status = BOOT_INTEGRITY_UNKNOWN;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   -1, "an UNKNOWN-slot report is no-detail");
+    /* NO_BASELINE is NOT a comparison: the golden pins nothing for that slot,
+     * which the per-PCR contract itself calls UNVERIFIED rather than wrong. An
+     * all-NO_BASELINE report must never read as "no PCR differs". */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        r.pcrs[i].status = BOOT_INTEGRITY_NO_BASELINE;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   -1, "an all-NO_BASELINE report is not a completed comparison");
+
+    /* ONE compared slot does not speak for the rest. Eight UNKNOWN beside one
+     * VERIFIED is eight PCRs nobody checked, and 0 would say otherwise. */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        r.pcrs[i].status = BOOT_INTEGRITY_UNKNOWN;
+    r.pcrs[0].status = BOOT_INTEGRITY_VERIFIED;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   -1, "one compared slot does not make the whole report evaluated");
+
+    /* Same shape but WITH a differing slot: report what was found, and say the
+     * list is not provably complete rather than claiming it is whole. */
+    r.pcrs[3].status = BOOT_INTEGRITY_MISMATCH;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   2, "a mismatch amid unevaluated slots is reported as incomplete");
+    TEST_ASSERT(strcmp(buf, "3") == 0, "and the found index is still named");
+
+    /* Detail published, nothing differing -> 0 with an empty list. */
+    r.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        r.pcrs[i].pcr_index = (uint8_t)(i < 8u ? i : 11u);
+        r.pcrs[i].status = BOOT_INTEGRITY_VERIFIED;
+    }
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   0, "evaluated detail with no mismatch reports no-mismatch");
+    TEST_ASSERT_EQ((uint32_t)buf[0], 0u, "the no-mismatch list is empty");
+
+    /* One differing slot, single digit. */
+    r.pcrs[2].status = BOOT_INTEGRITY_MISMATCH;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   1, "one differing PCR reports a list");
+    TEST_ASSERT(strcmp(buf, "2") == 0, "the single index renders bare");
+
+    /* Two-digit index formats as two digits, and ordering follows the slots. */
+    r.pcrs[8].status = BOOT_INTEGRITY_MISMATCH;   /* index 11 */
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   1, "two differing PCRs still report a list");
+    TEST_ASSERT(strcmp(buf, "2,11") == 0, "a two-digit index renders both digits");
+
+    /* EVERY slot differing is the widest real payload and must fit exactly --
+     * this is the case the buffer was sized for, so a silent truncation here
+     * would be the defect the bound exists to prevent. */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        r.pcrs[i].status = BOOT_INTEGRITY_MISMATCH;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   1, "the full measured set renders");
+    TEST_ASSERT(strcmp(buf, "0,1,2,3,4,5,6,7,11") == 0,
+                "every measured PCR appears, in slot order, untruncated");
+
+    /* TRUNCATION IS ITS OWN ANSWER (2), never a short list presented as whole. */
+    {
+        char small[6];
+        TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, small,
+                                                            (uint32_t)sizeof small),
+                       2, "a truncated list says so rather than reading as complete");
+        TEST_ASSERT(strcmp(small, "0,1,2") == 0,
+                    "truncation stops at a whole index, never mid-number");
+    }
+    /* Cap 1 fits nothing at all. The dangerous wrong answer here is 0, which
+     * would claim no PCR differs when nine of them do. */
+    {
+        char tiny[1];
+        TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, tiny,
+                                                            (uint32_t)sizeof tiny),
+                       2, "a capacity that fits nothing reports truncation, not none");
+        TEST_ASSERT_EQ((uint32_t)tiny[0], 0u, "and still terminates the buffer");
+    }
+    /* A TWO-DIGIT first mismatch that cannot fit in cap 2 is the same trap with
+     * a different shape: one byte of payload room, an index needing two. */
+    {
+        char two[2];
+        for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+            r.pcrs[i].status = BOOT_INTEGRITY_VERIFIED;
+        r.pcrs[8].status = BOOT_INTEGRITY_MISMATCH;   /* index 11 */
+        TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, two,
+                                                            (uint32_t)sizeof two),
+                       2, "a two-digit first mismatch that cannot fit is truncation");
+        TEST_ASSERT_EQ((uint32_t)two[0], 0u, "no half-rendered index is emitted");
+        /* Control: the same index DOES render given one more byte. */
+        {
+            char three[3];
+            TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, three,
+                                                                (uint32_t)sizeof three),
+                           1, "control: two-digit index fits in cap 3");
+            TEST_ASSERT(strcmp(three, "11") == 0, "and renders both digits");
+        }
+        for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+            r.pcrs[i].status = BOOT_INTEGRITY_MISMATCH;
+    }
+
+    /* A pcr_count past the array bound is clamped, not trusted: the count
+     * travels in the same report an attacker-writable baseline influenced. */
+    r.pcr_count = 200u;
+    TEST_ASSERT_EQ(tpm_integrity_render_mismatched_pcrs(&r, buf, (uint32_t)sizeof buf),
+                   1, "an oversized pcr_count still renders");
+    TEST_ASSERT(strcmp(buf, "0,1,2,3,4,5,6,7,11") == 0,
+                "an oversized pcr_count is clamped to the array bound");
+}
+
 void test_register_tpm_replay(void)
 {
     test_suite_register_cat("tpm: PCR extend banks", test_pcr_extend_banks, TEST_CAT_SECURITY);
@@ -447,6 +664,10 @@ void test_register_tpm_replay(void)
     test_suite_register_cat("tpm: replay verdict finalize", test_replay_finalize, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: integrity status label", test_integrity_status_label, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: integrity status scope", test_integrity_status_scope, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: integrity baseline-verified predicate",
+                            test_integrity_baseline_verified, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: mismatched-PCR list renderer",
+                            test_render_mismatched_pcrs, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

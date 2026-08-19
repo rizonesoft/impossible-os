@@ -1,6 +1,6 @@
 {
-  "total_suites": 3121,
-  "total_assertions": 13592,
+  "total_suites": 3123,
+  "total_assertions": 13627,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
@@ -105,7 +105,7 @@
     {"file": "test_tpm_headless_authz.c", "suites": 18, "assertions": 70},
     {"file": "test_tpm_nv.c", "suites": 42, "assertions": 509},
     {"file": "test_tpm_pcr_alloc.c", "suites": 4, "assertions": 20},
-    {"file": "test_tpm_replay.c", "suites": 10, "assertions": 57},
+    {"file": "test_tpm_replay.c", "suites": 12, "assertions": 92},
     {"file": "test_tpm_sb_reconcile.c", "suites": 2, "assertions": 30},
     {"file": "test_tpm_seal.c", "suites": 11, "assertions": 122},
     {"file": "test_tpm_transport.c", "suites": 8, "assertions": 131},

@@ -291,6 +291,37 @@ int tpm_integrity_baseline_verified(void);
  * wrong. Pure -- safe from any context; NULL yields the unknown-status text. */
 const char *tpm_integrity_status_scope(const struct boot_integrity_report *r);
 
+/* Bytes tpm_integrity_render_mismatched_pcrs() needs: the measured set tops out
+ * at PCR 11, so two digits per index, one separator each, one terminator. */
+#define BOOT_INTEGRITY_PCRLIST_MAX (BOOT_INTEGRITY_MAX_PCRS * 3u + 1u)
+
+/* Render every MISMATCH slot in `r` as a comma-separated decimal index list
+ * into `out` (capacity `cap`, always NUL-terminated when cap > 0), and return
+ * how the result should be READ:
+ *
+ *    2  differing PCRs exist but the list is NOT PROVABLY COMPLETE -- it was
+ *       truncated to what fit, or some slot was never compared. `out` holds
+ *       what was found, which may be empty.
+ *    1  every slot was compared and `out` names ALL the differing ones
+ *    0  every slot was compared and NONE differ
+ *   -1  there is nothing to speak for: no slots, or slots that were never
+ *       compared and no differing one found among those that were
+ *
+ * 0 IS THE EXCULPATORY ANSWER AND IT HAS TO BE EARNED BY EVERY SLOT. Only
+ * VERIFIED and MISMATCH mean a digest was compared; NO_BASELINE does NOT (the
+ * golden pins nothing there, which tpm_baseline_compare_pcrs itself calls
+ * UNVERIFIED rather than wrong), and neither does UNKNOWN, NO_CRYPTO, NO_TPM
+ * or anything outside the enum. Two weaker rules were tried and both lied: a
+ * count-based one called a Phase-0 report (full measured set, every slot
+ * NO_CRYPTO) evaluated, and an any-slot one said "no PCR differs" about eight
+ * UNKNOWN slots sitting beside one VERIFIED. Truncation is the same hazard
+ * from the other side -- a partial list presented as whole, or a 0 returned
+ * because even the first index did not fit. Pure, no allocation, no lock -- extracted
+ * from the boot path precisely so the bound and the formatting are reachable
+ * by a unit test. */
+int tpm_integrity_render_mismatched_pcrs(const struct boot_integrity_report *r,
+                                         char *out, uint32_t cap);
+
 /* Copy the published boot-integrity snapshot into the caller's buffer. This is
  * the ONLY reader entry point, on purpose.
  *

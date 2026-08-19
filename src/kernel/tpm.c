@@ -906,6 +906,17 @@ int tpm_integrity_baseline_verified(void)
 {
     struct boot_integrity_report r;
     tpm_integrity_report_copy(&r);
+    /* Tamper is checked FIRST, exactly as tpm_integrity_status_label does.
+     * The two answer the same question -- one for a reader, one for a caller --
+     * and they must not be able to disagree. Today they cannot in production,
+     * because tpm_integrity_set_replay_verdict pins MISMATCH inside the
+     * publication lock, so this is defence in depth rather than a live fix:
+     * it costs one comparison and removes the possibility that some future
+     * publisher constructs the VERIFIED-plus-TAMPER combination and hands a
+     * programmatic caller a success it would never have read off the label.
+     * A test builds exactly that report, which is how the divergence surfaced. */
+    if (r.replay_verdict == (uint8_t)TPM_REPLAY_TAMPER)
+        return 0;
     return r.overall_status == BOOT_INTEGRITY_VERIFIED;
 }
 
@@ -952,6 +963,92 @@ const char *tpm_integrity_status_label(const struct boot_integrity_report *r)
     }
 }
 
+/* DELIBERATELY TERSE. Each of these is concatenated into the Phase-1 boot log
+ * line, and serial_write holds its lock with interrupts off for the whole
+ * string -- at 115200 baud that is ~87 us per character, so the first draft's
+ * 96-188 byte sentences cost 8-17 ms of interrupt-off wire time on every boot
+ * and could suppress a 100 Hz timer tick. Every load-bearing claim survives
+ * the trim (the kernel IMAGE exclusion, the three MISMATCH kinds, "could not
+ * be compared" rather than "nothing was measured"); the prose that went is
+ * prose. Do not re-expand these for readability -- a longer explanation
+ * belongs in a UI or a diagnostics dump, not on the boot wire. */
+int tpm_integrity_render_mismatched_pcrs(const struct boot_integrity_report *r,
+                                         char *out, uint32_t cap)
+{
+    uint32_t w = 0;
+    uint8_t k, n;
+    int truncated = 0;
+    int all_compared = 1;
+
+    if (!out || cap == 0u)
+        return -1;
+    out[0] = '\0';
+    if (!r)
+        return -1;
+
+    n = r->pcr_count;
+    if (n > (uint8_t)BOOT_INTEGRITY_MAX_PCRS)
+        n = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+
+    /* "NO PCR DIFFERS" MUST BE EARNED BY EVERY SLOT, not by any slot. Two
+     * weaker rules were tried and both produce an exculpatory lie:
+     *
+     *   count-based -- a Phase-0 report carries the FULL measured set with
+     *     every slot NO_CRYPTO, so a nonzero count reported "no PCR differs"
+     *     about a comparison that never ran;
+     *   any-slot -- one VERIFIED slot beside eight UNKNOWN ones said the same
+     *     thing about eight PCRs nobody checked.
+     *
+     * Only VERIFIED and MISMATCH mean a digest was actually compared.
+     * NO_BASELINE does NOT: tpm_baseline_compare_pcrs writes it when the golden
+     * pins nothing for that slot, and its own contract calls that boot value
+     * UNVERIFIED rather than wrong. Anything else (UNKNOWN, NO_CRYPTO, NO_TPM,
+     * or a value from outside the enum) is likewise not a comparison. */
+    if (n == 0u)
+        return -1;
+    for (k = 0; k < n; k++) {
+        uint8_t st = r->pcrs[k].status;
+        if (st != BOOT_INTEGRITY_VERIFIED && st != BOOT_INTEGRITY_MISMATCH) {
+            all_compared = 0;
+            break;
+        }
+    }
+
+    for (k = 0; k < n; k++) {
+        uint8_t idx = r->pcrs[k].pcr_index;
+        if (r->pcrs[k].status != BOOT_INTEGRITY_MISMATCH)
+            continue;
+        /* EXACT width for THIS entry, not a worst-case reserve. A blanket
+         * "separator + two digits" bound wastes a byte on every single-digit
+         * index and can drop a trailing entry that would have fitted, which
+         * on this line means silently under-reporting which PCRs moved. */
+        uint32_t need = (w ? 1u : 0u) + (idx >= 10u ? 2u : 1u);
+        if (w + need > cap - 1u) {
+            /* TRUNCATION IS ITS OWN ANSWER. Returning 1 with a short list
+             * would present a partial set as the whole one, and returning 0
+             * when even the FIRST index did not fit would claim nothing
+             * differs. Either is a false statement on a security line. */
+            truncated = 1;
+            break;
+        }
+        if (w)
+            out[w++] = ',';
+        if (idx >= 10u)
+            out[w++] = (char)('0' + (idx / 10u));
+        out[w++] = (char)('0' + (idx % 10u));
+    }
+    out[w] = '\0';
+    /* Truncation always means a mismatch was FOUND and did not fit, so it is
+     * never the exculpatory answer even with an empty buffer. */
+    if (truncated)
+        return 2;
+    /* Some slot was never compared, so a differing PCR could be hiding behind
+     * it: report what was found, but never claim none differ. */
+    if (!all_compared)
+        return w ? 2 : -1;
+    return w ? 1 : 0;
+}
+
 const char *tpm_integrity_status_scope(const struct boot_integrity_report *r)
 {
     if (!r || r->overall_status == BOOT_INTEGRITY_UNKNOWN)
@@ -959,13 +1056,10 @@ const char *tpm_integrity_status_scope(const struct boot_integrity_report *r)
     /* Ordered to match tpm_integrity_status_label so the two can never describe
      * different statuses for the same report. */
     if (r->replay_verdict == (uint8_t)TPM_REPLAY_TAMPER)
-        return "the event log disagrees with hardware PCRs; the baseline "
-               "verdict is not trustworthy on top of that";
+        return "event log disagrees with hardware PCRs";
     switch (r->overall_status) {
         case BOOT_INTEGRITY_VERIFIED:
-            return "covers the enrolled PCR set, Secure Boot state and "
-                   "readability, firmware-version hash and ABI-manifest "
-                   "digest; the kernel IMAGE was not measured";
+            return "enrolled baseline only; the kernel IMAGE was not measured";
         case BOOT_INTEGRITY_MISMATCH:
             /* DELIBERATELY does not promise a field cause. This status is
              * published by THREE different kinds of failure: a comparison
@@ -984,24 +1078,23 @@ const char *tpm_integrity_status_scope(const struct boot_integrity_report *r)
              * MISMATCH-publishing status now has one. Distinguishing them
              * inside the report itself would need a provenance field, which
              * belongs with the report struct and its publication. */
-            return "the live state disagrees with the enrolled baseline, the "
-                   "stored baseline failed its own integrity or authenticity "
-                   "checks, or this kernel's own identity is corrupt; the "
-                   "boot log names which";
+            /* "integrity/authenticity", not authenticity alone: CORRUPT is a
+             * magic/version/size/CRC failure of the stored blob, which is
+             * integrity, and dropping the word made this line false for a
+             * reachable MISMATCH producer. */
+            return "baseline differs, or stored-baseline integrity/authenticity, "
+                   "or this kernel's own identity; the log names which";
         case BOOT_INTEGRITY_NO_TPM:
             /* "could not be compared", NOT "nothing was measured": the event
              * count is filled from the pre-transport phase before the no-TPM
              * branch is taken, so a NO_TPM report can legitimately carry a
              * nonzero one and a claim that nothing was measured contradicts
              * the report a reader is holding. */
-            return "no usable TPM this boot, so the baseline could not be "
-                   "compared and no verdict is claimed either way";
+            return "no usable TPM; the baseline could not be compared";
         case BOOT_INTEGRITY_NO_BASELINE:
-            return "no baseline is enrolled, so there is nothing to compare "
-                   "against; this is the normal state before enrollment";
+            return "nothing enrolled, so nothing to compare against";
         case BOOT_INTEGRITY_NO_CRYPTO:
-            return "the comparison could not run because the crypto or "
-                   "transport stack was unavailable at that phase";
+            return "crypto or transport unavailable at that phase";
         default:
             return "no verdict has been computed yet";
     }

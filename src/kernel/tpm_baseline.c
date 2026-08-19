@@ -160,9 +160,25 @@ const char *tpm_baseline_status_repair(uint8_t status)
             return "THIS KERNEL's own read-only identity failed validation: "
                    "do NOT look for a way to enroll past it (enrollment "
                    "refuses this by design); reinstall the kernel";
-        default:
+        /* NO `default:` ARM, deliberately, and this is the same enforcement
+         * tpm_baseline_cause_label() gets. The boot's verify path now emits a
+         * diagnosis ONLY through this helper, and the failure set is a second
+         * hand-maintained list in tpm_baseline_status_is_failure(), so a
+         * seventh failure status added later would publish MISMATCH with NO
+         * diagnosis line -- silently, and against this function's own claim to
+         * be exhaustive. Listing every enumerator makes -Wswitch under -Werror
+         * refuse to build until someone decides which arm the new value takes. */
+        case TPM_BASELINE_OK:
+        case TPM_BASELINE_NO_BASELINE:
+        case TPM_BASELINE_NO_TPM:
+        case TPM_BASELINE_TPMERR:
+        case TPM_BASELINE_BADARG:
+        case TPM_BASELINE_BUSY:
             return (const char *)0;
     }
+    /* Out-of-range value cast in from a uint8_t: not an enumerator, so the
+     * switch above cannot cover it and -Wswitch does not ask it to. */
+    return (const char *)0;
 }
 
 /* Write the whole attribution in one place so no return path can set the cause

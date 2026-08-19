@@ -790,36 +790,29 @@ void boot_phase1(void)
              * that ALSO moved PCRs shows both here rather than hiding the
              * second one behind the first. */
             if (bs == TPM_BASELINE_OK && overall == BOOT_INTEGRITY_MISMATCH) {
-                /* Two chars per index (the measured set tops out at PCR 11),
-                 * one separator each, one terminator. */
-                char pcrs[BOOT_INTEGRITY_MAX_PCRS * 3u + 1u];
+                char pcrs[BOOT_INTEGRITY_PCRLIST_MAX];
                 struct boot_integrity_report ir;
-                unsigned w = 0;
-                uint8_t k;
+                int listed;
                 /* Read the PUBLISHED report rather than pairing pcr_status[]
                  * with a second index list assembled here: the report already
                  * carries index and status together for each slot, and a
                  * locally rebuilt pairing is the exact drift that atomic
                  * boot-integrity report publication was built to remove. */
                 tpm_integrity_report_copy(&ir);
-                for (k = 0; k < ir.pcr_count && k < (uint8_t)BOOT_INTEGRITY_MAX_PCRS; k++) {
-                    uint8_t idx = ir.pcrs[k].pcr_index;
-                    if (ir.pcrs[k].status != BOOT_INTEGRITY_MISMATCH)
-                        continue;
-                    if (w + 3u >= sizeof pcrs)
-                        break;
-                    if (w)
-                        pcrs[w++] = ',';
-                    if (idx >= 10u)
-                        pcrs[w++] = (char)('0' + (idx / 10u));
-                    pcrs[w++] = (char)('0' + (idx % 10u));
-                }
-                pcrs[w] = '\0';
+                listed = tpm_integrity_render_mismatched_pcrs(&ir, pcrs,
+                                                              (uint32_t)sizeof pcrs);
+                /* FOUR outcomes, and each says only what it can prove.
+                 * "No PCR differs" is exculpatory, so it is reserved for a
+                 * comparison that actually ran; a truncated list is named as
+                 * truncated rather than presented as the whole set. */
                 klog(LOG_WARN, "TPM",
                      "Baseline mismatch: first differing field is %s%s%s",
                      tpm_baseline_cause_label(cause.cause),
-                     w ? "; PCRs also differing: " : "; no PCR differs",
-                     w ? pcrs : "");
+                     listed == 1 ? "; PCRs also differing: "
+                                 : (listed == 2 ? "; PCRs also differing (list truncated): "
+                                                : (listed == 0 ? "; no PCR differs"
+                                                               : "; per-PCR detail not evaluated")),
+                     listed > 0 ? pcrs : "");
             }
 
             /* One shared source for the diagnosis, so this path and the
