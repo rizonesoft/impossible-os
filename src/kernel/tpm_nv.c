@@ -1575,8 +1575,8 @@ static tpm_nv_status_t nv_policy_op_cb(tpm2_seq_t seq, uint32_t session, void *v
     /* rsp sized for a max-length NV_Read: header(10) + parameterSize(4) +
      * TPM2B_MAX_NV_BUFFER(2 + TPM_NV_MAX_DATA) + a full one-session auth area
      * (~69). +128 covers it; a larger response is rejected by tpm2_submit. */
-    uint8_t cmd[TPM_NV_MAX_DATA + 64u];
-    uint8_t rsp[TPM_NV_MAX_DATA + 128u];
+    uint8_t cmd[TPM_NV_MAX_CMD];
+    uint8_t rsp[TPM_NV_MAX_RSP];
     uint32_t n, rlen = 0;
     tpm_nv_status_t st;
 
@@ -1629,7 +1629,7 @@ static tpm_nv_status_t nv_definition_matches(tpm2_seq_t seq, uint32_t nv_index,
                                              const uint8_t *auth_policy,
                                              uint16_t policy_len)
 {
-    uint8_t cmd[16], rsp[TPM_NV_MAX_DATA + 128u];
+    uint8_t cmd[16], rsp[TPM_NV_MAX_RSP];
     struct tpm_nv_public have;
     uint32_t n, rlen = 0;
     tpm_nv_status_t st;
@@ -1840,7 +1840,7 @@ tpm_nv_status_t tpm_nv_undefine(uint32_t nv_index)
 tpm_nv_status_t tpm_nv_write(uint32_t nv_index, uint16_t offset,
                              const uint8_t *data, uint16_t len)
 {
-    uint8_t cmd[TPM_NV_MAX_DATA + 64u], rsp[32];
+    uint8_t cmd[TPM_NV_MAX_CMD], rsp[32];
     uint32_t n, rlen = 0;
     if (!data || len == 0u || len > TPM_NV_MAX_DATA)
         return TPM_NV_BADARG;
@@ -1854,7 +1854,7 @@ tpm_nv_status_t tpm_nv_write(uint32_t nv_index, uint16_t offset,
 tpm_nv_status_t tpm_nv_read(uint32_t nv_index, uint16_t offset,
                             uint8_t *out, uint16_t cap, uint16_t *out_len)
 {
-    uint8_t cmd[40], rsp[TPM_NV_MAX_DATA + 128u];
+    uint8_t cmd[40], rsp[TPM_NV_MAX_RSP];
     uint32_t n, rlen = 0;
     tpm_nv_status_t st;
     int dl;
@@ -2120,7 +2120,7 @@ static tpm_nv_status_t nv_verified_read_op(tpm2_seq_t seq, uint32_t nv_index,
                                            void *vctx)
 {
     struct nv_verified_read_ctx *c = (struct nv_verified_read_ctx *)vctx;
-    uint8_t cmd[64], rsp[TPM_NV_MAX_DATA + 128u];
+    uint8_t cmd[64], rsp[TPM_NV_MAX_RSP];
     uint32_t n, rlen = 0;
     tpm_nv_status_t st;
     int got;

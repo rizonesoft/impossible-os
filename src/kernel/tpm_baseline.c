@@ -615,23 +615,35 @@ tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st)
         case TPM_NV_RECORD:    return TPM_BASELINE_RECORD;
         /* An operation that needs an update authority when none is installed is
          * a CONFIGURATION state, not a TPM fault, and it maps to the status that
-         * says exactly that. Named explicitly because this switch promises the
-         * default arm is unreachable for every value the enum defines -- letting
-         * a new status inherit a bucket through the default is the failure that
-         * promise exists to prevent, and TPM_NV_UNAVAIL did exactly that when it
-         * was added. */
+         * says exactly that. Named explicitly because this switch enumerates
+         * EVERY value the enum defines and carries NO default arm -- letting a
+         * new status inherit a bucket silently is the failure that exhaustive
+         * enumeration prevents, and TPM_NV_UNAVAIL did exactly that when it was
+         * added, back when a default arm still absorbed it. */
         case TPM_NV_UNAVAIL:   return TPM_BASELINE_NOAUTH;
-        /* The remaining hard NV failures, named so the default arm is
-         * unreachable for every status the enum currently defines and a NEW one
-         * cannot inherit a bucket silently. */
+        /* The remaining hard NV failures, named so the enumeration is COMPLETE
+         * and a NEW status cannot inherit a bucket silently: with no default
+         * arm, adding one fails the build here until someone decides where it
+         * belongs. */
         case TPM_NV_LOCKED:
         case TPM_NV_NOSPACE:
         case TPM_NV_DEFINED:
         case TPM_NV_RANGE:
         case TPM_NV_AUTH:
         case TPM_NV_TPMERR:    return TPM_BASELINE_TPMERR;
-        default:               return TPM_BASELINE_TPMERR;
     }
+    /* NO `default:` ARM, and that is the enforcement this switch's promise was
+     * missing. The comment above says a new status must never inherit a bucket
+     * silently -- but a default arm is exactly what disables -Wswitch, so the
+     * promise was unenforced prose and TPM_NV_UNAVAIL had already broken it
+     * once. Without the arm, adding a tpm_nv_status_t value fails the BUILD
+     * until someone decides where it belongs.
+     *
+     * This return is for a value CAST into the enum from outside it, which the
+     * type system cannot prevent and the compiler cannot warn about. TPMERR is
+     * the conservative answer: it reaches no integrity conclusion, so a garbage
+     * input cannot manufacture a verdict in either direction. */
+    return TPM_BASELINE_TPMERR;
 }
 
 /* The bare owner-auth write. Kept as a separate INTERNAL entry point so the
@@ -645,7 +657,9 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
     /* REFUSE the unauthenticated path once an authority is provisioned: this
      * function writes the blob under owner auth and nothing else, so completing
      * it would leave the bind record describing the PREVIOUS blob and the very
-     * next verify would report UNBOUND. tpm_baseline_enroll_bound is the
+     * next verify would report RELABELED -- a CURRENT bind record describing
+     * bytes that changed under it, not the absent record UNBOUND means.
+     * tpm_baseline_enroll_bound is the
      * authorized path. */
     if (tpm_authz_provisioned())
         return TPM_BASELINE_AUTHREQ;

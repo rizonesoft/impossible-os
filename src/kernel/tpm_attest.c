@@ -389,21 +389,30 @@ static tpm_attest_status_t map_attest(tpm_nv_status_t s)
          * expiry means the operation ran out of the boot's patience, not that
          * the TPM failed. TPMERR would misreport a usable device. */
         case TPM_NV_BUDGET:    return TPM_ATTEST_BUSY;
-        /* Same reasoning as tpm_baseline.c and tpm_seal.c: both are hard
-         * integrity failures and are named so a future status cannot inherit
-         * this bucket silently. */
+        /* Same reasoning as tpm_baseline.c: both are hard integrity failures,
+         * named so THIS classification is explicit. It does NOT stop a future
+         * status inheriting this bucket -- the default arm below does exactly
+         * that, and only tpm_baseline_nv_status, which carries no default arm,
+         * actually prevents it. */
         case TPM_NV_RECREATED:
         case TPM_NV_CONTRACT:
         /* A record that failed to PARSE lands here with the enrolled
-         * contract's own corruption: this layer has no separate action
-         * for either, and naming it keeps the default arm unreachable
-         * for every value the NV enum defines. */
+         * contract's own corruption: this attestation layer has no separate action
+         * for either. Named rather than left to the fallthrough so the
+         * classification is a decision about the record. This switch does NOT
+         * enumerate the whole NV enum, so unlike the baseline map its default
+         * arm is genuinely reachable -- do not read this arm as a claim that
+         * it is not. */
         case TPM_NV_RECORD:    return TPM_ATTEST_TPMERR;
         /* Added with the authorized-record work: an operation needing an update
-         * authority when none is installed. Named explicitly rather than left
-         * to the default arm, which this switch promises is unreachable for
-         * every value the enum defines. Not reachable from this module today;
-         * the mapping exists so the promise stays true. */
+         * authority when none is installed. Named explicitly because a
+         * configuration state deserves a deliberate decision, NOT because this
+         * switch is exhaustive -- it names a subset of the NV enum and its
+         * default arm is genuinely reachable, which is the honest design for a
+         * layer that maps every remaining NV failure to one value. Where the
+         * mapping actually differs per status, exhaustiveness IS enforced:
+         * tpm_baseline_nv_status carries no default arm for that reason.
+         * Not reachable from this module today. */
         case TPM_NV_UNAVAIL:   return TPM_ATTEST_TPMERR;
         default:               return TPM_ATTEST_TPMERR;
     }

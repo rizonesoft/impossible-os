@@ -85,6 +85,97 @@ struct tpm_baseline {
     uint32_t crc32;                      /* IEEE CRC32 over bytes [0, crc32 offset) */
 };
 
+/* Layer 1 for the two structs above, which ARE the on-NV wire format.
+ *
+ * Absent until section 29's review, and the gap is exactly the one the record
+ * layer next door does not have: tpm_record.h pins every header offset and all
+ * three sizes, and those asserts are what prove its structs are padding-free
+ * and therefore safe to copy whole. Here the same claim ("the struct IS the
+ * wire format") rested on nothing, so a reordered field or a compiler that
+ * inserted padding would not fail the BUILD -- it would fail as a fleet-wide
+ * TPM_BASELINE_CORRUPT on the next boot, against blobs already written.
+ *
+ * The offsets are ABSOLUTE NUMBERS, not expressions over the macros that
+ * define the struct, and that distinction is the second half of the guard. An
+ * assert written as TPM_BASELINE_MAX_PCRS * (4 + TPM_BASELINE_DIGEST) stays
+ * true when someone raises MAX_PCRS to measure more PCRs -- a legitimate
+ * change -- while the persisted blob silently grows past 412 bytes and every
+ * NV index already written becomes unreadable at its declared size. Absolute
+ * values make that a BUILD failure, which is the moment to bump
+ * TPM_BASELINE_VERSION and write a migration rather than the next boot.
+ *
+ * EVERY persisted field is pinned, not a selection of them, and the difference
+ * is the whole value: the first version of this block pinned only the coarse
+ * boundaries, which left equal-width neighbours free to swap. Exchanging
+ * secure_boot with secure_boot_valid keeps every size and every pinned offset
+ * true while silently reinterpreting blobs already written to NV -- a
+ * fleet-wide false integrity failure that the build would have waved through.
+ * An assert set that reads as coverage without being it is worse than none.
+ *
+ * The size asserts stay as independent padding guards, and the crc32 assert as
+ * a finality guard: a field appended after the checksum would sit outside the
+ * region the checksum covers. */
+_Static_assert(sizeof(struct tpm_baseline_pcr) == 36u,
+               "tpm_baseline_pcr v1 is 36 bytes; padding or growth would corrupt it");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_pcr, index) == 0u,
+               "tpm_baseline_pcr.index offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_pcr, present) == 1u,
+               "tpm_baseline_pcr.present offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_pcr, pad) == 2u,
+               "tpm_baseline_pcr.pad offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline_pcr, digest) == 4u,
+               "tpm_baseline_pcr.digest offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, magic) == 0u,
+               "tpm_baseline.magic must lead the blob");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, version) == 4u,
+               "tpm_baseline.version offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, size) == 6u,
+               "tpm_baseline.size offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, generation) == 8u,
+               "tpm_baseline.generation offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, alg) == 12u,
+               "tpm_baseline.alg offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, pcr_count) == 14u,
+               "tpm_baseline.pcr_count offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, secure_boot) == 15u,
+               "tpm_baseline.secure_boot offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, secure_boot_valid) == 16u,
+               "tpm_baseline.secure_boot_valid offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, fw_hash_present) == 17u,
+               "tpm_baseline.fw_hash_present offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, abi_manifest_present) == 18u,
+               "tpm_baseline.abi_manifest_present offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, pad) == 19u,
+               "tpm_baseline.pad offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, fw_hash) == 20u,
+               "tpm_baseline.fw_hash offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, abi_manifest) == 52u,
+               "tpm_baseline.abi_manifest offset pinned");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, pcrs) == 84u,
+               "tpm_baseline.pcrs offset pinned");
+_Static_assert(sizeof(struct tpm_baseline) == 412u,
+               "tpm_baseline v1 is 412 bytes on NV; growing it needs a VERSION "
+               "bump and a migration, not a larger struct");
+_Static_assert(__builtin_offsetof(struct tpm_baseline, crc32) == 408u,
+               "tpm_baseline.crc32 offset pinned");
+/* The formula forms are kept BESIDE the absolute pins, not instead of them:
+ * these catch compiler padding (the absolute pins would too, but these say
+ * WHICH relation broke), while the absolute pins catch a macro change that
+ * grows the blob with every relation still intact. */
+_Static_assert(sizeof(struct tpm_baseline_pcr) == 4u + TPM_BASELINE_DIGEST,
+               "tpm_baseline_pcr must stay free of padding");
+_Static_assert(sizeof(struct tpm_baseline)
+               == 20u + (2u * TPM_BASELINE_DIGEST)
+                  + (TPM_BASELINE_MAX_PCRS * (4u + TPM_BASELINE_DIGEST)) + 4u,
+               "tpm_baseline must stay free of padding");
+/* The crc32 field is LAST, and the whole integrity scheme depends on it: the
+ * checksum covers every byte before its own offset, so a field added after it
+ * would sit outside the digest entirely. Written as a RELATION as well as an
+ * absolute offset above, because this one must hold at any future version. */
+_Static_assert(__builtin_offsetof(struct tpm_baseline, crc32)
+               == sizeof(struct tpm_baseline) - 4u,
+               "tpm_baseline.crc32 must be the final field");
+
 /* Compare verdict (pure golden-vs-current comparison). */
 typedef enum {
     TPM_BASELINE_MATCH      = 0,  /* every golden PCR + SB + fw-hash matches current */
@@ -147,9 +238,19 @@ struct tpm_baseline_mismatch {
  * nothing about the rest. An out-of-range value renders "unknown". Pure. */
 const char *tpm_baseline_cause_label(uint8_t cause);
 
-/* Operator-facing DIAGNOSIS for a failure status, with recovery guidance whose
- * strength varies by status (classified exhaustively below), or NULL for a
- * status that is not an integrity failure.
+/* Operator-facing DIAGNOSIS for a status that names an action, with recovery
+ * guidance whose strength varies by status (classified exhaustively below), or
+ * NULL for a status with nothing to advise.
+ *
+ * NON-NULL IS NOT A FAILURE TEST, and this contract said it was until section
+ * 29 added the two configuration refusals. Text is returned for the SEVEN
+ * integrity failures AND for TPM_BASELINE_NOAUTH and TPM_BASELINE_AUTHREQ,
+ * which tpm_baseline_status_is_failure deliberately excludes -- so a caller
+ * discriminating on non-NULL would report an expected enrollment refusal as
+ * tamper. Ask the PREDICATE what to publish and ask this function what to TELL
+ * the operator; they answer different questions on purpose. NULL is returned
+ * for TPM_BASELINE_OK, NO_BASELINE, NO_TPM, TPMERR, BUSY, BADARG and any
+ * out-of-range value.
  *
  * ONE helper because there are TWO callers and they used to disagree. The
  * Phase-1 verification path named four statuses in a hand-written chain while
@@ -167,13 +268,21 @@ const char *tpm_baseline_cause_label(uint8_t cause);
  *
  * WHAT EACH STRING PROMISES IS NOT UNIFORM, and pretending otherwise is how a
  * consumer or a later reader ends up inventing a repair. Every entry is a
- * DIAGNOSIS; the recovery half falls into exactly three kinds, and this list is
- * exhaustive over the six failure statuses:
+ * DIAGNOSIS; the recovery half falls into exactly four kinds, and this list is
+ * exhaustive over the seven failure statuses plus the two configuration
+ * refusals:
  *
  *   diagnosis only, deliberately -- TORN, RELABELED, IDENTITY. TORN collapses
  *     three directions whose repairs differ, so naming one would be destructive
  *     over-recovery; the other two name what happened and stop because the
  *     authorized replacement they would point at does not exist yet.
+ *     RECORD is in this same kind: it says the enrolled index answered with
+ *     bytes that are not a record, and stops there, because the authorized
+ *     recovery that would replace them does not exist yet either.
+ *   diagnosis plus AN ACTION AVAILABLE TODAY -- NOAUTH (install an update
+ *     authority) and AUTHREQ (use the authorized enroll path). These two are
+ *     not integrity failures at all, which is precisely why non-NULL cannot be
+ *     read as a failure test.
  *   diagnosis plus a REQUIRED but currently UNAVAILABLE path -- UNBOUND
  *     (authorized migration, owned by the versioned-baseline-growth work) and
  *     CORRUPT (authorized index replacement). These name the direction so an
@@ -184,7 +293,7 @@ const char *tpm_baseline_cause_label(uint8_t cause);
  *
  * No entry states a next step that would deterministically FAIL if attempted;
  * that is the property being held, and it is weaker than "everything named here
- * is reachable today". The CORRUPT text earns its place in the second kind by
+ * is reachable today". The CORRUPT text earns its place in the third kind by
  * saying what re-enrolling will actually do rather than implying it repairs
  * anything. Do not "complete" the first kind by inventing an action.
  *
@@ -196,21 +305,33 @@ typedef enum {
     TPM_BASELINE_OK         = 0,
     TPM_BASELINE_NO_BASELINE = 1,  /* NV index not defined / never written */
     TPM_BASELINE_NO_TPM     = 2,   /* could not measure on THIS attempt. Reached
-                                    * from four distinct causes: the transport is
-                                    * unavailable; it was BUSY with another
-                                    * transaction; the operation outran the
+                                    * from three distinct causes: the transport
+                                    * is unavailable; the operation outran the
                                     * boot's budget; or a required PCR could not
                                     * be snapshotted (inactive bank, bad
-                                    * argument). All of them leave the integrity
+                                    * argument). NV-LAYER contention is no
+                                    * longer among them: it reports
+                                    * TPM_BASELINE_BUSY, as the retry note below
+                                    * says. PCR-layer contention still DOES land
+                                    * here, and that is a known wart rather than
+                                    * a claim -- tpm_baseline_snapshot collapses
+                                    * every unreadable PCR into a partial
+                                    * snapshot and returns NO_TPM, so a
+                                    * TPM_PCR_BUSY read is reported as "could
+                                    * not measure" and is not retried even
+                                    * though it would be safe to. All
+                                    * of them leave the integrity
                                     * verdict UNPUBLISHED rather than reporting a
                                     * false tamper, which is the property this
                                     * value exists for.
                                     *
                                     * Retry safety DIFFERS by cause, which is why
-                                    * the retry-SAFE cause no longer lands here:
-                                    * transport contention now reports
-                                    * TPM_BASELINE_BUSY. What remains under
-                                    * NO_TPM is deliberately NOT retryable --
+                                    * NV-layer contention no longer lands here:
+                                    * it reports TPM_BASELINE_BUSY. What remains
+                                    * is deliberately NOT retryable, with the
+                                    * PCR-layer contention above as the one
+                                    * known exception (safe to retry, currently
+                                    * reported as though it were not) --
                                     * BUDGET abandoned the command in flight with
                                     * its completion UNKNOWN, so a blind retry of
                                     * state-changing work can apply it twice (the
@@ -236,9 +357,10 @@ typedef enum {
      * from "the identity check always runs", and a caller must not infer that
      * it did. The boundary is reaching the IDENTITY
      * CHECK, which is not the same as reaching tpm_baseline_snapshot. Three
-     * kinds of exit refuse without ever looking: UNBOUND when an authority
-     * guard rejects the path before snapshot (the unauthenticated one on a
-     * provisioned machine, the bound one on an unprovisioned machine), BADARG
+     * kinds of exit refuse without ever looking: a CONFIGURATION refusal when
+     * an authority guard rejects the path before snapshot (AUTHREQ from the
+     * unauthenticated entry point on a provisioned machine, NOAUTH from the
+     * bound one on an unprovisioned machine), BADARG
      * on a missing or malformed grant before snapshot, and BADARG INSIDE
      * snapshot on a NULL output or an unsupported `alg`, which is rejected
      * ahead of the identity check. Safe in all cases, but only a call that
@@ -306,12 +428,10 @@ typedef enum {
      * tamper would be told to migrate its blob, authenticating the attacker's
      * content.
      *
-     * NOTE, a known wart rather than a claim: UNBOUND is still OVERLOADED
-     * elsewhere. It is returned for a legacy blob with no bind record, for
-     * TPM_NV_UNAVAIL, and by both enroll entry points when no authority is
-     * provisioned. Splitting those belongs to the enroll path and is owned by
-     * section 29; the split here covers the VERIFY path only, which is the one
-     * that decides a boot's integrity verdict. */
+     * The overload it was split out of is now FULLY resolved: TPM_NV_UNAVAIL
+     * maps to TPM_BASELINE_NOAUTH, both enroll entry points return NOAUTH or
+     * TPM_BASELINE_AUTHREQ, and UNBOUND now means one thing only -- a legacy
+     * blob carrying no bind record on the VERIFY path. */
     TPM_BASELINE_RELABELED = 9,
     /* The NV index behind the bind record failed its ENROLLED CONTRACT before
      * any pairing could be computed: a wrong Name, a redefined index, a counter
@@ -365,7 +485,10 @@ typedef enum {
     /* AN UPDATE AUTHORITY IS PROVISIONED, so the UNAUTHENTICATED enroll entry
      * point refuses: it writes the blob under owner auth and nothing else, so
      * completing it would leave the bind record describing the PREVIOUS blob
-     * and the very next verify would report UNBOUND. The authorized path is
+     * and the very next verify would report RELABELED -- the bind record is
+     * still there and still CURRENT, and it now describes bytes that are gone,
+     * which is exactly the relabel shape. NOT UNBOUND: that means no bind
+     * record at all. The authorized path is
      * tpm_baseline_enroll_bound.
      *
      * The exact OPPOSITE configuration to NOAUTH, and both returned UNBOUND
@@ -423,10 +546,14 @@ const char *tpm_baseline_pairing_repair(tpm_pairing_t pairing);
  * or too-slow device has not failed to match), and BADARG is a caller error
  * rather than a statement about the machine.
  *
- * VERIFY-PATH ONLY, and TPM_BASELINE_UNBOUND is why: on the verify path it
- * means a blob with no authenticated bind record, but the ENROLL entry points
- * return the same value as an ordinary configuration refusal on a healthy
- * authority-provisioned machine. An enroll-side caller must exclude it. Pure. */
+ * USABLE ON BOTH PATHS, and TPM_BASELINE_UNBOUND is why it once was not: the
+ * enroll entry points used to return that same value as an ordinary
+ * configuration refusal, so an enroll-side caller had to exclude it by name or
+ * publish tamper on a healthy machine. They now return TPM_BASELINE_AUTHREQ and
+ * TPM_BASELINE_NOAUTH, neither of which this predicate classes as a failure, so
+ * that exclusion was deleted and both paths use the rule unmodified. Adding a
+ * configuration state to this predicate would reintroduce the whole problem.
+ * Pure. */
 int tpm_baseline_status_is_failure(tpm_baseline_status_t bs);
 
 /* Map an NV-layer status onto the baseline status the boot reports.
@@ -563,16 +690,26 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
  * baseline's generation + 1, or 1 for a first enroll, so a rotation never rolls
  * the counter backward), finalize, and store the blob in the owner-auth NV DATA
  * index `nv_index` (define-if-absent then write). RECOVERY-GATED -- callers must
- * check the recovery + enroll config gate first. */
+ * check the recovery + enroll config gate first.
+ *
+ * REFUSES with TPM_BASELINE_AUTHREQ while an update authority is provisioned:
+ * this path writes the blob under owner auth and nothing else, so completing it
+ * would leave the bind record describing the PREVIOUS blob. AUTHREQ is a
+ * CONFIGURATION state and not an integrity failure, so a caller must not
+ * publish a verdict for it -- it means "use tpm_baseline_enroll_bound", and on
+ * a healthy authority-provisioned machine it is the expected answer. */
 tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg);
 
 /* Enroll or rotate a baseline AND its authenticated bind record, as one
  * operation. This is the only correct path once an update authority is
  * provisioned: tpm_baseline_enroll writes the blob under owner auth and nothing
  * else, so using it after a bind exists would leave the bind describing the
- * PREVIOUS blob and the next verify would report TPM_BASELINE_UNBOUND. That is
- * why the plain enroll now REFUSES with UNBOUND while an authority is
- * installed, rather than quietly breaking the machine it was asked to update.
+ * PREVIOUS blob, so the next verify would report TPM_BASELINE_RELABELED: the
+ * record is present and CURRENT and describes content that no longer matches.
+ * (Not UNBOUND, which means no bind record exists at all.) That is
+ * why the plain enroll now REFUSES with TPM_BASELINE_AUTHREQ while an
+ * authority is installed, rather than quietly breaking the machine it was
+ * asked to update.
  *
  * Order is blob then bind, deliberately: the bind digest covers the blob, so a
  * bind that lands describes bytes already on the device, and a bind that fails
@@ -585,9 +722,12 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg);
  * bind bytes that can never match and every rotation would verify as a
  * mismatch.
  *
- * Returns TPM_BASELINE_OK, TPM_BASELINE_BADARG on a NULL transition,
- * TPM_BASELINE_UNBOUND when no authority is provisioned, or whatever the
- * enroll or the authorized bind reports. */
+ * Returns TPM_BASELINE_OK, TPM_BASELINE_BADARG on a NULL or malformed
+ * transition, TPM_BASELINE_NOAUTH when no authority is provisioned, or
+ * whatever the enroll or the authorized bind reports. NOAUTH is the mirror of
+ * the plain enroll's AUTHREQ and is equally a configuration state rather than
+ * a verdict: the two say "install an authority" and "use the authorized path",
+ * and both returned the same overloaded UNBOUND before the split. */
 struct tpm_authz_transition;
 tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
                                                 const struct tpm_authz_transition *tr);
@@ -598,22 +738,34 @@ tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
  * VERDICT-PRODUCING returns set *out_overall to a BOOT_INTEGRITY_* value and a
  * caller MUST publish it: TPM_BASELINE_OK (VERIFIED on a full match),
  * TPM_BASELINE_NO_BASELINE (the index is undefined or never written),
- * TPM_BASELINE_CORRUPT and TPM_BASELINE_SELF_CORRUPT, and the four authenticity
- * failures TPM_BASELINE_UNBOUND, TPM_BASELINE_TORN, TPM_BASELINE_RELABELED and
- * TPM_BASELINE_IDENTITY (all MISMATCH).
+ * TPM_BASELINE_CORRUPT and TPM_BASELINE_SELF_CORRUPT, and the five authenticity
+ * failures TPM_BASELINE_UNBOUND, TPM_BASELINE_TORN, TPM_BASELINE_RELABELED,
+ * TPM_BASELINE_IDENTITY and TPM_BASELINE_RECORD (all MISMATCH).
  *
  * NON-VERDICT returns leave *out_overall untouched and MUST NOT be published:
  * TPM_BASELINE_NO_TPM (absent or too slow -- a machine that could not measure
  * has not failed to match), TPM_BASELINE_BUSY (transport contention -- the
  * ONLY one of these that is safe to retry blind, since nothing was
- * submitted), TPM_BASELINE_TPMERR (a device fault that reached no conclusion)
- * and TPM_BASELINE_BADARG.
+ * submitted), TPM_BASELINE_TPMERR (a device fault that reached no conclusion) and
+ * TPM_BASELINE_BADARG.
+ *
+ * TPM_BASELINE_NOAUTH is deliberately in NEITHER list, because this verifier
+ * cannot return it. Every producer of the underlying TPM_NV_UNAVAIL sits behind
+ * a `!tpm_authz_provisioned()` guard, and this function consults the bind path
+ * only when that same predicate is TRUE, on a set-once authority -- so the one
+ * status meaning "no authority installed" is unreachable from here. It is a
+ * real return of the ENROLL entry points; listing it here was a stale claim
+ * added when the status was, not a path any caller can reach.
  *
  * The distinction is the whole point: publishing a non-verdict reports a false
  * tamper, and DROPPING a verdict leaves a detected attack invisible under
  * whatever the previous phase published. An earlier version of this comment
  * listed only OK, CORRUPT and NO_BASELINE, and every caller written against it
- * would silently discard the authenticity verdicts. */
+ * would silently discard the authenticity verdicts. It went stale a SECOND
+ * time when TPM_BASELINE_RECORD and TPM_BASELINE_NOAUTH were added, which is
+ * why tpm_baseline_status_is_failure() is the authority and these lists are a
+ * reader's summary of it: a caller that switches on the list rather than
+ * calling the predicate will drift again. */
 tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
                                           uint8_t *out_overall,
                                           uint8_t *out_pcr_status,

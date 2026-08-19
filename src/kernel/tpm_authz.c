@@ -224,8 +224,18 @@ struct authz_policy_ctx {
  * the TPM may hold a session or a transient object whose handle nobody could
  * read. ATOMIC because the authorized paths run under a transport sequence but
  * this counter is read from outside one, and a torn read would understate a
- * leak. Monotonic by design -- it is evidence that a slot MAY be held until
- * reset, and nothing in this file can prove one was later released. */
+ * leak. RELAXED is the right order and not a shortcut: this word publishes no
+ * other data, so it carries no release obligation -- contrast the ACQUIRE and
+ * RELEASE pair on s_authority.public_area below, which gates the length and
+ * policyRef stored beside it.
+ *
+ * It never decreases in a shipping kernel; the reset beside the accessor is
+ * KERNEL_TESTS-only, so a suite can assert a count rather than a running total.
+ * IN PRODUCTION THE COUNTER HAS NO READER: the operator-facing signal is the
+ * klog warning raised at the same moment, and this exists so a test can assert
+ * the CLASSIFICATION -- above all that an ordinary refusal is not counted.
+ * Surfacing an accumulated total in the boot-integrity report would be a
+ * genuine improvement and is not what this section claims to have done. */
 static uint32_t s_authz_unknown_alloc;
 
 /* EXEC-failure accounting for a command that may have allocated a handle.
@@ -464,15 +474,54 @@ tpm_nv_status_t tpm_authz_contract_cache_ok(const struct tpm_nv_identity *cache)
  *
  *   1. read the counter                  -- must equal what the grant assumed
  *   2. verify the index identity         -- the enrolled handle, not a lookalike
- *   3. write the record under the grant  -- reversible; nothing is committed yet
+ *   3. write the record under the grant  -- OVERWRITES the sole record
  *   4. read it back                      -- the bytes are on the device, verbatim
  *   5. increment the counter             -- THE COMMIT POINT, irreversible, last
  *
- * A failure anywhere before 5 leaves a record whose generation is one ahead of
- * the counter. Readers already treat that as not-current, so the machine keeps
- * using the previously committed value: the failure costs an update, never the
- * floor. The reverse order would advance the irreversible half first and leave
- * the machine committed to bytes that may not exist. */
+ * WHAT A PRE-COMMIT FAILURE LEAVES BEHIND depends on how far it got, and the
+ * four cases are not interchangeable:
+ *
+ *   - BEFORE the write lands (steps 1-2, command construction, or a DEFINITE
+ *     refusal of the NV_Write): nothing was overwritten, so the previously
+ *     committed record and its counter are intact. The update is lost; the
+ *     floor is not.
+ *   - AFTER a VERIFIED readback, with the increment either NOT SUBMITTED or
+ *     TRUSTWORTHILY REFUSED: the record's generation is one ahead of the
+ *     counter, readers treat it as not-current, and there is NO usable fallback
+ *     -- step 3 overwrote the only record there is, so the previously committed
+ *     bytes are gone. The machine fails closed and needs the direction-specific
+ *     recovery. Two boundaries matter here. The READBACK, not the write, opens
+ *     this case: NV_Write reporting success is not proof the bytes landed,
+ *     which is the whole reason step 4 exists. And a REFUSED increment, not
+ *     merely an unconfirmed one, keeps it: an increment whose outcome is
+ *     unknown belongs to the last case below, because it may already have
+ *     executed and left the pairing CURRENT -- acting on this case there would
+ *     issue a second increment and drive a current pairing to counter-ahead,
+ *     which is the destructive direction.
+ *   - WRITE reported success but the readback FAILED or DIFFERED: the stored
+ *     bytes may be the candidate, corrupt, or still the previous record. Neither
+ *     the generation nor the availability of a fallback is established.
+ *   - UNKNOWN outcome OF EITHER STATE-CHANGING COMMAND, the write or the
+ *     increment. Unknown means ANY outcome that is neither a trustworthy
+ *     refusal nor a validated success -- no response header parsed, and equally
+ *     a parsed TPM2_RC_SUCCESS whose session envelope failed validation, which
+ *     the executor reports as TRANSPORT. The two commands are NOT symmetric
+ *     here: an unknown WRITE leaves the record unknown and the counter
+ *     unattempted, while an unknown INCREMENT means the record is established
+ *     and only the counter is in doubt, so the pairing may already be CURRENT.
+ *     Re-read both anchors either way, and never assume the increment did not
+ *     land.
+ *
+ * This comment used to flatten every case into "costs an update, never the
+ * floor", which is false for the second; a first correction flattened them the
+ * other way, which is false for the first and the last; and a second correction
+ * still treated a reported write as a confirmed one. Each flattening read as
+ * tidier than the truth, which is why the cases are enumerated rather than
+ * summarized.
+ *
+ * The ordering is still the design: the reverse order would advance the
+ * irreversible half first and leave the machine committed to bytes that may
+ * never have been written, which is worse than any of the four above. */
 
 struct authz_write_ctx {
     uint32_t        nv_index;
@@ -650,7 +699,25 @@ flush_key:
 static int authz_write_seq(tpm2_seq_t seq, void *vctx)
 {
     struct authz_write_ctx *c = (struct authz_write_ctx *)vctx;
-    /* rsp is sized against the RECORD SIZE THIS FUNCTION ADVERTISES, not
+    /* MEASURED FRAME, so nobody has to re-derive it: this function is 3112
+     * bytes (llvm-objdump of the prologue), and the deepest authorized-write
+     * chain is tpm_authz_write_record 312 + this 3112 + the authorized-session
+     * helper 1544 = 4968 bytes before the transport frames.
+     *
+     * THE FIGURE IS LATENT, not a measurement of a shipping path: there is no
+     * production caller of the authorized write at all today. The boot's only
+     * enroll caller uses the UNAUTHENTICATED writer, and nothing outside the
+     * tests reaches tpm_baseline_enroll_bound, tpm_ab_floor_advance or
+     * tpm_authz_write_record. It is recorded now because the numbers are cheap
+     * to take while the code is in hand and expensive to reconstruct later: a
+     * Phase-1 caller would run on the 16 KiB BSP boot stack
+     * (BSP_BOOT_STACK_SIZE, boot_hw.c) and use about a third, while a
+     * KERNEL-THREAD caller gets TASK_STACK_SIZE (8 KiB) and the same chain is
+     * about two thirds. Whichever arrives first, its stack is assessed then,
+     * and the buffers move off the stack before a thread-context caller is
+     * wired.
+     *
+     * rsp is sized against the RECORD SIZE THIS FUNCTION ADVERTISES, not
      * against the two record shapes that happen to be compiled in today.
      * tpm_authz_write_record accepts any record_len up to TPM_NV_MAX_DATA, and
      * the readback below is an NV_Read whose response is
@@ -660,7 +727,7 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
      * grown past ~437 bytes would have surfaced as an unexplained transport
      * error rather than a named refusal. TPM_NV_MAX_DATA + 128 is the same
      * arithmetic the NV layer's own policy-op helper uses for this shape. */
-    uint8_t cmd[1024], rsp[TPM_NV_MAX_DATA + 128u];
+    uint8_t cmd[1024], rsp[TPM_NV_MAX_RSP];
     uint8_t names[2u * (2u + SHA256_DIGEST_LEN)];
     uint8_t cnames[2u * (2u + SHA256_DIGEST_LEN)];
     uint8_t params[16u + TPM_NV_MAX_DATA];
@@ -918,7 +985,12 @@ struct authz_read_ctx {
 static int authz_read_seq(tpm2_seq_t seq, void *vctx)
 {
     struct authz_read_ctx *c = (struct authz_read_ctx *)vctx;
-    uint8_t cmd[64], rsp[512];
+    /* Sized from the API's own bound, exactly as the write path is: this reads
+     * c->cap bytes and the public entry point accepts any cap up to
+     * TPM_NV_MAX_DATA. The bare 512 here was the same defect the write side
+     * carried, and fixing one while leaving its sibling would have closed
+     * nothing -- the two grow together the day a record contract does. */
+    uint8_t cmd[64], rsp[TPM_NV_MAX_RSP];
     struct tpm_nv_public pub;
     uint32_t n, rlen = 0, rc = 0;
     tpm_nv_status_t st, counter_gone = TPM_NV_OK;

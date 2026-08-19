@@ -404,6 +404,27 @@ typedef enum {
                              * for both cannot tell which object to recover. */
 } tpm_nv_status_t;
 
+/* Response and command buffer bounds for a MAXIMUM-SIZE NV transfer, derived
+ * once here instead of open-coded at each call site.
+ *
+ * An NV_Read reply is header(10) + parameterSize(4) + TPM2B_MAX_NV_BUFFER
+ * (2 + TPM_NV_MAX_DATA) + a full one-session auth area (nonceTPM TPM2B,
+ * attributes, hmac TPM2B: about 69 bytes). An NV_Write command is the mirror
+ * image. The margins round those envelopes up; a reply larger than the buffer
+ * is rejected by tpm2_submit rather than overrunning it.
+ *
+ * NAMED because the same arithmetic was open-coded at every site that needed
+ * it, and the copies drifted. Seven sites use these bounds now: five in the NV
+ * layer and both authorized-record paths. Before the authorized-record
+ * hardening BOTH of those paths carried a bare 512, which cannot hold the
+ * maximum transfer their own API accepts, so a grown record contract would have
+ * surfaced as an unexplained transport error instead of a named refusal; that
+ * work fixed the write side, and the review that followed it found the read
+ * side still wrong. A rule copied once per call site is a rule that gets a copy
+ * wrong. */
+#define TPM_NV_MAX_RSP (TPM_NV_MAX_DATA + 128u)
+#define TPM_NV_MAX_CMD (TPM_NV_MAX_DATA + 64u)
+
 /* Sentinel for "the exec wrapper never parsed a response header", which it
  * signals by leaving its *out_rc untouched. No real TPM response code can be
  * 0xFFFFFFFF (the format-1 encoding bounds it well below that).
