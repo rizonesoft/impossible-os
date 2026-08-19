@@ -51,8 +51,17 @@ _Static_assert(sizeof(unsigned long long) == 8,
 /* Field offsets, counted from the start of the OPTIONAL header. SizeOfHeaders
  * and CheckSum land at the SAME place in PE32 and PE32+: the two layouts
  * diverge at ImageBase (4 vs 8 bytes) but re-converge because PE32 also carries
- * a BaseOfData that PE32+ drops. Pinned against include/kernel/pe.h, which
- * _Static_asserts SizeOfHeaders at 0x3C and CheckSum at 0x40 for PE32+. */
+ * a BaseOfData that PE32+ drops.
+ *
+ * These are NOT pinned by a _Static_assert here, and saying so matters: this
+ * header parses a byte buffer rather than declaring a struct, so there is no
+ * layout for an assert to check. include/kernel/pe.h DOES assert the same two
+ * offsets (0x3C, 0x40) on its own PE32+ struct, which is corroboration and not
+ * a constraint on this file -- it is a kernel translation unit this header
+ * cannot include. What actually holds these honest is tools/boot-header-tests,
+ * which hashes the REAL staged BOOTX64.EFI and compares against an independent
+ * transcription of the spec: a wrong offset there fails immediately, on every
+ * smoke leg. */
 #define PEAC_OPT_SIZEOFHEADERS      60u
 #define PEAC_OPT_CHECKSUM           64u
 #define PEAC_OPT_MAGIC_PE32     0x010Bu
@@ -165,12 +174,19 @@ PEAC_FN int peac_hash(const unsigned char *img, unsigned long long img_size,
 
     /* COFF file header: 20 bytes at pe_off+4, NumberOfSections at +2 and
      * SizeOfOptionalHeader at +16. */
-    unsigned int coff_off = pe_off + 4u;
+    /* 64-bit from here down. Every one of these is derived from a 32-bit field
+     * the file itself declares, so on an input larger than 4 GiB a crafted
+     * e_lfanew could wrap the adds below and produce a coherent-looking parse
+     * of the wrong bytes. The only in-tree caller caps its input at 2 MiB, so
+     * this is unreachable today -- but the header is documented as reusable and
+     * unit-tested standalone, and an arithmetic bound that depends on who calls
+     * you is not a bound. */
+    unsigned long long coff_off = (unsigned long long)pe_off + 4u;
     if ((img_size - coff_off) < 20u)
         return PEAC_BAD_COFF;
     unsigned int nsec     = peac_rd16(img + coff_off + 2u);
     unsigned int opt_size = peac_rd16(img + coff_off + 16u);
-    unsigned int opt_off  = coff_off + 20u;   /* <= img_size, checked above */
+    unsigned long long opt_off = coff_off + 20u;   /* <= img_size, checked above */
 
     if (opt_size == 0u || (unsigned long long)opt_off > img_size
         || (img_size - opt_off) < (unsigned long long)opt_size)
@@ -197,8 +213,8 @@ PEAC_FN int peac_hash(const unsigned char *img, unsigned long long img_size,
     if (opt_size < secdir_rel + PEAC_DIR_ENTRY_SIZE)
         return PEAC_BAD_OPTIONAL;
 
-    unsigned int checksum_off    = opt_off + PEAC_OPT_CHECKSUM;
-    unsigned int secdir_off      = opt_off + secdir_rel;
+    unsigned long long checksum_off = opt_off + PEAC_OPT_CHECKSUM;
+    unsigned long long secdir_off   = opt_off + secdir_rel;
     unsigned int size_of_headers = peac_rd32(img + opt_off + PEAC_OPT_SIZEOFHEADERS);
 
     /* NumberOfRvaAndSizes sits 4 bytes before the array in both layouts. The
@@ -218,7 +234,7 @@ PEAC_FN int peac_hash(const unsigned char *img, unsigned long long img_size,
     if ((unsigned long long)size_of_headers > img_size)
         return PEAC_BAD_HEADERS;
     if (secdir_off < checksum_off + 4u
-        || size_of_headers < secdir_off + PEAC_DIR_ENTRY_SIZE)
+        || (unsigned long long)size_of_headers < secdir_off + PEAC_DIR_ENTRY_SIZE)
         return PEAC_BAD_HEADERS;
 
     /* Steps 9-10: the section table, minus every zero-length section, sorted by
@@ -228,14 +244,13 @@ PEAC_FN int peac_hash(const unsigned char *img, unsigned long long img_size,
      * shift where the trailing-data range begins. */
     if (nsec > PEAC_MAX_SECTIONS)
         return PEAC_TOO_MANY_SECTIONS;
-    unsigned int sectab_off = opt_off + opt_size;   /* <= img_size, checked */
+    unsigned long long sectab_off = opt_off + opt_size;   /* <= img_size, checked */
     /* Bound the whole table before walking it, so `hdr` below cannot wrap. */
     if ((img_size - sectab_off)
             < (unsigned long long)nsec * PEAC_SECTION_HDR_SIZE)
         return PEAC_BAD_SECTION;
     for (i = 0; i < nsec; i++) {
-        unsigned long long hdr =
-            (unsigned long long)sectab_off + (unsigned long long)i * PEAC_SECTION_HDR_SIZE;
+        unsigned long long hdr = sectab_off + (unsigned long long)i * PEAC_SECTION_HDR_SIZE;
         unsigned int sraw = peac_rd32(img + hdr + PEAC_SECTION_SIZERAW_OFF);
         unsigned int praw = peac_rd32(img + hdr + PEAC_SECTION_PTRRAW_OFF);
         if (sraw == 0u)
@@ -274,12 +289,12 @@ PEAC_FN int peac_hash(const unsigned char *img, unsigned long long img_size,
     /* Steps 2-7: the header, with the checksum and the certificate table entry
      * cut out of it. */
     sha256b_init(&ctx);
-    sha256b_update(&ctx, img, (unsigned long long)checksum_off);
+    sha256b_update(&ctx, img, checksum_off);
     sha256b_update(&ctx, img + checksum_off + 4u,
-                   (unsigned long long)(secdir_off - (checksum_off + 4u)));
+                   secdir_off - (checksum_off + 4u));
     sha256b_update(&ctx, img + secdir_off + PEAC_DIR_ENTRY_SIZE,
-                   (unsigned long long)(size_of_headers
-                                        - (secdir_off + PEAC_DIR_ENTRY_SIZE)));
+                   (unsigned long long)size_of_headers
+                       - (secdir_off + PEAC_DIR_ENTRY_SIZE));
 
     /* Steps 8, 11-13: SUM_OF_BYTES_HASHED starts at SizeOfHeaders and grows by
      * each kept section's SizeOfRawData. */

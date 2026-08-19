@@ -12267,10 +12267,12 @@ static inline void post_code16(UINT16 code)
 /* BOOTX64.EFI on-disk self-measurement (measured-boot loader attribution). */
 #define POST16_BL_SELF_MEASURE    0xB0A4
 #define POST16_BL_SELF_MEASURE_OK 0xB0A5
-/* PCR 4 correlation: entry, and the AGREE verdict specifically. A boot that
- * halts between them is one that reached the event-log walk and died there. */
+/* PCR 4 correlation: entry, and the log-match verdict specifically. A boot that
+ * halts between them is one that reached the event-log walk and died there.
+ * The second is deliberately not named _AGREE: no PCR is read or replayed on
+ * this path, so the marker records a log match, not TPM-confirmed agreement. */
 #define POST16_BL_PCR4_CORRELATE    0xB0A8
-#define POST16_BL_PCR4_AGREE        0xB0A9
+#define POST16_BL_PCR4_LOG_MATCH    0xB0A9
 
 /* PE/COFF structures for UKI section walk.
  * Reference: Microsoft PE/COFF Specification, MS-DOS stub at offset 0,
@@ -15234,7 +15236,17 @@ static void net_http_probe(EFI_HANDLE dev_handle)
  * partial read) would be worse than absence: it looks exactly like the real
  * answer. */
 
-#define SELF_MEASURE_SIZE_CAP   (8u * 1024u * 1024u) /* the shipped image is ~344 KB */
+/* STAYS 8 MiB. Since the whole file is now held in one pool allocation (the
+ * Authenticode hash needs the section table before it knows which bytes to hash,
+ * so a single forward pass is not available) this ceiling is also the worst-case
+ * peak pre-EBS allocation, and it was briefly lowered to 2 MiB on exactly that
+ * reasoning. Reverted: section 20 shipped, verified and documented an 8 MiB
+ * bound, so narrowing it here would silently refuse a loader that grew into the
+ * 2-8 MiB range the contract still promises -- publishing no digest at all and
+ * failing the smoke oracle, for a machine doing nothing wrong. The peak
+ * allocation is a real concern, and it is filed as an item rather than paid for
+ * with a contract nobody was told had changed. */
+#define SELF_MEASURE_SIZE_CAP   (8u * 1024u * 1024u) /* the shipped image is ~350 KB */
 #define SELF_MEASURE_CHUNK      (64u * 1024u)
 /* 256 CHAR16 covers every ESP path a loader is launched from with room to spare
  * (`\EFI\BOOT\BOOTX64.EFI` is 21). It is a hard bound, not a truncation point:
@@ -15279,6 +15291,10 @@ enum self_measure_status {
     SELF_MEASURE_SELFTEST_FAILED, /* the hash itself is wrong; publish nothing */
 };
 
+/* Distinct from every enum peac_status value (which start at PEAC_OK == 0), so
+ * "never computed" can never be mistaken for "computed successfully". */
+#define SELF_MEASURE_PE_NOT_RUN 0xFFu
+
 /* Published for the kernel handoff. The boot_info carriage is NOT wired yet:
  * adding a boot_info field requires an F() row in
  * tools/boot-info-manifest/dump-fields.inc (its completeness check refuses a
@@ -15317,8 +15333,21 @@ static struct {
      * them, which is the substitution this correlation exists to catch. */
     UINT8  pe_digest[SHA256B_DIGEST_LEN];
     UINT8  pe_present;              /* 1 = pe_digest holds a real measurement */
-    UINT8  pe_status;               /* enum peac_status */
+    /* enum peac_status once the hash has RUN, otherwise SELF_MEASURE_PE_NOT_RUN.
+     * PEAC_OK is 0, so a record that never ran would otherwise report `ok`
+     * beside an absent digest -- two fields disagreeing, which is the same trap
+     * SELF_MEASURE_NOT_RUN exists to close for the flat status above. */
+    UINT8  pe_status;
 } g_self_measure;
+
+/* peac_status_name() plus the not-run sentinel, so every value the record can
+ * hold has a name and none of them reads as a success it is not. */
+static const char *self_measure_pe_status_name(UINT8 st)
+{
+    if (st == SELF_MEASURE_PE_NOT_RUN)
+        return "not-run";
+    return peac_status_name((int)st);
+}
 
 static const char *self_measure_status_name(UINT8 st)
 {
@@ -15470,6 +15499,18 @@ static void self_measure_run(void)
     g_self_measure.tsc_delta = 0;
     for (i = 0; i < SHA256B_DIGEST_LEN; i++)
         g_self_measure.digest[i] = 0;
+    /* The PE fields need the SAME treatment, and for a reason specific to this
+     * loader: .bss is NOT zeroed here -- firmware pool-poisons it with 0xAF
+     * (bootx64.c:8425). Leaving pe_present unwritten therefore does not mean
+     * "false", it means 0xAF, and a boot that failed before computing the
+     * digest would print status=ok over uninitialized bytes and sail past the
+     * no-local-digest guard into a fabricated DISAGREE. Clearing an absence is
+     * not defensive here; it is the difference between an honest absence and
+     * an invented measurement. */
+    g_self_measure.pe_present = 0;
+    g_self_measure.pe_status = (UINT8)SELF_MEASURE_PE_NOT_RUN;
+    for (i = 0; i < SHA256B_DIGEST_LEN; i++)
+        g_self_measure.pe_digest[i] = 0;
 
     /* The hash itself is verified before anything it produces is believed. */
     if (!sha256b_selftest()) {
@@ -15640,13 +15681,25 @@ report:
             }
         } else {
             serial_early_print("status=");
-            serial_early_print(peac_status_name((int)g_self_measure.pe_status));
+            serial_early_print(self_measure_pe_status_name(g_self_measure.pe_status));
             serial_early_print(" pe-authenticode-sha256=ABSENT");
         }
         serial_early_print("\n");
     } else {
         serial_early_print(" digest=ABSENT\n");
     }
+}
+
+/* Close every correlate line with its own elapsed cost. The self-measurement's
+ * tsc_delta is finalized before this work begins, so without this the section's
+ * boot-latency contribution -- an event-log walk plus polled-UART output -- was
+ * invisible to the one timer that exists. A cost nobody measures is a cost
+ * nobody notices growing. */
+static void correlate_tsc_tail(UINT64 start)
+{
+    serial_early_print(" tsc=");
+    serial_early_print_hex64(boot_rdtsc() - start);
+    serial_early_print("\n");
 }
 
 /* ---------------------------------------------------------------------------
@@ -15689,6 +15742,8 @@ static void correlate_pcr4_measurement(void)
     int rc;
     UINTN i;
 
+    UINT64 corr_tsc_start = boot_rdtsc();
+
     post_code16(POST16_BL_PCR4_CORRELATE);
     serial_early_print("[BOOT] pcr4-correlate: ");
 
@@ -15696,8 +15751,8 @@ static void correlate_pcr4_measurement(void)
      * which is an absence on our side rather than a claim about the platform. */
     if (!g_self_measure.pe_present) {
         serial_early_print("result=no-local-digest status=");
-        serial_early_print(peac_status_name((int)g_self_measure.pe_status));
-        serial_early_print("\n");
+        serial_early_print(self_measure_pe_status_name(g_self_measure.pe_status));
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
 
@@ -15706,25 +15761,29 @@ static void correlate_pcr4_measurement(void)
      * against an event's full path compares a suffix with a whole. */
     status = gBS->HandleProtocol(gImageHandle, &lidp_guid, (VOID **)&self_dp);
     if (EFI_ERROR(status) || !self_dp) {
-        serial_early_print("result=no-image-device-path\n");
+        serial_early_print("result=no-image-device-path");
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
     /* The object is measured by firmware, never self-walked: a device path is
      * hostile input and a heuristic cap is not an object bound. */
     status = gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
     if (EFI_ERROR(status) || !dpu || !dpu->GetDevicePathSize) {
-        serial_early_print("result=no-devpath-utilities\n");
+        serial_early_print("result=no-devpath-utilities");
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
     dp_size = dpu->GetDevicePathSize(self_dp);
     if (dp_size < 4u) {
-        serial_early_print("result=degenerate-device-path\n");
+        serial_early_print("result=degenerate-device-path");
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
 
     if (!g_boot_info_ptr->tpm_available || !g_boot_info_ptr->tpm_event_log
         || g_boot_info_ptr->tpm_event_log_size == 0u) {
-        serial_early_print("result=no-event-log\n");
+        serial_early_print("result=no-event-log");
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
 
@@ -15735,7 +15794,7 @@ static void correlate_pcr4_measurement(void)
          * "try for a match" is how a corrupt log becomes an AGREE. */
         serial_early_print("result=log-unusable status=");
         serial_early_print(tcgl_status_name(rc));
-        serial_early_print("\n");
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
 
@@ -15748,7 +15807,7 @@ static void correlate_pcr4_measurement(void)
             serial_early_print(" candidates=");
             serial_early_print_uint((UINT32)candidates);
         }
-        serial_early_print("\n");
+        correlate_tsc_tail(corr_tsc_start);
         return;
     }
 
@@ -15765,17 +15824,22 @@ static void correlate_pcr4_measurement(void)
                                                     | (UINT16)m.sha256[j + 1u]));
                 }
             }
-            serial_early_print("\n");
+            correlate_tsc_tail(corr_tsc_start);
             return;
         }
     }
 
-    serial_early_print("result=AGREE image-base=");
+    /* NOT "AGREE". Nothing here read or replayed a PCR, so the strongest honest
+     * claim is that an internally-consistent log RECORDS this digest. A bare
+     * AGREE on the wire would be read as TPM-backed by a consumer that never
+     * sees the qualification in these comments, and the whole point of the
+     * absence taxonomy above is that the wire words mean what they say. */
+    serial_early_print("result=UNAUTHENTICATED-LOG-MATCH image-base=");
     serial_early_print_hex64((UINT64)m.image_base);
     serial_early_print(" image-len=");
     serial_early_print_uint((UINT32)m.image_len);
-    serial_early_print("\n");
-    post_code16(POST16_BL_PCR4_AGREE);
+    correlate_tsc_tail(corr_tsc_start);
+    post_code16(POST16_BL_PCR4_LOG_MATCH);
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)

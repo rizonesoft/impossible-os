@@ -518,6 +518,34 @@ else
         fi
     fi
 
+    # ---- PCR 4 correlation verdict -----------------------------------------
+    # The correlation is the section's actual deliverable and was the one line
+    # of the three with no schema behind it -- omission, not intent. Anchor it,
+    # because the failure this guards is not a wrong digest but a SILENT one:
+    # if correlate_pcr4_measurement stopped running, or started reporting an
+    # outcome nobody enumerated, every other assertion here would still pass.
+    #
+    # The verdict itself is deliberately NOT constrained to a single value. A
+    # dev-host boot has no TPM and correctly reports no-event-log; a machine
+    # with one reports a match or a named absence. What IS constrained is that
+    # the line exists, names an enumerated outcome, and carries its cost. A
+    # bare AGREE is rejected on purpose: nothing on this path reads or replays
+    # a PCR, so that word must not appear.
+    PCR4_LINE="$(grep -F -- '[BOOT] pcr4-correlate:' "$STRIPPED_LOG" 2>/dev/null | head -1)"
+    PCR4_BODY="$(printf '%s' "$PCR4_LINE" | sed 's/\r$//')"
+    PCR4_SCHEMA='^\[BOOT\] pcr4-correlate: result=(UNAUTHENTICATED-LOG-MATCH|DISAGREE|no-local-digest|no-image-device-path|no-devpath-utilities|degenerate-device-path|no-event-log|log-unusable|no-comparison)([ ][a-z0-9-]+=[0-9A-Za-z-]+)* tsc=[0-9A-F]{16}$'
+    if [ -z "$PCR4_LINE" ]; then
+        echo -e "  ${RED}MISSING:${NC} [BOOT] pcr4-correlate: line absent from serial"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-PCR 4 correlation did not report}"
+    elif ! printf '%s' "$PCR4_BODY" | grep -qE -- "$PCR4_SCHEMA"; then
+        echo -e "  ${RED}MISSING:${NC} pcr4-correlate line is not a schema-valid outcome: $PCR4_BODY"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-PCR 4 correlation reported an unenumerated outcome}"
+    else
+        echo -e "  ${GREEN}OK${NC} pcr4-correlate: $(printf '%s' "$PCR4_BODY" | sed -n 's/.*result=\([A-Za-z-]*\).*/\1/p')"
+    fi
+
     # ---- Authenticode PE digest oracle -------------------------------------
     # The flat digest above says which FILE was hashed. This one says whether
     # that file could be what firmware executed: it is the Authenticode PE hash,
