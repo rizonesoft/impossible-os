@@ -15058,8 +15058,25 @@ enum self_measure_status {
  * field without one) and that file is operator-only machinery. Until then this
  * record is the loader-side source of truth and the serial line below is how it
  * leaves the machine. */
+/* WHAT THIS DIGEST CLAIMS, AND WHAT NO CONSUMER MAY UPGRADE IT TO.
+ *
+ * These are the bytes of the ESP FILE reached through the loaded-image
+ * DeviceHandle + FilePath. They are NOT the bytes firmware executed. Firmware
+ * measured the executed image itself during LoadImage, as an
+ * EV_EFI_BOOT_SERVICES_APPLICATION event into PCR 4 (TCG PC Client Platform
+ * Firmware Profile), and that measurement is an Authenticode PE hash over the
+ * loaded image rather than a flat file hash -- a different value over different
+ * bytes, so the two are not interchangeable and cannot be compared without a PE
+ * hasher.
+ *
+ * The gap is real, not theoretical: the file can be replaced between LoadImage
+ * and this reopen, and a remount can resolve the same path elsewhere. Either
+ * yields two internally consistent digests with nothing to notice the swap.
+ * Correlating this value with the firmware event is a tracked capability of its
+ * own; until it lands, this record is evidence about a FILE on the ESP, and
+ * every field name and serial token says so. */
 static struct {
-    UINT8  digest[SHA256B_DIGEST_LEN];
+    UINT8  digest[SHA256B_DIGEST_LEN];  /* SHA-256 over the ESP FILE bytes */
     UINT8  present;                 /* 1 = digest holds a real measurement */
     UINT8  status;                  /* enum self_measure_status; 0 = never ran */
     UINT64 measured_bytes;
@@ -15332,7 +15349,10 @@ report:
         serial_early_print_uint((UINT32)g_self_measure.measured_bytes);
         serial_early_print(" tsc=");
         serial_early_print_hex64(g_self_measure.tsc_delta);
-        serial_early_print(" sha256=");
+        /* The token NAMES the subject: esp-file-sha256, never a bare sha256.
+         * A bare one invites a reader (or a later parser) to treat it as the
+         * executed image's digest, which it is not. */
+        serial_early_print(" esp-file-sha256=");
         for (i = 0; i < SHA256B_DIGEST_LEN; i += 2u) {
             serial_early_print_hex16((UINT16)(((UINT16)g_self_measure.digest[i] << 8)
                                             | (UINT16)g_self_measure.digest[i + 1u]));

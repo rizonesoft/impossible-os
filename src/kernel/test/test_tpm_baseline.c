@@ -7,6 +7,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/tpm.h"
+#include "kernel/klog.h"   /* klog_entry_t.message cap -- the guidance lines must fit */
 #include "kernel/tpm_baseline.h"
 #include "kernel/tpm_nv.h"          /* TPM_NV_INDEX_BASELINE */
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical set) */
@@ -1033,6 +1034,338 @@ static void test_integrity_build_report(void)
                    "NULL out is refused");
 }
 
+/* FIRST-MISMATCH ATTRIBUTION: every MISMATCH branch of the comparison must name
+ * a DIFFERENT field, because the whole point is that an operator can tell a
+ * firmware update from a Secure Boot toggle from a genuine tamper. A test that
+ * only checked "some cause was set" would pass with every branch reporting the
+ * same one, which is the state this section exists to fix. */
+static void test_baseline_compare_cause(void)
+{
+    struct tpm_baseline g, c;
+    struct tpm_baseline_mismatch m;
+
+    /* Control FIRST: a matching pair must report MATCH and NO cause. Without
+     * this, an implementation that reported a cause unconditionally would pass
+     * every assertion below. */
+    make_golden(&g);
+    make_golden(&c);
+    memset(&m, 0xEE, sizeof(m));
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MATCH,
+                   "control: identical baselines match");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "a MATCH clears the cause rather than leaving the poison");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_valid, 0u, "a MATCH marks no PCR index valid");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_index, 0u, "a MATCH leaves no PCR index behind");
+
+    /* Bank: checked before everything else, since no digest is comparable. */
+    make_golden(&c);
+    c.alg = TPM_ALG_SHA1;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a different hash bank mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_BANK,
+                   "a bank difference is attributed to the bank");
+
+    /* Secure Boot readability and Secure Boot state are DISTINCT causes: a
+     * platform that stopped reporting the state and one that turned it off
+     * need different operator actions. */
+    make_golden(&c);
+    c.secure_boot_valid = 0u;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "Secure Boot becoming unreadable mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_SB_VALIDITY,
+                   "unreadable Secure Boot is attributed to readability");
+
+    make_golden(&c);
+    c.secure_boot = 0u;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "Secure Boot turning off mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_SB_STATE,
+                   "a Secure Boot state change is attributed to the state");
+
+    /* Firmware hash: absent and differing are separate causes. */
+    make_golden(&c);
+    c.fw_hash_present = 0u;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a vanished firmware hash mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_FW_HASH_ABSENT,
+                   "an absent firmware hash is named as absent, not as differing");
+
+    make_golden(&c);
+    memset(c.fw_hash, 0xDD, TPM_BASELINE_DIGEST);
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a changed firmware hash mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_FW_HASH,
+                   "a firmware update is attributed to the firmware hash");
+
+    /* ABI manifest: presence disagreement, then content. */
+    make_golden(&c);
+    c.abi_manifest_present = 1u;
+    memset(c.abi_manifest, 0x11, TPM_BASELINE_DIGEST);
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "an ABI-manifest presence disagreement mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_ABI_PRESENCE,
+                   "presence disagreement is attributed to presence");
+
+    make_golden(&g);
+    g.abi_manifest_present = 1u;
+    memset(g.abi_manifest, 0x11, TPM_BASELINE_DIGEST);
+    make_golden(&c);
+    c.abi_manifest_present = 1u;
+    memset(c.abi_manifest, 0x22, TPM_BASELINE_DIGEST);
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a differing ABI manifest mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_ABI_CONTENT,
+                   "a differing ABI manifest is attributed to its content");
+
+    /* A golden pinning no PCR at all. */
+    make_golden(&g);
+    make_golden(&c);
+    {
+        uint32_t i;
+        for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++)
+            g.pcrs[i].present = 0u;
+    }
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a golden pinning no PCR cannot match");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_NO_PCR_PINNED,
+                   "an unpinned golden is named as such, not as a PCR difference");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_valid, 0u,
+                   "no-PCR-pinned carries no PCR index (there is no culprit slot)");
+
+    /* A PCR whose digest moved: the index is part of the attribution. Slot 2
+     * holds PCR 2 in the canonical set, so the reported index proves the
+     * culprit slot is identified rather than defaulted. */
+    make_golden(&g);
+    make_golden(&c);
+    memset(c.pcrs[2].digest, 0x5A, TPM_BASELINE_DIGEST);
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a changed PCR digest mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_PCR_DIGEST,
+                   "a changed digest is attributed to the PCR digest");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_valid, 1u, "a PCR cause marks its index valid");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_index, (uint32_t)k_baseline_pcrs[2],
+                   "the reported PCR index is the culprit slot, not slot 0");
+
+    /* A pinned PCR that is no longer readable. Slot 4 -> PCR 4. */
+    make_golden(&c);
+    c.pcrs[4].present = 0u;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m), (int)TPM_BASELINE_MISMATCH,
+                   "a pinned PCR that vanished mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_PCR_ABSENT,
+                   "a vanished PCR is named absent, not as a digest difference");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_index, (uint32_t)k_baseline_pcrs[4],
+                   "the absent PCR reports its own index");
+
+    /* Precedence: when a scalar AND a PCR both moved, the scalar wins, because
+     * it is compared first. This is the documented first-mismatch contract, and
+     * asserting it is what stops a later reorder changing the reported cause
+     * silently. */
+    make_golden(&c);
+    c.secure_boot = 0u;
+    memset(c.pcrs[2].digest, 0x5A, TPM_BASELINE_DIGEST);
+    TEST_ASSERT_EQ((uint32_t)tpm_baseline_compare_detail(&g, &c, &m),
+                   (uint32_t)TPM_BASELINE_MISMATCH,
+                   "a simultaneous scalar+PCR change mismatches");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_SB_STATE,
+                   "the earlier scalar cause wins over a later PCR difference");
+
+    /* BADARG is attributed too, so a caller cannot read NONE beside a
+     * non-verdict return. */
+    memset(&m, 0xEE, sizeof(m));
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail((const struct tpm_baseline *)0, &c, &m),
+                   (int)TPM_BASELINE_CMP_BADARG, "NULL golden is BADARG");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_BADARG,
+                   "BADARG is attributed rather than left as poison");
+
+    /* An oversized pcr_count is the other BADARG route. */
+    make_golden(&c);
+    c.pcr_count = (uint8_t)(TPM_BASELINE_MAX_PCRS + 1u);
+    TEST_ASSERT_EQ((int)tpm_baseline_compare_detail(&g, &c, &m),
+                   (int)TPM_BASELINE_CMP_BADARG, "an oversized pcr_count is BADARG");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_BADARG,
+                   "the oversized-count BADARG is attributed too");
+
+    /* Declining the detail is legal and must not fault, and the wrapper must
+     * agree with the detail function on the verdict. */
+    make_golden(&c);
+    c.secure_boot = 0u;
+    TEST_ASSERT_EQ((int)tpm_baseline_compare(&g, &c),
+                   (int)tpm_baseline_compare_detail(&g, &c,
+                                                    (struct tpm_baseline_mismatch *)0),
+                   "the wrapper and the detail function return the same verdict");
+}
+
+/* Every cause renders a DISTINCT name, and an out-of-range value renders
+ * "unknown" rather than reading past a table. Distinctness is the property that
+ * matters: identical strings would make the attribution useless while every
+ * per-branch test above still passed. */
+static void test_baseline_cause_label(void)
+{
+    const char *names[12];
+    uint32_t i, j;
+
+    for (i = 0; i < 12u; i++) {
+        names[i] = tpm_baseline_cause_label((uint8_t)i);
+        TEST_ASSERT(names[i] != (const char *)0, "every in-range cause has a name");
+    }
+    for (i = 0; i < 12u; i++) {
+        for (j = i + 1u; j < 12u; j++) {
+            TEST_ASSERT(strcmp(names[i], names[j]) != 0,
+                        "no two causes share a name");
+        }
+    }
+    TEST_ASSERT(strcmp(tpm_baseline_cause_label((uint8_t)TPM_BASELINE_CAUSE_NONE),
+                       "none") == 0, "the no-cause value renders none");
+    TEST_ASSERT(strcmp(tpm_baseline_cause_label((uint8_t)TPM_BASELINE_CAUSE_SB_STATE),
+                       "secure-boot-state") == 0, "the Secure Boot state name is stable");
+    TEST_ASSERT(strcmp(tpm_baseline_cause_label(12u), "unknown") == 0,
+                "the first out-of-range value renders unknown");
+    TEST_ASSERT(strcmp(tpm_baseline_cause_label(255u), "unknown") == 0,
+                "a far out-of-range value renders unknown");
+}
+
+/* The verify WRAPPER's fail-closed attribution contract, on the path this suite
+ * can reach without a full NV-blob fake. No transport means no comparison ever
+ * runs, so a caller reusing its struct across boots must read NONE and not the
+ * previous call's cause -- which is why the struct is POISONED first. A wrapper
+ * that simply never touched the out-param would otherwise pass. */
+static void test_baseline_verify_detail_no_transport(void)
+{
+    struct tpm_t_test_state prev;
+    struct tpm_baseline_mismatch m;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+
+    memset(pcr_status, 0xEE, sizeof(pcr_status));
+    memset(&m, 0xEE, sizeof(m));
+    prev = tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                                    pcr_status, (uint8_t)TPM_BASELINE_MAX_PCRS,
+                                    &pcr_n, &m);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "no transport still verifies to NO_TPM through the detail wrapper");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "a path that never compared reports NO cause, not stale poison");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_valid, 0u,
+                   "a path that never compared marks no PCR index valid");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_index, 0u,
+                   "a path that never compared leaves no PCR index behind");
+    TEST_ASSERT_EQ(pcr_n, 0u,
+                   "the detail wrapper keeps the not-evaluated per-PCR contract");
+    TEST_ASSERT_EQ(overall, 0xEEu,
+                   "the detail wrapper still publishes no verdict on a non-verdict return");
+
+    /* A NULL cause pointer is "no detail wanted" and must not fault. */
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    (uint8_t *)0, (uint8_t *)0, 0u, (uint8_t *)0,
+                                    (struct tpm_baseline_mismatch *)0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "a NULL cause pointer is accepted on the no-transport path");
+
+    /* The UNDERSIZED-buffer refusal is a SECOND, earlier return, and it is the
+     * one that would go quiet: it sits BELOW the cause reset today, so moving
+     * the reset under it would let a reused struct carry a previous call's PCR
+     * cause beside BADARG while every other assertion here stayed green. Poison
+     * everything and prove the whole out-param set is either written or left
+     * alone, as each one's contract says. */
+    memset(&m, 0xEE, sizeof(m));
+    memset(pcr_status, 0xEE, sizeof(pcr_status));
+    overall = 0xEEu;
+    pcr_n = 0xEEu;
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                                    pcr_status,
+                                    (uint8_t)(TPM_BASELINE_MAX_PCRS - 1u), &pcr_n, &m);
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
+                   "a buffer too small for the measured set is refused outright");
+    TEST_ASSERT_EQ((uint32_t)m.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "the undersized refusal still clears the cause");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_valid, 0u,
+                   "the undersized refusal marks no PCR index valid");
+    TEST_ASSERT_EQ((uint32_t)m.pcr_index, 0u,
+                   "the undersized refusal leaves no PCR index behind");
+    TEST_ASSERT_EQ((uint32_t)m.pad, 0u,
+                   "the undersized refusal zeroes the padding byte too");
+    TEST_ASSERT_EQ(pcr_n, 0u,
+                   "the undersized refusal reports nothing evaluated");
+    TEST_ASSERT_EQ(overall, 0xEEu,
+                   "a BADARG return publishes no verdict");
+    TEST_ASSERT_EQ(pcr_status[0], 0xEEu,
+                   "a refused call writes no per-PCR status");
+
+    tpm_t_test_restore(prev);
+}
+
+/* The shared status-to-guidance helper. Two properties matter and neither is
+ * the wording: EVERY failure status that can publish MISMATCH must have a line
+ * (a status without one reaches the operator as a bare number, which is what
+ * the enrollment path used to do), and the CORRUPT and SELF_CORRUPT lines must
+ * stay DISTINCT, because they route to opposite recovery paths -- bad stored
+ * bytes against an untrustworthy kernel -- even though enrollment refuses both
+ * today. */
+static void test_baseline_status_repair(void)
+{
+    static const tpm_baseline_status_t failures[6] = {
+        TPM_BASELINE_TORN, TPM_BASELINE_RELABELED, TPM_BASELINE_UNBOUND,
+        TPM_BASELINE_IDENTITY, TPM_BASELINE_CORRUPT, TPM_BASELINE_SELF_CORRUPT
+    };
+    const char *texts[6];
+    uint32_t i, j;
+
+    for (i = 0; i < 6u; i++) {
+        texts[i] = tpm_baseline_status_repair((uint8_t)failures[i]);
+        TEST_ASSERT(texts[i] != (const char *)0,
+                    "every MISMATCH-publishing failure status has guidance");
+        TEST_ASSERT(tpm_baseline_status_is_failure(failures[i]) != 0,
+                    "control: each of these really is a failure status");
+    }
+    for (i = 0; i < 6u; i++)
+        for (j = i + 1u; j < 6u; j++)
+            TEST_ASSERT(strcmp(texts[i], texts[j]) != 0,
+                        "no two failure statuses share guidance");
+
+    /* The two that must not converge. SELF_CORRUPT must warn the operator off
+     * looking for a way past the refusal; CORRUPT must not promise that
+     * re-enrolling repairs it, because the enroll path validates the readback
+     * first and refuses on the same bytes. */
+    TEST_ASSERT(strstr(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_SELF_CORRUPT),
+                       "do NOT") != (char *)0,
+                "a corrupt kernel identity forbids enrolling past the refusal");
+    TEST_ASSERT(strstr(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_SELF_CORRUPT),
+                       "reinstall the kernel") != (char *)0,
+                "and names the one action that actually resolves it");
+    TEST_ASSERT(strstr(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_CORRUPT),
+                       "REFUSE") != (char *)0,
+                "a corrupt stored blob warns that re-enrolling refuses");
+
+    /* Non-failure statuses have nothing to advise, and must say so with NULL
+     * rather than a plausible-looking line. */
+    TEST_ASSERT(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_OK)
+                == (const char *)0, "OK has no repair guidance");
+    TEST_ASSERT(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_NO_BASELINE)
+                == (const char *)0, "an unenrolled machine has nothing to repair");
+    TEST_ASSERT(tpm_baseline_status_repair((uint8_t)TPM_BASELINE_NO_TPM)
+                == (const char *)0, "a machine that could not measure has nothing to repair");
+    TEST_ASSERT(tpm_baseline_status_repair(200u) == (const char *)0,
+                "an out-of-range status yields no guidance rather than a stray pointer");
+
+    /* Both call sites render these into a klog entry that TRUNCATES at
+     * message[256], and the enrollment path wraps the longest prefix around
+     * them. A truncated safety instruction is worse than none -- "do NOT" can
+     * be exactly what gets cut -- so the composite is bounded here. */
+    for (i = 0; i < 6u; i++) {
+        const uint32_t rendered =
+            (uint32_t)strlen("Baseline enroll integrity failure (status 99): "
+                             "not a clean first install -- ") +
+            (uint32_t)strlen(texts[i]);
+        TEST_ASSERT(rendered < (uint32_t)sizeof(((klog_entry_t *)0)->message),
+                    "the longest rendered enroll-failure line fits a klog entry");
+    }
+}
+
 void test_register_tpm_baseline(void)
 {
     test_suite_register_cat("tpm: baseline finalize/validate", test_baseline_finalize_validate, TEST_CAT_SECURITY);
@@ -1049,6 +1382,14 @@ void test_register_tpm_baseline(void)
                             test_baseline_compare_pcrs, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: baseline verify per-PCR out-params (no transport)",
                             test_baseline_verify_no_transport, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline first-mismatch attribution",
+                            test_baseline_compare_cause, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline mismatch cause labels",
+                            test_baseline_cause_label, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline failure-status repair guidance",
+                            test_baseline_status_repair, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify cause fail-closed (no transport)",
+                            test_baseline_verify_detail_no_transport, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: boot-integrity report publication",
                             test_integrity_publication, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: boot-integrity initial-report builder",

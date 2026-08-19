@@ -96,25 +96,144 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
     return 1;
 }
 
+const char *tpm_baseline_cause_label(uint8_t cause)
+{
+    /* A switch rather than a table indexed by the enum: the compiler flags a
+     * value added to tpm_baseline_cause_t without a name here, whereas a
+     * parallel array would silently render a new cause as whatever sat past
+     * its end. */
+    switch ((tpm_baseline_cause_t)cause) {
+        case TPM_BASELINE_CAUSE_NONE:           return "none";
+        case TPM_BASELINE_CAUSE_BANK:           return "hash-bank";
+        case TPM_BASELINE_CAUSE_SB_VALIDITY:    return "secure-boot-readability";
+        case TPM_BASELINE_CAUSE_SB_STATE:       return "secure-boot-state";
+        case TPM_BASELINE_CAUSE_FW_HASH_ABSENT: return "firmware-hash-absent";
+        case TPM_BASELINE_CAUSE_FW_HASH:        return "firmware-hash";
+        case TPM_BASELINE_CAUSE_ABI_PRESENCE:   return "abi-manifest-presence";
+        case TPM_BASELINE_CAUSE_ABI_CONTENT:    return "abi-manifest-content";
+        case TPM_BASELINE_CAUSE_NO_PCR_PINNED:  return "no-pcr-pinned";
+        case TPM_BASELINE_CAUSE_PCR_DIGEST:     return "pcr-digest";
+        case TPM_BASELINE_CAUSE_PCR_ABSENT:     return "pcr-absent";
+        case TPM_BASELINE_CAUSE_BADARG:         return "bad-argument";
+    }
+    return "unknown";
+}
+
+const char *tpm_baseline_status_repair(uint8_t status)
+{
+    switch ((tpm_baseline_status_t)status) {
+        case TPM_BASELINE_TORN:
+            /* Deliberately does NOT name one repair: this status collapses an
+             * uncommitted write, a torn pairing and an impossible one, and the
+             * direction decides the action. Completing an interrupted commit
+             * and entering authorized recovery are different, and prescribing
+             * the second for the first is destructive over-recovery. */
+            return "Baseline bind record and its commit counter DISAGREE: "
+                   "repair is AUTHORIZED and never a fresh enrollment";
+        case TPM_BASELINE_RELABELED:
+            return "Baseline blob does NOT match its committed bind record: "
+                   "content was replaced under a valid record";
+        case TPM_BASELINE_UNBOUND:
+            return "Baseline has no authenticated bind record (legacy): "
+                   "authorized migration required, never auto-binding";
+        case TPM_BASELINE_IDENTITY:
+            return "Baseline NV index failed its enrolled contract: the index "
+                   "answering is NOT the one enrolled";
+        case TPM_BASELINE_CORRUPT:
+            /* NOT "re-enroll to repair it". The enroll path reads the existing
+             * blob back and validates it BEFORE writing, so it refuses on the
+             * same corruption and the operator loops. Authorized replacement of
+             * the index is the reachable route and does not exist yet, so the
+             * honest line says what will happen rather than what should. */
+            return "Stored baseline blob failed validation: re-enrolling will "
+                   "REFUSE on the same bytes; the index needs authorized "
+                   "replacement";
+        case TPM_BASELINE_SELF_CORRUPT:
+            /* "refuses this by design" and NOT "would authenticate the corrupt
+             * state": a call that reaches the identity check inside
+             * tpm_baseline_snapshot fails it and propagates this status, so
+             * enrollment already refuses. Absence of this status does NOT mean
+             * the check ran -- an authority guard, a bad grant, or a bad `alg`
+             * exits ahead of it (see the enum contract). Either way the operator
+             * instruction is the same, and it is aimed at whoever would go
+             * hunting for a way PAST the refusal, which is the dangerous move. */
+            return "THIS KERNEL's own read-only identity failed validation: "
+                   "do NOT look for a way to enroll past it (enrollment "
+                   "refuses this by design); reinstall the kernel";
+        default:
+            return (const char *)0;
+    }
+}
+
+/* Write the whole attribution in one place so no return path can set the cause
+ * and forget pcr_valid, which would leave a stale index reading as meaningful
+ * beside a scalar cause. NULL is the "caller does not want detail" case and is
+ * not an error. */
+static void baseline_cause_set(struct tpm_baseline_mismatch *out,
+                               tpm_baseline_cause_t cause,
+                               uint8_t pcr_index, uint8_t pcr_valid)
+{
+    if (!out)
+        return;
+    out->cause = (uint8_t)cause;
+    out->pcr_index = pcr_valid ? pcr_index : 0u;
+    out->pcr_valid = pcr_valid ? 1u : 0u;
+    out->pad = 0u;
+}
+
 tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
                                             const struct tpm_baseline *current)
 {
+    return tpm_baseline_compare_detail(golden, current,
+                                       (struct tpm_baseline_mismatch *)0);
+}
+
+tpm_baseline_verdict_t tpm_baseline_compare_detail(const struct tpm_baseline *golden,
+                                                   const struct tpm_baseline *current,
+                                                   struct tpm_baseline_mismatch *out_cause)
+{
     uint32_t i, j;
-    if (!golden || !current)
+    /* Fail-closed: the attribution is defined before any comparison runs, so
+     * every early return below already carries a written value and a caller
+     * can never read a previous call's cause beside this call's verdict. */
+    baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_NONE, 0u, 0u);
+    if (!golden || !current) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_BADARG, 0u, 0u);
         return TPM_BASELINE_CMP_BADARG;
-    /* Same hash bank, or the digests are not comparable. */
-    if (golden->alg != current->alg)
+    }
+    /* Same hash bank, or the digests are not comparable. Checked first for that
+     * reason: under a bank disagreement no later cause could name a real
+     * difference, because nothing downstream is comparable at all. */
+    if (golden->alg != current->alg) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_BANK, 0u, 0u);
         return TPM_BASELINE_MISMATCH;
+    }
     /* Secure Boot state (validity included: a baseline enrolled with SB readable
-     * must not silently match a boot where SB became unreadable). */
-    if (golden->secure_boot_valid != current->secure_boot_valid ||
-        golden->secure_boot != current->secure_boot)
+     * must not silently match a boot where SB became unreadable). The two are
+     * tested in sequence rather than as one OR so the report can say WHICH
+     * moved; the verdict is identical either way, because the second test is
+     * NOT gated on the first agreeing -- gating it would change behavior. */
+    if (golden->secure_boot_valid != current->secure_boot_valid) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_SB_VALIDITY, 0u, 0u);
         return TPM_BASELINE_MISMATCH;
-    /* Firmware-version hash (when the golden carries one). */
+    }
+    if (golden->secure_boot != current->secure_boot) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_SB_STATE, 0u, 0u);
+        return TPM_BASELINE_MISMATCH;
+    }
+    /* Firmware-version hash (when the golden carries one). Absent-in-current and
+     * differing-content are named apart: the first is a platform that stopped
+     * reporting SMBIOS, the second is a firmware update, and the operator
+     * actions are not the same. */
     if (golden->fw_hash_present) {
-        if (!current->fw_hash_present ||
-            memcmp(golden->fw_hash, current->fw_hash, TPM_BASELINE_DIGEST) != 0)
+        if (!current->fw_hash_present) {
+            baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_FW_HASH_ABSENT, 0u, 0u);
             return TPM_BASELINE_MISMATCH;
+        }
+        if (memcmp(golden->fw_hash, current->fw_hash, TPM_BASELINE_DIGEST) != 0) {
+            baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_FW_HASH, 0u, 0u);
+            return TPM_BASELINE_MISMATCH;
+        }
     }
     /* Kernel-ABI manifest identity -- SYMMETRIC, unlike the fw-hash gate above,
      * and the difference is deliberate. The firmware hash comes from SMBIOS,
@@ -127,14 +246,20 @@ tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
      * a one-way gate would let that baseline keep reporting VERIFIED forever
      * while attesting nothing about the ABI. Either presence disagreement is a
      * mismatch; clearing it takes a re-enroll, which is the honest signal. */
-    if (golden->abi_manifest_present != current->abi_manifest_present)
+    if (golden->abi_manifest_present != current->abi_manifest_present) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_ABI_PRESENCE, 0u, 0u);
         return TPM_BASELINE_MISMATCH;
+    }
     if (golden->abi_manifest_present &&
-        memcmp(golden->abi_manifest, current->abi_manifest, TPM_BASELINE_DIGEST) != 0)
+        memcmp(golden->abi_manifest, current->abi_manifest, TPM_BASELINE_DIGEST) != 0) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_ABI_CONTENT, 0u, 0u);
         return TPM_BASELINE_MISMATCH;
+    }
     if (golden->pcr_count > TPM_BASELINE_MAX_PCRS ||
-        current->pcr_count > TPM_BASELINE_MAX_PCRS)
+        current->pcr_count > TPM_BASELINE_MAX_PCRS) {
+        baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_BADARG, 0u, 0u);
         return TPM_BASELINE_CMP_BADARG;
+    }
     /* A golden baseline that pins NO PCR cannot be a match -- it would otherwise
      * "verify" the boot without checking any measured value. */
     {
@@ -142,8 +267,10 @@ tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
         for (k = 0; k < golden->pcr_count; k++)
             if (golden->pcrs[k].present)
                 gp++;
-        if (gp == 0u)
+        if (gp == 0u) {
+            baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_NO_PCR_PINNED, 0u, 0u);
             return TPM_BASELINE_MISMATCH;
+        }
     }
     /* Every golden PCR present at enroll must equal the current digest for that
      * index in the same bank. A golden PCR that is no longer present/readable is
@@ -156,14 +283,20 @@ tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
         for (j = 0; j < current->pcr_count; j++) {
             const struct tpm_baseline_pcr *c = &current->pcrs[j];
             if (c->index == g->index && c->present) {
-                if (memcmp(g->digest, c->digest, TPM_BASELINE_DIGEST) != 0)
+                if (memcmp(g->digest, c->digest, TPM_BASELINE_DIGEST) != 0) {
+                    baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_PCR_DIGEST,
+                                       g->index, 1u);
                     return TPM_BASELINE_MISMATCH;
+                }
                 found = 1;
                 break;
             }
         }
-        if (!found)
+        if (!found) {
+            baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_PCR_ABSENT,
+                               g->index, 1u);
             return TPM_BASELINE_MISMATCH;
+        }
     }
     return TPM_BASELINE_MATCH;
 }
@@ -555,6 +688,18 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
                                           uint8_t pcr_cap,
                                           uint8_t *out_pcr_n)
 {
+    return tpm_baseline_verify_detail(nv_index, alg, out_overall, out_pcr_status,
+                                      pcr_cap, out_pcr_n,
+                                      (struct tpm_baseline_mismatch *)0);
+}
+
+tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg,
+                                                 uint8_t *out_overall,
+                                                 uint8_t *out_pcr_status,
+                                                 uint8_t pcr_cap,
+                                                 uint8_t *out_pcr_n,
+                                                 struct tpm_baseline_mismatch *out_cause)
+{
     uint8_t blob[sizeof(struct tpm_baseline)];
     struct tpm_baseline current;
     struct tpm_baseline golden;
@@ -570,6 +715,12 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
      * out-param exists to prevent. */
     if (out_pcr_n)
         *out_pcr_n = 0;
+    /* Same rule for the attribution, and for the same reason: most returns
+     * below never reach a comparison, so NONE is written once up front and the
+     * single comparison site overwrites it. A caller that reused its struct
+     * across boots would otherwise read the previous call's cause beside this
+     * call's status. */
+    baseline_cause_set(out_cause, TPM_BASELINE_CAUSE_NONE, 0u, 0u);
 
     /* THIS KERNEL's identity is checked BEFORE the NV lookup, for the same
      * reason snapshot checks it before the PCR reads: it does not depend on
@@ -692,7 +843,7 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
         return st;
     }
 
-    v = tpm_baseline_compare(&golden, &current);
+    v = tpm_baseline_compare_detail(&golden, &current, out_cause);
     if (out_overall)
         *out_overall = (v == TPM_BASELINE_MATCH)
                            ? BOOT_INTEGRITY_VERIFIED

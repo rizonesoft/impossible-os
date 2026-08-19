@@ -92,6 +92,105 @@ typedef enum {
     TPM_BASELINE_CMP_BADARG = 2,
 } tpm_baseline_verdict_t;
 
+/* WHICH field produced a MISMATCH verdict.
+ *
+ * THIS IS A FIRST-MISMATCH DIAGNOSTIC, NOT AN EXHAUSTIVE INVENTORY, and the
+ * distinction is load-bearing for anyone reading it. tpm_baseline_compare
+ * returns at the first difference it finds, so a boot where the Secure Boot
+ * state AND a PCR both moved reports only the Secure Boot state. The
+ * comparison order below is the stable precedence, and it is deliberately
+ * most-general first: a hash-bank disagreement makes every digest
+ * incomparable, so naming a PCR under it would be nonsense.
+ *
+ *   BANK -> SB_VALIDITY -> SB_STATE -> FW_HASH_ABSENT -> FW_HASH ->
+ *   ABI_PRESENCE -> ABI_CONTENT -> NO_PCR_PINNED -> (per golden slot, in
+ *   golden order) PCR_ABSENT / PCR_DIGEST
+ *
+ * The complete per-PCR picture is a SEPARATE surface and always has been:
+ * tpm_baseline_compare_pcrs walks every golden slot regardless of what the
+ * scalars did. A consumer that needs "everything that differs" reads that; a
+ * consumer that needs "what stopped this boot verifying" reads this. */
+typedef enum {
+    TPM_BASELINE_CAUSE_NONE           = 0,  /* verdict was MATCH; no cause */
+    TPM_BASELINE_CAUSE_BANK           = 1,  /* golden and current hash banks differ */
+    TPM_BASELINE_CAUSE_SB_VALIDITY    = 2,  /* Secure Boot readability changed */
+    TPM_BASELINE_CAUSE_SB_STATE       = 3,  /* Secure Boot on/off changed */
+    TPM_BASELINE_CAUSE_FW_HASH_ABSENT = 4,  /* golden pins a fw hash, current has none */
+    TPM_BASELINE_CAUSE_FW_HASH        = 5,  /* firmware-version hash differs */
+    TPM_BASELINE_CAUSE_ABI_PRESENCE   = 6,  /* ABI-manifest presence disagrees */
+    TPM_BASELINE_CAUSE_ABI_CONTENT    = 7,  /* ABI-manifest digest differs */
+    TPM_BASELINE_CAUSE_NO_PCR_PINNED  = 8,  /* golden pins no PCR at all */
+    TPM_BASELINE_CAUSE_PCR_DIGEST     = 9,  /* a pinned PCR's digest differs */
+    TPM_BASELINE_CAUSE_PCR_ABSENT     = 10, /* a pinned PCR is no longer readable */
+    TPM_BASELINE_CAUSE_BADARG         = 11, /* verdict was CMP_BADARG */
+} tpm_baseline_cause_t;
+
+/* First-mismatch attribution, filled by tpm_baseline_compare_detail.
+ *
+ * FAIL-CLOSED CONTRACT: every entry point that accepts one of these WRITES all
+ * four bytes before it can return, including the paths that never compare
+ * anything. A caller therefore cannot read a stale cause from a previous call
+ * beside a fresh verdict, which is the shape that would make this diagnostic
+ * worse than no diagnostic at all. */
+struct tpm_baseline_mismatch {
+    uint8_t cause;      /* tpm_baseline_cause_t */
+    uint8_t pcr_index;  /* PCR register number; meaningful only when pcr_valid */
+    uint8_t pcr_valid;  /* 1 when cause is PCR_DIGEST or PCR_ABSENT */
+    uint8_t pad;
+};
+
+/* One-word name for a tpm_baseline_cause_t, for serial/diagnostic reporting:
+ * "none", "hash-bank", "secure-boot-readability", "secure-boot-state",
+ * "firmware-hash-absent", "firmware-hash", "abi-manifest-presence",
+ * "abi-manifest-content", "no-pcr-pinned", "pcr-digest", "pcr-absent",
+ * "bad-argument". Every name describes the FIRST difference only and claims
+ * nothing about the rest. An out-of-range value renders "unknown". Pure. */
+const char *tpm_baseline_cause_label(uint8_t cause);
+
+/* Operator-facing DIAGNOSIS for a failure status, with recovery guidance whose
+ * strength varies by status (classified exhaustively below), or NULL for a
+ * status that is not an integrity failure.
+ *
+ * ONE helper because there are TWO callers and they used to disagree. The
+ * Phase-1 verification path named four statuses in a hand-written chain while
+ * the ENROLLMENT path published the same MISMATCH verdict with only a numeric
+ * `status %d`, so a corrupt kernel identity discovered during enrollment
+ * reached the operator as a number. Splitting the text across call sites is
+ * what let them drift; there is now one source for it.
+ *
+ * The guidance is the point, not the label, and two of these are OPPOSITE:
+ * a corrupt STORED baseline is somebody else's bad bytes, while a corrupt
+ * KERNEL identity means the party doing the measuring cannot be trusted to
+ * produce one at all. Current enrollment REFUSES BOTH -- see the SELF_CORRUPT
+ * enum contract -- so the difference is about what a future change may safely
+ * do, never about today's behavior.
+ *
+ * WHAT EACH STRING PROMISES IS NOT UNIFORM, and pretending otherwise is how a
+ * consumer or a later reader ends up inventing a repair. Every entry is a
+ * DIAGNOSIS; the recovery half falls into exactly three kinds, and this list is
+ * exhaustive over the six failure statuses:
+ *
+ *   diagnosis only, deliberately -- TORN, RELABELED, IDENTITY. TORN collapses
+ *     three directions whose repairs differ, so naming one would be destructive
+ *     over-recovery; the other two name what happened and stop because the
+ *     authorized replacement they would point at does not exist yet.
+ *   diagnosis plus a REQUIRED but currently UNAVAILABLE path -- UNBOUND
+ *     (authorized migration, owned by the versioned-baseline-growth work) and
+ *     CORRUPT (authorized index replacement). These name the direction so an
+ *     operator is not sent somewhere harmful, and the direction is deliberately
+ *     not yet an instruction they can carry out.
+ *   diagnosis plus an immediately actionable instruction -- SELF_CORRUPT:
+ *     do not enroll, reinstall the kernel.
+ *
+ * No entry states a next step that would deterministically FAIL if attempted;
+ * that is the property being held, and it is weaker than "everything named here
+ * is reachable today". The CORRUPT text earns its place in the second kind by
+ * saying what re-enrolling will actually do rather than implying it repairs
+ * anything. Do not "complete" the first kind by inventing an action.
+ *
+ * Pure -- safe from any context. */
+const char *tpm_baseline_status_repair(uint8_t status);
+
 /* Wrapper status (enroll / verify drive the TPM). */
 typedef enum {
     TPM_BASELINE_OK         = 0,
@@ -126,11 +225,30 @@ typedef enum {
     TPM_BASELINE_BADARG     = 5,
     /* THIS KERNEL's own build-time `.bootproto` ABI identity failed validation.
      * Split from TPM_BASELINE_CORRUPT deliberately: the two are operationally
-     * OPPOSITE even though both are integrity failures. A corrupt STORED blob
-     * invites "offer a re-enroll", which is exactly the wrong response to a
-     * corrupt KERNEL descriptor -- it would enroll the corruption as the new
-     * golden. Any handler that treats CORRUPT as re-enrollable must not reach
-     * this value. */
+     * OPPOSITE even though both are integrity failures, and the difference is
+     * about WHAT IS TRUSTWORTHY rather than about what today's code happens to
+     * do. A corrupt STORED blob is somebody else's bad bytes and says nothing
+     * against this kernel; a corrupt kernel descriptor says the measuring party
+     * itself cannot be trusted to produce a golden.
+     *
+     * Enrollment currently REFUSES BOTH, so do NOT document or rely on a
+     * behavioral difference here; there is none today. The refusal does NOT come
+     * from "the identity check always runs", and a caller must not infer that
+     * it did. The boundary is reaching the IDENTITY
+     * CHECK, which is not the same as reaching tpm_baseline_snapshot. Three
+     * kinds of exit refuse without ever looking: UNBOUND when an authority
+     * guard rejects the path before snapshot (the unauthenticated one on a
+     * provisioned machine, the bound one on an unprovisioned machine), BADARG
+     * on a missing or malformed grant before snapshot, and BADARG INSIDE
+     * snapshot on a NULL output or an unsupported `alg`, which is rejected
+     * ahead of the identity check. Safe in all cases, but only a call that
+     * reaches the check DIAGNOSES the corruption, so the ABSENCE of this status
+     * carries no assurance. The routing must stay
+     * separate anyway, because the safety comes entirely from that validation
+     * running: anything that weakened or bypassed it would make enrollment
+     * unsafe on exactly this value, while the same weakening on CORRUPT would
+     * only write a fresh golden over bad stored bytes. See
+     * tpm_baseline_status_repair() for what each one tells the operator. */
     TPM_BASELINE_SELF_CORRUPT = 6,
     /* The stored blob is well-formed but is NOT bound to an authenticated
      * record, on a kernel whose update authority IS provisioned.
@@ -142,11 +260,16 @@ typedef enum {
      * passes. Only the bind record catches it, so a baseline with no bind
      * record is refused rather than accepted as golden.
      *
-     * Also distinct from CORRUPT in what it invites: a corrupt blob invites a
-     * re-enroll, and re-enrolling here would silently authenticate whatever an
-     * attacker last wrote. The repair is the authorized migration.
-     * The repair is the authorized migration owned by the versioned baseline
-     * growth and NV index migration work. */
+     * The dangerous operation here is AUTO-BINDING, not re-enrollment, and
+     * conflating the two hides what must never happen. Plain enrollment refuses
+     * outright on a machine whose authority is provisioned, and an authorized
+     * bound enrollment REPLACES the blob with freshly snapshotted live state
+     * and binds those new bytes -- neither one authenticates the pre-existing
+     * blob. Only an auto-bind, or a migration that trusted what is already
+     * stored, would stamp an attacker's well-formed bytes as golden. The repair
+     * is the authorized migration owned by the versioned baseline growth and NV
+     * index migration work, which is not yet available -- naming the direction
+     * is the point, not prescribing a step. */
     TPM_BASELINE_UNBOUND = 7,
     /* The bind record and its commit counter DISAGREE: the counter has moved
      * past any record behind it, or a record sits ahead of a commit that never
@@ -318,6 +441,20 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
 tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
                                             const struct tpm_baseline *current);
 
+/* tpm_baseline_compare plus FIRST-MISMATCH attribution. Identical verdict and
+ * identical comparison order -- tpm_baseline_compare is a wrapper over this one
+ * passing NULL, so the two can never drift.
+ *
+ * `out_cause` is optional and FAIL-CLOSED when supplied: it is fully written on
+ * every return, MATCH and BADARG included (NONE / BADARG respectively), so it
+ * never carries a stale value from a previous call. `pcr_valid` is 1 only for
+ * the two PCR causes, and then `pcr_index` is the golden slot's register
+ * number. Read the tpm_baseline_cause_t comment before rendering it: this names
+ * the first difference, never all of them. Pure. */
+tpm_baseline_verdict_t tpm_baseline_compare_detail(const struct tpm_baseline *golden,
+                                                   const struct tpm_baseline *current,
+                                                   struct tpm_baseline_mismatch *out_cause);
+
 /* Per-PCR comparison DETAIL, for the boot-integrity report's per-PCR slots.
  *
  * Separate from tpm_baseline_compare on purpose. That function answers "does
@@ -362,11 +499,18 @@ int tpm_baseline_rotation_ok(uint32_t old_gen, uint32_t new_gen);
  * boot_proto_abi_digest. generation/crc are left 0 (the caller stamps them on
  * enroll).
  *
- * Returns OK; NO_TPM when the full measured PCR set is not readable; or CORRUPT
- * when the kernel's own `.bootproto` ABI digest fails validation. CORRUPT is
- * fail-closed by design: that digest is a compile-time constant, so its absence
- * means read-only kernel data is corrupt, and enrolling a baseline with the
- * identity silently dropped would produce a golden that binds nothing. */
+ * Returns OK; NO_TPM when the full measured PCR set is not readable; or
+ * SELF_CORRUPT when the kernel's own `.bootproto` ABI digest fails validation.
+ * SELF_CORRUPT and not CORRUPT, which this contract said for a while and which
+ * is the one confusion that matters here: CORRUPT is about the STORED blob and
+ * routes to stored-blob recovery, while this is about THIS KERNEL and must not.
+ * It is fail-closed by design -- that digest is a compile-time constant, so its
+ * absence means read-only kernel data is corrupt. A call that reaches the
+ * identity check therefore refuses before any baseline is written, rather than
+ * producing a golden that binds nothing. The check is NOT the first thing this
+ * function does -- a NULL output or an unsupported `alg` is BADARG ahead of it
+ * -- and callers can exit earlier still, so the ABSENCE of this status is never
+ * evidence that the identity was verified. */
 tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *out);
 
 /* Enroll: snapshot the current state, stamp a monotonic generation (the existing
@@ -429,3 +573,21 @@ tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
                                           uint8_t *out_pcr_status,
                                           uint8_t pcr_cap,
                                           uint8_t *out_pcr_n);
+
+/* tpm_baseline_verify plus the FIRST-MISMATCH attribution from the comparison
+ * it performed. Identical behavior in every other respect -- tpm_baseline_verify
+ * is a wrapper over this one passing NULL for `out_cause`.
+ *
+ * `out_cause` is optional and FAIL-CLOSED when supplied: it is fully written
+ * before ANY return, so the many paths that never reach a comparison (no
+ * transport, no baseline, a corrupt or unauthenticated blob, a device fault)
+ * leave NONE rather than a stale cause from a previous boot's call. Only
+ * TPM_BASELINE_OK can report a cause other than NONE, because it is the only
+ * status reached by actually comparing two baselines: the authenticity
+ * failures are MISMATCH verdicts whose reason is the STATUS, not a field. */
+tpm_baseline_status_t tpm_baseline_verify_detail(uint32_t nv_index, uint16_t alg,
+                                                 uint8_t *out_overall,
+                                                 uint8_t *out_pcr_status,
+                                                 uint8_t pcr_cap,
+                                                 uint8_t *out_pcr_n,
+                                                 struct tpm_baseline_mismatch *out_cause);

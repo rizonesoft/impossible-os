@@ -902,7 +902,7 @@ boot_result_t tpm_integrity_init(void)
     return res;
 }
 
-int tpm_integrity_verified(void)
+int tpm_integrity_baseline_verified(void)
 {
     struct boot_integrity_report r;
     tpm_integrity_report_copy(&r);
@@ -940,12 +940,70 @@ const char *tpm_integrity_status_label(const struct boot_integrity_report *r)
     if (r->replay_verdict == (uint8_t)TPM_REPLAY_TAMPER)
         return "event-log-tamper";
     switch (r->overall_status) {
-        case BOOT_INTEGRITY_VERIFIED:    return "verified";
+        /* "baseline-verified", never a bare "verified": the subject is the
+         * enrolled baseline, and the bare word invites a reader to conclude
+         * the kernel image was measured. Nothing in the baseline hashes it. */
+        case BOOT_INTEGRITY_VERIFIED:    return "baseline-verified";
         case BOOT_INTEGRITY_MISMATCH:    return "baseline-mismatch";
         case BOOT_INTEGRITY_NO_TPM:      return "no-TPM";
         case BOOT_INTEGRITY_NO_BASELINE: return "no-baseline";
         case BOOT_INTEGRITY_NO_CRYPTO:   return "no-crypto";
         default:                         return "unknown";
+    }
+}
+
+const char *tpm_integrity_status_scope(const struct boot_integrity_report *r)
+{
+    if (!r || r->overall_status == BOOT_INTEGRITY_UNKNOWN)
+        return "no verdict has been computed yet";
+    /* Ordered to match tpm_integrity_status_label so the two can never describe
+     * different statuses for the same report. */
+    if (r->replay_verdict == (uint8_t)TPM_REPLAY_TAMPER)
+        return "the event log disagrees with hardware PCRs; the baseline "
+               "verdict is not trustworthy on top of that";
+    switch (r->overall_status) {
+        case BOOT_INTEGRITY_VERIFIED:
+            return "covers the enrolled PCR set, Secure Boot state and "
+                   "readability, firmware-version hash and ABI-manifest "
+                   "digest; the kernel IMAGE was not measured";
+        case BOOT_INTEGRITY_MISMATCH:
+            /* DELIBERATELY does not promise a field cause. This status is
+             * published by THREE different kinds of failure: a comparison
+             * that ran and disagreed, a stored baseline that failed its own
+             * corruption or authenticity checks, and THIS KERNEL's own
+             * read-only identity failing validation before any baseline was
+             * even read. Only the first kind has a differing FIELD, so text
+             * directing every reader to one would send two thirds of them
+             * looking for evidence that does not exist. The third kind is the
+             * one that must never be missed: enrollment refuses it today just
+             * as it refuses the second, but the safety there rests entirely on
+             * the kernel-identity check running, so the two must never share a
+             * recovery path.
+             *
+             * Which kind it was is named on its own boot-log line, and every
+             * MISMATCH-publishing status now has one. Distinguishing them
+             * inside the report itself would need a provenance field, which
+             * belongs with the report struct and its publication. */
+            return "the live state disagrees with the enrolled baseline, the "
+                   "stored baseline failed its own integrity or authenticity "
+                   "checks, or this kernel's own identity is corrupt; the "
+                   "boot log names which";
+        case BOOT_INTEGRITY_NO_TPM:
+            /* "could not be compared", NOT "nothing was measured": the event
+             * count is filled from the pre-transport phase before the no-TPM
+             * branch is taken, so a NO_TPM report can legitimately carry a
+             * nonzero one and a claim that nothing was measured contradicts
+             * the report a reader is holding. */
+            return "no usable TPM this boot, so the baseline could not be "
+                   "compared and no verdict is claimed either way";
+        case BOOT_INTEGRITY_NO_BASELINE:
+            return "no baseline is enrolled, so there is nothing to compare "
+                   "against; this is the normal state before enrollment";
+        case BOOT_INTEGRITY_NO_CRYPTO:
+            return "the comparison could not run because the crypto or "
+                   "transport stack was unavailable at that phase";
+        default:
+            return "no verdict has been computed yet";
     }
 }
 

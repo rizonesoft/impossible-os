@@ -105,17 +105,27 @@ void tpm_evlog_export_cel(void);
 
 /* ---- Boot Integrity Verification API ----
  *
- * Verifies that measured boot values (PCR digests from the TCG event log)
- * match expected golden values.  This is the foundation for:
- *   - Trusted Boot: detect firmware/bootloader/kernel tampering
- *   - BitLocker-style FDE: seal encryption keys to PCR state
- *   - Remote attestation: prove boot integrity to remote parties
+ * WHAT A VERIFIED VERDICT ACTUALLY CLAIMS, stated first because the obvious
+ * reading is wrong. This facility compares the ENROLLED BASELINE against the
+ * live state: the measured-set PCR digests {0-7,11} in one bank, the Secure
+ * Boot state and its readability, a firmware-version hash derived from SMBIOS,
+ * and the kernel-ABI manifest digest. A match means THOSE agree with what was
+ * enrolled on this machine.
  *
- * STATUS: Stub implementation.  Full verification requires:
- *   1. SHA-256 crypto primitives (to compute expected hashes)
- *   2. TPM PCR read API (to get actual PCR register values)
- *   3. First-boot enrollment (store baseline golden PCR values)
- *   4. Secure storage for golden values (encrypted NVRAM or TPM NV index)
+ * It does NOT mean the kernel IMAGE was measured or content-verified. Nothing
+ * in the baseline hashes kernel.exe, and the loader's own digest covers the
+ * ESP FILE rather than the bytes firmware executed. Every string this API
+ * renders is named so a reader cannot upgrade the claim by accident:
+ * "baseline-verified", never a bare "verified".
+ *
+ * On that scoped footing it supports:
+ *   - Trusted Boot: detect a change in the enrolled measured state
+ *   - BitLocker-style FDE: seal encryption keys to PCR state
+ *   - Remote attestation: prove the measured state to remote parties
+ *
+ * Correlating an executed image with the firmware's own PCR 4
+ * EV_EFI_BOOT_SERVICES_APPLICATION measurement is a separate, tracked
+ * capability and is deliberately not claimed here.
  * ---- */
 
 /* TCG hash algorithm IDs (TCG Algorithm Registry). Public API inputs for
@@ -147,10 +157,41 @@ static inline uint16_t tpm_alg_digest_len_pub(uint16_t alg_id)
 #define TPM_PCR_STATE_TRANS     6   /* State transition and wake events */
 #define TPM_PCR_SECUREBOOT      7   /* Secure Boot policy (db/dbx/KEK/PK) */
 
-/* Boot integrity verification status */
+/* Boot integrity verification status.
+ *
+ * MISMATCH IS AN UMBRELLA INTEGRITY-FAILURE STATUS, not "a PCR differs", and a
+ * consumer reading the constant alone will get that wrong. Both comments used
+ * to say "PCRs", which is false in both directions: VERIFIED also covers the
+ * Secure Boot state, a firmware-version hash and the ABI-manifest digest, and
+ * MISMATCH covers FOUR distinct failure-provenance classes, three of which
+ * never compare an ENROLLED-BASELINE PCR value (the fourth does compare PCRs,
+ * just against the replayed event log rather than against a baseline):
+ *
+ *   1. the live state disagreed with the enrolled baseline (the only publisher
+ *      that has a differing FIELD, reported as a tpm_baseline_cause_t)
+ *   2. the stored baseline failed its own integrity or authenticity checks
+ *      (corrupt blob, torn or relabelled bind record, unbound, wrong index)
+ *   3. THIS KERNEL's own read-only identity failed validation, before any
+ *      baseline was read -- enrollment refuses this today exactly as it
+ *      refuses 2, but it must never be routed WITH 2, because the safety here
+ *      rests entirely on that validation running
+ *   4. the event-log replay disagreed with the hardware PCRs, published by
+ *      tpm_integrity_set_replay_verdict independently of any baseline; the
+ *      label and scope functions report that one as event-log tamper
+ *
+ * So do not branch on the constant alone. tpm_integrity_status_label() and
+ * tpm_integrity_status_scope() encode the precedence and the wording. What the
+ * boot log adds differs by class and is NOT uniformly a remedy: classes 2 and 3
+ * get a NAMED DIAGNOSIS from tpm_baseline_status_repair(), class 1 gets the
+ * first differing field and every differing PCR, and class 4 gets the
+ * mismatching PCR. What accompanies that diagnosis VARIES: some entries are
+ * diagnosis-only on purpose, some name a required repair the tree cannot yet
+ * perform, and one is immediately actionable. None names a step that would
+ * deterministically fail. Read tpm_baseline_status_repair()'s contract for the
+ * exhaustive split before building any UX on top of it. */
 #define BOOT_INTEGRITY_UNKNOWN       0  /* Not yet checked */
-#define BOOT_INTEGRITY_VERIFIED      1  /* All PCRs match golden values */
-#define BOOT_INTEGRITY_MISMATCH      2  /* One or more PCRs differ */
+#define BOOT_INTEGRITY_VERIFIED      1  /* the live state matches the enrolled baseline */
+#define BOOT_INTEGRITY_MISMATCH      2  /* umbrella: any of the four failures above */
 #define BOOT_INTEGRITY_NO_TPM        3  /* No TPM -- cannot verify */
 #define BOOT_INTEGRITY_NO_BASELINE   4  /* No golden values enrolled */
 #define BOOT_INTEGRITY_NO_CRYPTO     5  /* Crypto stack not available */
@@ -233,9 +274,22 @@ int tpm_integrity_build_report(struct boot_integrity_report *out,
  * Phase 1 and publishes its verdict through tpm_integrity_publish_baseline(). */
 boot_result_t tpm_integrity_init(void);
 
-/* Returns 1 if boot integrity is verified (all PCRs match golden values).
- * Returns 0 if not verified, no TPM, or no baseline enrolled. */
-int tpm_integrity_verified(void);
+/* Returns 1 when the live state matches the ENROLLED BASELINE (measured-set
+ * PCRs, Secure Boot state and readability, firmware-version hash, ABI-manifest
+ * digest); 0 when it does not, or there is no TPM, or nothing is enrolled.
+ *
+ * NAMED for what it answers, on purpose. The old name was tpm_integrity_verified
+ * and a programmatic consumer could reasonably read it as "this boot's code was
+ * verified", which it has never meant: no kernel image is measured anywhere in
+ * the baseline. A caller wanting the wider claim has nothing to call yet, and
+ * that is the honest state. */
+int tpm_integrity_baseline_verified(void);
+
+/* One-line statement of what the report's status covers and what it does NOT,
+ * for the boot log and any operator-facing surface that renders the label. A
+ * label alone cannot carry scope, and the scope is the part a reader gets
+ * wrong. Pure -- safe from any context; NULL yields the unknown-status text. */
+const char *tpm_integrity_status_scope(const struct boot_integrity_report *r);
 
 /* Copy the published boot-integrity snapshot into the caller's buffer. This is
  * the ONLY reader entry point, on purpose.
@@ -256,7 +310,13 @@ void tpm_integrity_report_copy(struct boot_integrity_report *out);
 /* One-word boot-diagnostics status for the integrity report, for serial log /
  * VPD / recovery UX: "no-TPM", "event-log-tamper" (replay != hardware -- checked
  * BEFORE baseline so it is never masked by a mismatch status), "baseline-
- * mismatch", "no-baseline", "no-crypto", "verified", "unknown". Pure -- safe to
+ * mismatch", "no-baseline", "no-crypto", "baseline-verified", "unknown".
+ *
+ * The success label is "baseline-verified" rather than a bare "verified", and
+ * that is a correctness property rather than wording: it pairs with the
+ * existing "baseline-mismatch" so both name the same subject, and it cannot be
+ * read as a claim that the kernel image was measured. Pair it with
+ * tpm_integrity_status_scope() wherever an operator reads it. Pure -- safe to
  * call from any context. */
 const char *tpm_integrity_status_label(const struct boot_integrity_report *r);
 

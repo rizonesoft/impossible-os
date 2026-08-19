@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/tpm_replay.h"
 #include "kernel/tpm.h"
+#include "kernel/klog.h"   /* klog_entry_t.message cap -- the scope lines must fit */
 #include "kernel/crypto/sha1.h"
 #include "kernel/crypto/sha256.h"
 #include "kernel/crypto/sha384.h"
@@ -316,11 +317,122 @@ static void test_integrity_status_label(void)
     TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "baseline-mismatch", 18) == 0,
                 "mismatch w/o tamper -> baseline-mismatch");
 
+    /* "baseline-verified", never a bare "verified". The subject is the enrolled
+     * baseline; nothing in it measures the kernel image, and a bare word is
+     * exactly what a reader upgrades into a claim that it does. */
     r.overall_status = BOOT_INTEGRITY_VERIFIED;
-    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "verified", 9) == 0, "verified");
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "baseline-verified", 18) == 0,
+                "verified -> baseline-verified (scoped, never a bare verified)");
 
     TEST_ASSERT(memcmp(tpm_integrity_status_label((const struct boot_integrity_report *)0),
                        "unknown", 8) == 0, "NULL report -> unknown");
+}
+
+/* The SCOPE sentence beside the label. The label alone cannot carry scope, and
+ * the scope is the part a reader gets wrong -- so each status gets its own
+ * sentence and the VERIFIED one must say out loud that the kernel image was not
+ * measured. */
+static void test_integrity_status_scope(void)
+{
+    struct boot_integrity_report r;
+    const char *scopes[6];
+    uint32_t i, j;
+    memset(&r, 0, sizeof(r));
+
+    TEST_ASSERT(tpm_integrity_status_scope((const struct boot_integrity_report *)0)
+                != (const char *)0, "NULL report yields a scope sentence, not NULL");
+    TEST_ASSERT(strcmp(tpm_integrity_status_scope(&r),
+                       tpm_integrity_status_scope(
+                           (const struct boot_integrity_report *)0)) == 0,
+                "an unevaluated report reads the same as no report at all");
+
+    /* The VERIFIED scope must name the kernel IMAGE exclusion explicitly. A
+     * scope sentence that merely lists what IS covered would let the reader
+     * keep the assumption this section exists to remove. */
+    r.tpm_version = 2u;
+    r.overall_status = BOOT_INTEGRITY_VERIFIED;
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "IMAGE was not measured")
+                != (char *)0,
+                "the verified scope states that the kernel image was not measured");
+
+    /* The MISMATCH scope must NOT promise a differing field. That status is
+     * also published for a corrupt or unauthenticated stored baseline, where no
+     * comparison ran and there is no field cause to look up, so text sending
+     * every reader after one would send half of them after evidence that does
+     * not exist. */
+    r.overall_status = BOOT_INTEGRITY_MISMATCH;
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "field") == (char *)0,
+                "the mismatch scope promises no differing field");
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "authenticity") != (char *)0,
+                "the mismatch scope admits the corrupt/unauthenticated case");
+    /* The THIRD kind is the one that must never be missed. A SELF_CORRUPT
+     * verdict also publishes MISMATCH, and its recovery path is not the stored
+     * baseline's: the party that would produce a new golden is itself the thing
+     * that failed validation. A scope covering only the first two kinds is what
+     * sends a reader down the wrong repair. */
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "kernel's own identity")
+                != (char *)0,
+                "the mismatch scope covers a corrupt kernel identity as well");
+
+    /* The NO_TPM scope must not claim nothing was measured: the event count is
+     * filled before the no-TPM branch is taken, so a NO_TPM report can carry a
+     * nonzero one and that claim would contradict the report in hand. */
+    r.overall_status = BOOT_INTEGRITY_NO_TPM;
+    r.event_count = 7u;
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "nothing was measured")
+                == (char *)0,
+                "a NO_TPM report carrying events is not described as unmeasured");
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "could not be compared")
+                != (char *)0,
+                "the no-TPM scope says the baseline could not be compared");
+    r.event_count = 0u;
+
+    /* Tamper is checked before the baseline status in the scope, exactly as in
+     * the label, so the two can never describe different statuses. */
+    r.overall_status = BOOT_INTEGRITY_MISMATCH;
+    r.replay_verdict = (uint8_t)TPM_REPLAY_TAMPER;
+    TEST_ASSERT(strstr(tpm_integrity_status_scope(&r), "event log") != (char *)0,
+                "a tamper verdict scopes to the event log, not to the baseline");
+    r.replay_verdict = (uint8_t)TPM_REPLAY_VERIFIED;
+
+    /* Every status gets its OWN sentence: identical text would make the scope
+     * decorative. UNKNOWN and the default share one on purpose and are counted
+     * once. */
+    {
+        const uint8_t statuses[6] = {
+            BOOT_INTEGRITY_UNKNOWN, BOOT_INTEGRITY_VERIFIED, BOOT_INTEGRITY_MISMATCH,
+            BOOT_INTEGRITY_NO_TPM, BOOT_INTEGRITY_NO_BASELINE, BOOT_INTEGRITY_NO_CRYPTO
+        };
+        for (i = 0; i < 6u; i++) {
+            r.overall_status = statuses[i];
+            scopes[i] = tpm_integrity_status_scope(&r);
+            TEST_ASSERT(scopes[i] != (const char *)0, "every status has a scope sentence");
+        }
+        for (i = 0; i < 6u; i++)
+            for (j = i + 1u; j < 6u; j++)
+                TEST_ASSERT(strcmp(scopes[i], scopes[j]) != 0,
+                            "no two statuses share a scope sentence");
+
+        /* The boot log renders "Boot integrity status: <label> (<scope>)" into
+         * a klog entry that TRUNCATES at message[256]. The longest pair fits
+         * today with little room, and a truncated scope sentence would fail
+         * silently and quietly reintroduce the overclaim these sentences exist
+         * to remove -- a half-printed "or this kernel's own identity is" is
+         * worse than no scope at all. Assert the whole rendered shape. */
+        for (i = 0; i < 6u; i++) {
+            uint32_t rendered;
+            /* Re-select the status so the LABEL measured is the one that
+             * actually accompanies scopes[i]; leaving r on the loop's last
+             * value would size every line against one label. */
+            r.overall_status = statuses[i];
+            rendered =
+                (uint32_t)strlen("Boot integrity status: ") +
+                (uint32_t)strlen(tpm_integrity_status_label(&r)) +
+                (uint32_t)strlen(" ()") + (uint32_t)strlen(scopes[i]);
+            TEST_ASSERT(rendered < (uint32_t)sizeof(((klog_entry_t *)0)->message),
+                        "every rendered status+scope line fits the klog entry");
+        }
+    }
 }
 
 void test_register_tpm_replay(void)
@@ -334,6 +446,7 @@ void test_register_tpm_replay(void)
     test_suite_register_cat("tpm: replay verify report", test_replay_verify_report, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: replay verdict finalize", test_replay_finalize, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: integrity status label", test_integrity_status_label, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: integrity status scope", test_integrity_status_scope, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

@@ -668,10 +668,18 @@ void boot_phase1(void)
              * it genuinely is a verdict. */
             if (tpm_baseline_status_is_failure(bs) &&
                 bs != TPM_BASELINE_UNBOUND) {
+                /* The same named diagnosis the verification path gives. This
+                 * printed only `status %d` before, so a corrupt KERNEL
+                 * identity found during enrollment -- the one status whose
+                 * recovery path must never be shared with a corrupt stored
+                 * blob -- reached the operator as a number. */
+                const char *repair = tpm_baseline_status_repair((uint8_t)bs);
                 klog(LOG_ERROR, "TPM",
-                     "Baseline enroll detected an integrity failure (status %d): "
-                     "not a clean first install",
-                     (uint64_t)bs);
+                     "Baseline enroll integrity failure (status %d): not a "
+                     "clean first install%s%s",
+                     (uint64_t)bs,
+                     repair ? " -- " : "",
+                     repair ? repair : "");
                 tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0);
             }
         } else if (g_boot_info.config.tpm_enroll) {
@@ -689,6 +697,10 @@ void boot_phase1(void)
             uint8_t overall = 0;
             uint8_t pcr_status[BOOT_INTEGRITY_MAX_PCRS];
             uint8_t pcr_n = 0;
+            /* Initialized here as well as inside verify_detail: the retry loop
+             * below is bounded by a constant, so a future edit setting that
+             * constant to 0 would leave this read without ever calling verify. */
+            struct tpm_baseline_mismatch cause = { 0, 0, 0, 0 };
             /* Verify, retrying ONLY transport contention.
              *
              * TPM_BASELINE_BUSY means the transport gate refused before anything
@@ -729,9 +741,11 @@ void boot_phase1(void)
                     for (spin = 0; spin < TPM_BASELINE_VERIFY_BACKOFF_SPINS; spin++)
                         __asm__ volatile ("pause");
                 }
-                bs = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
-                                         &overall, pcr_status,
-                                         (uint8_t)BOOT_INTEGRITY_MAX_PCRS, &pcr_n);
+                bs = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE,
+                                                TPM_ALG_SHA256,
+                                                &overall, pcr_status,
+                                                (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                                &pcr_n, &cause);
                 if (bs != TPM_BASELINE_BUSY)
                     break;
             }
@@ -756,34 +770,68 @@ void boot_phase1(void)
                 tpm_baseline_status_is_failure(bs))
                 tpm_integrity_publish_baseline(overall, pcr_status, pcr_n);
 
-            /* The three repairs are opposite, so they are named separately
-             * rather than left for an operator to infer from one status. */
-            if (bs == TPM_BASELINE_TORN)
-                /* Deliberately does NOT name one repair. This status collapses
-                 * three directions -- an uncommitted write, a torn pairing, an
-                 * impossible one -- and the enum's own contract says the
-                 * direction decides the repair. Completing an interrupted
-                 * commit and entering authorized recovery are different
-                 * actions, and prescribing the second for the first is
-                 * destructive over-recovery. The direction lives in the view's
-                 * tpm_pairing_t; tpm_baseline_verify does not yet pass it out,
-                 * which is filed. What IS safe to say unconditionally is the
-                 * one thing every direction shares. */
-                klog(LOG_ERROR, "TPM",
-                     "Baseline bind record and its commit counter DISAGREE: "
-                     "repair is AUTHORIZED and never a fresh enrollment");
-            else if (bs == TPM_BASELINE_RELABELED)
-                klog(LOG_ERROR, "TPM",
-                     "Baseline blob does NOT match its committed bind record: "
-                     "content was replaced under a valid record");
-            else if (bs == TPM_BASELINE_UNBOUND)
+            /* WHICH field stopped this boot verifying. Without it every cause
+             * -- a firmware update, a Secure Boot toggle, a re-enroll needed
+             * after an ABI change, and a genuine tamper -- reaches the operator
+             * as the single word "baseline-mismatch", so the known-benign
+             * migration cases are indistinguishable from an attack.
+             *
+             * Only TPM_BASELINE_OK carries a field cause: every other
+             * MISMATCH-producing status (TORN, RELABELED, UNBOUND, IDENTITY,
+             * CORRUPT, SELF_CORRUPT) is a verdict about the stored blob or
+             * about THIS KERNEL's own identity rather than about a compared
+             * field -- SELF_CORRUPT is the kernel one and is deliberately not a
+             * blob verdict -- and each already logs its own line below.
+             *
+             * The cause names the FIRST difference in a fixed comparison order,
+             * so it is a starting point and not an inventory. The PCR list
+             * beside it is the exhaustive half: tpm_baseline_compare_pcrs
+             * already walked every golden slot, so a scalar-caused mismatch
+             * that ALSO moved PCRs shows both here rather than hiding the
+             * second one behind the first. */
+            if (bs == TPM_BASELINE_OK && overall == BOOT_INTEGRITY_MISMATCH) {
+                /* Two chars per index (the measured set tops out at PCR 11),
+                 * one separator each, one terminator. */
+                char pcrs[BOOT_INTEGRITY_MAX_PCRS * 3u + 1u];
+                struct boot_integrity_report ir;
+                unsigned w = 0;
+                uint8_t k;
+                /* Read the PUBLISHED report rather than pairing pcr_status[]
+                 * with a second index list assembled here: the report already
+                 * carries index and status together for each slot, and a
+                 * locally rebuilt pairing is the exact drift that atomic
+                 * boot-integrity report publication was built to remove. */
+                tpm_integrity_report_copy(&ir);
+                for (k = 0; k < ir.pcr_count && k < (uint8_t)BOOT_INTEGRITY_MAX_PCRS; k++) {
+                    uint8_t idx = ir.pcrs[k].pcr_index;
+                    if (ir.pcrs[k].status != BOOT_INTEGRITY_MISMATCH)
+                        continue;
+                    if (w + 3u >= sizeof pcrs)
+                        break;
+                    if (w)
+                        pcrs[w++] = ',';
+                    if (idx >= 10u)
+                        pcrs[w++] = (char)('0' + (idx / 10u));
+                    pcrs[w++] = (char)('0' + (idx % 10u));
+                }
+                pcrs[w] = '\0';
                 klog(LOG_WARN, "TPM",
-                     "Baseline has no authenticated bind record (legacy): "
-                     "authorized migration required, never auto-binding");
-            else if (bs == TPM_BASELINE_IDENTITY)
-                klog(LOG_ERROR, "TPM",
-                     "Baseline NV index failed its enrolled contract: the index "
-                     "answering is NOT the one enrolled");
+                     "Baseline mismatch: first differing field is %s%s%s",
+                     tpm_baseline_cause_label(cause.cause),
+                     w ? "; PCRs also differing: " : "; no PCR differs",
+                     w ? pcrs : "");
+            }
+
+            /* One shared source for the diagnosis, so this path and the
+             * enrollment path above cannot drift apart again. Only UNBOUND is
+             * a warning: it is a legacy-migration state on an otherwise
+             * healthy machine, while the rest are integrity failures. */
+            {
+                const char *repair = tpm_baseline_status_repair((uint8_t)bs);
+                if (repair)
+                    klog(bs == TPM_BASELINE_UNBOUND ? LOG_WARN : LOG_ERROR,
+                         "TPM", "%s", repair);
+            }
 
             /* Budget expiry collapses into NO_TPM by design (tpm_baseline.c
              * nv_to_baseline): a TPM that merely answered too slowly must leave
@@ -801,8 +849,13 @@ void boot_phase1(void)
         {
             struct boot_integrity_report ir;
             tpm_integrity_report_copy(&ir);
-            klog(LOG_INFO, "TPM", "Boot integrity status: %s",
-                 tpm_integrity_status_label(&ir));
+            /* The label and its SCOPE go out together. A one-word status is
+             * exactly the shape a reader over-reads, and the most expensive
+             * over-read here is concluding that a clean status means the
+             * kernel image was measured, which no part of this facility does. */
+            klog(LOG_INFO, "TPM", "Boot integrity status: %s (%s)",
+                 tpm_integrity_status_label(&ir),
+                 tpm_integrity_status_scope(&ir));
         }
 
         /* The deadline ends where the boot's verified reads end. Nothing else

@@ -490,7 +490,12 @@ else
     # anything: field order, decimal byte count, 16 uppercase TSC digits and 64
     # uppercase digest digits, in that exact order. Matching fields "anywhere on
     # the line" would let the producer/consumer format drift silently.
-    SELF_MEASURE_SCHEMA='^\[BOOT\] self-measure: status=ok bytes=[0-9]{1,20} tsc=[0-9A-F]{16} sha256=[0-9A-F]{64}$'
+    # The digest token is esp-file-sha256, not a bare sha256: the loader hashes
+    # the ESP FILE, never the bytes firmware executed (that measurement is the
+    # firmware's own Authenticode PE hash in PCR 4). The anchored schema is what
+    # makes the rename real -- a producer left on the old token fails here on
+    # every leg rather than quietly reverting the claim.
+    SELF_MEASURE_SCHEMA='^\[BOOT\] self-measure: status=ok bytes=[0-9]{1,20} tsc=[0-9A-F]{16} esp-file-sha256=[0-9A-F]{64}$'
     SELF_MEASURE_BODY="$(printf '%s' "$SELF_MEASURE_LINE" | sed 's/\r$//')"
     if [ ! -f "$LOADER_FILE" ]; then
         echo -e "  ${YELLOW}self-measure:${NC} $LOADER_FILE absent -- oracle skipped (advisory)"
@@ -499,7 +504,7 @@ else
         BOOT_FAILED=true
         FAIL_REASON="${FAIL_REASON:-Loader self-measurement reported ABSENT or off-schema}"
     else
-        REPORTED_SHA="$(printf '%s' "$SELF_MEASURE_BODY" | sed -n 's/.* sha256=\([0-9A-F]\{64\}\)$/\1/p' | tr 'A-F' 'a-f')"
+        REPORTED_SHA="$(printf '%s' "$SELF_MEASURE_BODY" | sed -n 's/.* esp-file-sha256=\([0-9A-F]\{64\}\)$/\1/p' | tr 'A-F' 'a-f')"
         REPORTED_BYTES="$(printf '%s' "$SELF_MEASURE_BODY" | sed -n 's/.* bytes=\([0-9]\{1,20\}\) .*/\1/p')"
         ORACLE_SHA="$(sha256sum "$LOADER_FILE" | cut -d' ' -f1)"
         ORACLE_BYTES="$(wc -c < "$LOADER_FILE" | tr -d ' ')"
