@@ -178,33 +178,55 @@ jobs:
           # merely yields an empty string and the script carries on -- the same
           # failure-as-absence collapse the gh guard above exists to stop, one
           # line later (Codex adversarial round 2, section 16).
-          if ! sha="$(printf '%s' "$raw" | jq -r 'map(select(.conclusion=="success")) | .[0].headSha // empty')"; then
+          # Take the whole candidate SET, not `.[0]`. Which entry is newest is
+          # decided below by git, not by the order the API happened to return.
+          if ! shas="$(printf '%s' "$raw" | jq -r 'map(select(.conclusion=="success")) | .[].headSha')"; then
               echo "::error::could not parse the last-gated-SHA query result"
               exit 1
           fi
-          if [ -z "${sha:-}" ]; then
+          if [ -z "${shas:-}" ]; then
               # A genuinely empty API result means no successful run exists yet.
               # That is the ONLY case where deriving a base is legitimate.
               echo "sha=" >>"$GITHUB_OUTPUT"
               echo "no prior successful run; the gate will derive a base"
-          elif git rev-parse --verify --quiet "${sha}^{commit}" >/dev/null 2>&1; then
-              echo "sha=$sha" >>"$GITHUB_OUTPUT"
-              echo "last gated SHA: $sha"
           else
-              # A REAL last-green SHA we cannot materialize is NOT an absence.
-              # Downgrading it to "" fell back to HEAD~1, and after a
-              # force-push/history rewrite a regression older than HEAD~1 whose
-              # final commit leaves the closure unchanged would exit 0 and
-              # become the next green baseline. Try to fetch it; if it still
-              # cannot be materialized, the gate cannot establish its range.
-              git fetch --no-tags --quiet origin "$sha" 2>/dev/null || true
-              if git rev-parse --verify --quiet "${sha}^{commit}" >/dev/null 2>&1; then
-                  echo "sha=$sha" >>"$GITHUB_OUTPUT"
-                  echo "last gated SHA (fetched): $sha"
-              else
-                  echo "::error::last gated SHA $sha is not reachable even after fetch -- history was rewritten. Refusing to silently gate a shorter range."
+              # DO NOT TRUST THE API'S RETURN ORDER. Observed 2026-08-19 (run
+              # 32255498885): this query returned a success from 2026-08-04 as
+              # `.[0]` while fifteen newer successes existed, so the gate took a
+              # base 440 commits back whose tree predates the snapshot protocol
+              # entirely, could not read its constants, and died INFRASTRUCTURE
+              # -- a red job with nothing wrong in the tree (the same gate exits
+              # 0 against the true last green). Ordering is the API's business
+              # and it got it wrong; ancestry and distance are OURS, and git
+              # answers both exactly. Pick the candidate CLOSEST to HEAD by
+              # commit topology, which is immune to both a mis-ordered and a
+              # partially-stale response.
+              #
+              # A candidate that is not an ancestor of HEAD is SKIPPED rather
+              # than fatal: after a force-push the rewritten SHAs are exactly
+              # the ones to walk past. Only an entirely ancestor-less set means
+              # the gate cannot establish its range, and that stays fatal for
+              # the original reason -- falling back to HEAD~1 would let a
+              # regression older than one commit become the next green baseline.
+              sha=""
+              best=-1
+              for cand in $shas; do
+                  git rev-parse --verify --quiet "${cand}^{commit}" >/dev/null 2>&1 \
+                      || git fetch --no-tags --quiet origin "$cand" 2>/dev/null || true
+                  git merge-base --is-ancestor "$cand" HEAD 2>/dev/null || continue
+                  dist="$(git rev-list --count "${cand}..HEAD" 2>/dev/null)" || continue
+                  [ -n "$dist" ] || continue
+                  if [ "$best" -lt 0 ] || [ "$dist" -lt "$best" ]; then
+                      best="$dist"
+                      sha="$cand"
+                  fi
+              done
+              if [ -z "$sha" ]; then
+                  echo "::error::no previously gated SHA is an ancestor of HEAD even after fetch -- history was rewritten. Refusing to silently gate a shorter range."
                   exit 1
               fi
+              echo "sha=$sha" >>"$GITHUB_OUTPUT"
+              echo "last gated SHA: $sha ($best commit(s) back)"
           fi
 
       - name: Resolver identity gate
