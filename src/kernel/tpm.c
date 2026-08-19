@@ -755,13 +755,24 @@ void tpm_pcr_cache_init(void)
  *
  * KERNEL_TESTS-gated for the same reason the transport seams are: it turns an
  * eagerly-populated lock-free read into a per-call transaction, which is
- * correct for a fixture and wrong for the boot path. */
+ * correct for a fixture and wrong for the boot path.
+ *
+ * RELEASE on the store, ACQUIRE on the load, the same publication idiom
+ * s_report_published uses above. The flag is the PUBLICATION WORD for the fake
+ * transport a fixture installed just before it: a reader that sees the bypass
+ * set must also see the transport swap that preceded it, or it would route a
+ * live PCR read through half-installed state. Today's only tpm_pcr_get callers
+ * are Phase-1 boot-path and the suite runs sequentially on the BSP, so the
+ * ordering is not currently observable -- which is exactly why it is worth
+ * writing down rather than leaving to a plain int whose safety argument lives
+ * nowhere. Restoring is the mirror: the fixture clears the bypass BEFORE it
+ * puts the previous transport back. */
 static int s_pcr_cache_bypass;
 
 int tpm_pcr_test_cache_bypass(int on)
 {
-    int prev = s_pcr_cache_bypass;
-    s_pcr_cache_bypass = on ? 1 : 0;
+    int prev = __atomic_load_n(&s_pcr_cache_bypass, __ATOMIC_ACQUIRE);
+    __atomic_store_n(&s_pcr_cache_bypass, on ? 1 : 0, __ATOMIC_RELEASE);
     return prev;
 }
 #endif /* KERNEL_TESTS */
@@ -775,7 +786,7 @@ tpm_pcr_status_t tpm_pcr_get(uint32_t pcr_index, uint16_t alg,
         return TPM_PCR_BADARG;
 
 #ifdef KERNEL_TESTS
-    if (s_pcr_cache_bypass)
+    if (__atomic_load_n(&s_pcr_cache_bypass, __ATOMIC_ACQUIRE))
         return tpm2_pcr_read(alg, pcr_index, out, out_cap, out_len);
 #endif
 

@@ -1142,4 +1142,6 @@ flowchart TD
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_02_kernel_core_TODO_14_registry_completion_md_e13937
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_02_kernel_core_TODO_24_alpc_message_ports_md_9d63bf
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_02_kernel_core_TODO_22_environment_variables_md_a79eb3
+  todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_02_kernel_core_TODO_04_system_logging_md_f11c79
+  todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf
 ```

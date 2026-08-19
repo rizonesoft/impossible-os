@@ -1468,6 +1468,14 @@ static void bv_golden(struct tpm_baseline *b, uint32_t gen)
     (void)tpm_baseline_finalize(b);
 }
 
+/* tpm_fake_tis_nv_set IGNORES a length above its cap and returns void, so a
+ * baseline blob that outgrew the fake would seed an EMPTY index -- every verify
+ * test would then fail as NO_BASELINE and the failure would be attributed to
+ * tpm_baseline_verify rather than to the fixture. Pin the relation here, where
+ * the dependency actually lives. */
+_Static_assert(sizeof(struct tpm_baseline) <= TPM_FAKE_TIS_NV_MAX,
+               "the baseline blob must fit the fake's NV store");
+
 static void bv_store(const struct tpm_baseline *b)
 {
     tpm_fake_tis_nv_set(TPM_NV_INDEX_BASELINE, (const uint8_t *)b,
@@ -2041,18 +2049,26 @@ static void test_baseline_enroll_corrupt_no_rollback(void)
  * attributed to the code under test rather than to the fixture. These drive the
  * TIS registers directly -- the wrappers above cannot produce a malformed
  * command, which is exactly why the boundary needs its own case. */
+/* Drives the device registers DIRECTLY, which is the only way to submit a
+ * command the wrappers cannot build. That also steps outside `tpm2_submit`'s
+ * `s_busy` gate, which is what serializes every other path into the fake and is
+ * the reason its file-scope state needs no lock of its own. Safe here only
+ * because nothing else touches the TPM while the unit suite runs inline on the
+ * BSP; it is written down because the safety argument is otherwise invisible at
+ * this call site. */
 static uint32_t bv_submit_raw(const uint8_t *cmd, uint32_t n,
                               uint8_t *rsp, uint32_t cap)
 {
     const struct tpm_t_io *io = tpm_fake_tis_io();
     uint32_t i, got = 0;
 
-    io->w32(0x018u, 0x40u);                    /* COMMAND_READY */
+    io->w32(TPM_FAKE_TIS_REG_STS, TPM_FAKE_TIS_STS_COMMAND_READY);
     for (i = 0; i < n; i++)
-        io->w8(0x024u, cmd[i]);
-    io->w32(0x018u, 0x20u);                    /* GO */
-    while (got < cap && (io->r32(0x018u) & 0x10u) != 0u)   /* DATA_AVAIL */
-        rsp[got++] = io->r8(0x024u);
+        io->w8(TPM_FAKE_TIS_REG_FIFO, cmd[i]);
+    io->w32(TPM_FAKE_TIS_REG_STS, TPM_FAKE_TIS_STS_GO);
+    while (got < cap &&
+           (io->r32(TPM_FAKE_TIS_REG_STS) & TPM_FAKE_TIS_STS_DATA_AVAIL) != 0u)
+        rsp[got++] = io->r8(TPM_FAKE_TIS_REG_FIFO);
     return got;
 }
 
@@ -2083,6 +2099,29 @@ static void test_baseline_fake_tis_malformed(void)
     bv_golden(&g, 5u);
     bv_store(&g);
     len_before = tpm_fake_tis_nv_content(before, (uint16_t)sizeof(before));
+
+    /* POSITIVE CONTROL FIRST. Every case below asserts a bare non-success
+     * header -- which is also exactly what the fake returns when it receives
+     * NOTHING (ft_cmd_has(10) fails and it answers a size error). io->w8 also
+     * drops any write to an offset that is not the FIFO. So if bv_submit_raw
+     * ever stopped delivering bytes -- a register-offset drift, a handshake
+     * change -- all eight refusals would still "pass" as no-ops, and so would
+     * the closing content comparison. One well-formed command proving the path
+     * DELIVERS is what makes the eight refusals mean anything. */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(cmd + 2, 35u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_NV_READ);
+    tpm2_be32_put(cmd + 14, TPM_NV_INDEX_BASELINE);
+    tpm2_be16_put(cmd + 31, 4u);                 /* read 4 bytes */
+    tpm2_be16_put(cmd + 33, 0u);                 /* from offset 0 */
+    n = bv_submit_raw(cmd, 35u, rsp, (uint32_t)sizeof(rsp));
+    TEST_ASSERT_EQ(n, 25u,
+                   "the control command reached the device and was answered");
+    TEST_ASSERT_EQ(tpm2_be32_get(rsp + 6), TPM2_RC_SUCCESS,
+                   "a well-formed command SUCCEEDS -- the refusals below are real");
+    TEST_ASSERT_EQ(memcmp(rsp + 16, before, 4u), 0,
+                   "the control read returned the seeded bytes");
 
     /* (1) NV_DefineSpace whose authPolicy length positions its dataSize field
      * far past the delivered bytes. Reading dataSize at 43 + policy_len without

@@ -29,6 +29,19 @@
 #include "kernel/types.h"
 #include "kernel/tpm_transport.h"
 
+/* The TIS registers and status bits the fake models. PUBLISHED rather than kept
+ * private because a test that drives the device directly (to submit a malformed
+ * command the wrappers cannot produce) needs exactly these -- and open-coding
+ * them at the call site would be a third copy of the vocabulary, after the real
+ * driver's and the fake's, that no compiler can keep in step. */
+#define TPM_FAKE_TIS_REG_STS   0x018u
+#define TPM_FAKE_TIS_REG_FIFO  0x024u
+#define TPM_FAKE_TIS_STS_EXPECT        0x08u
+#define TPM_FAKE_TIS_STS_DATA_AVAIL    0x10u
+#define TPM_FAKE_TIS_STS_GO            0x20u
+#define TPM_FAKE_TIS_STS_COMMAND_READY 0x40u
+#define TPM_FAKE_TIS_STS_VALID         0x80u
+
 /* Largest NV object the fake stores. The baseline blob is the biggest consumer
  * (sizeof(struct tpm_baseline)); TPM_NV_MAX_DATA is the transport's own cap. */
 #define TPM_FAKE_TIS_NV_MAX   512u
@@ -47,7 +60,12 @@ struct tpm_fake_tis_req {
     uint16_t offset;     /* NV_Read / NV_Write: offset */
     uint16_t size;       /* NV_Read: requested size. NV_Write / Define: length */
     uint8_t  sel[3];     /* PCR_Read: pcrSelect bitmap */
-    uint8_t  sel_count;  /* PCR_Read: TPML_PCR_SELECTION count */
+    /* Full 32-bit TPML_PCR_SELECTION count. Recorded UNTRUNCATED: the point of
+     * this field is that a test can assert what the command asked for instead
+     * of trusting the fake's decode, and a count of 0x100 narrowed to a byte
+     * would record 0 -- the fake would refuse correctly and the transcript
+     * would describe a request nobody made. */
+    uint32_t sel_count;
 };
 
 /* Clear every knob, the NV store, the PCR table and the transcript. */
@@ -59,7 +77,11 @@ const struct tpm_t_io *tpm_fake_tis_io(void);
 /* ---- NV content ---- */
 
 /* Define `nv_index` and seed it with `len` bytes (arbitrary length up to
- * TPM_FAKE_TIS_NV_MAX). A read of any OTHER index answers TPM_RC_HANDLE, which
+ * TPM_FAKE_TIS_NV_MAX). A `len` above that cap is IGNORED -- this returns void,
+ * so a caller seeding an object that outgrew the fake gets a silently empty
+ * index and its tests then fail as NO_BASELINE, blaming the code under test.
+ * Pin the relation with a _Static_assert at the call site rather than relying
+ * on noticing it. A read of any OTHER index answers TPM_RC_HANDLE, which
  * is what a real TPM does for an undefined index -- so a wrapper that reads the
  * wrong index fails rather than being handed the right bytes. */
 void tpm_fake_tis_nv_set(uint32_t nv_index, const uint8_t *data, uint16_t len);
@@ -95,6 +117,9 @@ void tpm_fake_tis_fail_cc(uint32_t cc, uint32_t rc, int times);
 /* ---- Transcript ---- */
 
 uint32_t tpm_fake_tis_log_count(void);
+/* Borrowed, NOT owned: the returned pointer aims into the fake's own static log
+ * and is invalidated by the next command or by tpm_fake_tis_reset(). Read what
+ * you need before submitting anything else; never retain it across a call. */
 /* NULL when i is past the recorded set (the log saturates at
  * TPM_FAKE_TIS_LOG_MAX; tpm_fake_tis_log_overflow() reports that it did). */
 const struct tpm_fake_tis_req *tpm_fake_tis_log(uint32_t i);

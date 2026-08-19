@@ -84,13 +84,13 @@ static int      ft_log_overflow;
 
 /* ---- TIS registers (the subset tpm_transport.c touches) ---- */
 
-#define FT_REG_STS   0x018u
-#define FT_REG_FIFO  0x024u
-#define FT_STS_EXPECT        0x08u
-#define FT_STS_DATA_AVAIL    0x10u
-#define FT_STS_GO            0x20u
-#define FT_STS_COMMAND_READY 0x40u
-#define FT_STS_VALID         0x80u
+#define FT_REG_STS            TPM_FAKE_TIS_REG_STS
+#define FT_REG_FIFO           TPM_FAKE_TIS_REG_FIFO
+#define FT_STS_EXPECT         TPM_FAKE_TIS_STS_EXPECT
+#define FT_STS_DATA_AVAIL     TPM_FAKE_TIS_STS_DATA_AVAIL
+#define FT_STS_GO             TPM_FAKE_TIS_STS_GO
+#define FT_STS_COMMAND_READY  TPM_FAKE_TIS_STS_COMMAND_READY
+#define FT_STS_VALID          TPM_FAKE_TIS_STS_VALID
 
 void tpm_fake_tis_reset(void)
 {
@@ -484,7 +484,7 @@ static void ft_do_pcr_read(void)
     if (r) {
         r->index = idx;
         r->alg = alg;
-        r->sel_count = (uint8_t)sel_count;
+        r->sel_count = sel_count;
         r->sel[0] = sel[0]; r->sel[1] = sel[1]; r->sel[2] = sel[2];
     }
 
