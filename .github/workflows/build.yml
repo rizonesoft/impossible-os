@@ -40,15 +40,24 @@ jobs:
   build:
     name: Build Impossible OS
     runs-on: ubuntu-latest
-    # 15 was a runaway backstop chosen when the job ran well under it; it became
-    # a live gate as the suites grew. MEASURED: the last green run (30864937433,
-    # 2026-08-04) finished in 14m52s -- 8 seconds of margin -- and the next
-    # growth tipped it over: run 31056543625 passed every step, then had
-    # `Stale-ABI fixtures` CANCELLED at the wall 13m10s in, with that step
-    # needing ~2m56s (so ~16m06s required). Raised to 25 to restore real
-    # headroom while staying a genuine runaway cap. A step that hangs still
-    # fails here rather than burning GHA's 6h default.
-    timeout-minutes: 25
+    # A runaway backstop, NOT a performance budget -- and it has now been eaten
+    # by suite growth twice. 15 became a live gate on 2026-08-04 (last green
+    # 30864937433 at 14m52s, 8s of margin; run 31056543625 then had `Stale-ABI
+    # fixtures` killed at the wall) and was raised to 25. MEASURED 2026-08-19,
+    # the same wall again: the four newest green jobs ran 23m03s / 21m18s /
+    # 22m54s / 20m21s -- under two minutes of margin at worst -- and runs
+    # 32216947553 and 32222383232 were both killed at exactly 25m1Xs.
+    #
+    # THE KILL IS DISGUISED. GitHub reports a `timeout-minutes` kill with
+    # conclusion `cancelled`, which is indistinguishable in every dashboard
+    # from a benign supersession by the next push -- so this job stopped
+    # producing a verdict for hours without anything looking red.
+    # `scripts/overnight/ci-check.py` calls that shape a completed drought;
+    # that note is the only thing that surfaces it.
+    #
+    # Raised to 40: ~17 minutes of headroom over the worst observed green,
+    # while still failing a hung step long before GHA's 6h default.
+    timeout-minutes: 40
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
