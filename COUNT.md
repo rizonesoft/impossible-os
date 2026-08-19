@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     490 |     366530 |
+| **C sources** (`.c`)  |     490 |     366549 |
 | **Headers** (`.h`)    |     339 |      76903 |
 | **Assembly** (`.asm`) |      11 |       1279 |
-| **Subtotal**          | **840** | **444712** |
+| **Subtotal**          | **840** | **444731** |
 
 ## SDK Tools
 
@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     467 |     134062 |
+| **Markdown** (`.md`)        |     467 |     134091 |
 | **JSON** (`.json`)          |      16 |       2453 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1839 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **515** | **140540** |
+| **Subtotal**                | **515** | **140569** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1313** | **649663** |
-| **Supporting text + metadata** |  **515** | **140540** |
-| **All counted text files**     | **1828** | **790203** |
+| **Core code + tooling**        | **1313** | **649682** |
+| **Supporting text + metadata** |  **515** | **140569** |
+| **All counted text files**     | **1828** | **790251** |
 
 > Vendored code excluded: ~468728 lines across 517 files -- `stb_image.h`, `stb_truetype.h`, `efi.h`, the four imported Fluent System Icons CSS files, and every third-party library under `src/libs/` and `src/kernel/acpica/` (see [src/libs/PROVENANCE.md](src/libs/PROVENANCE.md) for what each one is). Our own files inside those trees are still counted.
 >
@@ -75,19 +75,24 @@
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-|                                |                    Linux |                  Windows |         Impossible OS |
-| ------------------------------ | -----------------------: | -----------------------: | --------------------: |
-| **Core code + tooling lines**  |              ~28,000,000 |              ~50,000,000 |               649,663 |
-| **Supporting text + metadata** | not separately published | not separately published |               140,540 |
-| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |               790,203 |
-| **Developers**                 |            ~1,000 active |              ~5,000 peak |                     1 |
-| **Time span**                  |                 33 years |                 40 years | 5 month(s), 15 day(s) |
+|                                     |                    Linux |                  Windows |         Impossible OS |
+| ----------------------------------- | -----------------------: | -----------------------: | --------------------: |
+| **Whole tree, vendored included**   |              ~28,000,000 |              ~50,000,000 |             1,258,979 |
+| **Written here, vendored excluded** | not separately published | not separately published |               790,251 |
+| **Developers**                      |            ~1,000 active |              ~5,000 peak |                     1 |
+| **Time span**                       |                 33 years |                 40 years | 5 month(s), 15 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 649,663
+> The first row is the like-for-like one: ~28,000,000 and ~50,000,000 are whole-tree
+> counts that include everything those projects vendor, so ours includes
+> 468,728 vendored lines too. The second row is what was actually
+> written here, and it is the one the estimate below uses -- nobody earns credit for
+> effort someone else already spent.
+>
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 649,682
 > lines of core code and tooling would take **143 developers** working for **5 month(s), 15 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-08-19 13:17 · commit `5bb2f1784`*
+*Last updated: 2026-08-19 13:42 · commit `09d6ab8bb`*

@@ -159,6 +159,9 @@ core_total_lines=$((code_lines + sdk_lines + infra_lines))
 counted_total_files=$((core_total_files + support_files))
 counted_total_lines=$((core_total_lines + support_lines))
 
+# `vendored_lines` is summed further down, after is_vendored is defined; the
+# whole-tree figure it feeds is assembled there.
+
 # Count vendored lines -- the same gate the counters used, over the same files,
 # so this figure is what was actually excluded rather than an independent guess.
 vendored_lines=0
@@ -175,6 +178,15 @@ done < <(
         find "$v" -type f 2>/dev/null
     done
 )
+
+# THE COMPARISON BASIS. The ~28M Linux and ~50M Windows figures are WHOLE-TREE
+# counts and include everything those projects vendor -- Linux alone carries
+# ACPICA, zlib, zstd, lz4 and xz, the same class of code excluded above. Setting
+# our vendored-excluded total against their vendored-included totals compares
+# two different things and understates this tree on a basis nobody else uses,
+# so the Impossibility Index is computed here instead.
+whole_tree_files=$((counted_total_files + vendored_files))
+whole_tree_lines=$((counted_total_lines + vendored_lines))
 
 # Get commit info
 commit_hash=$(git rev-parse --short HEAD)
@@ -325,9 +337,8 @@ grand_total_table="$(make_table3 "" "Files" "Lines" \
     $'**All counted text files**\t**'"${counted_total_files}"$'**\t**'"${counted_total_lines}"$'**')"
 
 impossibility_table="$(make_table4 "" "Linux" "Windows" "Impossible OS" \
-    $'**Core code + tooling lines**\t~28,000,000\t~50,000,000\t'"$(fmt "${core_total_lines}")" \
-    $'**Supporting text + metadata**\tnot separately published\tnot separately published\t'"$(fmt "${support_lines}")" \
-    $'**All authored lines**\t~28,000,000\t~50,000,000\t'"$(fmt "${counted_total_lines}")" \
+    $'**Whole tree, vendored included**\t~28,000,000\t~50,000,000\t'"$(fmt "${whole_tree_lines}")" \
+    $'**Written here, vendored excluded**\tnot separately published\tnot separately published\t'"$(fmt "${counted_total_lines}")" \
     $'**Developers**\t~1,000 active\t~5,000 peak\t1' \
     $'**Time span**\t33 years\t40 years\t'"${ELAPSED_STR}")"
 
@@ -380,6 +391,12 @@ ${grand_total_table}
 
 ${impossibility_table}
 
+> The first row is the like-for-like one: ~28,000,000 and ~50,000,000 are whole-tree
+> counts that include everything those projects vendor, so ours includes
+> $(fmt ${vendored_lines}) vendored lines too. The second row is what was actually
+> written here, and it is the one the estimate below uses -- nobody earns credit for
+> effort someone else already spent.
+>
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), writing $(fmt ${core_total_lines})
 > lines of core code and tooling would take **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
 >
