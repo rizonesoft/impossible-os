@@ -13,12 +13,12 @@
 
 ## Kernel & OS Code
 
-|                       |    Files |      Lines |
-| --------------------- | -------: | ---------: |
-| **C sources** (`.c`)  |      769 |     627582 |
-| **Headers** (`.h`)    |      566 |     193189 |
-| **Assembly** (`.asm`) |       11 |       1279 |
-| **Subtotal**          | **1346** | **822050** |
+|                       |   Files |      Lines |
+| --------------------- | ------: | ---------: |
+| **C sources** (`.c`)  |     490 |     366530 |
+| **Headers** (`.h`)    |     339 |      76903 |
+| **Assembly** (`.asm`) |      11 |       1279 |
+| **Subtotal**          | **840** | **444712** |
 
 ## SDK Tools
 
@@ -38,31 +38,31 @@
 | **Python** (`.py`)                |     273 |     107977 |
 | **JavaScript** (`.js`)            |       1 |        524 |
 | **Include fragments** (`.inc`)    |       7 |       3241 |
-| **Makefile**                      |       4 |       2576 |
+| **Makefile**                      |       3 |       2173 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        199 |
-| **Subtotal**                      | **467** | **203635** |
+| **Subtotal**                      | **466** | **203232** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     468 |     134123 |
+| **Markdown** (`.md`)        |     467 |     134062 |
 | **JSON** (`.json`)          |      16 |       2453 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1839 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **516** | **140601** |
+| **Subtotal**                | **515** | **140540** |
 
 ## Grand Total
 
-|                                |    Files |       Lines |
-| ------------------------------ | -------: | ----------: |
-| **Core code + tooling**        | **1820** | **1027404** |
-| **Supporting text + metadata** |  **516** |  **140601** |
-| **All counted text files**     | **2336** | **1168005** |
+|                                |    Files |      Lines |
+| ------------------------------ | -------: | ---------: |
+| **Core code + tooling**        | **1313** | **649663** |
+| **Supporting text + metadata** |  **515** | **140540** |
+| **All counted text files**     | **1828** | **790203** |
 
-> Vendored code excluded: ~88552 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`, and the four imported Fluent System Icons CSS files)
+> Vendored code excluded: ~468728 lines across 517 files -- `stb_image.h`, `stb_truetype.h`, `efi.h`, the four imported Fluent System Icons CSS files, and every third-party library under `src/libs/` and `src/kernel/acpica/` (see [src/libs/PROVENANCE.md](src/libs/PROVENANCE.md) for what each one is). Our own files inside those trees are still counted.
 >
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,17 +77,17 @@
 
 |                                |                    Linux |                  Windows |         Impossible OS |
 | ------------------------------ | -----------------------: | -----------------------: | --------------------: |
-| **Core code + tooling lines**  |              ~28,000,000 |              ~50,000,000 |             1,027,404 |
-| **Supporting text + metadata** | not separately published | not separately published |               140,601 |
-| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |             1,168,005 |
+| **Core code + tooling lines**  |              ~28,000,000 |              ~50,000,000 |               649,663 |
+| **Supporting text + metadata** | not separately published | not separately published |               140,540 |
+| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |               790,203 |
 | **Developers**                 |            ~1,000 active |              ~5,000 peak |                     1 |
 | **Time span**                  |                 33 years |                 40 years | 5 month(s), 15 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 1,027,404
-> lines of core code and tooling would take **227 developers** working for **5 month(s), 15 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 649,663
+> lines of core code and tooling would take **143 developers** working for **5 month(s), 15 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-08-19 10:52 · commit `fd294105a`*
+*Last updated: 2026-08-19 13:17 · commit `5bb2f1784`*

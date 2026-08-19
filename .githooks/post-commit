@@ -26,6 +26,28 @@ VENDORED=(
     "$ROOT/resources/icons/FluentSystemIcons-Light.css"
 )
 
+# Whole vendored TREES, matched by path prefix. The exact-path list above could
+# only ever name individual files, so every library vendored after it was
+# written was counted as our own code: measured 2026-08-19, 379,699 lines of
+# .c/.h under these two roots (Mbed TLS 205,509, ACPICA 146,861, LZ4 10,611,
+# miniz 9,255, Monocypher 3,920, cJSON 3,543) sat inside the 822,050-line
+# "Kernel & OS Code" subtotal -- 46% of it -- under a COUNT.md line claiming
+# vendored code was excluded. `src/libs/PROVENANCE.md` is the authority on what
+# lives here; a new library dropped under either root is now excluded on
+# arrival rather than needing this hook edited.
+VENDORED_DIRS=(
+    "$ROOT/src/libs"
+    "$ROOT/src/kernel/acpica"
+)
+
+# Files INSIDE a vendored tree that we authored, so they stay counted. These
+# are exactly the "Local additions (NOT upstream)" rows of PROVENANCE.md.
+VENDORED_KEEP=(
+    "$ROOT/src/libs/PROVENANCE.md"
+    "$ROOT/src/libs/lz4/lz4_merge.ld"
+    "$ROOT/src/kernel/acpica/include/platform/acimpossible.h"
+)
+
 # Count lines by extension in given directories, excluding vendored files
 count_lines() {
     local ext="$1"
@@ -34,11 +56,7 @@ count_lines() {
     local total=0
     local files=0
     while IFS= read -r f; do
-        local skip=0
-        for v in "${VENDORED[@]}"; do
-            [ "$f" = "$v" ] && skip=1 && break
-        done
-        [ "$skip" = "1" ] && continue
+        is_vendored "$f" && continue
         local n
         n=$(wc -l < "$f")
         total=$((total + n))
@@ -50,9 +68,28 @@ count_lines() {
 is_vendored() {
     local f="$1"
     local v
+    # Our own files inside a vendored tree win over the tree prefix.
+    for v in "${VENDORED_KEEP[@]}"; do
+        [ "$f" = "$v" ] && return 1
+    done
     for v in "${VENDORED[@]}"; do
         [ "$f" = "$v" ] && return 0
     done
+    for v in "${VENDORED_DIRS[@]}"; do
+        case "$f" in "$v"/*) return 0 ;; esac
+    done
+    return 1
+}
+
+# Does this file land in one of the counted buckets below? The excluded-lines
+# figure must describe what was actually REMOVED from the totals, so a vendored
+# LICENSE or .gitignore -- never counted in the first place -- must not inflate
+# it.
+is_counted_ext() {
+    case "$1" in
+        *.c|*.h|*.asm|*.sh|*.bat|*.ps1|*.ld|*.lds|*.py|*.js|*.inc|*Makefile) return 0 ;;
+        *.md|*.json|*.yml|*.yaml|*.html|*.css|*.cfg|*.conf) return 0 ;;
+    esac
     return 1
 }
 
@@ -122,11 +159,22 @@ core_total_lines=$((code_lines + sdk_lines + infra_lines))
 counted_total_files=$((core_total_files + support_files))
 counted_total_lines=$((core_total_lines + support_lines))
 
-# Count vendored lines
+# Count vendored lines -- the same gate the counters used, over the same files,
+# so this figure is what was actually excluded rather than an independent guess.
 vendored_lines=0
-for v in "${VENDORED[@]}"; do
-    [ -f "$v" ] && vendored_lines=$((vendored_lines + $(wc -l < "$v")))
-done
+vendored_files=0
+while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    is_counted_ext "$f" || continue
+    is_vendored "$f" || continue
+    vendored_lines=$((vendored_lines + $(wc -l < "$f")))
+    vendored_files=$((vendored_files + 1))
+done < <(
+    printf '%s\n' "${VENDORED[@]}"
+    for v in "${VENDORED_DIRS[@]}"; do
+        find "$v" -type f 2>/dev/null
+    done
+)
 
 # Get commit info
 commit_hash=$(git rev-parse --short HEAD)
@@ -317,7 +365,7 @@ ${support_table}
 
 ${grand_total_table}
 
-> Vendored code excluded: ~${vendored_lines} lines (\`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`, and the four imported Fluent System Icons CSS files)
+> Vendored code excluded: ~${vendored_lines} lines across ${vendored_files} files -- \`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`, the four imported Fluent System Icons CSS files, and every third-party library under \`src/libs/\` and \`src/kernel/acpica/\` (see [src/libs/PROVENANCE.md](src/libs/PROVENANCE.md) for what each one is). Our own files inside those trees are still counted.
 >
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
