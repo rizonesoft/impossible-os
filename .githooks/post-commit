@@ -202,8 +202,15 @@ NOW_EPOCH=$(date +%s)
 ELAPSED_DAYS=$(( (NOW_EPOCH - FIRST_COMMIT_EPOCH) / 86400 ))
 [ "$ELAPSED_DAYS" -lt 1 ] && ELAPSED_DAYS=1
 
-# equivalent team size = core_total_lines * 365 / (industry_rate * elapsed_days)
-EQUIV_DEVS=$(( core_total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
+# equivalent team size = whole_tree_lines * 365 / (industry_rate * elapsed_days)
+#
+# WHOLE TREE, to match the figures it is compared against. The ~1,000 Linux and
+# ~5,000 Windows headcounts are whole-PROJECT counts set against whole-TREE line
+# counts that include everything those projects vendor; none of those developers
+# wrote the vendored parts either. Running our side on authored-only lines while
+# their side runs on whole-tree lines would be the same mismatch fixed one row
+# below, pointing the other way.
+EQUIV_DEVS=$(( whole_tree_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
 
 # Format elapsed time
 ELAPSED_MONTHS=$(( ELAPSED_DAYS / 30 ))
@@ -334,11 +341,12 @@ support_table="$(make_table3 "" "Files" "Lines" \
 grand_total_table="$(make_table3 "" "Files" "Lines" \
     $'**Core code + tooling**\t**'"${core_total_files}"$'**\t**'"${core_total_lines}"$'**' \
     $'**Supporting text + metadata**\t**'"${support_files}"$'**\t**'"${support_lines}"$'**' \
-    $'**All counted text files**\t**'"${counted_total_files}"$'**\t**'"${counted_total_lines}"$'**')"
+    $'**Written here**\t**'"${counted_total_files}"$'**\t**'"${counted_total_lines}"$'**' \
+    $'**Vendored ([third-party](src/libs/PROVENANCE.md))**\t'"${vendored_files}"$'\t'"${vendored_lines}" \
+    $'**All lines in tree**\t**'"${whole_tree_files}"$'**\t**'"${whole_tree_lines}"$'**')"
 
 impossibility_table="$(make_table4 "" "Linux" "Windows" "Impossible OS" \
-    $'**Whole tree, vendored included**\t~28,000,000\t~50,000,000\t'"$(fmt "${whole_tree_lines}")" \
-    $'**Written here, vendored excluded**\tnot separately published\tnot separately published\t'"$(fmt "${counted_total_lines}")" \
+    $'**All lines in tree**\t~28,000,000\t~50,000,000\t'"$(fmt "${whole_tree_lines}")" \
     $'**Developers**\t~1,000 active\t~5,000 peak\t1' \
     $'**Time span**\t33 years\t40 years\t'"${ELAPSED_STR}")"
 
@@ -376,8 +384,6 @@ ${support_table}
 
 ${grand_total_table}
 
-> Vendored code excluded: ~${vendored_lines} lines across ${vendored_files} files -- \`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`, the four imported Fluent System Icons CSS files, and every third-party library under \`src/libs/\` and \`src/kernel/acpica/\` (see [src/libs/PROVENANCE.md](src/libs/PROVENANCE.md) for what each one is). Our own files inside those trees are still counted.
->
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
 ---
@@ -391,14 +397,14 @@ ${grand_total_table}
 
 ${impossibility_table}
 
-> The first row is the like-for-like one: ~28,000,000 and ~50,000,000 are whole-tree
-> counts that include everything those projects vendor, so ours includes
-> $(fmt ${vendored_lines}) vendored lines too. The second row is what was actually
-> written here, and it is the one the estimate below uses -- nobody earns credit for
-> effort someone else already spent.
+> Every column is the same measurement: all lines in the tree, vendored code
+> included. ~28,000,000 and ~50,000,000 are whole-tree counts -- Linux alone
+> carries ACPICA, zlib, zstd, lz4 and xz -- and the headcounts beside them are
+> whole-project too. The split between what was written here and what was
+> vendored is in the Grand Total table above.
 >
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing $(fmt ${core_total_lines})
-> lines of core code and tooling would take **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), a tree of
+> $(fmt ${whole_tree_lines}) lines implies **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
@@ -407,13 +413,19 @@ ${impossibility_table}
 *Last updated: ${commit_date} · commit \`${commit_hash}\`*
 EOF
 
-# Rewrite the README lines-of-code badge from the live core count, so the
+# Rewrite the README lines-of-code badge from the live tree count, so the
 # README total is never hand-maintained or stale (it drifted to "84k+" while
 # the real count was 6x that). Marker-delimited + idempotent: the block between
 # COUNT-BADGE:START and COUNT-BADGE:END is regenerated in place.
+#
+# WHOLE TREE, matching the headline figure in COUNT.md. The badge carries no
+# label saying which basis it uses, so a reader takes it as THE number for this
+# repository; publishing a different one here than the document's own headline
+# is a discrepancy with no visible explanation. The written-here/vendored split
+# is one click away in the Grand Total table.
 README_FILE="$ROOT/README.md"
 if [ -f "$README_FILE" ] && grep -q 'COUNT-BADGE:START' "$README_FILE"; then
-    loc_k=$(( core_total_lines / 1000 ))
+    loc_k=$(( whole_tree_lines / 1000 ))
     badge_url="https://img.shields.io/badge/lines-${loc_k}k-blueviolet?style=flat-square"
     awk -v url="$badge_url" '
         /COUNT-BADGE:START/ { print; inblk=1; next }

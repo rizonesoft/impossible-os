@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     490 |     366549 |
+| **C sources** (`.c`)  |     490 |     366674 |
 | **Headers** (`.h`)    |     339 |      76903 |
 | **Assembly** (`.asm`) |      11 |       1279 |
-| **Subtotal**          | **840** | **444731** |
+| **Subtotal**          | **840** | **444856** |
 
 ## SDK Tools
 
@@ -46,24 +46,24 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     467 |     134091 |
+| **Markdown** (`.md`)        |     467 |     134097 |
 | **JSON** (`.json`)          |      16 |       2453 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1839 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **515** | **140569** |
+| **Subtotal**                | **515** | **140575** |
 
 ## Grand Total
 
-|                                |    Files |      Lines |
-| ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1313** | **649682** |
-| **Supporting text + metadata** |  **515** | **140569** |
-| **All counted text files**     | **1828** | **790251** |
+|                                                      |    Files |       Lines |
+| ---------------------------------------------------- | -------: | ----------: |
+| **Core code + tooling**                              | **1313** |  **649807** |
+| **Supporting text + metadata**                       |  **515** |  **140575** |
+| **Written here**                                     | **1828** |  **790382** |
+| **Vendored ([third-party](src/libs/PROVENANCE.md))** |      517 |      468728 |
+| **All lines in tree**                                | **2345** | **1259110** |
 
-> Vendored code excluded: ~468728 lines across 517 files -- `stb_image.h`, `stb_truetype.h`, `efi.h`, the four imported Fluent System Icons CSS files, and every third-party library under `src/libs/` and `src/kernel/acpica/` (see [src/libs/PROVENANCE.md](src/libs/PROVENANCE.md) for what each one is). Our own files inside those trees are still counted.
->
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
 ---
@@ -75,24 +75,23 @@
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-|                                     |                    Linux |                  Windows |         Impossible OS |
-| ----------------------------------- | -----------------------: | -----------------------: | --------------------: |
-| **Whole tree, vendored included**   |              ~28,000,000 |              ~50,000,000 |             1,258,979 |
-| **Written here, vendored excluded** | not separately published | not separately published |               790,251 |
-| **Developers**                      |            ~1,000 active |              ~5,000 peak |                     1 |
-| **Time span**                       |                 33 years |                 40 years | 5 month(s), 15 day(s) |
+|                       |         Linux |     Windows |         Impossible OS |
+| --------------------- | ------------: | ----------: | --------------------: |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,259,110 |
+| **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
+| **Time span**         |      33 years |    40 years | 5 month(s), 15 day(s) |
 
-> The first row is the like-for-like one: ~28,000,000 and ~50,000,000 are whole-tree
-> counts that include everything those projects vendor, so ours includes
-> 468,728 vendored lines too. The second row is what was actually
-> written here, and it is the one the estimate below uses -- nobody earns credit for
-> effort someone else already spent.
+> Every column is the same measurement: all lines in the tree, vendored code
+> included. ~28,000,000 and ~50,000,000 are whole-tree counts -- Linux alone
+> carries ACPICA, zlib, zstd, lz4 and xz -- and the headcounts beside them are
+> whole-project too. The split between what was written here and what was
+> vendored is in the Grand Total table above.
 >
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 649,682
-> lines of core code and tooling would take **143 developers** working for **5 month(s), 15 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), a tree of
+> 1,259,110 lines implies **278 developers** working for **5 month(s), 15 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-08-19 13:42 · commit `09d6ab8bb`*
+*Last updated: 2026-08-19 13:48 · commit `5fdcf5c00`*
