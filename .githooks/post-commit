@@ -212,6 +212,13 @@ ELAPSED_DAYS=$(( (NOW_EPOCH - FIRST_COMMIT_EPOCH) / 86400 ))
 # below, pointing the other way.
 EQUIV_DEVS=$(( whole_tree_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
 
+# And the same rate on the code actually written here. Both are published: the
+# whole-tree figure is the like-for-like one, but COCOMO prices code being
+# WRITTEN and vendoring is a decision rather than a development cost, so the
+# whole-tree number credits this project with effort spent elsewhere over
+# decades. Quoting only one of the two invites the objection either way.
+EQUIV_DEVS_CORE=$(( core_total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
+
 # Format elapsed time
 ELAPSED_MONTHS=$(( ELAPSED_DAYS / 30 ))
 ELAPSED_REM_DAYS=$(( ELAPSED_DAYS % 30 ))
@@ -405,6 +412,9 @@ ${impossibility_table}
 >
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), a tree of
 > $(fmt ${whole_tree_lines}) lines implies **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
+> COCOMO prices code being WRITTEN, though, and adopting a library is a decision
+> rather than a development cost -- so on the $(fmt ${core_total_lines}) lines of core code
+> and tooling actually written here, the same rate implies **${EQUIV_DEVS_CORE} developers**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
