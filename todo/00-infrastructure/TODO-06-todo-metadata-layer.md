@@ -98,6 +98,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  47   |   §47   | The gate consumers adopt the section-context projections (spawned by §45 review)        | §45           |  [x]   |
 | ⭐  |  48   |   §48   | The mutating repair tool stops rewriting the raw HTML it is shown (split from §47)      | §42, §46      |  [x]   |
 | ⭐  |  49   |   §49   | Decide whether `alias-staleness` is producer-assertable, then promote or record why not | §36, §43      |  [x]   |
+| 💎  |  50   |   §50   | A base older than the gate's own protocol must not be reported as a broken gate         | §16, §18      |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -821,6 +822,7 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 -> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- must land first: wiring a gate that verdicts only part of the population would automate an incomplete proof.
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- split out of this section (item: "ONE validator module both readers call, with the shape rules stated once"); this section wires the gate, §17 makes both cache readers agree about what a valid cache is.
 -> XREF: [`TODO-06 §18`](#18-identity-gate-hardening-producer-differential-and-protocol-constant-extraction) -- owns the four review findings this section accepted but does NOT close (item: "Producer differential across BOTH corpora"); the gate ships without them and states every one of those blind spots in its own header.
+-> XREF: [`TODO-06 §50`](#50-a-base-older-than-the-gates-own-protocol-must-not-be-reported-as-a-broken-gate) -- constrains the last-green range this section wired (item: "Decide what the gate DOES with an unadjudicatable range"): a base predating the protocol extraction reports as a broken gate.
 
 > **Verified:** 2026-08-06 | commit `800b62e0` + review fixes | 3/3 items | build OK | test_build 224/224 (11 identity-gate fixtures 22a-22k); tooling 1287/1287; kernel 28326 + 17 user-mode; lint rc 0, 0 errors; todo-graph 8/8 checks
 > **Accepted:** [M] Producer differential must run over BOTH corpora, not just head, or a change that removes a ref form's last live example while dropping its parser passes (RESOLVED 2026-08-13 in §18, commit `9ef13a2b3`) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Producer differential across BOTH corpora, so a cache-producer regression cannot hide" at line 913)
@@ -961,6 +963,7 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 > - Fifteen adversarial rounds plus a consistency and a perf leg; 41 findings, all verified at file:line and fixed; several were reproduced independently before being accepted, and two rounds overturned an earlier round's fix. The protocol became inert DATA, the relocation rule moved from the snapshots to the trees, an attestation flag was replaced by verified VALUES, and the one residual this section had accepted was refuted by the round asked to check it and is closed.
 
 -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the gate these harden (item: "Implemented the chosen wiring, fail-CLOSED on its own infrastructure errors"); both findings were accepted during its design review and scoped out of it.
+-> XREF: [`TODO-06 §50`](#50-a-base-older-than-the-gates-own-protocol-must-not-be-reported-as-a-broken-gate) -- re-reads `proto_of` and the protocol-constant extraction this section owns (item: "Prove the chosen behaviour with a fixture whose base tree lacks the protocol files").
 
 > **Verified:** 2026-08-07 | commit `9ef13a2b3` | 6/6 items | build OK | test_build 289/289, tooling 1287/1287, kernel 28326 pass/0 fail, lint 0 errors, identity gate PASS
 > **Accepted:** [M] Retirement is provable only by searching the emitters' source text, which indexed or concatenated emission defeats; the path is closed rather than knowingly unsound (reason: replacing the evidence is a redesign of how ref_resolution emits, not a patch) (RESOLVED 2026-08-13 in §20, commit `f86175ccd`) -> XREF: 00-infrastructure/TODO-06 §20 (item: "Give the resolver a declared emitted-member set instead of raw bucket strings" at line 1037)
@@ -2728,6 +2731,29 @@ The class describes a specific defect shape this file's own history is full of: 
 
 ---
 
+
+## 50. A Base Older Than the Gate's Own Protocol Must Not Be Reported as a Broken Gate
+
+> **Spawned-by:** root
+
+Filed 2026-08-19 from a live CI failure, not from a section review. `todo-graph.yml` run 32255498885 went red at `6e7ea8c9a` with `INFRASTRUCTURE: cannot read the snapshot protocol constants (got 'UNREADABLE')`. Nothing was wrong with the tree: the same gate exits 0 at that HEAD against the true last green (`3231e696`), verified locally. The base it actually used was `5b1ebb7f` from 2026-08-04, 440 commits back, because the workflow took `.[0]` of the successful-run query on faith and the API returned that entry first while fifteen newer successes existed. `git archive 5b1ebb7f scripts | tar -x` confirms the mechanism directly: that tree carries no `snapshot_protocol.py`, no `ref_resolution.py` and no `corpus_resolution_snapshot.py`, so `proto_of` in `scripts/todo-graph/identity-gate.sh:365` has nothing to import and every branch falls through to `UNREADABLE`.
+
+The base SELECTION half is already fixed (commit `f5fb4a45c`, `.github/workflows/todo-graph.yml`): the candidate closest to HEAD is now chosen by commit topology, which is immune to both a mis-ordered and a partially-stale response. This section owns the half that fix does not reach. Reaching an ancient base is now unlikely rather than impossible, and the case where it happens is exactly the case where the gate is ALREADY stuck: the last-green pointer only advances on a PASS (`identity-gate.sh:806` states this), so if `todo-graph.yml` stays red long enough that every success the query returns predates the protocol extraction, the gate wedges and cannot self-clear.
+
+- [ ] Distinguish a base that PREDATES the snapshot mechanism from one whose protocol is corrupt, since `proto_of` collapses both into `UNREADABLE`.
+  - The two need opposite responses and only one of them is a defect in the tree. The diagnostic an operator sees today ("the snapshot tool is missing or renamed") actively misdescribes the ancient-base case, which is what cost the diagnosis time on 2026-08-19.
+- [ ] Decide what the gate DOES with an unadjudicatable range. -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- owns the workflow wiring and the last-green range.
+  - Record why the rejected options were rejected, because they are not equivalent: clamping the base forward to the extraction commit narrows the adjudicated range silently, deriving a fresh base is the fallback §16's own comments already refuse, and failing loudly preserves the wedge.
+  - This is a safety decision about what may become a green baseline, so it is recorded rather than guessed.
+- [ ] Prove the chosen behaviour with a fixture whose base tree lacks the protocol files, plus a corrupt-protocol control. -> XREF: [`TODO-06 §18`](#18-identity-gate-hardening-producer-differential-and-protocol-constant-extraction)
+  - §18 owns `proto_of` and the protocol-constant extraction this section re-reads.
+  - Without the control the fixture proves only that something changed. The two cases share one code path today, so a fix that makes the ancient base pass can silently make the corrupt one pass too, which is the laundering §16 exists to prevent.
+- [ ] Commit: `"todo-graph: an unadjudicatable base is not a broken gate"`
+
+**Test checkpoint:** a base tree with no `snapshot_protocol.py` produces the chosen verdict by its own name, and a base tree whose protocol constants are present but malformed still fails INFRASTRUCTURE, each beside the other as a control. Scope: this section owns the ancient-base classification and its fixtures. The base SELECTION is fixed in `f5fb4a45c` and is not re-opened here; the workflow wiring is §16 and `proto_of` itself is §18. Platforms: host tooling only, proven by `bash scripts/test-tooling.sh` (group `[todo-graph]`); no kernel surface.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                                                           | 🪟 Win11                | 🐧 Linux                            | 🚀 Impossible OS                                                                 |
@@ -2802,6 +2828,7 @@ The class describes a specific defect shape this file's own history is full of: 
 | ⭐  | A gate refuses when its coordinates cannot match the diff's       | ❌ None                 | ❌ Silent line-number drift         | ✅ §47 non-LF breaks refused; CRLF excluded because git and the scanner agree    |
 | 💎  | A rewriter lints prose INSIDE raw HTML without moving its bytes   | ❌ None                 | ❌ Formatters reflow or skip whole  | ✅ §48 stateful quote-aware tag boundary; split tags held from both directions   |
 | 💎  | A shim export must keep EARNING its place, or be retired          | ❌ None                 | ⚠️ vulture/F401 guess by name       | ✅ §49 AST-resolved candidates + decidable drift; advisory, human-adjudicated    |
+| 💎  | A gate says whether IT broke or its RANGE is unadjudicatable      | ❌ None                 | ❌ None                             | ⚠️ §50 base older than the protocol still reports as a broken gate               |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.
