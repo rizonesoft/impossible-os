@@ -66,9 +66,10 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  26   | Baseline-blob NV fake: wrapper-level verify coverage          | §11, §18, §6                                              |  [x]   |
 | 💎  |  27   | Authorized NV record transitions                              | §21, §15, §17                                             |  [x]   |
 | 💎  |  28   | Crash-consistent record pairing, floor APIs, read budget      | §27, §17, §6                                              |  [x]   |
-| 💎  |  29   | Authorized-record hardening and coverage residue              | §27                                                       |  [ ]   |
+| 💎  |  29   | Authorized-record hardening                                   | §27                                                       |  [ ]   |
 | 💎  |  30   | Headless authorization transport + full-record binding        | §23, §6, §27                                              |  [ ]   |
 | 💎  |  31   | Loader digest correlation with the firmware PCR 4 measurement | §1, §20, §25                                              |  [ ]   |
+| 💎  |  32   | Authorized-record fake-TIS coverage residue                   | §29, §27, §28                                             |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -1194,23 +1195,15 @@ Split out of §27 on 2026-08-18 on a SPLIT-RECOMMENDED complexity verdict. §27 
 
 ---
 
-## 29. Authorized-Record Hardening and Coverage Residue
+## 29. Authorized-Record Hardening
 
 > **Spawned-by:** §27 (review)
-> **User impact:** on a machine with an update authority provisioned, the anti-rollback evidence the boot decision rests on is read from a counter index whose identity was never verified; a run of failed authorization attempts can exhaust the TPM's small handle pools and disable authorized updates until reboot; and two status values each carry two opposite meanings, so an operator following the reported state takes the wrong recovery.
+> **User impact:** on a machine with an update authority provisioned, a run of failed authorization attempts can exhaust the TPM's small handle pools and disable authorized updates until reboot, and two status values each carry two opposite meanings, so an operator following the reported state takes the wrong recovery.
 
-§27 shipped the authorization boundary and its stamps. These are the findings its own review round produced that were not fixed in place, kept together because they share one surface and one test seam rather than being scattered as parks in a closed section.
+§27 shipped the authorization boundary and its stamps. These are the PRODUCTION-CODE findings its own review round produced that were not fixed in place, kept together because they share one surface rather than being scattered as parks in a closed section.
 
-The split is deliberate: §27's claim is that a forged record cannot be accepted, and that claim is tested and stamped. What is left here is HARDENING of the paths around it (an unverified read-side index, unaccounted handles on unknown-outcome failures), two status values that conflate opposite states, and the executable coverage the test-coverage rounds named. None of it weakens the boundary; all of it is work a reviewer would expect to see before the boundary is relied on in production.
+The split is deliberate: §27's claim is that a forged record cannot be accepted, and that claim is tested and stamped. What is left here is HARDENING of the paths around it (unaccounted handles on unknown-outcome failures, statuses that conflate opposite states, a response buffer sized against the wrong thing, type-punned record buffers). None of it weakens the boundary; all of it is work a reviewer would expect to see before the boundary is relied on in production. The executable coverage the test-coverage rounds named moved to §32 on 2026-08-19 when this section's manifest returned SPLIT-RECOMMENDED at 11 work items; §32 asserts the statuses this section separates, so it runs after.
 
-- [ ] Drive `tpm_baseline_enroll_bound` through the fake-TIS seam: it has no executable coverage, so the authority guard, the stored-byte readback and the bind ordering can all regress green.
-  - Needs a deterministic core that takes a prepared snapshot, or a `KERNEL_TESTS` snapshot-provider seam, because the real path calls `tpm_baseline_snapshot` and a test may not stand up PCR state.
-  - Assert blob-before-bind ordering, that the bind covers the EXACT stored bytes and generation, and that a readback or bind failure propagates rather than reporting success.
-- [ ] Cover the write path's recreated-anchor gate directly: the current test returns `TPM_NV_RECREATED` from the READ path before `tpm_authz_write_record` is ever reached, so the separate write-side check has no coverage.
-  - Call `tpm_authz_write_record` with the fixture reporting WRITTEN clear, and assert the refusal lands BEFORE LoadExternal, NV_Write or NV_Increment, beside a written-index success control.
-- [ ] Give the fake a corrupted-readback mode: the transaction promises not to commit until the record reads back byte for byte, but the fixture always returns exactly what was written, so deleting that comparison would leave every suite green.
-  - Assert `TPM_NV_MISMATCH`, one write, zero increments and no surviving handles for both an altered and a short readback.
-- [ ] Cover the missing and uninitialized anchor refusals at the public writers, so an absent or never-written index cannot be papered over by a fresh write.
 - [x] Verify the COUNTER index identity on the read path, as the write path already does -> XREF: 01-boot-platform/TODO-13 §28 (item: "Specify the baseline counter's crash-consistent ordering")
   - Shipped with §28: `authz_read_seq` derives a counter contract and matches it in-sequence before the counter value is trusted, closing the asymmetry with the write path. A pre-pair identity failure now reports the publishable `TPM_BASELINE_IDENTITY` rather than being dropped as a device fault.
 - [ ] Account for TPM handles on the EXEC-failure paths, not only the parse-failure ones: a BUSY, BUDGET or TRANSPORT failure can leave the TPM having executed the command and allocated the object or session, with nothing recovering it.
@@ -1218,17 +1211,15 @@ The split is deliberate: §27's claim is that a forged record cannot be accepted
 - [ ] Separate "no authority provisioned" from "authority provisioned but this baseline is unbound": `TPM_BASELINE_UNBOUND` carries both, which are opposite configuration states with opposite operator actions.
   - WIDENED by §28's review: the overload is FOUR-way, not two. `tpm_baseline.c` returns UNBOUND for a legacy blob with no bind record (verify), for `TPM_NV_UNAVAIL`, and from BOTH enroll entry points when no authority is provisioned. §28 split the verify-side relabel case out as `TPM_BASELINE_RELABELED`; the enroll-side overload is what remains.
   - It is load-bearing, not cosmetic. `boot_interrupts.c` must special-case UNBOUND at the verify call site instead of using the shared `tpm_baseline_status_is_failure` predicate, because folding it in published `BOOT_INTEGRITY_MISMATCH` on a healthy authority-provisioned machine whose enroll merely refused. Splitting the status is what lets that exception be deleted -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
-- [ ] Cover the bind-failure branch's `*out_overall` gate end to end: a NON-VERDICT bind failure (BUDGET / BUSY / TRANSPORT / TPMERR) must leave the caller's integrity verdict untouched rather than fabricating MISMATCH.
-  - The gate SHIPPED with §28 (`tpm_baseline.c`, the write is now conditional on `tpm_baseline_status_is_failure`), and the predicate itself is unit-tested, but the branch has no regression pin. Reaching it needs a fixture where the BLOB read succeeds and only the BIND read fails non-verdict, which the `test_tpm_authz.c` fake cannot serve: it has no valid stored baseline, so verification fails at the blob and never reaches the bind check. Needs the `test_tpm_baseline.c` fixture extended with an authority plus a per-index failure rc -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
 - [ ] Pass the pairing DIRECTION out of `tpm_baseline_verify`, so a consumer can choose the repair instead of inferring one from a deliberately collapsed status.
   - `TPM_BASELINE_TORN` covers UNCOMMITTED, TORN and IMPOSSIBLE, and the enum's own contract says the direction decides the repair: completing an interrupted commit and entering authorized recovery are different actions, and prescribing the second for the first is destructive over-recovery. `tpm_baseline_verify` currently discards `bview.pairing`, so `boot_interrupts.c` can only log the one thing every direction shares -> XREF: 01-boot-platform/TODO-13 §28 (item: "Specify the baseline counter's crash-consistent ordering").
 - [ ] Report a record that fails to PARSE as its own status rather than reusing `TPM_NV_CONTRACT`, whose documented meaning is a corrupt enrolled CONTRACT; a reader cannot currently tell which of the two it holds.
 - [ ] Size the authorized-write response buffer against the record size it advertises.
   - `params` and `readback` are built for the maximum NV data size while `rsp` cannot hold that NV_Read response, so a manifest growth would surface as an unexplained transport error rather than a named refusal.
 - [ ] Give the record buffers explicit alignment, or access their fields through memcpy: plain byte arrays are type-punned to structs with 4- and 8-byte members, which x86-64 tolerates and the planned ARM64 port may not.
-- [ ] Commit: `"tpm: authorized-record hardening and coverage residue"`
+- [ ] Commit: `"tpm: authorized-record hardening"`
 
-**Test checkpoint:** the read path refuses a counter index whose identity does not match the enrolled contract, beside a control proving the enrolled one still reads. A forced BUSY, BUDGET or TRANSPORT failure at each allocating command leaves no session or transient object live, asserted on named handles rather than a flush count. `tpm_baseline_enroll_bound` is driven end to end through the fake-TIS seam and proven to bind the exact stored bytes, with a control that an unbound blob and a bound one report differently. A record that fails to parse and a corrupt enrolled contract report DIFFERENT statuses, and so do "no authority provisioned" and "authority provisioned, baseline unbound". Scope: this section owns the residue around §27's boundary, not the boundary itself. The crash-consistent pairing and the aggregate read budget are §28, first provisioning is §15, and the record authorization itself stays §27. Platforms: fake-TIS unit suites are the whole automatable surface; live swtpm is operator-gated (no `swtpm` on the dev host).
+**Test checkpoint:** a forced BUSY, BUDGET or TRANSPORT failure at each allocating command leaves no session or transient object live, asserted on named handles rather than a flush count. A record that fails to parse and a corrupt enrolled contract report DIFFERENT statuses, and so do "no authority provisioned" and "authority provisioned, baseline unbound". A torn pairing reports its DIRECTION to the caller rather than collapsing to one status. Scope: this section owns the production-code residue around §27's boundary. The fake-TIS coverage residue is §32, the crash-consistent pairing and the aggregate read budget are §28, first provisioning is §15, and the record authorization itself stays §27. Platforms: kernel unit suites; live swtpm is operator-gated (no `swtpm` on the dev host).
 
 ---
 ## 30. Headless Authorization Transport and Full-Record Binding
@@ -1291,6 +1282,30 @@ The gap being closed is a TOCTOU swap. Firmware measured the executed image duri
 
 ---
 
+
+## 32. Authorized-Record Fake-TIS Coverage Residue
+
+> **Spawned-by:** §29 (split)
+
+Split out of §29 on 2026-08-19, when its manifest returned SPLIT-RECOMMENDED at 11 work items: §29 is the production-code hardening, this is the executable coverage §27's and §29's test-coverage rounds named. It runs AFTER §29 because several of its assertions pin the statuses §29 separates, and because three of the five items need the `test_tpm_baseline.c` fake-TIS fixture extended before any of them can be written.
+
+Every item here has the same failure shape: a promise the code makes that no test would notice being deleted. That is why they are coverage rather than hardening, and why they are worth a section rather than a park.
+
+- [ ] Drive `tpm_baseline_enroll_bound` through the fake-TIS seam: it has no executable coverage, so the authority guard, the stored-byte readback and the bind ordering can all regress green.
+  - Needs a deterministic core that takes a prepared snapshot, or a `KERNEL_TESTS` snapshot-provider seam, because the real path calls `tpm_baseline_snapshot` and a test may not stand up PCR state.
+  - Assert blob-before-bind ordering, that the bind covers the EXACT stored bytes and generation, and that a readback or bind failure propagates rather than reporting success.
+- [ ] Cover the write path's recreated-anchor gate directly: the current test returns `TPM_NV_RECREATED` from the READ path before `tpm_authz_write_record` is ever reached, so the separate write-side check has no coverage.
+  - Call `tpm_authz_write_record` with the fixture reporting WRITTEN clear, and assert the refusal lands BEFORE LoadExternal, NV_Write or NV_Increment, beside a written-index success control.
+- [ ] Give the fake a corrupted-readback mode: the transaction promises not to commit until the record reads back byte for byte, but the fixture always returns exactly what was written, so deleting that comparison would leave every suite green.
+  - Assert `TPM_NV_MISMATCH`, one write, zero increments and no surviving handles for both an altered and a short readback.
+- [ ] Cover the missing and uninitialized anchor refusals at the public writers, so an absent or never-written index cannot be papered over by a fresh write.
+- [ ] Cover the bind-failure branch's `*out_overall` gate end to end: a NON-VERDICT bind failure (BUDGET / BUSY / TRANSPORT / TPMERR) must leave the caller's integrity verdict untouched rather than fabricating MISMATCH.
+  - The gate SHIPPED with §28 (`tpm_baseline.c`, the write is now conditional on `tpm_baseline_status_is_failure`), and the predicate itself is unit-tested, but the branch has no regression pin. Reaching it needs a fixture where the BLOB read succeeds and only the BIND read fails non-verdict, which the `test_tpm_authz.c` fake cannot serve: it has no valid stored baseline, so verification fails at the blob and never reaches the bind check. Needs the `test_tpm_baseline.c` fixture extended with an authority plus a per-index failure rc -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
+- [ ] Commit: `"tpm: authorized-record fake-TIS coverage residue"`
+
+**Test checkpoint:** each of the five paths is exercised by a test that FAILS when the guard it pins is deleted, which is the bar the corrupted-readback item exists to state: a fixture that always returns what was written cannot prove a readback comparison. `tpm_baseline_enroll_bound` is driven end to end through the fake-TIS seam and proven to bind the exact stored bytes, with a control that an unbound blob and a bound one report differently. Scope: this section owns executable coverage only and changes no production contract; the production hardening is §29, the record authorization is §27, and the crash-consistent pairing is §28. Platforms: fake-TIS unit suites are the whole automatable surface; live swtpm is operator-gated (no `swtpm` on the dev host).
+
+---
 
 ## OS Comparison
 
