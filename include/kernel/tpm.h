@@ -441,6 +441,22 @@ void tpm_integrity_publish_baseline(uint8_t status,
  * through. That is correct for a restore and wrong for anything else, so it
  * must not exist as callable surface in a release kernel. */
 void tpm_integrity_test_republish(const struct boot_integrity_report *r);
+
+/* Make tpm_pcr_get() bypass the Phase-1 PCR cache and resolve every read
+ * through the transport; returns the PREVIOUS setting so a fixture can restore
+ * it (same save/restore contract as tpm_t_test_install / tpm_t_test_restore).
+ *
+ * A test that installs a fake TIS needs this: tpm_pcr_cache_init() populates
+ * the cache from the real platform at Phase 1, so on a machine that HAS a TPM
+ * the entries are valid and hold live digests and a transport-level fake is
+ * never consulted -- the test would pass on a TPM-less dev host and fail on
+ * bare metal. Bypassing rather than injecting digests into the cache also keeps
+ * the real tpm2_pcr_read response parser in the path.
+ *
+ * KERNEL_TESTS-gated: it converts an eagerly-populated lock-free read into a
+ * per-call TPM transaction, which is correct for a fixture and wrong for the
+ * boot path, so it must not exist as callable surface in a release kernel. */
+int tpm_pcr_test_cache_bypass(int on);
 #endif /* KERNEL_TESTS */
 
 /* ---- Secure Boot Variable Measurement Reconciliation (STRUCTURAL, UNAUTHENTICATED) ----

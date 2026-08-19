@@ -13,6 +13,10 @@
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical set) */
 #include "kernel/tpm_transport.h"   /* tpm_t_test_install/restore (no-transport path) */
 #include "kernel/boot_proto_descriptor.h"
+#include "kernel/tpm_authz.h"          /* tpm_authz_test_clear_authority */
+#include "kernel/smbios.h"             /* golden fw-hash from its primary source */
+#include "kernel/crypto/sha256.h"
+#include "kernel/test/tpm_fake_tis.h"  /* shared fake-TIS: NV + PCR content */
 #include "libc/string.h"
 
 /* The measured PCR set the baseline canonically pins (matches tpm_baseline.c). */
@@ -1366,6 +1370,899 @@ static void test_baseline_status_repair(void)
     }
 }
 
+
+/* ============================================================================
+ * Wrapper-level verify / enroll coverage against the shared fake-TIS.
+ *
+ * Everything above this point is the PURE core: compare, validate, finalize.
+ * The plumbing between that core and the operator -- which snapshots
+ * tpm_baseline_verify_detail passes to the comparison, which capacity it hands
+ * tpm_baseline_compare_pcrs, whether it forwards the cause out-param at all --
+ * is what these exercise, because that plumbing is exactly what stays green
+ * while the reported result is wrong.
+ * ========================================================================== */
+
+/* The digest the fake serves for a PCR. Distinct per index, so a wrapper
+ * reading the WRONG PCR produces a wrong digest instead of an accidental
+ * match. */
+static void bv_digest(uint8_t pcr, uint8_t *out)
+{
+    uint32_t i;
+    for (i = 0; i < TPM_BASELINE_DIGEST; i++)
+        out[i] = (uint8_t)(0x40u + (uint32_t)pcr * 7u + i);
+}
+
+struct bv_fix {
+    struct tpm_t_test_state prev_io;
+    int prev_bypass;
+};
+
+static void bv_open(struct bv_fix *f)
+{
+    uint8_t d[TPM_BASELINE_DIGEST];
+    uint32_t i;
+
+    tpm_fake_tis_reset();
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+        bv_digest(k_baseline_pcrs[i], d);
+        tpm_fake_tis_pcr_set(k_baseline_pcrs[i], d);
+    }
+    /* No authority provisioned. tpm_baseline_verify_detail only consults the
+     * bind record when tpm_authz_provisioned() is true, and the sibling authz
+     * suites install one; clearing here makes the legacy path deterministic
+     * regardless of test ORDER rather than dependent on it. */
+    tpm_authz_test_clear_authority();
+    f->prev_io = tpm_t_test_install(tpm_fake_tis_io(), TPM_T_IFACE_TIS, 1);
+    /* The Phase-1 PCR cache is populated from the real platform, so on a
+     * machine that HAS a TPM tpm_pcr_get would answer from live digests and
+     * never reach the fake. */
+    f->prev_bypass = tpm_pcr_test_cache_bypass(1);
+}
+
+static void bv_close(struct bv_fix *f)
+{
+    (void)tpm_pcr_test_cache_bypass(f->prev_bypass);
+    tpm_t_test_restore(f->prev_io);
+}
+
+/* Assemble the golden that the fixture's fake state implies, WITHOUT calling
+ * tpm_baseline_snapshot.
+ *
+ * The circularity this avoids is the whole point: verify_detail obtains
+ * `current` from tpm_baseline_snapshot, so a golden built by the same function
+ * would reproduce a snapshot bug identically on both sides -- reading PCR 0 for
+ * every slot, selecting the wrong bank, or sourcing the wrong Secure Boot field
+ * would leave every verdict, count, per-PCR status and cause assertion green.
+ * The PCR digests here come from the fake's own table and the scalars from
+ * their primary sources. */
+static void bv_golden(struct tpm_baseline *b, uint32_t gen)
+{
+    struct boot_integrity_report rep;
+    const struct smbios_system_info *si;
+    uint32_t i;
+
+    memset(b, 0, sizeof(*b));
+    b->alg = TPM_ALG_SHA256;
+    b->generation = gen;
+    b->pcr_count = TPM_BASELINE_MAX_PCRS;
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+        b->pcrs[i].index = k_baseline_pcrs[i];
+        b->pcrs[i].present = 1u;
+        bv_digest(k_baseline_pcrs[i], b->pcrs[i].digest);
+    }
+    tpm_integrity_report_copy(&rep);
+    b->secure_boot = rep.secure_boot;
+    b->secure_boot_valid = rep.secure_boot_valid;
+    si = smbios_get_info();
+    if (si) {
+        uint32_t n = 0;
+        while (n < (uint32_t)sizeof(si->bios_version) && si->bios_version[n] != '\0')
+            n++;
+        if (n != 0u) {
+            sha256(si->bios_version, n, b->fw_hash);
+            b->fw_hash_present = 1u;
+        }
+    }
+    if (boot_proto_abi_digest(b->abi_manifest))
+        b->abi_manifest_present = 1u;
+    (void)tpm_baseline_finalize(b);
+}
+
+static void bv_store(const struct tpm_baseline *b)
+{
+    tpm_fake_tis_nv_set(TPM_NV_INDEX_BASELINE, (const uint8_t *)b,
+                        (uint16_t)sizeof(*b));
+}
+
+/* Assert that the PCR reads this verify issued were EXACTLY the canonical
+ * measured set, in canonical order, each selecting one PCR in the SHA-256 bank.
+ * The independently-built golden proves the comparison used the right values;
+ * this proves the acquisition asked for the right ones. `first` is the log
+ * index the PCR reads start at. */
+static void bv_assert_pcr_transcript(uint32_t first)
+{
+    uint32_t i;
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+        const struct tpm_fake_tis_req *r = tpm_fake_tis_log(first + i);
+        uint8_t pcr = k_baseline_pcrs[i];
+        uint8_t want[3];
+        TEST_ASSERT(r != (const struct tpm_fake_tis_req *)0,
+                    "one PCR read per measured PCR was issued");
+        if (!r)
+            return;
+        TEST_ASSERT_EQ(r->cc, TPM2_CC_PCR_READ, "the measured reads are PCR_Read");
+        TEST_ASSERT_EQ(r->index, (uint32_t)pcr,
+                       "the measured set is read in canonical order");
+        TEST_ASSERT_EQ((uint32_t)r->alg, (uint32_t)TPM_ALG_SHA256,
+                       "every measured read names the SHA-256 bank");
+        TEST_ASSERT_EQ((uint32_t)r->sel_count, 1u,
+                       "each read selects exactly one bank");
+        want[0] = 0u; want[1] = 0u; want[2] = 0u;
+        want[pcr >> 3] = (uint8_t)(1u << (pcr & 7u));
+        TEST_ASSERT(r->sel[0] == want[0] && r->sel[1] == want[1] &&
+                    r->sel[2] == want[2],
+                    "each read selects exactly its own PCR");
+    }
+}
+
+/* Assert the transcript is EXACTLY `want`, in order, with nothing before,
+ * between or after. A count-free scan cannot see a duplicated command: a second
+ * NV_Write with the same valid request leaves the stored bytes identical, so
+ * every content assertion still passes while the enroll has written the device
+ * twice -- a persistent side effect, and one that reports failure after having
+ * already changed TPM state if the duplicate is the one that fails. */
+static void bv_assert_sequence(const uint32_t *want, uint32_t n, const char *what)
+{
+    uint32_t i;
+    TEST_ASSERT_EQ((uint32_t)tpm_fake_tis_log_overflow(), 0u,
+                   "the transcript captured every command");
+    TEST_ASSERT_EQ(tpm_fake_tis_log_count(), n, what);
+    for (i = 0; i < n; i++) {
+        const struct tpm_fake_tis_req *r = tpm_fake_tis_log(i);
+        TEST_ASSERT(r != (const struct tpm_fake_tis_req *)0,
+                    "the transcript holds the expected number of commands");
+        if (!r)
+            return;
+        TEST_ASSERT_EQ(r->cc, want[i],
+                       "the transcript matches the expected command order");
+    }
+}
+
+/* The one NV read a verify makes: the baseline index, from offset 0, for the
+ * whole blob. A fake dispatching on command code alone would answer a read of
+ * the wrong index with the right bytes. */
+static void bv_assert_nv_read(uint32_t at)
+{
+    const struct tpm_fake_tis_req *r = tpm_fake_tis_log(at);
+    TEST_ASSERT(r != (const struct tpm_fake_tis_req *)0, "an NV read was issued");
+    if (!r)
+        return;
+    TEST_ASSERT_EQ(r->cc, TPM2_CC_NV_READ, "the blob is fetched with NV_Read");
+    TEST_ASSERT_EQ(r->index, (uint32_t)TPM_NV_INDEX_BASELINE,
+                   "the blob is read from the baseline index");
+    TEST_ASSERT_EQ((uint32_t)r->offset, 0u, "the blob is read from offset 0");
+    TEST_ASSERT_EQ((uint32_t)r->size, (uint32_t)sizeof(struct tpm_baseline),
+                   "the whole blob is requested in one transfer");
+}
+
+static void test_baseline_verify_match(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+    uint32_t i;
+
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "a matching baseline verifies");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_VERIFIED,
+                   "a full match publishes VERIFIED");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "every measured PCR was evaluated");
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++)
+        TEST_ASSERT_EQ((uint32_t)pcr_status[i], (uint32_t)BOOT_INTEGRITY_VERIFIED,
+                       "every PCR verifies against the golden");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "a match has no first-mismatch cause");
+    TEST_ASSERT_EQ((uint32_t)cause.pcr_valid, 0u,
+                   "a match names no PCR");
+
+    /* The transcript: one NV read, then the measured set. Asserting the COUNT
+     * is what makes the two positional checks below meaningful -- an extra
+     * unexpected command would otherwise shift them silently. */
+    TEST_ASSERT_EQ(tpm_fake_tis_log_count(), 1u + (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "a verify issues one NV read plus one read per measured PCR");
+    TEST_ASSERT_EQ((uint32_t)tpm_fake_tis_log_overflow(), 0u,
+                   "the transcript captured every command");
+    bv_assert_nv_read(0u);
+    bv_assert_pcr_transcript(1u);
+}
+
+static void test_baseline_verify_pcr_mismatch(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+    uint32_t i;
+    const uint32_t moved = 4u;   /* golden slot 4 == PCR 5 */
+
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    g.pcrs[moved].digest[0] ^= 0xFFu;   /* one PCR moved since enroll */
+    (void)tpm_baseline_finalize(&g);
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK,
+                   "a mismatch is a successful comparison, not an error");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_MISMATCH,
+                   "a moved PCR publishes MISMATCH");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "the per-PCR detail still covers the whole measured set");
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++)
+        TEST_ASSERT_EQ((uint32_t)pcr_status[i],
+                       (uint32_t)((i == moved) ? BOOT_INTEGRITY_MISMATCH
+                                               : BOOT_INTEGRITY_VERIFIED),
+                       "exactly the moved PCR reports MISMATCH");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_PCR_DIGEST,
+                   "the cause names a PCR digest difference");
+    TEST_ASSERT_EQ((uint32_t)cause.pcr_valid, 1u, "the cause carries a PCR index");
+    TEST_ASSERT_EQ((uint32_t)cause.pcr_index, (uint32_t)k_baseline_pcrs[moved],
+                   "the cause names the PCR that actually moved");
+}
+
+static void test_baseline_verify_scalar_mismatch(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+    uint32_t i;
+
+    /* Secure Boot state: MISMATCH overall while every PCR verifies. This is the
+     * shape that stops a Secure Boot change reading as PCR tampering, and it is
+     * only observable through the wrapper -- tpm_baseline_compare stops at the
+     * first scalar difference and never produces per-PCR detail at all. */
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    g.secure_boot = (uint8_t)(g.secure_boot ? 0u : 1u);
+    (void)tpm_baseline_finalize(&g);
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "a scalar mismatch still compares");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_MISMATCH,
+                   "a Secure Boot change publishes MISMATCH");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "a scalar mismatch still evaluates every PCR");
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++)
+        TEST_ASSERT_EQ((uint32_t)pcr_status[i], (uint32_t)BOOT_INTEGRITY_VERIFIED,
+                       "a scalar mismatch leaves every PCR VERIFIED");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_SB_STATE,
+                   "the cause names the Secure Boot state");
+    TEST_ASSERT_EQ((uint32_t)cause.pcr_valid, 0u,
+                   "a scalar cause names no PCR");
+}
+
+static void test_baseline_verify_abi_mismatch(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+    uint32_t i;
+
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    TEST_ASSERT_EQ((uint32_t)g.abi_manifest_present, 1u,
+                   "the kernel always carries an ABI manifest digest");
+    g.abi_manifest[0] ^= 0xFFu;   /* the running kernel is not the enrolled one */
+    (void)tpm_baseline_finalize(&g);
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "an ABI change still compares");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_MISMATCH,
+                   "a changed kernel-ABI manifest publishes MISMATCH");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "an ABI mismatch still evaluates every PCR");
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++)
+        TEST_ASSERT_EQ((uint32_t)pcr_status[i], (uint32_t)BOOT_INTEGRITY_VERIFIED,
+                       "an ABI mismatch leaves every PCR VERIFIED");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_ABI_CONTENT,
+                   "the cause names the ABI manifest content");
+}
+
+static void test_baseline_verify_no_baseline(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();     /* never enrolled: the index is undefined */
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_BASELINE,
+                   "an undefined index verifies to NO_BASELINE");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_NO_BASELINE,
+                   "NO_BASELINE is published rather than a mismatch");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, 0u, "nothing was evaluated");
+    TEST_ASSERT_EQ((uint32_t)pcr_status[0], 0xEEu,
+                   "a non-comparing path writes no per-PCR status");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "a path that never compared reports no cause");
+    /* The measured state is never read when there is nothing to compare it
+     * against: one NV read and no PCR traffic at all. */
+    TEST_ASSERT_EQ(tpm_fake_tis_cc_count(TPM2_CC_NV_READ), 1u,
+                   "the absent index was read exactly once");
+    TEST_ASSERT_EQ(tpm_fake_tis_cc_count(TPM2_CC_PCR_READ), 0u,
+                   "no PCR is read when no baseline exists");
+}
+
+static void test_baseline_verify_corrupt(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    /* Corrupt AFTER finalize, so the stored bytes are well-shaped but the CRC
+     * no longer covers them -- the defined-but-untrustworthy state. */
+    g.pcrs[0].digest[0] ^= 0xFFu;
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_CORRUPT,
+                   "a blob failing its CRC is CORRUPT, not a silent pass");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_MISMATCH,
+                   "an untrustworthy stored golden publishes MISMATCH");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, 0u, "a corrupt golden evaluates nothing");
+    TEST_ASSERT_EQ((uint32_t)pcr_status[0], 0xEEu,
+                   "a corrupt golden writes no per-PCR status");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "a corrupt golden reports no comparison cause");
+    TEST_ASSERT_EQ(tpm_fake_tis_cc_count(TPM2_CC_PCR_READ), 0u,
+                   "no PCR is read against a golden that cannot be trusted");
+}
+
+static void test_baseline_verify_snapshot_fail(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    struct tpm_baseline_mismatch cause;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    bv_store(&g);
+    /* One measured PCR is no longer readable in this bank: the snapshot is
+     * PARTIAL, which cannot form a verifiable comparison. */
+    tpm_fake_tis_pcr_clear(k_baseline_pcrs[2]);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+    memset(&cause, 0xEEu, sizeof(cause));
+
+    st = tpm_baseline_verify_detail(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256,
+                                    &overall, pcr_status,
+                                    (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n,
+                                    &cause);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_NO_TPM,
+                   "a partial measured set reports NO_TPM (degraded)");
+    TEST_ASSERT_EQ((uint32_t)overall, 0xEEu,
+                   "a machine that could not measure is not one that failed to match");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, 0u, "a failed snapshot evaluates nothing");
+    TEST_ASSERT_EQ((uint32_t)pcr_status[0], 0xEEu,
+                   "a failed snapshot writes no per-PCR status");
+    TEST_ASSERT_EQ((uint32_t)cause.cause, (uint32_t)TPM_BASELINE_CAUSE_NONE,
+                   "a failed snapshot reports no comparison cause");
+}
+
+/* An undersized detail buffer is refused BEFORE any TPM work, so the wrapper
+ * cannot hand back a truncated array beside a whole-set verdict. Reachable only
+ * through the wrapper: the pure comparison clamps instead. */
+static void test_baseline_verify_undersized_detail(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+
+    bv_open(&f);
+    bv_golden(&g, 3u);
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status, (uint8_t)(TPM_BASELINE_MAX_PCRS - 1u),
+                             &pcr_n);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
+                   "a detail buffer that cannot hold the measured set is refused");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, 0u, "a refused verify evaluated nothing");
+    TEST_ASSERT_EQ((uint32_t)pcr_status[0], 0xEEu,
+                   "a refused verify writes no per-PCR status");
+    TEST_ASSERT_EQ(tpm_fake_tis_cc_count(TPM2_CC_NV_READ), 0u,
+                   "the capacity check runs before any TPM work");
+}
+
+/* tpm_baseline_verify is the thin wrapper that declines the cause out-param.
+ * Its own plumbing is worth one case: dropping the other out-params on the way
+ * through would be invisible to every verify_detail test above. */
+static void test_baseline_verify_wrapper_forwards(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    uint8_t overall = 0xEEu;
+    uint8_t pcr_status[TPM_BASELINE_MAX_PCRS];
+    uint8_t pcr_n = 0xEEu;
+    tpm_baseline_status_t st;
+    uint32_t i;
+
+    bv_open(&f);
+    bv_golden(&g, 9u);
+    bv_store(&g);
+    memset(pcr_status, 0xEEu, sizeof(pcr_status));
+
+    st = tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall,
+                             pcr_status, (uint8_t)TPM_BASELINE_MAX_PCRS, &pcr_n);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "the wrapper verifies a match");
+    TEST_ASSERT_EQ((uint32_t)overall, (uint32_t)BOOT_INTEGRITY_VERIFIED,
+                   "the wrapper forwards the overall verdict");
+    TEST_ASSERT_EQ((uint32_t)pcr_n, (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "the wrapper forwards the evaluated count");
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++)
+        TEST_ASSERT_EQ((uint32_t)pcr_status[i], (uint32_t)BOOT_INTEGRITY_VERIFIED,
+                       "the wrapper forwards the per-PCR detail");
+}
+
+/* ---- Enroll wrapper against the same fake ---- */
+
+static void test_baseline_enroll_first(void)
+{
+    struct bv_fix f;
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    struct tpm_baseline stored;
+    tpm_baseline_status_t st;
+    uint16_t len;
+    uint32_t i;
+    int ok;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();      /* never enrolled */
+
+    st = tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
+    len = tpm_fake_tis_nv_content(blob, (uint16_t)sizeof(blob));
+    ok = tpm_baseline_validate(blob, len, &stored);
+    {
+        /* snapshot's measured set, the generation-guard read (which finds the
+         * index absent), the define, then exactly one write. */
+        uint32_t want[12];
+        uint32_t k;
+        for (k = 0; k < TPM_BASELINE_MAX_PCRS; k++)
+            want[k] = TPM2_CC_PCR_READ;
+        want[9] = TPM2_CC_NV_READ;
+        want[10] = TPM2_CC_NV_DEFINE_SPACE;
+        want[11] = TPM2_CC_NV_WRITE;
+        bv_assert_sequence(want, 12u,
+                           "a first enroll issues the measured reads, one guard "
+                           "read, one define and exactly ONE write");
+    }
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "a first enroll succeeds");
+    TEST_ASSERT_EQ((uint32_t)len, (uint32_t)sizeof(struct tpm_baseline),
+                   "the whole blob was stored");
+    TEST_ASSERT_EQ(ok, 1, "the stored blob validates");
+    TEST_ASSERT_EQ(stored.generation, 1u,
+                   "a genuine first enroll starts at generation 1");
+    TEST_ASSERT_EQ((uint32_t)stored.pcr_count, (uint32_t)TPM_BASELINE_MAX_PCRS,
+                   "the enrolled blob pins the whole measured set");
+    /* The enrolled digests are the ones the device actually reported, checked
+     * against the fake's table rather than against another snapshot. */
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+        uint8_t want[TPM_BASELINE_DIGEST];
+        bv_digest(k_baseline_pcrs[i], want);
+        TEST_ASSERT_EQ((uint32_t)stored.pcrs[i].index, (uint32_t)k_baseline_pcrs[i],
+                       "the enrolled slots are the canonical measured set");
+        TEST_ASSERT_EQ((uint32_t)stored.pcrs[i].present, 1u,
+                       "every enrolled slot is present");
+        TEST_ASSERT_EQ(memcmp(stored.pcrs[i].digest, want, TPM_BASELINE_DIGEST), 0,
+                       "the enrolled digest is the one the device reported");
+    }
+}
+
+static void test_baseline_enroll_rotates(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    struct tpm_baseline stored;
+    tpm_baseline_status_t st;
+    uint16_t len;
+    uint32_t i, wr_index = 0u, wr_size = 0u, wr_offset = 0xFFFFu;
+    uint32_t writes = 0u;
+    int ok;
+
+    bv_open(&f);
+    bv_golden(&g, 7u);
+    bv_store(&g);
+
+    st = tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
+    len = tpm_fake_tis_nv_content(blob, (uint16_t)sizeof(blob));
+    ok = tpm_baseline_validate(blob, len, &stored);
+    for (i = 0; i < tpm_fake_tis_log_count(); i++) {
+        const struct tpm_fake_tis_req *r = tpm_fake_tis_log(i);
+        if (r && r->cc == TPM2_CC_NV_WRITE) {
+            writes++;
+            wr_index = r->index; wr_size = r->size; wr_offset = r->offset;
+        }
+    }
+    {
+        /* Same shape as a first enroll plus the ReadPublic that
+         * nv_definition_matches issues when the define reports already-defined,
+         * which is the normal rotation path. */
+        uint32_t want[13];
+        uint32_t k;
+        for (k = 0; k < TPM_BASELINE_MAX_PCRS; k++)
+            want[k] = TPM2_CC_PCR_READ;
+        want[9] = TPM2_CC_NV_READ;
+        want[10] = TPM2_CC_NV_DEFINE_SPACE;
+        want[11] = TPM2_CC_NV_READ_PUBLIC;
+        want[12] = TPM2_CC_NV_WRITE;
+        bv_assert_sequence(want, 13u,
+                           "a rotation re-reads the definition and then writes exactly once");
+    }
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK, "a rotation succeeds");
+    TEST_ASSERT_EQ(ok, 1, "the rotated blob validates");
+    TEST_ASSERT_EQ(stored.generation, 8u,
+                   "the generation guard read the existing blob and advanced it");
+    TEST_ASSERT_EQ(writes, 1u,
+                   "the rotation wrote the blob exactly once, not twice");
+    TEST_ASSERT_EQ(wr_index, (uint32_t)TPM_NV_INDEX_BASELINE,
+                   "the rotation wrote the baseline index");
+    TEST_ASSERT_EQ((uint32_t)wr_offset, 0u, "the rotation wrote from offset 0");
+    TEST_ASSERT_EQ(wr_size, (uint32_t)sizeof(struct tpm_baseline),
+                   "the rotation wrote the whole blob");
+}
+
+static void test_baseline_enroll_corrupt_no_rollback(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    struct tpm_baseline stored;
+    tpm_baseline_status_t st;
+    uint16_t len;
+    int ok;
+
+    /* An existing blob that is present but UNREADABLE must not fall through to
+     * generation 1: that would roll a high-generation baseline back over a
+     * transient corruption, which is the anti-rollback the guard exists for. */
+    bv_open(&f);
+    bv_golden(&g, 42u);
+    g.crc32 ^= 0xFFFFFFFFu;
+    bv_store(&g);
+
+    st = tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
+    len = tpm_fake_tis_nv_content(blob, (uint16_t)sizeof(blob));
+    ok = tpm_baseline_validate(blob, len, &stored);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_CORRUPT,
+                   "an unreadable existing blob fails the enroll closed");
+    TEST_ASSERT_EQ(ok, 0, "the corrupt blob was left in place, not overwritten");
+    TEST_ASSERT_EQ(tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE), 0u,
+                   "a refused enroll writes nothing");
+}
+
+
+/* The fake is shared test INFRASTRUCTURE, so its own robustness is part of the
+ * contract: a handler that reads past the bytes a command actually delivered
+ * would corrupt whichever suite happened to trip it, and the failure would be
+ * attributed to the code under test rather than to the fixture. These drive the
+ * TIS registers directly -- the wrappers above cannot produce a malformed
+ * command, which is exactly why the boundary needs its own case. */
+static uint32_t bv_submit_raw(const uint8_t *cmd, uint32_t n,
+                              uint8_t *rsp, uint32_t cap)
+{
+    const struct tpm_t_io *io = tpm_fake_tis_io();
+    uint32_t i, got = 0;
+
+    io->w32(0x018u, 0x40u);                    /* COMMAND_READY */
+    for (i = 0; i < n; i++)
+        io->w8(0x024u, cmd[i]);
+    io->w32(0x018u, 0x20u);                    /* GO */
+    while (got < cap && (io->r32(0x018u) & 0x10u) != 0u)   /* DATA_AVAIL */
+        rsp[got++] = io->r8(0x024u);
+    return got;
+}
+
+static void bv_assert_refused(const uint8_t *rsp, uint32_t n, const char *what)
+{
+    TEST_ASSERT_EQ(n, 10u, what);
+    if (n < 10u)
+        return;
+    TEST_ASSERT_EQ((uint32_t)tpm2_be16_get(rsp + 0), (uint32_t)TPM2_ST_NO_SESSIONS,
+                   "a refusal is a bare no-sessions header");
+    TEST_ASSERT_EQ(tpm2_be32_get(rsp + 2), 10u, "the refusal declares its own size");
+    TEST_ASSERT(tpm2_be32_get(rsp + 6) != TPM2_RC_SUCCESS,
+                "a refusal carries a non-success response code");
+}
+
+static void test_baseline_fake_tis_malformed(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline g;
+    uint8_t cmd[1024];
+    uint8_t rsp[64];
+    uint8_t before[sizeof(struct tpm_baseline)];
+    uint8_t after[sizeof(struct tpm_baseline)];
+    uint32_t n;
+    uint16_t len_before, len_after;
+
+    bv_open(&f);
+    bv_golden(&g, 5u);
+    bv_store(&g);
+    len_before = tpm_fake_tis_nv_content(before, (uint16_t)sizeof(before));
+
+    /* (1) NV_DefineSpace whose authPolicy length positions its dataSize field
+     * far past the delivered bytes. Reading dataSize at 43 + policy_len without
+     * re-validating is an out-of-bounds read of the fake's own buffer. */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(cmd + 2, 45u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_NV_DEFINE_SPACE);
+    tpm2_be16_put(cmd + 41, 0xFFFFu);            /* authPolicy size */
+    n = bv_submit_raw(cmd, 45u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "an oversized authPolicy length is refused, not read past");
+
+    /* (2) An NV_Write whose CAPTURED PREFIX is entirely valid -- right index,
+     * a 4-byte payload at offset 0 -- but whose declared size runs past what
+     * the fake can hold. Only the overflow flag refuses this one: every length
+     * guard is satisfied by the prefix, so without it the write LANDS and
+     * corrupts the stored blob. That is what makes this a regression test for
+     * the overflow guard specifically rather than for the length guards. */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(cmd + 2, 700u);                /* > FT_CMD_CAP (576) */
+    tpm2_be32_put(cmd + 6, TPM2_CC_NV_WRITE);
+    tpm2_be32_put(cmd + 14, TPM_NV_INDEX_BASELINE);
+    tpm2_be16_put(cmd + 31, 4u);                 /* TPM2B length */
+    cmd[33] = 0xDEu; cmd[34] = 0xADu; cmd[35] = 0xBEu; cmd[36] = 0xEFu;
+    tpm2_be16_put(cmd + 37, 0u);                 /* offset */
+    n = bv_submit_raw(cmd, 700u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "a command past the fake's capacity is refused");
+
+    /* (3) A truncated NV_Read: a well-formed header whose fixed fields were
+     * never delivered. Every one of those offsets lands inside the buffer. */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(cmd + 2, 20u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_NV_READ);
+    n = bv_submit_raw(cmd, 20u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "a truncated NV_Read is refused");
+
+    /* (4) An NV_Write whose TPM2B length positions the offset field past the
+     * delivered bytes -- the write-side twin of case (1). */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(cmd + 2, 40u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_NV_WRITE);
+    tpm2_be32_put(cmd + 14, TPM_NV_INDEX_BASELINE);
+    tpm2_be16_put(cmd + 31, 100u);               /* claims 100 payload bytes */
+    n = bv_submit_raw(cmd, 40u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "an NV_Write claiming undelivered payload is refused");
+
+    /* (5) A truncated NV_ReadPublic (needs header + nvIndex). */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(cmd + 2, 12u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_NV_READ_PUBLIC);
+    n = bv_submit_raw(cmd, 12u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "a truncated NV_ReadPublic is refused");
+
+    /* (6) A truncated PCR_Read (needs the whole TPML_PCR_SELECTION). */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(cmd + 2, 16u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_PCR_READ);
+    n = bv_submit_raw(cmd, 16u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "a truncated PCR_Read is refused");
+
+    /* (7) Shorter than a header at all: the command code is itself a field. */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(cmd + 2, 6u);
+    n = bv_submit_raw(cmd, 6u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "a command shorter than a header is refused");
+
+    /* (8) A command the fake does not model FAILS CLOSED. Answering it with
+     * success would let unexpected TPM traffic pass through any test that does
+     * not assert the whole transcript. */
+    memset(cmd, 0, sizeof(cmd));
+    tpm2_be16_put(cmd + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(cmd + 2, 10u);
+    tpm2_be32_put(cmd + 6, 0x0000017Au);         /* TPM2_CC_PCR_Extend */
+    n = bv_submit_raw(cmd, 10u, rsp, (uint32_t)sizeof(rsp));
+    bv_assert_refused(rsp, n, "an unmodelled command fails closed");
+
+    len_after = tpm_fake_tis_nv_content(after, (uint16_t)sizeof(after));
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((uint32_t)len_before, (uint32_t)sizeof(struct tpm_baseline),
+                   "the fixture seeded the whole blob");
+    TEST_ASSERT_EQ((uint32_t)len_after, (uint32_t)len_before,
+                   "no refused command changed the stored length");
+    /* Length alone would miss a same-length corruption, which is exactly what
+     * case (2) writes if the overflow guard is removed. */
+    TEST_ASSERT_EQ(memcmp(before, after, sizeof(before)), 0,
+                   "no refused command changed a single stored byte");
+}
+
+/* The fake's NV public state has to behave like a real index or the identity
+ * and lifecycle checks built on it prove nothing: dataSize is fixed at define,
+ * TPMA_NV_WRITTEN is the TPM's to set, and a write past the defined size is
+ * refused rather than allowed to grow the index. */
+static void test_baseline_fake_tis_nv_public(void)
+{
+    struct bv_fix f;
+    uint8_t payload[16];
+    uint16_t size_fresh = 0xEEEEu, size_written = 0xEEEEu;
+    uint32_t attrs_fresh = 0xEEEEEEEEu, attrs_written = 0xEEEEEEEEu;
+    tpm_nv_status_t d_st, r_fresh, w_st, r_written, over_st;
+    uint32_t i;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();
+    for (i = 0; i < sizeof(payload); i++)
+        payload[i] = (uint8_t)(0x10u + i);
+
+    d_st = tpm_nv_define_data(TPM_NV_INDEX_BASELINE, 32u);
+    r_fresh = tpm_nv_read_public(TPM_NV_INDEX_BASELINE, &size_fresh, &attrs_fresh);
+    w_st = tpm_nv_write(TPM_NV_INDEX_BASELINE, 0u, payload, (uint16_t)sizeof(payload));
+    r_written = tpm_nv_read_public(TPM_NV_INDEX_BASELINE, &size_written,
+                                   &attrs_written);
+    /* Past the defined size: a real TPM refuses rather than growing the index. */
+    over_st = tpm_nv_write(TPM_NV_INDEX_BASELINE, 24u, payload,
+                           (uint16_t)sizeof(payload));
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)d_st, (int)TPM_NV_OK, "the index defines");
+    TEST_ASSERT_EQ((int)r_fresh, (int)TPM_NV_OK, "a fresh index reports its public area");
+    TEST_ASSERT_EQ((uint32_t)size_fresh, 32u, "a fresh index reports its DEFINED size");
+    TEST_ASSERT_EQ(attrs_fresh & (uint32_t)TPMA_NV_WRITTEN, 0u,
+                   "a freshly defined index is not WRITTEN");
+    TEST_ASSERT_EQ((int)w_st, (int)TPM_NV_OK, "a write within the defined size succeeds");
+    TEST_ASSERT_EQ((int)r_written, (int)TPM_NV_OK, "the written index reports its public area");
+    TEST_ASSERT_EQ((uint32_t)size_written, 32u,
+                   "dataSize is immutable: a 16-byte write does not shrink or grow it");
+    TEST_ASSERT(attrs_written & (uint32_t)TPMA_NV_WRITTEN,
+                "a successful write sets TPMA_NV_WRITTEN");
+    TEST_ASSERT_EQ((int)over_st, (int)TPM_NV_RANGE,
+                   "a write past the defined size is refused, not allowed to grow it");
+}
+
+/* Failure injection is part of the shared API, so its DISABLE has to be real: a
+ * disable that arms a success instead would intercept the command and answer it
+ * with a bare success the handler never produced -- the caller sees its write
+ * succeed while NV never moved, which is the exact shape a fixture must never
+ * manufacture. */
+static void test_baseline_fake_tis_injection_disable(void)
+{
+    struct bv_fix f;
+    uint8_t payload[8];
+    uint8_t got[8];
+    tpm_nv_status_t d_st, w_failed, w_ok;
+    uint16_t len;
+    uint32_t writes, i;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();
+    for (i = 0; i < sizeof(payload); i++)
+        payload[i] = (uint8_t)(0xA0u + i);
+
+    d_st = tpm_nv_define_data(TPM_NV_INDEX_BASELINE, (uint16_t)sizeof(payload));
+    tpm_fake_tis_fail_cc(TPM2_CC_NV_WRITE, TPM2_RC_NV_LOCKED, -1);
+    w_failed = tpm_nv_write(TPM_NV_INDEX_BASELINE, 0u, payload,
+                            (uint16_t)sizeof(payload));
+    tpm_fake_tis_fail_cc(TPM2_CC_NV_WRITE, TPM2_RC_SUCCESS, -1);   /* disable */
+    w_ok = tpm_nv_write(TPM_NV_INDEX_BASELINE, 0u, payload,
+                        (uint16_t)sizeof(payload));
+    len = tpm_fake_tis_nv_content(got, (uint16_t)sizeof(got));
+    writes = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)d_st, (int)TPM_NV_OK, "the index defines");
+    TEST_ASSERT_EQ((int)w_failed, (int)TPM_NV_LOCKED,
+                   "an armed injection fails the write");
+    TEST_ASSERT_EQ((int)w_ok, (int)TPM_NV_OK,
+                   "the write succeeds once injection is disabled");
+    TEST_ASSERT_EQ(writes, 2u, "both writes reached the device");
+    TEST_ASSERT_EQ((uint32_t)len, (uint32_t)sizeof(payload),
+                   "the disabled-injection write really stored its bytes");
+    TEST_ASSERT_EQ(memcmp(got, payload, sizeof(payload)), 0,
+                   "a disabled injection runs the handler, it does not fake success");
+}
+
 void test_register_tpm_baseline(void)
 {
     test_suite_register_cat("tpm: baseline finalize/validate", test_baseline_finalize_validate, TEST_CAT_SECURITY);
@@ -1394,4 +2291,34 @@ void test_register_tpm_baseline(void)
                             test_integrity_publication, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: boot-integrity initial-report builder",
                             test_integrity_build_report, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify end-to-end match",
+                            test_baseline_verify_match, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify one PCR moved",
+                            test_baseline_verify_pcr_mismatch, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify scalar-only mismatch",
+                            test_baseline_verify_scalar_mismatch, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify ABI-manifest mismatch",
+                            test_baseline_verify_abi_mismatch, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify no baseline enrolled",
+                            test_baseline_verify_no_baseline, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify corrupt stored blob",
+                            test_baseline_verify_corrupt, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify snapshot failure",
+                            test_baseline_verify_snapshot_fail, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify undersized detail buffer",
+                            test_baseline_verify_undersized_detail, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline verify wrapper forwards out-params",
+                            test_baseline_verify_wrapper_forwards, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline enroll first generation",
+                            test_baseline_enroll_first, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline enroll rotates generation",
+                            test_baseline_enroll_rotates, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline enroll corrupt no rollback",
+                            test_baseline_enroll_corrupt_no_rollback, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline fake-TIS refuses malformed commands",
+                            test_baseline_fake_tis_malformed, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline fake-TIS NV public state",
+                            test_baseline_fake_tis_nv_public, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: baseline fake-TIS injection disable",
+                            test_baseline_fake_tis_injection_disable, TEST_CAT_SECURITY);
 }

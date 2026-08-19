@@ -742,6 +742,30 @@ void tpm_pcr_cache_init(void)
     klog(LOG_INFO, "TPM", "PCR cache populated (measured-boot PCRs, active banks)");
 }
 
+#ifdef KERNEL_TESTS
+/* When set, tpm_pcr_get() ignores the cache entirely and resolves through the
+ * transport. A test that installs a fake TIS needs this because the cache is
+ * populated at Phase 1 by tpm_pcr_cache_init() from whatever the REAL platform
+ * answered: on a machine with a TPM the entries are valid and hold live
+ * digests, so a transport-level fake would never be consulted and the test
+ * would pass on a TPM-less dev host while failing on bare metal. Bypassing
+ * (rather than injecting digests into s_pcr_cache) keeps the real
+ * tpm2_pcr_read response parser in the path, which is half of what the
+ * end-to-end coverage is for.
+ *
+ * KERNEL_TESTS-gated for the same reason the transport seams are: it turns an
+ * eagerly-populated lock-free read into a per-call transaction, which is
+ * correct for a fixture and wrong for the boot path. */
+static int s_pcr_cache_bypass;
+
+int tpm_pcr_test_cache_bypass(int on)
+{
+    int prev = s_pcr_cache_bypass;
+    s_pcr_cache_bypass = on ? 1 : 0;
+    return prev;
+}
+#endif /* KERNEL_TESTS */
+
 tpm_pcr_status_t tpm_pcr_get(uint32_t pcr_index, uint16_t alg,
                              uint8_t *out, uint32_t out_cap, uint32_t *out_len)
 {
@@ -749,6 +773,11 @@ tpm_pcr_status_t tpm_pcr_get(uint32_t pcr_index, uint16_t alg,
     if (out_len) *out_len = 0;
     if (!out || pcr_index >= 24u || bank < 0)
         return TPM_PCR_BADARG;
+
+#ifdef KERNEL_TESTS
+    if (s_pcr_cache_bypass)
+        return tpm2_pcr_read(alg, pcr_index, out, out_cap, out_len);
+#endif
 
     struct pcr_cache_entry *e = &s_pcr_cache[pcr_index][bank];
     if (!e->valid)
