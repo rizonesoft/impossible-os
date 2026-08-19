@@ -202,22 +202,14 @@ NOW_EPOCH=$(date +%s)
 ELAPSED_DAYS=$(( (NOW_EPOCH - FIRST_COMMIT_EPOCH) / 86400 ))
 [ "$ELAPSED_DAYS" -lt 1 ] && ELAPSED_DAYS=1
 
-# equivalent team size = whole_tree_lines * 365 / (industry_rate * elapsed_days)
+# equivalent team size = core_total_lines * 365 / (industry_rate * elapsed_days)
 #
-# WHOLE TREE, to match the figures it is compared against. The ~1,000 Linux and
-# ~5,000 Windows headcounts are whole-PROJECT counts set against whole-TREE line
-# counts that include everything those projects vendor; none of those developers
-# wrote the vendored parts either. Running our side on authored-only lines while
-# their side runs on whole-tree lines would be the same mismatch fixed one row
-# below, pointing the other way.
-EQUIV_DEVS=$(( whole_tree_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
-
-# And the same rate on the code actually written here. Both are published: the
-# whole-tree figure is the like-for-like one, but COCOMO prices code being
-# WRITTEN and vendoring is a decision rather than a development cost, so the
-# whole-tree number credits this project with effort spent elsewhere over
-# decades. Quoting only one of the two invites the objection either way.
-EQUIV_DEVS_CORE=$(( core_total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
+# CODE WRITTEN HERE, not the whole tree. The comparison table above is whole-tree
+# because that is what ~28M and ~50M are, but COCOMO II prices code being
+# DEVELOPED, and adopting a library is a decision plus an integration seam rather
+# than a development cost. The whole-tree figure would be roughly double and
+# would credit this project with effort spent elsewhere over decades.
+EQUIV_DEVS=$(( core_total_lines * 365 / (INDUSTRY_LOC_PER_YEAR * ELAPSED_DAYS) ))
 
 # Format elapsed time
 ELAPSED_MONTHS=$(( ELAPSED_DAYS / 30 ))
@@ -404,17 +396,8 @@ ${grand_total_table}
 
 ${impossibility_table}
 
-> Every column is the same measurement: all lines in the tree, vendored code
-> included. ~28,000,000 and ~50,000,000 are whole-tree counts -- Linux alone
-> carries ACPICA, zlib, zstd, lz4 and xz -- and the headcounts beside them are
-> whole-project too. The split between what was written here and what was
-> vendored is in the Grand Total table above.
->
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), a tree of
-> $(fmt ${whole_tree_lines}) lines implies **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
-> COCOMO prices code being WRITTEN, though, and adopting a library is a decision
-> rather than a development cost -- so on the $(fmt ${core_total_lines}) lines of core code
-> and tooling actually written here, the same rate implies **${EQUIV_DEVS_CORE} developers**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the $(fmt ${core_total_lines}) lines
+> written here imply **${EQUIV_DEVS} developers** working for **${ELAPSED_STR}**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
