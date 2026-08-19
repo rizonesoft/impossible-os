@@ -36,18 +36,19 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                | Depends On    | Status |
-| --- | :---: | ------------------------------------------ | ------------- | :----: |
-| 💎  |   1   | Entropy source inventory and quality model | T04 §2        |  [x]   |
-| 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1            |  [x]   |
-| 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1    |  [x]   |
-| 💎  |   4   | TPM RNG collection                         | §1, T13 §2    |  [x]   |
-| 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1            |  [x]   |
-| 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4 |  [x]   |
-| 💎  |   7   | boot_info seed handoff                     | T01 §4        |  [x]   |
-| 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5 |  [x]   |
-| ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8         |  [/]   |
-| 💎  |  10   | Entropy tests                              | §1-§9         |  [x]   |
+| ⭐  | Order | Deliverable                                  | Depends On    | Status |
+| --- | :---: | -------------------------------------------- | ------------- | :----: |
+| 💎  |   1   | Entropy source inventory and quality model   | T04 §2        |  [x]   |
+| 💎  |   2   | EFI_RNG_PROTOCOL collection                  | §1            |  [x]   |
+| 💎  |   3   | CPU RDRAND/RDSEED collection                 | §1, T09 §1    |  [x]   |
+| 💎  |   4   | TPM RNG collection                           | §1, T13 §2    |  [x]   |
+| 💎  |   5   | Boot timing and interrupt jitter mix-in      | §1            |  [x]   |
+| 💎  |   6   | Seed file carryover lifecycle                | §1, T24 §3,§4 |  [x]   |
+| 💎  |   7   | boot_info seed handoff                       | T01 §4        |  [x]   |
+| 💎  |   8   | Kernel early CSPRNG seeding                  | §7, D02T03 §5 |  [x]   |
+| ⭐  |   9   | Entropy diagnostics and policy gates         | §1-§8         |  [/]   |
+| 💎  |  10   | Entropy tests                                | §1-§9         |  [x]   |
+| 💎  |  11   | Capability gate on the seed payload consumer | §3, §10       |  [ ]   |
 
 ## 1. Entropy Source Inventory and Quality Model
 
@@ -314,6 +315,38 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 > **Verified:** 2026-06-13 | commit `51d9eb90` | 7/7 items | build OK | tests 367+16 PASS, smoke PASS (KVM 2.520s)
 > **Quality reviewed:** 2026-06-13 | Codex 7x (adversarial x2, adversarial-impl x2, re-adversarial, consistency, perf) | 1H+3M+1L fixed, 0 open | scope: kernel-code-quality
+
+---
+
+## 11. Capability Gate on the Seed Payload Consumer
+
+> **Spawned-by:** root
+> **User impact:** on a boot where the loader reports the payload-descriptor capability as absent or degraded, the seed consumer reads, WIPES and can FREE physical frames the PMM never reserved and may already have handed to another owner. The symptom is early-kernel memory corruption with no line naming the seed path, on exactly the boots where the handoff was already known to be unhealthy.
+
+`boot_reserved.c` gates its ENTIRE payload reservation loop on `BOOT_CAP_PAYLOAD_DESCRIPTORS` (`src/kernel/mm/boot_reserved.c`, "a producer that reports the capability as degraded is saying do not consume the descriptors"). So `BOOT_PAYLOAD_FLAG_RESERVED` on a descriptor is only evidence that PMM pinned the range WHEN that capability was negotiated. Without it the flag is a claim nobody acted on.
+
+The warm-update consumer already carries the matching gate and says why: `src/kernel/main/boot_hw.c` requires `caps_ok` before it will treat a type-9 descriptor as anything, precisely because "skipping the caps_present gate lets a producer with caps_present clear ship a descriptor that the reservation pass would skip, returning preserved memory to PMM".
+
+VERIFIED 2026-08-19 while adding the same gate to the TPM headless-authorization consumer: `grep -n "caps_present\|BOOT_CAP_" src/kernel/main/boot_seed.c src/kernel/security/stack_canary.c` returns nothing. `boot_seed_desc_classify` checks `FLAG_RESERVED`, the identity-map bound and the length contract, and never the capability. The seed path is the WORSE of the two cases, because `boot_seed_release_payload` does not merely read the range: it wipes it and, on an ownership match, calls `pmm_free_frame` on every page.
+
+- [ ] Gate `boot_seed_take_payloads` on `BOOT_CAP_PAYLOAD_DESCRIPTORS` before any descriptor of this type is read, wiped or released, with its own class in `boot_seed_desc_class_t` so the refusal is named rather than folded into NOT_RESERVED.
+  - The gate belongs in the classifier, not at the call site, so the whole refusal matrix stays in one pure function the suite already drives.
+- [ ] Give `stack_canary.c`'s peek at the seed payload the same gate: it calls `boot_payload_find` directly and dereferences the result.
+- [ ] Audit every other `boot_payload_find` consumer for the same omission and either gate it or record why it does not need one.
+  - The two known-good precedents are the warm-update consumer and the TPM headless-authorization consumer; both refuse before touching memory.
+- [ ] Give payload-consumer guards an OBSERVABLE seam, because the natural test for them passes whether or not the guard fires.
+  - A payload consumer dereferences `phys_start` raw, which is the Phase-1 boot identity map contract. A unit test runs at Phase 3, where that alias is no longer live -> so a test that writes a canary into its own buffer, hands the buffer's physical address to the consumer, and then checks the canary survives will see it survive EITHER WAY: if the guard fails open, the read and wipe land at an address that is not the test's buffer.
+  - MEASURED 2026-08-19 on the TPM headless-authorization consumer, which has the same shape: deleting its capability branch outright left the whole security suite green, and the case now SKIPs rather than reporting a pass it did not earn -> XREF: 01-boot-platform/TODO-13 §30 (item: "Carry the signed authorization from the ESP to the kernel as `BOOT_PAYLOAD_HEADLESS_AUTHZ`").
+  - The shape is a seam the consumer reads its payload THROUGH, so a test can substitute a mapping it owns; a classifier-only test proves the decision but never that the consumer acts on it.
+- [ ] Bound the rejected-payload wipe by the CONTRACT length, not by the descriptor's own `length` field.
+  - `boot_seed_release_payload` is called with `d->length` for the BAD_LENGTH class too (`src/kernel/main/boot_seed.c`), and BAD_LENGTH means the classifier has just declared that field wrong. It is bounded only by the identity-map check, so a descriptor claiming gigabytes is rejected and then wipes gigabytes.
+  - Found 2026-08-19 by the round-4 adversarial review of the TPM headless-authorization transport, which had copied this shape and now wipes a fixed `TPM_HEADLESS_BLOB_LEN` after an exact-length acceptance -> XREF: 01-boot-platform/TODO-13 §30 (item: "Carry the signed authorization from the ESP to the kernel as `BOOT_PAYLOAD_HEADLESS_AUTHZ`").
+  - The seed payload IS secret one-time key material, so unlike the authorization it must still be wiped when refused -- the fix is to bound the length, not to stop wiping.
+- [ ] Unit-test a degraded-capability handoff: the descriptor is neither read nor wiped, the frames are not freed, and the boot continues degraded rather than halting, beside a negotiated-capability control that consumes normally.
+  - Depends on the observable seam above; without it this assertion is one of the ones that passes for the wrong reason.
+- [ ] Commit: `"boot: capability gate on the seed payload consumer"`
+
+**Test checkpoint:** with `caps_present` clear and a RESERVED-flagged seed descriptor present, the classifier reports the capability refusal, `boot_seed_release_payload` is never reached, and a canary byte written into the payload range by the fixture is still intact afterwards -- which is the assertion that separates "refused" from "refused after wiping". The same fixture with the capability set consumes the payload as today. Scope: this section owns the capability gate on the seed consumers only; the reservation pass itself is correct and unchanged, and the descriptor ABI is `01-boot-platform/TODO-01`. Platforms: kernel unit suites; no hardware.
 
 ---
 

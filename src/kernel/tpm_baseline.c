@@ -646,6 +646,293 @@ tpm_baseline_status_t tpm_baseline_nv_status(tpm_nv_status_t st)
     return TPM_BASELINE_TPMERR;
 }
 
+
+/* ---- canonical transition digests -------------------------------------------
+ *
+ * These are what a headless authorization is signed over. They live here rather
+ * than in tpm_headless_authz.c on purpose: the digest's coverage is a property
+ * of struct tpm_baseline, so it belongs beside the struct's own validate /
+ * finalize / compare, where a field added to the record is in the same file as
+ * the code that decides what an authorization covers.
+ * --------------------------------------------------------------------------- */
+
+/* Domain-separation tags. Distinct byte strings so a record digest can never be
+ * replayed as a transition digest, or either as some future third construction
+ * over the same struct. */
+static const uint8_t k_canon_tag[] = "IPOS-baseline-canon-v1";
+static const uint8_t k_transition_tag[] = "IPOS-baseline-transition-v1";
+
+/* The tag BYTE COUNTS are published in tpm_baseline.h as part of the external
+ * digest preimage, and they include the terminating NUL because the hash is fed
+ * `sizeof` rather than a length. Pinning them here is what stops the header's
+ * specification and the code from drifting: renaming a tag without updating the
+ * documented length becomes a build failure, rather than a fleet of offline
+ * signers producing digests the kernel refuses. */
+_Static_assert(sizeof k_canon_tag == 23u,
+               "TAG_CANON is 23 bytes including its NUL -- update tpm_baseline.h");
+_Static_assert(sizeof k_transition_tag == 28u,
+               "TAG_TRANS is 28 bytes including its NUL -- update tpm_baseline.h");
+
+int tpm_baseline_canon_digest(const struct tpm_baseline *b,
+                              uint8_t out[TPM_BASELINE_DIGEST])
+{
+    struct tpm_baseline canon;
+    struct sha256_ctx ctx;
+
+    if (!b || !out)
+        return -1;
+
+    /* Copy then zero, rather than hashing the original in pieces around the
+     * excluded fields. Both are correct; this one cannot drift, because a
+     * field inserted between two excluded ones does not move a hand-written
+     * offset here -- it is simply covered. */
+    memcpy(&canon, b, sizeof canon);
+    /* NORMALIZE to the shape that will actually be PERSISTED, then zero what
+     * cannot be predicted. tpm_baseline_finalize stamps magic, version and
+     * size unconditionally on the way to NV, while tpm_baseline_snapshot
+     * leaves them at their memset-zero default -- so hashing them as-found
+     * would digest a pre-finalize struct here and a post-finalize record on
+     * the device, and the full-record binding would cover bytes nobody stores.
+     * Worse for the operator: a tool computing the digest from a baseline READ
+     * BACK off a machine sees the stamped values and produces a token the
+     * kernel could never match.
+     *
+     * Stamping rather than excluding is what keeps `version` COVERED. The
+     * version selects how every other byte is interpreted, so a migration to a
+     * new TPM_BASELINE_VERSION must move this digest; excluding the field
+     * would have let one authorization span two record formats. */
+    canon.magic   = TPM_BASELINE_MAGIC;
+    canon.version = TPM_BASELINE_VERSION;
+    canon.size    = (uint16_t)sizeof canon;
+    /* generation is assigned by the enroll from what is already in NV, so an
+     * offline signer cannot predict it; crc32 is derived from everything
+     * before it. */
+    canon.generation = 0u;
+    canon.crc32      = 0u;
+    /* EVERY padding byte, not just the top-level one. The nested
+     * tpm_baseline_pcr.pad pair is padding in exactly the same sense and is
+     * covered by the record's CRC for corruption, so leaving it in the digest
+     * would let a meaningless byte decide whether an offline-signed
+     * authorization matches. */
+    canon.pad = 0u;
+    {
+        uint32_t i;
+        for (i = 0; i < (uint32_t)TPM_BASELINE_MAX_PCRS; i++) {
+            canon.pcrs[i].pad[0] = 0u;
+            canon.pcrs[i].pad[1] = 0u;
+        }
+    }
+
+    sha256_init(&ctx);
+    sha256_update(&ctx, k_canon_tag, (uint32_t)sizeof k_canon_tag);
+    sha256_update(&ctx, (const uint8_t *)&canon, (uint32_t)sizeof canon);
+    sha256_final(&ctx, out);
+    return 0;
+}
+
+int tpm_baseline_transition_id(const struct tpm_baseline *prev,
+                               uint32_t prev_generation,
+                               const struct tpm_baseline *cand,
+                               uint8_t out[TPM_BASELINE_DIGEST])
+{
+    struct sha256_ctx ctx;
+    uint8_t prev_digest[TPM_BASELINE_DIGEST];
+    uint8_t cand_digest[TPM_BASELINE_DIGEST];
+    uint8_t hdr[5];
+
+    if (!cand || !out)
+        return -1;
+    /* A NULL predecessor with a non-zero generation is a caller bug that would
+     * silently produce a digest describing a transition that cannot exist.
+     * Refuse rather than hash it. */
+    if (!prev && prev_generation != 0u)
+        return -1;
+
+    if (prev) {
+        if (tpm_baseline_canon_digest(prev, prev_digest) != 0)
+            return -1;
+    } else {
+        memset(prev_digest, 0, sizeof prev_digest);
+    }
+    if (tpm_baseline_canon_digest(cand, cand_digest) != 0)
+        return -1;
+
+    /* has_prev is hashed SEPARATELY from the digest bytes. Without it, a
+     * predecessor whose canonical digest happened to be all zeros would be
+     * indistinguishable from no predecessor at all -- a distinction the whole
+     * enroll-versus-rotate boundary rests on. */
+    hdr[0] = prev ? 1u : 0u;
+    hdr[1] = (uint8_t)(prev_generation & 0xFFu);
+    hdr[2] = (uint8_t)((prev_generation >> 8) & 0xFFu);
+    hdr[3] = (uint8_t)((prev_generation >> 16) & 0xFFu);
+    hdr[4] = (uint8_t)((prev_generation >> 24) & 0xFFu);
+
+    sha256_init(&ctx);
+    sha256_update(&ctx, k_transition_tag, (uint32_t)sizeof k_transition_tag);
+    sha256_update(&ctx, hdr, (uint32_t)sizeof hdr);
+    sha256_update(&ctx, prev_digest, (uint32_t)sizeof prev_digest);
+    sha256_update(&ctx, cand_digest, (uint32_t)sizeof cand_digest);
+    sha256_final(&ctx, out);
+    return 0;
+}
+
+/* Read and validate the stored predecessor.
+ *
+ * The status split is the safety property: only NOTFOUND / UNINIT mean "no
+ * predecessor". Every other failure -- a short read, a corrupt blob, a
+ * transport error -- returns a failing status, because treating an unreadable
+ * predecessor as an absent one is exactly how a rollback gets authorized as a
+ * first enrollment. */
+tpm_baseline_status_t tpm_baseline_predecessor(uint32_t nv_index,
+                                               struct tpm_baseline *out,
+                                               uint32_t *out_generation)
+{
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    uint16_t got = 0;
+    tpm_nv_status_t rd;
+
+    if (!out || !out_generation)
+        return TPM_BASELINE_BADARG;
+
+    rd = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof blob, &got);
+    if (rd == TPM_NV_NOTFOUND || rd == TPM_NV_UNINIT) {
+        memset(out, 0, sizeof *out);
+        *out_generation = 0u;
+        return TPM_BASELINE_NO_BASELINE;
+    }
+    if (rd != TPM_NV_OK)
+        return tpm_baseline_nv_status(rd);
+    if (got != (uint16_t)sizeof blob || !tpm_baseline_validate(blob, got, out))
+        return TPM_BASELINE_CORRUPT;
+    *out_generation = out->generation;
+    return TPM_BASELINE_OK;
+}
+
+/* The ONE write path. Every enrollment in this file lands here, so the
+ * monotonic-generation rule, the fail-closed predecessor read and the NV
+ * define/write sequence exist exactly once.
+ *
+ * `expect_transition` is NULL for the unauthenticated path (nothing authorized
+ * a specific transition, so there is nothing to check) and the authorized
+ * digest for the headless path. When it is present the digest is re-derived
+ * HERE, against the predecessor this function itself just read, so the bytes
+ * that reach the TPM are provably the bytes the authorization covered and a
+ * predecessor that moved since the authorization is a refusal.
+ *
+ * The candidate is COPIED before anything is computed over it. The caller's
+ * struct is caller-owned memory; hashing it and then writing it leaves a window
+ * where the two could differ, and the copy closes that window rather than
+ * narrowing it. */
+static tpm_baseline_status_t baseline_write_candidate(uint32_t nv_index,
+                                                      const struct tpm_baseline *cand,
+                                                      const uint8_t *expect_transition)
+{
+    struct tpm_baseline b;
+    struct tpm_baseline prev;
+    uint32_t prev_gen = 0u;
+    uint32_t gen = 1u;
+    int has_prev = 0;
+    tpm_baseline_status_t st;
+    tpm_nv_status_t nv;
+
+    if (!cand)
+        return TPM_BASELINE_BADARG;
+    memcpy(&b, cand, sizeof b);
+    /* CANONICALIZE THE COPY THAT WILL BE PERSISTED, not only the one that is
+     * hashed. Without this the digest zeroes padding while the write stores
+     * whatever the caller had, so two records with different padding share one
+     * authorized transition digest and the "the bytes on the device are the
+     * bytes the authorization covered" claim is not literally true. Padding
+     * carries no meaning and is covered by the record CRC for corruption, so
+     * normalizing it here costs nothing and makes the claim exact. */
+    b.pad = 0u;
+    {
+        uint32_t pi;
+        for (pi = 0; pi < (uint32_t)TPM_BASELINE_MAX_PCRS; pi++) {
+            b.pcrs[pi].pad[0] = 0u;
+            b.pcrs[pi].pad[1] = 0u;
+        }
+    }
+
+    st = tpm_baseline_predecessor(nv_index, &prev, &prev_gen);
+    if (st == TPM_BASELINE_OK) {
+        has_prev = 1;
+        /* Monotonic generation, FAIL CLOSED. A valid existing baseline rotates
+         * to gen+1; a short/corrupt blob or any read failure already returned
+         * above rather than falling through to gen=1, which would roll a
+         * high-generation baseline back over a transient read error. */
+        if (prev_gen == 0xFFFFFFFFu)
+            return TPM_BASELINE_TPMERR;   /* no backward wrap */
+        gen = prev_gen + 1u;
+        if (!tpm_baseline_rotation_ok(prev_gen, gen))
+            return TPM_BASELINE_TPMERR;
+    } else if (st == TPM_BASELINE_NO_BASELINE) {
+        gen = 1u;   /* genuine first enroll */
+    } else {
+        return st;
+    }
+
+    if (expect_transition) {
+        uint8_t want[TPM_BASELINE_DIGEST];
+        if (tpm_baseline_transition_id(has_prev ? &prev : (const struct tpm_baseline *)0,
+                                       has_prev ? prev_gen : 0u,
+                                       &b, want) != 0)
+            return TPM_BASELINE_BADARG;
+        /* Plain comparison: both operands are public digests and the
+         * authenticity decision was already made by the Ed25519 check in the
+         * authorization path. Same rationale as hl_eq in tpm_headless_authz.c. */
+        if (memcmp(want, expect_transition, sizeof want) != 0)
+            return TPM_BASELINE_BADARG;
+    }
+
+    b.generation = gen;
+    if (tpm_baseline_finalize(&b) == 0u)
+        return TPM_BASELINE_BADARG;
+
+    /* NEVER WRITE A BLOB THIS KERNEL WOULD REFUSE TO READ. The digest match
+     * above proves the bytes are the ones somebody AUTHORIZED; it says nothing
+     * about whether they are a well-formed record, and the two are independent
+     * -- an authorization can be computed over any candidate at all.
+     *
+     * That gap is reachable because this path's whole premise is that the
+     * CALLER supplies the bytes: a candidate with, say, pcr_count 0 digests
+     * fine, matches its own transition, finalizes with a correct CRC, and
+     * lands in NV as a record every later boot reports as CORRUPT. Validating
+     * the finalized copy makes the write self-checking -- whatever reaches the
+     * TPM is provably readable back by the same validator the boot uses. */
+    {
+        struct tpm_baseline check;
+        if (!tpm_baseline_validate((const uint8_t *)&b, (uint32_t)sizeof b, &check))
+            return TPM_BASELINE_BADARG;
+    }
+
+    /* Define the owner-auth DATA index (idempotent: an already-defined index
+     * returns DEFINED, fine for re-enroll / rotation), then write the blob. */
+    nv = tpm_nv_define_data(nv_index, (uint16_t)sizeof b);
+    if (nv != TPM_NV_OK && nv != TPM_NV_DEFINED)
+        return tpm_baseline_nv_status(nv);
+    nv = tpm_nv_write(nv_index, 0u, (const uint8_t *)&b, (uint16_t)sizeof b);
+    return tpm_baseline_nv_status(nv);
+}
+
+tpm_baseline_status_t tpm_baseline_enroll_headless(uint32_t nv_index,
+                                                   const struct tpm_baseline *cand,
+                                                   const uint8_t transition_id[TPM_BASELINE_DIGEST])
+{
+    if (!cand || !transition_id)
+        return TPM_BASELINE_BADARG;
+    /* THE SAME REFUSAL tpm_baseline_enroll carries, and it is not redundant:
+     * this is a second public entry point onto the owner-auth write, so
+     * without it a headless enrollment would silently do what the console path
+     * is refused for -- leave the authenticated bind record describing the
+     * PREVIOUS blob, which the next boot reports as RELABELED. Letting the
+     * headless path also update the bind record needs the authorization to
+     * carry a transition grant, which is tracked as its own work. */
+    if (tpm_authz_provisioned())
+        return TPM_BASELINE_AUTHREQ;
+    return baseline_write_candidate(nv_index, cand, transition_id);
+}
+
 /* The bare owner-auth write. Kept as a separate INTERNAL entry point so the
  * authorized path can reuse it without tripping the guard that exists to stop
  * an UNauthorized caller reaching it. */
@@ -670,51 +957,14 @@ static tpm_baseline_status_t tpm_baseline_enroll_unauthenticated(uint32_t nv_ind
                                                                  uint16_t alg)
 {
     struct tpm_baseline b;
-    uint8_t old_blob[sizeof(struct tpm_baseline)];
-    struct tpm_baseline old;
-    uint16_t got = 0;
-    uint32_t gen = 1u;
     tpm_baseline_status_t st;
-    tpm_nv_status_t nv;
 
     st = tpm_baseline_snapshot(alg, &b);
     if (st != TPM_BASELINE_OK)
         return st;
-
-    /* Monotonic generation, FAIL CLOSED. A valid existing baseline rotates to
-     * gen+1; ONLY a genuine first enroll (index NOTFOUND / never written) starts
-     * at 1. A short/corrupt existing blob or any read/transport failure must NOT
-     * fall through to gen=1 -- that would roll a high-generation baseline back
-     * over a transient read error (content-layer anti-rollback; NV write-lock/
-     * counter hardening is a tracked follow-up). */
-    {
-        tpm_nv_status_t rd = tpm_nv_read(nv_index, 0u, old_blob,
-                                         (uint16_t)sizeof(old_blob), &got);
-        if (rd == TPM_NV_OK && got == (uint16_t)sizeof(old_blob) &&
-            tpm_baseline_validate(old_blob, got, &old)) {
-            if (old.generation == 0xFFFFFFFFu)
-                return TPM_BASELINE_TPMERR;   /* no backward wrap */
-            gen = old.generation + 1u;
-            if (!tpm_baseline_rotation_ok(old.generation, gen))
-                return TPM_BASELINE_TPMERR;
-        } else if (rd == TPM_NV_NOTFOUND || rd == TPM_NV_UNINIT) {
-            gen = 1u;   /* genuine first enroll */
-        } else {
-            /* Index exists but is unreadable/corrupt, or a transport error. */
-            return (rd == TPM_NV_OK) ? TPM_BASELINE_CORRUPT : tpm_baseline_nv_status(rd);
-        }
-    }
-    b.generation = gen;
-    if (tpm_baseline_finalize(&b) == 0u)
-        return TPM_BASELINE_BADARG;
-
-    /* Define the owner-auth DATA index (idempotent: an already-defined index
-     * returns DEFINED, fine for re-enroll / rotation), then write the blob. */
-    nv = tpm_nv_define_data(nv_index, (uint16_t)sizeof(b));
-    if (nv != TPM_NV_OK && nv != TPM_NV_DEFINED)
-        return tpm_baseline_nv_status(nv);
-    nv = tpm_nv_write(nv_index, 0u, (const uint8_t *)&b, (uint16_t)sizeof(b));
-    return tpm_baseline_nv_status(nv);
+    /* No expected transition: nothing authorized a specific one on this path,
+     * which is exactly why it refuses once an authority is provisioned. */
+    return baseline_write_candidate(nv_index, &b, (const uint8_t *)0);
 }
 
 tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,

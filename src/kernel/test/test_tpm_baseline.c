@@ -11,7 +11,9 @@
 #include "kernel/tpm_baseline.h"
 #include "kernel/tpm_nv.h"          /* TPM_NV_INDEX_BASELINE */
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical set) */
-#include "kernel/tpm_transport.h"   /* tpm_t_test_install/restore (no-transport path) */
+#include "kernel/tpm_transport.h"
+#include "kernel/tpm_headless_authz.h"
+#include "kernel/tpm_enroll_gate.h"   /* tpm_t_test_install/restore (no-transport path) */
 #include "kernel/boot_proto_descriptor.h"
 #include "kernel/tpm_authz.h"          /* tpm_authz_test_clear_authority */
 #include "kernel/smbios.h"             /* golden fw-hash from its primary source */
@@ -2345,6 +2347,454 @@ static void test_baseline_fake_tis_injection_disable(void)
                    "a disabled injection runs the handler, it does not fake success");
 }
 
+
+/* ---- headless enrollment: the transition-enforcing write path (section 30) ---
+ *
+ * These reach past the argument guards into the part that matters: the
+ * predecessor read, the transition recomputation, the mismatch refusal, the
+ * generation stamp and the NV write. The invariant under test is that the
+ * bytes on the device are the bytes the authorization covered.
+ */
+
+/* The candidate a headless enrollment would authorize on this fixture, built
+ * the way production builds it. */
+static tpm_baseline_status_t bh_candidate(struct tpm_baseline *cand)
+{
+    return tpm_baseline_snapshot(TPM_ALG_SHA256, cand);
+}
+
+static void test_baseline_headless_first_enroll(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline cand, stored;
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    uint8_t stored_tid[TPM_BASELINE_DIGEST];
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    tpm_baseline_status_t st;
+    uint16_t len;
+    int ok, made, derived;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();                    /* never enrolled */
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+    /* POISON EVERY PADDING BYTE before deriving. tpm_baseline_transition_id
+     * canonicalizes padding itself, so a check that only recomputes the digest
+     * cannot see whether the WRITE canonicalized it too -- the stored bytes are
+     * asserted directly below for exactly that reason. Both levels are poisoned
+     * including the LAST pcrs[] entry, which is where an off-by-one in the
+     * write-side loop would show. */
+    cand.pad = 0x5Au;
+    cand.pcrs[0].pad[0] = 0xA5u;
+    cand.pcrs[0].pad[1] = 0x5Au;
+    cand.pcrs[TPM_BASELINE_MAX_PCRS - 1].pad[0] = 0xC3u;
+    cand.pcrs[TPM_BASELINE_MAX_PCRS - 1].pad[1] = 0x3Cu;
+    derived = (tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u,
+                                          &cand, tid) == 0);
+    /* MOVE THE PLATFORM UNDER THE WRITE. Everything the fake would report from
+     * here on differs from what `cand` holds, so a write path that re-derived
+     * the record instead of persisting the caller's bytes could not produce a
+     * record matching `tid`. Without this the fixture is stable enough that
+     * replacing the write with a second identical snapshot would pass. */
+    {
+        uint8_t moved[TPM_BASELINE_DIGEST];
+        uint32_t k;
+        for (k = 0; k < TPM_BASELINE_DIGEST; k++)
+            moved[k] = (uint8_t)(0xE0u + k);
+        tpm_fake_tis_pcr_set(k_baseline_pcrs[0], moved);
+    }
+    st = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    len = tpm_fake_tis_nv_content(blob, (uint16_t)sizeof blob);
+    ok = tpm_baseline_validate(blob, len, &stored);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ(derived, 1, "the first-enrollment transition is describable");
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_OK,
+                   "an authorized first enrollment succeeds");
+    TEST_ASSERT_EQ((uint32_t)len, (uint32_t)sizeof(struct tpm_baseline),
+                   "the whole blob was stored");
+    TEST_ASSERT_EQ(ok, 1, "the stored blob validates");
+    TEST_ASSERT_EQ(stored.generation, 1u,
+                   "a genuine first enroll starts at generation 1");
+
+    /* THE SECTION'S CENTRAL CLAIM, asserted against the bytes actually on the
+     * device: the record that landed digests to the transition that was
+     * authorized. This is what catches a write path that re-derives, mutates
+     * or re-snapshots anything after the check. */
+    TEST_ASSERT_EQ(tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u,
+                                              &stored, stored_tid), 0,
+                   "the stored record's transition is describable");
+    TEST_ASSERT_EQ(memcmp(stored_tid, tid, sizeof tid), 0,
+                   "the persisted record is the record the authorization covered");
+
+    /* And the RAW stored bytes, not a digest recomputed over them: the digest
+     * canonicalizes padding, so only a direct read can show the write
+     * canonicalized it too. Poisoned pads above, all zero here. */
+    TEST_ASSERT_EQ((uint32_t)stored.pad, 0u,
+                   "the persisted top-level pad is canonical");
+    {
+        uint32_t k;
+        for (k = 0; k < (uint32_t)TPM_BASELINE_MAX_PCRS; k++) {
+            TEST_ASSERT_EQ((uint32_t)stored.pcrs[k].pad[0], 0u,
+                           "every persisted nested pad byte 0 is canonical");
+            TEST_ASSERT_EQ((uint32_t)stored.pcrs[k].pad[1], 0u,
+                           "every persisted nested pad byte 1 is canonical");
+        }
+    }
+
+    /* The full invariant, stated as a byte comparison: the stored record and
+     * the canonicalized candidate differ ONLY in generation and crc32. */
+    {
+        struct tpm_baseline want;
+        memcpy(&want, &cand, sizeof want);
+        want.magic   = TPM_BASELINE_MAGIC;
+        want.version = TPM_BASELINE_VERSION;
+        want.size    = (uint16_t)sizeof want;
+        want.pad     = 0u;
+        {
+            uint32_t k;
+            for (k = 0; k < (uint32_t)TPM_BASELINE_MAX_PCRS; k++) {
+                want.pcrs[k].pad[0] = 0u;
+                want.pcrs[k].pad[1] = 0u;
+            }
+        }
+        want.generation = stored.generation;   /* assigned by the write */
+        (void)tpm_baseline_finalize(&want);    /* stamps crc32 over the rest */
+        TEST_ASSERT_EQ(memcmp(&want, &stored, sizeof want), 0,
+                       "the stored record is the canonicalized candidate, "
+                       "differing only in the generation the write assigned");
+    }
+}
+
+static void test_baseline_headless_transition_mismatch(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline cand;
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    tpm_baseline_status_t st;
+    uint32_t writes, defines;
+    int made, derived;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+    derived = (tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u,
+                                          &cand, tid) == 0);
+    tid[0] ^= 0xFFu;                 /* the ONLY perturbation */
+    st = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    writes  = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    defines = tpm_fake_tis_cc_count(TPM2_CC_NV_DEFINE_SPACE);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ(derived, 1, "the transition is describable");
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_BADARG,
+                   "a digest that does not describe this transition is refused");
+    TEST_ASSERT_EQ(writes, 0u, "a refused transition writes nothing");
+    TEST_ASSERT_EQ(defines, 0u, "a refused transition defines nothing");
+}
+
+/* THE ROLLBACK CASE. A token derived against predecessor P must not be usable
+ * on a machine that has since moved to Q -- the design-review finding this
+ * section's predecessor binding exists to close. */
+static void test_baseline_headless_predecessor_moved(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline cand, prev_p, prev_q;
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    tpm_baseline_status_t st_ok, st_moved;
+    uint32_t writes_before, writes_after_refusal;
+    int made;
+
+    bv_open(&f);
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+
+    /* P is what the operator signed against. */
+    bv_golden(&prev_p, 3u);
+    bv_store(&prev_p);
+    (void)tpm_baseline_transition_id(&prev_p, 3u, &cand, tid);
+
+    /* Control: against P the same token is ACCEPTED, so the refusal below is
+     * caused by the predecessor moving and not by the token being wrong. */
+    st_ok = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+
+    /* Q: a different golden at the same generation. */
+    bv_golden(&prev_q, 3u);
+    prev_q.fw_hash[0] ^= 0xFFu;
+    (void)tpm_baseline_finalize(&prev_q);
+    bv_store(&prev_q);
+    writes_before = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    st_moved = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    writes_after_refusal =
+        tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE) - writes_before;
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ((int)st_ok, (int)TPM_BASELINE_OK,
+                   "against the authorized predecessor the token is accepted");
+    TEST_ASSERT_EQ((int)st_moved, (int)TPM_BASELINE_BADARG,
+                   "the same token is refused once the predecessor has moved");
+    TEST_ASSERT_EQ(writes_after_refusal, 0u,
+                   "a refused rollback writes nothing");
+}
+
+static void test_baseline_headless_generation_ceiling(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline cand, prev;
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    tpm_baseline_status_t st;
+    uint32_t writes;
+    int made;
+
+    bv_open(&f);
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+    bv_golden(&prev, 0xFFFFFFFFu);
+    bv_store(&prev);
+    (void)tpm_baseline_transition_id(&prev, 0xFFFFFFFFu, &cand, tid);
+    st = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    writes = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ((int)st, (int)TPM_BASELINE_TPMERR,
+                   "a generation at the ceiling refuses rather than wrapping "
+                   "backward");
+    TEST_ASSERT_EQ(writes, 0u, "nothing is written at the ceiling");
+}
+
+/* The predecessor read's absence-versus-failure split. Only NOTFOUND and UNINIT
+ * may become NO_BASELINE; everything else must stay a failure, because reading
+ * an unreadable predecessor as an absent one is how a rollback gets authorized
+ * as a first enrollment. */
+static void test_baseline_predecessor_boundaries(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline prev, got;
+    uint32_t gen = 0xA5A5A5A5u;
+    tpm_baseline_status_t st_absent, st_present, st_null_out, st_null_gen, st_corrupt;
+    uint32_t present_gen = 0u;
+    uint8_t corrupt[sizeof(struct tpm_baseline)];
+
+    bv_open(&f);
+
+    st_null_out = tpm_baseline_predecessor(TPM_NV_INDEX_BASELINE,
+                                           (struct tpm_baseline *)0, &gen);
+    st_null_gen = tpm_baseline_predecessor(TPM_NV_INDEX_BASELINE, &got,
+                                           (uint32_t *)0);
+
+    tpm_fake_tis_nv_clear();
+    memset(&got, 0xCC, sizeof got);
+    st_absent = tpm_baseline_predecessor(TPM_NV_INDEX_BASELINE, &got, &gen);
+
+    bv_golden(&prev, 9u);
+    bv_store(&prev);
+    st_present = tpm_baseline_predecessor(TPM_NV_INDEX_BASELINE, &got,
+                                          &present_gen);
+
+    /* A stored blob whose CRC no longer covers it is CORRUPT, never absent. */
+    memcpy(corrupt, &prev, sizeof corrupt);
+    corrupt[16] ^= 0xFFu;
+    tpm_fake_tis_nv_set(TPM_NV_INDEX_BASELINE, corrupt, (uint16_t)sizeof corrupt);
+    st_corrupt = tpm_baseline_predecessor(TPM_NV_INDEX_BASELINE, &got, &gen);
+
+    bv_close(&f);
+
+    TEST_ASSERT_EQ((int)st_null_out, (int)TPM_BASELINE_BADARG,
+                   "a NULL output is refused");
+    TEST_ASSERT_EQ((int)st_null_gen, (int)TPM_BASELINE_BADARG,
+                   "a NULL generation output is refused");
+    TEST_ASSERT_EQ((int)st_absent, (int)TPM_BASELINE_NO_BASELINE,
+                   "an unwritten index reports no predecessor");
+    TEST_ASSERT_EQ(gen, 0u, "an absent predecessor reports generation 0");
+    TEST_ASSERT_EQ((int)st_present, (int)TPM_BASELINE_OK,
+                   "a valid stored baseline is a predecessor");
+    TEST_ASSERT_EQ(present_gen, 9u,
+                   "the predecessor reports its own generation");
+    TEST_ASSERT_EQ((int)st_corrupt, (int)TPM_BASELINE_CORRUPT,
+                   "a corrupt predecessor is a failure, NEVER an absence");
+}
+
+
+/* A matching transition digest proves the bytes were AUTHORIZED; it says
+ * nothing about whether they are a well-formed record, and the two are
+ * independent because an authorization can be computed over any candidate at
+ * all. A caller-supplied candidate must therefore be refused on SHAPE before
+ * anything reaches NV -- otherwise a blob with a correct CRC and a matching
+ * digest lands in the index and every later boot reports it CORRUPT. */
+static void test_baseline_headless_refuses_malformed_candidate(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline cand;
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    tpm_baseline_status_t st_bad, st_ok;
+    uint32_t writes_bad, defines_bad;
+    int made;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+
+    /* pcr_count 0: a full measured set is what makes a baseline verifiable, so
+     * tpm_baseline_validate rejects this shape. The digest is derived over the
+     * MALFORMED candidate, so the authorization genuinely matches it. */
+    cand.pcr_count = 0u;
+    (void)tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u, &cand, tid);
+    st_bad = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    writes_bad  = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    defines_bad = tpm_fake_tis_cc_count(TPM2_CC_NV_DEFINE_SPACE);
+
+    /* CONTROL: the same call with a well-formed candidate succeeds, so the
+     * refusal above is caused by the shape and not by the fixture. */
+    if (bh_candidate(&cand) == TPM_BASELINE_OK) {
+        (void)tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u,
+                                         &cand, tid);
+        st_ok = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    } else {
+        st_ok = TPM_BASELINE_TPMERR;
+    }
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ((int)st_bad, (int)TPM_BASELINE_BADARG,
+                   "a structurally invalid candidate is refused even when its "
+                   "authorization matches it exactly");
+    TEST_ASSERT_EQ(writes_bad, 0u, "and nothing is written");
+    TEST_ASSERT_EQ(defines_bad, 0u, "and nothing is defined");
+    TEST_ASSERT_EQ((int)st_ok, (int)TPM_BASELINE_OK,
+                   "CONTROL: a well-formed candidate still enrolls");
+}
+
+/* The headless entry point must carry the SAME refusal the console one does
+ * once an update authority is provisioned. Without it an owner-auth write
+ * lands while the authenticated bind record still describes the previous
+ * record, and the next verification reports RELABELED. */
+static void test_baseline_headless_refuses_when_authority_provisioned(void)
+{
+    struct bv_fix f;
+    struct tpm_authz_authority a;
+    struct tpm_baseline cand;
+    uint8_t pub[16];
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    tpm_baseline_status_t st_guarded, st_control;
+    uint32_t writes, defines, reads;
+    int installed, made;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+    (void)tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u, &cand, tid);
+
+    /* CONTROL FIRST, with no authority: the same arguments enroll. */
+    st_control = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+
+    memset(pub, 0x5C, sizeof pub);
+    tpm2_be16_put(pub + 0, 0x0001u);
+    tpm2_be16_put(pub + 2, TPM_ALG_SHA256);
+    memset(&a, 0, sizeof a);
+    a.public_area = pub;
+    a.public_len = (uint16_t)sizeof pub;
+    installed = (tpm_authz_set_authority(&a) == TPM_NV_OK);
+
+    reads   = tpm_fake_tis_cc_count(TPM2_CC_NV_READ);
+    writes  = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    defines = tpm_fake_tis_cc_count(TPM2_CC_NV_DEFINE_SPACE);
+    st_guarded = tpm_baseline_enroll_headless(TPM_NV_INDEX_BASELINE, &cand, tid);
+    reads   = tpm_fake_tis_cc_count(TPM2_CC_NV_READ)         - reads;
+    writes  = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE)        - writes;
+    defines = tpm_fake_tis_cc_count(TPM2_CC_NV_DEFINE_SPACE) - defines;
+
+    tpm_authz_test_clear_authority();
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ((int)st_control, (int)TPM_BASELINE_OK,
+                   "CONTROL: with no update authority the same call enrolls");
+    TEST_ASSERT_EQ(installed, 1, "the update authority installs");
+    TEST_ASSERT_EQ((int)st_guarded, (int)TPM_BASELINE_AUTHREQ,
+                   "a provisioned update authority refuses the headless "
+                   "owner-auth write, exactly as the console path is refused");
+    TEST_ASSERT_EQ(reads, 0u, "the refusal costs no NV read");
+    TEST_ASSERT_EQ(defines, 0u, "and no define");
+    TEST_ASSERT_EQ(writes, 0u, "and no write");
+}
+
+
+/* THE PRODUCTION DISPATCH, which decides whether an admitted enrollment writes
+ * the AUTHORIZED candidate or takes a fresh snapshot. Swapping this back to the
+ * ordinary path is the one change that would spend the operator's one-shot
+ * token and then store a record nobody approved, and with the choice inlined at
+ * the Phase-1 call site no test could see it. */
+static void test_baseline_enroll_dispatch_routes_by_authority(void)
+{
+    struct bv_fix f;
+    struct tpm_baseline cand, stored;
+    uint8_t tid[TPM_BASELINE_DIGEST];
+    uint8_t cand_tid[TPM_BASELINE_DIGEST], stored_tid[TPM_BASELINE_DIGEST];
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    tpm_baseline_status_t st_headless, st_console, st_no_transition;
+    uint16_t len;
+    uint32_t writes_before, writes_no_transition;
+    int made, ok;
+
+    bv_open(&f);
+    tpm_fake_tis_nv_clear();
+    made = (bh_candidate(&cand) == TPM_BASELINE_OK);
+    (void)tpm_baseline_transition_id((const struct tpm_baseline *)0, 0u, &cand, tid);
+    (void)tpm_baseline_canon_digest(&cand, cand_tid);
+
+    /* MOVE THE PLATFORM. Everything a fresh snapshot would now report differs
+     * from `cand`, so the stored record proves WHICH path ran. */
+    {
+        uint8_t moved[TPM_BASELINE_DIGEST];
+        uint32_t k;
+        for (k = 0; k < TPM_BASELINE_DIGEST; k++)
+            moved[k] = (uint8_t)(0x70u + k);
+        tpm_fake_tis_pcr_set(k_baseline_pcrs[0], moved);
+    }
+
+    st_headless = tpm_headless_enroll_dispatch(
+        (uint8_t)TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION, 1,
+        TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &cand, tid);
+    len = tpm_fake_tis_nv_content(blob, (uint16_t)sizeof blob);
+    ok = tpm_baseline_validate(blob, len, &stored);
+    if (ok)
+        (void)tpm_baseline_canon_digest(&stored, stored_tid);
+
+    /* A headless authority with NO prepared transition must REFUSE, never fall
+     * back to the snapshot path. */
+    writes_before = tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE);
+    st_no_transition = tpm_headless_enroll_dispatch(
+        (uint8_t)TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION, 0,
+        TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &cand, tid);
+    writes_no_transition =
+        tpm_fake_tis_cc_count(TPM2_CC_NV_WRITE) - writes_before;
+
+    /* CONTROL: a console authority still takes the ordinary snapshot path, so
+     * the routing above is caused by the AUTHORITY and not by the arguments. */
+    tpm_fake_tis_nv_clear();
+    st_console = tpm_headless_enroll_dispatch(
+        (uint8_t)TPM_ENROLL_AUTH_LOCAL_CONSOLE_ON_TRUSTED_CHAIN, 1,
+        TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &cand, tid);
+    bv_close(&f);
+
+    TEST_ASSERT_EQ(made, 1, "the fixture produces a candidate");
+    TEST_ASSERT_EQ((int)st_headless, (int)TPM_BASELINE_OK,
+                   "a headless authority enrolls");
+    TEST_ASSERT_EQ(ok, 1, "the stored blob validates");
+    TEST_ASSERT_EQ(memcmp(stored_tid, cand_tid, sizeof cand_tid), 0,
+                   "a headless authority stores the AUTHORIZED candidate, not a "
+                   "fresh snapshot taken after the platform moved");
+
+    TEST_ASSERT_EQ((int)st_no_transition, (int)TPM_BASELINE_BADARG,
+                   "a headless authority with no prepared transition REFUSES "
+                   "rather than falling back to the snapshot path");
+    TEST_ASSERT_EQ(writes_no_transition, 0u, "and writes nothing");
+
+    TEST_ASSERT_EQ((int)st_console, (int)TPM_BASELINE_OK,
+                   "CONTROL: a console authority still enrolls by snapshot");
+}
+
 void test_register_tpm_baseline(void)
 {
     test_suite_register_cat("tpm: baseline finalize/validate", test_baseline_finalize_validate, TEST_CAT_SECURITY);
@@ -2403,4 +2853,20 @@ void test_register_tpm_baseline(void)
                             test_baseline_fake_tis_nv_public, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: baseline fake-TIS injection disable",
                             test_baseline_fake_tis_injection_disable, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: headless first enrollment",
+                            test_baseline_headless_first_enroll, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: headless transition mismatch",
+                            test_baseline_headless_transition_mismatch, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: headless predecessor moved",
+                            test_baseline_headless_predecessor_moved, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: headless generation ceiling",
+                            test_baseline_headless_generation_ceiling, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: predecessor boundaries",
+                            test_baseline_predecessor_boundaries, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: headless refuses malformed candidate",
+                            test_baseline_headless_refuses_malformed_candidate, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: headless refuses with authority provisioned",
+                            test_baseline_headless_refuses_when_authority_provisioned, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm baseline: enroll dispatch routes by authority",
+                            test_baseline_enroll_dispatch_routes_by_authority, TEST_CAT_SECURITY);
 }

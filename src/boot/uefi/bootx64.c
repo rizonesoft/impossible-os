@@ -10462,6 +10462,202 @@ static void collect_boot_entropy(void)
     post_code16(POST16_BL_ENTROPY_OK);
 }
 
+/* ============================================================================
+ * Headless enrollment authorization transport (owner: TPM measured-boot
+ * attestation roadmap, section 30)
+ *
+ * Carries an OFFLINE-SIGNED authorization from the ESP to the kernel as a
+ * BOOT_PAYLOAD_HEADLESS_AUTHZ descriptor. The blob is not authority in itself:
+ * it is Ed25519-signed under a key the kernel already holds, bound to this
+ * machine's EK identity, bound to the exact measured-state transition it
+ * authorizes, and spent against a monotonic TPM counter. That is what
+ * separates it from the plain ESP-file authority the enrollment gate
+ * deliberately does not honor -- anyone can write this file and it buys them
+ * nothing without the private half.
+ *
+ * The transport therefore carries bytes, never trust, and every failure
+ * degrades to NO authorization rather than a partial one: absent file, wrong
+ * size, unreadable, or a full descriptor table all leave the kernel exactly
+ * where it is today, which is a machine that refuses a headless enrollment.
+ * Nothing here is fatal for the same reason -- a machine with no authorization
+ * file is the normal case, not a broken boot.
+ *
+ * Runs AFTER load_staged_payloads() so the packed-prefix invariant the kernel
+ * validator enforces (no occupied slot at index >= payload_count) still holds:
+ * this appends one slot at the current count.
+ * ============================================================================ */
+
+#define POST16_BL_HL_AUTHZ        0xB0A6
+#define POST16_BL_HL_AUTHZ_OK     0xB0A7
+
+/* The exact on-wire size of struct tpm_headless_authz_blob
+ * (include/kernel/tpm_headless_authz.h, TPM_HEADLESS_BLOB_LEN). Mirrored
+ * rather than included because the bootloader cannot pull kernel headers; the
+ * kernel-side consumer re-checks the length against its own definition, so a
+ * drift here refuses the payload instead of handing over short bytes. */
+#define BL_HEADLESS_AUTHZ_LEN     152u
+
+static void publish_headless_authz_payload(void)
+{
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_FILE_PROTOCOL *root_dir;
+    EFI_FILE_PROTOCOL *file;
+    EFI_STATUS status;
+    EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+    UINTN info_size = 0;
+    VOID *info_buf = (VOID *)0;
+    UINT64 file_size = 0;
+    EFI_PHYSICAL_ADDRESS blob_addr = 0;
+    UINTN read_size;
+    UINT32 idx;
+    struct boot_payload_desc *d;
+
+    post_code16(POST16_BL_HL_AUTHZ);
+
+    status = locate_boot_fs(&fs);
+    if (EFI_ERROR(status)) {
+        post_code16(POST16_BL_HL_AUTHZ_OK);
+        return;
+    }
+    status = fs->OpenVolume(fs, &root_dir);
+    if (EFI_ERROR(status)) {
+        post_code16(POST16_BL_HL_AUTHZ_OK);
+        return;
+    }
+
+    status = root_dir->Open(root_dir, &file,
+                            u"\\EFI\\ImpossibleOS\\tpm-authz.bin",
+                            EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) {
+        /* Same two-location search boot.conf uses, so an authorization can be
+         * dropped at the volume root on firmware that cannot create the
+         * vendor directory. */
+        status = root_dir->Open(root_dir, &file, u"\\tpm-authz.bin",
+                                EFI_FILE_MODE_READ, 0);
+    }
+    if (EFI_ERROR(status)) {
+        /* The ordinary case: no operator ever placed one. Silent by design --
+         * a warning on every boot of every machine would train operators to
+         * ignore the line that matters. */
+        root_dir->Close(root_dir);
+        post_code16(POST16_BL_HL_AUTHZ_OK);
+        return;
+    }
+
+    status = file->GetInfo(file, &file_info_guid, &info_size, (VOID *)0);
+    if (status != EFI_BUFFER_TOO_SMALL || info_size == 0) {
+        serial_early_print("[WARN] headless authz: GetInfo size probe failed\n");
+        goto done_file;
+    }
+    status = gBS->AllocatePool(EfiLoaderData, info_size, &info_buf);
+    if (EFI_ERROR(status) || !info_buf) {
+        serial_early_print("[WARN] headless authz: AllocatePool(info) failed\n");
+        goto done_file;
+    }
+    status = file->GetInfo(file, &file_info_guid, &info_size, info_buf);
+    if (EFI_ERROR(status)) {
+        gBS->FreePool(info_buf);
+        serial_early_print("[WARN] headless authz: GetInfo read failed\n");
+        goto done_file;
+    }
+    file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
+    gBS->FreePool(info_buf);
+
+    /* EXACT size, not a ceiling. The blob is a fixed-layout record whose
+     * signature covers a fixed byte range; a short file cannot be a truncated
+     * authorization that is merely weaker, and a long one is not this format.
+     * Refusing both here means the kernel never sees bytes it would have to
+     * decide about. */
+    if (file_size != (UINT64)BL_HEADLESS_AUTHZ_LEN) {
+        serial_early_print("[WARN] headless authz: file is ");
+        serial_early_print_uint((UINT32)file_size);
+        serial_early_print(" bytes, expected ");
+        serial_early_print_uint((UINT32)BL_HEADLESS_AUTHZ_LEN);
+        serial_early_print(" -- not published\n");
+        goto done_file;
+    }
+
+    /* YIELD THE LAST SLOT. The staging table reserves BOOT_PAYLOAD_MAX - 1 for
+     * boot.conf payloads, leaving ONE for implicit publishers -- and there is
+     * more than one of those: the entropy seed is published later in the boot,
+     * from collect_boot_entropy, and simply DROPS its payload when the table
+     * is full.
+     *
+     * At the 31-staged-payload boundary this function would therefore take the
+     * last slot and silently cost the machine its firmware entropy seed,
+     * leaving the CSPRNG and the stack canary on their degraded TSC-derived
+     * path. It would do so for ANY 152-byte file, valid or not, because the
+     * signature is not checked until the kernel runs.
+     *
+     * An authorization is OPTIONAL and degrades to "this machine cannot enroll
+     * without a console", which is the pre-existing state. Entropy is not
+     * optional in the same way, so the authorization is the one that yields.
+     * The general shortfall -- one reserved slot for three named implicit
+     * payload kinds -- is tracked with the boot payload descriptor array. */
+    idx = g_boot_info_ptr->payload_count;
+    if (idx + 1u >= BOOT_PAYLOAD_MAX) {
+        serial_early_print("[WARN] headless authz: payload table full "
+                           "(reserving the last slot for the entropy seed) "
+                           "-- not published\n");
+        goto done_file;
+    }
+
+    /* Below 4 GiB, exactly as the seed transport does and for the same reason:
+     * the kernel consumer dereferences phys_start through the boot identity
+     * map, which covers the first 4 GiB only. AllocateAnyPages on high-memory
+     * firmware returns frames above that, and the kernel would then REFUSE a
+     * perfectly valid signed authorization -- a headless machine that cannot
+     * enroll, with the cause visible only as an out-of-map log line. */
+    blob_addr = 0xFFFFFFFFull;
+    status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData, 1, &blob_addr);
+    if (EFI_ERROR(status)) {
+        serial_early_print("[WARN] headless authz: AllocatePages failed\n");
+        goto done_file;
+    }
+    /* Zero the WHOLE page before the read. The descriptor's length is 152, but
+     * the page is RESERVED and handed to the kernel, so the 3944 bytes past
+     * the blob would otherwise be whatever EfiLoaderData held -- loader stack
+     * or an earlier file's contents. */
+    efi_memset((VOID *)(UINTN)blob_addr, 0, EFI_PAGE_SIZE);
+
+    read_size = (UINTN)BL_HEADLESS_AUTHZ_LEN;
+    status = file->Read(file, &read_size, (VOID *)(UINTN)blob_addr);
+    if (EFI_ERROR(status) || read_size != (UINTN)BL_HEADLESS_AUTHZ_LEN) {
+        efi_memset((VOID *)(UINTN)blob_addr, 0, EFI_PAGE_SIZE);
+        gBS->FreePages(blob_addr, 1);
+        serial_early_print("[WARN] headless authz: short read -- not published\n");
+        goto done_file;
+    }
+
+    d = &g_boot_info_ptr->payload_descriptors[idx];
+    d->type        = BOOT_PAYLOAD_HEADLESS_AUTHZ;
+    d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED |
+                     BOOT_PAYLOAD_FLAG_CHECKSUMMED;
+    d->phys_start  = (UINT64)blob_addr;
+    d->length      = (UINT64)BL_HEADLESS_AUTHZ_LEN;
+    d->alignment   = 4096ull;
+    /* CRC-32C detects a corrupt transfer, and that is ALL it is for: the
+     * authorization's integrity comes from its Ed25519 signature, which an
+     * attacker who can rewrite the file can also re-CRC. Naming that here
+     * stops a later reader from mistaking the checksum for a security
+     * property. */
+    d->checksum    = (UINT64)bl_crc32c((const UINT8 *)(UINTN)blob_addr,
+                                       (UINTN)BL_HEADLESS_AUTHZ_LEN);
+    d->producer_id = BOOT_PRODUCER_UEFI;
+    d->_reserved   = 0u;
+    g_boot_info_ptr->payload_count = idx + 1u;
+    g_boot_info_ptr->payload_total_bytes += (UINT64)BL_HEADLESS_AUTHZ_LEN;
+
+    serial_early_print("[BOOT] headless authz payload published at 0x");
+    serial_early_print_hex64((UINT64)blob_addr);
+    serial_early_print("\n");
+
+done_file:
+    file->Close(file);
+    root_dir->Close(root_dir);
+    post_code16(POST16_BL_HL_AUTHZ_OK);
+}
+
 /* ----- SMBIOS Type 1 (System Information) UUID extraction --------------
  *
  * SMBIOS UUID feeds the boot policy ladder's machine_id filter (the
@@ -16302,6 +16498,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * allocations do not compete with the 32/16/8 MiB graduated kernel
      * buffer. All failures are fatal: a missing payload == boot fail. */
     load_staged_payloads();
+
+    /* Headless enrollment authorization, appended AFTER the staged payloads so
+     * the packed-prefix invariant holds. Non-fatal on every path: an absent or
+     * malformed authorization means this machine simply cannot enroll a
+     * baseline without a console, which is the pre-existing behavior. */
+    publish_headless_authz_payload();
 
     /*: Boot device enumeration log -- gated behind verbose=1 in boot.conf
      * to avoid per-handle Open/Close overhead on firmware with many devices.

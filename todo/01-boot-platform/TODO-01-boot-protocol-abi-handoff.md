@@ -96,6 +96,8 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
 | ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [x]   |
 | 💎  |  25   | Bounded retry for a transient rollback-floor write | §13, §16, §24                      |  [x]   |
+| 💎  |  26   | Enum-VALUE drift detection for the mirror          | §2, §3                             |  [ ]   |
+| 💎  |  27   | Descriptor capacity for the implicit publishers    | §4, §26                            |  [ ]   |
 
 ---
 
@@ -965,6 +967,51 @@ The gap is narrow and the shape of the fix already exists in this file: §19 bui
 > **Accepted:** [M] the give-up is reported only to that boot's serial log, so an operator on an unattended box cannot discover afterwards that the policy never took effect (reason: durable-record plumbing is owned by the boot-diagnostics domain, not this section) -> XREF: 01-boot-platform/TODO-14 §12 (item: "Give the anti-rollback give-up a durable record" at line 374)
 > **Accepted:** [H] `task_create` has no slot-admission lock, so concurrent creators can claim the same task slot (reason: pre-existing defect that already has an owner; re-confirmed here at `task.c:830-835` + `:1116-1126` while evaluating a retry-carrier fix that would have added a caller, and that fix was withdrawn rather than built on it) -> XREF: 03-memory-concurrency/TODO-06 §13 (item: "Atomic task-slot CLAIM" at line 300)
 > **Quality reviewed:** 2026-08-16 | Codex 20x (design, adversarial x3, test-coverage, consistency x9, perf x2, re-adversarial x4; adversarial + perf + consistency all closed on approve) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 3H+27M+4L fixed, 2 accepted, 1 rejected on later evidence | scope: kernel-code-quality
+
+---
+
+## 26. Enum-VALUE Drift Detection for the Bootloader Mirror
+
+> **Spawned-by:** root
+> **User impact:** a bootloader and a kernel that disagree about a payload-type NUMBER compile, link, boot and print nothing wrong. The kernel simply never finds the payload the loader published, or finds the wrong one -- so a feature carried over that enum (today: an initrd, a TPM event log, a random seed, a headless enrollment authorization) silently does not exist on that machine.
+
+The drift checker that §3 shipped compares STRUCT layout: `tools/boot-info-manifest/` dumps every field's offset and size from both `include/kernel/boot_info.h` and `src/boot/uefi/boot_info_mirror.h`, and `compare.sh` runs as the first gate in `scripts/build.sh`. It does not compare ENUM MEMBER VALUES, because the manifest is generated from struct definitions and an enum member is not a field.
+
+That leaves `enum boot_payload_type` and `enum boot_payload_producer` synchronized by a comment. `boot_info_mirror.h` says "value-for-value identical to include/kernel/boot_info.h" and re-declares each value as a separate `#define`, and nothing checks the claim. VERIFIED 2026-08-19 while adding `BOOT_PAYLOAD_HEADLESS_AUTHZ`: `grep -rn "_Static_assert.*BOOT_PAYLOAD"` finds only the 48-byte `struct boot_payload_desc` size assert, and `tools/boot-info-manifest/dump-fields.inc` contains no enum member at all.
+
+The failure is quiet in a way the struct-drift failure is not: a wrong OFFSET corrupts a field and something usually misbehaves loudly, whereas a wrong TYPE NUMBER means `boot_payload_find` looks for a value nobody published and returns NULL, which every consumer is required to handle gracefully. The mirror also splits the enum across two places (`BOOT_PAYLOAD_WARM_UPDATE_STATE` is defined down in the warm-update block, away from the others), so a reader checking the list by eye can miss a value entirely.
+
+- [ ] Emit every `enum boot_payload_type` and `enum boot_payload_producer` member NAME and VALUE into the generated manifest from both sides, so `compare.sh` adjudicates them exactly as it adjudicates field offsets.
+  - The kernel side reads the enum directly. The mirror side is `#define`s, so the dumper has to evaluate the macro rather than reflect an enum -- the same shape `dump-mirror.c` already uses for the struct offsets.
+  - A member present on one side and absent on the other must FAIL, not be skipped: an unmirrored value is exactly the case where the loader can publish something the kernel will never look for.
+- [ ] Cover the producer enum and any future mirrored enum by CONSTRUCTION rather than by a hand-maintained list, so the next enum added to the ABI is checked without anyone remembering to add it.
+- [ ] Collect `BOOT_PAYLOAD_WARM_UPDATE_STATE` back with the rest of `enum boot_payload_type` in the mirror, or leave it where it is and make the check the thing that reads it, so physical placement stops being load-bearing for a human reader.
+- [ ] Unit-test the checker against a deliberately skewed pair of inputs, so a checker that silently passes everything is caught.
+- [ ] Commit: `"boot: enum-value drift detection for the bootloader mirror"`
+
+**Test checkpoint:** a fixture in which the mirror declares one payload type at a different number than the kernel FAILS `compare.sh` with the member named, and the unmodified tree passes. A member added to the kernel enum and not to the mirror fails the same way. Scope: this section owns enum-member drift only; struct field offsets and sizes are §2 and §3 and are unchanged, and the ABI version contract is §1. Platforms: host build gate, no hardware.
+
+---
+
+## 27. Descriptor Capacity for the Implicit Publishers
+
+> **Spawned-by:** root
+> **User impact:** on a machine whose `boot.conf` fills the payload staging table, an implicit publisher silently loses its payload. Today that is the firmware entropy seed, which leaves the CSPRNG and the stack canary on their degraded TSC-derived path on exactly the boots carrying the most configuration. Nothing fails; the machine is just quietly weaker.
+
+`BOOT_PAYLOAD_STAGE_MAX` is `BOOT_PAYLOAD_MAX - 1` (`src/boot/uefi/bootx64.c`), and its comment states the intent: "the -1 leaves headroom for future implicit payloads (TPM event log copy, random seed, USB handover state). Slot 31 stays open." That names THREE implicit kinds and reserves ONE slot.
+
+VERIFIED 2026-08-19 while adding the headless-authorization transport, which is a fourth implicit publisher. At 31 staged payloads the authorization took the last slot and `collect_boot_entropy` then hit its own `idx >= BOOT_PAYLOAD_MAX` check and dropped the seed. The authorization now yields that slot explicitly, which fixes the collision it introduced and leaves the underlying arithmetic exactly as wrong as before: any second implicit publisher reaching the boundary loses to the first, in call order, with a warning nobody reads.
+
+The ordering makes it worse than a simple cap: implicit publishers run at different points in the boot, so which one loses depends on where its call site happens to sit rather than on which payload matters more.
+
+- [ ] Size the staging reservation against the NUMBER of implicit publishers rather than against the constant 1, so adding one is an arithmetic change in a single place.
+  - Name the implicit publishers in a list the reservation is computed from, so the compiler carries the relation instead of a comment.
+- [ ] Give each implicit publisher a reserved slot rather than a shared pool, or a documented priority, so which one survives the boundary is a decision rather than a consequence of call order.
+- [ ] Make an implicit publisher's drop LOUD and attributable: the entropy path prints one line and continues, the authorization path now prints another, and neither says what was lost or that the machine is degraded as a result.
+- [ ] Unit-test the boundary directly: a staged set that exactly fills the table plus every implicit publisher, asserting each named payload is present in the handed-off descriptor array.
+- [ ] Commit: `"boot: descriptor capacity for the implicit payload publishers"`
+
+**Test checkpoint:** with the staging table filled to `BOOT_PAYLOAD_STAGE_MAX` and every implicit publisher active, the handed-off `payload_descriptors[]` contains one descriptor of each implicit type, and `payload_overflow` reports the staged entries that were refused rather than an implicit payload being dropped silently. Scope: this section owns the descriptor-array capacity arithmetic and the implicit publishers' claim on it; the descriptor ABI is §4, enum-value drift is §26, and each payload's own contract stays with its owning subsystem. Platforms: bootloader + kernel unit suites; no hardware.
 
 ---
 

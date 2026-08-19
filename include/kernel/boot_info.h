@@ -1469,6 +1469,8 @@ enum boot_payload_type {
     BOOT_PAYLOAD_RANDOM_SEED       = 7,   /* bootloader RNG seed (owner: early entropy seed handoff) */
     BOOT_PAYLOAD_USB_HANDOVER      = 8,   /* xHCI DMA state blob (owner: USB zero-delay handover DMA state) */
     BOOT_PAYLOAD_WARM_UPDATE_STATE = 9,   /* warm-kernel-update preserved memory (owner: warm-kernel-update ABI) */
+    /* signed headless-enrollment authorization (owner: TPM measured-boot attestation) */
+    BOOT_PAYLOAD_HEADLESS_AUTHZ    = 10,
 };
 
 /* Descriptor flags (bitmask). New bits are ignored by older kernels if

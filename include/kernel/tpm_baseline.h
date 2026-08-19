@@ -732,6 +732,121 @@ struct tpm_authz_transition;
 tpm_baseline_status_t tpm_baseline_enroll_bound(uint32_t nv_index, uint16_t alg,
                                                 const struct tpm_authz_transition *tr);
 
+/* Canonical digest over ONE baseline record's security-relevant content.
+ *
+ * SHA-256 over the whole struct with the three fields that are not content
+ * zeroed first: `crc32` (derived from everything before it, so hashing it adds
+ * nothing and forces an offline signer to recompute it), `pad` (a padding byte
+ * that carries no meaning), and `generation` (the enroll assigns it from what
+ * is already in NV, so an offline signer cannot predict it). Everything else
+ * is covered, which is the whole difference from a PCR-set digest: the
+ * firmware-version hash, the ABI-manifest digest, the Secure Boot state and
+ * the alg/count header are all part of what an operator is approving.
+ *
+ * Canonicalizing by zeroing rather than by selecting fields is deliberate and
+ * follows tpm_record_digest_compute: a field ADDED to struct tpm_baseline is
+ * then covered automatically, whereas a hand-written field list would silently
+ * leave it unauthorized -- which is precisely the class of gap this digest
+ * exists to close.
+ *
+ * THE PREIMAGE IS AN EXTERNAL FORMAT, so it is specified here byte for byte
+ * rather than left to be read off the implementation. An offline signing tool
+ * that gets any of this wrong produces a token the kernel silently refuses.
+ *
+ *   canon := SHA-256( TAG_CANON || CANON_RECORD )
+ *
+ *   TAG_CANON    the 23 bytes "IPOS-baseline-canon-v1" INCLUDING its
+ *                terminating NUL byte (the C string literal hashed with
+ *                sizeof, not strlen).
+ *   CANON_RECORD the whole `struct tpm_baseline`, in its exact on-NV
+ *                little-endian layout and size, with these fields overwritten
+ *                first:
+ *                  magic      = TPM_BASELINE_MAGIC
+ *                  version    = TPM_BASELINE_VERSION
+ *                  size       = sizeof(struct tpm_baseline)
+ *                  generation = 0
+ *                  crc32      = 0
+ *                  pad        = 0
+ *                  pcrs[i].pad[0..1] = 0, for EVERY i in [0, TPM_BASELINE_MAX_PCRS)
+ *
+ * Returns 0 on success, -1 on a NULL argument. */
+int tpm_baseline_canon_digest(const struct tpm_baseline *b,
+                              uint8_t out[TPM_BASELINE_DIGEST]);
+
+/* Canonical digest over a baseline TRANSITION: the record that would be
+ * written together with the record it replaces.
+ *
+ * `prev` is the validated predecessor, or NULL when the index holds no valid
+ * baseline (a genuine first enrollment); `prev_generation` is the
+ * predecessor's generation and MUST be 0 when `prev` is NULL.
+ *
+ * BINDING THE PREDECESSOR IS NOT BELT-AND-BRACES, it is the difference between
+ * an authorization and a rollback primitive. A digest over the candidate alone
+ * lets a token issued for state A survive an intervening enrollment of state
+ * B: the enroll path silently becomes a rotation, stamps generation n+1, and
+ * tpm_baseline_rotation_ok accepts the numeric increase even though the golden
+ * content moved backwards. With the predecessor in the digest, that token
+ * describes a transition the machine is no longer in and is refused.
+ *
+ * THE PREIMAGE, byte for byte, for the same reason as above:
+ *
+ *   transition := SHA-256( TAG_TRANS || HDR || PREV_DIGEST || CAND_DIGEST )
+ *
+ *   TAG_TRANS    the 28 bytes "IPOS-baseline-transition-v1" INCLUDING its
+ *                terminating NUL byte.
+ *   HDR          5 bytes: has_prev (1 when `prev` is non-NULL, else 0), then
+ *                prev_generation as 4 bytes LITTLE-ENDIAN. has_prev is hashed
+ *                separately from the digest so a predecessor whose canonical
+ *                digest happened to be all zeros stays distinguishable from no
+ *                predecessor at all -- the enroll-versus-rotate boundary rests
+ *                on that distinction.
+ *   PREV_DIGEST  the 32-byte canonical digest of `prev`, or 32 zero bytes when
+ *                there is no predecessor.
+ *   CAND_DIGEST  the 32-byte canonical digest of the candidate.
+ *
+ * Returns 0 on success, -1 on a NULL candidate or output, or on the
+ * contradiction of a NULL `prev` with a non-zero `prev_generation`. */
+int tpm_baseline_transition_id(const struct tpm_baseline *prev,
+                               uint32_t prev_generation,
+                               const struct tpm_baseline *cand,
+                               uint8_t out[TPM_BASELINE_DIGEST]);
+
+/* Read the CURRENT baseline from `nv_index` for the purpose of describing a
+ * transition. Writes the validated predecessor to *out and its generation to
+ * *out_generation on success.
+ *
+ * Returns TPM_BASELINE_OK when a valid predecessor exists, TPM_BASELINE_NO_BASELINE
+ * when the index is undefined or never written (a first enrollment, and the
+ * ONLY non-OK status a caller may treat as "no predecessor"), and any other
+ * status when the predecessor could not be established -- which is FAIL-CLOSED
+ * and must not be read as absence, because treating an unreadable predecessor
+ * as absent is how a rollback gets authorized as a first enroll. */
+tpm_baseline_status_t tpm_baseline_predecessor(uint32_t nv_index,
+                                               struct tpm_baseline *out,
+                                               uint32_t *out_generation);
+
+/* Enroll a baseline the caller ALREADY BUILT, under a headless authorization.
+ *
+ * `cand` is the exact candidate whose transition digest was authorized, and
+ * `transition_id` is that digest. The function copies `cand` into memory it
+ * owns, re-derives the transition digest against the predecessor it reads
+ * inside the write path, and REFUSES with TPM_BASELINE_BADARG if it differs --
+ * so the bytes that reach NV are provably the bytes the authorization covered,
+ * and a predecessor that moved between the authorization and the write is a
+ * refusal rather than a silent rollback.
+ *
+ * REFUSES with TPM_BASELINE_AUTHREQ while an update authority is provisioned,
+ * exactly as tpm_baseline_enroll does and for the same reason: an owner-auth
+ * write would leave the bind record describing the previous blob. Coexistence
+ * of a headless authorization with a provisioned record authority needs the
+ * authorization to carry the transition grant too, which is tracked separately.
+ *
+ * Returns TPM_BASELINE_OK, TPM_BASELINE_BADARG on NULL/mismatch, or whatever
+ * the generation read or the NV write reports. */
+tpm_baseline_status_t tpm_baseline_enroll_headless(uint32_t nv_index,
+                                                   const struct tpm_baseline *cand,
+                                                   const uint8_t transition_id[TPM_BASELINE_DIGEST]);
+
 /* Verify: read the blob from `nv_index`, validate it, snapshot the current
  * state, and compare.
  *

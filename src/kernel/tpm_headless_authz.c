@@ -5,10 +5,11 @@
  * it, all live in the header banner. This file is the mechanism.
  */
 #include "kernel/tpm_headless_authz.h"
+#include "kernel/tpm_enroll_gate.h"
+#include "kernel/tpm_baseline.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_attest.h"
 #include "kernel/tpm_authz.h"
-#include "kernel/tpm_baseline.h"
 #include "kernel/tpm_nv.h"
 #include "kernel/ci/ci_crypto.h"
 #include "kernel/crypto/sha256.h"
@@ -179,7 +180,7 @@ tpm_headless_authz_precheck(const uint8_t *blob, uint32_t blob_len,
     return TPM_HEADLESS_OK;
 }
 
-/* The bindings ONLY: device identity, PCR set, operation, counter. Assumes the
+/* The bindings ONLY: device identity, transition, operation, counter. Assumes the
  * local half (format + signature) has ALREADY passed -- callers that have not
  * run it themselves must go through tpm_headless_authz_evaluate below, never
  * this directly, or a forged blob would reach a binding check unauthenticated. */
@@ -197,10 +198,10 @@ hl_evaluate_bindings(const struct tpm_headless_authz_inputs *in)
     if (!hl_eq(b + TPM_HEADLESS_OFF_DEVICE_ID, in->device_id, TPM_HEADLESS_ID_LEN))
         return TPM_HEADLESS_WRONG_DEVICE;
 
-    if (!in->pcr_set_known)
+    if (!in->transition_known)
         return TPM_HEADLESS_UNKNOWN_STATE;
-    if (!hl_eq(b + TPM_HEADLESS_OFF_PCR_SET, in->pcr_set, TPM_HEADLESS_ID_LEN))
-        return TPM_HEADLESS_WRONG_PCR_SET;
+    if (!hl_eq(b + TPM_HEADLESS_OFF_TRANSITION, in->transition_id, TPM_HEADLESS_ID_LEN))
+        return TPM_HEADLESS_WRONG_TRANSITION;
 
     if (op != in->operation)
         return TPM_HEADLESS_WRONG_OPERATION;
@@ -246,7 +247,7 @@ const char *tpm_headless_verdict_label(uint8_t verdict)
     case TPM_HEADLESS_BAD_FORMAT:      return "bad-format";
     case TPM_HEADLESS_BAD_SIGNATURE:   return "bad-signature";
     case TPM_HEADLESS_WRONG_DEVICE:    return "wrong-device";
-    case TPM_HEADLESS_WRONG_PCR_SET:   return "wrong-pcr-set";
+    case TPM_HEADLESS_WRONG_TRANSITION: return "wrong-transition";
     case TPM_HEADLESS_WRONG_OPERATION: return "wrong-operation";
     case TPM_HEADLESS_STALE_OR_SPENT:  return "stale-or-spent";
     case TPM_HEADLESS_NOT_YET_VALID:   return "not-yet-valid";
@@ -264,7 +265,10 @@ const char *tpm_headless_verdict_label(uint8_t verdict)
  * MEANING with any other digest the subsystem takes over similar bytes; the
  * tag makes each digest answer exactly one question. */
 static const uint8_t HL_TAG_DEV[8] = { 'I','H','A','Z','D','E','V','1' };
-static const uint8_t HL_TAG_PCR[8] = { 'I','H','A','Z','P','C','R','1' };
+/* There is no measured-state tag here any more. The transition digest is
+ * computed by tpm_baseline_transition_id, which carries its own domain
+ * separators, and it is computed there precisely so its coverage lives beside
+ * the struct whose fields it covers. */
 
 /* Device identity: SHA-256 over the EK PRIMARY public. Returns 0 on success. */
 static int hl_device_id(uint8_t out[TPM_HEADLESS_ID_LEN])
@@ -284,48 +288,6 @@ static int hl_device_id(uint8_t out[TPM_HEADLESS_ID_LEN])
     sha256_update(&ctx, HL_TAG_DEV, (uint32_t)sizeof HL_TAG_DEV);
     sha256_update(&ctx, hdr, 2u);
     sha256_update(&ctx, pub, (uint32_t)pub_len);
-    sha256_final(&ctx, out);
-    return 0;
-}
-
-/* Measured state: SHA-256 over a canonical, FIXED-SIZE serialization of the
- * current PCR set. Fixed size on purpose -- a variable-length encoding over
- * present slots would let two different PCR sets serialize identically.
- *
- * This covers the PCR SET only. The non-PCR fields of struct tpm_baseline
- * (firmware-version hash, ABI-manifest digest, Secure Boot state) are NOT
- * covered here: binding the authorization to the whole enrolled record is a
- * separate construction with the opposite failure mode, owned by the headless
- * authorization transport and full-record binding work, which builds the
- * candidate baseline once and binds a digest over every security-relevant
- * field of it. */
-static int hl_pcr_set_digest(uint8_t out[TPM_HEADLESS_ID_LEN])
-{
-    struct tpm_baseline b;
-    struct sha256_ctx ctx;
-    uint8_t hdr[3];
-    uint32_t i;
-
-    if (tpm_baseline_snapshot(TPM_ALG_SHA256, &b) != TPM_BASELINE_OK)
-        return -1;
-    hdr[0] = (uint8_t)(b.alg & 0xFFu);
-    hdr[1] = (uint8_t)((b.alg >> 8) & 0xFFu);
-    hdr[2] = b.pcr_count;
-    sha256_init(&ctx);
-    sha256_update(&ctx, HL_TAG_PCR, (uint32_t)sizeof HL_TAG_PCR);
-    sha256_update(&ctx, hdr, 3u);
-    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
-        uint8_t slot[2];
-        static const uint8_t zero[TPM_BASELINE_DIGEST] = { 0 };
-        slot[0] = b.pcrs[i].index;
-        slot[1] = b.pcrs[i].present;
-        sha256_update(&ctx, slot, 2u);
-        /* An absent slot contributes zeros rather than stale bytes, so the
-         * digest depends on what was MEASURED and not on what the snapshot
-         * happened to leave in an unused entry. */
-        sha256_update(&ctx, b.pcrs[i].present ? b.pcrs[i].digest : zero,
-                      (uint32_t)TPM_BASELINE_DIGEST);
-    }
     sha256_final(&ctx, out);
     return 0;
 }
@@ -408,9 +370,79 @@ int tpm_headless_authz_next_counter(uint64_t *out)
     return (hl_counter_read(out) == TPM_NV_OK) ? 0 : -1;
 }
 
+tpm_headless_verdict_t
+tpm_headless_authz_precheck_installed(const uint8_t *blob, uint32_t blob_len)
+{
+    uint8_t pub[TPM_HEADLESS_PUBKEY_LEN];
+    uint8_t present;
+
+    /* ONE acquire decides both whether there is an authority and whether its
+     * bytes may be read, exactly as the authorize path does. */
+    present = (uint8_t)hl_authority_snapshot(pub);
+    return tpm_headless_authz_precheck(blob, blob_len, present, pub);
+}
+
+tpm_headless_verdict_t
+tpm_headless_enroll_prepare(const uint8_t *blob, uint32_t blob_len,
+                            uint32_t nv_index, uint16_t alg,
+                            struct tpm_baseline *out_cand,
+                            uint8_t out_transition[TPM_HEADLESS_ID_LEN],
+                            uint32_t *out_operation)
+{
+    struct tpm_baseline prev;
+    uint32_t prev_gen = 0u;
+    tpm_headless_verdict_t v;
+    tpm_baseline_status_t ps;
+    int have_prev = 0;
+
+    if (!out_cand || !out_transition || !out_operation)
+        return TPM_HEADLESS_ABSENT;
+
+    /* THE LOCAL HALF FIRST, and nothing below it runs until it passes. */
+    v = tpm_headless_authz_precheck_installed(blob, blob_len);
+    if (v != TPM_HEADLESS_OK)
+        return v;
+
+    if (tpm_baseline_snapshot(alg, out_cand) != TPM_BASELINE_OK)
+        return TPM_HEADLESS_UNKNOWN_STATE;
+
+    ps = tpm_baseline_predecessor(nv_index, &prev, &prev_gen);
+    if (ps == TPM_BASELINE_OK)
+        have_prev = 1;
+    else if (ps != TPM_BASELINE_NO_BASELINE)
+        return TPM_HEADLESS_UNKNOWN_STATE;   /* FAIL CLOSED, never assumed absent */
+
+    if (tpm_baseline_transition_id(have_prev ? &prev : (const struct tpm_baseline *)0,
+                                   have_prev ? prev_gen : 0u,
+                                   out_cand, out_transition) != 0)
+        return TPM_HEADLESS_UNKNOWN_STATE;
+
+    *out_operation = have_prev ? (uint32_t)TPM_HEADLESS_OP_ROTATE_BASELINE
+                               : (uint32_t)TPM_HEADLESS_OP_ENROLL_BASELINE;
+    return TPM_HEADLESS_OK;
+}
+
+tpm_baseline_status_t
+tpm_headless_enroll_dispatch(uint8_t authority, int have_transition,
+                             uint32_t nv_index, uint16_t alg,
+                             const struct tpm_baseline *cand,
+                             const uint8_t *transition_id)
+{
+    if (authority == (uint8_t)TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION) {
+        /* REFUSE rather than fall back. Falling back would take a fresh
+         * snapshot and store bytes nobody authorized, after the token was
+         * already spent -- the exact failure this section closed. */
+        if (!have_transition || !cand || !transition_id)
+            return TPM_BASELINE_BADARG;
+        return tpm_baseline_enroll_headless(nv_index, cand, transition_id);
+    }
+    return tpm_baseline_enroll(nv_index, alg);
+}
+
 tpm_headless_verdict_t tpm_headless_authz_authorize(const uint8_t *blob,
                                                     uint32_t blob_len,
-                                                    uint32_t operation)
+                                                    uint32_t operation,
+                                                    const uint8_t *transition_id)
 {
     struct tpm_headless_authz_inputs in;
     tpm_headless_verdict_t v;
@@ -428,11 +460,11 @@ tpm_headless_verdict_t tpm_headless_authz_authorize(const uint8_t *blob,
 
     /* EVERY LOCAL CHECK RUNS BEFORE THE FIRST TPM TRANSACTION, and that
      * ordering is the point rather than an optimization. The blob is a file an
-     * attacker can write beside the loader, so gathering the device identity,
-     * the PCR snapshot and the counter first would let anyone force a
-     * CreatePrimary, a full PCR snapshot and two NV operations on every boot
-     * with bytes they invented. After this, only a blob genuinely signed by the
-     * installed authority costs the TPM anything at all. */
+     * attacker can write beside the loader, so gathering the device identity
+     * and the counter first would let anyone force a CreatePrimary and two NV
+     * operations on every boot with bytes they invented. After this, only a
+     * blob genuinely signed by the installed authority costs the TPM anything
+     * at all. */
     v = tpm_headless_authz_precheck(in.blob, in.blob_len, in.authority_present,
                                     in.authority_pub);
     if (v != TPM_HEADLESS_OK)
@@ -440,8 +472,18 @@ tpm_headless_verdict_t tpm_headless_authz_authorize(const uint8_t *blob,
 
     if (hl_device_id(in.device_id) == 0)
         in.device_known = 1u;
-    if (hl_pcr_set_digest(in.pcr_set) == 0)
-        in.pcr_set_known = 1u;
+    /* The transition digest comes FROM THE CALLER and is never re-derived
+     * here. Deriving it would mean taking a second tpm_baseline_snapshot, and
+     * the bytes this function authorizes would then be a different snapshot
+     * from the bytes the enrollment writes -- an honestly authorized
+     * enrollment writing content nobody approved. A NULL digest leaves
+     * transition_known clear, which refuses UNKNOWN_STATE. */
+    if (transition_id) {
+        uint32_t k;
+        for (k = 0; k < (uint32_t)TPM_HEADLESS_ID_LEN; k++)
+            in.transition_id[k] = transition_id[k];
+        in.transition_known = 1u;
+    }
     if (hl_counter_read(&counter) == TPM_NV_OK) {
         in.counter = counter;
         in.counter_known = 1u;

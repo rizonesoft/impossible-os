@@ -337,6 +337,9 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 #define BOOT_PAYLOAD_NETWORK_CONFIG    6u
 #define BOOT_PAYLOAD_RANDOM_SEED       7u
 #define BOOT_PAYLOAD_USB_HANDOVER      8u
+/* 9u is BOOT_PAYLOAD_WARM_UPDATE_STATE, defined with the rest of the
+ * warm-update surface further down this header. */
+#define BOOT_PAYLOAD_HEADLESS_AUTHZ    10u
 
 /* BOOT_PAYLOAD_FLAG_* mirror */
 #define BOOT_PAYLOAD_FLAG_VALID        (1u << 0)

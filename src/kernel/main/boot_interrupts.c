@@ -66,6 +66,7 @@
 #include "kernel/tpm_budget.h"
 #include "kernel/tpm_enroll_gate.h"
 #include "kernel/tpm_headless_authz.h"
+#include "kernel/boot_headless_authz.h"
 #include "kernel/boot_confirm.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
@@ -591,6 +592,19 @@ void boot_phase1(void)
             .confirm                 = TPM_CONFIRM_PENDING,
         };
         struct tpm_enroll_gate_result gr;
+        /* The headless candidate and the transition it describes. Declared out
+         * here because the authorization below and the enroll further down
+         * must use the SAME bytes: that identity is the whole point of this
+         * section, so the candidate cannot be a local of either branch.
+         * Untouched on a console boot, where hl_have_transition stays 0 and
+         * the ordinary enroll runs. Roughly 450 bytes of the 16 KiB BSP boot
+         * stack, which is the stack this decision has always run on; the
+         * predecessor copy lives inside tpm_headless_enroll_prepare and does
+         * not outlive it. */
+        struct tpm_baseline hl_cand;
+        uint8_t hl_transition[TPM_BASELINE_DIGEST];
+        int hl_have_transition = 0;
+
         tpm_enroll_gate_evaluate(&gi, &gr);
 
         /* Prompt ONLY when every non-operator condition already held. That is
@@ -628,13 +642,50 @@ void boot_phase1(void)
              * key installed the call returns NO_AUTHORITY without touching the
              * TPM, and with no payload presented it returns ABSENT, which
              * leaves the gate's verdict exactly what it was before this
-             * existed. The payload itself is not carried yet: the
-             * ESP-to-kernel headless-authorization transport is owned by the
-             * headless authorization transport and full-record binding work,
-             * which publishes it as a BOOT_PAYLOAD_HEADLESS_AUTHZ descriptor. */
+             * existed.
+             *
+             * THE CANDIDATE IS BUILT EXACTLY ONCE, here, and the same bytes
+             * are authorized and then written. The authorization used to be
+             * evaluated against a snapshot the authz module took for itself
+             * while the enroll took another, so an honestly authorized
+             * enrollment could write a record nobody had approved -- the
+             * firmware-version hash, the ABI-manifest digest and the Secure
+             * Boot state were never covered by anything. */
+            /* UNAVAILABLE ONLY, matching the gate. A TIMEOUT would spend the
+             * token's one-shot counter on a verdict the gate cannot admit, so
+             * widening this without widening the gate would destroy the
+             * operator's authorization for nothing. Whether the two no-answer
+             * shapes should be treated alike is filed, not decided here. */
             if (gi.confirm == TPM_CONFIRM_UNAVAILABLE) {
+                const uint8_t *hl_blob = (const uint8_t *)0;
+                uint32_t hl_len = boot_headless_authz_take(&hl_blob);
+                uint32_t hl_op = (uint32_t)TPM_HEADLESS_OP_ENROLL_BASELINE;
+                const uint8_t *hl_tid = (const uint8_t *)0;
+
+                /* ONE call decides everything this boot needs and owns the
+                 * ORDERING: the local signature check runs first, and the PCR
+                 * snapshot, the predecessor read and the transition derivation
+                 * happen only if it passes. That ordering lives in
+                 * tpm_headless_enroll_prepare rather than here so a fake-TIS
+                 * test can assert an EMPTY TPM transcript for a refused token;
+                 * inlined at this call site it was unpinnable, because Phase 1
+                 * cannot be driven from a unit test.
+                 *
+                 * On any refusal hl_tid stays NULL, and authorize below reports
+                 * the same verdict -- so an ordinary machine with no payload
+                 * and no authority boots exactly as it did before this
+                 * transport existed, having spent no TPM transactions. */
+                if (tpm_headless_enroll_prepare(hl_blob, hl_len,
+                                                TPM_NV_INDEX_BASELINE,
+                                                TPM_ALG_SHA256,
+                                                &hl_cand, hl_transition,
+                                                &hl_op) == TPM_HEADLESS_OK) {
+                    hl_tid = hl_transition;
+                    hl_have_transition = 1;
+                }
+
                 gi.headless_authz = (uint8_t)tpm_headless_authz_authorize(
-                    NULL, 0u, (uint32_t)TPM_HEADLESS_OP_ENROLL_BASELINE);
+                    hl_blob, hl_len, hl_op, hl_tid);
                 if (gi.headless_authz != (uint8_t)TPM_HEADLESS_ABSENT) {
                     klog(LOG_WARN, "TPM",
                          "Headless enrollment authorization: %s",
@@ -645,8 +696,17 @@ void boot_phase1(void)
         }
 
         if (gr.admit) {
+            /* THE HEADLESS PATH WRITES THE BYTES IT AUTHORIZED. The choice
+             * lives in tpm_headless_enroll_dispatch rather than here so a test
+             * can pin it: inlined at this call site, swapping it back to the
+             * ordinary snapshot path left every test green while spending the
+             * token and storing a record nobody authorized. */
             tpm_baseline_status_t bs =
-                tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
+                tpm_headless_enroll_dispatch((uint8_t)gr.authority,
+                                             hl_have_transition,
+                                             TPM_NV_INDEX_BASELINE,
+                                             TPM_ALG_SHA256,
+                                             &hl_cand, hl_transition);
             klog(LOG_WARN, "TPM",
                  "Baseline enroll (authority %s): status %d",
                  tpm_enroll_authority_label(gr.authority), (uint64_t)bs);

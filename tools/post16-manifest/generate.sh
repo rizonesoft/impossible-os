@@ -160,6 +160,8 @@ POST16_REQUIRED_NAMES=(
     POST16_BL_KIND_VALIDATE_OK
     POST16_BL_AB_SELECT
     POST16_BL_AB_SELECT_OK
+    POST16_BL_HL_AUTHZ
+    POST16_BL_HL_AUTHZ_OK
 )
 
 # Optional set: POST16 codes that ARE emitted by the bootloader but are

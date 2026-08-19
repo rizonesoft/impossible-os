@@ -230,6 +230,19 @@ void tpm_enroll_gate_evaluate(const struct tpm_enroll_gate_inputs *in,
                         TPM_ENROLL_REFUSE_NONE);
             return;
         case TPM_CONFIRM_TIMEOUT:
+            /* A CONSOLE EXISTS AND NOBODY ANSWERED, which is NOT the same as
+             * no console at all -- and the signed token is deliberately not
+             * consulted here. That is a deliberate decision made with the
+             * headless enrollment escape hatch, with its own test ("a token
+             * cannot override a console timeout"), not an oversight.
+             *
+             * It is also the reason the escape hatch is unreachable on a
+             * headless server that HAS an 8042: boot_confirm.c calls a console
+             * present whenever port 0x64 reads anything but 0xFF, so such a
+             * machine times out rather than reporting UNAVAILABLE. Whether the
+             * two no-answer shapes should be treated alike is an operator
+             * decision about the enrollment trust model, filed rather than
+             * taken -- see the headless authority lifecycle work. */
             gate_result(out, 0, 0, TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY,
                         TPM_ENROLL_REFUSE_CONFIRM_TIMEOUT);
             return;

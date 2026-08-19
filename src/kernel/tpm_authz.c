@@ -537,6 +537,48 @@ struct authz_write_ctx {
     tpm_nv_status_t st;
 };
 
+
+/* ---- authorized-write scratch ------------------------------------------------
+ *
+ * The four command/response/parameter buffers the authorized write needs are
+ * TPM_NV_MAX_DATA-derived and total 2704 bytes; the authorized-session helper
+ * adds another 1280. As stack locals the chain measured 4968 bytes
+ * (llvm-objdump prologues: tpm_authz_write_record 312 + authz_write_seq 3112 +
+ * authz_open_authorized_session 1544), which is about a third of the 16 KiB BSP
+ * boot stack and about two thirds of an 8 KiB TASK_STACK_SIZE thread stack,
+ * with a guard page below. That was tolerable only while nothing outside the
+ * tests called the authorized write; it stops being tolerable the moment a
+ * production caller exists.
+ *
+ * SMP SAFETY IS THE SEQUENCE GATE, NOT A LOCK, and that is deliberate. Both
+ * users run strictly inside a tpm2_seq_run callback, and tpm2_seq_run holds a
+ * global busy gate for the whole callback and waits for every in-flight
+ * submission before releasing it (src/kernel/tpm_transport.c, tpm2_seq_run). A
+ * second concurrent authorized write is therefore refused with TPM_NV_BUSY
+ * before it can reach this scratch, rather than interleaving with the first --
+ * the same argument the module banner already makes for the transition itself
+ * (the phase contract in include/kernel/tpm_authz.h). A spinlock would be the
+ * wrong instrument and is forbidden by the kernel gates: this path blocks on
+ * TPM I/O for milliseconds.
+ *
+ * The two users get SEPARATE fields rather than sharing one buffer, because
+ * authz_write_seq calls authz_open_authorized_session with its own cmd/rsp
+ * still live; aliasing them would corrupt the outer command mid-sequence.
+ *
+ * Not ISR-reachable: the TPM transport is Phase-1 and above only.
+ */
+struct authz_write_scratch {
+    /* authz_write_seq */
+    uint8_t cmd[1024];
+    uint8_t rsp[TPM_NV_MAX_RSP];
+    uint8_t params[16u + TPM_NV_MAX_DATA];
+    uint8_t readback[TPM_NV_MAX_DATA];
+    /* authz_open_authorized_session */
+    uint8_t sess_cmd[768];
+    uint8_t sess_rsp[512];
+};
+static struct authz_write_scratch s_authz_scratch;
+
 /* Open a policy session, satisfy PolicyCommandCode + PolicyCpHash + PolicyNV,
  * then PolicyAuthorize it with the authority's ticket. On success *out_session
  * is a session the TPM will accept for exactly the command the cpHash names.
@@ -553,7 +595,8 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
                                                      uint16_t operand_len,
                                                      uint32_t *out_session)
 {
-    uint8_t cmd[768], rsp[512], nonce[AUTHZ_NONCE_LEN];
+    struct authz_write_scratch *sc = &s_authz_scratch;
+    uint8_t nonce[AUTHZ_NONCE_LEN];
     uint8_t ticket[TPM2_TK_VERIFIED_MAX_LEN];
     uint8_t ahash[SHA256_DIGEST_LEN];
     uint32_t ticket_len = 0, key_handle = 0;
@@ -568,19 +611,19 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
     /* Load the authority's public area so the TPM can check its signature. The
      * hierarchy is named because it selects the proof value inside the ticket;
      * an unhierarchied load cannot produce one PolicyAuthorize will accept. */
-    n = tpm2_build_load_external(cmd, sizeof cmd, s_authority.public_area,
+    n = tpm2_build_load_external(sc->sess_cmd, sizeof sc->sess_cmd, s_authority.public_area,
                                  s_authority.public_len, TPM_RH_OWNER);
     if (n == 0u)
         return TPM_NV_BADARG;
     rc = TPM_NV_RC_UNSET;
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0) {
         /* LoadExternal allocates a TRANSIENT OBJECT. The parse-failure branch
          * below recovers and flushes it; this branch has no reply to recover
          * from, so all it can do is classify and say so. */
         (void)authz_alloc_failure_note(rc, "authority key load");
         return st;
     }
-    st = tpm2_parse_load_external(rsp, rlen, &key_handle,
+    st = tpm2_parse_load_external(sc->sess_rsp, rlen, &key_handle,
                                   key_name_tpm, (uint16_t)sizeof key_name_tpm,
                                   &key_name_tpm_len);
     if (st != TPM_NV_OK) {
@@ -589,7 +632,7 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
          * returning here without flushing holds a transient slot until reboot,
          * and repeated failures exhaust the pool and disable authorization
          * entirely. */
-        key_handle = tpm2_rsp_object_handle(rsp, rlen);
+        key_handle = tpm2_rsp_object_handle(sc->sess_rsp, rlen);
         if (key_handle == 0u)
             authz_unrecoverable_handle("authority key object");
         goto flush_key;
@@ -620,21 +663,21 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
     }
 
     /* Turn the detached authority signature into a ticket. */
-    n = tpm2_build_verify_signature(cmd, sizeof cmd, key_handle,
+    n = tpm2_build_verify_signature(sc->sess_cmd, sizeof sc->sess_cmd, key_handle,
                                     ahash, g->signature, g->sig_len);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_key; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0)
         goto flush_key;
-    st = tpm2_parse_verify_signature(rsp, rlen, ticket, (uint32_t)sizeof ticket,
+    st = tpm2_parse_verify_signature(sc->sess_rsp, rlen, ticket, (uint32_t)sizeof ticket,
                                      &ticket_len);
     if (st != TPM_NV_OK)
         goto flush_key;
 
-    n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY,
+    n = tpm2_build_start_auth_session(sc->sess_cmd, sizeof sc->sess_cmd, TPM2_SE_POLICY,
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_key; }
     rc = TPM_NV_RC_UNSET;
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0) {
         /* flush_key releases the object loaded ABOVE; it says nothing about the
          * session THIS command may have allocated, which is the gap the note
          * closes. Both matter: the object is nameable and gets flushed, the
@@ -642,9 +685,9 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
         (void)authz_alloc_failure_note(rc, "policy session");
         goto flush_key;
     }
-    session = tpm2_parse_start_auth_session(rsp, rlen);
+    session = tpm2_parse_start_auth_session(sc->sess_rsp, rlen);
     if (session == 0u) {
-        uint32_t leaked = tpm2_rsp_session_handle(rsp, rlen);
+        uint32_t leaked = tpm2_rsp_session_handle(sc->sess_rsp, rlen);
         if (leaked != 0u)
             tpm_nv_flush_handle(seq, leaked);
         else
@@ -653,32 +696,32 @@ static tpm_nv_status_t authz_open_authorized_session(tpm2_seq_t seq,
         goto flush_key;
     }
 
-    n = tpm2_build_policy_command_code(cmd, sizeof cmd, session, command_code);
+    n = tpm2_build_policy_command_code(sc->sess_cmd, sizeof sc->sess_cmd, session, command_code);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_all; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0)
         goto flush_all;
 
-    n = tpm2_build_policy_cphash(cmd, sizeof cmd, session, cphash);
+    n = tpm2_build_policy_cphash(sc->sess_cmd, sizeof sc->sess_cmd, session, cphash);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_all; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0)
         goto flush_all;
 
     /* PolicyNV pins the generation the grant was issued against. Without it a
      * grant for one transition would satisfy the policy at any counter value,
      * and an old grant could be replayed after the counter moved on. */
-    n = tpm2_build_policy_nv(cmd, sizeof cmd, c->counter_index, session,
+    n = tpm2_build_policy_nv(sc->sess_cmd, sizeof sc->sess_cmd, c->counter_index, session,
                              operand, operand_len, 0u, TPM2_EO_EQ);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_all; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0)
         goto flush_all;
 
-    n = tpm2_build_policy_authorize(cmd, sizeof cmd, session,
+    n = tpm2_build_policy_authorize(sc->sess_cmd, sizeof sc->sess_cmd, session,
                                     g->approved_policy, g->approved_len,
                                     s_authority.policy_ref, s_authority.policy_ref_len,
                                     c->key_name, c->key_name_len,
                                     ticket, ticket_len);
     if (n == 0u) { st = TPM_NV_BADARG; goto flush_all; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0)
+    if (tpm_session_cmd_exec_seq(seq, sc->sess_cmd, n, sc->sess_rsp, sizeof sc->sess_rsp, &rlen, &st, &rc) != 0)
         goto flush_all;
 
     /* The loaded key has done its job the moment the ticket is consumed, so it
@@ -699,41 +742,32 @@ flush_key:
 static int authz_write_seq(tpm2_seq_t seq, void *vctx)
 {
     struct authz_write_ctx *c = (struct authz_write_ctx *)vctx;
-    /* MEASURED FRAME, so nobody has to re-derive it: this function is 3112
-     * bytes (llvm-objdump of the prologue), and the deepest authorized-write
-     * chain is tpm_authz_write_record 312 + this 3112 + the authorized-session
-     * helper 1544 = 4968 bytes before the transport frames.
+    struct authz_write_scratch *sc = &s_authz_scratch;
+    /* THE LARGE BUFFERS ARE OFF THE STACK, in s_authz_scratch above. The chain
+     * measured 4968 bytes of frames while they were locals (llvm-objdump
+     * prologues: tpm_authz_write_record 312 + this 3112 +
+     * authz_open_authorized_session 1544) -- about a third of the 16 KiB BSP
+     * boot stack, and about two thirds of an 8 KiB TASK_STACK_SIZE thread
+     * stack with a guard page below. That was recorded as LATENT while nothing
+     * outside the tests called the authorized write; the headless enrollment
+     * transport is the caller that made it real, so the buffers moved.
      *
-     * THE FIGURE IS LATENT, not a measurement of a shipping path: there is no
-     * production caller of the authorized write at all today. The boot's only
-     * enroll caller uses the UNAUTHENTICATED writer, and nothing outside the
-     * tests reaches tpm_baseline_enroll_bound, tpm_ab_floor_advance or
-     * tpm_authz_write_record. It is recorded now because the numbers are cheap
-     * to take while the code is in hand and expensive to reconstruct later: a
-     * Phase-1 caller would run on the 16 KiB BSP boot stack
-     * (BSP_BOOT_STACK_SIZE, boot_hw.c) and use about a third, while a
-     * KERNEL-THREAD caller gets TASK_STACK_SIZE (8 KiB) and the same chain is
-     * about two thirds. Whichever arrives first, its stack is assessed then,
-     * and the buffers move off the stack before a thread-context caller is
-     * wired.
+     * The three TPM_NV_MAX_DATA-derived buffers (rsp, params, readback) grow
+     * together if the record contract grows; cmd is fixed at 1024 and does
+     * NOT, so a growth would leave the command buffer behind rather than
+     * enlarging it -- the opposite failure from the stack one, and a second
+     * thing to settle if the contract ever grows.
      *
-     * rsp is sized against the RECORD SIZE THIS FUNCTION ADVERTISES, not
-     * against the two record shapes that happen to be compiled in today.
-     * tpm_authz_write_record accepts any record_len up to TPM_NV_MAX_DATA, and
-     * the readback below is an NV_Read whose response is
-     * header(10) + parameterSize(4) + TPM2B_MAX_NV_BUFFER(2 + record_len) +
-     * a full one-session auth area (~69). At the maximum that is 528 bytes
-     * before the auth area, so the previous 512 could not hold it: a manifest
-     * grown past ~437 bytes would have surfaced as an unexplained transport
-     * error rather than a named refusal. TPM_NV_MAX_DATA + 128 is the same
-     * arithmetic the NV layer's own policy-op helper uses for this shape. */
-    uint8_t cmd[1024], rsp[TPM_NV_MAX_RSP];
+     * rsp is sized against the record size this function ADVERTISES, not the
+     * two record shapes compiled in today: tpm_authz_write_record accepts any
+     * record_len up to TPM_NV_MAX_DATA, and the readback is an NV_Read whose
+     * response is header(10) + parameterSize(4) + TPM2B_MAX_NV_BUFFER(2 +
+     * record_len) + a full one-session auth area (~69) -- 528 bytes at the
+     * maximum, which is why TPM_NV_MAX_RSP and not 512. */
     uint8_t names[2u * (2u + SHA256_DIGEST_LEN)];
     uint8_t cnames[2u * (2u + SHA256_DIGEST_LEN)];
-    uint8_t params[16u + TPM_NV_MAX_DATA];
     uint8_t cphash[SHA256_DIGEST_LEN];
     uint8_t operand[8];
-    uint8_t readback[TPM_NV_MAX_DATA];
     struct tpm_nv_public pub;
     uint32_t session = 0, n, rlen = 0, rc = 0;
     uint32_t names_len, params_len, cnames_len;
@@ -790,14 +824,14 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
     names_len *= 2u;
 
     params_len = 0u;
-    tpm2_be16_put(params, c->record_len); params_len = 2u;
+    tpm2_be16_put(sc->params, c->record_len); params_len = 2u;
     for (i = 0; i < c->record_len; i++)
-        params[params_len + i] = c->record[i];
+        sc->params[params_len + i] = c->record[i];
     params_len += c->record_len;
-    tpm2_be16_put(params + params_len, 0u); params_len += 2u;  /* offset */
+    tpm2_be16_put(sc->params + params_len, 0u); params_len += 2u;  /* offset */
 
     st = tpm2_cphash_compute(TPM2_CC_NV_WRITE, names, names_len,
-                             params, params_len, cphash);
+                             sc->params, params_len, cphash);
     if (st != TPM_NV_OK) { c->st = st; return 0; }
 
     /* The PolicyNV operand is the counter value the grant was issued against,
@@ -810,31 +844,31 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
     if (st != TPM_NV_OK) { c->st = st; return 0; }
 
     /* 3. The write itself, under the session the authority authorized. */
-    n = tpm2_build_nv_write(cmd, sizeof cmd, c->nv_index, c->nv_index, session,
+    n = tpm2_build_nv_write(sc->cmd, sizeof sc->cmd, c->nv_index, c->nv_index, session,
                             0u, c->record, c->record_len);
     if (n == 0u) { c->st = TPM_NV_BADARG; goto flush; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+    if (tpm_session_cmd_exec_seq(seq, sc->cmd, n, sc->rsp, sizeof sc->rsp, &rlen, &st, &rc) != 0) {
         c->st = st;
         goto flush;
     }
 
     /* The policy session is consumed by the command it authorized, so it is
-     * flushed before the readback rather than reused. */
+     * flushed before the sc->readback rather than reused. */
     tpm_nv_flush_handle(seq, session);
     session = 0u;
 
     /* 4. Read the bytes back before committing to them. A write the TPM
      *    reported as successful but stored differently would otherwise be
      *    committed by the increment and only discovered on the next boot. */
-    n = tpm2_build_nv_read(cmd, sizeof cmd, TPM_RH_OWNER, c->nv_index, TPM_RS_PW,
+    n = tpm2_build_nv_read(sc->cmd, sizeof sc->cmd, TPM_RH_OWNER, c->nv_index, TPM_RS_PW,
                            c->record_len, 0u);
     if (n == 0u) { c->st = TPM_NV_BADARG; return 0; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+    if (tpm_session_cmd_exec_seq(seq, sc->cmd, n, sc->rsp, sizeof sc->rsp, &rlen, &st, &rc) != 0) {
         c->st = st;
         return 0;
     }
-    rb = tpm2_parse_nv_read(rsp, rlen, readback, (uint32_t)sizeof readback);
-    if (rb != (int)c->record_len || memcmp(readback, c->record, c->record_len) != 0) {
+    rb = tpm2_parse_nv_read(sc->rsp, rlen, sc->readback, (uint32_t)sizeof sc->readback);
+    if (rb != (int)c->record_len || memcmp(sc->readback, c->record, c->record_len) != 0) {
         c->st = TPM_NV_MISMATCH;
         return 0;
     }
@@ -873,10 +907,10 @@ static int authz_write_seq(tpm2_seq_t seq, void *vctx)
                                        cphash, operand, 8u, &session);
     if (st != TPM_NV_OK) { c->st = st; return 0; }
 
-    n = tpm2_build_nv_increment(cmd, sizeof cmd, c->counter_index,
+    n = tpm2_build_nv_increment(sc->cmd, sizeof sc->cmd, c->counter_index,
                                 c->counter_index, session);
     if (n == 0u) { c->st = TPM_NV_BADARG; goto flush; }
-    if (tpm_session_cmd_exec_seq(seq, cmd, n, rsp, sizeof rsp, &rlen, &st, &rc) != 0) {
+    if (tpm_session_cmd_exec_seq(seq, sc->cmd, n, sc->rsp, sizeof sc->rsp, &rlen, &st, &rc) != 0) {
         c->st = st;
         goto flush;
     }
