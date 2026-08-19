@@ -506,6 +506,17 @@ typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 #define EFI_LOADED_IMAGE_PROTOCOL_GUID \
     { 0x5B1B31A1, 0x9562, 0x11d2, { 0x8E, 0x3F, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
 
+/* The COMPLETE device path of the loaded image, which is a DIFFERENT object
+ * from EFI_LOADED_IMAGE_PROTOCOL.FilePath below: UEFI defines FilePath as only
+ * the portion specific to DeviceHandle, so it is a relative suffix. The TCG
+ * event log records the full path, so comparing FilePath against an event's
+ * device path compares a suffix with a whole and matches nothing. Anything
+ * identifying this image against a firmware-published path must use this
+ * protocol. Installed on the image handle by the boot manager
+ * (UEFI 2.10 spec 9.2, EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL). */
+#define EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL_GUID \
+    { 0xbc62157e, 0x3e33, 0x4fec, { 0x99, 0x20, 0x2d, 0x3b, 0x36, 0xd7, 0x50, 0xdf } }
+
 typedef struct {
     UINT32            Revision;
     EFI_HANDLE        ParentHandle;

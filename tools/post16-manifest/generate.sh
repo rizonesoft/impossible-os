@@ -152,6 +152,7 @@ POST16_REQUIRED_NAMES=(
     POST16_BL_BOOT_VAR_EXT_OK
     POST16_BL_SELF_MEASURE
     POST16_BL_SELF_MEASURE_OK
+    POST16_BL_PCR4_CORRELATE
     POST16_BL_BOOT_POLICY
     POST16_BL_BOOT_POLICY_DECIDE
     POST16_BL_BOOT_POLICY_OK
@@ -171,6 +172,7 @@ POST16_REQUIRED_NAMES=(
 # Every entry needs a short reason so future maintainers know WHY it's
 # optional rather than required. Format: NAME=reason
 POST16_OPTIONAL_REASONS=(
+    "POST16_BL_PCR4_AGREE=scenario-dependent: the PCR 4 correlation entry code is unconditional, but AGREE needs a real TPM whose event log carries this image's own load event, which no emulated dev-host boot provides"
     "POST16_BL_HL_AUTHZ=scenario-dependent: headless-authorization publish is gated on boot.conf tpm_enroll, so an ordinary boot emits nothing (the marker itself costs polled-UART time)"
     "POST16_BL_HL_AUTHZ_OK=scenario-dependent: paired with POST16_BL_HL_AUTHZ, emitted only on a boot that requested enrollment"
     "POST16_BL_FALLBACK=scenario-dependent: boot-device fallback chain"

@@ -68,7 +68,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  28   | Crash-consistent record pairing, floor APIs, read budget      | §27, §17, §6                                              |  [x]   |
 | 💎  |  29   | Authorized-record hardening                                   | §27                                                       |  [x]   |
 | 💎  |  30   | Headless authorization transport + full-record binding        | §23, §6, §27                                              |  [x]   |
-| 💎  |  31   | Loader digest correlation with the firmware PCR 4 measurement | §1, §20, §25                                              |  [ ]   |
+| 💎  |  31   | Loader digest correlation with the firmware PCR 4 measurement | §1, §20, §25                                              |  [/]   |
 | 💎  |  32   | Authorized-record fake-TIS coverage residue                   | §29, §27, §28                                             |  [ ]   |
 | 💎  |  33   | PCR-layer contention loses its retry                          | §29, §25                                                  |  [ ]   |
 | 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [ ]   |
@@ -1341,17 +1341,35 @@ Split out of §25 on 2026-08-19, by §25's design review, which refused to let �
 
 The gap being closed is a TOCTOU swap. Firmware measured the executed image during `LoadImage` as an `EV_EFI_BOOT_SERVICES_APPLICATION` event into PCR 4 (TCG PC Client Platform Firmware Profile v1.06r52), pre-relocation and Authenticode-hashed. The loader separately hashes the ESP file it reopens. Replace the file between those two moments, or remount so the same path resolves elsewhere, and both digests are internally consistent while describing different bytes. An uncorrelated second hash of an already-measured file is the weak form; every real precedent measures the NEXT stage instead, and shim deliberately skips re-measuring a UKI firmware already measured.
 
-- [ ] Compute the Authenticode PE hash of the loader image the way firmware does, excluding the checksum field, the certificate-table directory entry and the attribute-certificate table, rather than the flat file hash the loader has today.
-  - A flat SHA-256 over the file can never equal the firmware's value, so this is a prerequisite rather than a comparison detail. The exclusion ranges are the whole difficulty and are specified by the PE/COFF Authenticode signature format.
-- [ ] Locate the loader's own `EV_EFI_BOOT_SERVICES_APPLICATION` event in PCR 4 and compare its digest against the computed PE hash. -> XREF: 01-boot-platform/TODO-13 §1 (item: "Validate the record chain")
-  - Needs a complete parse rather than a scan: the event carries a `UEFI_IMAGE_LOAD_EVENT` payload whose device path identifies WHICH image the entry describes, and picking the wrong entry on a machine that loaded several boot applications produces a confident wrong answer.
-- [ ] Define and implement what happens when the two DISAGREE and, separately, when there is nothing to compare against.
-  - Disagreement is a real finding and must reach the operator as one. Absence is NOT: a machine with no TPM or no event log has nothing to correlate, and the honest result there is a weaker claim rather than a manufactured mismatch. Collapsing the two is the failure this item exists to prevent.
+- [x] Compute the Authenticode PE hash of the loader image the way firmware does, excluding the checksum field, the certificate-table directory entry and the attribute-certificate table, rather than the flat file hash the loader has today.
+  - `peac_hash()` in `include/boot/pe_authenticode.h`, transcribing the Authenticode spec's numbered steps; `self_measure_run()` derives it and the flat digest from ONE snapshot, so the two cannot describe different bytes.
+  - Cross-checked against `tools/boot-header-tests/authenticode_oracle.py`, an independent transcription, on a synthetic fixture AND on the real staged `BOOTX64.EFI` at every smoke run.
+- [x] Locate the loader's own `EV_EFI_BOOT_SERVICES_APPLICATION` event in PCR 4 and compare its digest against the computed PE hash. -> XREF: 01-boot-platform/TODO-13 §1 (item: "Validate the record chain")
+  - `include/boot/tcg_evlog.h` validates the SpecID payload accounts for itself, rejects duplicate banks, and requires every record to carry one digest per advertised bank before any match counts.
+  - Identity is the COMPLETE `EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL` path, not `LoadedImage.FilePath` (a relative suffix); two candidates report AMBIGUOUS, and the digest is compared only after one entry is identified.
+- [x] Define and implement what happens when the two DISAGREE and, separately, when there is nothing to compare against.
+  - AGREE, DISAGREE and the absence outcomes each print a distinct named token; absence never renders as a mismatch. Verified on the 4-leg matrix: TPM-less QEMU reports `result=no-event-log`.
 - [ ] Carry the digest, the ESP path hashed and an anti-replay value off the serial line, into a surface a remote verifier can read. -> XREF: 01-boot-platform/TODO-13 §19 (item: "Design an authorized, crash-safe resize")
+  - BLOCKED, not merely unstarted: §19 is parked on five independently-verified blockers, so there is no record to grow. This section therefore ships a LOCAL DIAGNOSTIC and does not claim the TOCTOU is closed.
   - Three separate needs, all invisible today because the measurement exists only as UART text: the digest never reaches `TPM2_PCR_Extend` or the event log at all, A/B and alternate boot entries make "which file was hashed" a real question, and without a nonce or monotonic counter one boot's line replays as another's.
-- [ ] Commit: `"tpm: correlate the loader digest with the firmware PCR 4 measurement"`
+- [ ] Bind the correlation to a PCR REPLAY, so AGREE means the TPM confirms the measurement rather than the log merely claiming it. -> XREF: 01-boot-platform/TODO-13 §1 (item: "Validate the record chain")
+  - `tcg_evlog.h` proves the log is internally well-formed, never that it is true; only replaying it into the PCRs and comparing against the TPM's own values does that. The header and the loader both state that limit rather than implying the stronger claim.
+- [ ] Size the acquired event log from the log's OWN advertised bank table, so a conforming platform carrying an unfamiliar bank is not discarded wholesale.
+  - `tpm_bl_alg_len()` (`src/boot/uefi/bootx64.c:9444`) knows only SHA-1/256/384/512 and returns 0 otherwise, so `tpm_compute_log_size()` returns 0 and `retrieve_tpm_event_log()` drops the entire log. A machine with SHA-256 plus SM3 or SHA-3 reports `no-event-log` though the SHA-256 measurement is present and usable.
+  - Filed rather than fixed here: this is the acquisition path deciding whether ANY log is copied, and the dev host has no TPM to exercise a change against, so a blind rewrite would be an unverified boot-path edit.
+- [x] Commit: `"tpm: correlate the loader digest with the firmware PCR 4 measurement"`
 
 **Test checkpoint:** the computed Authenticode PE hash of the staged loader equals the value an independent host-side implementation produces for the same binary, which a flat file hash cannot satisfy. On a boot whose event log contains the loader's own `EV_EFI_BOOT_SERVICES_APPLICATION` entry, the correlation reports AGREE, and a deliberately altered digest reports DISAGREE, each beside the other as a control. A boot with no TPM or no event log reports the weaker claim by name and never reports a mismatch. Scope: this section owns the PE hasher, the event correlation and the reporting of its outcome. Scoping the file digest's CLAIM is §25 and already shipped; producing the file digest is §20; the event-log parse it consumes is §1. Platforms: kernel unit suites for the PE hasher and the correlation logic; a live end-to-end correlation needs firmware that measures into PCR 4 and is operator-gated (no `swtpm` on the dev host).
+
+> **Test runner:** `bash tools/boot-header-tests/run.sh` | expected: `54/54 checks passed, 0 failed`. Host-side by necessity -- the in-kernel suite is out of image room (measured 2026-08-19: `__kernel_end` at `0x7fe000` leaves 8192 bytes below the user base, against an 8664-byte suite), the same reason `tools/memmap-check` runs there. Wired into `scripts/test-tooling.sh`; the end-to-end digest oracle runs in `scripts/test-smoke.sh` on every smoke leg.
+
+> **Notes:**
+> - Shipped the Authenticode PE hasher (`include/boot/pe_authenticode.h`), a strict TCG event-log walker (`include/boot/tcg_evlog.h`), and `correlate_pcr4_measurement()` in the loader, which reports AGREE / DISAGREE / a named absence on serial pre-ExitBootServices.
+> - `self_measure_run()` now reads the loader file ONCE into a snapshot and derives both the flat and the Authenticode digest from it, so the two can never describe different bytes.
+> - Identity uses the complete `EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL` path (new GUID in `efi.h`, verified against EDK2 by `tools/uefi-guid-check`); `LoadedImage.FilePath` is a relative suffix and would have matched nothing.
+> - Downstream: the loader's serial line gains `[BOOT] self-measure-pe:`, pinned by an anchored schema and cross-checked against an independent oracle on the real staged binary; POST16 `0xB0A8` joins the smoke required set.
+> - Canonical doc: this section; the trust boundary is stated in both new headers' banners.
+> - Scope boundary: a LOCAL DIAGNOSTIC only. The verdict is not extended into a PCR, not bound to a nonce, and not readable by a remote verifier (that is §19, parked); and the log is validated for internal consistency, NOT authenticated by PCR replay -- so AGREE means the log claims firmware measured these bytes, not that the TPM confirms it.
 
 ---
 
@@ -1462,33 +1480,35 @@ All three items were raised by §23's review rounds and filed into §30 when §2
 
 ## OS Comparison
 
-| ⭐  | Feature                                | Windows                             | Linux                                        | Impossible OS                                                                    |
-| --- | -------------------------------------- | ----------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------- |
-| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB                     | tpm_tis/tpm_crb drivers                      | ✅ §2 burst-chunked TIS + CRB                                                    |
-| 💎  | Secure Boot PCR integration            | Measured Boot                       | IMA/TPM tools                                | ⚠️ §5 structural SB var reconcile                                                |
-| 💎  | PCR replay                             | internal/Defender                   | tpm2-tools                                   | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                   |
-| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker                  | tpm2_nvdefine + kernel RM                    | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                                  |
-| 💎  | NV counter / write-lock primitives     | TBS NV counters                     | tpm2_nvincrement / nvwritelock               | ✅ §17 TPMA_NV + TPM_NT model, Increment/WriteLock, bounded command budget       |
-| 💎  | Authorized anti-rollback record writes | Signed policy over TBS NV           | PolicyAuthorize + tpm2_policyauthorize       | ✅ §27 PolicyAuthorize + cpHash + PolicyNV, write-then-increment commit          |
-| 💎  | Abandoned TPM handle accounting        | TBS resource manager virtualizes    | kernel RM flushes on fd close                | ✅ §29 abandoned allocations classified and reported                             |
-| 💎  | Operator-facing recovery diagnosis     | WBCL event log, no repair guidance  | none (IMA reports a hash mismatch only)      | ✅ §29 per-status repair text + pairing DIRECTION                                |
-| 💎  | Crash-consistent anchor pairing        | WBCL/TBS internal                   | none (IMA has no commit counter)             | ✅ §28 directional CURRENT/UNCOMMITTED/TORN classifier + lost-anchor detection   |
-| 💎  | Aggregate boot deadline for NV reads   | none (per-call TBS timeouts)        | none (per-command tpm2 timeouts)             | ✅ §28 one armed-and-disarmed Phase-1 ledger, refuses before an unfundable seq   |
-| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline              | IMA + systemd-pcrlock                        | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation               |
-| 💎  | Kernel-ABI identity bound in baseline  | Boot config / WBCL binding          | IMA template hash binding                    | ✅ §16 build-time `.bootproto` sha256, fail-closed, symmetric presence gate      |
-| 💎  | Sealed secrets                         | BitLocker                           | systemd-cryptenroll                          | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff         |
-| ⭐  | Boot attestation report (JSON)         | Device Health Attestation           | Keylime AK quote JSON                        | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending    |
-| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation           | Keylime AK quote                             | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                         |
-| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal              | systemd-pcrlock CEL                          | ✅ §12 event-centric table + derived masks                                       |
-| ⭐  | Baseline enrollment authority          | TPM PPI physical presence           | root + interactive prompt                    | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value          |
-| ⭐  | Headless enrollment authority          | TPM PPI (needs physical presence)   | systemd-cryptenroll (needs an operator)      | ✅ §23 one-shot Ed25519 token; §30 ESP transport + whole-record transition bound |
-| 💎  | Boot-integrity report publication      | Measured Boot / WBCL state          | sysfs PCRs + IMA runtime                     | ✅ §18 immutable snapshot swap, copy-out readers, per-PCR detail with verdict    |
-| 💎  | Loader binary identity                 | Firmware PCR-4 Authenticode         | shim/GRUB self-measure to PCR 4/9            | ⚠️ §20 on-disk file digest on serial; PCR extend + event-log correlation are §31 |
-| 💎  | Mismatch attribution (which field)     | WBCL/TCG-log decode names it        | systemd-pcrlock is per-component             | ✅ §25 eleven named first-mismatch causes + culprit PCR index, all PCRs listed   |
-| ⭐  | Scoped integrity claim (what it means) | "Boot integrity" with no scope text | none (IMA/pcrlock leave scope to the reader) | ✅ §25 "baseline-verified" + a per-status scope sentence; no bare "verified"     |
-| 💎  | NV index identity + delete authority   | TBS index handle trust              | tpm2_nvreadpublic name; policy-delete        | ✅ §21 Name verified before any content read; POLICY_DELETE platform-only        |
-| 💎  | Pre-kernel NV floor read (loader)      | no A/B slots; NV via TBS post-boot  | no NV-gated slot choice in shim/systemd-boot | ⚠️ §22 vtable corrected + `SubmitCommand` typed; read parked on index auth       |
-| 💎  | Bounded multi-command budget (seal/AK) | per-call TBS timeouts               | per-command tpm2-tools timeouts              | ✅ §24 one sequence per operation, verified teardown                             |
+| ⭐  | Feature                                       | Windows                             | Linux                                             | Impossible OS                                                                    |
+| --- | --------------------------------------------- | ----------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 💎  | TPM2 command transport (TIS/CRB)              | tpm.sys TIS/CRB                     | tpm_tis/tpm_crb drivers                           | ✅ §2 burst-chunked TIS + CRB                                                    |
+| 💎  | Secure Boot PCR integration                   | Measured Boot                       | IMA/TPM tools                                     | ⚠️ §5 structural SB var reconcile                                                |
+| 💎  | PCR replay                                    | internal/Defender                   | tpm2-tools                                        | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                   |
+| 💎  | Loader digest bound to the PCR 4 measurement  | Measured Boot (internal)            | shim skips re-measuring an already-measured image | ⚠️ §31 Authenticode PE hash + event-log correlation, local diagnostic only       |
+| 💎  | Boot-app event identified by full device path | internal                            | ❌ none in-tree                                   | ✅ §31 exactly-one-candidate match; two report AMBIGUOUS rather than the first   |
+| 💎  | TPM NV index storage (PCR-sealed)             | TBS NV / BitLocker                  | tpm2_nvdefine + kernel RM                         | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                                  |
+| 💎  | NV counter / write-lock primitives            | TBS NV counters                     | tpm2_nvincrement / nvwritelock                    | ✅ §17 TPMA_NV + TPM_NT model, Increment/WriteLock, bounded command budget       |
+| 💎  | Authorized anti-rollback record writes        | Signed policy over TBS NV           | PolicyAuthorize + tpm2_policyauthorize            | ✅ §27 PolicyAuthorize + cpHash + PolicyNV, write-then-increment commit          |
+| 💎  | Abandoned TPM handle accounting               | TBS resource manager virtualizes    | kernel RM flushes on fd close                     | ✅ §29 abandoned allocations classified and reported                             |
+| 💎  | Operator-facing recovery diagnosis            | WBCL event log, no repair guidance  | none (IMA reports a hash mismatch only)           | ✅ §29 per-status repair text + pairing DIRECTION                                |
+| 💎  | Crash-consistent anchor pairing               | WBCL/TBS internal                   | none (IMA has no commit counter)                  | ✅ §28 directional CURRENT/UNCOMMITTED/TORN classifier + lost-anchor detection   |
+| 💎  | Aggregate boot deadline for NV reads          | none (per-call TBS timeouts)        | none (per-command tpm2 timeouts)                  | ✅ §28 one armed-and-disarmed Phase-1 ledger, refuses before an unfundable seq   |
+| 💎  | Measured-boot baseline (enroll/verify)        | Measured Boot baseline              | IMA + systemd-pcrlock                             | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation               |
+| 💎  | Kernel-ABI identity bound in baseline         | Boot config / WBCL binding          | IMA template hash binding                         | ✅ §16 build-time `.bootproto` sha256, fail-closed, symmetric presence gate      |
+| 💎  | Sealed secrets                                | BitLocker                           | systemd-cryptenroll                               | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff         |
+| ⭐  | Boot attestation report (JSON)                | Device Health Attestation           | Keylime AK quote JSON                             | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending    |
+| 💎  | Remote attestation (TPM2 Quote)               | Device Health Attestation           | Keylime AK quote                                  | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                         |
+| 💎  | PCR allocation policy                         | PCR7+11 BitLocker seal              | systemd-pcrlock CEL                               | ✅ §12 event-centric table + derived masks                                       |
+| ⭐  | Baseline enrollment authority                 | TPM PPI physical presence           | root + interactive prompt                         | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value          |
+| ⭐  | Headless enrollment authority                 | TPM PPI (needs physical presence)   | systemd-cryptenroll (needs an operator)           | ✅ §23 one-shot Ed25519 token; §30 ESP transport + whole-record transition bound |
+| 💎  | Boot-integrity report publication             | Measured Boot / WBCL state          | sysfs PCRs + IMA runtime                          | ✅ §18 immutable snapshot swap, copy-out readers, per-PCR detail with verdict    |
+| 💎  | Loader binary identity                        | Firmware PCR-4 Authenticode         | shim/GRUB self-measure to PCR 4/9                 | ⚠️ §20 on-disk file digest on serial; PCR extend + event-log correlation are §31 |
+| 💎  | Mismatch attribution (which field)            | WBCL/TCG-log decode names it        | systemd-pcrlock is per-component                  | ✅ §25 eleven named first-mismatch causes + culprit PCR index, all PCRs listed   |
+| ⭐  | Scoped integrity claim (what it means)        | "Boot integrity" with no scope text | none (IMA/pcrlock leave scope to the reader)      | ✅ §25 "baseline-verified" + a per-status scope sentence; no bare "verified"     |
+| 💎  | NV index identity + delete authority          | TBS index handle trust              | tpm2_nvreadpublic name; policy-delete             | ✅ §21 Name verified before any content read; POLICY_DELETE platform-only        |
+| 💎  | Pre-kernel NV floor read (loader)             | no A/B slots; NV via TBS post-boot  | no NV-gated slot choice in shim/systemd-boot      | ⚠️ §22 vtable corrected + `SubmitCommand` typed; read parked on index auth       |
+| 💎  | Bounded multi-command budget (seal/AK)        | per-call TBS timeouts               | per-command tpm2-tools timeouts                   | ✅ §24 one sequence per operation, verified teardown                             |
 
 ## Unit Tests
 

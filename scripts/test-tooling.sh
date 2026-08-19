@@ -1391,6 +1391,24 @@ fi
 assert_exit_zero "memmap layout gate: constants + translation helpers" \
     bash "$REPO_ROOT/tools/memmap-check/check.sh"
 
+# --- boot pure-header gate (host) -------------------------------------------
+# include/boot/pe_authenticode.h and include/boot/tcg_evlog.h parse hostile,
+# firmware-owned bytes: a PE image whose section table decides what gets hashed,
+# and a TCG event log whose records decide what firmware claims to have
+# measured. Both are plain C over plain types so the loader and a test compile
+# them unchanged, and both are exercised here with malformed inputs firmware
+# will never hand a running loader.
+#
+# They live on the host for the same reason the memmap gate above does: the
+# in-kernel suite is out of room. Measured 2026-08-19 -- __kernel_end at
+# 0x7fe000 leaves 8192 bytes below the user base, and this suite alone is 8664.
+# The Authenticode digest is additionally cross-checked against an independent
+# transcription of the spec steps, so the expectation is not this code agreeing
+# with itself.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[boot_header_gate]${NC}"
+assert_exit_zero "boot pure-header gate: Authenticode hash + TCG event-log walk" \
+    bash "$REPO_ROOT/tools/boot-header-tests/run.sh"
+
 # --- atomic-claim gate (generated object) ------------------------------------
 # The panic path's ownership transitions each claim a resource AND record who
 # owns it in ONE compare-exchange, so that an abort at any instruction boundary

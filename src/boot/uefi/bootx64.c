@@ -29,6 +29,8 @@
 #include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
 #include "../../../include/boot/sha256_boot.h"     /* SHA-256 for the loader self-measurement */
 #include "../../../include/boot/devpath_filepath.h" /* bounded LoadedImage FilePath parser */
+#include "../../../include/boot/pe_authenticode.h" /* Authenticode PE image hash, as firmware computes it */
+#include "../../../include/boot/tcg_evlog.h"       /* strict TCG event-log walk + image-load event identity */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
@@ -12265,6 +12267,10 @@ static inline void post_code16(UINT16 code)
 /* BOOTX64.EFI on-disk self-measurement (measured-boot loader attribution). */
 #define POST16_BL_SELF_MEASURE    0xB0A4
 #define POST16_BL_SELF_MEASURE_OK 0xB0A5
+/* PCR 4 correlation: entry, and the AGREE verdict specifically. A boot that
+ * halts between them is one that reached the event-log walk and died there. */
+#define POST16_BL_PCR4_CORRELATE    0xB0A8
+#define POST16_BL_PCR4_AGREE        0xB0A9
 
 /* PE/COFF structures for UKI section walk.
  * Reference: Microsoft PE/COFF Specification, MS-DOS stub at offset 0,
@@ -15302,6 +15308,16 @@ static struct {
     UINT8  status;                  /* enum self_measure_status; 0 = never ran */
     UINT64 measured_bytes;
     UINT64 tsc_delta;
+    /* The Authenticode PE hash of the SAME snapshot, which is the only digest
+     * firmware's PCR 4 measurement can ever equal. Kept beside the flat digest
+     * rather than replacing it: they answer different questions, and section 20
+     * pinned the flat one as evidence about an ESP FILE. Both are derived from
+     * ONE read of the file -- two reads would let the two digests describe two
+     * different snapshots of a file an attacker is free to rewrite between
+     * them, which is the substitution this correlation exists to catch. */
+    UINT8  pe_digest[SHA256B_DIGEST_LEN];
+    UINT8  pe_present;              /* 1 = pe_digest holds a real measurement */
+    UINT8  pe_status;               /* enum peac_status */
 } g_self_measure;
 
 static const char *self_measure_status_name(UINT8 st)
@@ -15358,21 +15374,27 @@ static enum self_measure_status self_measure_resolve_path(CHAR16 *out, UINTN out
 
 /* Hash the loader file in one forward pass over bounded chunks. `file` is
  * already open and positioned at 0. */
-static enum self_measure_status self_measure_hash_file(EFI_FILE_PROTOCOL *file,
+/* Read the whole file into `buf[0 .. file_size)` -- ONE snapshot, from which
+ * every digest of this image is then derived. This used to hash as it streamed;
+ * it fills a buffer instead because the Authenticode hash needs the section
+ * table before it knows which bytes to hash in which order, and because two
+ * passes over a file are two SNAPSHOTS: the flat digest and the PE digest could
+ * describe different bytes, which is precisely the substitution the PCR 4
+ * correlation exists to detect. Every refusal below is unchanged from the
+ * streaming version -- they are what make a published digest mean the whole
+ * file. */
+static enum self_measure_status self_measure_read_file(EFI_FILE_PROTOCOL *file,
                                                        UINT64 file_size,
-                                                       UINT8 out[SHA256B_DIGEST_LEN],
+                                                       UINT8 *buf,
                                                        UINT64 *out_bytes)
 {
-    struct sha256b_ctx ctx;
-    VOID *chunk = (VOID *)0;
     EFI_STATUS status;
     UINT64 remaining = file_size;
+    UINT64 done = 0;
 
-    status = gBS->AllocatePool(EfiLoaderData, (UINTN)SELF_MEASURE_CHUNK, &chunk);
-    if (EFI_ERROR(status) || !chunk)
+    if (!buf)
         return SELF_MEASURE_NO_MEMORY;
 
-    sha256b_init(&ctx);
     while (remaining > 0u) {
         UINTN want = (remaining < (UINT64)SELF_MEASURE_CHUNK)
                    ? (UINTN)remaining : (UINTN)SELF_MEASURE_CHUNK;
@@ -15382,27 +15404,22 @@ static enum self_measure_status self_measure_hash_file(EFI_FILE_PROTOCOL *file,
          * only, so a positive WARNING status would pass it and let degraded
          * firmware contribute bytes to a digest published as trustworthy. Every
          * non-success here is a refusal instead. */
-        status = file->Read(file, &got, chunk);
-        if (status != EFI_SUCCESS) {
-            gBS->FreePool(chunk);
+        status = file->Read(file, &got, buf + done);
+        if (status != EFI_SUCCESS)
             return SELF_MEASURE_READ_FAILED;
-        }
         /* UEFI 2.10 spec 13.5.2 says Read never returns more than requested, but
          * `got` is firmware-written and this is a bare-metal target: taking it on
-         * trust would hash past the chunk allocation and underflow `remaining`.
+         * trust would write past the allocation and underflow `remaining`.
          * A firmware that violates the contract gets a refusal, not a read. */
-        if (got > want) {
-            gBS->FreePool(chunk);
+        if (got > want)
             return SELF_MEASURE_READ_FAILED;
-        }
         if (got == 0u) {
             /* FileSize said there were more bytes. Hashing what we got would
              * publish a prefix digest that is indistinguishable from the real
              * one, so this is a refusal. */
-            gBS->FreePool(chunk);
             return SELF_MEASURE_SHORT_READ;
         }
-        sha256b_update(&ctx, chunk, (UINT64)got);
+        done      += (UINT64)got;
         remaining -= (UINT64)got;
     }
     /* FileSize is metadata, not proof of EOF. A stale or hostile under-report
@@ -15420,17 +15437,11 @@ static enum self_measure_status self_measure_hash_file(EFI_FILE_PROTOCOL *file,
              * under-reported, so a failed probe leaves EOF UNVERIFIED. Reading
              * that as EOF would publish a possible prefix digest as complete,
              * which is the single outcome this whole path exists to prevent. */
-            gBS->FreePool(chunk);
             return SELF_MEASURE_READ_FAILED;
         }
-        if (probe_len != 0u) {
-            gBS->FreePool(chunk);
+        if (probe_len != 0u)
             return SELF_MEASURE_TRAILING_BYTES;
-        }
     }
-
-    sha256b_final(&ctx, out);
-    gBS->FreePool(chunk);
 
     *out_bytes = file_size;
     return SELF_MEASURE_OK;
@@ -15544,11 +15555,39 @@ static void self_measure_run(void)
         goto close_and_report;
     }
 
-    st = self_measure_hash_file(file, file_size, g_self_measure.digest,
-                                &g_self_measure.measured_bytes);
-    g_self_measure.status = (UINT8)st;
-    if (st == SELF_MEASURE_OK)
-        g_self_measure.present = 1;
+    {
+        /* Exactly FileSize, under the sanity cap enforced above -- a dynamic
+         * allocation that hard-fails rather than a fixed buffer that truncates.
+         * Freed before ExitBootServices; nothing here outlives the loader. */
+        VOID *snap = (VOID *)0;
+
+        status = gBS->AllocatePool(EfiLoaderData, (UINTN)file_size, &snap);
+        if (EFI_ERROR(status) || !snap) {
+            g_self_measure.status = (UINT8)SELF_MEASURE_NO_MEMORY;
+            goto close_and_report;
+        }
+
+        st = self_measure_read_file(file, file_size, (UINT8 *)snap,
+                                    &g_self_measure.measured_bytes);
+        g_self_measure.status = (UINT8)st;
+        if (st == SELF_MEASURE_OK) {
+            int pst;
+
+            /* Both digests, one snapshot. The flat hash stays byte-identical to
+             * what section 20 published -- same bytes, same algorithm -- so the
+             * smoke test's independent cross-check still binds. */
+            sha256b((const void *)snap, file_size, g_self_measure.digest);
+            g_self_measure.present = 1;
+
+            pst = peac_hash((const unsigned char *)snap,
+                            (unsigned long long)file_size,
+                            g_self_measure.pe_digest);
+            g_self_measure.pe_status = (UINT8)pst;
+            if (pst == PEAC_OK)
+                g_self_measure.pe_present = 1;
+        }
+        gBS->FreePool(snap);
+    }
 
 close_and_report:
     if (file)
@@ -15580,9 +15619,163 @@ report:
         }
         serial_early_print("\n");
         post_code16(POST16_BL_SELF_MEASURE_OK);
+
+        /* A SEPARATE line, deliberately. Section 20's line is pinned by an
+         * ANCHORED schema in scripts/test-smoke.sh, and that anchor is what
+         * makes the smoke test's independent cross-check bind; appending a
+         * token to it would have to loosen the anchor, trading a real assertion
+         * for a cosmetic saving. The two digests also answer different
+         * questions -- one about an ESP file, one about what firmware can have
+         * executed -- so they read better apart than run together.
+         *
+         * The name is chosen just as carefully as `esp-file-sha256`: this
+         * digest CAN equal a firmware PCR 4 measurement, which is exactly why
+         * it must never be confused with the flat one above. */
+        serial_early_print("[BOOT] self-measure-pe: ");
+        if (g_self_measure.pe_present) {
+            serial_early_print("status=ok pe-authenticode-sha256=");
+            for (i = 0; i < SHA256B_DIGEST_LEN; i += 2u) {
+                serial_early_print_hex16((UINT16)(((UINT16)g_self_measure.pe_digest[i] << 8)
+                                                | (UINT16)g_self_measure.pe_digest[i + 1u]));
+            }
+        } else {
+            serial_early_print("status=");
+            serial_early_print(peac_status_name((int)g_self_measure.pe_status));
+            serial_early_print(" pe-authenticode-sha256=ABSENT");
+        }
+        serial_early_print("\n");
     } else {
         serial_early_print(" digest=ABSENT\n");
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * PCR 4 correlation.
+ *
+ * The digest above is evidence about a FILE on the ESP. Firmware separately
+ * measured the image it actually executed into PCR 4, Authenticode-hashed,
+ * during LoadImage. Between those two moments the file can be swapped, or the
+ * volume remounted so the same path resolves elsewhere, and both digests stay
+ * internally consistent while describing different bytes. Comparing them is
+ * what turns a file observation into evidence about executed code.
+ *
+ * WHAT THIS IS NOT, TWICE OVER. First, the verdict leaves on the serial line
+ * only. It is a local diagnostic, not an attestation: nothing here is extended
+ * into a PCR, bound to a verifier nonce, or carried anywhere a remote party can
+ * read it. Second, and less obvious: the event log is validated for internal
+ * consistency, not authenticated. Only replaying it into the PCRs and comparing
+ * against the TPM's own values would prove the log true, and nothing here does
+ * that. So AGREE means "the log says firmware measured the bytes we hashed",
+ * which is strictly weaker than "the TPM confirms it did". Both gaps are
+ * tracked; neither is claimed by this code.
+ *
+ * ABSENCE IS NOT DISAGREEMENT, and keeping the two apart is the whole design.
+ * A machine with no TPM, no event log, or no matching entry has nothing to
+ * compare, and the honest report there is a weaker claim by name. Collapsing it
+ * into a mismatch would manufacture a security finding out of ordinary
+ * hardware, and an operator who learns to ignore one would ignore the real one.
+ * ------------------------------------------------------------------------- */
+static void correlate_pcr4_measurement(void)
+{
+    EFI_GUID lidp_guid = EFI_LOADED_IMAGE_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_GUID dpu_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
+    EFI_DEVICE_PATH_PROTOCOL *self_dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    struct tcgl_log lg;
+    struct tcgl_match m;
+    unsigned int candidates = 0;
+    UINTN dp_size = 0;
+    EFI_STATUS status;
+    int rc;
+    UINTN i;
+
+    post_code16(POST16_BL_PCR4_CORRELATE);
+    serial_early_print("[BOOT] pcr4-correlate: ");
+
+    /* Without our own Authenticode digest there is nothing to compare AGAINST,
+     * which is an absence on our side rather than a claim about the platform. */
+    if (!g_self_measure.pe_present) {
+        serial_early_print("result=no-local-digest status=");
+        serial_early_print(peac_status_name((int)g_self_measure.pe_status));
+        serial_early_print("\n");
+        return;
+    }
+
+    /* Identity comes from the COMPLETE device path, never LoadedImage.FilePath:
+     * FilePath is only the portion specific to DeviceHandle, so matching it
+     * against an event's full path compares a suffix with a whole. */
+    status = gBS->HandleProtocol(gImageHandle, &lidp_guid, (VOID **)&self_dp);
+    if (EFI_ERROR(status) || !self_dp) {
+        serial_early_print("result=no-image-device-path\n");
+        return;
+    }
+    /* The object is measured by firmware, never self-walked: a device path is
+     * hostile input and a heuristic cap is not an object bound. */
+    status = gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
+    if (EFI_ERROR(status) || !dpu || !dpu->GetDevicePathSize) {
+        serial_early_print("result=no-devpath-utilities\n");
+        return;
+    }
+    dp_size = dpu->GetDevicePathSize(self_dp);
+    if (dp_size < 4u) {
+        serial_early_print("result=degenerate-device-path\n");
+        return;
+    }
+
+    if (!g_boot_info_ptr->tpm_available || !g_boot_info_ptr->tpm_event_log
+        || g_boot_info_ptr->tpm_event_log_size == 0u) {
+        serial_early_print("result=no-event-log\n");
+        return;
+    }
+
+    rc = tcgl_open((const unsigned char *)(UINTN)g_boot_info_ptr->tpm_event_log,
+                   (unsigned long long)g_boot_info_ptr->tpm_event_log_size, &lg);
+    if (rc != TCGL_OK) {
+        /* A log we cannot validate is reported as such. Walking it anyway to
+         * "try for a match" is how a corrupt log becomes an AGREE. */
+        serial_early_print("result=log-unusable status=");
+        serial_early_print(tcgl_status_name(rc));
+        serial_early_print("\n");
+        return;
+    }
+
+    rc = tcgl_find_image_load(&lg, 4u, (const unsigned char *)self_dp,
+                              (unsigned long long)dp_size, &m, &candidates);
+    if (rc != TCGL_OK) {
+        serial_early_print("result=no-comparison status=");
+        serial_early_print(tcgl_status_name(rc));
+        if (rc == TCGL_AMBIGUOUS) {
+            serial_early_print(" candidates=");
+            serial_early_print_uint((UINT32)candidates);
+        }
+        serial_early_print("\n");
+        return;
+    }
+
+    /* Only now, with exactly one identified entry, does the digest decide
+     * anything. Comparing digests first would let a byte-identical image loaded
+     * from a different path answer for this one. */
+    for (i = 0; i < SHA256B_DIGEST_LEN; i++) {
+        if (m.sha256[i] != g_self_measure.pe_digest[i]) {
+            serial_early_print("result=DISAGREE firmware-sha256=");
+            {
+                UINTN j;
+                for (j = 0; j < SHA256B_DIGEST_LEN; j += 2u) {
+                    serial_early_print_hex16((UINT16)(((UINT16)m.sha256[j] << 8)
+                                                    | (UINT16)m.sha256[j + 1u]));
+                }
+            }
+            serial_early_print("\n");
+            return;
+        }
+    }
+
+    serial_early_print("result=AGREE image-base=");
+    serial_early_print_hex64((UINT64)m.image_base);
+    serial_early_print(" image-len=");
+    serial_early_print_uint((UINT32)m.image_len);
+    serial_early_print("\n");
+    post_code16(POST16_BL_PCR4_AGREE);
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
@@ -16795,6 +16988,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 4c: Retrieve TPM event log (if available) */
     retrieve_tpm_event_log();
+
+    /* Step 4c-2: correlate our own on-disk digest with what firmware measured
+     * into PCR 4. Must follow the retrieval (it reads the copied log) and stay
+     * ahead of ExitBootServices (it calls HandleProtocol/LocateProtocol). */
+    correlate_pcr4_measurement();
 
     /* Step 4d: Parse FPDT for firmware boot timing */
     parse_fpdt();

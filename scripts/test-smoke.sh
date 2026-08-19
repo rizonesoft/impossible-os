@@ -517,6 +517,44 @@ else
             FAIL_REASON="${FAIL_REASON:-Loader self-measurement does not match the staged binary}"
         fi
     fi
+
+    # ---- Authenticode PE digest oracle -------------------------------------
+    # The flat digest above says which FILE was hashed. This one says whether
+    # that file could be what firmware executed: it is the Authenticode PE hash,
+    # the only digest a PCR 4 EV_EFI_BOOT_SERVICES_APPLICATION measurement can
+    # ever equal. Cross-checked against an INDEPENDENT transcription of the
+    # spec's numbered steps, so agreement here is the loader agreeing with the
+    # spec as read by someone else -- not with itself. A flat hash cannot
+    # satisfy this, which is the point.
+    SELF_MEASURE_PE_LINE="$(grep -F -- '[BOOT] self-measure-pe:' "$STRIPPED_LOG" 2>/dev/null | head -1)"
+    SELF_MEASURE_PE_BODY="$(printf '%s' "$SELF_MEASURE_PE_LINE" | sed 's/\r$//')"
+    SELF_MEASURE_PE_SCHEMA='^\[BOOT\] self-measure-pe: status=ok pe-authenticode-sha256=[0-9A-F]{64}$'
+    if [ ! -f "$LOADER_FILE" ]; then
+        : # already reported advisory-skipped above
+    elif [ -z "$SELF_MEASURE_PE_LINE" ]; then
+        echo -e "  ${RED}MISSING:${NC} [BOOT] self-measure-pe: line absent from serial"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-Loader Authenticode measurement did not report}"
+    elif ! printf '%s' "$SELF_MEASURE_PE_BODY" | grep -qE -- "$SELF_MEASURE_PE_SCHEMA"; then
+        echo -e "  ${RED}MISSING:${NC} self-measure-pe line is not a schema-valid success: $SELF_MEASURE_PE_BODY"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-Loader Authenticode measurement reported ABSENT or off-schema}"
+    else
+        REPORTED_PE_SHA="$(printf '%s' "$SELF_MEASURE_PE_BODY" \
+            | sed -n 's/.* pe-authenticode-sha256=\([0-9A-F]\{64\}\)$/\1/p' | tr 'A-F' 'a-f')"
+        ORACLE_PE_SHA="$(python3 "$REPO_ROOT/tools/boot-header-tests/authenticode_oracle.py" \
+            "$LOADER_FILE" 2>/dev/null || true)"
+        if [ -z "$ORACLE_PE_SHA" ]; then
+            echo -e "  ${YELLOW}self-measure-pe:${NC} oracle unavailable -- comparison skipped (advisory)"
+        elif [ "$REPORTED_PE_SHA" = "$ORACLE_PE_SHA" ]; then
+            echo -e "  ${GREEN}✓${NC} self-measure-pe matches the independent Authenticode oracle"
+        else
+            echo -e "  ${RED}MISMATCH:${NC} self-measure-pe ${REPORTED_PE_SHA:0:16}..."
+            echo -e "  ${DIM}  oracle      ${ORACLE_PE_SHA:0:16}... ($LOADER_FILE)${NC}"
+            BOOT_FAILED=true
+            FAIL_REASON="${FAIL_REASON:-Loader Authenticode digest does not match the independent oracle}"
+        fi
+    fi
 fi
 
 # ---- Log cleanliness: ANY unexpected [FAIL] fails the run -------------------
