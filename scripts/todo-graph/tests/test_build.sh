@@ -9796,12 +9796,16 @@ PY2
     # 22ao: A BASE THAT PREDATES THE MECHANISM ENTIRELY. Derived from history
     # rather than hardcoded: take the EARLIEST commit that added any
     # protocol-bearing path and use its parent, which by construction had none.
-    G_ANCIENT_ADD="$( (cd "$GATE_REPO" && for _p in \
+    # ONE multi-path traversal, not one per path. The clone keeps the full
+    # repository history even though its TODO corpus is pruned, so three walks
+    # cost three times what the single question needs (Codex perf, section 50
+    # post-commit review).
+    G_ANCIENT_ADD="$( (cd "$GATE_REPO" && git log --full-history --diff-filter=A \
+            --format='%ct %H' HEAD -- \
             scripts/todo-graph/snapshot_protocol.json \
             scripts/todo-graph/ref_resolution.py \
-            scripts/todo-graph/corpus_resolution_snapshot.py; do
-            git log --full-history --diff-filter=A --format='%ct %H' HEAD -- "$_p" 2>/dev/null
-        done | sort -n | head -1 | awk '{print $2}') )"
+            scripts/todo-graph/corpus_resolution_snapshot.py 2>/dev/null \
+        | sort -n | head -1 | awk '{print $2}') )"
     G_ANCIENT=""
     if [ -n "$G_ANCIENT_ADD" ]; then
         G_ANCIENT="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet "${G_ANCIENT_ADD}^" 2>/dev/null) )"
@@ -10264,7 +10268,12 @@ PY2
         (cd "$GATE_REPO" && bash "$G_MUT" --base "$G_REMOVED" --head HEAD \
             >"$TMP_DIR/gate-22be.log" 2>&1)
         G_RC=$?
-        if [ "$G_RC" -eq 3 ] && grep -q 'FORM_UNMAPPED' "$TMP_DIR/gate-22be.log"; then
+        # THE EXACT SIDE, not the shared suffix: this case is constructed so the
+        # BASE answers first, and greping `FORM_UNMAPPED` would stay green if an
+        # ordering regression made the HEAD answer instead.
+        if [ "$G_RC" -eq 3 ] \
+           && grep -q 'BASE_FORM_UNMAPPED' "$TMP_DIR/gate-22be.log" \
+           && ! grep -q 'HEAD_FORM_UNMAPPED' "$TMP_DIR/gate-22be.log"; then
             t_pass "identity gate: a protocol path the form mapping does not cover is refused, not ignored"
         else
             t_fail "identity gate: a fourth protocol path was silently ignored (rc=$G_RC; see $TMP_DIR/gate-22be.log)"
@@ -10511,6 +10520,16 @@ PY2
             (cd "$GATE_REPO" && git replace -d "$G_GOOD_JSON" >/dev/null 2>&1)
         fi
     fi
+    # RESTORE build.py. Leaving it changed relative to G_PROTO_BASE made every
+    # LATER protocol-only case enter the producer differential -- four producer
+    # builds over two corpora -- to assert something about record transport
+    # (Codex perf, section 50 post-commit review). Cases that need the closure
+    # to differ still add their own benign change.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/build.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22bk: restore build.py" >/dev/null 2>&1
+    )
 
     # 22bl: A LISTED REPLACEMENT IS NOT NECESSARILY AN ACTIVE ONE. Git stops
     # reading replacements under `GIT_NO_REPLACE_OBJECTS` or
@@ -10745,7 +10764,11 @@ PY2
             (cd "$GATE_REPO" && bash "$G_MUT_PY" --base "$G_PROTO_BASE" --head HEAD \
                 >"$TMP_DIR/gate-22bo-mut.log" 2>&1)
             G_RC=$?
-            if [ "$G_RC" -eq 3 ] && grep -q 'PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bo-mut.log"; then
+            # The poison is at HEAD, so the HEAD token is the one this
+            # mutation must produce -- the shared substring would also accept a
+            # base-side refusal that has nothing to do with the bytecode.
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bo-mut.log"; then
                 t_pass "identity gate: MUTATION -- without the gate-owned cache prefix the poison DOES decide"
             else
                 t_fail "identity gate: the pycache mutation did not fire, so 22bo proves nothing (rc=$G_RC; see $TMP_DIR/gate-22bo-mut.log)"

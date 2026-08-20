@@ -100,6 +100,11 @@
 #        BASE_TRANSPORT_FAILED        the gate could not carry its OWN record
 #        HEAD_TRANSPORT_FAILED        between its own processes; machinery, not
 #                                     a statement about either tree
+#      Two of the names below are RESERVED SOURCE-INTEGRITY GUARDS rather than
+#      classifications a tree can provoke: with PROTOCOL_PATHS as shipped, no
+#      input reaches them, and only an edit to this file that adds a path
+#      without extending the form mapping can. They are published so a future
+#      editor sees the contract, and fixtured by mutating a copy of the script:
 #        BASE_FORM_UNMAPPED           PROTOCOL_PATHS grew a path the form
 #        HEAD_FORM_UNMAPPED           mapping does not cover; refuse rather
 #                                     than classify around it
@@ -392,6 +397,20 @@ git worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
 # so the full-population comparison always runs on the resolver change itself
 # (Codex design review, section 16).
 # ---------------------------------------------------------------------------
+# The protocol probe reads a handful of constants, so it gets a small fixed
+# share of the budget rather than all of it -- bounded by `remaining()` so the
+# global deadline still dominates.
+PROTOCOL_PROBE_CAP_SECS=60
+probe_budget() {
+    local _r
+    _r="$(remaining)"
+    if [ "$_r" -gt "$PROTOCOL_PROBE_CAP_SECS" ]; then
+        printf '%s' "$PROTOCOL_PROBE_CAP_SECS"
+    else
+        printf '%s' "$_r"
+    fi
+}
+
 proto_of() {  # $1 = tree root
     # EVALUATE the constants, never scrape their source text. The first cut
     # regex-captured the RHS of `ALL_BUCKETS` -- which is literally
@@ -453,7 +472,13 @@ proto_of() {  # $1 = tree root
     # (measured directly on coreutils 9.4: shell pgid 1005288, probe pgid
     # 1005292). `--foreground`'s caveat -- that children of the command are not
     # timed out -- costs nothing here precisely because this probe has none.
-    timeout --foreground --kill-after=10s "$(remaining)" \
+    # A SMALL SHARE OF THE BUDGET, not all of it. Reading a handful of
+    # constants is constant-size work, but the probe was granted the entire
+    # remaining budget -- so one stalled import could spend the whole 600s and
+    # leave the producer, cache and corpus phases nothing (Codex perf, section
+    # 50 post-commit review). The cap is the SMALLER of the phase cap and what
+    # is left, so it can never extend the global deadline.
+    timeout --foreground --kill-after=10s "$(probe_budget)" \
         python3 - "$1" 3>"$_rec" >/dev/null 2>/dev/null <<'PY'
 import base64, contextlib, hashlib, importlib.util, json, os, sys, pathlib
 # THE RECORD GOES OUT ON FD 3, which the shell opened. Rebinding sys.stdout to
@@ -616,7 +641,7 @@ PY
         return 0
     fi
     local _line
-    _line="$(timeout --foreground --kill-after=10s "$(remaining)" head -n 1 "$_rec" 2>/dev/null)" \
+    _line="$(timeout --foreground --kill-after=10s "$(probe_budget)" head -n 1 "$_rec" 2>/dev/null)" \
         || { rm -f "$_rec"; printf 'TRANSPORT\n'; return 0; }
     rm -f "$_rec"
     [ -n "$_line" ] || { printf 'TRANSPORT\n'; return 0; }
@@ -916,12 +941,17 @@ protocol_ever_added() {  # $1 = commit-ish, rest = paths; 0 yes, 1 no, 2 cannot 
 # directory, so a real graft was invisible from exactly the kind of checkout
 # this gate creates for itself. `--git-path` resolves both correctly from
 # either.
-history_is_complete() {  # $1 = subject commit; 0 = its ancestry is readable
+# TRI-STATE HERE TOO: 0 readable, 1 provably truncated, 2 could not ask. Both
+# outcomes returned 1, so a FAILED probe was reported as a shallow or grafted
+# ancestry -- the same failed-question-as-negative-answer collapse this file
+# fixes elsewhere, pointing an operator at a clone that is not the problem
+# (Codex consistency, section 50 post-commit review).
+history_is_complete() {  # $1 = subject; 0 readable, 1 truncated, 2 cannot ask
     local _shallow _replaced _p _rc
     _shallow="$(git rev-parse --is-shallow-repository 2>/dev/null)"; _rc=$?
-    [ "$_rc" -ne 0 ] && return 1
+    [ "$_rc" -ne 0 ] && return 2
     [ "$_shallow" = "true" ] && return 1
-    _p="$(git rev-parse --git-path shallow 2>/dev/null)" || return 1
+    _p="$(git rev-parse --git-path shallow 2>/dev/null)" || return 2
     [ -s "$_p" ] && return 1
     # THE EFFECTIVE GRAFT SOURCE, not merely git's default one. `GIT_GRAFT_FILE`
     # overrides `info/grafts` and is inherited by every git call this function
@@ -934,7 +964,7 @@ history_is_complete() {  # $1 = subject commit; 0 = its ancestry is readable
     if [ -n "${GIT_GRAFT_FILE:-}" ]; then
         [ -s "$GIT_GRAFT_FILE" ] && return 1
     else
-        _p="$(git rev-parse --git-path info/grafts 2>/dev/null)" || return 1
+        _p="$(git rev-parse --git-path info/grafts 2>/dev/null)" || return 2
         [ -s "$_p" ] && return 1
     fi
     # REPLACEMENT REFS ARE SCOPED TO THE ANCESTRY, not counted globally. Any
@@ -1110,9 +1140,12 @@ case "$BASE_PROTO" in
                 # progress. Nothing is wrong with the tree under test", from a
                 # horizon rather than from history (Codex adversarial, section
                 # 50 round 2).
-                if ! history_is_complete "$BASE_SHA"; then
-                    die_infra "BASE_HISTORY_INCOMPLETE: the base $BASE_SHA carries only part of the snapshot protocol, but this checkout is shallow, grafted or replaced, so whether$PROTO_MISSING_TEXT was ever added would be a statement about what is visible here rather than about what happened. Re-run against a complete clone"
-                fi
+                history_is_complete "$BASE_SHA"
+                case "$?" in
+                    0) ;;
+                    2) die_infra "BASE_HISTORY_UNREADABLE: could not determine whether the base $BASE_SHA has a complete ancestry -- a git probe failed, so this says nothing about the clone and no classification is being guessed from it" ;;
+                    *) die_infra "BASE_HISTORY_INCOMPLETE: the base $BASE_SHA carries only part of the snapshot protocol, but this checkout is shallow, grafted or replaced, so whether$PROTO_MISSING_TEXT was ever added would be a statement about what is visible here rather than about what happened. Re-run against a complete clone" ;;
+                esac
                 protocol_ever_added "$BASE_SHA" "${PROTO_MISSING[@]}"
                 case "$?" in
                     2) die_infra "BASE_HISTORY_UNREADABLE: could not traverse the history of the base $BASE_SHA, so whether it ever carried$BASE_MISSING is unknown and no classification is being guessed from it" ;;
@@ -1120,9 +1153,12 @@ case "$BASE_PROTO" in
                     *) die_infra "BASE_PROTOCOL_INCOMPLETE: the base $BASE_SHA predates the COMPLETION of the snapshot protocol -- missing$BASE_MISSING, never added anywhere in its history, so the extraction was still in progress at that commit and this range cannot be adjudicated. Nothing is wrong with the tree under test" ;;
                 esac ;;
             *)
-                if ! history_is_complete "$BASE_SHA"; then
-                    die_infra "BASE_HISTORY_INCOMPLETE: the base $BASE_SHA carries none of ${PROTOCOL_PATHS[*]}, but this checkout is shallow, grafted or replaced, so 'never added anywhere in its history' would be a statement about what is visible here rather than about what happened. Re-run against a complete clone"
-                fi
+                history_is_complete "$BASE_SHA"
+                case "$?" in
+                    0) ;;
+                    2) die_infra "BASE_HISTORY_UNREADABLE: could not determine whether the base $BASE_SHA has a complete ancestry -- a git probe failed, so this says nothing about the clone and no classification is being guessed from it" ;;
+                    *) die_infra "BASE_HISTORY_INCOMPLETE: the base $BASE_SHA carries none of ${PROTOCOL_PATHS[*]}, but this checkout is shallow, grafted or replaced, so 'never added anywhere in its history' would be a statement about what is visible here rather than about what happened. Re-run against a complete clone" ;;
+                esac
                 protocol_ever_added "$BASE_SHA" "${PROTOCOL_PATHS[@]}"
                 case "$?" in
                     2) die_infra "BASE_HISTORY_UNREADABLE: could not traverse the history of the base $BASE_SHA, so whether it ever carried the snapshot protocol is unknown and no classification is being guessed from it" ;;
@@ -1167,7 +1203,7 @@ protocol_source_is_regular() {  # $1 = source, $2 = side; 0 ok, 1 not a file, 2 
 IFS='|' read -r BASE_SCHEMA BASE_PRE BASE_POST BASE_SOURCE BASE_PRE_B64 BASE_POST_B64 BASE_MIG_B64 <<< "$BASE_PROTO"
 for _f in "$BASE_SCHEMA" "$BASE_PRE" "$BASE_POST" "$BASE_SOURCE" \
           "$BASE_PRE_B64" "$BASE_POST_B64" "$BASE_MIG_B64"; do
-    [ -n "$_f" ] || die_infra "the protocol line is malformed (base='$BASE_PROTO')"
+    [ -n "$_f" ] || die_infra "BASE_PROTOCOL_UNREADABLE: the base protocol record is malformed (got '$BASE_PROTO') -- it did not carry the seven fields this gate's own probe emits, so nothing in it can be adjudicated"
 done
 if ! protocol_present_in_commit "$BASE_SHA"; then
     die_infra "BASE_TREE_UNREADABLE: could not ask what the base $BASE_SHA contains ($PROTO_PROBE_ERR) -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it"
@@ -1254,9 +1290,14 @@ case "$HEAD_PROTO" in
         die_infra "HEAD_PROTOCOL_ABSENT: the tree under test carries none of ${PROTOCOL_PATHS[*]} -- the snapshot mechanism this gate adjudicates is missing or renamed at HEAD, so nothing here can be gated" ;;
 esac
 IFS='|' read -r HEAD_SCHEMA HEAD_PRE HEAD_POST HEAD_SOURCE HEAD_PRE_B64 HEAD_POST_B64 HEAD_MIG_B64 <<< "$HEAD_PROTO"
+# A MALFORMED RECORD IS STILL A PROTOCOL THIS GATE CANNOT READ, so it answers
+# in the published vocabulary rather than through a generic message carrying no
+# token at all. The header promises a machine-branchable refusal for every
+# protocol read; this path was the one exception (Codex consistency, section 50
+# post-commit review).
 for _f in "$HEAD_SCHEMA" "$HEAD_PRE" "$HEAD_POST" "$HEAD_SOURCE" \
           "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64"; do
-    [ -n "$_f" ] || die_infra "the protocol line is malformed (head='$HEAD_PROTO')"
+    [ -n "$_f" ] || die_infra "HEAD_PROTOCOL_UNREADABLE: the head protocol record is malformed (got '$HEAD_PROTO') -- it did not carry the seven fields this gate's own probe emits, so nothing in it can be adjudicated"
 done
 
 # ---------------------------------------------------------------------------
