@@ -193,6 +193,12 @@ Every change below carries a refusal-direction control (a case that must still b
   - The dispatch prompts said "the staged tree" and "the working tree" respectively, so this was operator error in the prompt, not a tool defect -- but nothing in the broker or the envelope records WHICH tree a leg examined, so the disagreement is not diagnosable from the artifacts alone.
   - A one-line note in the review envelope naming the tree state each leg saw (index digest vs worktree digest at dispatch) would make this self-evident instead of a puzzle.
 
+- [ ] A Codex dispatch prompt containing a bare `--flag` token in PROSE is parsed as a companion CLI flag, and the review dies in 88 bytes with no finding
+  - Observed live 2026-08-19 on TODO-06 §50, first design dispatch. The prompt body named the gate's own option in a sentence ("re-point `--base` / IDENTITY_GATE_LAST_GATED_SHA at a commit carrying the protocol"). `codex-companion.mjs adversarial-review` takes `[--wait|--background] [--base <ref>] [--scope ...] [focus text]`, so it consumed `--base` with the value `/` and ran `git merge-base HEAD /`, exit 128, `fatal: Not a valid object name /`.
+  - The whole artifact was 88 bytes: the git error plus `Turn completed (rc=1)`. It reads as a crashed leg rather than a malformed prompt, so the natural response is to re-dispatch verbatim, which would crash identically.
+  - Cost here was one wasted dispatch plus one forced `RECEIVING_REVIEW_OVERRIDE=1` (the reception gate correctly fires on a dispatch that produced no findings, and there is nothing to receive). Cheap once. It is silent and repeatable, which is what makes it worth recording: any prompt discussing a CLI surface is a candidate, and this run writes such prompts routinely for tooling sections.
+  - Cheapest sensor lives in the broker, which already validates the first prompt line: refuse (or escape) a prompt whose body contains a token matching `(^|\s)--[a-z]` before dispatching, naming the offending token. That is argv-time, deterministic, and costs no model.
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.

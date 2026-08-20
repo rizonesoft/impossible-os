@@ -71,6 +71,43 @@
 #   3  INFRASTRUCTURE -- the gate could not run: no usable base, a protocol
 #      migration bundled with a resolver change, a cache/baseline failure, or a
 #      worktree it could not materialize
+#
+#      An rc 3 raised by the protocol read carries a STABLE LEADING TOKEN so a
+#      caller can branch on WHICH of these it is without parsing prose
+#      (section 50). They are NOT interchangeable: three of them say nothing is
+#      wrong with the tree under test, and two say the REPOSITORY -- not the
+#      tree and not the gate -- is what could not answer. The base side is
+#      adjudicated first, so a base token wins when both endpoints fail.
+#        BASE_PREDATES_PROTOCOL       the base is older than the snapshot
+#                                     mechanism; the range is unadjudicatable
+#        BASE_PROTOCOL_INCOMPLETE     the base carries part of the protocol and
+#                                     can express neither form -- either the
+#                                     extraction was still in progress there,
+#                                     or the rest was removed (the message says
+#                                     which, from that base's own history)
+#        BASE_PROTOCOL_REMOVED        the base's own history added the files
+#                                     and they are gone: deleted or renamed
+#        BASE_PROTOCOL_UNREADABLE     complete at the base, but unparseable
+#        BASE_TREE_UNREADABLE         git could not say what the base contains
+#        BASE_HISTORY_UNREADABLE      git could not traverse the base ancestry
+#        BASE_HISTORY_INCOMPLETE      shallow/grafted/replaced, so "never added
+#                                     in its history" would not be provable
+#        HEAD_TREE_UNREADABLE         git could not say what the head commit
+#                                     contains
+#        BASE_PROTOCOL_NOT_A_FILE     the protocol PARSED, but through a path
+#        HEAD_PROTOCOL_NOT_A_FILE     that is not a regular file -- a symlink
+#                                     the reader followed out of the commit
+#        BASE_TRANSPORT_FAILED        the gate could not carry its OWN record
+#        HEAD_TRANSPORT_FAILED        between its own processes; machinery, not
+#                                     a statement about either tree
+#        BASE_FORM_UNMAPPED           PROTOCOL_PATHS grew a path the form
+#        HEAD_FORM_UNMAPPED           mapping does not cover; refuse rather
+#                                     than classify around it
+#        HEAD_PROTOCOL_ABSENT         the tree under test has no mechanism
+#        HEAD_PROTOCOL_INCOMPLETE     the tree under test has part of one
+#        HEAD_PROTOCOL_UNMATERIALIZED the commit has it, the working tree does
+#                                     not: an incomplete/sparse checkout
+#        HEAD_PROTOCOL_UNREADABLE     complete at HEAD, but unparseable
 # ============================================================================
 
 set -uo pipefail
@@ -287,6 +324,18 @@ if [ "$CLOSURE_CHANGED" -eq 0 ]; then
 fi
 
 TMP_DIR="$(mktemp -d -t identity-gate.XXXXXX)" || die_infra "mktemp failed"
+
+# A GATE-OWNED BYTECODE CACHE FOR EVERY PYTHON PHASE THIS GATE RUNS, not just
+# the protocol read. `spec_from_file_location` + `exec_module` execute a
+# timestamp-valid `.pyc` in preference to the source they were handed, and a
+# poisoned one IS executed instead of the checked file (reproduced directly: a
+# spliced cache returned its own value). That let untracked bytes decide a
+# verdict about a commit, which is the one thing every check here exists to
+# prevent -- and scoping the fix to `proto_of` alone would have left every
+# other phase importing the same modules through the same poisoned cache.
+# `PYTHONPYCACHEPREFIX` relocates BOTH lookup and write (Codex adversarial,
+# section 50 round 14).
+export PYTHONPYCACHEPREFIX="$TMP_DIR/pycache"
 BASE_TREE="$TMP_DIR/base"
 WALK_PIDS=""
 cleanup() {
@@ -362,19 +411,79 @@ proto_of() {  # $1 = tree root
     # -- that still works, but it is reported as `legacy` so the inference is
     # refused for it rather than silently extended to a tree it does not hold
     # for.
-    python3 - "$1" <<'PY' 2>/dev/null || echo UNREADABLE
-import base64, hashlib, importlib.util, json, sys, pathlib
+    # THE RECORD TRAVELS ON ITS OWN CHANNEL, NOT ON STDOUT. Capturing stdout
+    # meant anything the imported modules emitted became part of the record:
+    # `redirect_stdout` moved python-level prints aside and a newline check
+    # caught framed contamination, but an UNTERMINATED direct write to fd 1
+    # (`os.write(1, b"noise|")`) simply concatenated with the record, shifting
+    # every field and producing a confident, wrong token (Codex adversarial,
+    # section 50 round 18). Patching that variant would have invited a third,
+    # so the record now goes to a file this function owns and stdout is
+    # discarded entirely -- there is no longer a channel for a tree to write on.
+    # A TRANSPORT FAILURE IS NOT A PROTOCOL VERDICT. Everything below moves the
+    # record between two processes, and every step of that can fail for reasons
+    # that say nothing about the tree: no temp file, no interpreter, an empty
+    # write, an unreadable file. Folding those into UNREADABLE labelled a
+    # perfectly valid base as malformed, and letting `head` fail silently
+    # produced the generic un-tokened malformed-line message -- both the exact
+    # failed-question-as-negative-answer fault this section fixed elsewhere,
+    # reappearing in the machinery this section itself introduced (Codex
+    # adversarial, section 50 round 20).
+    local _rec _prc
+    _rec="$(mktemp "$TMP_DIR/proto.XXXXXX" 2>/dev/null)" \
+        || { printf 'TRANSPORT\n'; return 0; }
+    # THE RECORD'S ADDRESS IS NEVER HANDED TO THE TREE. Passing the path as
+    # argv[2] told the very code being imported where the gate's own answer
+    # lived, and an `atexit` handler registered during import could replace a
+    # finished record with a valid-looking one (Codex adversarial, section 50
+    # round 19). The file is opened by the SHELL on fd 3, so no path reaches
+    # the subprocess, and argv is scrubbed before any tree code runs.
+    # NO `setsid` HERE, deliberately, unlike the walk phases below. Detaching
+    # the probe into its own session put it outside the gate's process group,
+    # so a TERM or INT delivered to the gate did not reach it: the probe could
+    # outlive the signal, hold the gate for the remaining budget, and an
+    # external escalation then skipped `cleanup` entirely, stranding the linked
+    # base worktree and the tempdir (Codex adversarial, section 50 round 24,
+    # [high]). The walk phases need `setsid` because they spawn children a bare
+    # `timeout` could not reap; this probe spawns none, so it can stay in the
+    # gate's own process group -- and `--foreground` is what actually keeps it
+    # there. Dropping `setsid` alone was NOT enough: GNU `timeout` puts the
+    # command in a new process group of its own unless asked not to, which
+    # leaves the probe just as unreachable by a signal sent to the gate's group
+    # (measured directly on coreutils 9.4: shell pgid 1005288, probe pgid
+    # 1005292). `--foreground`'s caveat -- that children of the command are not
+    # timed out -- costs nothing here precisely because this probe has none.
+    timeout --foreground --kill-after=10s "$(remaining)" \
+        python3 - "$1" 3>"$_rec" >/dev/null 2>/dev/null <<'PY'
+import base64, contextlib, hashlib, importlib.util, json, os, sys, pathlib
+# THE RECORD GOES OUT ON FD 3, which the shell opened. Rebinding sys.stdout to
+# it keeps every `print` below -- including the UNREADABLE sentinels --
+# unchanged, and leaves `redirect_stdout` in `_load` working as before, while
+# a write straight to fd 1 goes to the discarded real stdout.
+sys.stdout = os.fdopen(3, "w", encoding="utf-8", buffering=1)
 root = pathlib.Path(sys.argv[1])
+# NOTHING IMPORTED BELOW LEARNS THE SUBJECT PATH OR ANY OUTPUT PATH FROM argv.
+sys.argv = [sys.argv[0]]
 tg = root / "scripts/todo-graph"
 sys.path.insert(0, str(tg))
 source = "data"
 
 
 def _load(name):
+    # IMPORT-TIME OUTPUT GOES TO STDERR, NEVER INTO THE RECORD. This function's
+    # stdout IS the protocol line the caller parses, so a module that prints
+    # while being imported prepends a line to it -- the caller's `read` then
+    # takes the noise as the record and dies with a generic "malformed" rc 3
+    # carrying none of the stable tokens this section publishes (Codex
+    # adversarial, section 50 round 17). An import-time print is noise, not a
+    # protocol defect, so it is moved out of the way rather than classified.
+    # A write straight to fd 1 escapes this, which is why the caller ALSO
+    # refuses a multi-line record.
     spec = importlib.util.spec_from_file_location(name, tg / (name + ".py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)
+    with contextlib.redirect_stdout(sys.stderr):
+        spec.loader.exec_module(mod)
     return mod
 
 
@@ -483,28 +592,704 @@ print("%d|%s|%s|%s|%s|%s|%s" % (
     base64.b64encode(json.dumps(post).encode("utf-8")).decode("ascii"),
     base64.b64encode(json.dumps([renamed, retired]).encode("utf-8")).decode("ascii")))
 PY
+    _prc=$?
+    if [ "$_prc" -ne 0 ]; then
+        # The probe catches its OWN exceptions and reports UNREADABLE itself,
+        # so a nonzero status here is the interpreter failing to run at all --
+        # including 124/137, the budget killing a probe that would not finish.
+        # This was the ONE phase in the file running unbounded, so a stalled
+        # import or a blocked read could burn the whole gate budget and be
+        # terminated externally instead of returning a token (Codex
+        # adversarial, section 50 round 22).
+        rm -f "$_rec"
+        printf 'TRANSPORT\n'
+        return 0
+    fi
+    # THE FIRST LINE IS THE RECORD, and anything after it is discarded rather
+    # than trusted. `proto_of` writes its line before interpreter shutdown, so
+    # an `atexit` handler can only APPEND -- taking the head makes a late write
+    # inert instead of authoritative. The framing is still checked rather than
+    # assumed: an empty file is not a record.
+    if [ ! -s "$_rec" ]; then
+        rm -f "$_rec"
+        printf 'TRANSPORT\n'
+        return 0
+    fi
+    local _line
+    _line="$(timeout --foreground --kill-after=10s "$(remaining)" head -n 1 "$_rec" 2>/dev/null)" \
+        || { rm -f "$_rec"; printf 'TRANSPORT\n'; return 0; }
+    rm -f "$_rec"
+    [ -n "$_line" ] || { printf 'TRANSPORT\n'; return 0; }
+    printf '%s\n' "$_line"
 }
 BASE_PROTO="$(proto_of "$BASE_TREE")"
-HEAD_PROTO="$(proto_of "$REPO_ROOT")"
+# EXACTLY ONE RECORD PER SIDE. `redirect_stdout` moves PYTHON-level import
+# noise aside, but a module writing straight to fd 1 goes around it -- and a
+# contaminated capture makes the caller's `read` consume the noise line and die
+# with a generic malformed-line message carrying no stable token. Folding the
+# multi-line case into UNREADABLE routes it through the classification below,
+# which names the side and emits BASE_PROTOCOL_UNREADABLE or
+# HEAD_PROTOCOL_UNREADABLE like every other unusable protocol.
+case "$BASE_PROTO" in *$'\n'*) BASE_PROTO=UNREADABLE ;; esac
 # `?` means a constant could not be READ -- a missing or renamed snapshot tool,
 # or a declaration this parser no longer recognises. It must be an
 # INFRASTRUCTURE failure, not a value: treated as a value it merely differs
 # from the other side, which sent the run down the protocol-migration path and
 # exited 0 having built no cache and walked nothing (Codex adversarial, s16).
-for prot in "$BASE_PROTO" "$HEAD_PROTO"; do
-    case "$prot" in
-        UNREADABLE|*"?"*)
-            die_infra "cannot read the snapshot protocol constants (got '$prot') -- the snapshot tool is missing or renamed, or declares SNAPSHOT_SCHEMA/ALL_BUCKETS in a shape this gate cannot parse" ;;
+#
+# ---------------------------------------------------------------------------
+# BUT `UNREADABLE` IS FOUR DIFFERENT FACTS WEARING ONE NAME (section 50), and
+# they do not have the same operator action. `proto_of` runs inside ONE tree
+# and cannot tell them apart -- only the caller has the repository, the base
+# SHA and the history:
+#
+#   a. the constants are there and this parser cannot make sense of them
+#      -- a real defect in the tree under test, the original meaning;
+#   b. the protocol-bearing files were never in this commit's history at all
+#      -- the base simply PREDATES the mechanism, and nothing is wrong with
+#      any tree;
+#   c. the files existed in this commit's history and are gone from the
+#      commit -- a deletion or a rename, which IS a defect;
+#   d. the commit carries them but the working tree does not -- an
+#      incompletely materialized checkout, which is a defect in the CHECKOUT.
+#
+# Case (b) is what cost the diagnosis on 2026-08-19: todo-graph.yml run
+# 32255498885 gated against `5b1ebb7f` from 2026-08-04, 440 commits back, and
+# reported "the snapshot tool is missing or renamed". Nothing was missing and
+# nothing was renamed; the base predated the extraction by two days
+# (`corpus_resolution_snapshot.py` first appears at `cc05f2e90`,
+# `ref_resolution.py` at `10cdda4be`, `snapshot_protocol.json` at
+# `9ef13a2b3`).
+#
+# THE DISCRIMINATOR IS HISTORY, NOT THE FILESYSTEM (Codex design review,
+# section 50, [high]). "None of the three paths is present" proves absence and
+# nothing more: a POST-genesis base that deleted or renamed all three
+# satisfies that predicate exactly as an ancient one does, and would be handed
+# the ancient-base diagnosis -- which tells an operator to re-point the base
+# and skip a range that was mutilated rather than old. So the question asked
+# is "did any ancestor-or-self of this commit ever ADD one of these paths?",
+# which distinguishes never-existed from existed-and-removed and needs no
+# pinned genesis commit to do it.
+#
+# AND THE BASE SIDE IS ASKED THROUGH GIT, NOT THROUGH THE MATERIALIZED
+# WORKTREE. A sparse or partially-populated checkout can hide a path the
+# commit really contains, and this classification is what decides whether an
+# operator is told their tree is broken.
+#
+# WHAT THE GATE DOES WITH AN UNADJUDICATABLE RANGE: it REFUSES, at rc 3, and
+# says which of the four it is. It does not clamp the base forward to the
+# extraction commit (that silently narrows the adjudicated range and would let
+# the unexamined prefix become the next green baseline -- precisely the
+# laundering section 16 exists to prevent), it does not derive a fresh base
+# (section 16 already refuses that fallback for the same reason), and it never
+# passes (a range nothing adjudicated must not read as green). Recovery is NOT
+# this gate's to offer: `--base` and IDENTITY_GATE_LAST_GATED_SHA cannot
+# create the successful workflow record that moves the CI baseline, so
+# advertising them as the remedy would be advice that does not work where the
+# failure happens (Codex design review, section 50, [high]). In CI the
+# situation is already bounded and already has an honest answer -- the
+# workflow walks at most 60 first-parent commits and, finding no successful
+# run among them, refuses with "fix the oldest failure first"
+# (.github/workflows/todo-graph.yml) rather than reaching for an ancient base.
+#
+# The leading token on each message is STABLE and greppable so the workflow
+# can branch on the classification without parsing prose (Codex design
+# review, section 50, Q3).
+# ---------------------------------------------------------------------------
+# A COMPLETE PROTOCOL IS A SET, NOT A FILE, and treating any one path as
+# evidence of the whole was a confidently-wrong classification (Codex
+# adversarial, section 50). `proto_of` reads EITHER form:
+#     data   -- snapshot_protocol.json  (section 18 onward)
+#     legacy -- ref_resolution.py AND corpus_resolution_snapshot.py, together
+# In this repository's own history `cc05f2e90` introduced the snapshot file
+# and `10cdda4be` the resolver FIFTEEN COMMITS LATER, so every base in that
+# window carries one legacy half and no json. `proto_of` cannot import the
+# missing half and reports UNREADABLE -- and an any-path test would call that
+# tree's protocol "present but malformed", which is exactly backwards: nothing
+# is malformed, the extraction was still in progress. That window gets its own
+# token rather than being forced into one of the neighbouring answers.
+#
+# THE LOADER IS ONE OF THE PROTOCOL-BEARING PATHS, not a side-check. It was
+# added to the data form's file CONTRACT (round 13) but not to the set the
+# form CLASSIFICATION walks, so the two could disagree -- and a HEAD whose
+# worktree had the JSON but not the loader classified as `complete`, earning
+# HEAD_PROTOCOL_UNREADABLE when the honest answer was an incomplete checkout
+# (Codex adversarial, section 50 round 16). That is the THIRD time one set
+# knowing something another did not produced a wrong token here, so the sets
+# are now one set.
+PROTOCOL_JSON="scripts/todo-graph/snapshot_protocol.json"
+PROTOCOL_DATA_LOADER="scripts/todo-graph/snapshot_protocol.py"
+PROTOCOL_LEGACY_RESOLVER="scripts/todo-graph/ref_resolution.py"
+PROTOCOL_LEGACY_SNAPSHOT="scripts/todo-graph/corpus_resolution_snapshot.py"
+PROTOCOL_PATHS=(
+    "$PROTOCOL_JSON"
+    "$PROTOCOL_DATA_LOADER"
+    "$PROTOCOL_LEGACY_RESOLVER"
+    "$PROTOCOL_LEGACY_SNAPSHOT"
+)
+
+# A FAILED QUESTION IS NOT A NEGATIVE ANSWER. Both probes below discard git's
+# stderr but NEVER its exit status: swallowing a lookup or traversal failure
+# into "absent" / "never added" would let an unreadable repository state
+# manufacture a confident classification -- a broken object store would read as
+# a pristine ancient base (Codex adversarial + test-coverage, section 50).
+# `git ls-tree` is the presence primitive precisely because it separates the
+# two: rc 0 with empty output means "asked and absent", rc != 0 means "could
+# not ask" (`git cat-file -e` returns 128 for BOTH a missing path and a bad
+# object, so it cannot).
+# MEMBERSHIP IS EXACT AND TYPE-AWARE, never a substring of a joined string
+# (Codex adversarial, section 50 round 3). `git ls-tree -r` expands a
+# DIRECTORY pathspec to its descendants, so replacing `snapshot_protocol.json`
+# with a directory of that name yields `.../snapshot_protocol.json/README`,
+# which a substring test reads as the file being present -- the tree then looks
+# `complete` and earns the UNREADABLE token instead of the removed or
+# incomplete one it deserves. Any future protocol path containing an existing
+# one collides the same way. Presence is therefore recorded as a FLAG PER PATH,
+# decided from that path's own `ls-tree` entry, and the entry must be a `blob`.
+#
+# AND THE FLAG ARRAY IS SIZED FROM THE PATH ARRAY, never from a literal count.
+# `PROTO_HAS` was fixed at three entries with every writer and reader looping
+# over literal 0, 1, 2, so appending a fourth protocol path would have compiled
+# and run while that path was invisible to presence, form and missing-path --
+# a commit carrying ONLY the new path would classify as `none` and could earn
+# BASE_PROTOCOL_REMOVED (Codex adversarial, section 50 round 4). The form
+# mapping below knows exactly three names, so a path set it does not cover is
+# refused rather than silently mis-mapped.
+PROTO_HAS=()         # parallel to PROTOCOL_PATHS: 1 present as a file, else 0
+PROTO_PROBE_ERR=""   # non-empty when a probe could not be answered at all
+
+proto_index_of() {  # $1 = path; echoes its index in PROTOCOL_PATHS, or nothing
+    local _i
+    for _i in "${!PROTOCOL_PATHS[@]}"; do
+        [ "${PROTOCOL_PATHS[$_i]}" = "$1" ] && { printf '%s' "$_i"; return 0; }
+    done
+    return 1
+}
+
+# THE SINGLE-PATH TYPE TEST, shared by the presence probe and the form
+# contract. Both need "is this exact path a regular file here", and the second
+# of them asks about a path that is NOT in PROTOCOL_PATHS, so the test cannot
+# live inside the array walk.
+#
+# NOT `-r`: the exact entry at that path is the question, and its TYPE is half
+# the answer. MODE AS WELL AS TYPE, because git stores a SYMLINK as mode
+# 120000, type blob -- accepting every blob made a committed dangling symlink
+# look like a present protocol file while the worktree probe's `-f` correctly
+# rejected it, and the two sides then disagreed (Codex adversarial, section 50
+# round 5). The mode and type are the first two space-separated fields whatever
+# quoting git applies to the path.
+path_is_regular_in_commit() {  # $1 commit, $2 path; 0 regular, 1 not, 2 cannot ask
+    local _out _rc _mode _type
+    _out="$(git ls-tree "$1" -- "$2" 2>/dev/null)"; _rc=$?
+    [ "$_rc" -ne 0 ] && return 2
+    [ -n "$_out" ] || return 1
+    _mode="${_out%% *}"
+    _type="${_out#* }"; _type="${_type%% *}"
+    [ "$_type" = "blob" ] || return 1
+    case "$_mode" in
+        100644|100755) return 0 ;;
     esac
-done
+    return 1
+}
+
+# EVERY COMPONENT, NOT JUST THE LEAF. `-f` follows symlinks in every path
+# component while `-L` tests only the last one, so moving `scripts/todo-graph`
+# outside the checkout and symlinking the DIRECTORY back left each protocol
+# file `-f` and not `-L` -- and the gate read and executed bytes from outside
+# the repository while the contract passed (Codex adversarial, section 50
+# round 14). The commit side needs no equivalent: a git tree cannot be
+# traversed through a symlink entry, so `ls-tree` on such a path returns
+# nothing and the file already reads as absent.
+path_is_regular_in_worktree() {  # $1 root, $2 path; 0 regular file, else 1
+    local _cur _c
+    [ -f "$1/$2" ] || return 1
+    [ -L "$1/$2" ] && return 1
+    _cur="$1"
+    local IFS=/
+    for _c in $2; do
+        [ -n "$_c" ] || continue
+        _cur="$_cur/$_c"
+        [ -L "$_cur" ] && return 1
+    done
+    return 0
+}
+
+protocol_present_in_commit() {  # $1 = commit-ish
+    local _c="$1" _i
+    PROTO_HAS=()
+    for _i in "${!PROTOCOL_PATHS[@]}"; do PROTO_HAS[$_i]=0; done
+    for _i in "${!PROTOCOL_PATHS[@]}"; do
+        path_is_regular_in_commit "$_c" "${PROTOCOL_PATHS[$_i]}"
+        case "$?" in
+            0) PROTO_HAS[$_i]=1 ;;
+            1) ;;
+            *) PROTO_PROBE_ERR="git ls-tree failed for $_c"
+               PROTO_HAS=()
+               for _i in "${!PROTOCOL_PATHS[@]}"; do PROTO_HAS[$_i]=0; done
+               return 1 ;;
+        esac
+    done
+    return 0
+}
+
+protocol_present_in_worktree() {  # $1 = tree root
+    local _i
+    PROTO_HAS=()
+    for _i in "${!PROTOCOL_PATHS[@]}"; do PROTO_HAS[$_i]=0; done
+    for _i in "${!PROTOCOL_PATHS[@]}"; do
+        # A REGULAR FILE, exactly as the commit side requires. `-e` accepted a
+        # directory, and `-f` alone accepted a symlink -- which the commit side
+        # (mode 100644/100755) does not, and a disagreement between the two
+        # probes is what produced a wrong token rather than a wrong answer.
+        path_is_regular_in_worktree "$1" "${PROTOCOL_PATHS[$_i]}" \
+            && PROTO_HAS[$_i]=1
+    done
+    return 0
+}
+
+# `complete` = the subject can express a protocol in at least one of the two
+# forms; `none` = it carries no protocol path at all; `partial` = it carries
+# some but cannot express either form.
+protocol_form() {  # reads PROTO_HAS
+    local _i _json _load _res _snap
+    _json="$(proto_index_of "$PROTOCOL_JSON")" || { printf 'UNMAPPED\n'; return 0; }
+    _load="$(proto_index_of "$PROTOCOL_DATA_LOADER")" || { printf 'UNMAPPED\n'; return 0; }
+    _res="$(proto_index_of "$PROTOCOL_LEGACY_RESOLVER")" || { printf 'UNMAPPED\n'; return 0; }
+    _snap="$(proto_index_of "$PROTOCOL_LEGACY_SNAPSHOT")" || { printf 'UNMAPPED\n'; return 0; }
+    [ "${#PROTOCOL_PATHS[@]}" -eq 4 ] || { printf 'UNMAPPED\n'; return 0; }
+    # THE SELECTION RULE MIRRORS THE READER, it does not merely inventory what
+    # is available. `proto_of` takes the data form whenever the JSON exists and
+    # falls back to legacy ONLY when it does not -- so with the JSON present
+    # and the loader missing, the subject's form is a BROKEN DATA form, not a
+    # complete legacy one, however intact the legacy pair happens to be.
+    # Reporting "complete" there described a form the reader would not have
+    # chosen, and turned an incomplete checkout into a claim that the protocol
+    # was malformed (Codex adversarial, section 50 round 16).
+    if [ "${PROTO_HAS[$_json]}" = 1 ]; then
+        [ "${PROTO_HAS[$_load]}" = 1 ] && { printf 'complete\n'; return 0; }
+        printf 'partial\n'; return 0
+    fi
+    [ "${PROTO_HAS[$_res]}" = 1 ] && [ "${PROTO_HAS[$_snap]}" = 1 ] \
+        && { printf 'complete\n'; return 0; }
+    for _i in "${!PROTOCOL_PATHS[@]}"; do
+        [ "${PROTO_HAS[$_i]}" = 1 ] && { printf 'partial\n'; return 0; }
+    done
+    printf 'none\n'
+}
+
+# HISTORY IS THE DISCRIMINATOR the filesystem cannot supply: "none of these
+# paths is present" proves absence and nothing more, and a post-genesis commit
+# that deleted or renamed them satisfies it identically (Codex design review,
+# section 50). The question asked is "did any ancestor-or-self of this commit
+# ever ADD one of these paths?", which needs no pinned genesis commit.
+#
+# --full-history IS REQUIRED, not decoration. Default path-limited traversal
+# applies history simplification and can prune a TREESAME merge parent that
+# carries the add, which would answer "never added" about a commit whose
+# history plainly did (Codex adversarial, section 50).
+protocol_ever_added() {  # $1 = commit-ish, rest = paths; 0 yes, 1 no, 2 cannot ask
+    local _c="$1"; shift
+    local _out _rc
+    # NO PATHS MEANS NO QUESTION. Left unguarded this degrades into an
+    # unfiltered traversal whose first commit reads as a match, which is the
+    # subshell bug above wearing its consequence.
+    [ "$#" -gt 0 ] || return 2
+    _out="$(git log --full-history --diff-filter=A --format=%H -1 "$_c" -- "$@" 2>/dev/null)"
+    _rc=$?
+    [ "$_rc" -ne 0 ] && return 2
+    [ -n "$_out" ] && return 0
+    return 1
+}
+
+# AND A TRUNCATED HISTORY CANNOT PROVE A NEGATIVE. A shallow clone, a graft or
+# a replace ref all make "no add anywhere in the ancestry" a statement about
+# what this checkout can SEE rather than about what happened, so the ancient-
+# base inference is refused for them outright instead of being made unsoundly.
+#
+# EVERY PROBE FAILS CLOSED, and the metadata paths are resolved by git rather
+# than assembled by hand. Two ways this was unsound (Codex adversarial, section
+# 50 round 2): ignoring the exit status of `--is-shallow-repository` or
+# `git replace -l` let a FAILED probe read as "not shallow / no replacements",
+# which is the failed-question-as-negative-answer fault this change exists to
+# remove; and `--git-dir` in a LINKED worktree names the per-worktree
+# administrative directory while `info/grafts` and `shallow` live in the COMMON
+# directory, so a real graft was invisible from exactly the kind of checkout
+# this gate creates for itself. `--git-path` resolves both correctly from
+# either.
+history_is_complete() {  # $1 = subject commit; 0 = its ancestry is readable
+    local _shallow _replaced _p _rc
+    _shallow="$(git rev-parse --is-shallow-repository 2>/dev/null)"; _rc=$?
+    [ "$_rc" -ne 0 ] && return 1
+    [ "$_shallow" = "true" ] && return 1
+    _p="$(git rev-parse --git-path shallow 2>/dev/null)" || return 1
+    [ -s "$_p" ] && return 1
+    # THE EFFECTIVE GRAFT SOURCE, not merely git's default one. `GIT_GRAFT_FILE`
+    # overrides `info/grafts` and is inherited by every git call this function
+    # clears the way for, so checking only the default let a custom graft hide
+    # the commit that introduced a protocol path while the default file sat
+    # empty -- and the negative traversal that followed then read as proof
+    # (Codex adversarial, section 50 round 4). This repo already knows git
+    # honours it: `cache_schema.py` points it at the null device to get a
+    # graft-free walk.
+    if [ -n "${GIT_GRAFT_FILE:-}" ]; then
+        [ -s "$GIT_GRAFT_FILE" ] && return 1
+    else
+        _p="$(git rev-parse --git-path info/grafts 2>/dev/null)" || return 1
+        [ -s "$_p" ] && return 1
+    fi
+    # REPLACEMENT REFS ARE SCOPED TO THE ANCESTRY, not counted globally. Any
+    # `git replace` entry used to condemn the whole repository, so a
+    # replacement for a commit sitting on an unrelated orphan branch -- which
+    # `git log "$1"` can neither traverse nor consult -- produced
+    # BASE_HISTORY_INCOMPLETE for a base whose history was entirely intact,
+    # blocking a range on metadata that cannot touch it (Codex adversarial,
+    # section 50 round 6). The ancestry test runs under
+    # `--no-replace-objects` so it reports the TRUE topology rather than the
+    # one the replacement asserts.
+    #
+    # THE SHALLOW AND GRAFT CHECKS ABOVE STAY REPOSITORY-WIDE, deliberately.
+    # Scoping them is circular: both rewrite what a traversal can see, so any
+    # ancestry query used to decide whether they apply would already be running
+    # under them. A replacement ref has no such problem because git offers a
+    # switch that turns it off for one query. Repository-wide there is a false
+    # REFUSAL, never a false classification -- it fails closed, and it names
+    # exactly why.
+    # REPLACEMENTS ARE NOT ADJUDICATED HERE. They are decided ONCE, before any
+    # form classification, by `base_reads_are_substituted` -- see the base case
+    # below for why that had to move out of this function.
+    return 0
+}
+
+# Does any ACTIVE replacement change what a read of $1's tree or history
+# returns? ONE question, asked ONCE, before the base is classified at all.
+#
+# It lived inside history_is_complete and was therefore only asked by the arms
+# that make a never-added inference -- so the `complete` arm, which dies
+# immediately, never asked it. Replacing a base's reachable
+# snapshot_protocol.json blob with a malformed one of the same type then made
+# `proto_of` fail while `ls-tree` still reported a perfectly good regular blob,
+# and the gate called a VALID stored base malformed (Codex adversarial, section
+# 50 round 10). The same shape had already been paid for once at the commit
+# level in round 7; hoisting the question is what stops it recurring per arm.
+#
+# REACHABILITY IS THE RIGHT TEST for every object type at once: a commit, a
+# tree or a blob that the base's own object walk reaches is an object some read
+# below will resolve THROUGH the replacement. ONE walk answers for all of them,
+# and when there are no replacements at all it costs nothing.
+# A LISTED REPLACEMENT IS NOT NECESSARILY AN ACTIVE ONE. `GIT_NO_REPLACE_OBJECTS`
+# and `core.useReplaceRefs=false` turn replacement reads OFF, so every read the
+# gate makes resolves stored objects while `git replace -l` still enumerates the
+# refs -- and a range whose base was never substituted was refused as
+# manufactured (Codex adversarial, section 50 round 11).
+#
+# THE AMBIGUOUS CASE FAILS CLOSED RATHER THAN GUESSING WHICH WAY GIT READ IT.
+# Only a plainly-true value counts as "disabled"; anything else is undecided,
+# because being wrong here in the other direction would mean trusting a
+# substituted tree, and an over-refusal is the cheaper error.
+replacements_are_in_effect() {  # 0 in effect, 1 disabled, 2 cannot tell
+    local _v _rc
+    # PRESENCE, NOT TRUTHINESS. git disables replacement reads when this
+    # variable is SET, whatever its value -- confirmed directly: with
+    # `GIT_NO_REPLACE_OBJECTS=0`, `git cat-file -p` on a replaced object prints
+    # the ORIGINAL. Recognising only plainly-true values and calling the rest
+    # undecidable refused ranges git was definitively not substituting (Codex
+    # adversarial, section 50 round 14).
+    [ "${GIT_NO_REPLACE_OBJECTS+set}" = set ] && return 1
+    _v="$(git config --bool --get core.useReplaceRefs 2>/dev/null)"; _rc=$?
+    case "$_rc" in
+        0) [ "$_v" = "false" ] && return 1
+           return 0 ;;
+        1) return 0 ;;   # unset: git's default is to use them
+        *) return 2 ;;
+    esac
+}
+
+base_reads_are_substituted() {  # $1 = commit; 0 yes, 1 no, 2 cannot tell
+    local _replaced _rc _list _r
+    replacements_are_in_effect
+    case "$?" in
+        1) return 1 ;;   # git is not reading them: nothing is substituted
+        2) return 2 ;;
+    esac
+    _replaced="$(git replace -l 2>/dev/null)"; _rc=$?
+    [ "$_rc" -ne 0 ] && return 2
+    [ -n "$_replaced" ] || return 1
+    _list="$TMP_DIR/replace-reach.$$"
+    # No `setsid`, unlike the python phases below: those spawn children a bare
+    # `timeout` could not reap, and `git rev-list` does not.
+    timeout --kill-after=10s "$(remaining)" \
+        git --no-replace-objects rev-list --objects "$1" > "$_list" 2>/dev/null
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        rm -f "$_list"
+        return 2
+    fi
+    while IFS= read -r _r; do
+        [ -n "$_r" ] || continue
+        # A FLAG, NOT `exit 0` INSIDE THE RULE. awk runs END even after a
+        # rule's `exit`, so an `END { exit 1 }` overrides the success and every
+        # object reads as unreachable -- which silently disables this guard
+        # entirely. That shipped once and its paired reachable-object control
+        # is what caught it.
+        if awk -v id="$_r" '$1 == id { found = 1; exit } END { exit found ? 0 : 1 }' \
+               "$_list"; then
+            rm -f "$_list"
+            return 0
+        fi
+    done <<< "$_replaced"
+    rm -f "$_list"
+    return 1
+}
+
+# Fills PROTO_MISSING (an ARRAY, so no caller has to word-split an unquoted
+# expansion to pass the paths on) and PROTO_MISSING_TEXT for the diagnostic.
+#
+# IT MUST BE CALLED DIRECTLY, NEVER THROUGH `$(...)`. A command substitution
+# runs in a SUBSHELL, so the array it fills dies with that subshell and the
+# caller reads an EMPTY one -- which turned `git log ... -- "${PROTO_MISSING[@]}"`
+# into an unfiltered traversal that matched the first commit it saw and
+# answered "history DID add these" about paths whose history added nothing.
+# Caught live on `cc05f2e90`, the exact partial-introduction base this branch
+# exists to classify.
+PROTO_MISSING=()
+PROTO_MISSING_TEXT=""
+# A DIRECT `refs/replace/<sha>` LOOKUP USED TO LIVE HERE, and it is gone
+# deliberately: `base_reads_are_substituted` subsumes it, because the base
+# commit is reachable from its own object walk. That also keeps the round-8
+# lesson without re-implementing it -- a hardcoded `refs/replace/` prefix
+# missed a relocated `GIT_REPLACE_REF_BASE` namespace, while `git replace -l`
+# enumerates whatever namespace git is actually honouring.
+
+missing_protocol_paths() {  # reads PROTO_HAS
+    local _i
+    PROTO_MISSING=()
+    PROTO_MISSING_TEXT=""
+    for _i in "${!PROTOCOL_PATHS[@]}"; do
+        [ "${PROTO_HAS[$_i]}" = 1 ] && continue
+        PROTO_MISSING+=("${PROTOCOL_PATHS[$_i]}")
+        PROTO_MISSING_TEXT="$PROTO_MISSING_TEXT ${PROTOCOL_PATHS[$_i]}"
+    done
+}
+
+# THE BASE IS ADJUDICATED FIRST, and that order is part of the contract: when
+# both endpoints are unreadable the base answer is the one that decides whether
+# the RANGE can be adjudicated at all, so it is the more useful thing to say.
+case "$BASE_PROTO" in
+    TRANSPORT)
+        die_infra "BASE_TRANSPORT_FAILED: the gate could not carry the base $BASE_SHA protocol record between its own processes (no temp file, no interpreter, an empty write, or an unreadable record). That is this gate's machinery failing, not a statement about the base, and no classification is being guessed from it" ;;
+esac
+case "$BASE_PROTO" in
+    UNREADABLE|*"?"*)
+        # BEFORE ANY TREE CLASSIFICATION, AND FOR EVERY ARM. Each probe below
+        # reads the base's tree or its history, and a replacement of ANY object
+        # those reads resolve -- the commit, one of its trees, one of its blobs
+        # -- substitutes something the base does not store. Asked once here
+        # rather than per arm, because asking it per arm is how the `complete`
+        # arm came to skip it entirely.
+        base_reads_are_substituted "$BASE_SHA"
+        case "$?" in
+            0) die_infra "BASE_HISTORY_INCOMPLETE: an active refs/replace entry substitutes an object reachable from the base $BASE_SHA, so the tree and history this gate would read are manufactured by repository metadata rather than stored at that commit, and no classification of them would describe the base. Remove the replacement or re-run against a clean clone" ;;
+            2) die_infra "BASE_HISTORY_INCOMPLETE: could not determine whether repository replacement metadata substitutes anything reachable from the base $BASE_SHA, so whether its tree and history are the stored ones is unknown and no classification is being guessed from it" ;;
+        esac
+        if ! protocol_present_in_commit "$BASE_SHA"; then
+            die_infra "BASE_TREE_UNREADABLE: could not ask what the base $BASE_SHA contains ($PROTO_PROBE_ERR) -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it"
+        fi
+        BASE_FORM="$(protocol_form)"
+        [ "$BASE_FORM" = "UNMAPPED" ] && die_infra "BASE_FORM_UNMAPPED: PROTOCOL_PATHS declares a set this gate's form mapping does not cover (${PROTOCOL_PATHS[*]}), so no classification can be made from it. Extend protocol_form alongside PROTOCOL_PATHS"
+        missing_protocol_paths
+        BASE_MISSING="$PROTO_MISSING_TEXT"
+        case "$BASE_FORM" in
+            complete)
+                die_infra "BASE_PROTOCOL_UNREADABLE: cannot read the snapshot protocol constants at the base $BASE_SHA (got '$BASE_PROTO') -- the protocol files are present in that commit but declare SNAPSHOT_SCHEMA/ALL_BUCKETS in a shape this gate cannot parse" ;;
+            partial)
+                # THE SAME BAR AS THE `none` ARM BELOW. This arm reaches the
+                # SAME never-added inference over the missing half, so a
+                # truncated ancestry invalidates it identically -- and it was
+                # asymmetric: a shallow boundary whose base happened to retain
+                # one protocol path was told "the extraction was still in
+                # progress. Nothing is wrong with the tree under test", from a
+                # horizon rather than from history (Codex adversarial, section
+                # 50 round 2).
+                if ! history_is_complete "$BASE_SHA"; then
+                    die_infra "BASE_HISTORY_INCOMPLETE: the base $BASE_SHA carries only part of the snapshot protocol, but this checkout is shallow, grafted or replaced, so whether$PROTO_MISSING_TEXT was ever added would be a statement about what is visible here rather than about what happened. Re-run against a complete clone"
+                fi
+                protocol_ever_added "$BASE_SHA" "${PROTO_MISSING[@]}"
+                case "$?" in
+                    2) die_infra "BASE_HISTORY_UNREADABLE: could not traverse the history of the base $BASE_SHA, so whether it ever carried$BASE_MISSING is unknown and no classification is being guessed from it" ;;
+                    0) die_infra "BASE_PROTOCOL_INCOMPLETE: the base $BASE_SHA carries part of the snapshot protocol but cannot express either form of it -- missing$BASE_MISSING, which its own history DID add, so this base is mutilated rather than merely early" ;;
+                    *) die_infra "BASE_PROTOCOL_INCOMPLETE: the base $BASE_SHA predates the COMPLETION of the snapshot protocol -- missing$BASE_MISSING, never added anywhere in its history, so the extraction was still in progress at that commit and this range cannot be adjudicated. Nothing is wrong with the tree under test" ;;
+                esac ;;
+            *)
+                if ! history_is_complete "$BASE_SHA"; then
+                    die_infra "BASE_HISTORY_INCOMPLETE: the base $BASE_SHA carries none of ${PROTOCOL_PATHS[*]}, but this checkout is shallow, grafted or replaced, so 'never added anywhere in its history' would be a statement about what is visible here rather than about what happened. Re-run against a complete clone"
+                fi
+                protocol_ever_added "$BASE_SHA" "${PROTOCOL_PATHS[@]}"
+                case "$?" in
+                    2) die_infra "BASE_HISTORY_UNREADABLE: could not traverse the history of the base $BASE_SHA, so whether it ever carried the snapshot protocol is unknown and no classification is being guessed from it" ;;
+                    0) die_infra "BASE_PROTOCOL_REMOVED: the base $BASE_SHA carries none of ${PROTOCOL_PATHS[*]}, but its own history ADDED at least one of them -- they were deleted or renamed rather than never written, so this base is mutilated and its range must not be skipped as merely old" ;;
+                    *) die_infra "BASE_PREDATES_PROTOCOL: the base $BASE_SHA predates the snapshot protocol -- none of ${PROTOCOL_PATHS[*]} was ever added anywhere in its history, so there is no base-side resolver to differential and this range cannot be adjudicated. Nothing is wrong with the tree under test. Do not re-point the base to skip it: adjudicate the range or fix the older failure that left the last green this far back" ;;
+                esac ;;
+        esac ;;
+esac
+# TRI-STATE, because "git could not answer" and "that is not a regular file"
+# are different facts with different operator actions -- and collapsing them
+# through `|| return 1` made a failed `ls-tree` on the loader emit
+# BASE_PROTOCOL_NOT_A_FILE, telling an operator to fix a symlink that does not
+# exist (Codex adversarial, section 50 round 15). Every other probe in this
+# file already separates the two; this one had quietly stopped.
+protocol_source_is_regular() {  # $1 = source, $2 = side; 0 ok, 1 not a file, 2 cannot ask
+    local _i
+    case "$1" in
+        data)
+            # BOTH files, read from the SAME flags the form classification
+            # used -- re-probing here is what let the two disagree.
+            _i="$(proto_index_of "$PROTOCOL_JSON")" || return 1
+            [ "${PROTO_HAS[$_i]}" = 1 ] || return 1
+            _i="$(proto_index_of "$PROTOCOL_DATA_LOADER")" || return 1
+            [ "${PROTO_HAS[$_i]}" = 1 ] || return 1 ;;
+        legacy)
+            _i="$(proto_index_of "$PROTOCOL_LEGACY_RESOLVER")" || return 1
+            [ "${PROTO_HAS[$_i]}" = 1 ] || return 1
+            _i="$(proto_index_of "$PROTOCOL_LEGACY_SNAPSHOT")" || return 1
+            [ "${PROTO_HAS[$_i]}" = 1 ] || return 1 ;;
+        *) return 1 ;;   # an unrecognised source word is not a contract
+    esac
+    return 0
+}
+
+# THE BASE IS FINISHED BEFORE THE HEAD IS EVEN ASKED. Moving the head PROBE
+# down was only half the rule: the base's success-path contract still ran
+# after it, so a base whose protocol parses through a resolvable symlink --
+# whose answer is BASE_PROTOCOL_NOT_A_FILE -- reported HEAD_TRANSPORT_FAILED
+# whenever the head probe stalled or failed (Codex adversarial, section 50
+# round 23). Base-first now means every base question, not merely the
+# unreadable ones.
 IFS='|' read -r BASE_SCHEMA BASE_PRE BASE_POST BASE_SOURCE BASE_PRE_B64 BASE_POST_B64 BASE_MIG_B64 <<< "$BASE_PROTO"
-IFS='|' read -r HEAD_SCHEMA HEAD_PRE HEAD_POST HEAD_SOURCE HEAD_PRE_B64 HEAD_POST_B64 HEAD_MIG_B64 <<< "$HEAD_PROTO"
 for _f in "$BASE_SCHEMA" "$BASE_PRE" "$BASE_POST" "$BASE_SOURCE" \
-          "$BASE_PRE_B64" "$BASE_POST_B64" "$BASE_MIG_B64" \
-          "$HEAD_SCHEMA" "$HEAD_PRE" "$HEAD_POST" "$HEAD_SOURCE" \
-          "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64"; do
-    [ -n "$_f" ] || die_infra "the protocol line is malformed (base='$BASE_PROTO' head='$HEAD_PROTO')"
+          "$BASE_PRE_B64" "$BASE_POST_B64" "$BASE_MIG_B64"; do
+    [ -n "$_f" ] || die_infra "the protocol line is malformed (base='$BASE_PROTO')"
 done
+if ! protocol_present_in_commit "$BASE_SHA"; then
+    die_infra "BASE_TREE_UNREADABLE: could not ask what the base $BASE_SHA contains ($PROTO_PROBE_ERR) -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it"
+fi
+protocol_source_is_regular "$BASE_SOURCE" base
+case "$?" in
+    0) ;;
+    1) die_infra "BASE_PROTOCOL_NOT_A_FILE: the base $BASE_SHA parsed its protocol through the '$BASE_SOURCE' form, but that form's files are not all regular files in that commit -- a symlink parses (the reader follows it) while resolving to bytes the commit may not even contain, so the protocol this gate would adjudicate is not the one stored at the base" ;;
+    *) die_infra "BASE_TREE_UNREADABLE: could not ask whether the base $BASE_SHA stores the '$BASE_SOURCE' form's files as regular files -- git failed to answer, which is a repository failure and not a statement about the tree, so no classification is being guessed from it" ;;
+esac
+
+# ACQUIRED HERE, NOT BESIDE THE BASE PROBE. Running it up front meant a head
+# probe that STALLED could stop a perfectly classifiable base from ever
+# emitting its token -- base-first ordering has to hold for the acquisition as
+# well as the adjudication, or the base's answer waits on the head's machinery
+# (Codex adversarial, section 50 round 22).
+HEAD_PROTO="$(proto_of "$REPO_ROOT")"
+case "$HEAD_PROTO" in *$'\n'*) HEAD_PROTO=UNREADABLE ;; esac
+
+# THE HEAD SIDE IS REACHED ONLY ONCE THE BASE HAS NOTHING TO SAY. Placing this
+# transport check beside the base one put a HEAD machinery failure AHEAD of a
+# perfectly classifiable BASE failure, contradicting the base-first rule
+# published above -- a malformed base plus a failing head read reported
+# HEAD_TRANSPORT_FAILED and said nothing about the base at all (Codex
+# adversarial, section 50 round 21).
+case "$HEAD_PROTO" in
+    TRANSPORT)
+        die_infra "HEAD_TRANSPORT_FAILED: the gate could not carry the head protocol record between its own processes (no temp file, no interpreter, an empty write, or an unreadable record). That is this gate's machinery failing, not a statement about the tree under test, and no classification is being guessed from it" ;;
+esac
+case "$HEAD_PROTO" in
+    UNREADABLE|*"?"*)
+        protocol_present_in_worktree "$REPO_ROOT"
+        HEAD_FORM="$(protocol_form)"
+        [ "$HEAD_FORM" = "UNMAPPED" ] && die_infra "HEAD_FORM_UNMAPPED: PROTOCOL_PATHS declares a set this gate's form mapping does not cover (${PROTOCOL_PATHS[*]}), so no classification can be made from it. Extend protocol_form alongside PROTOCOL_PATHS"
+        missing_protocol_paths
+        HEAD_MISSING="$PROTO_MISSING_TEXT"
+        HEAD_WT_HAS=("${PROTO_HAS[@]}")
+        # ANY PATH THE COMMIT HAS AND THE WORKTREE LACKS IS AN INCOMPLETE
+        # CHECKOUT, whatever form the worktree happens to satisfy on its own.
+        # Deciding that from the worktree's form alone missed a whole family:
+        # remove ONLY snapshot_protocol.json and the surviving legacy pair
+        # still reads as a complete form, so the tree was called malformed --
+        # when `proto_of` had failed precisely because a file the commit DOES
+        # carry was not there to read (Codex adversarial, section 50 round 26).
+        # Asked as a path-by-path comparison this is one question rather than a
+        # form-by-form case analysis, so a further member cannot slip past it.
+        # AND THIS PROBE'S FAILURE IS NOT DISCARDED EITHER. Wrapped in a bare
+        # `if`, a git failure here merely skipped the comparison and execution
+        # ran on to blame the tree -- the same lost tri-state this file has now
+        # fixed three times, reappearing in the comparison added one round
+        # earlier (Codex adversarial, section 50 round 27).
+        if ! protocol_present_in_commit "$HEAD_RESOLVED"; then
+            die_infra "HEAD_TREE_UNREADABLE: could not ask what the head commit $HEAD_RESOLVED contains ($PROTO_PROBE_ERR) -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it"
+        fi
+        for _i in "${!PROTOCOL_PATHS[@]}"; do
+            if [ "${PROTO_HAS[$_i]}" = 1 ] && [ "${HEAD_WT_HAS[$_i]}" != 1 ]; then
+                die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries ${PROTOCOL_PATHS[$_i]} but the working tree does not -- this checkout is incomplete (sparse checkout, or a partial clone), so the gate is reading a tree that is not the commit it claims to test"
+            fi
+        done
+        PROTO_HAS=("${HEAD_WT_HAS[@]}")
+        if [ "$HEAD_FORM" = "complete" ]; then
+            die_infra "HEAD_PROTOCOL_UNREADABLE: cannot read the snapshot protocol constants at HEAD (got '$HEAD_PROTO') -- the snapshot tool is present but declares SNAPSHOT_SCHEMA/ALL_BUCKETS in a shape this gate cannot parse"
+        fi
+        # The commit is consulted only to separate a BROKEN TREE from a
+        # BROKEN CHECKOUT. They need opposite actions -- fix the tree, or fix
+        # the materialization -- and the filesystem alone cannot tell them
+        # apart under a sparse or partial checkout.
+        # AND A FAILED PROBE IS NOT A NEGATIVE ANSWER HERE EITHER. Folded into
+        # an `&&` condition, a git failure merely made the test false and
+        # execution fell through to a HEAD_PROTOCOL_* token -- attributing a
+        # repository failure to the tree under test, which is the exact
+        # invariant this change asserts (Codex adversarial, section 50 round 2).
+        if ! protocol_present_in_commit "$HEAD_RESOLVED"; then
+            die_infra "HEAD_TREE_UNREADABLE: could not ask what the head commit $HEAD_RESOLVED contains ($PROTO_PROBE_ERR) -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it"
+        fi
+        HEAD_COMMIT_FORM="$(protocol_form)"
+        [ "$HEAD_COMMIT_FORM" = "UNMAPPED" ] && die_infra "HEAD_FORM_UNMAPPED: PROTOCOL_PATHS declares a set this gate's form mapping does not cover (${PROTOCOL_PATHS[*]}), so no classification can be made from it. Extend protocol_form alongside PROTOCOL_PATHS"
+        if [ "$HEAD_COMMIT_FORM" = "complete" ]; then
+            die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries a complete snapshot protocol but the working tree does not (missing$HEAD_MISSING) -- this checkout is incomplete (sparse checkout, or a partial clone), so the gate is reading a tree that is not the commit it claims to test"
+        fi
+        if [ "$HEAD_FORM" = "partial" ]; then
+            die_infra "HEAD_PROTOCOL_INCOMPLETE: the tree under test carries part of the snapshot protocol but cannot express either form of it -- missing$HEAD_MISSING, so nothing here can be gated"
+        fi
+        die_infra "HEAD_PROTOCOL_ABSENT: the tree under test carries none of ${PROTOCOL_PATHS[*]} -- the snapshot mechanism this gate adjudicates is missing or renamed at HEAD, so nothing here can be gated" ;;
+esac
+IFS='|' read -r HEAD_SCHEMA HEAD_PRE HEAD_POST HEAD_SOURCE HEAD_PRE_B64 HEAD_POST_B64 HEAD_MIG_B64 <<< "$HEAD_PROTO"
+for _f in "$HEAD_SCHEMA" "$HEAD_PRE" "$HEAD_POST" "$HEAD_SOURCE" \
+          "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64"; do
+    [ -n "$_f" ] || die_infra "the protocol line is malformed (head='$HEAD_PROTO')"
+done
+
+# ---------------------------------------------------------------------------
+# THE REGULAR-FILE CONTRACT APPLIES TO A PROTOCOL THAT PARSED, NOT ONLY TO ONE
+# THAT DID NOT (Codex adversarial, section 50 round 12, [high]).
+#
+# The type checks above live inside the UNREADABLE branches, so they only ever
+# ran once `proto_of` had already failed. `proto_of` reads with
+# `pathlib.is_file()` and `read_text()`, both of which FOLLOW SYMLINKS
+# (confirmed directly), so a protocol path that is a symlink to valid JSON
+# parses perfectly, never enters those branches, and the gate goes on to
+# adjudicate a range through a path this file explicitly declares is not a
+# protocol file. A symlink to a target OUTSIDE the commit is worse still: the
+# verdict then depends on bytes the commit does not contain, which is exactly
+# the property every other check here exists to deny.
+#
+# So the form `proto_of` ACTUALLY USED is validated against regular files on
+# both sides: `data` needs the JSON, `legacy` needs BOTH python files. The base
+# is checked in the COMMIT (an ls-tree mode), the head in the working tree,
+# each matching what that side's reader actually opened.
+# THE DATA FORM IS TWO FILES, NOT ONE. `proto_of`'s data branch validates the
+# JSON against the LOADER by importing `snapshot_protocol.py` -- so that file is
+# executed on this path and belongs to the form's file set. Checking only the
+# JSON left the loader free to be a symlink to a byte-identical copy: it runs,
+# the JSON is regular, and the contract passes while code executes through a
+# path this gate declares is not a protocol file (Codex adversarial, section 50
+# round 13, [high]). The loader is declared with the other protocol paths above
+# and walked by the same probes, so the form contract and the form
+# classification cannot disagree about it.
+#
+protocol_present_in_worktree "$REPO_ROOT"
+protocol_source_is_regular "$HEAD_SOURCE" head \
+    || die_infra "HEAD_PROTOCOL_NOT_A_FILE: the tree under test parsed its protocol through the '$HEAD_SOURCE' form, but that form's files are not all regular files in the working tree -- a symlink parses (the reader follows it) while resolving to bytes outside the commit, so the protocol this gate would adjudicate is not the one under test"
 
 # ---------------------------------------------------------------------------
 # THE SEPARATION RULE (section 18, closing the section 16 refusals).

@@ -8886,7 +8886,13 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22q.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -eq 3 ] && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22q.log"; then
+    # THE STABLE TOKEN, not only the shared prose (Codex test-coverage,
+    # section 50). Both sides emit "cannot read the snapshot protocol", so a
+    # prose-only assertion would still pass if the gate died on the BASE side
+    # before ever reaching the head-side defect this case is about.
+    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22q.log" \
+       && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22q.log" \
+       && ! grep -q 'BASE_PROTOCOL_' "$TMP_DIR/gate-22q.log"; then
         t_pass "identity gate: a schema the loader would reject is infrastructure, not a fast-path PASS"
     else
         t_fail "identity gate: unusable schema reached a verdict (rc=$G_RC; see $TMP_DIR/gate-22q.log)"
@@ -8913,7 +8919,13 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22r.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -eq 3 ] && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22r.log"; then
+    # THE STABLE TOKEN, not only the shared prose (Codex test-coverage,
+    # section 50). Both sides emit "cannot read the snapshot protocol", so a
+    # prose-only assertion would still pass if the gate died on the BASE side
+    # before ever reaching the head-side defect this case is about.
+    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22r.log" \
+       && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22r.log" \
+       && ! grep -q 'BASE_PROTOCOL_' "$TMP_DIR/gate-22r.log"; then
         t_pass "identity gate: object-valued halves are unreadable, not a digest match"
     else
         t_fail "identity gate: object-valued halves passed (rc=$G_RC; see $TMP_DIR/gate-22r.log)"
@@ -9270,7 +9282,13 @@ PY2
     # Loader/data divergence makes the protocol UNREADABLE, which the caller
     # treats as infrastructure -- assert that exact code and diagnostic rather
     # than "something went wrong".
-    if [ "$G_RC" -eq 3 ] && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22ag.log"; then
+    # THE STABLE TOKEN, not only the shared prose (Codex test-coverage,
+    # section 50). Both sides emit "cannot read the snapshot protocol", so a
+    # prose-only assertion would still pass if the gate died on the BASE side
+    # before ever reaching the head-side defect this case is about.
+    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22ag.log" \
+       && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22ag.log" \
+       && ! grep -q 'BASE_PROTOCOL_' "$TMP_DIR/gate-22ag.log"; then
         t_pass "identity gate: a loader that disagrees with the protocol data is refused"
     else
         t_fail "identity gate: loader/data divergence not exercised (rc=$G_RC; see $TMP_DIR/gate-22ag.log)"
@@ -9761,6 +9779,1646 @@ PY2
             t_fail "identity gate: budget '$_bad_budget' not refused as usage rc 2 (rc=$G_RC; see $TMP_DIR/gate-22y.log)"
         fi
     done
+
+
+    # ------------------------------------------------------------------
+    # SECTION 50: `UNREADABLE` WAS MANY FACTS WEARING ONE NAME, and the
+    # operator was told the wrong one. todo-graph.yml run 32255498885 gated
+    # against a base 440 commits back that simply PREDATED the snapshot
+    # mechanism, and reported "the snapshot tool is missing or renamed".
+    #
+    # Each case asserts its own STABLE TOKEN and, where the confusion is the
+    # point, asserts the tokens it must NOT be. The cases share one code path,
+    # so the controls are what make any of them mean anything: a fix that
+    # rescues the ancient base must not drag a mutilated, a half-extracted or
+    # a corrupt one along with it.
+    # ------------------------------------------------------------------
+    # 22ao: A BASE THAT PREDATES THE MECHANISM ENTIRELY. Derived from history
+    # rather than hardcoded: take the EARLIEST commit that added any
+    # protocol-bearing path and use its parent, which by construction had none.
+    G_ANCIENT_ADD="$( (cd "$GATE_REPO" && for _p in \
+            scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py; do
+            git log --full-history --diff-filter=A --format='%ct %H' HEAD -- "$_p" 2>/dev/null
+        done | sort -n | head -1 | awk '{print $2}') )"
+    G_ANCIENT=""
+    if [ -n "$G_ANCIENT_ADD" ]; then
+        G_ANCIENT="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet "${G_ANCIENT_ADD}^" 2>/dev/null) )"
+    fi
+    if [ -z "$G_ANCIENT" ]; then
+        # A SILENT SKIP READS AS A PASS. If the clone cannot supply a
+        # pre-protocol commit the case is untested, and that must be visible.
+        t_fail "identity gate: could not derive a pre-protocol commit from the fixture clone's history"
+    else
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_ANCIENT" --head HEAD \
+            >"$TMP_DIR/gate-22ao.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 3 ] \
+           && grep -q 'BASE_PREDATES_PROTOCOL' "$TMP_DIR/gate-22ao.log" \
+           && ! grep -qE 'BASE_PROTOCOL_REMOVED|BASE_PROTOCOL_INCOMPLETE' \
+                  "$TMP_DIR/gate-22ao.log"; then
+            t_pass "identity gate: a base predating the snapshot protocol is named as such, not as a missing tool"
+        else
+            t_fail "identity gate: pre-protocol base misclassified (rc=$G_RC; see $TMP_DIR/gate-22ao.log)"
+        fi
+    fi
+
+    # 22an2: THE HALF-EXTRACTED WINDOW IS ITS OWN ANSWER. A COMPLETE protocol
+    # is a SET, not a file: this repo's own history added
+    # corpus_resolution_snapshot.py at cc05f2e90 and ref_resolution.py fifteen
+    # commits later, so every base between them carries one legacy half and no
+    # json. An any-path predicate calls that "present but malformed", which is
+    # backwards -- nothing is malformed, the extraction was in progress.
+    # Reproduced in the clone by leaving exactly one legacy half.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "s50: base carrying one legacy half only" >/dev/null 2>&1
+    )
+    G_PARTIAL="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "s50: restore the full protocol at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PARTIAL" --head HEAD \
+        >"$TMP_DIR/gate-22at.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_INCOMPLETE' "$TMP_DIR/gate-22at.log" \
+       && ! grep -qE 'BASE_PROTOCOL_UNREADABLE|BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_REMOVED' \
+              "$TMP_DIR/gate-22at.log"; then
+        t_pass "identity gate: a base carrying only part of the protocol is incomplete, not malformed"
+    else
+        t_fail "identity gate: partial protocol was forced into a neighbouring verdict (rc=$G_RC; see $TMP_DIR/gate-22at.log)"
+    fi
+
+    # 22ap: THE CONTROL THAT MAKES 22ao MEAN SOMETHING. A POST-genesis base
+    # that DELETED all three satisfies "none of the paths is present" exactly
+    # as an ancient one does, so a filesystem-only predicate would hand it the
+    # ancient diagnosis and invite an operator to skip a mutilated range.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ap: base with the protocol removed" >/dev/null 2>&1
+    )
+    G_REMOVED="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22ap: restore the protocol at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+        >"$TMP_DIR/gate-22ap.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22ap.log" \
+       && ! grep -q 'BASE_PREDATES_PROTOCOL' "$TMP_DIR/gate-22ap.log"; then
+        t_pass "identity gate: a base that DELETED the protocol is mutilated, never 'ancient'"
+    else
+        t_fail "identity gate: deleted-protocol base was not distinguished from a pre-protocol one (rc=$G_RC; see $TMP_DIR/gate-22ap.log)"
+    fi
+
+    # 22au: A COHERENT RENAME, exercised as an actual rename rather than
+    # asserted in a comment. The canonical paths are gone while history still
+    # records their addition, which is the same evidence a deletion leaves --
+    # and must reach the same verdict, never the ancient one.
+    (
+        cd "$GATE_REPO" || exit 1
+        git mv scripts/todo-graph/snapshot_protocol.json scripts/todo-graph/protocol_data.json >/dev/null 2>&1
+        git mv scripts/todo-graph/ref_resolution.py scripts/todo-graph/refres.py >/dev/null 2>&1
+        git mv scripts/todo-graph/corpus_resolution_snapshot.py scripts/todo-graph/corpus_snap.py >/dev/null 2>&1
+        git mv scripts/todo-graph/snapshot_protocol.py scripts/todo-graph/proto_loader.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22au: base with the protocol renamed away" >/dev/null 2>&1
+    )
+    G_RENAMED="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git mv scripts/todo-graph/protocol_data.json scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git mv scripts/todo-graph/refres.py scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git mv scripts/todo-graph/corpus_snap.py scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git mv scripts/todo-graph/proto_loader.py scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22au: rename the protocol back at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_RENAMED" --head HEAD \
+        >"$TMP_DIR/gate-22au.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22au.log" \
+       && ! grep -q 'BASE_PREDATES_PROTOCOL' "$TMP_DIR/gate-22au.log"; then
+        t_pass "identity gate: a RENAMED-away protocol reaches the mutilated verdict, not the ancient one"
+    else
+        t_fail "identity gate: renamed-away protocol misclassified (rc=$G_RC; see $TMP_DIR/gate-22au.log)"
+    fi
+
+    # 22aq: THE CORRUPT-PROTOCOL CONTROL, on the SAME side as 22ao. Present
+    # and COMPLETE but unparseable is the original meaning of UNREADABLE and
+    # must survive the split intact.
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = "not-an-int"
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22aq: base with a malformed protocol" >/dev/null 2>&1
+    )
+    G_CORRUPT="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22aq: restore a well-formed protocol at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CORRUPT" --head HEAD \
+        >"$TMP_DIR/gate-22aq.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22aq.log" \
+       && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22aq.log" \
+       && ! grep -qE 'BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_INCOMPLETE' \
+              "$TMP_DIR/gate-22aq.log"; then
+        t_pass "identity gate: a base whose protocol is COMPLETE but malformed stays a tree defect"
+    else
+        t_fail "identity gate: malformed base protocol was reclassified (rc=$G_RC; see $TMP_DIR/gate-22aq.log)"
+    fi
+
+    # 22av: WHICH SIDE ANSWERS WHEN BOTH FAIL. The base decides whether the
+    # RANGE can be adjudicated at all, so the base token is the documented
+    # winner -- and an unpinned ordering is exactly how a head defect starts
+    # being reported as a base one.
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = "also-not-an-int"
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22av: head unreadable too" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CORRUPT" --head HEAD \
+        >"$TMP_DIR/gate-22av.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22av.log" \
+       && ! grep -q 'HEAD_PROTOCOL_' "$TMP_DIR/gate-22av.log"; then
+        t_pass "identity gate: with BOTH endpoints unreadable the BASE token is the one reported"
+    else
+        t_fail "identity gate: base-first ordering is not pinned (rc=$G_RC; see $TMP_DIR/gate-22av.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22av: restore a well-formed protocol at head" >/dev/null 2>&1
+    )
+
+    # 22aw: A FAILED QUESTION IS NOT A NEGATIVE ANSWER. If the history probe
+    # cannot run, "never added anywhere in its history" has not been
+    # established -- and answering PREDATES from a git failure would let a
+    # broken object store manufacture a pristine ancient base. Forced with a
+    # PATH shim that fails ONLY the history traversal.
+    G_SHIM="$TMP_DIR/gitshim-s50"
+    mkdir -p "$G_SHIM"
+    G_REAL_GIT="$(command -v git)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'for a in "$@"; do [ "$a" = "--diff-filter=A" ] && exit 141; done\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM/git"
+    chmod +x "$G_SHIM/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_REMOVED" --head HEAD >"$TMP_DIR/gate-22aw.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_HISTORY_UNREADABLE' "$TMP_DIR/gate-22aw.log" \
+       && ! grep -qE 'BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_REMOVED' \
+              "$TMP_DIR/gate-22aw.log"; then
+        t_pass "identity gate: a git traversal failure refuses instead of becoming classification evidence"
+    else
+        t_fail "identity gate: failed history probe was read as an answer (rc=$G_RC; see $TMP_DIR/gate-22aw.log)"
+    fi
+
+    # 22ax: A TRUNCATED HISTORY CANNOT PROVE A NEGATIVE either. In a shallow
+    # clone the ancestry simply stops, so "no add anywhere in its history"
+    # describes what this checkout can SEE rather than what happened. The gate
+    # must say so rather than infer an ancient base from a horizon.
+    #
+    # THE BASE MUST ACTUALLY REACH THE BRANCH UNDER TEST. The first cut cloned
+    # the fixture repo as it stood and used HEAD~1, whose protocol was intact
+    # -- so the gate never entered the classification at all and the case
+    # passed while proving nothing. That is the vacuous-pass shape these
+    # fixtures exist to refuse, so the removal commit is created FIRST and the
+    # depth is chosen to make it the shallow boundary.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ax: the shallow boundary carries no protocol" >/dev/null 2>&1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22ax: restore the protocol at head" >/dev/null 2>&1
+    )
+    G_SHALLOW="$TMP_DIR/gate-shallow-s50"
+    rm -rf "$G_SHALLOW" 2>/dev/null || true
+    if git clone --quiet --depth 2 "file://$GATE_REPO" "$G_SHALLOW" >/dev/null 2>&1 \
+       && [ -f "$G_SHALLOW/scripts/todo-graph/identity-gate.sh" ]; then
+        G_SHALLOW_BASE="$( (cd "$G_SHALLOW" && git rev-parse --verify --quiet HEAD~1 2>/dev/null) )"
+        G_IS_SHALLOW="$( (cd "$G_SHALLOW" && git rev-parse --is-shallow-repository 2>/dev/null) )"
+        if [ -z "$G_SHALLOW_BASE" ] || [ "$G_IS_SHALLOW" != "true" ]; then
+            t_fail "identity gate: the shallow fixture is not actually shallow (base='$G_SHALLOW_BASE' shallow='$G_IS_SHALLOW')"
+        else
+            (cd "$G_SHALLOW" && bash "$G_SHALLOW/scripts/todo-graph/identity-gate.sh" \
+                --base "$G_SHALLOW_BASE" --head HEAD >"$TMP_DIR/gate-22ax.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22ax.log" \
+               && ! grep -qE 'BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_REMOVED' \
+                      "$TMP_DIR/gate-22ax.log"; then
+                t_pass "identity gate: a shallow horizon refuses the pre-protocol inference instead of making it"
+            else
+                t_fail "identity gate: shallow ancestry was treated as proof of absence (rc=$G_RC; see $TMP_DIR/gate-22ax.log)"
+            fi
+        fi
+    else
+        t_fail "identity gate: could not build the shallow fixture clone (a silent skip would read as a pass)"
+    fi
+
+    # 22ay: A GENUINE INTRODUCTION WINDOW, taken from real history rather than
+    # manufactured by deletion. 22at proves the partial SHAPE is recognised,
+    # but its missing paths were added in visible history, so it exercises only
+    # the "mutilated" half of that arm. The commit that FIRST added any
+    # protocol path carries exactly one of them and its ancestry never added
+    # the others -- the half-extracted case the live incident actually spans.
+    if [ -z "$G_ANCIENT_ADD" ]; then
+        t_fail "identity gate: no first-protocol-add commit to test the introduction window with"
+    else
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_ANCIENT_ADD" --head HEAD \
+            >"$TMP_DIR/gate-22ay.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 3 ] \
+           && grep -q 'BASE_PROTOCOL_INCOMPLETE' "$TMP_DIR/gate-22ay.log" \
+           && grep -q 'never added anywhere in its history' "$TMP_DIR/gate-22ay.log" \
+           && ! grep -q 'mutilated' "$TMP_DIR/gate-22ay.log"; then
+            t_pass "identity gate: a half-extracted base is named as early, not as mutilated"
+        else
+            t_fail "identity gate: the introduction window took the mutilated branch (rc=$G_RC; see $TMP_DIR/gate-22ay.log)"
+        fi
+    fi
+
+    # 22az: THE PARTIAL ARM MUST CLEAR THE SAME HISTORY BAR AS THE NONE ARM.
+    # It did not: a shallow boundary whose base happened to retain one protocol
+    # path was told "the extraction was still in progress. Nothing is wrong
+    # with the tree under test" -- an inference drawn from a horizon.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22az: shallow boundary keeps one legacy half" >/dev/null 2>&1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22az: restore the protocol at head" >/dev/null 2>&1
+    )
+    G_SHALLOW2="$TMP_DIR/gate-shallow2-s50"
+    rm -rf "$G_SHALLOW2" 2>/dev/null || true
+    if git clone --quiet --depth 2 "file://$GATE_REPO" "$G_SHALLOW2" >/dev/null 2>&1 \
+       && [ -f "$G_SHALLOW2/scripts/todo-graph/identity-gate.sh" ]; then
+        G_SB2="$( (cd "$G_SHALLOW2" && git rev-parse --verify --quiet HEAD~1 2>/dev/null) )"
+        if [ -z "$G_SB2" ]; then
+            t_fail "identity gate: the shallow partial fixture has no boundary commit"
+        else
+            (cd "$G_SHALLOW2" && bash "$G_SHALLOW2/scripts/todo-graph/identity-gate.sh" \
+                --base "$G_SB2" --head HEAD >"$TMP_DIR/gate-22az.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22az.log" \
+               && ! grep -q 'Nothing is wrong with the tree under test' "$TMP_DIR/gate-22az.log"; then
+                t_pass "identity gate: a PARTIAL base over a shallow ancestry refuses instead of inferring"
+            else
+                t_fail "identity gate: the partial arm drew a never-added inference from a horizon (rc=$G_RC; see $TMP_DIR/gate-22az.log)"
+            fi
+        fi
+    else
+        t_fail "identity gate: could not build the shallow partial fixture clone"
+    fi
+
+    # 22ba: A FAILED HEAD TREE PROBE IS A REPOSITORY FAILURE, NOT A TREE
+    # DEFECT. Folded into an `&&`, a git failure merely made the condition
+    # false and fell through to a HEAD_PROTOCOL_* token, blaming the tree under
+    # test for a question the repository could not answer. Forced with a shim
+    # that fails ls-tree ONLY for the head commit.
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/snapshot_protocol.json \
+              scripts/todo-graph/snapshot_protocol.py \
+              scripts/todo-graph/ref_resolution.py \
+              scripts/todo-graph/corpus_resolution_snapshot.py
+    )
+    G_HEAD_SHA="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    G_SHIM2="$TMP_DIR/gitshim2-s50"
+    mkdir -p "$G_SHIM2"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "ls-tree" ]; then\n'
+        printf '  for a in "$@"; do [ "$a" = "%s" ] && exit 128; done\n' "$G_HEAD_SHA"
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM2/git"
+    chmod +x "$G_SHIM2/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM2:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22ba.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_TREE_UNREADABLE' "$TMP_DIR/gate-22ba.log" \
+       && ! grep -qE 'HEAD_PROTOCOL_ABSENT|HEAD_PROTOCOL_INCOMPLETE' \
+              "$TMP_DIR/gate-22ba.log"; then
+        t_pass "identity gate: an unreadable HEAD tree is a repository failure, not a tree defect"
+    else
+        t_fail "identity gate: failed head tree probe was blamed on the tree (rc=$G_RC; see $TMP_DIR/gate-22ba.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+    )
+
+    # 22bb: THE COMPLETENESS PROBE ITSELF MUST FAIL CLOSED. `history_is_complete`
+    # ignored the exit status of its own git calls, so a FAILED probe read as
+    # "not shallow, no replacements" and cleared the way for the ancient-base
+    # inference -- the failed-question-as-negative-answer fault one level down.
+    G_SHIM3="$TMP_DIR/gitshim3-s50"
+    mkdir -p "$G_SHIM3"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf '[ "$1" = "replace" ] && exit 129\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM3/git"
+    chmod +x "$G_SHIM3/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM3:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_REMOVED" --head HEAD >"$TMP_DIR/gate-22bb.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bb.log" \
+       && ! grep -qE 'BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_REMOVED' \
+              "$TMP_DIR/gate-22bb.log"; then
+        t_pass "identity gate: a failed history-completeness probe fails closed"
+    else
+        t_fail "identity gate: completeness probe failure was read as 'history is fine' (rc=$G_RC; see $TMP_DIR/gate-22bb.log)"
+    fi
+
+    # 22bc: A DIRECTORY IS NOT A PROTOCOL FILE. `git ls-tree -r` expands a
+    # DIRECTORY pathspec to its descendants, so a directory named
+    # snapshot_protocol.json yields `.../snapshot_protocol.json/README` -- and
+    # a substring test over the joined result read that as the FILE being
+    # present, making a mutilated tree look `complete` and earning it the
+    # unreadable token instead of the removed one. Membership is now decided
+    # from each path's own entry, and the entry must be a blob.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        mkdir -p scripts/todo-graph/snapshot_protocol.json
+        printf 'not a protocol\n' > scripts/todo-graph/snapshot_protocol.json/README
+        git add scripts/todo-graph/snapshot_protocol.json/README >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22bc: a directory wearing the protocol file's name" >/dev/null 2>&1
+    )
+    G_DIRBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q -r --ignore-unmatch scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        rm -rf scripts/todo-graph/snapshot_protocol.json
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22bc: restore the real protocol at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_DIRBASE" --head HEAD \
+        >"$TMP_DIR/gate-22bc.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bc.log" \
+       && ! grep -qE 'BASE_PROTOCOL_UNREADABLE|BASE_PROTOCOL_INCOMPLETE' \
+              "$TMP_DIR/gate-22bc.log"; then
+        t_pass "identity gate: a directory wearing a protocol file's name is not the protocol"
+    else
+        t_fail "identity gate: a directory was counted as the protocol file (rc=$G_RC; see $TMP_DIR/gate-22bc.log)"
+    fi
+
+    # 22bd: A CUSTOM GRAFT FILE IS STILL A TRUNCATED HISTORY. `GIT_GRAFT_FILE`
+    # overrides `info/grafts` and is inherited by the traversal, so checking
+    # only git's default file left a non-default graft free to hide the commit
+    # that introduced a protocol path while the default sat empty -- and the
+    # negative traversal that followed then read as proof.
+    G_GRAFT="$TMP_DIR/s50-grafts"
+    printf '%s\n' "$G_REMOVED" > "$G_GRAFT"
+    (cd "$GATE_REPO" && GIT_GRAFT_FILE="$G_GRAFT" bash "$GATE_IN_CLONE" \
+        --base "$G_REMOVED" --head HEAD >"$TMP_DIR/gate-22bd.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bd.log" \
+       && ! grep -qE 'BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_REMOVED' \
+              "$TMP_DIR/gate-22bd.log"; then
+        t_pass "identity gate: a custom GIT_GRAFT_FILE is refused, not walked around"
+    else
+        t_fail "identity gate: a non-default graft hid the protocol introduction (rc=$G_RC; see $TMP_DIR/gate-22bd.log)"
+    fi
+    # MUTATION CONTROL: the very same base and head WITHOUT the graft must
+    # reach a real verdict, or 22bd would pass for the wrong reason.
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+        >"$TMP_DIR/gate-22bd-control.log" 2>&1)
+    if grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bd-control.log"; then
+        t_pass "identity gate: CONTROL -- without the graft the same range classifies normally"
+    else
+        t_fail "identity gate: the 22bd control did not reach its normal verdict (see $TMP_DIR/gate-22bd-control.log)"
+    fi
+
+    # 22be: A FOURTH PROTOCOL PATH MUST NOT BE SILENTLY IGNORED. The presence
+    # flags were a fixed three-element array indexed by literals beside a
+    # SEPARATE path array, so appending a path would have run cleanly while
+    # that path was invisible to presence, form and missing-path. Mutation
+    # applied to the CLONE's own copy of the gate, never the live one.
+    G_MUT="$GATE_REPO/scripts/todo-graph/identity-gate-mut.sh"
+    sed 's#^    "\$PROTOCOL_LEGACY_SNAPSHOT"$#    "$PROTOCOL_LEGACY_SNAPSHOT"\n    "scripts/todo-graph/protocol_addendum.py"#' \
+        "$GATE_IN_CLONE" > "$G_MUT"
+    if ! grep -q 'protocol_addendum.py' "$G_MUT"; then
+        t_fail "identity gate: could not build the fourth-path mutation (the PROTOCOL_PATHS anchor moved)"
+    else
+        (cd "$GATE_REPO" && bash "$G_MUT" --base "$G_REMOVED" --head HEAD \
+            >"$TMP_DIR/gate-22be.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 3 ] && grep -q 'FORM_UNMAPPED' "$TMP_DIR/gate-22be.log"; then
+            t_pass "identity gate: a protocol path the form mapping does not cover is refused, not ignored"
+        else
+            t_fail "identity gate: a fourth protocol path was silently ignored (rc=$G_RC; see $TMP_DIR/gate-22be.log)"
+        fi
+    fi
+    rm -f "$G_MUT"
+
+    # 22bf: A SYMLINK IS NOT A PROTOCOL FILE. Git stores one as mode 120000,
+    # type blob, so accepting every blob made a committed DANGLING symlink look
+    # present on the commit side while the worktree probe's `-f` rejected it.
+    # The two sides disagreed and the gate blamed the CHECKOUT for a defect in
+    # the committed tree -- the right refusal class, the wrong remediation.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        ln -s nowhere-at-all scripts/todo-graph/snapshot_protocol.json
+        git add scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22bf: the protocol path is a dangling symlink" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bf.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_PROTOCOL_ABSENT' "$TMP_DIR/gate-22bf.log" \
+       && ! grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22bf.log"; then
+        t_pass "identity gate: a committed dangling symlink is a tree defect, not an incomplete checkout"
+    else
+        t_fail "identity gate: a symlink blob was counted as a protocol file (rc=$G_RC; see $TMP_DIR/gate-22bf.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        rm -f scripts/todo-graph/snapshot_protocol.json
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22bf: restore the real protocol at head" >/dev/null 2>&1
+    )
+
+    # 22bg: AN UNRELATED REPLACEMENT REF MUST NOT CONDEMN THE RANGE. Any
+    # `git replace` entry used to mark the whole repository incomplete, so a
+    # replacement for a commit the base's own traversal can neither reach nor
+    # consult produced BASE_HISTORY_INCOMPLETE for a base whose history was
+    # entirely intact.
+    #
+    # BUILT WITH PLUMBING, NOT AN ORPHAN BRANCH. The first cut used
+    # `git checkout --orphan` plus `git rm -rf .`, which emptied the shared
+    # fixture worktree; the return checkout did not restore it and the next
+    # FOUR cases died at rc 127 with the gate script simply gone. `commit-tree`
+    # writes unreachable commits without touching the worktree at all -- and
+    # the replacement ref that follows is what keeps them alive.
+    G_EMPTY_TREE="$( (cd "$GATE_REPO" && git hash-object -t tree /dev/null 2>/dev/null) )"
+    G_ORPHAN_A=""
+    G_ORPHAN_B=""
+    if [ -n "$G_EMPTY_TREE" ]; then
+        G_ORPHAN_A="$( (cd "$GATE_REPO" && git commit-tree "$G_EMPTY_TREE" -m "22bg: unreachable A" </dev/null 2>/dev/null) )"
+        [ -n "$G_ORPHAN_A" ] && G_ORPHAN_B="$( (cd "$GATE_REPO" && git commit-tree "$G_EMPTY_TREE" -p "$G_ORPHAN_A" -m "22bg: unreachable B" </dev/null 2>/dev/null) )"
+    fi
+    if [ -z "$G_ORPHAN_A" ] || [ -z "$G_ORPHAN_B" ]; then
+        t_fail "identity gate: could not build the unrelated-replacement fixture (no unreachable commits)"
+    else
+        (cd "$GATE_REPO" && git replace -f "$G_ORPHAN_A" "$G_ORPHAN_B" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the unrelated replacement ref was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+                >"$TMP_DIR/gate-22bg.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bg.log" \
+               && ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bg.log"; then
+                t_pass "identity gate: a replacement ref outside the base ancestry leaves the verdict alone"
+            else
+                t_fail "identity gate: unrelated repository metadata condemned the range (rc=$G_RC; see $TMP_DIR/gate-22bg.log)"
+            fi
+            # AND THE POSITIVE HALF: a replacement INSIDE the base ancestry
+            # must still refuse, or the scoping would have removed the guard
+            # rather than narrowed it.
+            (cd "$GATE_REPO" && git replace -f "$G_REMOVED" "$G_ORPHAN_B" >/dev/null 2>&1)
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+                >"$TMP_DIR/gate-22bg2.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bg2.log"; then
+                t_pass "identity gate: a replacement ref INSIDE the base ancestry still refuses"
+            else
+                t_fail "identity gate: scoping removed the replacement guard entirely (rc=$G_RC; see $TMP_DIR/gate-22bg2.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_ORPHAN_A" >/dev/null 2>&1
+             cd "$GATE_REPO" && git replace -d "$G_REMOVED" >/dev/null 2>&1) >/dev/null 2>&1
+        fi
+    fi
+    # 22bh: A REPLACEMENT OF THE BASE OBJECT ITSELF. Distinct from 22bg, which
+    # is about a replacement elsewhere in the ancestry: replacing the BASE
+    # substitutes the very tree every presence probe reads. A synthetic tree
+    # carrying a COMPLETE but malformed protocol therefore reached the
+    # `complete` arm -- which never consults the completeness guard -- and
+    # earned BASE_PROTOCOL_UNREADABLE, a statement about a tree the repository
+    # manufactured rather than one stored at that commit.
+    if [ -z "$G_CORRUPT" ]; then
+        t_fail "identity gate: no malformed-protocol commit available to replace the base with"
+    else
+        (cd "$GATE_REPO" && git replace -f "$G_PROTO_BASE" "$G_CORRUPT" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the base replacement was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22bh.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bh.log" \
+               && ! grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bh.log"; then
+                t_pass "identity gate: a REPLACED base object is repository metadata, not a malformed tree"
+            else
+                t_fail "identity gate: a manufactured base tree was classified as the stored one (rc=$G_RC; see $TMP_DIR/gate-22bh.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_PROTO_BASE" >/dev/null 2>&1)
+        fi
+    fi
+    # MUTATION CONTROL: with the replacement removed, the SAME invocation must
+    # reach a real verdict again -- otherwise 22bh proves only that something
+    # broke.
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CORRUPT" --head HEAD \
+        >"$TMP_DIR/gate-22bh-control.log" 2>&1)
+    if grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bh-control.log"; then
+        t_pass "identity gate: CONTROL -- an unreplaced malformed base still reads as malformed"
+    else
+        t_fail "identity gate: the 22bh control lost its normal verdict (see $TMP_DIR/gate-22bh-control.log)"
+    fi
+
+    # 22bi: THE REPLACEMENT NAMESPACE IS CONFIGURABLE. `GIT_REPLACE_REF_BASE`
+    # relocates where git looks for replacements, so the base-replacement guard
+    # -- which looked under a hardcoded `refs/replace/` -- missed a replacement
+    # git was actively honouring, and the manufactured tree was classified as
+    # the stored one all over again.
+    if [ -z "$G_CORRUPT" ]; then
+        t_fail "identity gate: no malformed-protocol commit available for the namespace case"
+    else
+        (cd "$GATE_REPO" && git update-ref "refs/replacements/$G_PROTO_BASE" "$G_CORRUPT" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git rev-parse --verify --quiet "refs/replacements/$G_PROTO_BASE" 2>/dev/null) )" ]; then
+            t_fail "identity gate: the relocated replacement ref was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && GIT_REPLACE_REF_BASE=refs/replacements/ \
+                bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22bi.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bi.log" \
+               && ! grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bi.log"; then
+                t_pass "identity gate: a relocated replacement namespace is honoured, not missed"
+            else
+                t_fail "identity gate: GIT_REPLACE_REF_BASE bypassed the base-replacement guard (rc=$G_RC; see $TMP_DIR/gate-22bi.log)"
+            fi
+            (cd "$GATE_REPO" && git update-ref -d "refs/replacements/$G_PROTO_BASE" >/dev/null 2>&1)
+        fi
+    fi
+
+    # 22bj: A DANGLING-BLOB REPLACEMENT REACHES NOTHING. `merge-base
+    # --is-ancestor` accepts only commits and exits 128 for a blob, which the
+    # fail-closed arm read as "could not decide" -- so one `git replace` of two
+    # unreachable blobs condemned every range in the repository. Scoping is now
+    # object-type aware; a provably unreachable non-commit original is ignored.
+    G_BLOB_A="$( (cd "$GATE_REPO" && printf 'dangling one\n' | git hash-object -w --stdin 2>/dev/null) )"
+    G_BLOB_B="$( (cd "$GATE_REPO" && printf 'dangling two\n' | git hash-object -w --stdin 2>/dev/null) )"
+    if [ -z "$G_BLOB_A" ] || [ -z "$G_BLOB_B" ]; then
+        t_fail "identity gate: could not write the dangling blobs for the non-commit replacement case"
+    else
+        (cd "$GATE_REPO" && git replace -f "$G_BLOB_A" "$G_BLOB_B" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the dangling-blob replacement was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+                >"$TMP_DIR/gate-22bj.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bj.log" \
+               && ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bj.log"; then
+                t_pass "identity gate: an unreachable blob replacement does not condemn the range"
+            else
+                t_fail "identity gate: a dangling-blob replacement blocked an intact history (rc=$G_RC; see $TMP_DIR/gate-22bj.log)"
+            fi
+            # THE POSITIVE HALF: a REACHABLE blob replacement must still
+            # refuse, or the type-awareness would have deleted the guard for
+            # every non-commit rather than narrowing it.
+            G_LIVE_BLOB="$( (cd "$GATE_REPO" && git rev-parse "$G_REMOVED:scripts/todo-graph/build.py" 2>/dev/null) )"
+            if [ -z "$G_LIVE_BLOB" ]; then
+                t_fail "identity gate: could not find a reachable blob for the positive half"
+            else
+                (cd "$GATE_REPO" && git replace -f "$G_LIVE_BLOB" "$G_BLOB_B" >/dev/null 2>&1)
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+                    >"$TMP_DIR/gate-22bj2.log" 2>&1)
+                G_RC=$?
+                G_BJ2_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bj2.log" | head -1)"
+                if [ "$G_RC" -eq 3 ] && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bj2.log"; then
+                    t_pass "identity gate: a REACHABLE blob replacement still refuses"
+                else
+                    t_fail "identity gate: type-awareness removed the non-commit guard entirely (rc=$G_RC; got [$G_BJ2_TOKEN]; see $TMP_DIR/gate-22bj2.log)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_LIVE_BLOB" >/dev/null 2>&1)
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_BLOB_A" >/dev/null 2>&1)
+        fi
+    fi
+
+    # 22bk: A SUBSTITUTED PROTOCOL BLOB UNDER A VALID BASE. The replacement
+    # question used to live inside the completeness helper, which only the arms
+    # making a never-added inference ever called -- so the `complete` arm,
+    # which dies immediately, never asked it. Replacing a VALID base's own
+    # snapshot_protocol.json blob with a malformed one of the same type made
+    # `proto_of` fail while `ls-tree` still reported a perfectly good regular
+    # blob, and a stored base that is entirely valid was called malformed.
+    # A BENIGN CLOSURE CHANGE FIRST. Without one the closure is byte-identical
+    # base-vs-head and the gate exits 0 before the protocol is ever read, so
+    # the case would report a pass having tested nothing. (That early exit is
+    # section 51's subject; here it is only in the way.)
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\n# 22bk: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22bk: benign closure change" >/dev/null 2>&1
+    )
+    G_BAD_JSON="$( (cd "$GATE_REPO" && printf 'not json at all\n' | git hash-object -w --stdin 2>/dev/null) )"
+    G_GOOD_JSON="$( (cd "$GATE_REPO" && git rev-parse "$G_PROTO_BASE:scripts/todo-graph/snapshot_protocol.json" 2>/dev/null) )"
+    if [ -z "$G_BAD_JSON" ] || [ -z "$G_GOOD_JSON" ]; then
+        t_fail "identity gate: could not build the substituted-protocol-blob fixture"
+    else
+        (cd "$GATE_REPO" && git replace -f "$G_GOOD_JSON" "$G_BAD_JSON" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the protocol-blob replacement was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22bk.log" 2>&1)
+            G_RC=$?
+            G_BK_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bk.log" | head -1)"
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bk.log" \
+               && ! grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bk.log"; then
+                t_pass "identity gate: a substituted protocol BLOB is repository metadata, not a malformed base"
+            else
+                t_fail "identity gate: a valid base was called malformed because of a blob replacement (rc=$G_RC; got [$G_BK_TOKEN]; see $TMP_DIR/gate-22bk.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_GOOD_JSON" >/dev/null 2>&1)
+        fi
+    fi
+
+    # 22bl: A LISTED REPLACEMENT IS NOT NECESSARILY AN ACTIVE ONE. Git stops
+    # reading replacements under `GIT_NO_REPLACE_OBJECTS` or
+    # `core.useReplaceRefs=false`, so every read resolves stored objects while
+    # `git replace -l` still enumerates the refs -- and a base that was never
+    # substituted was refused as manufactured. Both knobs are exercised,
+    # because they are separate mechanisms and only one of them is an
+    # environment variable.
+    G_LIVE_BLOB2="$( (cd "$GATE_REPO" && git rev-parse "$G_REMOVED:scripts/todo-graph/build.py" 2>/dev/null) )"
+    G_SPARE_BLOB="$( (cd "$GATE_REPO" && printf 'spare\n' | git hash-object -w --stdin 2>/dev/null) )"
+    if [ -z "$G_LIVE_BLOB2" ] || [ -z "$G_SPARE_BLOB" ]; then
+        t_fail "identity gate: could not build the disabled-replacement fixture"
+    else
+        (cd "$GATE_REPO" && git replace -f "$G_LIVE_BLOB2" "$G_SPARE_BLOB" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the replacement for the disabled case was not created"
+        else
+            # CONTROL FIRST: with replacements ENABLED this same state must
+            # refuse, or the two assertions below would prove nothing.
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+                >"$TMP_DIR/gate-22bl-control.log" 2>&1)
+            if grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bl-control.log"; then
+                t_pass "identity gate: CONTROL -- with replacements enabled the same state refuses"
+            else
+                t_fail "identity gate: the 22bl control did not refuse (see $TMP_DIR/gate-22bl-control.log)"
+            fi
+            (cd "$GATE_REPO" && GIT_NO_REPLACE_OBJECTS=1 bash "$GATE_IN_CLONE" \
+                --base "$G_REMOVED" --head HEAD >"$TMP_DIR/gate-22bl.log" 2>&1)
+            G_RC=$?
+            G_BL_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bl.log" | head -1)"
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bl.log" \
+               && ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bl.log"; then
+                t_pass "identity gate: a replacement git is not reading does not condemn the range"
+            else
+                t_fail "identity gate: a disabled replacement was treated as active (rc=$G_RC; got [$G_BL_TOKEN]; see $TMP_DIR/gate-22bl.log)"
+            fi
+            # PRESENCE, NOT TRUTHINESS: git disables replacements for ANY set
+            # value, so `=0` must reach the same verdict as `=1`. Recognising
+            # only truthy words refused ranges git was not substituting.
+            (cd "$GATE_REPO" && GIT_NO_REPLACE_OBJECTS=0 bash "$GATE_IN_CLONE" \
+                --base "$G_REMOVED" --head HEAD >"$TMP_DIR/gate-22bl0.log" 2>&1)
+            G_RC=$?
+            G_BL0_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bl0.log" | head -1)"
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bl0.log" \
+               && ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bl0.log"; then
+                t_pass "identity gate: GIT_NO_REPLACE_OBJECTS=0 disables replacements exactly as =1 does"
+            else
+                t_fail "identity gate: a falsey-but-SET disable value was read as ambiguous (rc=$G_RC; got [$G_BL0_TOKEN]; see $TMP_DIR/gate-22bl0.log)"
+            fi
+            (cd "$GATE_REPO" && git -c core.useReplaceRefs=false config core.useReplaceRefs false >/dev/null 2>&1)
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_REMOVED" --head HEAD \
+                >"$TMP_DIR/gate-22bl2.log" 2>&1)
+            G_RC=$?
+            G_BL2_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bl2.log" | head -1)"
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_PROTOCOL_REMOVED' "$TMP_DIR/gate-22bl2.log" \
+               && ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22bl2.log"; then
+                t_pass "identity gate: core.useReplaceRefs=false is honoured the same as the env knob"
+            else
+                t_fail "identity gate: the config knob was ignored (rc=$G_RC; got [$G_BL2_TOKEN]; see $TMP_DIR/gate-22bl2.log)"
+            fi
+            (cd "$GATE_REPO" && git config --unset core.useReplaceRefs >/dev/null 2>&1
+             cd "$GATE_REPO" && git replace -d "$G_LIVE_BLOB2" >/dev/null 2>&1) >/dev/null 2>&1
+        fi
+    fi
+
+    # 22bm: A RESOLVABLE SYMLINK PARSES, AND THAT IS THE POINT. 22bf covers a
+    # DANGLING symlink, whose failed parse enters the unreadable branch where
+    # the file-type checks live -- so it cannot see this. `proto_of` reads with
+    # `pathlib.is_file()` and `read_text()`, both of which FOLLOW symlinks, so
+    # a protocol path symlinked to valid JSON parses cleanly, skips those
+    # branches entirely, and the gate adjudicates a range through bytes the
+    # commit need not even contain.
+    (
+        cd "$GATE_REPO" || exit 1
+        cp scripts/todo-graph/snapshot_protocol.json scripts/todo-graph/protocol_real.json
+        rm -f scripts/todo-graph/snapshot_protocol.json
+        ln -s protocol_real.json scripts/todo-graph/snapshot_protocol.json
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        printf '\n# 22bm: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git add scripts/todo-graph/build.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22bm: the protocol path is a resolvable symlink" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bm.log" 2>&1)
+    G_RC=$?
+    G_BM_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bm.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bm.log"; then
+        t_pass "identity gate: a protocol that PARSES through a symlink is still refused"
+    else
+        t_fail "identity gate: a resolvable symlink reached a verdict (rc=$G_RC; got [$G_BM_TOKEN]; see $TMP_DIR/gate-22bm.log)"
+    fi
+    # THE BASE SIDE OF THE SAME CONTRACT, which is checked in the COMMIT rather
+    # than the working tree and so needs its own case.
+    G_SYMBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/snapshot_protocol.json
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git rm -q --ignore-unmatch scripts/todo-graph/protocol_real.json >/dev/null 2>&1
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22bm: restore a real protocol file at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_SYMBASE" --head HEAD \
+        >"$TMP_DIR/gate-22bm2.log" 2>&1)
+    G_RC=$?
+    G_BM2_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bm2.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] && grep -q 'BASE_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bm2.log"; then
+        t_pass "identity gate: the same contract holds for a BASE whose protocol is a symlink"
+    else
+        t_fail "identity gate: a symlinked base protocol reached a verdict (rc=$G_RC; got [$G_BM2_TOKEN]; see $TMP_DIR/gate-22bm2.log)"
+    fi
+
+    # 22bn: THE LOADER IS PART OF THE DATA FORM. `proto_of`'s data branch
+    # validates the JSON by IMPORTING snapshot_protocol.py, so that file is
+    # executed on the success path -- and checking only the JSON left the
+    # loader free to be a symlink to a byte-identical copy, running while the
+    # contract passed. 22bm cannot see this: it symlinks the JSON, which is the
+    # file that WAS checked.
+    (
+        cd "$GATE_REPO" || exit 1
+        cp scripts/todo-graph/snapshot_protocol.py scripts/todo-graph/protocol_loader_real.py
+        rm -f scripts/todo-graph/snapshot_protocol.py
+        ln -s protocol_loader_real.py scripts/todo-graph/snapshot_protocol.py
+        printf '\n# 22bn: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22bn: the protocol LOADER is a resolvable symlink" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bn.log" 2>&1)
+    G_RC=$?
+    G_BN_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bn.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bn.log"; then
+        t_pass "identity gate: the data form's LOADER must be a regular file too"
+    else
+        t_fail "identity gate: a symlinked protocol loader reached a verdict (rc=$G_RC; got [$G_BN_TOKEN]; see $TMP_DIR/gate-22bn.log)"
+    fi
+    G_LOADER_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/snapshot_protocol.py
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git rm -q --ignore-unmatch scripts/todo-graph/protocol_loader_real.py >/dev/null 2>&1
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22bn: restore a real loader at head" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_LOADER_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bn2.log" 2>&1)
+    G_RC=$?
+    G_BN2_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bn2.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] && grep -q 'BASE_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bn2.log"; then
+        t_pass "identity gate: the loader contract holds for the BASE side too"
+    else
+        t_fail "identity gate: a symlinked base loader reached a verdict (rc=$G_RC; got [$G_BN2_TOKEN]; see $TMP_DIR/gate-22bn2.log)"
+    fi
+
+    # 22bo: UNTRACKED BYTECODE MUST NOT DECIDE A VERDICT. `proto_of` loads the
+    # protocol modules with `spec_from_file_location` + `exec_module`, which
+    # execute a timestamp-valid `__pycache__` entry in preference to the source
+    # they were handed -- reproduced directly: a spliced cache returned its own
+    # value rather than the file's. Untracked bytes deciding what a commit
+    # means is the one thing every check here exists to prevent.
+    #
+    # THE FIRST CUT OF THIS CASE WAS VACUOUS and a reviewer caught it: it
+    # exited quietly when no cache was produced (reachable under
+    # PYTHONDONTWRITEBYTECODE), and asserted only that one token was ABSENT --
+    # so it recorded PASS for rc 1, rc 2, an unrelated rc 3, or no poison at
+    # all. It now proves the poison exists, requires an exact gate result, and
+    # carries a MUTATION control that must FAIL.
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\n# 22bo: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22bo: benign closure change" >/dev/null 2>&1
+    )
+    G_POISON_OK=0
+    (
+        cd "$GATE_REPO" || exit 1
+        unset PYTHONDONTWRITEBYTECODE
+        python3 - <<'PY2'
+import importlib.util, pathlib, py_compile, sys
+src = pathlib.Path("scripts/todo-graph/snapshot_protocol.py")
+spec = importlib.util.spec_from_file_location("sp_warm", str(src))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+cache = sorted(pathlib.Path("scripts/todo-graph/__pycache__").glob("snapshot_protocol.*.pyc"))
+if not cache:
+    sys.exit(1)
+alt = pathlib.Path("scripts/todo-graph/_poison_src.py")
+alt.write_text("SNAPSHOT_SCHEMA = 999999\nPRE_RESOLUTION_BUCKETS = ()\n"
+               "POST_RESOLUTION_BUCKETS = ()\nALL_BUCKETS = ()\n")
+py_compile.compile(str(alt), cfile="/tmp/s50-poison.pyc", dfile=str(src), doraise=True)
+good = cache[0].read_bytes()
+bad = pathlib.Path("/tmp/s50-poison.pyc").read_bytes()
+cache[0].write_bytes(good[:16] + bad[16:])
+alt.unlink()
+# PROVE THE POISON TOOK: importing the SAME source must now yield the
+# poisoned value, or there is nothing for this case to test.
+spec2 = importlib.util.spec_from_file_location("sp_check", str(src))
+m2 = importlib.util.module_from_spec(spec2)
+spec2.loader.exec_module(m2)
+sys.exit(0 if getattr(m2, "SNAPSHOT_SCHEMA", None) == 999999 else 1)
+PY2
+    ) && G_POISON_OK=1
+    if [ "$G_POISON_OK" -ne 1 ]; then
+        t_fail "identity gate: could not create a poisoned __pycache__ entry, so the bytecode case proves nothing"
+    else
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22bo.log" 2>&1)
+        G_RC=$?
+        G_BO_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bo.log" | head -1)"
+        # AN EXACT RESULT, not the absence of one token: the range is
+        # verdict-neutral, so the gate must complete and exit 0.
+        if [ "$G_RC" -eq 0 ] && ! grep -q 'PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bo.log"; then
+            t_pass "identity gate: a poisoned __pycache__ entry does not decide the protocol"
+        else
+            t_fail "identity gate: untracked bytecode changed the verdict (rc=$G_RC; got [$G_BO_TOKEN]; see $TMP_DIR/gate-22bo.log)"
+        fi
+        # MUTATION: strip the gate-owned cache prefix from the CLONE's own copy
+        # and the very same poison must now break the protocol read. Without
+        # this the case cannot distinguish "the fix works" from "the poison
+        # never mattered".
+        # SINGLE-QUOTED sed script: the first cut used double quotes, so the
+        # shell expanded `$TMP_DIR` into the pattern before sed ever saw it and
+        # the mutation silently matched nothing.
+        G_MUT_PY="$GATE_REPO/scripts/todo-graph/identity-gate-nopycache.sh"
+        sed 's#^export PYTHONPYCACHEPREFIX=.*#:#' "$GATE_IN_CLONE" > "$G_MUT_PY"
+        if grep -q '^export PYTHONPYCACHEPREFIX' "$G_MUT_PY"; then
+            t_fail "identity gate: could not build the pycache mutation (the export line moved)"
+        else
+            (cd "$GATE_REPO" && bash "$G_MUT_PY" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22bo-mut.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] && grep -q 'PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bo-mut.log"; then
+                t_pass "identity gate: MUTATION -- without the gate-owned cache prefix the poison DOES decide"
+            else
+                t_fail "identity gate: the pycache mutation did not fire, so 22bo proves nothing (rc=$G_RC; see $TMP_DIR/gate-22bo-mut.log)"
+            fi
+        fi
+        rm -f "$G_MUT_PY"
+    fi
+    (cd "$GATE_REPO" && rm -rf scripts/todo-graph/__pycache__) >/dev/null 2>&1
+
+    # 22bp: AN ANCESTOR DIRECTORY SYMLINK. `-f` follows symlinks in EVERY path
+    # component while `-L` tests only the last one, so symlinking the
+    # `scripts/todo-graph` DIRECTORY to a location outside the checkout left
+    # every protocol file passing both tests while the gate read and executed
+    # bytes from outside the repository.
+    G_OUTSIDE="$TMP_DIR/s50-outside-todograph"
+    rm -rf "$G_OUTSIDE" 2>/dev/null || true
+    if cp -a "$GATE_REPO/scripts/todo-graph" "$G_OUTSIDE" 2>/dev/null; then
+        (
+            cd "$GATE_REPO" || exit 1
+            rm -rf scripts/todo-graph
+            ln -s "$G_OUTSIDE" scripts/todo-graph
+        )
+        # THROUGH THE IN-REPO PATH, not the resolved one. The gate derives its
+        # repo root from its own location, so invoking the physical copy makes
+        # it operate on a directory that is not the fixture repo at all -- the
+        # first cut did exactly that and died before reaching the contract.
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22bp.log" 2>&1)
+        G_RC=$?
+        G_BP_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bp.log" | head -1)"
+        if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bp.log"; then
+            t_pass "identity gate: a symlinked ANCESTOR directory is refused, not followed"
+        else
+            t_fail "identity gate: an ancestor-directory symlink bypassed the file contract (rc=$G_RC; got [$G_BP_TOKEN]; see $TMP_DIR/gate-22bp.log)"
+        fi
+        (
+            cd "$GATE_REPO" || exit 1
+            rm -f scripts/todo-graph
+            git checkout --quiet -- scripts/todo-graph >/dev/null 2>&1
+        )
+        if [ -f "$GATE_IN_CLONE" ]; then
+            t_pass "identity gate: CONTROL -- the ancestor-symlink case restores the real directory"
+        else
+            t_fail "identity gate: the ancestor-symlink case left the fixture clone broken"
+        fi
+    else
+        t_fail "identity gate: could not stage the ancestor-directory symlink fixture"
+    fi
+
+    # 22bq: A FAILED PROBE ON THE LOADER IS A REPOSITORY FAILURE, NOT A
+    # NON-FILE. The data-form contract collapsed every nonzero result from its
+    # loader probe through `|| return 1`, so a git failure emitted
+    # BASE_PROTOCOL_NOT_A_FILE and told an operator to fix a symlink that does
+    # not exist. Forced with a shim that fails `ls-tree` ONLY for the loader
+    # path, leaving the three protocol-path probes and the parse intact.
+    G_SHIM4="$TMP_DIR/gitshim4-s50"
+    mkdir -p "$G_SHIM4"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "ls-tree" ]; then\n'
+        printf '  for a in "$@"; do [ "$a" = "scripts/todo-graph/snapshot_protocol.py" ] && exit 128; done\n'
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM4/git"
+    chmod +x "$G_SHIM4/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM4:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22bq.log" 2>&1)
+    G_RC=$?
+    G_BQ_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bq.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_TREE_UNREADABLE' "$TMP_DIR/gate-22bq.log" \
+       && ! grep -q 'BASE_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bq.log"; then
+        t_pass "identity gate: a failed loader probe is a repository failure, not a non-file"
+    else
+        t_fail "identity gate: a git failure on the loader was reported as a non-file (rc=$G_RC; got [$G_BQ_TOKEN]; see $TMP_DIR/gate-22bq.log)"
+    fi
+
+    # 22br: THE LOADER MISSING FROM THE WORKTREE ONLY. The commit carries a
+    # complete protocol; the checkout does not. That is an incomplete
+    # materialization, and it used to read as HEAD_PROTOCOL_UNREADABLE because
+    # the form classification counted an intact legacy pair as "complete" even
+    # though `proto_of` takes the data form whenever the JSON exists.
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\n# 22br: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22br: benign closure change" >/dev/null 2>&1
+        rm -f scripts/todo-graph/snapshot_protocol.py
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22br.log" 2>&1)
+    G_RC=$?
+    G_BR_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22br.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22br.log" \
+       && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22br.log"; then
+        t_pass "identity gate: a loader missing from the WORKTREE is an incomplete checkout"
+    else
+        t_fail "identity gate: a missing loader was blamed on the protocol (rc=$G_RC; got [$G_BR_TOKEN]; see $TMP_DIR/gate-22br.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+    )
+    # AND FROM THE COMMIT: same file, different fault, different token.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22br: the loader is gone from the commit" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22br2.log" 2>&1)
+    G_RC=$?
+    G_BR2_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22br2.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_PROTOCOL_INCOMPLETE' "$TMP_DIR/gate-22br2.log" \
+       && ! grep -qE 'HEAD_PROTOCOL_UNREADABLE|HEAD_PROTOCOL_UNMATERIALIZED' \
+              "$TMP_DIR/gate-22br2.log"; then
+        t_pass "identity gate: a loader missing from the COMMIT is an incomplete protocol, not an unreadable one"
+    else
+        t_fail "identity gate: a committed loader removal took the wrong branch (rc=$G_RC; got [$G_BR2_TOKEN]; see $TMP_DIR/gate-22br2.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22br: restore the loader at head" >/dev/null 2>&1
+    )
+
+    # 22bs: IMPORT-TIME OUTPUT MUST NOT BECOME THE PROTOCOL RECORD. `proto_of`
+    # captures its own stdout as the record the caller parses, so a module that
+    # prints while being imported prepends a line to it -- the caller then reads
+    # the noise as the record and dies with a generic malformed-line message
+    # carrying NONE of the stable tokens this section publishes. An import-time
+    # print is noise, not a protocol defect, so the gate must simply be
+    # unaffected by it.
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\nprint("diagnostic noise from import")\n' >> scripts/todo-graph/snapshot_protocol.py
+        printf '\n# 22bs: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22bs: the protocol loader prints on import" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bs.log" 2>&1)
+    G_RC=$?
+    G_BS_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bs.log" | head -1)"
+    if [ "$G_RC" -eq 0 ] && ! grep -q 'protocol line is malformed' "$TMP_DIR/gate-22bs.log"; then
+        t_pass "identity gate: an import-time print does not become the protocol record"
+    else
+        t_fail "identity gate: import noise broke the protocol read (rc=$G_RC; got [$G_BS_TOKEN]; see $TMP_DIR/gate-22bs.log)"
+    fi
+    # MUTATION: strip the redirect from the CLONE's own copy and the SAME print
+    # must break the read, or this case cannot tell a working fix from a print
+    # that never mattered.
+    G_MUT_OUT="$GATE_REPO/scripts/todo-graph/identity-gate-noredirect.sh"
+    sed 's#    with contextlib.redirect_stdout(sys.stderr):#    if True:#' \
+        "$GATE_IN_CLONE" > "$G_MUT_OUT"
+    # THE CODE LINE, not any mention of it: a comment elsewhere in the file
+    # names `redirect_stdout` too, so a bare grep reported the mutation as
+    # unbuilt even after sed had removed the statement.
+    if grep -q 'with contextlib.redirect_stdout' "$G_MUT_OUT"; then
+        t_fail "identity gate: could not build the stdout-redirect mutation (the shape moved)"
+    else
+        (cd "$GATE_REPO" && bash "$G_MUT_OUT" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22bs-mut.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -ne 0 ]; then
+            t_pass "identity gate: MUTATION -- without the redirect the same print DOES break the read"
+        else
+            t_fail "identity gate: the redirect mutation did not fire, so 22bs proves nothing (rc=$G_RC; see $TMP_DIR/gate-22bs-mut.log)"
+        fi
+    fi
+    rm -f "$G_MUT_OUT"
+
+    # 22bt: A WRITE STRAIGHT TO FD 1 GOES AROUND THE REDIRECT, so the caller
+    # must refuse a multi-line record on its own -- and refuse it with a NAMED
+    # token rather than the generic malformed-line message.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        printf '\nimport os as _os\n_os.write(1, b"raw fd1 contamination\\n")\n' \
+            >> scripts/todo-graph/snapshot_protocol.py
+        git commit --quiet --no-verify -am "22bt: the loader writes to fd 1 on import" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bt.log" 2>&1)
+    G_RC=$?
+    G_BT_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bt.log" | head -1)"
+    # THE ASSERTION MOVED WITH THE DESIGN, and that is the point rather than a
+    # concession. This case originally required contamination to be MAPPED to a
+    # named token, which was the best available answer while the record shared
+    # stdout with the tree. Round 18 removed the channel instead, so there is
+    # nothing left to map: a newline-terminated write is now as harmless as an
+    # unterminated one, and the gate simply completes. Requiring a refusal here
+    # would be preserving a symptom of a design that no longer exists.
+    if [ "$G_RC" -eq 0 ] \
+       && ! grep -qE 'PROTOCOL_NOT_A_FILE|protocol line is malformed' \
+              "$TMP_DIR/gate-22bt.log"; then
+        t_pass "identity gate: a newline-terminated fd-1 write cannot reach the record either"
+    else
+        t_fail "identity gate: fd-1 contamination still affected the verdict (rc=$G_RC; got [$G_BT_TOKEN]; see $TMP_DIR/gate-22bt.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22bt: restore a quiet loader at head" >/dev/null 2>&1
+    )
+
+    # 22bu: THE UNTERMINATED fd-1 WRITE, which is the variant that actually
+    # broke the contract. A newline-terminated write made the capture
+    # multi-line and was caught; a write with NO newline concatenated with the
+    # record into a single line, shifting every field so the source word became
+    # a digest and the gate emitted a confident, wrong token about files that
+    # were all perfectly regular. Including a `|` makes the shift maximally
+    # plausible. The record now travels on its own channel, so there is no
+    # longer a way for the tree to reach it at all.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        printf '\nimport os as _os\n_os.write(1, b"noise|")\n' \
+            >> scripts/todo-graph/snapshot_protocol.py
+        printf '\n# 22bu: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22bu: the loader writes an unterminated fd-1 record" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bu.log" 2>&1)
+    G_RC=$?
+    G_BU_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bu.log" | head -1)"
+    # The record is unreachable from the tree now, so the gate simply completes:
+    # what must NOT happen is a field-shifted verdict blaming the files.
+    if [ "$G_RC" -eq 0 ] \
+       && ! grep -qE 'PROTOCOL_NOT_A_FILE|protocol line is malformed' \
+              "$TMP_DIR/gate-22bu.log"; then
+        t_pass "identity gate: an unterminated fd-1 write cannot reach the protocol record"
+    else
+        t_fail "identity gate: fd-1 noise shifted the record's fields (rc=$G_RC; got [$G_BU_TOKEN]; see $TMP_DIR/gate-22bu.log)"
+    fi
+    # MUTATION: put the record back on stdout in the CLONE's own copy and the
+    # same write must corrupt it, or this case cannot tell a working channel
+    # from noise that never mattered.
+    G_MUT_CH="$GATE_REPO/scripts/todo-graph/identity-gate-stdoutrec.sh"
+    # THE MUTATION TRACKS THE CURRENT SHAPE. It was written against an earlier
+    # invocation and silently stopped matching when the record moved to fd 3,
+    # producing an UNMUTATED copy that passed -- the assertion below caught it,
+    # which is the only reason a stale mutation is survivable.
+    sed -e 's#^sys.stdout = os.fdopen(3, "w", encoding="utf-8", buffering=1)$#sys.stdout = sys.__stdout__#' \
+        "$GATE_IN_CLONE" > "$G_MUT_CH"
+    if grep -q '^sys.stdout = os.fdopen(3,' "$G_MUT_CH"; then
+        t_fail "identity gate: could not build the record-channel mutation (the shape moved)"
+    else
+        (cd "$GATE_REPO" && bash "$G_MUT_CH" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22bu-mut.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -ne 0 ]; then
+            t_pass "identity gate: MUTATION -- with the record back on stdout the same write DOES corrupt it"
+        else
+            t_fail "identity gate: the record-channel mutation did not fire, so 22bu proves nothing (rc=$G_RC; see $TMP_DIR/gate-22bu-mut.log)"
+        fi
+    fi
+    rm -f "$G_MUT_CH"
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22bu: restore a quiet loader at head" >/dev/null 2>&1
+    )
+
+    # 22bv: A LOADER THAT TRIES TO WRITE THE GATE'S OWN ANSWER. While the
+    # record's path travelled in argv, the very code being imported knew where
+    # the gate's answer lived, and an `atexit` handler could replace a finished
+    # record with a valid-looking one -- seven plausible fields naming a source
+    # the gate then blamed the files for. The path no longer reaches the
+    # subprocess at all, and a late append cannot outrank the first line.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        # THE argv ROUTE ONLY. A handler that instead GUESSES the descriptor
+        # and seeks to its start does succeed, and deliberately is not asserted
+        # here: code executing inside the interpreter that must import it can
+        # reach any in-process channel, so no framing change closes that. It is
+        # filed as section 53 with the containment that actually applies -- this
+        # loader is in EXEC_CLOSURE, so a change to it cannot ride along as a
+        # data-only migration and forces the differential. What the GATE is
+        # responsible for is not handing out the address, and that is what this
+        # case pins.
+        {
+            printf '\nimport atexit as _atexit, sys as _sys\n'
+            printf 'def _clobber():\n'
+            printf '    try:\n'
+            printf '        _p = _sys.argv[2]\n'
+            printf '    except IndexError:\n'
+            printf '        return\n'
+            # SCOPED TO THE RECORD. This loader is imported by the gate's other
+            # python phases too, whose argv[2] names THEIR output -- an
+            # unscoped write clobbers those instead and the case then fails for
+            # a reason that has nothing to do with the boundary under test.
+            printf '    if "/proto." not in _p:\n'
+            printf '        return\n'
+            printf '    open(_p, "w").write("1|a|b|garbage|c|d|e\\n")\n'
+            printf '_atexit.register(_clobber)\n'
+        } >> scripts/todo-graph/snapshot_protocol.py
+        printf '\n# 22bv: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22bv: the loader tries to write the gate's record" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22bv.log" 2>&1)
+    G_RC=$?
+    G_BV_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bv.log" | head -1)"
+    if [ "$G_RC" -eq 0 ] \
+       && ! grep -qE 'PROTOCOL_NOT_A_FILE|protocol line is malformed' \
+              "$TMP_DIR/gate-22bv.log"; then
+        t_pass "identity gate: the record's address is never handed to the code being imported"
+    else
+        t_fail "identity gate: imported code reached the record (rc=$G_RC; got [$G_BV_TOKEN]; see $TMP_DIR/gate-22bv.log)"
+    fi
+    # MUTATION: hand the record's path back to the subprocess in the CLONE's
+    # own copy, and the SAME loader must corrupt the verdict. Without this the
+    # case cannot tell a closed boundary from a loader that never reached.
+    G_MUT_ARGV="$GATE_REPO/scripts/todo-graph/identity-gate-argvrec.sh"
+    # ONE STABLE ANCHOR, not the invocation line. Targeting the invocation made
+    # this mutation go stale twice as the probe's launch shape changed, each
+    # time producing an unmutated copy that passed -- the assertion caught it
+    # both times, which is the only reason a stale mutation is survivable.
+    # Rewriting the scrub line re-exposes the record's path exactly as the old
+    # design did, and it can be found from the descriptor the shell opened.
+    sed 's#^sys.argv = \[sys.argv\[0\]\]$#sys.argv = [sys.argv[0], sys.argv[1], os.readlink("/proc/self/fd/3")]#' \
+        "$GATE_IN_CLONE" > "$G_MUT_ARGV"
+    if grep -q '^sys.argv = \[sys.argv\[0\]\]$' "$G_MUT_ARGV"; then
+        t_fail "identity gate: could not build the argv-exposure mutation (the shape moved)"
+    else
+        (cd "$GATE_REPO" && bash "$G_MUT_ARGV" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22bv-mut.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -ne 0 ]; then
+            t_pass "identity gate: MUTATION -- handed the record path, the same loader DOES corrupt the verdict"
+        else
+            t_fail "identity gate: the argv-exposure mutation did not fire, so 22bv proves nothing (rc=$G_RC; see $TMP_DIR/gate-22bv-mut.log)"
+        fi
+    fi
+    rm -f "$G_MUT_ARGV"
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22bv: restore an honest loader at head" >/dev/null 2>&1
+    )
+
+    # 22bw: THE GATE'S OWN PLUMBING FAILING IS NOT A VERDICT ABOUT A TREE.
+    # Moving the protocol record between two processes can fail for reasons
+    # that say nothing about either side -- no temp file, no interpreter, an
+    # empty write, an unreadable record. Those collapsed into UNREADABLE, which
+    # labelled a perfectly valid base as malformed, and a failing `head` fell
+    # through to the generic un-tokened malformed-line message. Both forced
+    # here with PATH shims that break exactly one tool.
+    # SCOPED TO THE RECORD FILE. The gate also mktemps its own working
+    # DIRECTORY at startup, so a blanket failure kills it before it reaches the
+    # transport this case is about -- the first cut did exactly that and died
+    # with an un-tokened startup error.
+    G_SHIM_MK="$TMP_DIR/gitshim-mktemp-s50"
+    mkdir -p "$G_SHIM_MK"
+    G_REAL_MKTEMP="$(command -v mktemp)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'for a in "$@"; do [ "$a" = "-d" ] && exec %s "$@"; done\n' "$G_REAL_MKTEMP"
+        printf 'exit 7\n'
+    } > "$G_SHIM_MK/mktemp"
+    chmod +x "$G_SHIM_MK/mktemp"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_MK:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22bw.log" 2>&1)
+    G_RC=$?
+    G_BW_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bw.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_TRANSPORT_FAILED' "$TMP_DIR/gate-22bw.log" \
+       && ! grep -qE 'PROTOCOL_UNREADABLE|protocol line is malformed' \
+              "$TMP_DIR/gate-22bw.log"; then
+        t_pass "identity gate: a record-transport failure is named as machinery, not as a bad protocol"
+    else
+        t_fail "identity gate: transport failure was blamed on a tree (rc=$G_RC; got [$G_BW_TOKEN]; see $TMP_DIR/gate-22bw.log)"
+    fi
+
+    # 22bx: THE READ SIDE OF THE SAME TRANSPORT. A failing `head` had its
+    # status ignored entirely, so the caller parsed an empty string and died
+    # with the generic malformed-line message carrying no token at all.
+    G_SHIM_HD="$TMP_DIR/gitshim-head-s50"
+    mkdir -p "$G_SHIM_HD"
+    printf '#!/usr/bin/env bash\nexit 9\n' > "$G_SHIM_HD/head"
+    chmod +x "$G_SHIM_HD/head"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_HD:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22bx.log" 2>&1)
+    G_RC=$?
+    G_BX_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bx.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_TRANSPORT_FAILED' "$TMP_DIR/gate-22bx.log" \
+       && ! grep -q 'protocol line is malformed' "$TMP_DIR/gate-22bx.log"; then
+        t_pass "identity gate: a failing record READ is named too, not left to the generic message"
+    else
+        t_fail "identity gate: a failed record read escaped the token contract (rc=$G_RC; got [$G_BX_TOKEN]; see $TMP_DIR/gate-22bx.log)"
+    fi
+
+    # 22by: WHICH SIDE ANSWERS WHEN THE BASE IS CLASSIFIABLE AND THE HEAD'S
+    # TRANSPORT FAILS. The base decides whether the RANGE can be adjudicated at
+    # all, so a base token wins -- but the transport checks were placed beside
+    # each other ahead of both classifications, so a HEAD machinery failure
+    # outranked a perfectly classifiable BASE one and said nothing about the
+    # base. The shim fails the record read only on the SECOND call, which is
+    # the head probe.
+    G_SHIM_HD2="$TMP_DIR/gitshim-head2-s50"
+    mkdir -p "$G_SHIM_HD2"
+    G_REAL_HEAD="$(command -v head)"
+    G_HD_COUNT="$TMP_DIR/s50-head-calls"
+    rm -f "$G_HD_COUNT"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "-n" ] && [ "$2" = "1" ]; then\n'
+        printf '  printf x >> "%s"\n' "$G_HD_COUNT"
+        printf '  if [ "$(wc -c < "%s")" -ge 2 ]; then exit 9; fi\n' "$G_HD_COUNT"
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_HEAD"
+    } > "$G_SHIM_HD2/head"
+    chmod +x "$G_SHIM_HD2/head"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_HD2:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_CORRUPT" --head HEAD >"$TMP_DIR/gate-22by.log" 2>&1)
+    G_RC=$?
+    G_BY_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22by.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22by.log" \
+       && ! grep -q 'HEAD_TRANSPORT_FAILED' "$TMP_DIR/gate-22by.log"; then
+        t_pass "identity gate: a classifiable BASE still outranks a HEAD transport failure"
+    else
+        t_fail "identity gate: a head machinery failure outranked the base verdict (rc=$G_RC; got [$G_BY_TOKEN]; see $TMP_DIR/gate-22by.log)"
+    fi
+    rm -f "$G_HD_COUNT"
+
+    # 22bz: A STALLED HEAD PROBE MUST NOT SILENCE A CLASSIFIABLE BASE. 22by
+    # injects an IMMEDIATE second-probe failure, which the old ordering
+    # survived by accident; a probe that BLOCKS is the case that exposed it,
+    # because the head record was acquired before any base adjudication and
+    # `proto_of` was the one phase in the file running unbounded. The base is
+    # malformed here, so its token is the correct answer whatever the head does.
+    G_SHIM_SLEEP="$TMP_DIR/gitshim-stall-s50"
+    mkdir -p "$G_SHIM_SLEEP"
+    G_ST_COUNT="$TMP_DIR/s50-stall-calls"
+    rm -f "$G_ST_COUNT"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "-n" ] && [ "$2" = "1" ]; then\n'
+        printf '  printf x >> "%s"\n' "$G_ST_COUNT"
+        printf '  if [ "$(wc -c < "%s")" -ge 2 ]; then sleep 600; fi\n' "$G_ST_COUNT"
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_HEAD"
+    } > "$G_SHIM_SLEEP/head"
+    chmod +x "$G_SHIM_SLEEP/head"
+    G_STALL_START="$(date +%s)"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_SLEEP:$PATH" IDENTITY_GATE_BUDGET_SECS=20 \
+        bash "$GATE_IN_CLONE" --base "$G_CORRUPT" --head HEAD \
+        >"$TMP_DIR/gate-22bz.log" 2>&1)
+    G_RC=$?
+    G_STALL_ELAPSED=$(( $(date +%s) - G_STALL_START ))
+    G_BZ_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bz.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22bz.log" \
+       && [ "$G_STALL_ELAPSED" -lt 120 ]; then
+        t_pass "identity gate: a stalled HEAD probe cannot silence a classifiable base (${G_STALL_ELAPSED}s)"
+    else
+        t_fail "identity gate: a stalled head probe wedged or outranked the base (rc=$G_RC; ${G_STALL_ELAPSED}s; got [$G_BZ_TOKEN]; see $TMP_DIR/gate-22bz.log)"
+    fi
+    rm -f "$G_ST_COUNT"
+
+    # 22ca: A BASE THAT PARSES BUT VIOLATES THE FILE CONTRACT, WITH THE HEAD
+    # PROBE STALLED. 22bz proves the ordering for an UNREADABLE base; this is
+    # the SUCCESS-path hole beside it -- the base's regular-file contract ran
+    # after the head probe, so a base whose protocol parses through a
+    # resolvable symlink reported HEAD_TRANSPORT_FAILED whenever the head probe
+    # stalled, and said nothing about the base at all.
+    (
+        cd "$GATE_REPO" || exit 1
+        cp scripts/todo-graph/snapshot_protocol.json scripts/todo-graph/protocol_real2.json
+        rm -f scripts/todo-graph/snapshot_protocol.json
+        ln -s protocol_real2.json scripts/todo-graph/snapshot_protocol.json
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ca: base protocol reached through a symlink" >/dev/null 2>&1
+    )
+    G_SYMBASE2="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/snapshot_protocol.json
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git rm -q --ignore-unmatch scripts/todo-graph/protocol_real2.json >/dev/null 2>&1
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ca: restore a real protocol file at head" >/dev/null 2>&1
+    )
+    G_ST2_COUNT="$TMP_DIR/s50-stall2-calls"
+    rm -f "$G_ST2_COUNT"
+    G_SHIM_ST2="$TMP_DIR/gitshim-stall2-s50"
+    mkdir -p "$G_SHIM_ST2"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "-n" ] && [ "$2" = "1" ]; then\n'
+        printf '  printf x >> "%s"\n' "$G_ST2_COUNT"
+        printf '  if [ "$(wc -c < "%s")" -ge 2 ]; then sleep 600; fi\n' "$G_ST2_COUNT"
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_HEAD"
+    } > "$G_SHIM_ST2/head"
+    chmod +x "$G_SHIM_ST2/head"
+    G_CA_START="$(date +%s)"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_ST2:$PATH" IDENTITY_GATE_BUDGET_SECS=20 \
+        bash "$GATE_IN_CLONE" --base "$G_SYMBASE2" --head HEAD \
+        >"$TMP_DIR/gate-22ca.log" 2>&1)
+    G_RC=$?
+    G_CA_ELAPSED=$(( $(date +%s) - G_CA_START ))
+    G_CA_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ca.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'BASE_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22ca.log" \
+       && ! grep -q 'HEAD_TRANSPORT_FAILED' "$TMP_DIR/gate-22ca.log" \
+       && [ "$G_CA_ELAPSED" -lt 120 ]; then
+        t_pass "identity gate: a parsed base's file contract is settled before the head is asked (${G_CA_ELAPSED}s)"
+    else
+        t_fail "identity gate: a stalled head outranked the base's file contract (rc=$G_RC; ${G_CA_ELAPSED}s; got [$G_CA_TOKEN]; see $TMP_DIR/gate-22ca.log)"
+    fi
+    rm -f "$G_ST2_COUNT"
+
+    # 22cb: ONLY THE JSON MISSING FROM THE WORKTREE. 22as removes all four
+    # protocol paths and 22br removes only the loader; this removes only the
+    # JSON, and the surviving legacy pair then reads as a COMPLETE form on its
+    # own -- so the tree was called malformed when `proto_of` had failed
+    # because a file the commit DOES carry was not there to read. The head side
+    # now compares the worktree against the commit path by path, so what the
+    # worktree can satisfy by itself no longer decides the answer.
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\n# 22cb: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
+        git commit --quiet --no-verify -am "22cb: benign closure change" >/dev/null 2>&1
+        rm -f scripts/todo-graph/snapshot_protocol.json
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cb.log" 2>&1)
+    G_RC=$?
+    G_CB_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cb.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22cb.log" \
+       && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cb.log"; then
+        t_pass "identity gate: a single committed protocol file missing from the worktree is an incomplete checkout"
+    else
+        t_fail "identity gate: a missing committed JSON was called a malformed protocol (rc=$G_RC; got [$G_CB_TOKEN]; see $TMP_DIR/gate-22cb.log)"
+    fi
+    # CONTROL: restored, the same range reaches a normal verdict.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cb-control.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 0 ]; then
+        t_pass "identity gate: CONTROL -- with the file restored the same range is clean"
+    else
+        t_fail "identity gate: the 22cb control did not reach a clean verdict (rc=$G_RC; see $TMP_DIR/gate-22cb-control.log)"
+    fi
+
+    # 22cc: A FAILED HEAD TREE PROBE UNDER A COMPLETE WORKTREE FORM. 22ba
+    # removes every worktree protocol path, so its form is `none` and execution
+    # reaches a later probe; this keeps the worktree COMPLETE but malformed, so
+    # the comparison probe added one round earlier is the FIRST thing to ask
+    # git -- and its failure was swallowed by a bare `if`, letting the run go
+    # on to blame the tree for a question the repository could not answer.
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = "not-an-int"
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22cc: complete but malformed head protocol" >/dev/null 2>&1
+    )
+    G_HEAD_SHA2="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    G_SHIM5="$TMP_DIR/gitshim5-s50"
+    mkdir -p "$G_SHIM5"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "ls-tree" ]; then\n'
+        printf '  for a in "$@"; do [ "$a" = "%s" ] && exit 128; done\n' "$G_HEAD_SHA2"
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM5/git"
+    chmod +x "$G_SHIM5/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM5:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cc.log" 2>&1)
+    G_RC=$?
+    G_CC_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cc.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_TREE_UNREADABLE' "$TMP_DIR/gate-22cc.log" \
+       && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cc.log"; then
+        t_pass "identity gate: a failed head tree probe is named even when the worktree form is complete"
+    else
+        t_fail "identity gate: a swallowed probe failure blamed the tree (rc=$G_RC; got [$G_CC_TOKEN]; see $TMP_DIR/gate-22cc.log)"
+    fi
+    # CONTROL: without the shim the same state is a malformed protocol, which
+    # is what proves the shim is doing the work rather than the malformed JSON.
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cc-control.log" 2>&1)
+    if grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cc-control.log"; then
+        t_pass "identity gate: CONTROL -- without the shim the same head reads as malformed"
+    else
+        t_fail "identity gate: the 22cc control did not reach the malformed verdict (see $TMP_DIR/gate-22cc-control.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22cc: restore a well-formed protocol at head" >/dev/null 2>&1
+    )
+
+    # THE CLONE MUST LEAVE THIS CASE AS IT ENTERED IT. Four later cases were
+    # lost to a worktree this block emptied; assert the recovery rather than
+    # trusting it.
+    if [ -f "$GATE_IN_CLONE" ] && [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+        t_pass "identity gate: the replacement-ref case leaves the fixture clone intact"
+    else
+        t_fail "identity gate: the replacement-ref case damaged the shared fixture clone"
+    fi
+
+    # 22ar: THE HEAD SIDE IS ITS OWN QUESTION. The two sides shared one loop
+    # and one message, so a HEAD problem read as a base problem and the
+    # reverse. A tree under test with no snapshot mechanism at all is a broken
+    # HEAD, and history is irrelevant to that.
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm -q --ignore-unmatch scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ar: head with no snapshot mechanism" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22ar.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_PROTOCOL_ABSENT' "$TMP_DIR/gate-22ar.log" \
+       && ! grep -qE 'BASE_PREDATES_PROTOCOL|BASE_PROTOCOL_REMOVED|BASE_PROTOCOL_UNREADABLE|BASE_PROTOCOL_INCOMPLETE' \
+              "$TMP_DIR/gate-22ar.log"; then
+        t_pass "identity gate: an absent mechanism at HEAD is reported against HEAD, not the base"
+    else
+        t_fail "identity gate: absent-at-HEAD was not reported as a HEAD failure (rc=$G_RC; see $TMP_DIR/gate-22ar.log)"
+    fi
+
+    # 22as: AN INCOMPLETE CHECKOUT IS NOT AN ABSENT MECHANISM. Asking the
+    # filesystem alone cannot tell a sparse or partial materialization from a
+    # tree that genuinely lacks the files, and the two need opposite actions:
+    # fix the checkout, or fix the tree.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet HEAD~1 -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22as: restore the mechanism in the commit" >/dev/null 2>&1
+        rm -f scripts/todo-graph/snapshot_protocol.json \
+              scripts/todo-graph/snapshot_protocol.py \
+              scripts/todo-graph/ref_resolution.py \
+              scripts/todo-graph/corpus_resolution_snapshot.py
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22as.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22as.log"; then
+        t_pass "identity gate: a commit-present but worktree-absent protocol is an incomplete checkout"
+    else
+        t_fail "identity gate: unmaterialized protocol was not distinguished from an absent one (rc=$G_RC; see $TMP_DIR/gate-22as.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+    )
+
 
 
     # A snapshot lacking the pre/post halves cannot adjudicate a relocation,
