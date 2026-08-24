@@ -1,0 +1,128 @@
+# Overnight Runner Improvements v17 -- Findings (opened 2026-08-24)
+
+Opened at the 2026-08-24 close-out of [v16](overnight-runner-improvements-v16.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `overnight-runner-improvements-vNN.md` in this directory, which is this one until an operator opens v18.
+
+**Scope:** flow, gates, wedges, and machinery correctness. Cost findings go to [`token-saver-v17.md`](../token-saver/token-saver-v17.md) -- but a MISFIRING GATE is both, and belongs here with its mechanism.
+
+**Why findings land here instead of being fixed.** The run may not edit its own control plane (`.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json`) or the receipt surface. Record the finding in the same turn it is observed, then advance; a finding carried in-context to "report later" dies with the segment. **But before filing, ask where the FIX lands, not where the SYMPTOM appeared:** if every path the fix touches is outside the forbidden set, fix it in the owning TODO and file only the residue; when an item spans both, SPLIT it -- file the control-plane half, fix the rest.
+
+**What to write.** What was observed live (run id, segment, the exact refusal text or behavior), the mechanism confirmed at source with file:line, and what it cost or would cost. Separate what you OBSERVED from what you INFERRED, and say which you tested. Lead <= 250 chars; sub-bullet bodies <= 1,000, one idea per sub-bullet.
+
+**And state the CONSEQUENCE as its own checkable sentence.** Two v16 items proved this twice over. Three separate filings blamed a per-kind write race in the review-stamp tracker; the mechanism was one layer down (first-match truncation in a SHARED attribution path), and the tell was in the reports all along -- the stuck kind ROTATED, which no per-kind write path explains. Separately, the `--flag` item's own quoted example was backticked and would have been harmless; running the real parser showed the true hazard was a DIFFERENT shape that silently changes review scope. When writing "X causes Y", verify Y at its own file:line, separately from X.
+
+---
+
+## What shipped in the 2026-08-24 v16 close-out, and is therefore UNDER TEST
+
+Every change below carries a refusal-direction control (a case that must still be BLOCKED), because a canary exercises the happy path at scale and structurally cannot exercise the refusal path.
+
+- **Review-stamp attribution now fans out over a BUNDLED wave.** `codex_review_completed.py` gained `_all_dispatch_targets()` and stamps every `(kind, todo, section)` a compound Bash call dispatches, instead of only the leading one. Mutation-proved: restoring the singular extractor attributes `['re-adversarial']` from a four-leg wave, which is exactly the filed symptom. Refusal controls: prose mention, heredoc body, and a dispatch with no TODO path each still stamp NOTHING; a single dispatch is unchanged. **Watch for:** a bundled call whose legs target DIFFERENT TODOs -- each now gets its own stamp, which is correct but has never been exercised live.
+- **A wrapper-REFUSED dispatch no longer registers as a review.** `_dispatch_was_refused()` reads `tool_response` for the wrappers' own BLOCK banner and skips both the trigger record and the stamp. Refusal control: a real review whose findings text contains the word BLOCK is still recorded, and an unreadable response fails OPEN. **Watch for:** a refusal shape that does NOT print the banner (a crash inside the wrapper before it reaches the guard) still creating a phantom obligation.
+- **Both Codex dispatch wrappers refuse a bare `--flag` token in the prompt body** (rc 2, naming the token). Grounded in the real parser: `codex-companion.mjs` re-splits a one-argv prompt, so `--scope and` yields `{scope:"and"}` and the review RUNS against the wrong scope. Refusal control: a BACKTICKED flag is still accepted. **Watch for:** a legitimate prompt this rejects -- the guard fires on prose, and tooling sections discuss flags constantly. It should be noisy in exactly one direction; if it blocks something that had no bare token, that is a defect.
+- **`todo-reflow.py` refuses a block whose join would weld a space into a token.** The corpus was repaired first (`lazy-binding` in `12-user-platform-sdk/TODO-03`), so the check ships with 0 outstanding violations. Refusal controls: a line ending `--` or `+` still joins WITH its space, `_selftest()` is unchanged, and a SPACE-SEPARATED trailing separator still joins (this clause removed a 50% false-positive rate measured against the live corpus). **Watch for:** a legitimate hard-wrapped paragraph now permanently unrepairable because one break inside it is mid-token -- the refusal is per-BLOCK, so it parks the whole paragraph.
+- **A COMPLETED `review-todo-section` no longer counts as in flight.** `_skill_entry_finished()` skips an entry that has observed every required terminal step. Refusal control: with ANY of steps [4, 5, 8, 17] missing the entry stays ACTIVE and the gate still fires; an unparseable entry fails CLOSED. **Watch for:** a review that legitimately continues past its step-17 commit (a post-commit fix loop) no longer being gated -- believed impossible by the skill's own step order, but it is the one way this could go wrong.
+- **The UEFI loader tracks its headers automatically.** `-MMD -MP` in the sub-make plus a wildcard `UEFI_LOADER_INPUTS` in the top-level rule. Proved behaviourally: touching `include/boot/sha256_boot.h` alone now rebuilds the signed BOOTX64.EFI; before, it did not. Refusal control: an unchanged tree still does NOT relink. **Watch for:** the `.d` files needing one seeding compile after a `clean` -- the mechanism is inert until each object has compiled once.
+- **`scripts/overnight/bss-headroom.py` reports kernel-BSS-to-`USER_BASE` slack** from `build/kernel.map`, using the same two derivations `build.sh` uses. At close-out the real tree had **8192 bytes -- two pages**. **Watch for:** the wiring, which is NOT done (see the carried item).
+
+## Found live this cycle
+
+<!-- The run files here. One item below was found by the close-out's own verification, not by a run. -->
+
+- [x] `test-launch.sh`'s gate-seam assertion fails whenever the run's DEADLINE has passed, and blames the seam instead of the deadline (found at the 2026-08-24 close-out)
+      - OBSERVED 2026-08-24 running `scripts/overnight/tests/run-all.sh` during close-out verification: `79 passed, 1 failed`, the failure being `test-launch FAIL: gate seam did not print its decision`.
+      - NOT a regression from the close-out's changes, and checked rather than assumed: running the launcher by hand prints `deadline-check: STOP -- deadline reached (2026-08-19T22:07:47+02:00)` and exits. `overnight-launch.sh:123` runs the deadline check LONG before the gate seam, so the seam is unreachable and the assertion at `scripts/overnight/test-launch.sh:89` can never see its string. None of the close-out's changed files are on that path.
+      - Ruled out first: a stale `build/todo-cache.json`. Rebuilt with `--keep-cache`, the oracle still reported `NEEDS_WORK`, and the failure persisted -- so this is not the documented corpus-under-walk flake.
+      - The defect is the REPORT, not the gate. The test already skips the seam for two unreachable states (`RUN_ACTIVE=1`, and any oracle state that is not `NEEDS_WORK`); a past deadline is a THIRD such state and is simply not in the list, so an environmental stop is reported as a machinery failure. That is the same shape as the commit gate naming stale files from an unrelated section, and it costs a real diagnosis every time a close-out runs the suite on a stopped run.
+      - Fix: add the deadline state to the skip list with its own NOTE line (`gate-seam check skipped (deadline reached ...)`), so the suite stays green on a legitimately stopped run and a genuine seam regression is still caught when the deadline is live.
+      - **RESOLVED 2026-08-24 in the same close-out that found it**, because the runner-suite gate runs at commit AND push on any control-plane change, so leaving it red would have forced a `SKIP_RUNNER_SUITE=1` on exactly the class of change that gate exists to cover.
+      - The skip asks `deadline-check.sh` itself (exit 10 = STOP) rather than re-deriving the deadline rule, so the test and the launcher can never disagree about whether the seam is reachable.
+      - Refusal direction, verified BOTH ways by moving the deadline: with a PAST deadline the NOTE fires and the suite is green; with a LIVE deadline (+24h) NO skip NOTE is printed at all, so the seam is genuinely exercised and still asserts `GATE: would run (state=NEEDS_WORK)`. The gate did not become vacuous. Real deadline state restored afterwards.
+
+## Carried forward from v16 -- open
+
+Each of these carries its v16 verdict and what would settle it. They are argued carries, not defaults -- but note that v16 closed with 16 carried against 12 resolved-plus-rejected, so this section is the one to shrink next.
+
+- [ ] The BSS headroom sensor is SHIPPED but not WIRED, so a section start still cannot see the ceiling ([v16](overnight-runner-improvements-v16.md))
+      - `scripts/overnight/bss-headroom.py` exists, self-tests, and reports `headroom_bytes` / `tight` / `collided`. Nothing calls it.
+      - Settled by: a non-blocking advisory field in `section-manifest.py` (or `preflight.py`) for a section that will add kernel `.text`/`.rodata`, plus a control that a roomy tree produces NO warning -- the whole value is lost if it cries wolf on every section.
+      - Baseline to compare against: 8192 bytes of slack at close-out, and at least five sections historically stalled by discovering this late.
+- [ ] `subagent_audit` duration arm is dead -- the PRECONDITION is now answered, so the arm must be BUILT or DELETED this cycle ([v16](overnight-runner-improvements-v16.md))
+      - `duration_ms` non-null in 0 of 1955 payloads (recounted 2026-08-24, was 0/1912 at v15). The harness does not send it.
+      - The two-cycle blocker is GONE: `.claude/state/subagent-payload-keys.json` names `agent_id`, `session_id`, `prompt_id` and `agent_transcript_path`. A correlator exists.
+      - Cheapest form, and it needs no PreToolUse stamp at all: `agent_transcript_path` is in the Stop payload, so first-to-last entry timestamps give the duration directly. Evaluate that BEFORE building the stamp the v14 proposal assumed.
+      - This is its third cycle. If neither form is built this stop, DELETE the arm -- a guard that cannot fire reads as coverage.
+- [ ] `review_convergence.py record` fingerprints at CALL time, so a post-fix call answers CONVERGED over edits no reviewer saw ([v16](overnight-runner-improvements-v16.md))
+      - Confirmed at source: `record(root, slice_id, kind)` at `review_convergence.py:202` takes `_fingerprint()` of the tree as it is when called.
+      - This is a FAIL-OPEN: it can talk the run out of a warranted review round, and it did -- the round it would have skipped went on to find five more real defects, three of them fail-open.
+      - Settled by: have the broker record the dispatch-time fingerprint in `manifest.jsonl` (it already writes a timestamped entry per leg), and have `record` prefer that over the call-time tree, warning when it must fall back.
+- [ ] Section-commit content-binding turns a 3-dispatch review into 8 ([v16](overnight-runner-improvements-v16.md))
+      - Still the largest single cost number in this corpus, carried on DIFFICULTY. Every fix stales the reviews that prompted it.
+      - The failure is asymmetric: a miss costs dispatches, a false positive silently accepts a review that no longer matches the committed source, which is the gate's entire guarantee.
+      - Settled by: a conservative-by-construction classifier (unparseable or mixed hunk means NOT comment-only), plus two controls -- a real source edit still stales, and a hunk mixing a comment with a code change still stales.
+- [ ] `todo-reflow.py` cannot see prose wrapped below 78 columns ([v16](overnight-runner-improvements-v16.md))
+      - `LO, HI = 78, 138` (`todo-reflow.py:54`), `MIN_RUN = 3` (:52), and `_BULLET` lines classify as `struct` (:125), so 72/76-column fills and two-line wrapped bullets are invisible by construction.
+      - 34 `todo/*.md` files still carry hunks, so a floor change moves all of them at once -- the `ROTATE_HINT_TURNS` shape, where a threshold gets retuned on reasoning three cycles running.
+      - Newly SAFER than when filed: the mid-token guard shipped this cycle removes the corruption hazard a lower floor would have amplified.
+      - Settled by: for each candidate floor (72, 76), count the blocks it newly joins and hand-check a sample; ship the floor only with that number recorded.
+- [ ] A `boot_info` field cannot be added unattended at all, and the loader self-measurement STILL has no kernel carriage ([v16](overnight-runner-improvements-v16.md))
+      - Verified 2026-08-24: no `self_measure` symbol in `include/kernel/boot_info.h` or `src/boot/uefi/boot_info_mirror.h`, and `BOOT_INFO_VERSION` is 23 in both. The operator half was never applied.
+      - This is a real capability boundary rather than a defect: `check-doc-coverage.py:462` fails the build for an undocumented field, `receipt_surface_guard.py` blocks the run from editing that tool, and no reserved region is the right home.
+      - Settled by an operator applying: two `F()` rows in `dump-fields.inc`, an ownership-matrix row, a `BOOT_INFO_VERSION` bump in BOTH headers, and one assignment from `g_self_measure`.
+- [ ] The identity gate has no STALENESS floor on its resolved base ([v16](overnight-runner-improvements-v16.md), which also absorbed a duplicate filing of the same defect)
+      - `todo-graph.yml:170-172` trusts `.[0].headSha` from `gh run list --status success --limit 50`; the API intermittently served a page whose newest entry was five weeks old, and the gate correctly returned rc 3 INFRASTRUCTURE against a tree predating its own protocol files.
+      - It cannot self-clear: `IDENTITY_GATE_LAST_GATED_SHA` only advances on a PASS, so the red persisted across three pushes.
+      - Sorting `.[0]` by `createdAt` is NOT the fix and was ruled out -- that SHA could not appear in a correct 50-newest window under any ordering.
+      - Two halves, and the cheap one is separable: (a) DOC -- the SECTIONS step should say an rc-3 INFRASTRUCTURE failure of this gate is re-runnable, since one `gh run rerun --failed` is a cheaper first probe than a diagnosis and cleared it both times; (b) DESIGN -- reject an out-of-era base (one predating `snapshot_protocol.json`) at resolution time, with a control that a legitimately old but in-era base is still accepted.
+- [ ] A hard blocker forces a whole-section revert with no sanctioned place to preserve the work ([v16](overnight-runner-improvements-v16.md))
+      - The naive form is proven ACTIVELY WRONG, which is this item's most valuable content: `git diff` omits untracked files, so a preserved patch applied with rc 0, `git apply --check` passed, and the tree did not compile because the section's two NEW files were silently absent.
+      - Settled by: a `defer-preserve` phase verb using `git diff HEAD` over a temporary `git add -N` (or `git stash create -u`), writing to a named documented location, recording the path in the deferral, and VERIFYING the restore COMPILES.
+- [ ] An `Accepted:`/`Deferred:` XREF can name the wrong SECTION with a paraphrased item and pass every gate ([v16](overnight-runner-improvements-v16.md))
+      - The check is well-specified: the quoted text in `(item: "...")` must be a prefix of a real checklist line IN THE NAMED SECTION, not merely somewhere in the file.
+      - Settled by: measure its false-positive rate against every existing stamp in the corpus FIRST, then ship as WARN, repair the corpus, and only then promote. Shipping it blocking without that measurement would wedge the next run's commits.
+- [ ] A backgrounded ship push dies when the NEXT tool call is refused by a gate ([v16](overnight-runner-improvements-v16.md))
+      - The documented shape ("background-and-return is safe; background-and-wait is not") is right about the tool wall but does not cover a poll that a PreToolUse gate vetoes before it runs. The subshell's survival depends on a follow-up call a gate can refuse.
+      - Silent by construction: the run sees a started background job and a clean tree, with nothing saying the push never landed.
+      - Settled by: make the ship sequence verify `git log @{u}..HEAD` is empty as its OWN last step -- that check needs no surviving subshell.
+- [ ] Two review legs disagreed because one read the INDEX and the other the working tree ([v16](overnight-runner-improvements-v16.md))
+      - Operator error in the prompt, so no tool defect -- but nothing in the broker or envelope records WHICH tree a leg examined, so the disagreement is undiagnosable from the artifacts.
+      - Settled by: record an index digest and a worktree digest at dispatch time in the review envelope.
+- [ ] `four_dispatch_gate: stamp commit + all 3 dispatches recent allows` -- sixth member of the control-plane flake set ([v16](overnight-runner-improvements-v16.md))
+      - Pass count moved 1358 -> 1359 -> 1360 across three runs of one unchanged tree, and the group's fixture PASSES when extracted and run in isolation.
+      - Do NOT widen the assertion: two of three observations were green and the isolated fixture is green.
+      - Settled by: a reproduction under concurrent load carrying elapsed numbers, or an order-dependence result from shuffling the group's five cases.
+- [ ] `four_dispatch_gate: D` measures whole-hook wall-clock, not the lock section ([v16](overnight-runner-improvements-v16.md))
+      - Settled by ONE live D failure carrying its elapsed number. Both candidate remedies edit a currently-green assertion, which is the churn this corpus has recorded three times.
+- [ ] `section_review_required` mid-review block is instrumented, still awaiting a live reproduction ([v16](overnight-runner-improvements-v16.md))
+      - Settled by one live block carrying the instrumented reason string. The v14 guessed mechanism already failed source verification, so guessing again is worse than waiting.
+- [ ] Codex-waiter against a mistyped log path -- the grace-period form needs a measurement ([v16](overnight-runner-improvements-v16.md))
+      - The immediate-refusal fix is REJECTED and stays rejected: the broker creates the log ASYNC, so a missing log is legitimately a still-starting review, and an existence check broke `test_missing_log_returns_still_running`.
+      - Settled by: instrument the broker to record log-creation latency for one run, set the period above the observed maximum, and ship a control that a still-starting review is never refused.
+- [ ] Two review legs co-SIGTERMed within 6s -- unexplained, still no reproduction ([v16](overnight-runner-improvements-v16.md))
+      - Staying unexplained on purpose. Recovery works (`needs_redispatch` named both), so carrying is bounded; naming a reaper without evidence is not.
+- [ ] Reasoning lessons carried as standing guidance (promote to doctrine when the owning skill is next edited) ([v16](overnight-runner-improvements-v16.md))
+      - Real-mechanism-wrong-consequence: when a finding says "X can then do Y", verify Y at its own file:line.
+      - **A filed mechanism can be right while its blamed SUB-mechanism is wrong.** Three v16 items blamed a per-kind write race; the fault was first-match truncation in a shared path. The tell was in the reports: the stuck kind ROTATED, which no per-kind theory explains. When three reports of one symptom disagree about which component is at fault, the shared ancestor is the suspect.
+      - **Verify a consequence against the real PARSER, not the filed prose.** The `--flag` item's own example was backticked and would have been inert; running the tokenizer showed the real hazard was a different shape that silently changes review scope rather than crashing.
+      - **Measure a new check's PRECISION against the live corpus before shipping it.** The mid-token guard's first form fired on 2 real files and 1 was innocent; one clause took it to 1 and 0.
+      - Verify the probe before trusting the count: re-measure, never copy a number forward.
+      - Root-fix-reflex: two consecutive rounds each fixing a defect the previous introduced = stop and simplify.
+      - Reject-on-wrong-premise: state the premise as a separate checkable sentence, not folded into the conclusion.
+      - Grep the CONCEPT (every field/string carrying a semantic), not only the symbol whose definition moved.
+      - Never suppress stderr on `git add` in the ship sequence; use `git show <rev>:<path>` for read-only history questions.
+      - Settled by: promotion into `review-todo-section` or `superpowers:receiving-code-review` the next time either is edited for another reason, so it costs nothing extra.
+
+## Standing measurement obligations
+
+Carry the baselines forward. A measurement without one is an anecdote.
+
+- **Do the shipped stamp fixes actually remove the opt-outs they were costing?** New this cycle, and it is the sharpest test of the close-out's main change. BASELINE from v16: at least three `SKIP_REVIEW_HOOK` / `RECEIVING_REVIEW_OVERRIDE` opt-outs were taken on reviews that had been FULLY performed, plus roughly 7 extra Codex dispatches and ~20 minutes on one section. Measure: opt-outs taken per segment, and how many cite a stale-stamp reason. The target is zero.
+- **Does the bare-`--flag` guard ever refuse a prompt that had no bare token?** New this cycle. Baseline 0. Any such refusal is a defect in the guard, not in the prompt.
+- **Does the mid-token reflow guard park a paragraph nobody then repairs?** New this cycle. Baseline: 0 outstanding refusals in the corpus at close-out. Measure: refusals outstanding at the next close-out -- a rising number means the refusal message is not actionable enough.
+- **Filing discipline: does the run SPLIT an item spanning forbidden+fixable?** Baseline 2026-08-17: 2 of 2 filings compliant, but 0 qualifying cases. Still unmeasured under a genuinely mixed item. v16 supplied several mixed items (the loader Makefile, the ACPICA rule) and they were filed whole rather than split, so this is still open.
+- **Control-plane suite flake set -- now SIX members, and the snapshot-the-corpus decision is badly overdue.** Members: `section_commit_gate: old review with matching content binding`, `test_reachability_gate`, `test_stub_lint_coverage`, `test_decision_registry_contract.py`, `scripts/tests/test_todo_fence.py`, `four_dispatch_gate: stamp commit + all 3 dispatches recent allows`. CONFIRMED AGAIN 2026-08-24: `test_query_bounds.sh` failed 21/22 with `by-domain -> cache-unusable` purely because a TODO edit had staled `build/todo-cache.json`, and passed 22/22 after `build-and-validate.sh --keep-cache`. That is the same corpus-moving-under-the-walk mechanism, and it names the wrong culprit every time. Measure: does the pass count stop moving on an unchanged tree once the corpus is snapshotted.
+- **Section-hygiene branching factor.** Baseline: under 1 (v14: 0.86 over 24h). Watch it stays under 1; continuation waivers demanded (0 to date).
+- **`completed_drought` firing rate.** FIRED 2026-08-19 as a TRUE positive (a `timeout-minutes` kill that GitHub reports as `cancelled`); the note was the only signal separating it from benign supersession. Open question unchanged: how often it fires on a genuinely quiet branch.
+- **Does the fixpoint rebuild ever return non-zero in practice?** Still unknown; rc 3 never observed live.
+- **Restart survivability.** A WSL restart killed a run cleanly (tree clean, all pushed) but the systemd units are TRANSIENT and vanished with `/run`, so the run did not come back. Measure: whether any future host restart leaves work in a worse state than clean-and-pushed.
+- **The pre-push tooling suite receipt.** Measured 2026-08-09: a push went from a 10-minute wall kill to 44s on a valid receipt, 95-99s when stale. Measure: fraction of ship pushes hitting a valid receipt over a full run.
+- **J1 re-runs caused by attended commits.** Measured 2026-08-10: 3 operator commits forced `j1a -> j1b -> j1c`, ~17 minutes paid twice. Measure per attended session.

@@ -480,7 +480,20 @@ UEFI_EFI := $(BUILD_DIR)/tools/BOOTX64.EFI
 
 uefi-boot: $(UEFI_EFI)
 
-$(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds \
+# Every loader input, discovered rather than enumerated. The sub-make's own
+# -MMD -MP decides WHICH objects to rebuild; this list only decides whether the
+# sub-make RUNS at all, and a hand-written list silently stopped doing that the
+# moment a new shared header landed (2026-08-18: include/boot/sha256_boot.h and
+# include/boot/devpath_filepath.h are compiled into BOOTX64.EFI and appear in
+# neither list). Generated headers stay named explicitly below because a
+# wildcard cannot see a file the build has not produced yet.
+UEFI_LOADER_INPUTS := $(wildcard src/boot/uefi/*.c src/boot/uefi/*.h \
+                                 src/boot/uefi/*.asm src/boot/uefi/*.csv \
+                                 src/boot/uefi/*.lds) \
+                      $(wildcard include/boot/*.h)
+
+$(UEFI_EFI): $(UEFI_LOADER_INPUTS) \
+             src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds \
              src/boot/uefi/sbat.asm src/boot/uefi/sbat.csv \
              src/boot/uefi/elf_bootproto.c src/boot/uefi/elf_bootproto.h \
              src/boot/uefi/elf_types.h src/boot/uefi/boot_proto_mirror.h \

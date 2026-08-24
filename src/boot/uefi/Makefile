@@ -22,6 +22,16 @@ CFLAGS  := --target=x86_64-elf -ffreestanding -fno-stack-protector -fno-stack-ch
 # `make -C src/boot/uefi EXTRA_CFLAGS="-DBOOT_INFO_VERSION=8"`.
 CFLAGS += $(EXTRA_CFLAGS)
 
+# -MMD -MP so a header this loader actually includes is tracked automatically.
+# The hand-maintained prerequisite lists below stay (they cover GENERATED
+# headers, which cannot appear in a .d file that does not exist yet on a first
+# build) but they no longer have to be COMPLETE: until 2026-08-24 a new shared
+# header was invisible to incremental builds, so editing it alone left
+# bootx64.o -- and the SIGNED BOOTX64.EFI -- stale while the smoke oracle
+# verified a loader built from the previous header. The kernel side never had
+# this problem because Makefile:28 has carried -MMD -MP all along.
+CFLAGS += -MMD -MP
+
 OUTDIR ?= ../../../build/tools
 
 OBJS := bootx64.o reloc.o sbat.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o
@@ -123,3 +133,7 @@ $(OUTDIR)/BOOTX64.EFI: bootx64.so sbat.csv
 
 clean:
 	rm -f *.o *.so $(OUTDIR)/BOOTX64.EFI
+
+# Auto-generated header dependencies (-MMD -MP). Hyphen-prefixed so a missing
+# .d on a clean tree is not an error.
+-include $(OBJS:.o=.d)

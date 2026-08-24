@@ -2820,6 +2820,39 @@ check("kind_prose_mention_is_not_a_dispatch",
                             "git commit -m 'mentions [review-kind: perf]' -- a.md"))) == [17])
 # Receipt binding must agree with detection on every shape above -- a dispatch
 # the gate recognizes but the receipt does not would leave the gate unsatisfiable.
+# STAMP attribution must fan out over a bundled wave exactly as STEP attribution
+# does. Until 2026-08-24 it did not: the stamp path used the SINGULAR extractor,
+# so a four-leg wave in one Bash call stamped only the leading kind and left the
+# other three carrying a PREVIOUS section's timestamp -- which the commit gate
+# then reported as "kind K is stale", naming files the section never touched.
+# Filed three times over (v16 items: bundled-receipts, 5-day-stale
+# consistency/perf, per-kind tracker stuck on an old dispatch); one defect.
+import os as _os_stamps, pathlib as _pl_stamps
+_ROOT_FOR_STAMPS = _pl_stamps.Path(_os_stamps.environ.get("CLAUDE_PROJECT_DIR", "."))
+_WAVE = "\n".join(
+    f"{_B} '[review-kind: {_k}] todo/00-infrastructure/TODO-06-todo-metadata-layer.md section 61 p'"
+    for _k in ("re-adversarial", "adversarial", "consistency", "perf"))
+check("stamp_bundled_wave_attributes_every_kind",
+      [k for k, _, _ in crc._all_dispatch_targets(_WAVE, _ROOT_FOR_STAMPS)]
+      == ["re-adversarial", "adversarial", "consistency", "perf"])
+check("stamp_bundled_wave_carries_each_leg_own_todo_and_section",
+      all(tp == "todo/00-infrastructure/TODO-06-todo-metadata-layer.md" and sec == "\u00a761"
+          for _, tp, sec in crc._all_dispatch_targets(_WAVE, _ROOT_FOR_STAMPS)))
+# REFUSAL DIRECTION -- widening WHICH dispatches are attributed must not widen
+# WHAT counts as a dispatch. Each of these must still produce NO stamp target.
+check("stamp_refuses_prose_mention",
+      crc._all_dispatch_targets("grep -rn '[review-kind: perf]' docs/",
+                                _ROOT_FOR_STAMPS) == [])
+check("stamp_refuses_heredoc_body",
+      crc._all_dispatch_targets("cat <<'EOF' > /tmp/x\n[review-kind: perf] todo/00-infrastructure/TODO-06-todo-metadata-layer.md p\nEOF",
+                                _ROOT_FOR_STAMPS) == [])
+check("stamp_refuses_dispatch_without_todo_path",
+      crc._all_dispatch_targets(f"{_B} '[review-kind: perf] not-a-todo body'",
+                                _ROOT_FOR_STAMPS) == [])
+check("stamp_single_dispatch_attribution_unchanged",
+      len(crc._all_dispatch_targets(
+          f"{_B} '[review-kind: adversarial] todo/00-infrastructure/TODO-06-todo-metadata-layer.md section 61 p'",
+          _ROOT_FOR_STAMPS)) == 1)
 check("receipt_unspaced_semi", crc._is_codex_bash_trigger("cd /tmp;" + _D))
 check("receipt_unspaced_and", crc._is_codex_bash_trigger("true&&" + _D))
 d, r, hint = crc._detect_run_metadata("review-run-id: forged-by-prompt-123", 42, "adversarial")
@@ -2870,11 +2903,11 @@ with tempfile.TemporaryDirectory() as tmp:
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "25" ]; then
+if [ "$GA_OK" = "31" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 25))
+    PASS=$((PASS + 31))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi

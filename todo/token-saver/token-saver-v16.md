@@ -1,5 +1,7 @@
 # Token Saver v16 -- Cost Findings (opened 2026-08-17)
 
+> **CLOSED 2026-08-24.** Superseded by [v17](token-saver-v17.md). The single filed item was rejected on this file's own >= 2% bar (its author measured it at ~5K tokens and said so). The six-cycle open question is NOT restated again in v17 -- it is converted into one concrete measurement assignment. File findings from the next run in v17, not here.
+
 Cost and token findings from the run armed after the 2026-08-17 close-out of [v15](token-saver-v15.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v17.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.
@@ -20,7 +22,9 @@ At five cycles this deserves a decision rather than a sixth restatement. Either 
 
 <!-- The run files here. Nothing yet: v16 opened at close-out, before the next arm. -->
 
-- [ ] I dumped an unfiltered `skill-progress.json` walk and paid ~5K tokens to read one line (below the 2% bar; recorded as EXCLUDED, kept for the reasoning lesson)
+- [-] I dumped an unfiltered `skill-progress.json` walk and paid ~5K tokens to read one line (below the 2% bar; recorded as EXCLUDED, kept for the reasoning lesson)
+      - **REJECTED 2026-08-24 on the item's own measurement.** It is filed at ~5K tokens against a session far above 250K, i.e. under the >= 2% bar this file sets, and the item says so itself. Rejecting it is the file's rule working, not a finding being suppressed -- the reasoning lesson (a per-event append-only state file makes any `for k,v in d.items()` walk unbounded by construction, so the filter belongs in the probe) is preserved in the body and carried into v17's guidance.
+      - Incidental confirmation from this close-out: `skill-progress.json` now holds 383 keys, so the unbounded-walk shape is getting worse, not better. That strengthens the LESSON without turning the cost into a filing.
       - OBSERVED 2026-08-18 diagnosing the section-commit-gate misfire on TODO-13 section 22. I needed ONE fact: whether a non-orphaned `review-todo-section` entry existed. The probe I wrote printed every matching key, which is ~130 rows of orphaned history, because the file accumulates an entry per review ever run.
       - The filter I actually wanted was one clause I already knew: `if not v.get('compaction_orphaned')`. I had even printed that field in the loop, so the information needed to bound the output was in the probe I wrote.
       - Measured cost is roughly 5K tokens against a session far above 250K, so this sits UNDER the >= 2% filing bar and is not proposed as work. It is recorded because the capture file asks for approaches committed to too early, and because the shape generalises: when a state file is append-only per event, any `for k,v in d.items()` walk is unbounded by construction and the filter belongs in the probe rather than in the reading.

@@ -148,6 +148,58 @@ def _hard_wrapped(block) -> bool:
     return mid >= max(2, int(0.6 * len(head)))
 
 
+# A line break that fell INSIDE a token cannot be repaired by a space-join, and
+# the tool's own content guard is structurally unable to notice: `_norm()`
+# collapses all whitespace before comparing, so an INSERTED space is exactly the
+# damage it normalises away. Reproduced 2026-08-24 on the shape that hit
+# `todo/TODO-Claude-Overnight-Runner.md`: a slash-separated list broken after a
+# trailing `/` rejoined as "`os.setsid`/`start_new_session`/ `preexec_fn`" --
+# a corrupted token reported as a clean reflow.
+#
+# The rule keys on the CHARACTER CLASS, not on "ends in punctuation": a line
+# legitimately ending in `--`, `->` or `+` followed by prose must still join
+# with its space (6 of the 7 candidates in that file were exactly that). When a
+# pair looks mid-token the BLOCK is left alone rather than joined without a
+# space -- refusing is conservative in the direction that cannot corrupt, and a
+# silent no-space join would be the same class of undetectable damage.
+_TOKEN_TAIL = ("/", "_", "\\", "(", "[")
+_TOKEN_HEAD = re.compile(r"^[\w`/_\\(\[]")
+
+
+def _mid_token_pair(left: str, right: str) -> bool:
+    """True when joining `left` to `right` with a space would weld a space
+    into the middle of one token."""
+    l = left.rstrip()
+    r = right.strip()
+    if not l or not r:
+        return False
+    if not _TOKEN_HEAD.match(r):
+        return False
+    # PRECISION, measured against the live corpus 2026-08-24: a trailing `/`
+    # continues a token only when it is GLUED to the text before it. The same
+    # character SPACE-SEPARATED is an ordinary separator whose join is correct
+    # -- `` `TODO-02` / `` + `` `TODO-03` `` must still join with its space,
+    # while `` `start_new_session`/ `` + `` `preexec_fn` `` must not. Without
+    # this clause the check fired on 2 corpus files of which 1 was innocent.
+    if len(l) >= 2 and l[-2].isspace():
+        return False
+    if l.endswith(_TOKEN_TAIL):
+        return True
+    # a SINGLE trailing hyphen continues a token; `--` and `->` are prose
+    if l.endswith("-") and not l.endswith("--") and not l.endswith("->"):
+        return True
+    return False
+
+
+def _mid_token_break(block) -> int:
+    """Index of the first pair in `block` whose join would corrupt a token,
+    or -1 when the block is safe to join."""
+    for i in range(len(block) - 1):
+        if _mid_token_pair(block[i], block[i + 1]):
+            return i
+    return -1
+
+
 def verbatim_mask(lines, mask=None):
     """`True` per line where reflow must copy the line through untouched.
 
@@ -197,7 +249,19 @@ def reflow(text: str, vmask=None, hmask=None) -> str:
     def flush():
         if not buf:
             return
-        if _hard_wrapped(buf):
+        bad = _mid_token_break(buf) if _hard_wrapped(buf) else -1
+        if bad >= 0:
+            # Mid-token break: refuse this block rather than weld a space into
+            # a token that `_norm()` could never detect. The file keeps its
+            # hard wrap here and a human repairs the one line.
+            sys.stderr.write(
+                "[todo-reflow] REFUSED a block: line ending "
+                f"{buf[bad].rstrip()[-24:]!r} would join mid-token with "
+                f"{buf[bad + 1].strip()[:24]!r}. Repair the break by hand, "
+                "then re-run.\n"
+            )
+            out.extend(buf)
+        elif _hard_wrapped(buf):
             # Join on single spaces, keeping the FIRST line's indent so an
             # indented continuation under a bullet stays indented.
             joined = _indent(buf[0]) + " ".join(x.strip() for x in buf)

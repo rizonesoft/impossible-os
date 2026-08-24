@@ -694,6 +694,46 @@ def _detect_review_kind(skill_name: str, prompt: str) -> str:
     return kinds.pop()
 
 
+def _all_dispatch_targets(cmd: str, root: Path) -> list:
+    """Every `(kind, todo_path, section)` a compound Bash call dispatches.
+
+    The SINGULAR extractor stops at the first dispatch, so a review wave
+    issued as several broker calls in ONE Bash invocation stamped only the
+    leading kind and left every other kind carrying its PREVIOUS section's
+    timestamp. That then reads at the commit gate as "kind K is stale" on a
+    review which was genuinely performed, against a file list belonging to an
+    unrelated section -- and the cheapest way out looks like re-dispatching an
+    already-approved round, which is the churn the convergence gate exists to
+    stop.
+
+    `extract_dispatch_prompts` already exists for exactly this truncation
+    class (it fixed the same bug in skill_step_map's step attribution,
+    MEASURED 2026-08-03); the stamp path simply never adopted it. Each
+    dispatch carries its OWN todo path and section, so they are resolved
+    per-prompt rather than inherited from the leading leg.
+
+    Prose mentions, heredoc bodies and non-dispatch segments are rejected by
+    the shared helper, so this widens WHICH dispatches are attributed without
+    widening WHAT counts as a dispatch.
+    """
+    out: list = []
+    if not cmd:
+        return out
+    try:
+        prompts = _cd.extract_dispatch_prompts(cmd)
+    except Exception:
+        return out
+    for body in prompts:
+        kind = _detect_review_kind("", body)
+        if not kind:
+            continue
+        todo_path, section = _detect_todo_path(body, root)
+        if not todo_path:
+            continue
+        out.append((kind, todo_path, section))
+    return out
+
+
 def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
     """Extract (todo_path, section) from the prompt. Returns ("", "")
     when no match. WARNs on stderr when multiple distinct TODO paths
@@ -1233,6 +1273,37 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
             return
 
 
+# The two dispatch wrappers refuse a malformed prompt at argv time (bad argc, or
+# a bare `--flag` token that codex-companion would re-split into a real CLI
+# option). On a refusal `exec node` NEVER runs, so no Codex process starts, no
+# review artifact is written, and there is nothing to receive -- yet this hook
+# fires on the Bash call regardless of exit status, so the refusal used to
+# register as a performed review: it opened a reception obligation the agent
+# could only clear with an override, and, worse, it STAMPED
+# last-review-stamps.json as though the kind had been reviewed. Anchored on the
+# wrappers' own banner, which nothing else emits. Fails OPEN (records) whenever
+# the response cannot be read, so a real review is never dropped.
+_WRAPPER_REFUSAL = ("[codex-dispatch] BLOCK", "[review-broker] BLOCK")
+
+
+def _dispatch_was_refused(payload: dict) -> bool:
+    """True when the tool_response shows a dispatch wrapper refused at argv
+    time, i.e. no review ran and there is nothing to record."""
+    try:
+        resp = payload.get("tool_response")
+        if isinstance(resp, dict):
+            text = " ".join(
+                str(resp.get(k) or "") for k in ("stdout", "stderr", "output", "error")
+            )
+        elif isinstance(resp, str):
+            text = resp
+        else:
+            return False
+        return any(m in text for m in _WRAPPER_REFUSAL)
+    except Exception:
+        return False
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -1255,6 +1326,14 @@ def main() -> int:
         return 0  # outside git repo, nothing to track
     state_path = _state_path(root)
     now_ns = time.time_ns()
+    if kind == "trigger" and _dispatch_was_refused(payload):
+        # Refused at argv time: no review ran. Recording it would open a
+        # reception obligation and stamp a review that never happened.
+        sys.stderr.write(
+            "[codex-review-state] dispatch was REFUSED by its wrapper "
+            "(no review ran); not recording a trigger or a stamp.\n"
+        )
+        return 0
     if kind == "trigger":
         # WARN if a previous trigger is being overwritten while still
         # unreceived AND within TTL. This surfaces the "rapid-fire
@@ -1394,6 +1473,25 @@ def main() -> int:
                 root, todo_path, section, review_kind, now_ns,
                 dispatch_head_sha=head_at_dispatch,
             )
+            # A bundled wave stamps EVERY kind it dispatched, not just the
+            # leading one -- see _all_dispatch_targets. The command-level
+            # eligibility above (broker / non-background) already decided
+            # that this invocation may stamp at all; this only fans the
+            # decision out across the dispatches the same command carries.
+            _seen_targets = {(review_kind, todo_path)}
+            for _k, _tp, _sec in _all_dispatch_targets(raw_cmd, root):
+                if (_k, _tp) in _seen_targets:
+                    continue
+                _seen_targets.add((_k, _tp))
+                _ok2, _err2 = _record_stamp(
+                    root, _tp, _sec, _k, now_ns,
+                    dispatch_head_sha=head_at_dispatch,
+                )
+                _debug_log(
+                    root, "trigger_stamp_write_bundled",
+                    review_kind=_k, todo_path=_tp, section=_sec,
+                    stamp_attempted=True, stamp_write_ok=_ok2, error=_err2,
+                )
         elif state.get("background_dispatch"):
             stamp_ok = False
             stamp_err = "skipped (non-broker background dispatch is not review proof)"

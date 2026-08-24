@@ -1707,6 +1707,43 @@ def _skill_entry_stale(entry: dict) -> bool:
         return False                        # any doubt -> assume live
 
 
+def _skill_entry_finished(skill: str, entry: dict) -> bool:
+    """True when a skill-progress entry has already reached EVERY required
+    terminal step, i.e. the skill ran to completion and is not in flight.
+
+    WHY. Nothing clears a `review-todo-section` entry on NORMAL completion --
+    `_skill_entry_stale` only ages one out after 6h and `compaction_orphaned`
+    only covers entries a PreCompact saw. So a review that finished and stamped
+    stays "active" for hours, and the `not_section` branch then reads the NEXT
+    section's very first commit as that finished review's fix loop. MEASURED
+    2026-08-18 on TODO-13 section 22: a first commit touching only
+    `src/boot/uefi/efi.h` (+~90 lines, so the LOC arm fired) was BLOCKED for
+    missing re-adversarial evidence belonging to the previous session's
+    section-28 review. The obvious way out is to redispatch an adversarial
+    round over an already-approved diff, which is exactly the churn
+    `review_convergence.py` exists to stop.
+
+    Terminal step 17 IS the review's own commit, so an entry carrying every
+    required step has, by the gate's own definition of done, finished. A fix
+    loop runs BEFORE that commit, never after it, so this cannot excuse a
+    genuinely mid-review fix-loop commit -- an entry missing ANY required step
+    is still live and the gate still fires. Fails CLOSED (returns False, i.e.
+    "still active") on any parse problem.
+    """
+    try:
+        from skill_step_map import REQUIRED_TERMINAL_STEPS
+        required = set(REQUIRED_TERMINAL_STEPS.get(skill) or [])
+        if not required:
+            return False
+        observed = entry.get("steps_observed")
+        if not isinstance(observed, list):
+            return False
+        seen = {o.get("n") for o in observed if isinstance(o, dict)}
+        return required.issubset(seen)
+    except Exception:
+        return False
+
+
 def _active_section_todo(root: Path) -> str:
     """The TODO path of the in-flight implement/review-todo-section skill, or "".
 
@@ -1728,6 +1765,8 @@ def _active_section_todo(root: Path) -> str:
         if not isinstance(entry, dict) or entry.get("compaction_orphaned") is True:
             continue
         if _skill_entry_stale(entry) or _entry_is_foreign(root, entry):
+            continue
+        if _skill_entry_finished(skill, entry):
             continue
         todo_path = entry.get("todo_path")
         if isinstance(todo_path, str) and todo_path.endswith(".md") \

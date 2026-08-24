@@ -81,8 +81,22 @@ rm -f "$BACKOFF_FILE"
 ORACLE_STATE="$(cd "$REPO_ROOT" && python3 .claude/hooks/sequencer_triage.py --next 2>/dev/null \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
 # The gate seam also runs AFTER the flock, so it is skipped while a run is active.
+# THIRD unreachable state, added 2026-08-24: overnight-launch.sh runs
+# deadline-check.sh (at :123) LONG before the gate seam, so once a run is past
+# its deadline the launcher stops there and the seam can never print anything.
+# Without this arm the suite reports `gate seam did not print its decision` --
+# an environmental stop wearing a machinery failure's name, which costs a real
+# diagnosis every time a close-out runs the suite on a stopped run. Detected by
+# asking deadline-check.sh itself (exit 10 = STOP) rather than re-deriving the
+# rule, so the skip can never disagree with the launcher about the deadline.
+DEADLINE_STOP=0
+if [ -f "$SCRIPT_DIR/deadline-check.sh" ]; then
+  bash "$SCRIPT_DIR/deadline-check.sh" "$REPO_ROOT" >/dev/null 2>&1 || DEADLINE_STOP=1
+fi
 if [ "$RUN_ACTIVE" = "1" ]; then
   echo "test-launch NOTE: gate-seam check skipped (a run is active; the gate runs after the flock)"
+elif [ "$DEADLINE_STOP" = "1" ]; then
+  echo "test-launch NOTE: gate-seam check skipped (deadline reached; the launcher stops before the seam)"
 elif [ "$ORACLE_STATE" = "NEEDS_WORK" ]; then
   OUT5="$(OVERNIGHT_SEQUENCER_GATE_ONLY=1 bash "$LAUNCH" "$REPO_ROOT" "$FIXTURE_TODO" bypassPermissions 2>&1)" \
     || fail "gate-only run exited non-zero"

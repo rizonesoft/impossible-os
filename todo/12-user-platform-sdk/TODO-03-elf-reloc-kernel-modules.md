@@ -54,8 +54,7 @@ title: "TODO-03 -- ELF Relocations & Kernel Module System"
 `kmod_load("C:\\Impossible\\System\\Drivers\\foo.kmod")` validates, relocates, and
 calls `init_fn` of a `.kmod` ELF relocatable object. `ksym_lookup("pmm_alloc_contiguous")`
 returns the kernel function address. `EXPORT_SYMBOL(fn)` populates the `__ksymtab` section
-at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/PLT lazy-
-binding engine is available for the Linux ELF compat `dlopen` path.
+at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/PLT lazy-binding engine is available for the Linux ELF compat `dlopen` path.
 
 ---
 
