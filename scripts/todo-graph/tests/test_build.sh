@@ -11386,6 +11386,598 @@ PY2
         t_fail "identity gate: the replacement-ref case damaged the shared fixture clone"
     fi
 
+    # 22cd: THE BYTE-IDENTICAL CLOSURE EXIT ANSWERS TO THE PROTOCOL (section
+    # 51). Every other protocol case in this block reaches the classification
+    # because SOMETHING in the closure changed; this one is the opposite shape
+    # and the only one that used to reach rc 0. Base and head share one
+    # unloadable snapshot_protocol.json and differ only in a `todo/` file, so
+    # the closure is byte-identical and the exit fired before a protocol byte
+    # had been read -- returning 0 with no token at all, and making that head
+    # the next gated baseline. Section 18 had already refused the same shape at
+    # the schema fast path, so the two entry points disagreed.
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = "not-an-int"
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22cd: an unloadable protocol shared by base and head" >/dev/null 2>&1
+    )
+    G_CD_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit over an unloadable protocol\n' >>"$t"
+        git commit --quiet --no-verify -am "22cd: todo-only edit, closure untouched" >/dev/null 2>&1
+    )
+    # ASSERT THE CLOSURE REALLY IS IDENTICAL, or the case proves nothing: a
+    # stray resolver edit would send it down the ordinary path and it would
+    # pass against the very gate this fixture exists to catch.
+    G_CD_CLOSURE_DIFF="$( (cd "$GATE_REPO" && git diff --name-only "$G_CD_BASE" HEAD -- scripts/todo-graph scripts/lint/check_bucket_emission.py) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CD_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cd.log" 2>&1)
+    G_RC=$?
+    G_CD_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cd.log" | head -1)"
+    if [ -z "$G_CD_CLOSURE_DIFF" ] && [ "$G_RC" -eq 3 ] \
+       && grep -qE 'BASE_PROTOCOL_UNREADABLE|HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cd.log"; then
+        t_pass "identity gate: a byte-identical closure over an unloadable protocol is named, not exited 0"
+    else
+        t_fail "identity gate: the closure exit outranked the protocol (rc=$G_RC; got [$G_CD_TOKEN]; closure diff [$G_CD_CLOSURE_DIFF]; see $TMP_DIR/gate-22cd.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22cd: restore a well-formed protocol" >/dev/null 2>&1
+    )
+    # CONTROL: the exit itself is not what was removed. The SAME shape over a
+    # well-formed protocol -- byte-identical closure, todo-only diff -- must
+    # still be a silent rc 0, or this change has turned an ordinary roadmap
+    # commit into a gate failure.
+    G_CD_OK_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit over a well-formed protocol\n' >>"$t"
+        git commit --quiet --no-verify -am "22cd: todo-only edit over a healthy protocol" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CD_OK_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cd-control.log" 2>&1)
+    G_RC=$?
+    # THE MARKER, NOT MERELY THE STATUS. rc 0 alone cannot tell "the exit moved"
+    # from "the exit was deleted": a healthy byte-identical range that falls all
+    # the way through the differential also returns 0, so a deletion would leave
+    # this control green while costing every such range a full double walk
+    # (Codex test-coverage, section 51, [medium]).
+    if [ "$G_RC" -eq 0 ] \
+       && grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cd-control.log"; then
+        t_pass "identity gate: CONTROL -- a healthy byte-identical closure still exits 0 THROUGH the exit"
+    else
+        t_fail "identity gate: the byte-identical exit stopped working or was bypassed (rc=$G_RC; see $TMP_DIR/gate-22cd-control.log)"
+    fi
+
+    # 22ce: THE SAME ORDERING QUESTION, ASKED THROUGH THE FILE CONTRACT RATHER
+    # THAN THE PARSE (section 51). 22bp proves an ancestor-directory symlink is
+    # refused -- but it reaches that refusal down the ordinary path, because
+    # its range changes the closure. Here the closure is byte-identical
+    # (`git hash-object` reads THROUGH the symlink, so the external copy hashes
+    # the same) and the diff is one `todo/` file, which is precisely the shape
+    # a record-shaped predicate beside the old exit would have waved through:
+    # `proto_of` follows the symlink and returns a clean seven-field record,
+    # and only `protocol_source_is_regular` -- which runs after it -- refuses.
+    G_CE_OUTSIDE="$TMP_DIR/s51-outside-todograph"
+    rm -rf "$G_CE_OUTSIDE" 2>/dev/null || true
+    G_CE_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit read through an ancestor symlink\n' >>"$t"
+        git commit --quiet --no-verify -am "22ce: todo-only edit, closure untouched" >/dev/null 2>&1
+    )
+    if cp -a "$GATE_REPO/scripts/todo-graph" "$G_CE_OUTSIDE" 2>/dev/null; then
+        (
+            cd "$GATE_REPO" || exit 1
+            rm -rf scripts/todo-graph
+            ln -s "$G_CE_OUTSIDE" scripts/todo-graph
+        )
+        # Through the IN-REPO path, as 22bp records: invoking the physical copy
+        # makes the gate derive a repo root that is not the fixture repo.
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CE_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22ce.log" 2>&1)
+        G_RC=$?
+        G_CE_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ce.log" | head -1)"
+        if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22ce.log"; then
+            t_pass "identity gate: a byte-identical closure read through an ancestor symlink is refused"
+        else
+            t_fail "identity gate: an out-of-tree protocol rode the byte-identical exit (rc=$G_RC; got [$G_CE_TOKEN]; see $TMP_DIR/gate-22ce.log)"
+        fi
+        (
+            cd "$GATE_REPO" || exit 1
+            rm -f scripts/todo-graph
+            git checkout --quiet -- scripts/todo-graph >/dev/null 2>&1
+        )
+        rm -rf "$G_CE_OUTSIDE" 2>/dev/null || true
+        if [ -f "$GATE_IN_CLONE" ]; then
+            t_pass "identity gate: CONTROL -- the section 51 symlink case restores the real directory"
+        else
+            t_fail "identity gate: the section 51 symlink case left the fixture clone broken"
+        fi
+    else
+        t_fail "identity gate: could not stage the section 51 ancestor-symlink fixture"
+    fi
+
+    # 22cf: THE MEASUREMENT MUST STILL BE TRUE WHEN IT IS ACTED ON (section 51).
+    # Moving the decision widened the gap between hashing the closure and
+    # exiting on it from nothing to a base worktree plus two protocol probes,
+    # and the head side hashes the WORKING TREE on purpose. So a resolver file
+    # saved into a shared local checkout inside that window would be measured in
+    # its old form and ride the exit, making an UNEXAMINED change the next
+    # baseline. Forced deterministically with a shim that mutates a closure file
+    # immediately after `git worktree add` -- inside the window by construction,
+    # rather than by racing a sleep.
+    G_CF_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit mutated under the gate\n' >>"$t"
+        git commit --quiet --no-verify -am "22cf: todo-only edit, closure untouched" >/dev/null 2>&1
+    )
+    G_SHIM_S51="$TMP_DIR/gitshim-s51"
+    mkdir -p "$G_SHIM_S51"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "worktree" ]; then\n'
+        printf '  %s "$@"; _rc=$?\n' "$G_REAL_GIT"
+        printf '  printf "\\n# 22cf: mutated under the gate\\n" >> %s\n' \
+            "$GATE_REPO/scripts/todo-graph/ref_resolution.py"
+        printf '  exit $_rc\n'
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM_S51/git"
+    chmod +x "$G_SHIM_S51/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_S51:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_CF_BASE" --head HEAD >"$TMP_DIR/gate-22cf.log" 2>&1)
+    G_RC=$?
+    # rc 3, NOT a fall-through to the walk: the protocol constants were read
+    # before the movement, so walking would adjudicate mixed-time evidence and
+    # could return a real-looking verdict about a tree that never existed.
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cf.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cf.log"; then
+        t_pass "identity gate: a closure file that moves under the gate is refused by name"
+    else
+        t_fail "identity gate: a mid-run closure mutation was not refused (rc=$G_RC; see $TMP_DIR/gate-22cf.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/ref_resolution.py >/dev/null 2>&1)
+
+    # 22cj: AN UNANSWERABLE PROBE IS NOT CONFIRMED ABSENCE. The measurement far
+    # above collapses every git failure to the string MISSING on BOTH sides, so
+    # a closure member that is genuinely absent at the base and merely
+    # UNREADABLE at head compares EQUAL -- and an unexamined change rides the
+    # exit (Codex adversarial, section 51 round 2, [high]). Both halves are
+    # required to reach it: a member present at the base would differ from the
+    # unreadable head in the first pass and force a walk, so the fixture must
+    # delete it at the base and make the worktree path a DIRECTORY, which
+    # `hash-object` cannot read.
+    G_CJ_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm --quiet -f scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cj: closure member absent at the base" >/dev/null 2>&1
+    )
+    G_CJ_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit with an unreadable closure member\n' >>"$t"
+        git commit --quiet --no-verify -am "22cj: todo-only edit, closure untouched" >/dev/null 2>&1
+        mkdir -p scripts/todo-graph/producer_differential.py
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CJ_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cj.log" 2>&1)
+    G_RC=$?
+    G_CJ_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cj.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cj.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cj.log"; then
+        t_pass "identity gate: an unreadable closure member is refused, not read as unchanged"
+    else
+        t_fail "identity gate: an unreadable closure member rode the byte-identical exit (rc=$G_RC; got [$G_CJ_TOKEN]; see $TMP_DIR/gate-22cj.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -rf scripts/todo-graph/producer_differential.py
+        git checkout --quiet "$G_CJ_PRE" -- scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cj: restore the closure member" >/dev/null 2>&1
+    )
+
+    # 22ck: A BLOB OID SAYS WHAT AN ENTRY CONTAINS, NOT WHAT IT IS. Git stores a
+    # symlink as mode 120000 whose blob is the target PATH TEXT, so a base
+    # symlink naming `pass` and a head regular file whose whole content is
+    # `pass` carry the SAME OID. Presence-only probing therefore called them
+    # byte-identical while the base would EXECUTE the symlink target and the
+    # head executes those five bytes (Codex adversarial, section 51 round 3,
+    # [high]). Nothing about this needs a broken repository: both trees are
+    # well-formed and the OIDs genuinely match.
+    G_CK_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/producer_differential.py
+        ln -s pass scripts/todo-graph/producer_differential.py
+        git add scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ck: the closure member is a symlink at the base" >/dev/null 2>&1
+    )
+    G_CK_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/producer_differential.py
+        printf 'pass' > scripts/todo-graph/producer_differential.py
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit beside a symlink-to-regular swap\n' >>"$t"
+        git commit --quiet --no-verify -am "22ck: a regular file whose bytes are the old link target" >/dev/null 2>&1
+    )
+    # PROVE THE PREMISE FIRST, or a passing assertion means nothing: the two
+    # sides must really carry the same OID, and the base entry must really be a
+    # symlink. Without both, this case degenerates into an ordinary changed
+    # closure and would pass against the very gate it exists to catch.
+    G_CK_BOID="$( (cd "$GATE_REPO" && git rev-parse --quiet --verify "$G_CK_BASE:scripts/todo-graph/producer_differential.py" 2>/dev/null) )"
+    G_CK_HOID="$( (cd "$GATE_REPO" && git hash-object scripts/todo-graph/producer_differential.py 2>/dev/null) )"
+    G_CK_MODE="$( (cd "$GATE_REPO" && git ls-tree "$G_CK_BASE" -- scripts/todo-graph/producer_differential.py 2>/dev/null | cut -d' ' -f1) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CK_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22ck.log" 2>&1)
+    G_RC=$?
+    G_CK_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ck.log" | head -1)"
+    if [ -n "$G_CK_BOID" ] && [ "$G_CK_BOID" = "$G_CK_HOID" ] && [ "$G_CK_MODE" = "120000" ] \
+       && [ "$G_RC" -eq 3 ] \
+       && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22ck.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22ck.log"; then
+        t_pass "identity gate: an equal-OID symlink-to-regular swap is refused, not called identical"
+    else
+        t_fail "identity gate: a symlink-to-regular swap rode the byte-identical exit (rc=$G_RC; got [$G_CK_TOKEN]; mode=$G_CK_MODE base=$G_CK_BOID head=$G_CK_HOID; see $TMP_DIR/gate-22ck.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/producer_differential.py
+        git checkout --quiet "$G_CK_PRE" -- scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ck: restore the closure member" >/dev/null 2>&1
+    )
+
+    # 22cl: THE EXECUTABLE BIT DECIDES WHETHER THE LOCAL GATE RUNS AT ALL, so a
+    # mode-only change to identity-gate.sh IS verdict-affecting even though the
+    # bytes are identical and every closure member is invoked through an
+    # explicit interpreter. `.githooks/pre-push` enters its identity-gate block
+    # only when this script is `-x`, so 100755 -> 100644 riding along with a
+    # real closure change skips the whole local gate and leaves CI to notice
+    # after main has moved (Codex adversarial, section 51 round 4, [high] --
+    # which refuted the reasoning that had rejected this comparison one round
+    # earlier).
+    G_CL_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        # THROUGH THE INDEX, not `chmod`. A fixture that changes the mode on
+        # disk and commits it only works where the filesystem carries the bit,
+        # which is the very assumption round 5 showed was unsafe to build on.
+        git update-index --chmod=-x scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit beside a mode-only closure change\n' >>"$t"
+        # EXPLICIT PATHS, never `commit -a`. `-a` re-reads the worktree and
+        # resets the index entry's mode from the file on disk, silently undoing
+        # the `--chmod` this case exists to stage -- the fixture then measured
+        # an ordinary todo-only commit and its own premise check caught it.
+        git add "$t" >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cl: drop the gate's executable bit, bytes unchanged" >/dev/null 2>&1
+    )
+    # PREMISE: the CONTENT really is unchanged, so a failure here can only be
+    # about the mode.
+    G_CL_DIFF="$( (cd "$GATE_REPO" && git diff --name-only "$G_CL_PRE" HEAD -- scripts/todo-graph scripts/lint/check_bucket_emission.py) )"
+    G_CL_OLDMODE="$( (cd "$GATE_REPO" && git ls-tree "$G_CL_PRE" -- scripts/todo-graph/identity-gate.sh 2>/dev/null | cut -d' ' -f1) )"
+    G_CL_NEWMODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/identity-gate.sh 2>/dev/null | cut -d' ' -f1) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CL_PRE" --head HEAD \
+        >"$TMP_DIR/gate-22cl.log" 2>&1)
+    G_RC=$?
+    G_CL_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cl.log" | head -1)"
+    G_CL_OLDOID="$( (cd "$GATE_REPO" && git rev-parse --quiet --verify "$G_CL_PRE:scripts/todo-graph/identity-gate.sh" 2>/dev/null) )"
+    G_CL_NEWOID="$( (cd "$GATE_REPO" && git rev-parse --quiet --verify "HEAD:scripts/todo-graph/identity-gate.sh" 2>/dev/null) )"
+    # THE BYTE-EQUALITY PREMISE IS TESTED, not merely computed. `G_CL_DIFF` was
+    # printed in the failure message and never asserted, so a content change
+    # riding along with the mode flip would have produced the expected token and
+    # passed a fixture whose whole claim is "mode only" (Codex adversarial,
+    # section 51 round 6, [medium]). The premise is BLOB EQUALITY, not an empty
+    # `git diff --name-only`: that command lists a path whose MODE changed, so
+    # requiring it empty asserts the absence of the very thing being staged.
+    if [ "$G_CL_OLDMODE" = "100755" ] && [ "$G_CL_NEWMODE" = "100644" ] \
+       && [ -n "$G_CL_OLDOID" ] && [ "$G_CL_OLDOID" = "$G_CL_NEWOID" ] \
+       && [ "$G_RC" -eq 3 ] \
+       && grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cl.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cl.log"; then
+        t_pass "identity gate: a mode-only closure change is not byte-identical"
+    else
+        t_fail "identity gate: a mode-only closure change rode the exit (rc=$G_RC; got [$G_CL_TOKEN]; mode $G_CL_OLDMODE -> $G_CL_NEWMODE; oid $G_CL_OLDOID vs $G_CL_NEWOID; content diff [$G_CL_DIFF]; see $TMP_DIR/gate-22cl.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git update-index --chmod=+x scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cl: restore the gate's executable bit" >/dev/null 2>&1
+        chmod +x scripts/todo-graph/identity-gate.sh
+    )
+    G_CL_MODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/identity-gate.sh 2>/dev/null | cut -d' ' -f1) )"
+    if [ "$G_CL_MODE" = "100755" ]; then
+        t_pass "identity gate: CONTROL -- the mode case restores the committed executable bit"
+    else
+        t_fail "identity gate: the mode case left the fixture gate at mode $G_CL_MODE"
+    fi
+
+    # 22cm: THE MODE QUESTION IS ASKED OF GIT, NOT OF THE FILESYSTEM, and this
+    # is the control that proves it. Git supports checkouts whose filesystem
+    # does not carry the executable bit (`core.fileMode=false`, and mounts that
+    # report every file executable); an implementation that read `[ -x ]` for
+    # the head side compared 100644 against 100755 on a PERFECTLY HEALTHY range
+    # there and refused at rc 3, wedging every resolver push on that host
+    # (Codex adversarial, section 51 round 5, [high]). It passed everywhere here
+    # because this checkout has core.fileMode=true, which is exactly why no
+    # mode-preserving fixture could have found it.
+    G_CM_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    # CAPTURE THE ORIGINAL, do not assume it. Teardown used to set the value to
+    # `true` unconditionally, which is a restore only on a mode-preserving host;
+    # on a genuinely mode-blind filesystem the clone starts `false` and every
+    # later shared fixture would inherit a setting this case invented (Codex
+    # adversarial, section 51 round 6, [medium]).
+    G_CM_FM_WAS="$( (cd "$GATE_REPO" && git config --get core.fileMode 2>/dev/null) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git config core.fileMode false || true
+        # Both directions of the disagreement, on a tree git considers clean:
+        # the gate loses its bit on disk while the commit keeps it, and a
+        # non-executable member gains one.
+        chmod -x scripts/todo-graph/identity-gate.sh
+        chmod +x scripts/todo-graph/snapshot_protocol.json
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit on a mode-blind checkout\n' >>"$t"
+        git commit --quiet --no-verify -am "22cm: todo-only edit, closure untouched" >/dev/null 2>&1
+    )
+    # PREMISE: git must consider the worktree CLEAN despite the on-disk change,
+    # or the case is testing a dirty tree instead of a mode-blind one.
+    G_CM_DIRTY="$( (cd "$GATE_REPO" && git status --porcelain -- scripts/todo-graph) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CM_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cm.log" 2>&1)
+    G_RC=$?
+    if [ -z "$G_CM_DIRTY" ] && [ "$G_RC" -eq 0 ] \
+       && grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cm.log" \
+       && ! grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cm.log"; then
+        t_pass "identity gate: CONTROL -- a mode-blind checkout still exits 0 on a healthy range"
+    else
+        t_fail "identity gate: a core.fileMode=false checkout was refused (rc=$G_RC; dirty [$G_CM_DIRTY]; see $TMP_DIR/gate-22cm.log)"
+    fi
+    # And the committed flip is STILL refused under the same configuration,
+    # which is what keeps this a portability control rather than an escape.
+    (
+        cd "$GATE_REPO" || exit 1
+        git update-index --chmod=-x scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cm: committed mode flip on a mode-blind checkout" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CM_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cm-flip.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cm-flip.log"; then
+        t_pass "identity gate: a COMMITTED mode flip is still refused on a mode-blind checkout"
+    else
+        t_fail "identity gate: the committed mode flip was missed on a mode-blind checkout (rc=$G_RC; see $TMP_DIR/gate-22cm-flip.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git update-index --chmod=+x scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cm: restore" >/dev/null 2>&1
+        if [ -n "$G_CM_FM_WAS" ]; then
+            git config core.fileMode "$G_CM_FM_WAS"
+        else
+            git config --unset core.fileMode 2>/dev/null || true
+        fi
+        chmod +x scripts/todo-graph/identity-gate.sh
+        chmod -x scripts/todo-graph/snapshot_protocol.json
+        git checkout --quiet -- scripts/todo-graph >/dev/null 2>&1
+    )
+    G_CM_FM_NOW="$( (cd "$GATE_REPO" && git config --get core.fileMode 2>/dev/null) )"
+    G_CM_LEFT="$( (cd "$GATE_REPO" && git status --porcelain -- scripts/todo-graph) )"
+    if [ "$G_CM_FM_NOW" = "$G_CM_FM_WAS" ] && [ -z "$G_CM_LEFT" ]; then
+        t_pass "identity gate: CONTROL -- the mode-blind case restores config and worktree exactly"
+    else
+        t_fail "identity gate: the mode-blind case left core.fileMode [$G_CM_FM_NOW] (was [$G_CM_FM_WAS]) and worktree [$G_CM_LEFT]"
+    fi
+
+    # 22cn: A COMMITTED DELETION MUST NOT BE RESURRECTED BY A DIRTY WORKING
+    # TREE. Content is read from the worktree on purpose, and applying that to
+    # PRESENCE let a push that DELETES a closure member exit 0: the recreated
+    # file hashes to the base OID, the head tree entry is empty so the mode
+    # comparison is skipped, and the two sides compare equal (Codex adversarial,
+    # section 51 round 6, [high]).
+    G_CN_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    G_CN_OID="$( (cd "$GATE_REPO" && git rev-parse --quiet --verify "HEAD:scripts/todo-graph/producer_differential.py" 2>/dev/null) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm --quiet -f scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit beside a committed deletion\n' >>"$t"
+        git add "$t" >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cn: delete a closure member" >/dev/null 2>&1
+        git cat-file -p "$G_CN_OID" > scripts/todo-graph/producer_differential.py 2>/dev/null
+    )
+    # PREMISE: the resurrected file must hash to exactly the base blob, or the
+    # case degenerates into an ordinary content difference.
+    G_CN_HOID="$( (cd "$GATE_REPO" && git hash-object scripts/todo-graph/producer_differential.py 2>/dev/null) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CN_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cn.log" 2>&1)
+    G_RC=$?
+    G_CN_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cn.log" | head -1)"
+    if [ -n "$G_CN_OID" ] && [ "$G_CN_OID" = "$G_CN_HOID" ] \
+       && [ "$G_RC" -eq 3 ] \
+       && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cn.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cn.log"; then
+        t_pass "identity gate: a committed deletion is not resurrected by the working tree"
+    else
+        t_fail "identity gate: a committed closure deletion rode the exit (rc=$G_RC; got [$G_CN_TOKEN]; base=$G_CN_OID worktree=$G_CN_HOID; see $TMP_DIR/gate-22cn.log)"
+    fi
+    # The INVERSE: the head commit carries a member the working tree lacks --
+    # the closure analogue of HEAD_PROTOCOL_UNMATERIALIZED. The BASE must lack
+    # it too, and that is not a detail: an absent worktree file already differs
+    # from a present base in the FIRST pass, so a base that carries it forces an
+    # ordinary walk and the case never reaches the code it was written for. The
+    # first cut did exactly that and returned rc 0.
+    G_CN_MBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_CN_BASE" -- scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit beside a committed re-addition\n' >>"$t"
+        git add "$t" scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cn: re-add the closure member" >/dev/null 2>&1
+        rm -f scripts/todo-graph/producer_differential.py
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CN_MBASE" --head HEAD \
+        >"$TMP_DIR/gate-22cn-missing.log" 2>&1)
+    G_RC=$?
+    G_CN_MTOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cn-missing.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cn-missing.log"; then
+        t_pass "identity gate: a closure member the checkout never materialized is refused"
+    else
+        t_fail "identity gate: an unmaterialized closure member was not refused (rc=$G_RC; got [$G_CN_MTOKEN]; see $TMP_DIR/gate-22cn-missing.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph >/dev/null 2>&1)
+
+    # 22cg: ABSENCE ON BOTH SIDES IS THE ONE NEW REFUSAL THIS MOVE CREATES, and
+    # it is the shape that disproved the first draft of the implementation
+    # comment: every protocol path hashes MISSING against MISSING, so the
+    # closure is byte-identical with no protocol-path difference at all, and the
+    # base still earns a token. A tree carrying no snapshot mechanism cannot be
+    # gated, so refusing it IS the decision rather than a regression.
+    G_CG_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm --quiet -f scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py \
+            scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cg: no protocol mechanism at all" >/dev/null 2>&1
+    )
+    G_CG_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit with no protocol on either side\n' >>"$t"
+        git commit --quiet --no-verify -am "22cg: todo-only edit, no protocol either side" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CG_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22cg.log" 2>&1)
+    G_RC=$?
+    G_CG_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cg.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -qE 'BASE_PROTOCOL_REMOVED|BASE_PREDATES_PROTOCOL' "$TMP_DIR/gate-22cg.log" \
+       && ! grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cg.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cg.log"; then
+        t_pass "identity gate: a byte-identical closure with NO protocol on either side is refused by name"
+    else
+        t_fail "identity gate: absence on both sides rode the byte-identical exit (rc=$G_RC; got [$G_CG_TOKEN]; see $TMP_DIR/gate-22cg.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_CG_PRE" -- scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cg: restore the protocol mechanism" >/dev/null 2>&1
+    )
+
+    # 22ch: THE LEGACY FORM BEHIND THE SAME EXIT. 22cd and 22ce both leave the
+    # JSON in place, so both exercise only `proto_of`'s DATA branch -- a
+    # form-selective regression that restored the pre-read exit whenever the
+    # JSON is absent would pass them both (Codex test-coverage, section 51,
+    # [high]). Removing the JSON and its loader leaves the legacy PAIR, which is
+    # the form `proto_of` then selects.
+    # NO HEALTHY-LEGACY CONTROL IS CONSTRUCTIBLE against this tree, and that is
+    # a fact about the tree rather than an omission: since section 18 the legacy
+    # names are re-exports of the data loader (`ref_resolution.py:208`), so a
+    # legacy pair without the JSON cannot load at all. The reachable legacy
+    # assertion is therefore the unreadable one.
+    G_CH_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git rm --quiet -f scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ch: legacy pair only, and it cannot load" >/dev/null 2>&1
+    )
+    G_CH_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit over an unreadable legacy pair\n' >>"$t"
+        git commit --quiet --no-verify -am "22ch: todo-only edit over the legacy pair" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CH_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22ch.log" 2>&1)
+    G_RC=$?
+    G_CH_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ch.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -qE 'BASE_PROTOCOL_[A-Z_]+' "$TMP_DIR/gate-22ch.log" \
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22ch.log"; then
+        t_pass "identity gate: the legacy form is behind the exit too, not only the data form"
+    else
+        t_fail "identity gate: an unreadable legacy pair rode the byte-identical exit (rc=$G_RC; got [$G_CH_TOKEN]; see $TMP_DIR/gate-22ch.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_CH_PRE" -- scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ch: restore the data form" >/dev/null 2>&1
+    )
+
+    # 22ci: THE TWO EXITS THAT STILL PRECEDE THE PROTOCOL READ DO SO ON PURPOSE.
+    # `base == head` and an unusable base are decided before a protocol byte is
+    # read, and after section 51 that placement is a DECISION rather than an
+    # accident -- but 22a and 22e only ever see a healthy protocol, so moving
+    # either one below the read would leave both green (Codex test-coverage,
+    # section 51, [medium]). Asked under a MALFORMED protocol, each answer is
+    # only reachable from its published position.
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY3'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = "not-an-int"
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY3
+        git commit --quiet --no-verify -am "22ci: malformed protocol for the precedence cases" >/dev/null 2>&1
+    )
+    G_CI_HEAD="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CI_HEAD" --head HEAD \
+        >"$TMP_DIR/gate-22ci-selfsame.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 0 ] \
+       && grep -q 'base == head; nothing to differentiate' "$TMP_DIR/gate-22ci-selfsame.log" \
+       && ! grep -qE 'PROTOCOL_[A-Z_]+' "$TMP_DIR/gate-22ci-selfsame.log"; then
+        t_pass "identity gate: base == head is still answered before the protocol is read"
+    else
+        t_fail "identity gate: base == head fell behind the protocol read (rc=$G_RC; see $TMP_DIR/gate-22ci-selfsame.log)"
+    fi
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" \
+        --base 0000000000000000000000000000000000000000 --head HEAD \
+        >"$TMP_DIR/gate-22ci-badbase.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'is not a commit in this repository' "$TMP_DIR/gate-22ci-badbase.log" \
+       && ! grep -qE 'PROTOCOL_[A-Z_]+' "$TMP_DIR/gate-22ci-badbase.log"; then
+        t_pass "identity gate: an unusable explicit base still wins over any protocol token"
+    else
+        t_fail "identity gate: an unusable base was masked by a protocol verdict (rc=$G_RC; see $TMP_DIR/gate-22ci-badbase.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_CH_PRE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -am "22ci: restore a well-formed protocol" >/dev/null 2>&1
+    )
+    if [ -f "$GATE_IN_CLONE" ] \
+       && [ -f "$GATE_REPO/scripts/todo-graph/snapshot_protocol.json" ] \
+       && [ -f "$GATE_REPO/scripts/todo-graph/ref_resolution.py" ]; then
+        t_pass "identity gate: CONTROL -- the section 51 block leaves the fixture clone whole"
+    else
+        t_fail "identity gate: the section 51 block damaged the shared fixture clone"
+    fi
+
     # 22ar: THE HEAD SIDE IS ITS OWN QUESTION. The two sides shared one loop
     # and one message, so a HEAD problem read as a base problem and the
     # reverse. A tree under test with no snapshot mechanism at all is a broken
