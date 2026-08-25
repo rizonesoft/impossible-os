@@ -11689,7 +11689,7 @@ PY2
     if [ "$G_CL_OLDMODE" = "100755" ] && [ "$G_CL_NEWMODE" = "100644" ] \
        && [ -n "$G_CL_OLDOID" ] && [ "$G_CL_OLDOID" = "$G_CL_NEWOID" ] \
        && [ "$G_RC" -eq 3 ] \
-       && grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cl.log" \
+       && grep -q 'GATE_SCRIPT_NOT_EXECUTABLE' "$TMP_DIR/gate-22cl.log" \
        && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cl.log"; then
         t_pass "identity gate: a mode-only closure change is not byte-identical"
     else
@@ -11702,10 +11702,19 @@ PY2
         chmod +x scripts/todo-graph/identity-gate.sh
     )
     G_CL_MODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/identity-gate.sh 2>/dev/null | cut -d' ' -f1) )"
-    if [ "$G_CL_MODE" = "100755" ]; then
-        t_pass "identity gate: CONTROL -- the mode case restores the committed executable bit"
+    # THE RECOVERY LEG, and it is the point of asking this as an invariant. A
+    # base-vs-head mode COMPARISON was tried first and had no exit: the base is
+    # the last SUCCESSFULLY gated SHA, so it stays pre-change forever and every
+    # later head refuses. Restoring the bit must CLEAR the refusal against the
+    # unchanged base, or the gate is a trap rather than a check.
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CL_PRE" --head HEAD \
+        >"$TMP_DIR/gate-22cl-recover.log" 2>&1)
+    G_RC=$?
+    if [ "$G_CL_MODE" = "100755" ] && [ "$G_RC" -eq 0 ] \
+       && ! grep -q 'GATE_SCRIPT_NOT_EXECUTABLE' "$TMP_DIR/gate-22cl-recover.log"; then
+        t_pass "identity gate: restoring the executable bit CLEARS the refusal (recovery path exists)"
     else
-        t_fail "identity gate: the mode case left the fixture gate at mode $G_CL_MODE"
+        t_fail "identity gate: the mode refusal has no recovery path (rc=$G_RC; mode $G_CL_MODE; see $TMP_DIR/gate-22cl-recover.log)"
     fi
 
     # 22cm: THE MODE QUESTION IS ASKED OF GIT, NOT OF THE FILESYSTEM, and this
@@ -11759,7 +11768,7 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CM_BASE" --head HEAD \
         >"$TMP_DIR/gate-22cm-flip.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -eq 3 ] && grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cm-flip.log"; then
+    if [ "$G_RC" -eq 3 ] && grep -q 'GATE_SCRIPT_NOT_EXECUTABLE' "$TMP_DIR/gate-22cm-flip.log"; then
         t_pass "identity gate: a COMMITTED mode flip is still refused on a mode-blind checkout"
     else
         t_fail "identity gate: the committed mode flip was missed on a mode-blind checkout (rc=$G_RC; see $TMP_DIR/gate-22cm-flip.log)"
@@ -11843,6 +11852,110 @@ PY2
         t_fail "identity gate: an unmaterialized closure member was not refused (rc=$G_RC; got [$G_CN_MTOKEN]; see $TMP_DIR/gate-22cn-missing.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph >/dev/null 2>&1)
+
+    # 22co: A CONTENT CHANGE MUST NOT BUY A FREE PASS ON EVERYTHING ELSE. The
+    # structural checks were once hung under `CLOSURE_CHANGED -eq 0`, so the
+    # moment any closure blob differed, entry type, committed mode and
+    # head-vs-worktree presence all went unexamined -- which meant the exact
+    # scenario the mode check exists for still worked: pair a benign content
+    # edit with the gate losing its executable bit, and the local hook skips the
+    # non-executable script while CI takes the content-changed branch and can
+    # return rc 0 from an unchanged differential (Codex adversarial, section 51
+    # review, [high]). Fixture 22cl is mode-ONLY and structurally cannot see it.
+    G_CO_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\n# 22co: benign content change riding with a mode flip\n' \
+            >>scripts/todo-graph/ref_resolution.py
+        git update-index --chmod=-x scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+        git add scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22co: content change plus a mode flip" >/dev/null 2>&1
+    )
+    # PREMISE: the content really did change (so the old guard would have
+    # skipped the structural checks) AND the mode really did flip.
+    G_CO_CONTENT="$( (cd "$GATE_REPO" && git diff --name-only "$G_CO_PRE" HEAD -- scripts/todo-graph/ref_resolution.py) )"
+    G_CO_MODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/identity-gate.sh 2>/dev/null | cut -d' ' -f1) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CO_PRE" --head HEAD \
+        >"$TMP_DIR/gate-22co.log" 2>&1)
+    G_RC=$?
+    G_CO_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22co.log" | head -1)"
+    if [ -n "$G_CO_CONTENT" ] && [ "$G_CO_MODE" = "100644" ] \
+       && [ "$G_RC" -eq 3 ] \
+       && grep -q 'GATE_SCRIPT_NOT_EXECUTABLE' "$TMP_DIR/gate-22co.log"; then
+        t_pass "identity gate: a mode flip riding a content change is still refused"
+    else
+        t_fail "identity gate: a content change masked a mode flip (rc=$G_RC; got [$G_CO_TOKEN]; content [$G_CO_CONTENT]; mode $G_CO_MODE; see $TMP_DIR/gate-22co.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git update-index --chmod=+x scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+        git checkout --quiet "$G_CO_PRE" -- scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22co: restore" >/dev/null 2>&1
+        chmod +x scripts/todo-graph/identity-gate.sh
+    )
+
+    # 22cp: A NON-REGULAR CLOSURE MEMBER IS REFUSED BEFORE IT CAN BE EXECUTED,
+    # and that is the other half of the same guard. 22ck's symlink carries the
+    # BASE bytes so it reaches the exit; here the content differs, which under
+    # the old guard sent the range straight to the differential -- and the walks
+    # then import the closure, so the gate would have EXECUTED bytes reached
+    # through a path it declares is not a closure file.
+    G_CP_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/producer_differential.py
+        ln -s ../../scripts/todo-graph/build.py scripts/todo-graph/producer_differential.py
+        git add scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cp: a closure member that is a symlink" >/dev/null 2>&1
+    )
+    G_CP_MODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/producer_differential.py 2>/dev/null | cut -d' ' -f1) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CP_PRE" --head HEAD \
+        >"$TMP_DIR/gate-22cp.log" 2>&1)
+    G_RC=$?
+    G_CP_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cp.log" | head -1)"
+    if [ "$G_CP_MODE" = "120000" ] && [ "$G_RC" -eq 3 ] \
+       && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cp.log" \
+       && ! grep -q 'walking with BASE and HEAD resolver code' "$TMP_DIR/gate-22cp.log"; then
+        t_pass "identity gate: a symlinked closure member is refused BEFORE the walks execute it"
+    else
+        t_fail "identity gate: a symlinked closure member reached the differential (rc=$G_RC; got [$G_CP_TOKEN]; mode $G_CP_MODE; see $TMP_DIR/gate-22cp.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        rm -f scripts/todo-graph/producer_differential.py
+        git checkout --quiet "$G_CP_PRE" -- scripts/todo-graph/producer_differential.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cp: restore the closure member" >/dev/null 2>&1
+    )
+
+    # 22cq: AND MODE CHANGES ON EVERY OTHER CLOSURE MEMBER ARE NOT REFUSED.
+    # This is the control that keeps the invariant narrow. The withdrawn
+    # base-vs-head comparison refused all of them, which is what made it a
+    # wedge; only identity-gate.sh's own bit is load-bearing, because only it
+    # is what `.githooks/pre-push` tests before running the gate.
+    G_CQ_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    (
+        cd "$GATE_REPO" || exit 1
+        git update-index --chmod=+x scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] section 51 fixture: a todo-only edit beside an irrelevant mode change\n' >>"$t"
+        git add "$t" >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cq: mode change on a non-gate closure member" >/dev/null 2>&1
+    )
+    G_CQ_MODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/snapshot_protocol.json 2>/dev/null | cut -d' ' -f1) )"
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CQ_PRE" --head HEAD \
+        >"$TMP_DIR/gate-22cq.log" 2>&1)
+    G_RC=$?
+    if [ "$G_CQ_MODE" = "100755" ] && [ "$G_RC" -eq 0 ] \
+       && ! grep -qE 'GATE_SCRIPT_NOT_EXECUTABLE|CLOSURE_MODE' "$TMP_DIR/gate-22cq.log"; then
+        t_pass "identity gate: a mode change on a non-gate closure member is not refused"
+    else
+        t_fail "identity gate: an irrelevant mode change was refused (rc=$G_RC; mode $G_CQ_MODE; see $TMP_DIR/gate-22cq.log)"
+    fi
+    (
+        cd "$GATE_REPO" || exit 1
+        git update-index --chmod=-x scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22cq: restore" >/dev/null 2>&1
+    )
 
     # 22cg: ABSENCE ON BOTH SIDES IS THE ONE NEW REFUSAL THIS MOVE CREATES, and
     # it is the shape that disproved the first draft of the implementation

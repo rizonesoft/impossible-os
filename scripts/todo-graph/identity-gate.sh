@@ -127,6 +127,12 @@
 #                                     or hashed, or is not a regular file
 #                                     reached through regular directories -- an
 #                                     unanswered probe is never 'unchanged'
+#        GATE_SCRIPT_NOT_EXECUTABLE   the head commit stores identity-gate.sh
+#                                     as 100644, which silently disables the
+#                                     pre-push hook's gating block. An
+#                                     INVARIANT about the head, not a
+#                                     base-vs-head diff: restore the bit and
+#                                     commit, and it clears
 # ============================================================================
 
 set -uo pipefail
@@ -369,7 +375,12 @@ fi
 # Newly reachable over a byte-identical closure, every one of them a protocol
 # this gate cannot adjudicate:
 #   BASE_/HEAD_PROTOCOL_UNREADABLE      present on both sides, unloadable  (22cd)
-#   HEAD_PROTOCOL_NOT_A_FILE            parsed through a symlink           (22ce)
+#   HEAD_/BASE_PROTOCOL_NOT_A_FILE      parsed through a symlink           (22ce)
+#                                       -- BOTH sides, and the base one was
+#                                       missing from this list: base-first
+#                                       adjudication reaches it whenever a base
+#                                       protocol file is a symlink whose link
+#                                       text equals the head file's bytes
 #   BASE_PROTOCOL_REMOVED               absent on both sides               (22cg)
 #   BASE_PREDATES_PROTOCOL              absent, and never in this history
 #   BASE_/HEAD_PROTOCOL_INCOMPLETE      part of a form, expressing neither
@@ -378,9 +389,16 @@ fi
 # to cure: a base predating the protocol hashes MISSING against a real blob, so
 # it changes the closure and never arrives here at all.
 CLOSURE_CHANGED=0
-for f in "${CLOSURE[@]}"; do
+# The head-side hash of each member AS FIRST SEEN, kept so that "this member
+# moved while the gate was working" stays a different question from "this
+# member differs base-vs-head". Conflating them gave one token two meanings and
+# one repair action that was wrong for half of them.
+FIRST_H=()
+for _i in "${!CLOSURE[@]}"; do
+    f="${CLOSURE[$_i]}"
     b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null || echo MISSING)"
     h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING)"
+    FIRST_H[$_i]="$h"
     if [ "$b" != "$h" ]; then
         log "closure changed: $f"
         CLOSURE_CHANGED=1
@@ -429,7 +447,18 @@ cleanup() {
         WALK_PIDS=""
     fi
     if [ -d "$BASE_TREE" ]; then
-        git worktree remove --force "$BASE_TREE" >/dev/null 2>&1 || true
+        # BOUNDED, AND ITS FAILURE IS NOT DISCARDED. The removal ran unbounded
+        # with `|| true`, so a checkout that stalled on repository or
+        # filesystem I/O -- exactly the case the creation timeout now catches
+        # -- stalls AGAIN here and defeats the bound it was added to enforce.
+        # A partially initialized worktree also leaves an administrative entry
+        # registered after TMP_DIR is deleted, so a failed removal is pruned
+        # rather than assumed harmless (Codex re-adversarial, section 51
+        # review, [medium]).
+        timeout --foreground --kill-after=10s 60 \
+            git worktree remove --force "$BASE_TREE" >/dev/null 2>&1 \
+            || timeout --foreground --kill-after=10s 60 \
+               git worktree prune >/dev/null 2>&1 || true
     fi
     if [ "$KEEP_TMP" -eq 0 ]; then
         rm -rf "$TMP_DIR" 2>/dev/null || true
@@ -441,8 +470,15 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
-git worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
-    || die_infra "cannot materialize base worktree at $BASE_SHA"
+# BOUNDED BY THE GLOBAL BUDGET, like every other long step. This is the single
+# largest thing the gate does -- a full checkout of the base tree -- and it was
+# the ONE step outside `remaining()`, so the advertised deadline did not
+# constrain it and the CI job timeout was the only bound (Codex perf, section
+# 51 review). Slimming or deferring the materialization itself is a design
+# change tracked separately; bounding it is not.
+timeout --foreground --kill-after=10s "$(remaining)" \
+    git worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
+    || die_infra "cannot materialize base worktree at $BASE_SHA (the checkout failed, or the gate's remaining budget expired while it ran)"
 
 # ---------------------------------------------------------------------------
 # PROTOCOL SKEW. The base process WRITES with its own SNAPSHOT_SCHEMA and
@@ -1400,143 +1436,159 @@ protocol_source_is_regular "$HEAD_SOURCE" head \
 # A range that fails any of those questions never arrives here; it has already
 # died carrying the stable token that names WHICH question it failed, which is
 # what section 50 published that vocabulary for.
-# AND THE MEASUREMENT IS RE-TAKEN HERE, because moving the decision widened the
-# window between hashing the closure and acting on it from nothing to a base
-# worktree plus two protocol probes. The head side hashes the WORKING TREE on
-# purpose -- that is the code about to execute -- so in a shared local checkout
-# a resolver file saved inside that window would be measured in its old form,
-# take this exit, and make an UNEXAMINED change the next baseline (Codex
-# adversarial, section 51, [high]).
+# AND THE CLOSURE IS RE-EXAMINED HERE, UNCONDITIONALLY.
 #
-# A DETECTED MOVEMENT IS rc 3, NOT A FALL-THROUGH. The first fix walked the
-# differential instead, which reads like the conservative choice and is not:
-# the protocol constants that vocabulary depends on were read BEFORE the
-# movement, so the walk would run on mixed-time evidence and could return a
-# real-looking rc 0 or rc 1 about a tree that never existed. "The thing I was
-# measuring moved" is not a verdict about the range; it is this gate failing to
-# hold its subject still -- the same class as an unresolvable base, and it gets
-# the same answer (Codex adversarial, section 51 round 2, [high]).
+# Moving the decision widened the window between hashing the closure and acting
+# on it from nothing to a base worktree plus two protocol probes. The head side
+# hashes the WORKING TREE on purpose -- that is the code about to execute -- so
+# in a shared local checkout a resolver file saved inside that window would be
+# measured in its old form, ride the exit, and make an UNEXAMINED change the
+# next baseline (Codex adversarial, section 51, [high]).
 #
-# AND AN UNANSWERABLE PROBE IS NOT CONFIRMED ABSENCE. The measurement above
+# THIS BLOCK IS NOT GUARDED BY `CLOSURE_CHANGED`, and making it so was a real
+# defect rather than an optimisation. Hung under `if [ "$CLOSURE_CHANGED" -eq 0 ]`
+# every structural check here -- entry type, object presence, committed mode,
+# head-vs-worktree presence -- was skipped the moment ANY content differed. So
+# the exact scenario the mode check was added for still worked: pair a benign
+# closure edit with identity-gate.sh flipping 100755 to 100644, and the local
+# hook skips the now-non-executable script while CI runs it through `bash`,
+# takes this branch, and can return rc 0 from an unchanged differential. A
+# symlinked closure member with differing content likewise reached the Python
+# walks and was EXECUTED (Codex adversarial, section 51 review, [high]).
+# Structural validity is a precondition for adjudicating the range at all;
+# only the CONTENT comparison decides which way the range is adjudicated.
+#
+# THREE DISTINCT FAULTS, THREE DISTINCT TOKENS, because they have three
+# different repair actions and a caller branching on them needs to tell them
+# apart:
+#   CLOSURE_UNVERIFIABLE      the gate could not establish what it is looking
+#                             at -- fix the repository or the checkout;
+#   CLOSURE_MOVED_UNDER_GATE  a member changed WHILE the gate ran -- re-run
+#                             against a tree that holds still;
+# A third token, CLOSURE_MODE_CHANGED, briefly lived here for a base-vs-head
+# mode difference. It was withdrawn in the same review: deterministic, so it had
+# no business sharing the movement token (Codex consistency, [medium]) -- and
+# then, as a base-vs-head DIFF, a permanent wedge with no attainable repair
+# (Codex re-adversarial, [high]). The one mode that is load-bearing is now asked
+# as GATE_SCRIPT_NOT_EXECUTABLE, an invariant about the head, after this loop.
+#
+# AN UNANSWERABLE PROBE IS NOT CONFIRMED ABSENCE. The measurement far above
 # collapses every git failure to the string MISSING, so a member absent at the
-# base and merely UNREADABLE at head -- an unmaterialized sparse checkout, a
-# directory, a dangling symlink, an object-store failure -- compares equal and
-# would certify an unexamined change. That collapse predates this section and
-# is left alone above, where it can only force a walk; it must not survive into
-# the DECISION, so this pass asks tri-state questions through the same probes
-# the protocol contract uses. `path_is_regular_in_worktree` additionally walks
-# every path component, so a closure member reached through a symlinked
-# ancestor cannot be certified here either.
+# base and merely UNREADABLE at head compares equal there. That collapse
+# predates this section and is left alone, where it can only force a walk; it
+# must not survive into the DECISION, so this pass asks tri-state questions
+# through the same probes the protocol contract uses.
 #
-# THE WINDOW IS NARROWED, NOT CLOSED, and saying otherwise would be the third
+# THE WINDOW IS NARROWED, NOT CLOSED, and saying otherwise would be another
 # wrong claim in this block. A member can still move after its own re-hash;
 # only adjudicating an immutable snapshot removes that, which reverses the
 # deliberate working-tree choice this gate was built on. That question is
 # section 54's, not this section's.
-if [ "$CLOSURE_CHANGED" -eq 0 ]; then
-    for f in "${CLOSURE[@]}"; do
-        _bt="$(git ls-tree "$BASE_SHA" -- "$f" 2>/dev/null)" \
-            || die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA about the closure member $f -- the repository, not the range, is what failed, and an unanswered probe must never read as 'unchanged'"
-        if [ -n "$_bt" ]; then
-            # THE ENTRY'S TYPE, NOT MERELY ITS PRESENCE. A blob OID says what
-            # the entry CONTAINS and nothing about what it IS: git stores a
-            # symlink as mode 120000 whose blob is the target PATH TEXT, so a
-            # base symlink pointing at `pass` and a head regular file
-            # containing `pass` carry the SAME OID -- equal by content, wholly
-            # different in what executes, and certified byte-identical (Codex
-            # adversarial, section 51 round 3, [high]). `path_is_regular_in_commit`
-            # already asks this question for the protocol contract, checking
-            # type and mode together, and it rejects a submodule entry
-            # (type `commit`) by the same test.
-            path_is_regular_in_commit "$BASE_SHA" "$f"
-            case "$?" in
-                0) ;;
-                1) die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule) -- its blob may match byte-for-byte while naming rather than being the code, so nothing here can be certified unchanged" ;;
-                *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA how it stores the closure member $f -- the repository, not the range, is what failed" ;;
-            esac
-            _b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null)" \
-                || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA lists the closure member $f but its object could not be resolved"
-            # THE EXECUTABLE BIT IS PART OF THE IDENTITY, and the argument that
-            # it is not was REFUTED here rather than merely doubted. The first
-            # answer was that every closure member is imported by Python or run
-            # as `bash <path>`, so the bit cannot change what executes -- true
-            # of the members, and irrelevant, because it was reasoning about
-            # the file instead of about its CALLER. `.githooks/pre-push:194`
-            # enters the identity-gate block only `[ -x ... identity-gate.sh ]`,
-            # so a push that flips this script 100755 -> 100644 alongside a real
-            # closure change skips the entire local gate, and CI only catches it
-            # after main has already moved (Codex adversarial, section 51 round
-            # 4, [high]). Mode therefore joins the OID in the comparison.
-            # AND THE OBJECT IS PRESENT, not merely named. A tree entry resolves
-            # to an OID from the TREE; in a partial clone the blob behind it can
-            # be absent, and comparing OIDs would then certify bytes nothing in
-            # this repository can produce.
-            git cat-file -e "$_b" 2>/dev/null \
-                || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA names object $_b for the closure member $f but that object is not present in this repository"
-        else
-            _b=ABSENT
-        fi
-        _hw=1
-        if path_is_regular_in_worktree "$REPO_ROOT" "$f"; then
-            _h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null)" \
-                || die_infra "CLOSURE_UNVERIFIABLE: the closure member $f is a regular file in the working tree but could not be hashed"
-        elif [ -e "$REPO_ROOT/$f" ] || [ -L "$REPO_ROOT/$f" ]; then
-            die_infra "CLOSURE_UNVERIFIABLE: the closure member $f exists in the working tree but is not a regular file reached through regular directories -- the gate cannot certify bytes it may be reading from outside this checkout"
-        else
-            _h=ABSENT
-            _hw=0
-        fi
-        # THE MODE IS ASKED OF BOTH COMMITS, NEVER OF THE FILESYSTEM. The first
-        # cut took the base mode from `ls-tree` and the head mode from
-        # `[ -x ]`, which is not the same question: git supports checkouts
-        # whose filesystem does not carry the bit at all (`core.fileMode=false`,
-        # and mounts that report every file executable), so a PERFECTLY HEALTHY
-        # byte-identical range there compares 100644 against 100755 and dies at
-        # rc 3 -- wedging every resolver push on that host. It passed here only
-        # because this checkout has `core.fileMode=true`, which is precisely why
-        # a fixture could not find it (Codex adversarial, section 51 round 5,
-        # [high]). A PUSH carries committed modes, so committed modes are what
-        # this compares; whether the file is executable ON DISK is the pre-push
-        # caller's own integrity question and is filed against that hook.
-        #
-        # Only when BOTH commits carry the path is a mode claim meaningful. With
-        # the presence check above in force, the remaining case is a member
-        # absent from BOTH the base and the head commit -- and absent from the
-        # working tree too, so there is no mode to compare and nothing to hide.
-        _ht="$(git ls-tree "$HEAD_RESOLVED" -- "$f" 2>/dev/null)" \
-            || die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed"
-        # PRESENCE MUST AGREE BETWEEN THE HEAD COMMIT AND THE WORKING TREE, and
-        # that is a SEPARATE question from content. Content is read from the
-        # worktree on purpose, so an unexamined edit cannot early-exit -- but
-        # applying that to PRESENCE opened a hole the mode work then hid behind
-        # its both-commits condition: a commit that DELETES a closure member,
-        # with a dirty worktree recreating it from the base bytes, produced a
-        # head hash equal to the base's, an empty head tree entry that skipped
-        # the mode comparison, and rc 0 over a push that removed a
-        # verdict-affecting file (Codex adversarial, section 51 round 6,
-        # [high]). The inverse -- committed addition, worktree missing -- is the
-        # closure analogue of HEAD_PROTOCOL_UNMATERIALIZED, which section 50
-        # already refuses for the protocol paths.
-        if [ -n "$_ht" ] && [ "$_hw" -eq 0 ]; then
-            die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f but the working tree does not -- this checkout is not the commit it claims to test, so nothing here can be certified unchanged"
-        fi
-        if [ -z "$_ht" ] && [ "$_hw" -eq 1 ]; then
-            die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED does not carry the closure member $f but the working tree does -- the range being pushed removes it, and the bytes this gate can read are not in that commit"
-        fi
-        if [ -n "$_bt" ] && [ -n "$_ht" ]; then
-            path_is_regular_in_commit "$HEAD_RESOLVED" "$f"
-            case "$?" in
-                0) ;;
-                1) die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule), so its mode cannot be compared with the base's" ;;
-                *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed" ;;
-            esac
-            _b="${_bt%% *}:$_b"
-            _h="${_ht%% *}:$_h"
-        fi
-        [ "$_b" = "$_h" ] \
-            || die_infra "CLOSURE_MOVED_UNDER_GATE: the closure member $f differs base-vs-head in content or in mode ($_b vs $_h), or changed between the measurement above and this decision, so the protocol evidence already gathered describes a tree that is no longer here -- re-run the gate against a tree that holds still"
-    done
+for _i in "${!CLOSURE[@]}"; do
+    f="${CLOSURE[$_i]}"
+    _bt="$(git ls-tree "$BASE_SHA" -- "$f" 2>/dev/null)" \
+        || die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA about the closure member $f -- the repository, not the range, is what failed, and an unanswered probe must never read as 'unchanged'"
+    if [ -n "$_bt" ]; then
+        # THE ENTRY'S TYPE, NOT MERELY ITS PRESENCE. A blob OID says what the
+        # entry CONTAINS and nothing about what it IS: git stores a symlink as
+        # mode 120000 whose blob is the target PATH TEXT, so a base symlink
+        # pointing at `pass` and a head regular file containing `pass` carry the
+        # SAME OID -- equal by content, wholly different in what executes
+        # (Codex adversarial, section 51 round 3, [high]).
+        # `path_is_regular_in_commit` already asks this for the protocol
+        # contract, checking type and mode together, and rejects a submodule
+        # entry (type `commit`) by the same test.
+        path_is_regular_in_commit "$BASE_SHA" "$f"
+        case "$?" in
+            0) ;;
+            1) die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule) -- its blob may match byte-for-byte while naming rather than being the code, so nothing here can be certified and nothing here may be executed" ;;
+            *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA how it stores the closure member $f -- the repository, not the range, is what failed" ;;
+        esac
+        _b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null)" \
+            || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA lists the closure member $f but its object could not be resolved"
+        # AND THE OBJECT IS PRESENT, not merely named. A tree entry resolves to
+        # an OID from the TREE; in a partial clone the blob behind it can be
+        # absent, and comparing OIDs would then certify bytes nothing in this
+        # repository can produce.
+        git cat-file -e "$_b" 2>/dev/null \
+            || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA names object $_b for the closure member $f but that object is not present in this repository"
+    else
+        _b=ABSENT
+    fi
+    _hw=1
+    if path_is_regular_in_worktree "$REPO_ROOT" "$f"; then
+        _h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null)" \
+            || die_infra "CLOSURE_UNVERIFIABLE: the closure member $f is a regular file in the working tree but could not be hashed"
+    elif [ -e "$REPO_ROOT/$f" ] || [ -L "$REPO_ROOT/$f" ]; then
+        die_infra "CLOSURE_UNVERIFIABLE: the closure member $f exists in the working tree but is not a regular file reached through regular directories -- the gate cannot certify, or execute, bytes it may be reading from outside this checkout"
+    else
+        _h=ABSENT
+        _hw=0
+    fi
+    # MOVEMENT IS MEASURED AGAINST THE FIRST READING, not against the base.
+    # This is the only question here whose answer changes on a re-run.
+    if [ "$_h" != "${FIRST_H[$_i]}" ] \
+       && ! { [ "$_h" = ABSENT ] && [ "${FIRST_H[$_i]}" = MISSING ]; }; then
+        die_infra "CLOSURE_MOVED_UNDER_GATE: the closure member $f changed between the measurement above and this decision, so the evidence already gathered describes a tree that is no longer here -- re-run the gate against a tree that holds still"
+    fi
+    # PRESENCE MUST AGREE BETWEEN THE HEAD COMMIT AND THE WORKING TREE, and
+    # that is a SEPARATE question from content. Content is read from the
+    # worktree on purpose, so an unexamined edit cannot early-exit -- but
+    # applying that to PRESENCE let a commit that DELETES a closure member,
+    # with a dirty worktree recreating it from the base bytes, produce a head
+    # hash equal to the base's and exit 0 over a push that removed a
+    # verdict-affecting file (Codex adversarial, section 51 round 6, [high]).
+    # The inverse is the closure analogue of HEAD_PROTOCOL_UNMATERIALIZED.
+    _ht="$(git ls-tree "$HEAD_RESOLVED" -- "$f" 2>/dev/null)" \
+        || die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed"
+    if [ -n "$_ht" ] && [ "$_hw" -eq 0 ]; then
+        die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f but the working tree does not -- this checkout is not the commit it claims to test, so nothing here can be certified unchanged"
+    fi
+    if [ -z "$_ht" ] && [ "$_hw" -eq 1 ]; then
+        die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED does not carry the closure member $f but the working tree does -- the range being pushed removes it, and the bytes this gate can read are not in that commit"
+    fi
+    # THE MODE IS ASKED OF BOTH COMMITS, NEVER OF THE FILESYSTEM, and only to
+    # establish that the head entry is a regular file at all. Taking the head
+    # mode from `[ -x ]` instead asked a different question: git supports
+    # checkouts whose filesystem does not carry the bit (`core.fileMode=false`,
+    # and mounts that report everything executable), so a PERFECTLY HEALTHY
+    # range there refused -- wedging every resolver push on that host, and
+    # invisible locally because this checkout preserves modes (Codex
+    # adversarial, section 51 round 5, [high]).
+    if [ -n "$_bt" ] && [ -n "$_ht" ]; then
+        path_is_regular_in_commit "$HEAD_RESOLVED" "$f"
+        case "$?" in
+            0) ;;
+            1) die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule), so nothing here can be certified and nothing here may be executed" ;;
+            *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed" ;;
+        esac
+    fi
+done
+
+# THE ONE MODE THAT IS LOAD-BEARING, ASKED AS AN INVARIANT RATHER THAN A DIFF.
+#
+# A base-vs-head mode COMPARISON was tried here and withdrawn, because it is a
+# permanent wedge and the repair it recommended provably cannot work: the base
+# is the last SUCCESSFULLY gated SHA, so a mode change refuses, the baseline
+# never advances past it, and every later head carrying that mode refuses
+# again -- "land the mode change on its own commit" reaches the same branch,
+# and only REVERTING clears the gate (Codex re-adversarial, section 51 review,
+# [high]). That is a gate with no exit, which is worse than the hole it closed.
+#
+# The hole is also narrower than a general mode comparison implies. Mode is not
+# resolver behaviour, and the differential cannot see it -- but exactly ONE
+# mode matters to anything: `.githooks/pre-push:194` enters its identity-gate
+# block only `[ -x ... identity-gate.sh ]`, so a head where this script is not
+# executable has SILENTLY disabled the gate for every subsequent local push,
+# while CI keeps passing because it invokes the script through `bash`. Asked as
+# an invariant about the head alone, that has an attainable repair -- restore
+# the bit and commit -- and it cannot wedge, because any head where the file IS
+# executable passes. Mode changes on every other closure member are no longer
+# refused at all; they were never the threat.
+if [ "$(git ls-tree "$HEAD_RESOLVED" -- "scripts/todo-graph/identity-gate.sh" 2>/dev/null | cut -d" " -f1)" = "100644" ]; then
+    die_infra "GATE_SCRIPT_NOT_EXECUTABLE: the head commit $HEAD_RESOLVED stores scripts/todo-graph/identity-gate.sh as mode 100644. The pre-push hook enters its identity-gate block only when that file is executable, so at this head the gate is silently skipped for every local push and only CI still adjudicates -- after main has already moved. Restore the bit (git update-index --chmod=+x) and commit"
 fi
+
 if [ "$CLOSURE_CHANGED" -eq 0 ]; then
     log "resolver closure byte-identical base..head; nothing to differentiate."
     exit 0
