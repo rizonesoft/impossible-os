@@ -1801,8 +1801,16 @@ PY
     # behind (Codex adversarial, section 53 round 2, [medium]).
     if ! kill -0 "$_prb" 2>/dev/null && kill -0 -- "-$_prb" 2>/dev/null; then
         kill -TERM -- "-$_prb" 2>/dev/null || true
+        # THE GRACE ANSWERS TO THE GLOBAL DEADLINE like every other wait in this
+        # file. Left unbounded it was up to 3s per probe and there are two, so a
+        # tree that leaves descendants on both sides could push the gate ~7s
+        # past its advertised budget -- small, but this file's whole discipline
+        # is that no step escapes `remaining()` (Codex perf, section 53 review).
+        # A tree that leaves nothing never reaches here at all: the negative
+        # group probe above fails and the loop is skipped.
         for _i in 1 2 3 4 5 6; do
             kill -0 -- "-$_prb" 2>/dev/null || break
+            [ "$(remaining)" -gt 1 ] || break
             sleep 0.5
         done
         kill -KILL -- "-$_prb" 2>/dev/null || true
@@ -3054,8 +3062,9 @@ else
         "$BASE_TREE" "$REPO_ROOT" --strict >"$TMP_DIR/producer.log" 2>&1 &
     PROD_PID=$!
     WALK_PIDS="$PROD_PID"
-    wait "$PROD_PID"; PROD_RC=$?
+    wait "$PROD_PID"; PROD_RC=$?; WALK_WAITED="$PROD_PID"
     WALK_PIDS=""
+    WALK_WAITED=""
     sed 's/^/    /' "$TMP_DIR/producer.log"
     case "$PROD_RC" in
         0) PRODUCER_DIFF_OK=1
@@ -3083,8 +3092,9 @@ setsid timeout -s KILL "$(remaining)" \
     >"$TMP_DIR/build.log" 2>&1 &
 CACHE_PID=$!
 WALK_PIDS="$CACHE_PID"
-wait "$CACHE_PID"; CACHE_RC=$?
+wait "$CACHE_PID"; CACHE_RC=$?; WALK_WAITED="$CACHE_PID"
 WALK_PIDS=""
+WALK_WAITED=""
 case "$CACHE_RC" in
     0) ;;
     124|137) die_infra "the cache build exceeded the ${BUDGET_SECS}s budget and was killed" ;;
@@ -3115,8 +3125,9 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
         --output "$BASE_CACHE_ABS" >"$TMP_DIR/build-base.log" 2>&1 &
     BCACHE_PID=$!
     WALK_PIDS="$BCACHE_PID"
-    wait "$BCACHE_PID"; BCACHE_RC=$?
+    wait "$BCACHE_PID"; BCACHE_RC=$?; WALK_WAITED="$BCACHE_PID"
     WALK_PIDS=""
+    WALK_WAITED=""
     case "$BCACHE_RC" in
         0) ;;
         124|137) die_infra "the base-side cache build exceeded the ${BUDGET_SECS}s budget and was killed" ;;
@@ -3171,9 +3182,15 @@ WALK_PIDS="$WALK_PIDS $HEAD_PID"
 # to delete -- an orphan writing into a removed directory, and a exit status
 # nobody read. Each `timeout` kills its own child at the budget, and both are
 # waited on here before any verdict is formed.
-wait "$BASE_PID"; BASE_RC=$?
-wait "$HEAD_PID"; HEAD_RC=$?
+# EACH LEADER IS MARKED WAITED THE MOMENT ITS OWN `wait` RETURNS, not when the
+# pair is done. `wait "$HEAD_PID"` can block for the rest of the budget, and
+# for all of it BASE_PID sat in WALK_PIDS looking active -- so a TERM in that
+# window sent `cleanup` down the positive-pid fallback for a pid the kernel
+# had already released (Codex consistency, section 53 review, [high]).
+wait "$BASE_PID"; BASE_RC=$?; WALK_WAITED="$BASE_PID"
+wait "$HEAD_PID"; HEAD_RC=$?; WALK_WAITED="$WALK_WAITED $HEAD_PID"
 WALK_PIDS=""
+WALK_WAITED=""
 mono_now; WALK_END="$MONO_NOW"
 [ -n "$WALK_END" ] || die_infra "cannot read a monotonic clock after the resolver walks -- the gate's own deadline machinery is what failed here, and no classification is being guessed from it"
 WALK_SECS=$(( WALK_END - WALK_START ))
@@ -3203,8 +3220,9 @@ setsid timeout -s KILL "$(remaining)" \
     >"$TMP_DIR/compare.log" 2>&1 &
 CMP_PID=$!
 WALK_PIDS="$CMP_PID"
-wait "$CMP_PID"; CMP_RC=$?
+wait "$CMP_PID"; CMP_RC=$?; WALK_WAITED="$CMP_PID"
 WALK_PIDS=""
+WALK_WAITED=""
 sed 's/^/    /' "$TMP_DIR/compare.log"
 
 case "$CMP_RC" in
