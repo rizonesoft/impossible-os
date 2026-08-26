@@ -14416,6 +14416,492 @@ AWKSHIM
         (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
         (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
     fi
+
+    # ------------------------------------------------------------------
+    # 22ea/22eb/22ec (section 53): WHAT THE PROTOCOL PROBE CAN AND CANNOT
+    # VOUCH FOR. `proto_of` must IMPORT the tree under test to read its
+    # constants, so tree-controlled code runs inside the very process that
+    # produces the gate's record. Section 50 closed every ACCIDENTAL route
+    # into that record (import prints to stderr, a multi-line record
+    # refused, the record moved to a shell-owned descriptor, the path taken
+    # out of argv) and its nineteenth round showed the class is not
+    # closable that way. These cases pin what actually holds, in BOTH
+    # directions, so the containment is a measured property and not an
+    # argument -- and 22eb exists specifically because the argument as
+    # first written was wrong.
+    # ------------------------------------------------------------------
+    if [ -n "${G_PROTO_BASE:-}" ]; then
+        g_s53_restore() {
+            (cd "$GATE_REPO" || exit 1
+             git checkout --quiet "$G_PROTO_BASE" -- \
+                 scripts/todo-graph/snapshot_protocol.json \
+                 scripts/todo-graph/snapshot_protocol.py \
+                 scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+             git commit --quiet --no-verify -am "s53: restore an honest tree" >/dev/null 2>&1) || true
+        }
+        # EVERY EXIT PATH REAPS, not only the one that reached its assertion.
+        # The cancellation cases launch a 600s gate and a 900s adversary; a
+        # readiness timeout or a failed identity check is exactly the
+        # regression these cases exist to diagnose, and the first cut left
+        # both processes running on precisely those branches while deleting
+        # the directory they were writing into (Codex adversarial, section 53
+        # round 2). Called unconditionally after each case, success or not.
+        g_s53_reap() {  # $1.. = pids, group-first then individually
+            # SOME OF THESE PIDS COME FROM FILES THE FIXTURE'S OWN ADVERSARY
+            # WROTE, so they are not trusted numbers: a sabotaged loader could
+            # name this harness, and a recorded process that has already exited
+            # could have had its pid reissued. Anything sharing the harness's
+            # pid, group or session is refused outright, which is the part that
+            # matters -- killing the suite from its own cleanup path would be a
+            # far worse failure than a missed reap (Codex adversarial, section
+            # 53 round 3, [high]).
+            local _p _pg _sid _self_pg _self_sid
+            _self_pg="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+            _self_sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d ' ')"
+            for _p in "$@"; do
+                [ -n "$_p" ] || continue
+                case "$_p" in ''|*[!0-9]*) continue ;; 0|1) continue ;; esac
+                [ "$_p" = "$$" ] && continue
+                _pg="$(ps -o pgid= -p "$_p" 2>/dev/null | tr -d ' ')"
+                _sid="$(ps -o sid= -p "$_p" 2>/dev/null | tr -d ' ')"
+                [ -z "$_pg" ] && continue
+                [ -n "$_self_pg" ] && [ "$_pg" = "$_self_pg" ] && continue
+                [ -n "$_self_sid" ] && [ "$_sid" = "$_self_sid" ] && continue
+                [ "$_pg" = "$_p" ] && kill -KILL -- "-$_pg" 2>/dev/null
+                kill -KILL "$_p" 2>/dev/null || true
+            done
+            return 0
+        }
+        g_s53_bump_schema() {
+            (cd "$GATE_REPO" || exit 1
+             python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+assert "snapshot_schema" in d, "protocol file shape changed"
+d["snapshot_schema"] = int(d["snapshot_schema"]) + 1
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+            ) || return 1
+        }
+
+        # 22ea-control: THE HONEST PATH THIS CASE IS MEASURED AGAINST. The
+        # same protocol data change, with the loader untouched, is the
+        # data-only migration the gate is designed to pass. Without this the
+        # refusal below could be caused by the schema bump alone.
+        g_s53_restore
+        g_s53_bump_schema
+        (cd "$GATE_REPO" && git commit --quiet --no-verify -am "22ea-control: schema bump alone" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22ea-control.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 0 ] && grep -q 'DATA-ONLY' "$TMP_DIR/gate-22ea-control.log"; then
+            t_pass "identity gate: CONTROL -- a schema bump with an untouched loader is the data-only PASS"
+        else
+            t_fail "identity gate: the honest data-only control did not pass, so 22ea proves nothing (rc=$G_RC; see $TMP_DIR/gate-22ea-control.log)"
+        fi
+
+        # 22ea: A LOADER EDIT THAT ADMITS THE CHANGE IS REFUSED BY THE
+        # EXECUTABLE-CLOSURE CHECK, and named as unseparable rather than
+        # adjudicated. The substitution attempt here is the shape section 50
+        # already made inert -- a handler registered at import can only
+        # APPEND to the record, and the caller takes the FIRST line -- so the
+        # record still reports the protocol change, the gate enters the
+        # protocol-changed branch, and snapshot_protocol.py being in
+        # EXEC_CLOSURE is what refuses the pair.
+        g_s53_restore
+        g_s53_bump_schema
+        (
+            cd "$GATE_REPO" || exit 1
+            cat >> scripts/todo-graph/snapshot_protocol.py <<'PYSAB'
+
+
+# 22ea: an import-time attempt to substitute the gate's own record, registered
+# to run at interpreter shutdown. It can only APPEND, so it is inert -- which
+# is the point of this fixture: the record still tells the truth, and the pair
+# is refused for the loader edit rather than adjudicated.
+import atexit as _s53_atexit
+import os as _s53_os
+
+
+def _s53_substitute():
+    try:
+        _s53_os.write(3, b"1|dead|beef|data|e30=|e30=|e30=\n")
+    except OSError:
+        pass
+
+
+_s53_atexit.register(_s53_substitute)
+PYSAB
+            git commit --quiet --no-verify -am "22ea: loader substitution attempt + protocol change" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22ea.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 3 ] \
+           && grep -q 'snapshot_protocol.py' "$TMP_DIR/gate-22ea.log" \
+           && grep -q 'Split the commit' "$TMP_DIR/gate-22ea.log" \
+           && ! grep -q 'DATA-ONLY' "$TMP_DIR/gate-22ea.log"; then
+            t_pass "identity gate: a loader edit that admits the protocol change is refused, not adjudicated"
+        else
+            t_fail "identity gate: a sabotaging loader paired with a protocol change was not refused (rc=$G_RC; see $TMP_DIR/gate-22ea.log)"
+        fi
+
+        # 22eb: AND THE OTHER HALF OF THE DICHOTOMY, which the section's first
+        # draft got wrong. The executable-closure refusal above runs only
+        # INSIDE the protocol-changed branch, so a loader that CONCEALS the
+        # change -- writing a forged first line to the descriptor before the
+        # honest record is printed -- never reaches it. What it forfeits is the
+        # fast exit: snapshot_protocol.py is still in CLOSURE, so the gate
+        # cannot take the byte-identical early return either, and the pair goes
+        # to the FULL resolver differential instead. That is the accurate
+        # containment statement, and it is strictly weaker than "refused
+        # outright": the honest limit is that a gate which must execute the
+        # tree cannot distrust that execution's output.
+        g_s53_restore
+        G_S53_REC="$( (cd "$GATE_REPO" && python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import base64, hashlib, json, pathlib, sys
+d = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+pre, post = list(d["pre_resolution_buckets"]), list(d["post_resolution_buckets"])
+def fp(seq):
+    return hashlib.sha256(json.dumps(list(seq)).encode("utf-8")).hexdigest()
+def b64(o):
+    return base64.b64encode(json.dumps(o).encode("utf-8")).decode("ascii")
+print("%d|%s|%s|%s|%s|%s|%s" % (
+    int(d["snapshot_schema"]), fp(pre), fp(post), "data",
+    b64(pre), b64(post), b64([d.get("renamed_buckets") or {}, d.get("retired_buckets") or []])))
+PY2
+        ) )"
+        if [ -z "$G_S53_REC" ]; then
+            t_fail "identity gate: could not compute the base protocol record for the concealment case"
+        else
+            g_s53_bump_schema
+            (
+                cd "$GATE_REPO" || exit 1
+                {
+                    printf '\n\n'
+                    printf '# 22eb: forge the gate record at IMPORT time, before the honest one is\n'
+                    printf '# printed. The caller takes the FIRST line, so this one wins and the head\n'
+                    printf '# protocol reads identical to the base despite the data change.\n'
+                    printf 'import os as _s53_os2\n\n'
+                    printf 'try:\n'
+                    printf "    _s53_os2.write(3, b'%s\\\\n')\n" "$G_S53_REC"
+                    printf 'except OSError:\n'
+                    printf '    pass\n'
+                } >> scripts/todo-graph/snapshot_protocol.py
+                git commit --quiet --no-verify -am "22eb: loader conceals the protocol change" >/dev/null 2>&1
+            )
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22eb.log" 2>&1)
+            G_RC=$?
+            # PIN THE WHOLE PATH, not just the absence of a fast exit. The
+            # concealment hides the change from the PROTOCOL check and then
+            # walks straight into it again at compare time, because the two
+            # snapshots are written under different schemas -- so a forged
+            # record converts a clean data-only PASS into an infrastructure
+            # refusal that says in words it is not one.
+            if [ "$G_RC" -eq 3 ] \
+               && ! grep -q 'DATA-ONLY' "$TMP_DIR/gate-22eb.log" \
+               && ! grep -q 'nothing to differentiate' "$TMP_DIR/gate-22eb.log" \
+               && grep -q 'walking with BASE and HEAD resolver code' "$TMP_DIR/gate-22eb.log" \
+               && grep -q 'baseline schema is' "$TMP_DIR/gate-22eb.log" \
+               && grep -q 'this is NOT a pass' "$TMP_DIR/gate-22eb.log"; then
+                t_pass "identity gate: a forged record buys no fast exit -- the walk runs and the schema refuses it anyway"
+            else
+                t_fail "identity gate: a concealed protocol change took a fast path (rc=$G_RC; see $TMP_DIR/gate-22eb.log)"
+            fi
+        fi
+
+        # 22eb2: AND THE HONEST LIMIT, stated as a test rather than as a
+        # sentence. Conceal a VOCABULARY change instead of a schema one and
+        # nothing downstream refuses it: both snapshots are written at the same
+        # schema, so the differential compares them on their merits and an
+        # unused bucket really is verdict-neutral. The concealment therefore
+        # buys the tree exactly nothing -- it forfeits the cheap protocol path
+        # and receives the expensive check that was always the stronger one.
+        # That is the shape of the guarantee this probe can offer: a gate that
+        # must EXECUTE the tree cannot distrust that execution's output, so it
+        # is built so that lying about the output only ever costs the liar the
+        # weaker path.
+        g_s53_restore
+        if [ -n "$G_S53_REC" ]; then
+            (
+                cd "$GATE_REPO" || exit 1
+                python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].append("concealed_and_never_used")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+                {
+                    printf '\n\n'
+                    printf '# 22eb2: the same forgery, over a vocabulary change instead of a schema one.\n'
+                    printf 'import os as _s53_os4\n\n'
+                    printf 'try:\n'
+                    printf "    _s53_os4.write(3, b'%s\\\\n')\n" "$G_S53_REC"
+                    printf 'except OSError:\n'
+                    printf '    pass\n'
+                } >> scripts/todo-graph/snapshot_protocol.py
+                git commit --quiet --no-verify -am "22eb2: conceal a vocabulary change" >/dev/null 2>&1
+            )
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22eb2.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 0 ] \
+               && ! grep -q 'DATA-ONLY' "$TMP_DIR/gate-22eb2.log" \
+               && grep -q 'walking with BASE and HEAD resolver code' "$TMP_DIR/gate-22eb2.log"; then
+                t_pass "identity gate: concealing a vocabulary change only forfeits the cheap path -- the differential still adjudicates it"
+            else
+                t_fail "identity gate: a concealed vocabulary change did not reach the differential (rc=$G_RC; see $TMP_DIR/gate-22eb2.log)"
+            fi
+        fi
+
+        # 22ec: THE CANCELLATION PATH, which section 50 reasoned about and
+        # never fixtured. The probe imports tree-controlled code, so what it
+        # spawns is whatever that tree spawns -- and the old shape
+        # (`timeout` with `--foreground`, no recorded pid) left exactly that
+        # unbounded: a loader that starts one descendant and stalls kept the
+        # descendant alive after the probe was killed at its budget, after
+        # `cleanup` finished, and after the gate exited. The probe itself was
+        # always bounded; the descendant never was. This case is the proof,
+        # and it is deliberately ADVERSARIAL: the stall ignores TERM, so a
+        # cooperative `sleep` cannot pass it by accident.
+        g_s53_restore
+        G_S53_RUN="$TMP_DIR/s53-cancel"
+        rm -rf "$G_S53_RUN"; mkdir -p "$G_S53_RUN/tmp"
+        (
+            cd "$GATE_REPO" || exit 1
+            {
+                printf '\n\n'
+                printf '# 22ec: an adversarial stall inside the imported tree code.\n'
+                printf 'import os as _s53_os3, signal as _s53_sig, subprocess as _s53_sp, time as _s53_t\n\n'
+                printf '_s53_sig.signal(_s53_sig.SIGTERM, _s53_sig.SIG_IGN)\n'
+                printf '_s53_sig.signal(_s53_sig.SIGINT, _s53_sig.SIG_IGN)\n'
+                printf '_s53_kid = _s53_sp.Popen(["sleep", "900"])\n'
+                printf "open('%s/desc.pid', 'w').write(str(_s53_kid.pid))\n" "$G_S53_RUN"
+                printf "open('%s/probe.pid', 'w').write(str(_s53_os3.getpid()))\n" "$G_S53_RUN"
+                printf "open('%s/ready', 'w').write('1')\n" "$G_S53_RUN"
+                printf '_s53_t.sleep(900)\n'
+            } >> scripts/todo-graph/snapshot_protocol.py
+            git commit --quiet --no-verify -am "22ec: a stalling loader" >/dev/null 2>&1
+        )
+        G_S53_WT_BEFORE="$( (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null) )"
+        # OWN THE TEMP ROOT so "no tempdir left behind" is checkable: the gate
+        # mktemps under TMPDIR, and an empty fixture-owned directory afterwards
+        # is the whole assertion.
+        # KEEP THE PID. Finding the gate with `pgrep -f` later would signal
+        # whatever matched first -- a concurrent fixture, a stale gate, or an
+        # operator's own run -- and the process group it kills is then not
+        # provably the one under test (Codex adversarial, section 53, [high]).
+        # `setsid` execs in place here (a background command in a job-control-
+        # less shell is not a group leader), so `$!` IS the new session leader,
+        # which the identity check below requires rather than assumes.
+        TMPDIR="$G_S53_RUN/tmp" setsid bash -c \
+            'cd "$1" && exec bash "$2" --base "$3" --head HEAD' _ \
+            "$GATE_REPO" "$GATE_IN_CLONE" "$G_PROTO_BASE" \
+            >"$TMP_DIR/gate-22ec.log" 2>&1 &
+        G_S53_GATE=$!
+        # READINESS, NOT A SLEEP. The gate materializes a base worktree and
+        # probes the base tree before it ever reaches the head probe, and that
+        # is the part whose duration a loaded host changes.
+        G_S53_READY=0
+        for _i in $(seq 1 600); do
+            [ -f "$G_S53_RUN/ready" ] && { G_S53_READY=1; break; }
+            sleep 0.2
+        done
+        if [ "$G_S53_READY" -ne 1 ]; then
+            t_fail "identity gate: the stalling probe never became ready, so the cancellation case ran nothing (see $TMP_DIR/gate-22ec.log)"
+            g_s53_reap "$G_S53_GATE" "$(cat "$G_S53_RUN/probe.pid" 2>/dev/null)" "$(cat "$G_S53_RUN/desc.pid" 2>/dev/null)"
+        else
+            G_S53_PROBE="$(cat "$G_S53_RUN/probe.pid" 2>/dev/null)"
+            G_S53_DESC="$(cat "$G_S53_RUN/desc.pid" 2>/dev/null)"
+            G_S53_PROBEPG="$(ps -o pgid= -p "$G_S53_PROBE" 2>/dev/null | tr -d ' ')"
+            # SIGNAL THE GATE'S GROUP, which is what an external escalation
+            # does -- but PROVE it is the gate's group first. The launched pid
+            # must be its own process-group AND session leader, and that group
+            # must not be this harness's, or the signal below would take the
+            # suite down with it.
+            G_S53_GATEPG="$(ps -o pgid= -p "$G_S53_GATE" 2>/dev/null | tr -d ' ')"
+            G_S53_GATESID="$(ps -o sid= -p "$G_S53_GATE" 2>/dev/null | tr -d ' ')"
+            G_S53_SELFPG="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+            if [ -z "$G_S53_GATEPG" ] || [ "$G_S53_GATEPG" != "$G_S53_GATE" ] \
+               || [ "$G_S53_GATESID" != "$G_S53_GATE" ] \
+               || [ "$G_S53_GATEPG" = "$G_S53_SELFPG" ]; then
+                t_fail "identity gate: the launched gate is not an isolated session leader (pid=$G_S53_GATE pgid=$G_S53_GATEPG sid=$G_S53_GATESID harness=$G_S53_SELFPG), so the cancellation case will not signal it"
+                g_s53_reap "$G_S53_GATE" "$G_S53_PROBE" "$G_S53_DESC"
+            else
+                G_S53_T0=$SECONDS
+                kill -TERM -- "-$G_S53_GATEPG" 2>/dev/null || true
+                # POST-SIGNAL DEADLINE, kept well under the 60s probe cap so a
+                # prompt exit cannot be confused with the budget expiring.
+                for _i in $(seq 1 100); do
+                    kill -0 "$G_S53_GATE" 2>/dev/null || break
+                    sleep 0.2
+                done
+                G_S53_ELAPSED=$(( SECONDS - G_S53_T0 ))
+                # Give the reap loop its escalation window before judging.
+                for _i in $(seq 1 60); do
+                    kill -0 "$G_S53_DESC" 2>/dev/null || break
+                    sleep 0.2
+                done
+                G_S53_GATE_LIVE=no; kill -0 "$G_S53_GATE" 2>/dev/null && G_S53_GATE_LIVE=yes
+                G_S53_PROBE_LIVE=no; kill -0 "$G_S53_PROBE" 2>/dev/null && G_S53_PROBE_LIVE=yes
+                G_S53_DESC_LIVE=no; kill -0 "$G_S53_DESC" 2>/dev/null && G_S53_DESC_LIVE=yes
+                G_S53_WT_AFTER="$( (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null) )"
+                G_S53_TMP_LEFT="$(ls -A "$G_S53_RUN/tmp" 2>/dev/null)"
+                if [ "$G_S53_GATE_LIVE" = no ] && [ "$G_S53_ELAPSED" -le 20 ] \
+                   && [ "$G_S53_PROBE_LIVE" = no ] && [ "$G_S53_DESC_LIVE" = no ] \
+                   && [ "$G_S53_WT_BEFORE" = "$G_S53_WT_AFTER" ] \
+                   && [ -z "$G_S53_TMP_LEFT" ]; then
+                    t_pass "identity gate: cancelling the gate reaps the probe AND what the tree spawned (${G_S53_ELAPSED}s)"
+                else
+                    t_fail "identity gate: cancellation left something behind (${G_S53_ELAPSED}s gate=$G_S53_GATE_LIVE probe=$G_S53_PROBE_LIVE desc=$G_S53_DESC_LIVE tmp='$G_S53_TMP_LEFT' worktrees_equal=$([ "$G_S53_WT_BEFORE" = "$G_S53_WT_AFTER" ] && echo yes || echo no); see $TMP_DIR/gate-22ec.log)"
+                fi
+                # The fixture never leaves its own adversary running, whatever
+                # the verdict was.
+                [ -n "$G_S53_PROBEPG" ] && kill -KILL -- "-$G_S53_PROBEPG" 2>/dev/null
+                g_s53_reap "$G_S53_DESC" "$G_S53_PROBE" "$G_S53_GATE"
+
+                # MUTATION: stop the probe being tracked in `WALK_PIDS`, and
+                # the SAME adversary must survive. Without this the case
+                # cannot tell a reaped probe from one that never started, and
+                # that one assignment is the whole of what lets `cleanup`
+                # reach the probe's session at all.
+                G_MUT_S53="$GATE_REPO/scripts/todo-graph/identity-gate-noreap.sh"
+                sed 's#^    WALK_PIDS="$_prb"$#    WALK_PIDS=""#' \
+                    "$GATE_IN_CLONE" > "$G_MUT_S53"
+                if grep -q '^    WALK_PIDS="\$_prb"$' "$G_MUT_S53"; then
+                    t_fail "identity gate: could not build the probe-reap mutation (the shape moved)"
+                else
+                    rm -f "$G_S53_RUN/ready" "$G_S53_RUN/probe.pid" "$G_S53_RUN/desc.pid"
+                    TMPDIR="$G_S53_RUN/tmp" setsid bash -c \
+                        'cd "$1" && exec bash "$2" --base "$3" --head HEAD' _ \
+                        "$GATE_REPO" "$G_MUT_S53" "$G_PROTO_BASE" \
+                        >"$TMP_DIR/gate-22ec-mut.log" 2>&1 &
+                    G_S53_MGATE=$!
+                    G_S53_MREADY=0
+                    for _i in $(seq 1 600); do
+                        [ -f "$G_S53_RUN/ready" ] && { G_S53_MREADY=1; break; }
+                        sleep 0.2
+                    done
+                    if [ "$G_S53_MREADY" -ne 1 ]; then
+                        t_fail "identity gate: the mutation's probe never became ready (see $TMP_DIR/gate-22ec-mut.log)"
+                        g_s53_reap "$G_S53_MGATE" "$(cat "$G_S53_RUN/probe.pid" 2>/dev/null)" "$(cat "$G_S53_RUN/desc.pid" 2>/dev/null)"
+                    else
+                        G_S53_MPROBE="$(cat "$G_S53_RUN/probe.pid" 2>/dev/null)"
+                        G_S53_MDESC="$(cat "$G_S53_RUN/desc.pid" 2>/dev/null)"
+                        G_S53_MPPG="$(ps -o pgid= -p "$G_S53_MPROBE" 2>/dev/null | tr -d ' ')"
+                        G_S53_MGPG="$(ps -o pgid= -p "$G_S53_MGATE" 2>/dev/null | tr -d ' ')"
+                        G_S53_MSID="$(ps -o sid= -p "$G_S53_MGATE" 2>/dev/null | tr -d ' ')"
+                        # THE MUTATION MUST FAIL FOR THE RIGHT REASON. Without
+                        # these preconditions a lookup miss, an undelivered
+                        # signal or a gate that never exited would leave the
+                        # descendant alive and the arm would read as a leak it
+                        # never demonstrated (Codex test-coverage, section 53).
+                        G_S53_MSIG=0
+                        if [ -n "$G_S53_MGPG" ] && [ "$G_S53_MGPG" = "$G_S53_MGATE" ] \
+                           && [ "$G_S53_MSID" = "$G_S53_MGATE" ]; then
+                            kill -TERM -- "-$G_S53_MGPG" 2>/dev/null && G_S53_MSIG=1
+                        fi
+                        for _i in $(seq 1 100); do
+                            kill -0 "$G_S53_MGATE" 2>/dev/null || break
+                            sleep 0.2
+                        done
+                        G_S53_MGATE_LIVE=no; kill -0 "$G_S53_MGATE" 2>/dev/null && G_S53_MGATE_LIVE=yes
+                        for _i in $(seq 1 30); do
+                            kill -0 "$G_S53_MDESC" 2>/dev/null || break
+                            sleep 0.2
+                        done
+                        if [ "$G_S53_MSIG" -ne 1 ] || [ "$G_S53_MGATE_LIVE" != no ]; then
+                            t_fail "identity gate: the mutation never delivered cancellation (signalled=$G_S53_MSIG gate_live=$G_S53_MGATE_LIVE pid=$G_S53_MGATE pgid=$G_S53_MGPG sid=$G_S53_MSID), so it cannot show a leak"
+                        elif kill -0 "$G_S53_MDESC" 2>/dev/null; then
+                            t_pass "identity gate: MUTATION -- an unpublished probe pid leaks the tree's descendant, so 22ec measures the reaping"
+                        else
+                            t_fail "identity gate: the probe-reap mutation did not leak, so 22ec proves nothing (see $TMP_DIR/gate-22ec-mut.log)"
+                        fi
+                        [ -n "$G_S53_MPPG" ] && kill -KILL -- "-$G_S53_MPPG" 2>/dev/null
+                        g_s53_reap "$G_S53_MDESC" "$G_S53_MPROBE" "$G_S53_MGATE"
+                    fi
+                    rm -f "$G_MUT_S53"
+                fi
+            fi
+        fi
+        rm -rf "$G_S53_RUN"
+
+        # 22ed: THE ORDERING 22ec CANNOT REACH. 22ec's loader STALLS, so the
+        # pid file is still published when the signal arrives and `cleanup`
+        # does the reaping. A loader that spawns a descendant and then RETURNS
+        # NORMALLY takes the opposite path: `timeout` exits 0, `proto_of`
+        # unpublishes the pid, `cleanup` finds nothing, and the gate runs to a
+        # perfectly ordinary verdict with the descendant still alive. No signal
+        # is sent anywhere in this case -- the gate simply finishes -- which is
+        # what makes it the honest test of the success path (Codex
+        # test-coverage, section 53, [high]).
+        g_s53_restore
+        G_S53_RUN2="$TMP_DIR/s53-normal"
+        rm -rf "$G_S53_RUN2"; mkdir -p "$G_S53_RUN2/tmp"
+        (
+            cd "$GATE_REPO" || exit 1
+            {
+                printf '\n\n'
+                printf '# 22ed: spawn a descendant and return normally, IN THE PROBE ONLY.\n'
+                printf '# This same loader is imported by every python phase the gate runs -- the\n'
+                printf '# two resolver walks, the comparison and the cache build all reach it -- so\n'
+                printf '# an unconditional spawn would record whichever phase happened to run last\n'
+                printf '# and the case would not be about the probe at all. fd 3 is open only in\n'
+                printf '# the probe, because the SHELL opens it there to carry the record.\n'
+                printf 'import os as _s53_os5, subprocess as _s53_sp2\n\n'
+                printf 'try:\n'
+                printf '    _s53_os5.fstat(3)\n'
+                printf '    _s53_in_probe = True\n'
+                printf 'except OSError:\n'
+                printf '    _s53_in_probe = False\n\n'
+                printf 'if _s53_in_probe:\n'
+                printf '    _s53_kid2 = _s53_sp2.Popen(["sleep", "900"])\n'
+                printf "    open('%s/desc.pid', 'w').write(str(_s53_kid2.pid))\n" "$G_S53_RUN2"
+            } >> scripts/todo-graph/snapshot_protocol.py
+            git commit --quiet --no-verify -am "22ed: a loader that spawns and returns" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && TMPDIR="$G_S53_RUN2/tmp" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22ed.log" 2>&1)
+        G_RC=$?
+        G_S53_ND="$(cat "$G_S53_RUN2/desc.pid" 2>/dev/null)"
+        if [ -z "$G_S53_ND" ]; then
+            t_fail "identity gate: the normal-return loader never spawned, so 22ed ran nothing (rc=$G_RC; see $TMP_DIR/gate-22ed.log)"
+        else
+            G_S53_ND_LIVE=no; kill -0 "$G_S53_ND" 2>/dev/null && G_S53_ND_LIVE=yes
+            G_S53_TMP2="$(ls -A "$G_S53_RUN2/tmp" 2>/dev/null)"
+            if [ "$G_S53_ND_LIVE" = no ] && [ -z "$G_S53_TMP2" ]; then
+                t_pass "identity gate: a loader that spawns and RETURNS still leaves nothing behind"
+            else
+                t_fail "identity gate: the success path leaked what the tree spawned (desc=$G_S53_ND_LIVE tmp='$G_S53_TMP2'; see $TMP_DIR/gate-22ed.log)"
+            fi
+            g_s53_reap "$G_S53_ND"
+        fi
+
+        # MUTATION: take the post-`wait` group reap back out, and the SAME
+        # loader must leak. This is the whole content of 22ed -- without it the
+        # case cannot tell a reaped descendant from one that was never started.
+        G_MUT_S53B="$GATE_REPO/scripts/todo-graph/identity-gate-noreap2.sh"
+        sed 's#^    if ! kill -0 "$_prb" 2>/dev/null && kill -0 -- "-$_prb" 2>/dev/null; then$#    if false; then#' \
+            "$GATE_IN_CLONE" > "$G_MUT_S53B"
+        if grep -q '^    if ! kill -0 "\$_prb" 2>/dev/null && kill -0 -- "-\$_prb" 2>/dev/null; then$' "$G_MUT_S53B"; then
+            t_fail "identity gate: could not build the success-path reap mutation (the shape moved)"
+        else
+            rm -f "$G_S53_RUN2/desc.pid"
+            (cd "$GATE_REPO" && TMPDIR="$G_S53_RUN2/tmp" bash "$G_MUT_S53B" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22ed-mut.log" 2>&1)
+            G_S53_MND="$(cat "$G_S53_RUN2/desc.pid" 2>/dev/null)"
+            if [ -n "$G_S53_MND" ] && kill -0 "$G_S53_MND" 2>/dev/null; then
+                t_pass "identity gate: MUTATION -- without the success-path reap the descendant survives, so 22ed measures it"
+            else
+                t_fail "identity gate: the success-path reap mutation did not leak, so 22ed proves nothing (see $TMP_DIR/gate-22ed-mut.log)"
+            fi
+            g_s53_reap "$G_S53_MND"
+            rm -f "$G_MUT_S53B"
+        fi
+        rm -rf "$G_S53_RUN2"
+        g_s53_restore
+    fi
 fi
 
 # ----------------------------------------------------------------------

@@ -1425,6 +1425,12 @@ TMP_DIR="$(mktemp -d -t identity-gate.XXXXXX)" || die_infra "mktemp failed"
 export PYTHONPYCACHEPREFIX="$TMP_DIR/pycache"
 BASE_TREE="$TMP_DIR/base"
 WALK_PIDS=""
+# Leaders in WALK_PIDS that have ALREADY been `wait`ed, so their pid is a
+# number the kernel may have reissued. `cleanup` may still address their
+# GROUP, guarded by a liveness check, but must never fall back to signalling
+# the positive pid: that is how a recycled stranger gets killed (Codex
+# adversarial, section 53 round 3).
+WALK_WAITED=""
 cleanup() {
     # REAP BEFORE REMOVING. cleanup ran only on EXIT and never touched the
     # background walks, so a TERM/INT after they were spawned deleted the base
@@ -1441,16 +1447,27 @@ cleanup() {
         # (Codex adversarial, section 18 round 4, reproduced with a child
         # ignoring SIGTERM). `setsid` below puts each walk in its own group so
         # `kill -- -PGID` reaches the wrapper AND its children.
-        for _p in $WALK_PIDS; do kill -TERM -- "-$_p" 2>/dev/null || kill -TERM "$_p" 2>/dev/null || true; done
+        for _p in $WALK_PIDS; do
+            case " $WALK_WAITED " in
+                *" $_p "*) kill -0 "$_p" 2>/dev/null || kill -TERM -- "-$_p" 2>/dev/null || true ;;
+                *) kill -TERM -- "-$_p" 2>/dev/null || kill -TERM "$_p" 2>/dev/null || true ;;
+            esac
+        done
         for _i in 1 2 3 4 5 6 7 8 9 10; do
             _alive=0
             for _p in $WALK_PIDS; do kill -0 "$_p" 2>/dev/null && _alive=1; done
             [ "$_alive" -eq 0 ] && break
             sleep 0.5
         done
-        for _p in $WALK_PIDS; do kill -KILL -- "-$_p" 2>/dev/null || kill -KILL "$_p" 2>/dev/null || true; done
+        for _p in $WALK_PIDS; do
+            case " $WALK_WAITED " in
+                *" $_p "*) kill -0 "$_p" 2>/dev/null || kill -KILL -- "-$_p" 2>/dev/null || true ;;
+                *) kill -KILL -- "-$_p" 2>/dev/null || kill -KILL "$_p" 2>/dev/null || true ;;
+            esac
+        done
         for _p in $WALK_PIDS; do wait "$_p" 2>/dev/null || true; done
         WALK_PIDS=""
+        WALK_WAITED=""
     fi
     if [ -d "$BASE_TREE" ]; then
         # BOUNDED, AND ITS FAILURE IS NOT DISCARDED. The removal ran unbounded
@@ -1511,7 +1528,17 @@ probe_budget() {
     fi
 }
 
-proto_of() {  # $1 = tree root
+proto_of() {  # $1 = tree root; ANSWERS IN $PROTO_RESULT, never on a path
+    # THE RESULT DOES NOT TRAVEL THROUGH A NAMED FILE, and this is the
+    # SECOND channel this section had to close in its own fix. Round 2
+    # replaced the tree-writable pid file with a redirection into
+    # `$TMP_DIR/<side>-proto.txt` -- and the BASE probe runs tree code
+    # BEFORE the head redirection is opened, so it could derive TMP_DIR
+    # from the exported `PYTHONPYCACHEPREFIX` and pre-plant that name as a
+    # symlink to any file this user can write, which `>` then TRUNCATES
+    # (Codex adversarial, section 53 round 3, [high]). A caller variable
+    # has no name in the filesystem, so there is nothing to pre-plant.
+    PROTO_RESULT=""
     # EVALUATE the constants, never scrape their source text. The first cut
     # regex-captured the RHS of `ALL_BUCKETS` -- which is literally
     # `PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS` and NEVER changes when
@@ -1548,38 +1575,53 @@ proto_of() {  # $1 = tree root
     # failed-question-as-negative-answer fault this section fixed elsewhere,
     # reappearing in the machinery this section itself introduced (Codex
     # adversarial, section 50 round 20).
-    local _rec _prc
+    local _rec _prc _prb _i
     _rec="$(mktemp "$TMP_DIR/proto.XXXXXX" 2>/dev/null)" \
-        || { printf 'TRANSPORT\n'; return 0; }
+        || { PROTO_RESULT=TRANSPORT; return 0; }
     # THE RECORD'S ADDRESS IS NEVER HANDED TO THE TREE. Passing the path as
     # argv[2] told the very code being imported where the gate's own answer
     # lived, and an `atexit` handler registered during import could replace a
     # finished record with a valid-looking one (Codex adversarial, section 50
     # round 19). The file is opened by the SHELL on fd 3, so no path reaches
     # the subprocess, and argv is scrubbed before any tree code runs.
-    # NO `setsid` HERE, deliberately, unlike the walk phases below. Detaching
-    # the probe into its own session put it outside the gate's process group,
-    # so a TERM or INT delivered to the gate did not reach it: the probe could
-    # outlive the signal, hold the gate for the remaining budget, and an
-    # external escalation then skipped `cleanup` entirely, stranding the linked
-    # base worktree and the tempdir (Codex adversarial, section 50 round 24,
-    # [high]). The walk phases need `setsid` because they spawn children a bare
-    # `timeout` could not reap; this probe spawns none, so it can stay in the
-    # gate's own process group -- and `--foreground` is what actually keeps it
-    # there. Dropping `setsid` alone was NOT enough: GNU `timeout` puts the
-    # command in a new process group of its own unless asked not to, which
-    # leaves the probe just as unreachable by a signal sent to the gate's group
-    # (measured directly on coreutils 9.4: shell pgid 1005288, probe pgid
-    # 1005292). `--foreground`'s caveat -- that children of the command are not
-    # timed out -- costs nothing here precisely because this probe has none.
+    # SUPERVISED, NOT FOREGROUND -- and the premise that made it foreground was
+    # false (section 53). Section 50 round 24 kept the probe inside the gate's
+    # own process group so a TERM to the gate would reach it, on the stated
+    # ground that "the walk phases need `setsid` because they spawn children a
+    # bare `timeout` could not reap; this probe spawns none". This probe
+    # IMPORTS THE TREE UNDER TEST, so what it spawns is whatever that tree's
+    # code spawns, and `--foreground`'s documented caveat -- children of the
+    # command are not timed out -- then applies to a process the gate does not
+    # control. Measured on the previous shape: a loader that starts one
+    # descendant and returns leaves that descendant running after the probe is
+    # killed at its budget, after `cleanup` completes, and after the gate has
+    # exited (`sleep 300` still live, in the gate's own now-dead process
+    # group). It is the ONLY unbounded leak here; the probe itself is always
+    # bounded by `timeout -s KILL`.
+    # SO THE PROBE JOINS THE SAME SUPERVISION THE WALK PHASES USE: its own
+    # session via `setsid`, launched in the background, `wait`ed for its
+    # status, and reaped by `cleanup` through the TERM -> escalate -> KILL loop
+    # that already exists there. That RESTORES round 24's property rather than
+    # reversing it: `wait` is interruptible, so a TERM to the gate now runs the
+    # trap IMMEDIATELY instead of being deferred until the foreground command
+    # returns, and `cleanup` then signals the probe's whole group. The old
+    # shape did not even manage prompt cancellation -- a TERM-ignoring loader
+    # held the gate for the remainder of the probe budget (measured: TERM at
+    # t=3s against a 12s cap, gate exited at t=12s) because bash cannot run a
+    # trap while it is blocked in a foreground command.
+    # THE PID TRAVELS BY FILE, NOT BY VARIABLE. `proto_of` is called inside a
+    # command substitution, so it runs in a subshell and anything it assigns to
+    # `WALK_PIDS` is discarded with that subshell -- `cleanup` runs in the
+    # parent and would see nothing. TMP_DIR is shared on disk, so the pid goes
+    # there and both sides can see it.
     # A SMALL SHARE OF THE BUDGET, not all of it. Reading a handful of
     # constants is constant-size work, but the probe was granted the entire
     # remaining budget -- so one stalled import could spend the whole 600s and
     # leave the producer, cache and corpus phases nothing (Codex perf, section
     # 50 post-commit review). The cap is the SMALLER of the phase cap and what
     # is left, so it can never extend the global deadline.
-    timeout --foreground -s KILL "$(probe_budget)" \
-        python3 - "$1" 3>"$_rec" >/dev/null 2>/dev/null <<'PY'
+    setsid timeout -s KILL "$(probe_budget)" \
+        python3 - "$1" 3>"$_rec" >/dev/null 2>/dev/null <<'PY' &
 import base64, contextlib, hashlib, importlib.util, json, os, sys, pathlib
 # THE RECORD GOES OUT ON FD 3, which the shell opened. Rebinding sys.stdout to
 # it keeps every `print` below -- including the UNREADABLE sentinels --
@@ -1717,7 +1759,58 @@ print("%d|%s|%s|%s|%s|%s|%s" % (
     base64.b64encode(json.dumps(post).encode("utf-8")).decode("ascii"),
     base64.b64encode(json.dumps([renamed, retired]).encode("utf-8")).decode("ascii")))
 PY
+    _prb=$!
+    # TRACKED THE SAME WAY THE WALKS ARE, in `WALK_PIDS`, and deliberately NOT
+    # through a file. The first cut of this section published the pid to
+    # `$TMP_DIR/probe.pid` so `cleanup` could read it across the command
+    # substitution this function used to be called in -- and that handed the
+    # TREE a channel into the gate's own control state, because
+    # `PYTHONPYCACHEPREFIX` is exported as `$TMP_DIR/pycache`, so imported code
+    # can derive TMP_DIR, then delete the file to defeat cancellation or
+    # substitute a pid to make the gate signal an unrelated process group
+    # (Codex adversarial, section 53 round 2, [high]). That is precisely the
+    # class this section exists to reason about, reintroduced by its own fix.
+    # The channel is REMOVED rather than validated: `proto_of` is now called
+    # with a REDIRECTION instead of a command substitution, so it runs in the
+    # parent shell and can set `WALK_PIDS` directly, which no tree can write.
+    # ONE WINDOW STAYS OPEN and is recorded rather than papered over: a TERM
+    # landing between the `&` and the line below finds `WALK_PIDS` unset. It is
+    # the same single-statement window every walk phase carries
+    # (`... & BASE_PID=$!` then `WALK_PIDS=...`), because a pid cannot be
+    # recorded before the fork that creates it.
+    WALK_PIDS="$_prb"
+    wait "$_prb"
     _prc=$?
+    # DECLARED WAITED for the duration of the reap below, so a trap firing in
+    # that window addresses the group and never the released pid.
+    WALK_WAITED="$_prb"
+    # AND THE SUCCESS PATH REAPS TOO, which is the ordering the first cut of
+    # this section missed. `timeout` bounds the PROBE; it does not bound what
+    # the imported tree code spawned. A loader that starts a background process
+    # and then RETURNS NORMALLY leaves that descendant behind at a clean exit,
+    # with the pid file already removed and nothing left that can reach it --
+    # the same leak the stalled case shows, on an ordering the stalled case
+    # cannot reach (Codex test-coverage, section 53, [high]). Probing the GROUP
+    # for liveness first costs nothing on the ordinary path: the leader is gone
+    # and an honest tree left no members, so this is one failed signal.
+    # AND ONLY WHILE THE NUMBER STILL MEANS WHAT IT MEANT. `wait` has released
+    # the leader pid, so the group id is a number the kernel may reissue. If
+    # `$_prb` is ALIVE again it has been recycled and the group is somebody
+    # else's, so the reap is skipped rather than aimed at a stranger; if it is
+    # gone and the group still answers, the members are what the tree left
+    # behind (Codex adversarial, section 53 round 2, [medium]).
+    if ! kill -0 "$_prb" 2>/dev/null && kill -0 -- "-$_prb" 2>/dev/null; then
+        kill -TERM -- "-$_prb" 2>/dev/null || true
+        for _i in 1 2 3 4 5 6; do
+            kill -0 -- "-$_prb" 2>/dev/null || break
+            sleep 0.5
+        done
+        kill -KILL -- "-$_prb" 2>/dev/null || true
+    fi
+    # ONLY NOW is the probe untracked: a TERM landing mid-reap must still find
+    # a target, so `cleanup` can finish what this block started.
+    WALK_PIDS=""
+    WALK_WAITED=""
     if [ "$_prc" -ne 0 ]; then
         # The probe catches its OWN exceptions and reports UNREADABLE itself,
         # so a nonzero status here is the interpreter failing to run at all --
@@ -1727,7 +1820,7 @@ PY
         # terminated externally instead of returning a token (Codex
         # adversarial, section 50 round 22).
         rm -f "$_rec"
-        printf 'TRANSPORT\n'
+        PROTO_RESULT=TRANSPORT
         return 0
     fi
     # THE FIRST LINE IS THE RECORD, and anything after it is discarded rather
@@ -1737,17 +1830,23 @@ PY
     # assumed: an empty file is not a record.
     if [ ! -s "$_rec" ]; then
         rm -f "$_rec"
-        printf 'TRANSPORT\n'
+        PROTO_RESULT=TRANSPORT
         return 0
     fi
     local _line
     _line="$(timeout --foreground -s KILL "$(probe_budget)" head -n 1 "$_rec" 2>/dev/null)" \
-        || { rm -f "$_rec"; printf 'TRANSPORT\n'; return 0; }
+        || { rm -f "$_rec"; PROTO_RESULT=TRANSPORT; return 0; }
     rm -f "$_rec"
-    [ -n "$_line" ] || { printf 'TRANSPORT\n'; return 0; }
-    printf '%s\n' "$_line"
+    [ -n "$_line" ] || { PROTO_RESULT=TRANSPORT; return 0; }
+    PROTO_RESULT="$_line"
 }
-BASE_PROTO="$(proto_of "$BASE_TREE")"
+# CALLED PLAINLY, so it runs in THIS shell. A `$(...)` would put it in a
+# subshell, where the probe pid it records dies with that subshell and
+# `cleanup` -- which runs here -- could never reach the probe. The answer comes
+# back in `PROTO_RESULT` rather than on stdout precisely so that neither a
+# subshell nor a tree-addressable pathname is involved (section 53 rounds 2, 3).
+proto_of "$BASE_TREE"
+BASE_PROTO="$PROTO_RESULT"
 # EXACTLY ONE RECORD PER SIDE. `redirect_stdout` moves PYTHON-level import
 # noise aside, but a module writing straight to fd 1 goes around it -- and a
 # contaminated capture makes the caller's `read` consume the noise line and die
@@ -2260,7 +2359,8 @@ esac
 # emitting its token -- base-first ordering has to hold for the acquisition as
 # well as the adjudication, or the base's answer waits on the head's machinery
 # (Codex adversarial, section 50 round 22).
-HEAD_PROTO="$(proto_of "$REPO_ROOT")"
+proto_of "$REPO_ROOT"
+HEAD_PROTO="$PROTO_RESULT"
 case "$HEAD_PROTO" in *$'\n'*) HEAD_PROTO=UNREADABLE ;; esac
 
 # THE HEAD SIDE IS REACHED ONLY ONCE THE BASE HAS NOTHING TO SAY. Placing this
