@@ -12485,6 +12485,1937 @@ PY
     else
         t_fail "identity gate: write --strict exited $GATE_RC, expected 2 (see $TMP_DIR/gate-22f.log)"
     fi
+
+    # ------------------------------------------------------------------
+    # Section 52: the replacement routes section 50 did not reach.
+    # ------------------------------------------------------------------
+    # 22cr: A READABLE REPLACEMENT OF THE BASE. 22bh replaces the base with a
+    # MALFORMED tree, so it is caught by a guard that ran only once `proto_of`
+    # had already failed. The consequential member of the family is the
+    # opposite one: substitute the base with a tree that PARSES PERFECTLY and
+    # nothing ever asks the question, so the gate reaches a real verdict --
+    # here a byte-identical closure against the head's own tree -- about a base
+    # the repository manufactured. This case changes a PASS, not a refusal.
+    G_S52_HEAD="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    if [ -z "$G_S52_HEAD" ] || [ -z "$G_PROTO_BASE" ]; then
+        t_fail "identity gate: no endpoints available for the section 52 cases"
+    else
+        (cd "$GATE_REPO" && git replace -f "$G_PROTO_BASE" "$G_S52_HEAD" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the readable base replacement was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22cr.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22cr.log" \
+               && ! grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cr.log"; then
+                t_pass "identity gate: a base replaced by a PARSEABLE tree is still repository metadata"
+            else
+                t_fail "identity gate: a readable manufactured base earned a verdict (rc=$G_RC; see $TMP_DIR/gate-22cr.log)"
+            fi
+            # THE REFUSAL COMES FROM THE SUBSTITUTION BEING ACTIVE, not from
+            # the ref merely existing -- and this is also the documented
+            # opt-out: an operator who asks git for stored objects gets the
+            # adjudication a fresh CI clone would get, because replace refs are
+            # not fetched by default.
+            (cd "$GATE_REPO" && GIT_NO_REPLACE_OBJECTS=1 bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cr-optout.log" 2>&1)
+            if ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22cr-optout.log"; then
+                t_pass "identity gate: CONTROL -- GIT_NO_REPLACE_OBJECTS opts out of the substitution refusal"
+            else
+                t_fail "identity gate: the refusal fired while git was reading stored objects (see $TMP_DIR/gate-22cr-optout.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_PROTO_BASE" >/dev/null 2>&1)
+            # MUTATION CONTROL: with the replacement gone the same invocation
+            # must stop refusing, or 22cr proves only that something broke.
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22cr-control.log" 2>&1)
+            if ! grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22cr-control.log"; then
+                t_pass "identity gate: CONTROL -- an unreplaced base is not called manufactured"
+            else
+                t_fail "identity gate: the base refusal survived the replacement's removal (see $TMP_DIR/gate-22cr-control.log)"
+            fi
+        fi
+
+        # 22cs: THE HEAD COMMIT GETS THE SAME QUESTION, which it never got at
+        # all. The head side reads that commit for closure-member presence and
+        # mode, for the executable-bit invariant, and for the
+        # commit-versus-worktree protocol comparison; substituting it makes
+        # every one of those answers repository metadata.
+        (cd "$GATE_REPO" && git replace -f "$G_S52_HEAD" "$G_PROTO_BASE" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the head replacement was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22cs.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22cs.log"; then
+                t_pass "identity gate: a substituted head commit is refused, not adjudicated"
+            else
+                t_fail "identity gate: the head endpoint was read through a replacement (rc=$G_RC; see $TMP_DIR/gate-22cs.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_S52_HEAD" >/dev/null 2>&1)
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22cs-control.log" 2>&1)
+            if ! grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22cs-control.log"; then
+                t_pass "identity gate: CONTROL -- an unreplaced head is not called substituted"
+            else
+                t_fail "identity gate: the head refusal survived the replacement's removal (see $TMP_DIR/gate-22cs-control.log)"
+            fi
+        fi
+
+        # 22ct: THE HEAD QUESTION IS SCOPED TO WHAT THE HEAD SIDE ACTUALLY
+        # READS. Reusing the base's full-ancestry walk would refuse on a
+        # replacement targeting an ancestor of the head -- an object no
+        # head-side read can reach, since every one of them is an `ls-tree` of
+        # the head commit's own tree (Codex design review, section 52,
+        # [medium]). Deterministic false refusal, so it gets its own control.
+        G_S52_ANC="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet 'HEAD~1^{commit}' 2>/dev/null) )"
+        if [ -z "$G_S52_ANC" ]; then
+            t_fail "identity gate: no head ancestor available for the scope control"
+        else
+            (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+            if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+                t_fail "identity gate: the ancestor replacement was not created (the case would pass vacuously)"
+            else
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+                    >"$TMP_DIR/gate-22ct.log" 2>&1)
+                if ! grep -qE 'HEAD_OBJECTS_SUBSTITUTED|BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22ct.log"; then
+                    t_pass "identity gate: a replacement the head side cannot read leaves the verdict alone"
+                else
+                    t_fail "identity gate: an unreadable-by-head replacement condemned the range (see $TMP_DIR/gate-22ct.log)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+            fi
+        fi
+
+        # 22cu: THE ANSWER IS PINNED, NOT MERELY SAMPLED. `git replace -l` is a
+        # point-in-time read, so without the export a replacement installed
+        # after the guard would substitute every endpoint read that follows it
+        # (Codex design review, section 52, [high]). Racing that is not
+        # testable; the MECHANISM is. A shim records what
+        # GIT_NO_REPLACE_OBJECTS held on each endpoint read, and every one of
+        # them must already be pinned.
+        G_PIN_LOG="$TMP_DIR/gate-22cu-pin.log"
+        rm -f "$G_PIN_LOG"
+        G_SHIM_PIN="$TMP_DIR/gitshim-pin-s52"
+        mkdir -p "$G_SHIM_PIN"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'PINLOG=%s\n' "$G_PIN_LOG"
+            printf 'for a in "$@"; do\n'
+            printf '  case "$a" in\n'
+            printf '    ls-tree|worktree) printf "%%s\\n" "${GIT_NO_REPLACE_OBJECTS-unset}" >> "$PINLOG"; break ;;\n'
+            printf '  esac\n'
+            printf 'done\n'
+            printf 'exec %s "$@"\n' "$G_REAL_GIT"
+        } > "$G_SHIM_PIN/git"
+        chmod +x "$G_SHIM_PIN/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_PIN:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cu.log" 2>&1)
+        if [ ! -s "$G_PIN_LOG" ]; then
+            t_fail "identity gate: the pin probe recorded no endpoint read at all (see $TMP_DIR/gate-22cu.log)"
+        elif grep -qx 'unset' "$G_PIN_LOG"; then
+            t_fail "identity gate: an endpoint read ran before replacement reads were pinned (see $G_PIN_LOG)"
+        else
+            t_pass "identity gate: every endpoint read runs with replacement reads pinned off"
+        fi
+
+        # 22cv: THE BASE STILL WINS WHEN BOTH ENDPOINTS FAIL. Emitting the head
+        # substitution refusal at the point it is COMPUTED put it ahead of every
+        # base-side classification, so a malformed base plus a substituted head
+        # reported the head and said nothing about the base -- contradicting the
+        # base-first precedence the file header publishes, and sending the
+        # operator to repair the wrong end of the range (Codex adversarial,
+        # section 52 round 2, [medium]). The answer is recorded early and
+        # emitted late, which this case is what proves.
+        if [ -z "$G_CORRUPT" ]; then
+            t_fail "identity gate: no malformed-protocol commit available for the precedence case"
+        else
+            (cd "$GATE_REPO" && git replace -f "$G_S52_HEAD" "$G_PROTO_BASE" >/dev/null 2>&1)
+            if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+                t_fail "identity gate: the precedence-case head replacement was not created (the case would pass vacuously)"
+            else
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_CORRUPT" --head HEAD \
+                    >"$TMP_DIR/gate-22cv.log" 2>&1)
+                G_RC=$?
+                if [ "$G_RC" -eq 3 ] \
+                   && grep -q 'BASE_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cv.log" \
+                   && ! grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22cv.log"; then
+                    t_pass "identity gate: a malformed base still outranks a substituted head"
+                else
+                    t_fail "identity gate: the head substitution refusal masked a base token (rc=$G_RC; see $TMP_DIR/gate-22cv.log)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_S52_HEAD" >/dev/null 2>&1)
+            fi
+        fi
+
+        # 22cw: THE ENDPOINTS ARE RESOLVED UNDER THE PIN, NOT BEFORE IT. The
+        # fallback base is `HEAD~1`, and reading the head commit's PARENT
+        # resolves through a replacement of that commit -- so with the guard
+        # asked after resolution, the gate could derive its base from an object
+        # the repository manufactured, and removing the replacement before the
+        # guard ran made the metadata look clean (Codex adversarial, section 52
+        # round 2, [high]). The race itself is not testable; the RESOLUTION is.
+        # A replacement whose substitute has a DIFFERENT parent is installed,
+        # and the base the gate reports must be the STORED parent.
+        G_S52_STORED_PARENT="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet 'HEAD~1^{commit}' 2>/dev/null) )"
+        G_S52_FAKE="$( (cd "$GATE_REPO" && git commit-tree "$(git -C "$GATE_REPO" rev-parse 'HEAD^{tree}')" \
+                          -p "$G_PROTO_BASE" -m "22cw: a head whose parent is not the stored one" </dev/null 2>/dev/null) )"
+        if [ -z "$G_S52_STORED_PARENT" ] || [ -z "$G_S52_FAKE" ] \
+           || [ "$G_S52_STORED_PARENT" = "$G_PROTO_BASE" ]; then
+            t_fail "identity gate: could not build the fallback-base resolution fixture"
+        else
+            (cd "$GATE_REPO" && git replace -f "$G_S52_HEAD" "$G_S52_FAKE" >/dev/null 2>&1)
+            if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+                t_fail "identity gate: the fallback-base replacement was not created (the case would pass vacuously)"
+            else
+                (cd "$GATE_REPO" && env -u IDENTITY_GATE_LAST_GATED_SHA -u GITHUB_EVENT_BEFORE \
+                    bash "$GATE_IN_CLONE" --head HEAD >"$TMP_DIR/gate-22cw.log" 2>&1)
+                if grep -q "base $G_S52_STORED_PARENT" "$TMP_DIR/gate-22cw.log" \
+                   && ! grep -q "base $G_PROTO_BASE" "$TMP_DIR/gate-22cw.log"; then
+                    t_pass "identity gate: the fallback base is resolved from stored objects, not through a replacement"
+                else
+                    t_fail "identity gate: a manufactured commit decided the fallback base (see $TMP_DIR/gate-22cw.log)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_S52_HEAD" >/dev/null 2>&1)
+            fi
+        fi
+
+        # 22cx: AN ENDPOINT REPLACEMENT IS ANSWERED WITHOUT A WALK. A commit is
+        # reachable from its own object walk, so enumerating the history to
+        # discover that costs the whole closure for an answer already in hand --
+        # and on a large repository with an active replacement it can eat most
+        # of IDENTITY_GATE_BUDGET_SECS and surface as an indeterminate timeout
+        # instead of the refusal (Codex perf, section 52, [medium]). Asserted by
+        # OBSERVATION rather than by timing: a shim records whether `rev-list`
+        # was spawned at all, and the ancestor case is the probe control proving
+        # the shim can see one.
+        G_RL_LOG="$TMP_DIR/gate-22cx-revlist.log"
+        G_SHIM_RL="$TMP_DIR/gitshim-revlist-s52"
+        mkdir -p "$G_SHIM_RL"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'RLLOG=%s\n' "$G_RL_LOG"
+            printf 'for a in "$@"; do\n'
+            printf '  [ "$a" = "rev-list" ] && { printf "rev-list\\n" >> "$RLLOG"; break; }\n'
+            printf 'done\n'
+            printf 'exec %s "$@"\n' "$G_REAL_GIT"
+        } > "$G_SHIM_RL/git"
+        chmod +x "$G_SHIM_RL/git"
+        rm -f "$G_RL_LOG"
+        (cd "$GATE_REPO" && git replace -f "$G_PROTO_BASE" "$G_S52_HEAD" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && PATH="$G_SHIM_RL:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cx.log" 2>&1)
+        if grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22cx.log" && [ ! -s "$G_RL_LOG" ]; then
+            t_pass "identity gate: a replaced endpoint refuses without enumerating its history"
+        else
+            t_fail "identity gate: an endpoint replacement paid for a full object walk (see $TMP_DIR/gate-22cx.log and $G_RL_LOG)"
+        fi
+        (cd "$GATE_REPO" && git replace -d "$G_PROTO_BASE" >/dev/null 2>&1)
+        # AND THE HEAD ENDPOINT TOO, which the first cut missed. The endpoint
+        # test compared the captured list against the commit being asked about,
+        # so a sole replacement naming the HEAD was absent from the BASE's test:
+        # the base call fell through and walked the whole history to find
+        # nothing before the head call short-circuited (Codex perf, section 52
+        # round 5, [medium], measured at 70,513 objects). Both endpoints are now
+        # removed from the candidate set in one pass, so this variant must spawn
+        # no walk either.
+        rm -f "$G_RL_LOG"
+        (cd "$GATE_REPO" && git replace -f "$G_S52_HEAD" "$G_PROTO_BASE" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && PATH="$G_SHIM_RL:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cx-head.log" 2>&1)
+        if grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22cx-head.log" && [ ! -s "$G_RL_LOG" ]; then
+            t_pass "identity gate: a replaced HEAD refuses without walking the base history"
+        else
+            t_fail "identity gate: a HEAD-only replacement paid for a base walk (see $TMP_DIR/gate-22cx-head.log and $G_RL_LOG)"
+        fi
+        (cd "$GATE_REPO" && git replace -d "$G_S52_HEAD" >/dev/null 2>&1)
+        rm -f "$G_RL_LOG"
+        if [ -n "$G_S52_ANC" ]; then
+            (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+            (cd "$GATE_REPO" && PATH="$G_SHIM_RL:$PATH" bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cx-control.log" 2>&1)
+            if [ -s "$G_RL_LOG" ]; then
+                t_pass "identity gate: CONTROL -- a non-endpoint replacement does still spawn the walk"
+            else
+                t_fail "identity gate: the rev-list probe never fired, so 22cx passed vacuously"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+        fi
+
+        # 22cy: THE WALK STOPS AT THE FIRST MATCH, AND A HIT OUTRANKS THE
+        # PRODUCER'S STATUS. 22cx proves only that a walk is or is not spawned;
+        # neither leg proves what happens INSIDE one. That mattered because the
+        # two arms emit the SAME leading token with different prose -- a
+        # definite "an active refs/replace entry substitutes" against an
+        # indeterminate "could not determine whether" -- so reading the
+        # pipeline status before the HIT would misclassify a known match as
+        # unknown and every existing fixture would stay green. Removing awk's
+        # `exit` would likewise restore the whole-history scan invisibly (Codex
+        # adversarial, section 52 round 4, [medium]).
+        #
+        # Both are bound here with a CONTROLLED PRODUCER: the shim answers
+        # `rev-list` with the replaced oid FIRST and then floods the stream, and
+        # writes a drain marker only if it was allowed to finish. An early exit
+        # SIGPIPEs it, so the marker's ABSENCE is the termination proof and the
+        # definite message is the ordering proof.
+        if [ -z "$G_S52_ANC" ]; then
+            t_fail "identity gate: no object available for the early-match fixture"
+        else
+            G_CY_DRAIN="$TMP_DIR/gate-22cy-drain.log"
+            G_SHIM_CY="$TMP_DIR/gitshim-earlymatch-s52"
+            mkdir -p "$G_SHIM_CY"
+            rm -f "$G_CY_DRAIN"
+            cat > "$G_SHIM_CY/git" <<SHIM
+#!/usr/bin/env bash
+DRAINLOG=$G_CY_DRAIN
+MATCH=$G_S52_ANC
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  if [ "\$a" = "rev-list" ]; then
+    printf '%s tree\n' "\$MATCH"
+    # THE PRODUCER'S OWN STATUS IS PROPAGATED, and the SHAPE of that is
+    # load-bearing rather than a detail. Two earlier drafts silently exited 0 --
+    # first a trailing \`exit 0\`, then \`if ...; then ...; fi; exit \$?\`, which
+    # returns 0 because a FAILED \`if\` with no \`else\` evaluates to 0 -- and with
+    # either one the mutation that reads the pipeline status before the HIT
+    # stayed green, so the probe proved nothing at all. Real git dies of
+    # SIGPIPE, so the status is captured directly and returned.
+    seq 1 300000 | sed 's/^/0000000000000000000000000000000000000000 /'
+    rc=\$?
+    [ "\$rc" -eq 0 ] && printf 'drained\n' >> "\$DRAINLOG"
+    exit "\$rc"
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+            chmod +x "$G_SHIM_CY/git"
+            (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+            if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+                t_fail "identity gate: the early-match replacement was not created (the case would pass vacuously)"
+            else
+                (cd "$GATE_REPO" && PATH="$G_SHIM_CY:$PATH" bash "$GATE_IN_CLONE" \
+                    --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22cy.log" 2>&1)
+                if grep -q 'an active refs/replace entry substitutes an object reachable from the base' "$TMP_DIR/gate-22cy.log" \
+                   && ! grep -q 'could not determine whether repository replacement metadata' "$TMP_DIR/gate-22cy.log"; then
+                    t_pass "identity gate: a matched object is reported as substituted, not as indeterminate"
+                else
+                    t_fail "identity gate: a known substitution was reported as unknown (see $TMP_DIR/gate-22cy.log)"
+                fi
+                if [ ! -s "$G_CY_DRAIN" ]; then
+                    t_pass "identity gate: the object walk is terminated at the first match, not drained"
+                else
+                    t_fail "identity gate: the walk read the whole stream after a match (see $G_CY_DRAIN)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+            fi
+        fi
+
+        # 22cz: ENDPOINT ROLES ARE NOT EXCLUSIVE, AND THE REVERSE RANGE IS THE
+        # PROOF. Removing BOTH endpoint oids from one shared candidate set
+        # looked symmetric and dropped a reachable replacement: this gate takes
+        # arbitrary --base/--head, and after a rewind the last-gated base can be
+        # a DESCENDANT of the head, so the head commit is an object the BASE's
+        # history walk reaches. With it discarded globally the base answered
+        # "not substituted" without walking and the range earned a base
+        # classification where BASE_HISTORY_INCOMPLETE was due (Codex
+        # adversarial, section 52 round 6, [medium]). Every other case in this
+        # block is the forward topology, which cannot see it.
+        if [ -z "$G_S52_ANC" ]; then
+            t_fail "identity gate: no ancestor available for the reverse-range case"
+        else
+            (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+            if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+                t_fail "identity gate: the reverse-range replacement was not created (the case would pass vacuously)"
+            else
+                # base = the NEWER commit, head = its own ancestor, and the
+                # replacement names the head.
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S52_HEAD" --head "$G_S52_ANC" \
+                    >"$TMP_DIR/gate-22cz.log" 2>&1)
+                G_RC=$?
+                if [ "$G_RC" -eq 3 ] \
+                   && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22cz.log" \
+                   && ! grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22cz.log"; then
+                    t_pass "identity gate: a replaced head REACHABLE from the base is the base's refusal"
+                else
+                    t_fail "identity gate: a reachable replacement was dropped as an endpoint (rc=$G_RC; see $TMP_DIR/gate-22cz.log)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+            fi
+        fi
+
+        # 22da: THE PEEL FROM A COMMIT-ISH TO A COMMIT IS ITSELF SUBSTITUTABLE.
+        # Endpoints are peeled UNDER the pin, so an annotated tag resolves
+        # through the STORED tag object while the operator's own git resolves it
+        # through the replacement to a DIFFERENT commit. A tag object is not
+        # reachable from the commit it points at, so neither the history walk
+        # nor the snapshot walk contains it and every other case in this block
+        # is blind to it: the gate would certify a range nobody asked about
+        # (Codex adversarial AND consistency, section 52 round 7, [medium],
+        # found independently by both). Fixtured on BOTH sides, because the
+        # argument can name either one.
+        (cd "$GATE_REPO" && git tag -a -f -m "22da: tag a" s52-tag-a "$G_S52_HEAD" >/dev/null 2>&1
+         cd "$GATE_REPO" && git tag -a -f -m "22da: tag b" s52-tag-b "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_TAG_A="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet s52-tag-a 2>/dev/null) )"
+        G_TAG_B="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet s52-tag-b 2>/dev/null) )"
+        if [ -z "$G_TAG_A" ] || [ -z "$G_TAG_B" ] || [ "$G_TAG_A" = "$G_S52_HEAD" ]; then
+            t_fail "identity gate: could not build the annotated-tag fixture (tags absent, or not tag objects)"
+        else
+            (cd "$GATE_REPO" && git replace -f "$G_TAG_A" "$G_TAG_B" >/dev/null 2>&1)
+            if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+                t_fail "identity gate: the tag-object replacement was not created (the case would pass vacuously)"
+            else
+                # PROBE CONTROL: the substitution must actually move the tag for
+                # ordinary git, or neither leg below proves anything.
+                G_TAG_ACTIVE="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet "s52-tag-a^{commit}" 2>/dev/null) )"
+                if [ "$G_TAG_ACTIVE" = "$G_PROTO_BASE" ]; then
+                    t_pass "identity gate: CONTROL -- the replaced tag object does move where ordinary git resolves"
+                else
+                    t_fail "identity gate: the tag replacement did not move git's own resolution (got '$G_TAG_ACTIVE')"
+                fi
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head s52-tag-a \
+                    >"$TMP_DIR/gate-22da-head.log" 2>&1)
+                G_RC=$?
+                if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22da-head.log"; then
+                    t_pass "identity gate: a head named through a replaced tag object is refused"
+                else
+                    t_fail "identity gate: the gate adjudicated a head the repository resolves elsewhere (rc=$G_RC; see $TMP_DIR/gate-22da-head.log)"
+                fi
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base s52-tag-a --head HEAD \
+                    >"$TMP_DIR/gate-22da-base.log" 2>&1)
+                G_RC=$?
+                if [ "$G_RC" -eq 3 ] && grep -q 'BASE_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22da-base.log"; then
+                    t_pass "identity gate: a base named through a replaced tag object is refused"
+                else
+                    t_fail "identity gate: the gate adjudicated a base the repository resolves elsewhere (rc=$G_RC; see $TMP_DIR/gate-22da-base.log)"
+                fi
+                (cd "$GATE_REPO" && git replace -d "$G_TAG_A" >/dev/null 2>&1)
+                (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head s52-tag-a \
+                    >"$TMP_DIR/gate-22da-control.log" 2>&1)
+                if ! grep -qE 'HEAD_OBJECTS_SUBSTITUTED|BASE_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22da-control.log"; then
+                    t_pass "identity gate: CONTROL -- an unreplaced tag endpoint is not called substituted"
+                else
+                    t_fail "identity gate: the tag refusal survived the replacement's removal (see $TMP_DIR/gate-22da-control.log)"
+                fi
+            fi
+            # 22db: A REVISION SPEC IS AN ARBITRARY STRING, AND GIT ACCEPTS
+            # WHITESPACE IN ONE. `<rev>^{/<regex>}` is a legal endpoint and its
+            # regex can contain spaces, so a `spec peel` table looked up by
+            # whitespace field made every such spec miss its own row -- and a
+            # miss is deliberately read as "no divergence", which reopened the
+            # substituted-tag bypass for exactly the specs nobody would think
+            # to test (Codex adversarial, section 52 round 9, [medium]).
+            G_WS_SPEC='s52-tag-a^{/ }'
+            (cd "$GATE_REPO" && git replace -f "$G_TAG_A" "$G_TAG_B" >/dev/null 2>&1)
+            G_WS_STORED="$( (cd "$GATE_REPO" && GIT_NO_REPLACE_OBJECTS=1 git rev-parse --verify --quiet "${G_WS_SPEC}^{commit}" 2>/dev/null) )"
+            G_WS_ACTIVE="$( (cd "$GATE_REPO" && git rev-parse --verify --quiet "${G_WS_SPEC}^{commit}" 2>/dev/null) )"
+            if [ -n "$G_WS_STORED" ] && [ -n "$G_WS_ACTIVE" ] && [ "$G_WS_STORED" != "$G_WS_ACTIVE" ]; then
+                t_pass "identity gate: CONTROL -- a whitespace-bearing spec does resolve differently under the replacement"
+            else
+                t_fail "identity gate: the whitespace spec fixture is vacuous (stored '$G_WS_STORED' active '$G_WS_ACTIVE')"
+            fi
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head "$G_WS_SPEC" \
+                >"$TMP_DIR/gate-22db.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22db.log"; then
+                t_pass "identity gate: a whitespace-bearing endpoint spec is not exempt from the peel check"
+            else
+                t_fail "identity gate: a spec with a space skipped peel-divergence detection (rc=$G_RC; see $TMP_DIR/gate-22db.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_TAG_A" >/dev/null 2>&1)
+            (cd "$GATE_REPO" && git tag -d s52-tag-a >/dev/null 2>&1
+             cd "$GATE_REPO" && git tag -d s52-tag-b >/dev/null 2>&1)
+        fi
+
+        # 22dc: THE EMPTY RANGE IS NOT EXEMPT FROM THE PRECONDITION. Replacing
+        # a commit does not move `rev-parse <spec>^{commit}` -- peeling returns
+        # the object NAME, and the substitution changes its CONTENT -- so a
+        # selfsame invocation cleared the peel check, reached the "nothing to
+        # differentiate" exit above the substitution adjudication, and returned
+        # a green rc 0 over a commit git shows the operator differently (Codex
+        # adversarial, section 52 round 10, [medium]). rc 0 is what a caller
+        # records a new baseline on, which is why an empty range still has to
+        # answer this.
+        (cd "$GATE_REPO" && git replace -f "$G_S52_HEAD" "$G_PROTO_BASE" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the selfsame-range replacement was not created (the case would pass vacuously)"
+        else
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S52_HEAD" --head "$G_S52_HEAD" \
+                >"$TMP_DIR/gate-22dc.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'BASE_HISTORY_INCOMPLETE' "$TMP_DIR/gate-22dc.log" \
+               && ! grep -q 'nothing to differentiate' "$TMP_DIR/gate-22dc.log"; then
+                t_pass "identity gate: a selfsame range over a replaced commit refuses instead of exiting green"
+            else
+                t_fail "identity gate: an empty range skipped the substitution precondition (rc=$G_RC; see $TMP_DIR/gate-22dc.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_S52_HEAD" >/dev/null 2>&1)
+            # MUTATION CONTROL: unreplaced, the same selfsame invocation must
+            # still take the empty-range exit, or the fix would have removed it.
+            (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S52_HEAD" --head "$G_S52_HEAD" \
+                >"$TMP_DIR/gate-22dc-control.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 0 ] && grep -q 'nothing to differentiate' "$TMP_DIR/gate-22dc-control.log"; then
+                t_pass "identity gate: CONTROL -- an unreplaced selfsame range still exits green"
+            else
+                t_fail "identity gate: the empty-range exit was lost (rc=$G_RC; see $TMP_DIR/gate-22dc-control.log)"
+            fi
+        fi
+
+        # 22dd: A MOVING REF IS NOT A SUBSTITUTION. The peel comparison used to
+        # measure the ACTIVE peel against the resolution taken after the pin --
+        # two reads separated by the whole endpoint resolution -- so an endpoint
+        # ref that simply ADVANCED in between diverged for a reason that has
+        # nothing to do with replacement metadata, and the gate emitted a token
+        # whose published meaning says metadata caused it: a false rc 3 pointing
+        # the operator at the wrong repair (Codex consistency, section 52 round
+        # 11, [medium]). Both peels are now taken adjacently and the active one
+        # TWICE, so movement is detected and named instead of blamed.
+        #
+        # The race is made deterministic by a shim that moves the branch during
+        # the stored read, which is the one call in the pair that carries
+        # GIT_NO_REPLACE_OBJECTS in its environment.
+        G_MOVE_MARK="$TMP_DIR/gate-22dd-fired"
+        rm -f "$G_MOVE_MARK"
+        (cd "$GATE_REPO" && git branch -f s52-move-branch "$G_PROTO_BASE" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_SHIM_MV="$TMP_DIR/gitshim-move-s52"
+        mkdir -p "$G_SHIM_MV"
+        cat > "$G_SHIM_MV/git" <<SHIM
+#!/usr/bin/env bash
+MARK=$G_MOVE_MARK
+REALGIT=$G_REAL_GIT
+TARGET=$G_CORRUPT
+if [ "\${GIT_NO_REPLACE_OBJECTS-}" = "1" ] && [ ! -e "\$MARK" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *s52-move-branch*)
+        : > "\$MARK"
+        "\$REALGIT" branch -f s52-move-branch "\$TARGET" >/dev/null 2>&1
+        break ;;
+    esac
+  done
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_MV/git"
+        if [ -z "$G_CORRUPT" ] || [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: could not build the moving-ref fixture"
+        else
+            (cd "$GATE_REPO" && PATH="$G_SHIM_MV:$PATH" bash "$GATE_IN_CLONE" \
+                --base s52-move-branch --head HEAD >"$TMP_DIR/gate-22dd.log" 2>&1)
+            G_RC=$?
+            if [ ! -e "$G_MOVE_MARK" ]; then
+                t_fail "identity gate: the moving-ref shim never fired, so 22dd would pass vacuously"
+            elif [ "$G_RC" -eq 3 ] \
+                 && grep -q 'ENDPOINT_MOVED_UNDER_GATE' "$TMP_DIR/gate-22dd.log" \
+                 && ! grep -qE 'BASE_OBJECTS_SUBSTITUTED|HEAD_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22dd.log"; then
+                t_pass "identity gate: an endpoint that moved is named as movement, not as substitution"
+            else
+                t_fail "identity gate: a moving ref was blamed on replacement metadata (rc=$G_RC; see $TMP_DIR/gate-22dd.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1
+             cd "$GATE_REPO" && git branch -D s52-move-branch >/dev/null 2>&1)
+        fi
+
+        # 22de: AN UNANSWERED PROBE IS NOT MOVEMENT. The capture takes the
+        # active peel twice around the stored one, and only the FIRST two were
+        # tested for an answer -- so a failed THIRD peel came back empty, read
+        # as "differs from the first", and an indeterminate observation was
+        # reported as the endpoint having MOVED. A definite token for a
+        # question nobody answered, sending the operator to re-run a repository
+        # that was never moving (Codex adversarial AND consistency, section 52
+        # round 12, found independently by both).
+        G_FAIL_MARK="$TMP_DIR/gate-22de-count"
+        rm -f "$G_FAIL_MARK"
+        (cd "$GATE_REPO" && git branch -f s52-fail-branch "$G_PROTO_BASE" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_SHIM_FAIL="$TMP_DIR/gitshim-thirdpeel-s52"
+        mkdir -p "$G_SHIM_FAIL"
+        cat > "$G_SHIM_FAIL/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_FAIL_MARK
+REALGIT=$G_REAL_GIT
+# The capture reads active, stored, active. Only the two ACTIVE reads run with
+# the pin variable absent, so counting those identifies the third peel exactly.
+if [ -z "\${GIT_NO_REPLACE_OBJECTS-}" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *s52-fail-branch*)
+        n=0
+        [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+        n=\$((n + 1))
+        printf '%s' "\$n" > "\$COUNT"
+        [ "\$n" = "2" ] && exit 128
+        break ;;
+    esac
+  done
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_FAIL/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_FAIL:$PATH" bash "$GATE_IN_CLONE" \
+            --base s52-fail-branch --head HEAD >"$TMP_DIR/gate-22de.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_FAIL_MARK" ] || [ "$(cat "$G_FAIL_MARK" 2>/dev/null)" -lt 2 ]; then
+            t_fail "identity gate: the third-peel probe never reached its second active read, so 22de would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] \
+             && grep -q 'BASE_OBJECTS_SUBSTITUTED' "$TMP_DIR/gate-22de.log" \
+             && ! grep -q 'ENDPOINT_MOVED_UNDER_GATE' "$TMP_DIR/gate-22de.log"; then
+            t_pass "identity gate: a failed third peel is unanswerable, not movement"
+        else
+            t_fail "identity gate: an unanswered probe was reported as endpoint movement (rc=$G_RC; see $TMP_DIR/gate-22de.log)"
+        fi
+        (cd "$GATE_REPO" && git branch -D s52-fail-branch >/dev/null 2>&1)
+
+        # 22df: REPLACEMENT METADATA ADDED AFTER THE CAPTURE IS IN NO SET THE
+        # GATE HOLDS. Every substitution answer rests on one `git replace -l`
+        # read taken before the endpoints were resolved; an entry landing after
+        # it is in neither captured set and, when it targets a tag object, in
+        # neither commit walk either -- so the gate could return a GREEN verdict
+        # while ordinary git resolves the endpoint through a substitute it never
+        # saw. A false pass, not a mis-named refusal (Codex adversarial, section
+        # 52 round 12, [medium]).
+        G_META_MARK="$TMP_DIR/gate-22df-fired"
+        rm -f "$G_META_MARK"
+        G_SHIM_META="$TMP_DIR/gitshim-meta-s52"
+        mkdir -p "$G_SHIM_META"
+        cat > "$G_SHIM_META/git" <<SHIM
+#!/usr/bin/env bash
+MARK=$G_META_MARK
+REALGIT=$G_REAL_GIT
+SRC=$G_CORRUPT
+DST=$G_PROTO_BASE
+seen_replace=0
+seen_list=0
+for a in "\$@"; do
+  [ "\$a" = "replace" ] && seen_replace=1
+  [ "\$a" = "-l" ] && seen_list=1
+done
+if [ "\$seen_replace\$seen_list" = "11" ] && [ ! -e "\$MARK" ]; then
+  : > "\$MARK"
+  out="\$("\$REALGIT" "\$@")"
+  "\$REALGIT" replace -f "\$SRC" "\$DST" >/dev/null 2>&1
+  [ -n "\$out" ] && printf '%s\n' "\$out"
+  exit 0
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_META/git"
+        if [ -z "$G_CORRUPT" ]; then
+            t_fail "identity gate: no second object available for the metadata-change fixture"
+        else
+            (cd "$GATE_REPO" && PATH="$G_SHIM_META:$PATH" bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22df.log" 2>&1)
+            G_RC=$?
+            if [ ! -e "$G_META_MARK" ]; then
+                t_fail "identity gate: the metadata-change shim never fired, so 22df would pass vacuously"
+            elif [ "$G_RC" -eq 3 ] && grep -q 'ENDPOINT_MOVED_UNDER_GATE' "$TMP_DIR/gate-22df.log"; then
+                t_pass "identity gate: replacement metadata added after the capture is caught, not certified around"
+            else
+                t_fail "identity gate: metadata landing after the capture went unnoticed (rc=$G_RC; see $TMP_DIR/gate-22df.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_CORRUPT" >/dev/null 2>&1)
+        fi
+        (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+
+        # 22dg: ZERO TO ONE IS THE TRANSITION THAT MATTERED MOST. The listing
+        # re-read used to be guarded on the capture having found something, so a
+        # repository that starts with NO replacements skipped it entirely and
+        # the FIRST replacement created after capture was never seen: the gate
+        # pinned reads to stored objects, adjudicated an empty captured set, and
+        # returned rc 0 while ordinary git resolved a substituted endpoint
+        # (Codex adversarial, section 52 round 13, [medium]). 22df cannot see
+        # this because an earlier case leaves a replacement active through it.
+        if [ -n "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the zero-to-one fixture needs a repository with no replacements"
+        else
+            G_ZERO_MARK="$TMP_DIR/gate-22dg-fired"
+            rm -f "$G_ZERO_MARK"
+            G_SHIM_ZERO="$TMP_DIR/gitshim-zero-s52"
+            mkdir -p "$G_SHIM_ZERO"
+            cat > "$G_SHIM_ZERO/git" <<SHIM
+#!/usr/bin/env bash
+MARK=$G_ZERO_MARK
+REALGIT=$G_REAL_GIT
+SRC=$G_CORRUPT
+DST=$G_PROTO_BASE
+seen_replace=0
+seen_list=0
+for a in "\$@"; do
+  [ "\$a" = "replace" ] && seen_replace=1
+  [ "\$a" = "-l" ] && seen_list=1
+done
+if [ "\$seen_replace\$seen_list" = "11" ] && [ ! -e "\$MARK" ]; then
+  : > "\$MARK"
+  "\$REALGIT" replace -f "\$SRC" "\$DST" >/dev/null 2>&1
+  exit 0
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+            chmod +x "$G_SHIM_ZERO/git"
+            (cd "$GATE_REPO" && PATH="$G_SHIM_ZERO:$PATH" bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22dg.log" 2>&1)
+            G_RC=$?
+            if [ ! -e "$G_ZERO_MARK" ]; then
+                t_fail "identity gate: the zero-to-one shim never fired, so 22dg would pass vacuously"
+            elif [ "$G_RC" -eq 3 ] && grep -q 'ENDPOINT_MOVED_UNDER_GATE' "$TMP_DIR/gate-22dg.log"; then
+                t_pass "identity gate: the FIRST replacement created after an empty capture is still caught"
+            else
+                t_fail "identity gate: an empty capture disabled the metadata re-read (rc=$G_RC; see $TMP_DIR/gate-22dg.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_CORRUPT" >/dev/null 2>&1)
+        fi
+
+        # 22dh: A FAILED PROBE IS NOT AN OBSERVED CHANGE. The revalidation
+        # collapsed a failed listing into a synthetic mismatch, so the gate
+        # asserted the metadata CHANGED when it had merely failed to ask -- an
+        # unlisted emission reason and a misleading diagnosis under a degraded
+        # git (Codex consistency, section 52 round 13, [medium]).
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_LFAIL_COUNT="$TMP_DIR/gate-22dh-count"
+        rm -f "$G_LFAIL_COUNT"
+        G_SHIM_LFAIL="$TMP_DIR/gitshim-listfail-s52"
+        mkdir -p "$G_SHIM_LFAIL"
+        cat > "$G_SHIM_LFAIL/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_LFAIL_COUNT
+REALGIT=$G_REAL_GIT
+seen_replace=0
+seen_list=0
+for a in "\$@"; do
+  [ "\$a" = "replace" ] && seen_replace=1
+  [ "\$a" = "-l" ] && seen_list=1
+done
+if [ "\$seen_replace\$seen_list" = "11" ]; then
+  n=0
+  [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+  n=\$((n + 1))
+  printf '%s' "\$n" > "\$COUNT"
+  [ "\$n" = "2" ] && exit 129
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_LFAIL/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_LFAIL:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22dh.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_LFAIL_COUNT" ] || [ "$(cat "$G_LFAIL_COUNT" 2>/dev/null)" -lt 2 ]; then
+            t_fail "identity gate: the listing never got re-read, so 22dh would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] \
+             && grep -q 'could not re-read the repository' "$TMP_DIR/gate-22dh.log" \
+             && ! grep -q 'changed while this gate was working' "$TMP_DIR/gate-22dh.log"; then
+            t_pass "identity gate: a failed metadata re-read is unanswerable, not an observed change"
+        else
+            t_fail "identity gate: a failed probe was reported as an observed change (rc=$G_RC; see $TMP_DIR/gate-22dh.log)"
+        fi
+
+        # 22di: THE BATCH SHARES ONE BUDGET. `remaining` floors to 1s, which is
+        # right for a single call and wrong for a loop: every probe was granted
+        # a fresh second however long the batch had already run, so a stalling
+        # revision search overran the gate deadline in proportion to the number
+        # of probes -- measured at 6.19s against a 1s budget (Codex perf,
+        # section 52 round 13, [medium]). `budget_left` reports 0 rather than 1,
+        # and no probe spawns past it.
+        #
+        # ASSERTED BY COUNTING PROBES, NOT BY THE CLOCK. A wall-clock bound is
+        # both flaky and blunt: the first draft stalled every `^{commit}` call,
+        # so the gate died at the HEAD resolution and the capture batch -- the
+        # actual subject -- never ran, and the mutation that restores the floor
+        # passed it. The stall is scoped to a spec that is CAPTURED but never
+        # RESOLVED (a last-gated SHA under an explicit `--base`), so the three
+        # capture probes are the only ones that reach it: one spawn is the fix,
+        # three is the defect.
+        G_STALL_LOG="$TMP_DIR/gate-22di-spawns"
+        rm -f "$G_STALL_LOG"
+        (cd "$GATE_REPO" && git branch -f s52-stall-branch "$G_PROTO_BASE" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_STALL_SHIM="$TMP_DIR/gitshim-stall-s52"
+        mkdir -p "$G_STALL_SHIM"
+        cat > "$G_STALL_SHIM/git" <<SHIM
+#!/usr/bin/env bash
+SPAWNLOG=$G_STALL_LOG
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  case "\$a" in
+    *s52-stall-branch*)
+      printf 'spawn\n' >> "\$SPAWNLOG"
+      # A CHILD, and this probe's output IS CAPTURED, which is the combination
+      # that matters. `timeout --foreground` explicitly does not signal the
+      # command's children, so a descendant holding the command substitution's
+      # stdout keeps the caller blocked for the whole stall even though the
+      # bound fired -- 20s against a 2s budget. Without that flag the process
+      # GROUP is signalled and the caller returns at the deadline. Git spawns
+      # such descendants (hooks, promisor helpers), so this is the real shape;
+      # an `exec`ed stall could never show it (Codex adversarial, section 52
+      # round 29, [medium]).
+      sleep 20 &
+      wait
+      exit 0 ;;
+  esac
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_STALL_SHIM/git"
+        G_T0=$SECONDS
+        (cd "$GATE_REPO" && IDENTITY_GATE_BUDGET_SECS=2 \
+            IDENTITY_GATE_LAST_GATED_SHA=s52-stall-branch \
+            PATH="$G_STALL_SHIM:$PATH" \
+            bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22di.log" 2>&1)
+        G_RC=$?
+        G_ELAPSED=$(( SECONDS - G_T0 ))
+        G_SPAWNS=0
+        [ -f "$G_STALL_LOG" ] && G_SPAWNS=$(wc -l < "$G_STALL_LOG")
+        if [ "$G_SPAWNS" -eq 0 ]; then
+            t_fail "identity gate: the stalling spec was never probed, so 22di would pass vacuously"
+        elif [ "$G_SPAWNS" -eq 1 ] && [ "$G_RC" -ne 0 ] && [ "$G_ELAPSED" -le 8 ]; then
+            t_pass "identity gate: no probe spawns once the shared budget is spent, and a stalled descendant does not outlive it (${G_SPAWNS} spawn, ${G_ELAPSED}s)"
+        else
+            t_fail "identity gate: the probe batch kept spawning past its budget (${G_SPAWNS} spawns, rc=$G_RC, ${G_ELAPSED}s; see $TMP_DIR/gate-22di.log)"
+        fi
+        (cd "$GATE_REPO" && git branch -D s52-stall-branch >/dev/null 2>&1)
+
+        # 22dj: A CALLER ERROR IS AN ANSWER, NOT FAILED MACHINERY. The endpoint
+        # probes were routed through a bounded helper whose only "does not
+        # resolve" status is rc 1 -- but `git rev-parse --verify` WITHOUT
+        # `--quiet` exits 128 on an invalid revision, so a plain
+        # `--head not-a-ref` was classified as a probe the gate could not ask
+        # and reported under ENDPOINT_UNRESOLVABLE, sending the operator to
+        # repair infrastructure for their own typo (Codex adversarial, section
+        # 52 round 14, [medium]). That distinction is the whole reason the
+        # token was published.
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --head s52-definitely-not-a-ref \
+            >"$TMP_DIR/gate-22dj.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 3 ] \
+           && grep -q "is not a commit" "$TMP_DIR/gate-22dj.log" \
+           && ! grep -q 'ENDPOINT_UNRESOLVABLE' "$TMP_DIR/gate-22dj.log"; then
+            t_pass "identity gate: an invalid head argument is answered, not blamed on machinery"
+        else
+            t_fail "identity gate: a caller error was reported as failed machinery (rc=$G_RC; see $TMP_DIR/gate-22dj.log)"
+        fi
+
+        # 22dk: THE FALLBACK CHAIN IS WHERE A COLLAPSED STATUS COSTS MOST. These
+        # probes CHOOSE WHICH RANGE IS ADJUDICATED, so a stalled or failed
+        # event-base lookup read as "that candidate is unusable" and the chain
+        # advanced to HEAD~1 -- adjudicating only the last commit of a
+        # multi-commit push, and able to return green over resolver changes it
+        # never compared (Codex adversarial AND consistency, section 52 round
+        # 14, [high]). 22di cannot see this: it supplies an explicit base, so
+        # the chain is never entered.
+        G_FB_LOG="$TMP_DIR/gate-22dk-spawns"
+        rm -f "$G_FB_LOG"
+        G_SHIM_FB="$TMP_DIR/gitshim-fallback-s52"
+        mkdir -p "$G_SHIM_FB"
+        cat > "$G_SHIM_FB/git" <<SHIM
+#!/usr/bin/env bash
+SPAWNLOG=$G_FB_LOG
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  case "\$a" in
+    # A PROBE FAILURE, NOT A STALL. The stall shape cannot discriminate here:
+    # both the fixed and the collapsed forms end up refusing on an exhausted
+    # budget, just at different points, so the mutation passed. rc 128 is what
+    # a degraded git actually returns, and it separates the two cleanly --
+    # tri-state refuses, a boolean falls through to HEAD~1.
+    *s52-event-base*) printf 'spawn\n' >> "\$SPAWNLOG"; exit 128 ;;
+  esac
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_FB/git"
+        (cd "$GATE_REPO" && git branch -f s52-event-base "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_FB_T0=$SECONDS
+        (cd "$GATE_REPO" && env -u IDENTITY_GATE_LAST_GATED_SHA \
+            IDENTITY_GATE_BUDGET_SECS=2 GITHUB_EVENT_BEFORE=s52-event-base \
+            PATH="$G_SHIM_FB:$PATH" bash "$GATE_IN_CLONE" --head HEAD \
+            >"$TMP_DIR/gate-22dk.log" 2>&1)
+        G_RC=$?
+        G_FB_ELAPSED=$(( SECONDS - G_FB_T0 ))
+        if [ ! -s "$G_FB_LOG" ]; then
+            t_fail "identity gate: the event-base candidate was never probed, so 22dk would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] \
+             && grep -q 'ENDPOINT_UNRESOLVABLE' "$TMP_DIR/gate-22dk.log" \
+             && ! grep -q 'falling back to HEAD~1' "$TMP_DIR/gate-22dk.log" \
+             && ! grep -q '^\[identity-gate\] base ' "$TMP_DIR/gate-22dk.log"; then
+            t_pass "identity gate: an unanswerable event-base refuses instead of narrowing the range"
+        else
+            t_fail "identity gate: a failed candidate probe silently narrowed the range or escaped the budget (rc=$G_RC, ${G_FB_ELAPSED}s; see $TMP_DIR/gate-22dk.log)"
+        fi
+        (cd "$GATE_REPO" && git branch -D s52-event-base >/dev/null 2>&1)
+
+        # 22dl: THE REACHABILITY PHASE ANSWERS TO THE SAME DEADLINE. The peel
+        # loop was bounded a round earlier while this phase kept an unbounded
+        # `merge-base` and a walk floored to one second -- so a degraded commit
+        # graph could wedge the gate here, AFTER it already knew the head was
+        # substituted, suppressing a verdict it had reached (Codex adversarial,
+        # section 52 round 15, [medium]). Asserted on elapsed, which is the only
+        # discriminator available: the probe's status is treated identically
+        # whether it is killed or answers, by design.
+        G_MB_LOG="$TMP_DIR/gate-22dl-spawns"
+        rm -f "$G_MB_LOG"
+        G_SHIM_MB="$TMP_DIR/gitshim-mergebase-s52"
+        mkdir -p "$G_SHIM_MB"
+        cat > "$G_SHIM_MB/git" <<SHIM
+#!/usr/bin/env bash
+SPAWNLOG=$G_MB_LOG
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  # DELIBERATELY TERM-RESISTANT. A cooperative `sleep` dies on the first
+  # signal, so it cannot tell a hard deadline from a TERM plus a ten-second
+  # grace -- and the grace was the defect: a non-cooperative probe spent it in
+  # full, 12s against a 2s budget (Codex perf, section 52 round 16, [medium]).
+  # A CHILD, NOT `exec`. `timeout --foreground` explicitly does not signal the
+  # command's children, so a descendant that outlives the kill holds the caller
+  # open past the budget -- git spawns hooks and promisor helpers, so this is
+  # the shape that matters, and `exec sleep` could never show it (Codex
+  # adversarial, section 52 round 29, [medium]).
+  [ "\$a" = "merge-base" ] && { printf 'spawn\n' >> "\$SPAWNLOG"; trap '' TERM INT; sleep 20 & wait; exit 0; }
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_MB/git"
+        (cd "$GATE_REPO" && git replace -f "$G_S52_HEAD" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_MB_T0=$SECONDS
+        (cd "$GATE_REPO" && IDENTITY_GATE_BUDGET_SECS=2 PATH="$G_SHIM_MB:$PATH" \
+            bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22dl.log" 2>&1)
+        G_RC=$?
+        G_MB_ELAPSED=$(( SECONDS - G_MB_T0 ))
+        if [ ! -s "$G_MB_LOG" ]; then
+            t_fail "identity gate: the ancestry probe never ran, so 22dl would pass vacuously"
+        elif [ "$G_RC" -ne 0 ] && [ "$G_MB_ELAPSED" -le 5 ]; then
+            t_pass "identity gate: the reachability phase stays inside the shared budget (${G_MB_ELAPSED}s)"
+        else
+            t_fail "identity gate: a reachability probe escaped the shared budget (rc=$G_RC, ${G_MB_ELAPSED}s; see $TMP_DIR/gate-22dl.log)"
+        fi
+        (cd "$GATE_REPO" && git replace -d "$G_S52_HEAD" >/dev/null 2>&1)
+
+        # 22dm: REPLACEMENT SUPPORT CAN BE TURNED ON WHILE THE GATE RUNS. With
+        # `core.useReplaceRefs` initially false the capture is skipped, the
+        # listing is never read, and the revalidation used to be guarded on the
+        # enabled state -- so a concurrent enable left ordinary git resolving
+        # through pre-existing replace refs while the gate stayed pinned to
+        # stored objects, reported clean, and advanced its baseline over a
+        # substituted endpoint (Codex adversarial, section 52 round 16, [high]).
+        # The same shape as the zero-to-one listing race, one level up, and
+        # 22dg cannot see it because that fixture starts enabled.
+        G_CFG_MARK="$TMP_DIR/gate-22dm-fired"
+        rm -f "$G_CFG_MARK"
+        (cd "$GATE_REPO" && git config core.useReplaceRefs false >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_SHIM_CFG="$TMP_DIR/gitshim-enable-s52"
+        mkdir -p "$G_SHIM_CFG"
+        cat > "$G_SHIM_CFG/git" <<SHIM
+#!/usr/bin/env bash
+MARK=$G_CFG_MARK
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  if [ "\$a" = "core.useReplaceRefs" ] && [ ! -e "\$MARK" ]; then
+    : > "\$MARK"
+    out="\$("\$REALGIT" "\$@")"; rc=\$?
+    "\$REALGIT" config core.useReplaceRefs true >/dev/null 2>&1
+    [ -n "\$out" ] && printf '%s\n' "\$out"
+    exit "\$rc"
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_CFG/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_CFG:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22dm.log" 2>&1)
+        G_RC=$?
+        if [ ! -e "$G_CFG_MARK" ]; then
+            t_fail "identity gate: the enablement shim never fired, so 22dm would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] && grep -q 'core.useReplaceRefs changed' "$TMP_DIR/gate-22dm.log"; then
+            t_pass "identity gate: replacement support enabled mid-run is caught, not adjudicated around"
+        else
+            t_fail "identity gate: a mid-run enable left the gate reporting on stale state (rc=$G_RC; see $TMP_DIR/gate-22dm.log)"
+        fi
+        (cd "$GATE_REPO" && git config --unset core.useReplaceRefs >/dev/null 2>&1
+         cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+
+        # 22dn: ONCE IS NOT ENOUGH. 22dm flips the setting during the CAPTURE,
+        # so it only ever proved that the single mid-run revalidation sees a
+        # change that happened before it. An enable landing AFTER that point
+        # left the state "disabled", the listing check skipped, and the gate
+        # free to exit 0 while ordinary git had already begun resolving through
+        # pre-existing replace refs (Codex adversarial, section 52 round 17,
+        # [high]). The state is now re-asserted immediately before every green
+        # exit, and this fixture flips on the SECOND read so only that last
+        # assertion can catch it.
+        G_LATE_COUNT="$TMP_DIR/gate-22dn-count"
+        rm -f "$G_LATE_COUNT"
+        (cd "$GATE_REPO" && git config core.useReplaceRefs false >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_SHIM_LATE="$TMP_DIR/gitshim-lateenable-s52"
+        mkdir -p "$G_SHIM_LATE"
+        cat > "$G_SHIM_LATE/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_LATE_COUNT
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  if [ "\$a" = "core.useReplaceRefs" ]; then
+    n=0
+    [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+    n=\$((n + 1))
+    printf '%s' "\$n" > "\$COUNT"
+    out="\$("\$REALGIT" "\$@")"; rc=\$?
+    [ "\$n" = "2" ] && "\$REALGIT" config core.useReplaceRefs true >/dev/null 2>&1
+    [ -n "\$out" ] && printf '%s\n' "\$out"
+    exit "\$rc"
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_LATE/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_LATE:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_S52_HEAD" --head "$G_S52_HEAD" >"$TMP_DIR/gate-22dn.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_LATE_COUNT" ] || [ "$(cat "$G_LATE_COUNT" 2>/dev/null)" -lt 3 ]; then
+            t_fail "identity gate: the state was not re-asserted before the green exit, so 22dn would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] && grep -q 'core.useReplaceRefs changed' "$TMP_DIR/gate-22dn.log"; then
+            t_pass "identity gate: a late enable is caught before the gate can return green"
+        else
+            t_fail "identity gate: an enable after the mid-run check still reached a green exit (rc=$G_RC; see $TMP_DIR/gate-22dn.log)"
+        fi
+        (cd "$GATE_REPO" && git config --unset core.useReplaceRefs >/dev/null 2>&1
+         cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+
+        # 22do: THE CLOCK PROVIDER IS PART OF THE DEADLINE. Every probe is
+        # wrapped in a limit this gate computes from a subprocess clock, so an
+        # interpreter that never starts stops the wrapped probe from ever
+        # running -- hard-killing a child cannot help when the child is never
+        # spawned (Codex adversarial AND perf, section 52 round 17, [medium],
+        # found independently by both).
+        G_PY_SHIM="$TMP_DIR/pyshim-clock-s52"
+        mkdir -p "$G_PY_SHIM"
+        cat > "$G_PY_SHIM/python3" <<'PYSHIM'
+#!/usr/bin/env bash
+# `exec`, so the stall IS the process the deadline is bounding. A `sleep` left
+# as a CHILD outlives its parent's hard kill and keeps the command
+# substitution's stdout open, so the caller blocks for the full stall even
+# though the bound fired -- 30s against a 5s limit. Real interpreters have no
+# such grandchild. The bound uses an unblockable signal, so no trap is needed.
+exec sleep 30
+PYSHIM
+        chmod +x "$G_PY_SHIM/python3"
+        G_CLK_T0=$SECONDS
+        # A SMALL BUDGET, because the clock no longer forks. With `/proc/uptime`
+        # available the wedged interpreter is met at the first bounded PYTHON
+        # phase rather than at the first clock read, and that phase is bounded
+        # by the gate budget -- so the budget is what this now measures.
+        (cd "$GATE_REPO" && IDENTITY_GATE_BUDGET_SECS=2 PATH="$G_PY_SHIM:$PATH" \
+            bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22do.log" 2>&1)
+        G_RC=$?
+        G_CLK_ELAPSED=$(( SECONDS - G_CLK_T0 ))
+        if [ "$G_RC" -ne 0 ] && [ "$G_CLK_ELAPSED" -le 8 ]; then
+            t_pass "identity gate: a wedged clock provider refuses within a fixed bound (${G_CLK_ELAPSED}s)"
+        else
+            t_fail "identity gate: a wedged clock provider hung the gate (rc=$G_RC, ${G_CLK_ELAPSED}s; see $TMP_DIR/gate-22do.log)"
+        fi
+
+        # 22dp: AND THE BOUND IS ENFORCED STRUCTURALLY, not only observed once.
+        # 22do wedges the interpreter from process start, so the FIRST bounded
+        # read fails and execution never reaches the later clock sites -- which
+        # is exactly how two of them stayed unbounded through a round that
+        # believed the provider was covered (Codex adversarial AND perf,
+        # section 52 round 18, [medium], found independently by both). A stall
+        # fixture per call site would be brittle and would still miss the next
+        # one added; the invariant is that the clock has ONE reader, and that
+        # is checkable directly.
+        G_CLK_SITES="$(grep -c 'time\.monotonic()' "$GATE_IN_CLONE" || true)"
+        G_CLK_RAW="$(grep -n 'time\.monotonic()' "$GATE_IN_CLONE" \
+                      | grep -v '^[0-9]*:#' | grep -vc 'python3 -c' || true)"
+        # AND THE FALLBACK KEEPS ITS BOUND. The primary clock reads
+        # /proc/uptime with builtins, so 22do's wedged-interpreter shim is now
+        # first met by a later python phase and can no longer prove anything
+        # about the fallback (Codex consistency, section 52 round 22,
+        # [medium]). The bound is asserted where it lives instead.
+        G_CLK_FALLBACK_BOUND="$(grep -B2 "python3 -c .import time" "$GATE_IN_CLONE" \
+                                 | grep -c 'timeout .*-s KILL' || true)"
+        if [ "$G_CLK_SITES" -ge 2 ] && [ "$G_CLK_RAW" -eq 0 ] \
+           && [ "$(grep -c 'python3 -c .import time' "$GATE_IN_CLONE")" -eq 1 ] \
+           && [ "$G_CLK_FALLBACK_BOUND" -ge 1 ]; then
+            t_pass "identity gate: the monotonic clock has exactly one reader, and its fallback is bounded"
+        else
+            t_fail "identity gate: a clock read lives outside mono_now or its fallback is unbounded (sites=$G_CLK_SITES raw=$G_CLK_RAW bound=$G_CLK_FALLBACK_BOUND)"
+        fi
+
+        # 22dt: EVERY GIT SPAWN THIS GATE DEPENDS ON IS BOUNDED, asserted
+        # structurally. A stall fixture per call site would be brittle and
+        # would still miss the next site anyone adds -- which is precisely how
+        # the closure passes, the type probe and the full-history traversal
+        # stayed unbounded through several rounds that each believed the
+        # deadline was gate-wide (Codex adversarial AND perf, section 52 rounds
+        # 19-20). The invariant is checkable: a `git` invocation is either
+        # wrapped in `timeout` or routed through a bounded helper. The only
+        # exemption is the cleanup trap, which must run even when the budget is
+        # gone -- bounding a reaper is how you leak the thing it reaps.
+        G_UNBOUNDED="$(python3 - "$GATE_IN_CLONE" <<'PYGIT'
+import re, sys
+
+src = open(sys.argv[1], encoding="utf-8").read().split("\n")
+# Join backslash continuations into logical lines, keeping the first line no.
+logical, buf, start = [], "", 0
+for i, ln in enumerate(src, 1):
+    if not buf:
+        start = i
+    buf += ln
+    if ln.rstrip().endswith("\\"):
+        buf = buf.rstrip()[:-1] + " "
+        continue
+    logical.append((start, buf))
+    buf = ""
+
+
+def is_dash_c(word):
+    """True for `-c` and any short-option cluster containing it: `bash -ec`
+    runs its argument as a program exactly as `bash -c` does, and reading only
+    the exact spellings let that form through (Codex adversarial, section 52
+    round 23, [medium])."""
+    return (word.startswith("-") and not word.startswith("--")
+            and "c" in word[1:])
+
+
+def scopes_of(line):
+    """Every region of the line a shell would EXECUTE, as separate scopes.
+
+    Substring scanning was fooled five ways (Codex adversarial, section 52
+    round 22): `command git`, `env FOO=1 git`, `bash -c 'git ...'`, a backtick
+    substitution, and an exemption phrase matched anywhere in the segment. A
+    quoted string is a literal UNLESS it is the argument of `-c`, in which case
+    it is a program; `$( )` and backticks are programs wherever they appear,
+    including inside double quotes -- which is where the first state machine
+    went wrong, taking the `"` that opens a nested `"$_left"` as the one that
+    CLOSES the outer span and mis-tokenizing everything after it."""
+    scopes, out, i, n = [], [], 0, len(line)
+    dq = False
+    dq_start = 0
+
+    def last_word():
+        m = re.search(r"(\S+)\s*$", "".join(out))
+        return m.group(1) if m else ""
+
+    def balanced(open_at, opener, closer):
+        depth, k = 0, open_at
+        while k < n:
+            if line[k] == opener:
+                depth += 1
+            elif line[k] == closer:
+                depth -= 1
+                if depth == 0:
+                    return k
+            k += 1
+        return n - 1
+
+    while i < n:
+        c = line[i]
+        if c == "\\" and i + 1 < n:
+            out.append("  ")
+            i += 2
+        elif not dq and c == "'":
+            j = line.find("'", i + 1)
+            j = n - 1 if j == -1 else j
+            if is_dash_c(last_word()):
+                scopes.extend(scopes_of(line[i + 1:j]))
+            out.append(" " * (j - i + 1))
+            i = j + 1
+        elif c == "`":
+            j = line.find("`", i + 1)
+            j = n - 1 if j == -1 else j
+            scopes.extend(scopes_of(line[i + 1:j]))
+            out.append(" __SUBST__ ")
+            i = j + 1
+        elif c == "$" and i + 1 < n and line[i + 1] == "(":
+            k = balanced(i + 1, "(", ")")
+            scopes.extend(scopes_of(line[i + 2:k]))
+            out.append(" __SUBST__ ")
+            i = k + 1
+        elif c == '"':
+            if dq:
+                if is_dash_c(last_word()):
+                    scopes.extend(scopes_of(line[dq_start:i]))
+                dq = False
+                # A PLACEHOLDER, NOT A BLANK. Blanked to whitespace, a quoted
+                # ARGUMENT vanished -- and `timeout ... "$_left" git ...` then
+                # looked like `timeout ... git ...`, so the duration token the
+                # checker examined was the word `git` itself.
+                out.append(" __ARG__ " if i > dq_start else " ")
+            else:
+                dq = True
+                dq_start = i + 1
+                out.append(" ")
+            i += 1
+        elif c == "#" and not dq and (not out or out[-1] in " \t;&|("):
+            break
+        else:
+            out.append(" " if dq else c)
+            i += 1
+    scopes.insert(0, "".join(out))
+    return scopes
+
+
+# Grouping and negation are not commands; they prefix one. `{ git ...; }` and
+# `! git ...` executed git while the scanner read the brace or the bang as the
+# command word (Codex adversarial, section 52 round 23, [medium]).
+SEGMENT_SPLIT = re.compile(r"[;&|(){}]+|\bthen\b|\bdo\b|\belse\b|\bif\b|\bwhile\b|\bfi\b|\bdone\b")
+ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
+# Prefixes that execute the REST of the segment and so must be unwrapped, not
+# accepted as the command word. `--` ends a wrapper's own options.
+WRAPPERS = re.compile(r"^(?:command|builtin|exec|nohup|setsid|time|eval)\s+(?:--\s+)?")
+# `-i` TAKES NO OPERAND AND `-u` DOES, and treating them alike made the regex
+# swallow the command itself: `env -i git rev-parse HEAD` consumed `env -i git`
+# and left `rev-parse HEAD`, so the scanner saw no spawn at all (Codex
+# adversarial, section 52 round 27, [medium]).
+ENV_CMD = re.compile(r"^env\s+(?:-i\s+|-u\s+\S+\s+|--\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*")
+NEGATION = re.compile(r"^!\s+")
+# A duration of literally 0 DISABLES timeout(1) -- the same trap this gate
+# already documents for its own budget floor. A wrapper that disables itself is
+# not a bound, so the scanner refuses to accept it as one.
+# OPTIONS WITH OPERANDS, PARSED WITH THEIR REAL ARITY. Treating every short
+# option as operand-free made `timeout -s KILL 0 git ...` read `KILL` as the
+# duration and leave the zero behind -- and `-s KILL` is the form this gate
+# uses everywhere, so that is precisely where a disabling duration would hide
+# (Codex adversarial, section 52 round 28, [medium]).
+TIMEOUT_CMD = re.compile(
+    r"^timeout\s+("
+    r"(?:"
+    r"(?:-[sk]\s+\S+|--(?:signal|kill-after)(?:=\S+|\s+\S+))\s+"
+    r"|--[a-z-]+(?:=\S+)?\s+"
+    r"|-[a-zA-Z]+\s+"
+    r")*"
+    r")(\S+)\s+")
+
+
+# ONLY A NARROW FINITE-POSITIVE DECIMAL COUNTS AS A BOUND. Asking "does this
+# parse to zero" was still too generous: `timeout 0x0` and `timeout inf` both
+# run forever, and `float()` rejects the first and returns infinity for the
+# second, so neither read as zero and both passed as bounded (Codex
+# adversarial, section 52 round 26, [medium]). The question is inverted -- a
+# duration must PROVE it bounds something.
+_DURATION = re.compile(r"^\+?(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$")
+
+
+def _is_zero_duration(word):
+    """True when this duration does NOT bound anything: zero, or a spelling
+    outside the grammar we are prepared to vouch for."""
+    # A COMPUTED duration is accepted: the code that writes one guards it
+    # against zero before it spawns, and this scan cannot evaluate it. Only a
+    # LITERAL has to prove itself here.
+    if word == "__ARG__" or word.startswith("$"):
+        return False
+    if not _DURATION.match(word):
+        return True
+    body = word[:-1] if word[-1:] in "smhd" else word
+    try:
+        v = float(body)
+    except ValueError:
+        return True
+    return not (v > 0.0) or v != v or v in (float("inf"),)
+
+
+def normalized(segment):
+    """The segment with execution prefixes, negation and env assignments
+    removed -- and with a self-disabling `timeout 0` deliberately NOT removed,
+    so it reads as the unbounded spawn it is."""
+    seg = segment.strip()
+    changed = True
+    while changed:
+        changed = False
+        for pat in (ENV_ASSIGN, WRAPPERS, ENV_CMD, NEGATION):
+            m = pat.match(seg)
+            if m and m.end() > 0:
+                seg = seg[m.end():].lstrip()
+                changed = True
+        m = TIMEOUT_CMD.match(seg)
+        # EVERY SPELLING OF ZERO, parsed as a NUMBER rather than matched as a
+        # shape. timeout(1) takes an optional s/m/h/d suffix and a full
+        # floating-point grammar, so `0`, `0s`, `00`, `.0`, `0e0`, `0E+0` and
+        # `+0` all disable it -- and a regex written for the obvious spellings
+        # missed five of those (Codex adversarial, section 52 rounds 24 and
+        # 25, [medium]). Anything that parses to zero is no bound at all.
+        if m and _is_zero_duration(m.group(2)):
+            seg = seg[m.end():].lstrip()   # a zero duration is no bound at all
+            changed = True
+    return seg
+
+
+# EXACT command forms, anchored at the start of the normalized segment -- an
+# exemption matched anywhere let `git rev-parse HEAD worktree remove` through.
+EXEMPT = (
+    # The cleanup trap must run even when the budget is gone; bounding a
+    # reaper is how you leak the thing it reaps.
+    re.compile(r"^git\s+worktree\s+(?:remove|prune)\b"),
+    # Supervised as a whole pipeline by the `timeout ... bash -c` around it;
+    # the body is scanned as its own scope, so the exemption is only for the
+    # producer inside that already-bounded shell. Fixture 22ds proves the bound
+    # by stalling the consumer.
+    re.compile(r"^git\s+--no-replace-objects\s+rev-list\b"),
+)
+
+bad = []
+for no, ln in logical:
+    hit = None
+    for scope in scopes_of(ln):
+        for seg in SEGMENT_SPLIT.split(scope):
+            norm = normalized(seg)
+            if not re.match(r"^git(\s|$)", norm):
+                continue
+            if any(e.match(norm) for e in EXEMPT):
+                continue
+            hit = norm[:60]
+            break
+        if hit:
+            break
+    if hit:
+        bad.append("%d:%s" % (no, hit))
+print("\n".join(bad))
+PYGIT
+)"
+        # THE SCANNER'S OWN SENSITIVITY IS A FIXTURE, not a claim. Five bypass
+        # forms were accepted by the first two drafts -- `command git`,
+        # `env FOO=1 git`, `bash -c 'git ...'`, a backtick substitution, and an
+        # exemption phrase matched anywhere in the segment (Codex adversarial,
+        # section 52 round 22, [medium]) -- and five MORE by the third:
+        # `timeout 0 git ...`, where a zero duration disables timeout(1)
+        # outright, `command -- git`, `{ git ...; }`, `! git ...` and
+        # `bash -ec 'git ...'` (round 23, [medium]), and three more spellings
+        # of a zero duration in round 24 and five more in round 25, once the
+        # duration was parsed as a NUMBER rather than matched as a shape, and
+        # three more in round 26 once the question was inverted again: a
+        # duration must PROVE it bounds something, because `0x0` and `inf` are
+        # neither zero nor a bound. A
+        # scan that cannot be
+        # shown to FIND them proves nothing when it reports a clean file, so
+        # every one of them is re-detected on each run.
+        G_CX="$TMP_DIR/gate-22dt-counterexamples.sh"
+        cat > "$G_CX" <<'CXEOF'
+command git rev-parse HEAD
+env FOO=1 git rev-parse HEAD
+bash -c 'git rev-parse HEAD'
+_x=`git rev-parse HEAD`
+git rev-parse HEAD worktree remove
+timeout 1 true; git rev-parse HEAD
+_y="$(git ls-tree HEAD -- p)"   # worktree remove
+timeout 0 git rev-parse HEAD
+command -- git rev-parse HEAD
+{ git rev-parse HEAD; }
+! git rev-parse HEAD
+bash -ec 'git rev-parse HEAD'
+timeout 0s git rev-parse HEAD
+timeout 0.0 git rev-parse HEAD
+timeout --preserve-status 00 git rev-parse HEAD
+timeout .0 git rev-parse HEAD
+timeout .0s git rev-parse HEAD
+timeout 0e0 git rev-parse HEAD
+timeout 0E+0 git rev-parse HEAD
+timeout +0 git rev-parse HEAD
+timeout 0x0 git rev-parse HEAD
+timeout inf git rev-parse HEAD
+timeout 1e309 git rev-parse HEAD
+env -i git rev-parse HEAD
+timeout -s KILL 0 git rev-parse HEAD
+CXEOF
+        G_CX_HITS="$(python3 - "$G_CX" <<'PYCX'
+import re, sys
+
+src = open(sys.argv[1], encoding="utf-8").read().split("\n")
+# Join backslash continuations into logical lines, keeping the first line no.
+logical, buf, start = [], "", 0
+for i, ln in enumerate(src, 1):
+    if not buf:
+        start = i
+    buf += ln
+    if ln.rstrip().endswith("\\"):
+        buf = buf.rstrip()[:-1] + " "
+        continue
+    logical.append((start, buf))
+    buf = ""
+
+
+def is_dash_c(word):
+    """True for `-c` and any short-option cluster containing it: `bash -ec`
+    runs its argument as a program exactly as `bash -c` does, and reading only
+    the exact spellings let that form through (Codex adversarial, section 52
+    round 23, [medium])."""
+    return (word.startswith("-") and not word.startswith("--")
+            and "c" in word[1:])
+
+
+def scopes_of(line):
+    """Every region of the line a shell would EXECUTE, as separate scopes.
+
+    Substring scanning was fooled five ways (Codex adversarial, section 52
+    round 22): `command git`, `env FOO=1 git`, `bash -c 'git ...'`, a backtick
+    substitution, and an exemption phrase matched anywhere in the segment. A
+    quoted string is a literal UNLESS it is the argument of `-c`, in which case
+    it is a program; `$( )` and backticks are programs wherever they appear,
+    including inside double quotes -- which is where the first state machine
+    went wrong, taking the `"` that opens a nested `"$_left"` as the one that
+    CLOSES the outer span and mis-tokenizing everything after it."""
+    scopes, out, i, n = [], [], 0, len(line)
+    dq = False
+    dq_start = 0
+
+    def last_word():
+        m = re.search(r"(\S+)\s*$", "".join(out))
+        return m.group(1) if m else ""
+
+    def balanced(open_at, opener, closer):
+        depth, k = 0, open_at
+        while k < n:
+            if line[k] == opener:
+                depth += 1
+            elif line[k] == closer:
+                depth -= 1
+                if depth == 0:
+                    return k
+            k += 1
+        return n - 1
+
+    while i < n:
+        c = line[i]
+        if c == "\\" and i + 1 < n:
+            out.append("  ")
+            i += 2
+        elif not dq and c == "'":
+            j = line.find("'", i + 1)
+            j = n - 1 if j == -1 else j
+            if is_dash_c(last_word()):
+                scopes.extend(scopes_of(line[i + 1:j]))
+            out.append(" " * (j - i + 1))
+            i = j + 1
+        elif c == "`":
+            j = line.find("`", i + 1)
+            j = n - 1 if j == -1 else j
+            scopes.extend(scopes_of(line[i + 1:j]))
+            out.append(" __SUBST__ ")
+            i = j + 1
+        elif c == "$" and i + 1 < n and line[i + 1] == "(":
+            k = balanced(i + 1, "(", ")")
+            scopes.extend(scopes_of(line[i + 2:k]))
+            out.append(" __SUBST__ ")
+            i = k + 1
+        elif c == '"':
+            if dq:
+                if is_dash_c(last_word()):
+                    scopes.extend(scopes_of(line[dq_start:i]))
+                dq = False
+                # A PLACEHOLDER, NOT A BLANK. Blanked to whitespace, a quoted
+                # ARGUMENT vanished -- and `timeout ... "$_left" git ...` then
+                # looked like `timeout ... git ...`, so the duration token the
+                # checker examined was the word `git` itself.
+                out.append(" __ARG__ " if i > dq_start else " ")
+            else:
+                dq = True
+                dq_start = i + 1
+                out.append(" ")
+            i += 1
+        elif c == "#" and not dq and (not out or out[-1] in " \t;&|("):
+            break
+        else:
+            out.append(" " if dq else c)
+            i += 1
+    scopes.insert(0, "".join(out))
+    return scopes
+
+
+# Grouping and negation are not commands; they prefix one. `{ git ...; }` and
+# `! git ...` executed git while the scanner read the brace or the bang as the
+# command word (Codex adversarial, section 52 round 23, [medium]).
+SEGMENT_SPLIT = re.compile(r"[;&|(){}]+|\bthen\b|\bdo\b|\belse\b|\bif\b|\bwhile\b|\bfi\b|\bdone\b")
+ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
+# Prefixes that execute the REST of the segment and so must be unwrapped, not
+# accepted as the command word. `--` ends a wrapper's own options.
+WRAPPERS = re.compile(r"^(?:command|builtin|exec|nohup|setsid|time|eval)\s+(?:--\s+)?")
+# `-i` TAKES NO OPERAND AND `-u` DOES, and treating them alike made the regex
+# swallow the command itself: `env -i git rev-parse HEAD` consumed `env -i git`
+# and left `rev-parse HEAD`, so the scanner saw no spawn at all (Codex
+# adversarial, section 52 round 27, [medium]).
+ENV_CMD = re.compile(r"^env\s+(?:-i\s+|-u\s+\S+\s+|--\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*")
+NEGATION = re.compile(r"^!\s+")
+# A duration of literally 0 DISABLES timeout(1) -- the same trap this gate
+# already documents for its own budget floor. A wrapper that disables itself is
+# not a bound, so the scanner refuses to accept it as one.
+# OPTIONS WITH OPERANDS, PARSED WITH THEIR REAL ARITY. Treating every short
+# option as operand-free made `timeout -s KILL 0 git ...` read `KILL` as the
+# duration and leave the zero behind -- and `-s KILL` is the form this gate
+# uses everywhere, so that is precisely where a disabling duration would hide
+# (Codex adversarial, section 52 round 28, [medium]).
+TIMEOUT_CMD = re.compile(
+    r"^timeout\s+("
+    r"(?:"
+    r"(?:-[sk]\s+\S+|--(?:signal|kill-after)(?:=\S+|\s+\S+))\s+"
+    r"|--[a-z-]+(?:=\S+)?\s+"
+    r"|-[a-zA-Z]+\s+"
+    r")*"
+    r")(\S+)\s+")
+
+
+# ONLY A NARROW FINITE-POSITIVE DECIMAL COUNTS AS A BOUND. Asking "does this
+# parse to zero" was still too generous: `timeout 0x0` and `timeout inf` both
+# run forever, and `float()` rejects the first and returns infinity for the
+# second, so neither read as zero and both passed as bounded (Codex
+# adversarial, section 52 round 26, [medium]). The question is inverted -- a
+# duration must PROVE it bounds something.
+_DURATION = re.compile(r"^\+?(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$")
+
+
+def _is_zero_duration(word):
+    """True when this duration does NOT bound anything: zero, or a spelling
+    outside the grammar we are prepared to vouch for."""
+    # A COMPUTED duration is accepted: the code that writes one guards it
+    # against zero before it spawns, and this scan cannot evaluate it. Only a
+    # LITERAL has to prove itself here.
+    if word == "__ARG__" or word.startswith("$"):
+        return False
+    if not _DURATION.match(word):
+        return True
+    body = word[:-1] if word[-1:] in "smhd" else word
+    try:
+        v = float(body)
+    except ValueError:
+        return True
+    return not (v > 0.0) or v != v or v in (float("inf"),)
+
+
+def normalized(segment):
+    """The segment with execution prefixes, negation and env assignments
+    removed -- and with a self-disabling `timeout 0` deliberately NOT removed,
+    so it reads as the unbounded spawn it is."""
+    seg = segment.strip()
+    changed = True
+    while changed:
+        changed = False
+        for pat in (ENV_ASSIGN, WRAPPERS, ENV_CMD, NEGATION):
+            m = pat.match(seg)
+            if m and m.end() > 0:
+                seg = seg[m.end():].lstrip()
+                changed = True
+        m = TIMEOUT_CMD.match(seg)
+        # EVERY SPELLING OF ZERO, parsed as a NUMBER rather than matched as a
+        # shape. timeout(1) takes an optional s/m/h/d suffix and a full
+        # floating-point grammar, so `0`, `0s`, `00`, `.0`, `0e0`, `0E+0` and
+        # `+0` all disable it -- and a regex written for the obvious spellings
+        # missed five of those (Codex adversarial, section 52 rounds 24 and
+        # 25, [medium]). Anything that parses to zero is no bound at all.
+        if m and _is_zero_duration(m.group(2)):
+            seg = seg[m.end():].lstrip()   # a zero duration is no bound at all
+            changed = True
+    return seg
+
+
+# EXACT command forms, anchored at the start of the normalized segment -- an
+# exemption matched anywhere let `git rev-parse HEAD worktree remove` through.
+EXEMPT = (
+    # The cleanup trap must run even when the budget is gone; bounding a
+    # reaper is how you leak the thing it reaps.
+    re.compile(r"^git\s+worktree\s+(?:remove|prune)\b"),
+    # Supervised as a whole pipeline by the `timeout ... bash -c` around it;
+    # the body is scanned as its own scope, so the exemption is only for the
+    # producer inside that already-bounded shell. Fixture 22ds proves the bound
+    # by stalling the consumer.
+    re.compile(r"^git\s+--no-replace-objects\s+rev-list\b"),
+)
+
+bad = []
+for no, ln in logical:
+    hit = None
+    for scope in scopes_of(ln):
+        for seg in SEGMENT_SPLIT.split(scope):
+            norm = normalized(seg)
+            if not re.match(r"^git(\s|$)", norm):
+                continue
+            if any(e.match(norm) for e in EXEMPT):
+                continue
+            hit = norm[:60]
+            break
+        if hit:
+            break
+    if hit:
+        bad.append("%d:%s" % (no, hit))
+print("\n".join(bad))
+PYCX
+)"
+        G_CX_N="$(printf '%s\n' "$G_CX_HITS" | grep -c . || true)"
+        if [ "$G_CX_N" -ne 25 ]; then
+            t_fail "identity gate: the spawn scanner missed $((25 - G_CX_N)) of 25 known bypass forms, so a clean report means nothing"
+        elif [ -z "$G_UNBOUNDED" ]; then
+            t_pass "identity gate: every git spawn is bounded by the shared deadline (scanner sees all 25 bypass forms)"
+        else
+            t_fail "identity gate: unbounded git spawn(s): $(printf '%s' "$G_UNBOUNDED" | tr '\n' ' ')"
+        fi
+
+        # 22du: THE ORDINARY REPOSITORY HAS NO REPLACEMENTS, and that is where
+        # the endpoint freshness check has to hold. The peel array is populated
+        # only when replacement metadata exists, so on a normal repository
+        # every pre-exit assertion iterated an EMPTY array and a branch-valued
+        # endpoint could advance after resolution while the gate returned zero
+        # about the old commit (Codex adversarial, section 52 round 20,
+        # [high]). 22dq cannot see this: it installs a replacement first, which
+        # is exactly what makes the array non-empty -- and disabling the
+        # unconditional check left 22dq green, which is how this gap was found.
+        G_ADV2_COUNT="$TMP_DIR/gate-22du-count"
+        rm -f "$G_ADV2_COUNT"
+        (cd "$GATE_REPO" && git branch -f s52-adv2-branch "$G_PROTO_BASE" >/dev/null 2>&1)
+        if [ -n "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: 22du needs a repository with no replacements"
+        else
+            G_SHIM_ADV2="$TMP_DIR/gitshim-advance2-s52"
+            mkdir -p "$G_SHIM_ADV2"
+            cat > "$G_SHIM_ADV2/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_ADV2_COUNT
+REALGIT=$G_REAL_GIT
+TARGET=$G_CORRUPT
+# With no replacement metadata the state assertion's only spawn is this config
+# read, so counting it identifies each assertion. The first is mid-run, the
+# second guards the green exit.
+for a in "\$@"; do
+  if [ "\$a" = "core.useReplaceRefs" ]; then
+    n=0
+    [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+    n=\$((n + 1))
+    printf '%s' "\$n" > "\$COUNT"
+    if [ "\$n" = "2" ]; then
+      out="\$("\$REALGIT" "\$@")"; rc=\$?
+      "\$REALGIT" branch -f s52-adv2-branch "\$TARGET" >/dev/null 2>&1
+      [ -n "\$out" ] && printf '%s\n' "\$out"
+      exit "\$rc"
+    fi
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+            chmod +x "$G_SHIM_ADV2/git"
+            (cd "$GATE_REPO" && PATH="$G_SHIM_ADV2:$PATH" bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head s52-adv2-branch >"$TMP_DIR/gate-22du.log" 2>&1)
+            G_RC=$?
+            if [ ! -f "$G_ADV2_COUNT" ] || [ "$(cat "$G_ADV2_COUNT" 2>/dev/null)" -lt 2 ]; then
+                t_fail "identity gate: the state was not re-asserted on the no-replacement path, so 22du would pass vacuously"
+            elif [ "$G_RC" -eq 3 ] && grep -q 'no longer resolves to' "$TMP_DIR/gate-22du.log"; then
+                t_pass "identity gate: endpoint freshness holds on a repository with no replacements"
+            else
+                t_fail "identity gate: a late endpoint advance reached a green exit with no replacements (rc=$G_RC; see $TMP_DIR/gate-22du.log)"
+            fi
+            (cd "$GATE_REPO" && git branch -D s52-adv2-branch >/dev/null 2>&1)
+        fi
+
+        # 22dv: THE OTHER DIRECTION OF THE UNREADABLE SETTING. 22dr fails the
+        # RE-READ; failing the CAPTURE instead left the comparison emitting
+        # "changed from '<unreadable>'" -- movement asserted from a value that
+        # was never observed (Codex consistency, section 52 round 20, [medium]).
+        G_CFGFAIL1="$TMP_DIR/gate-22dv-count"
+        rm -f "$G_CFGFAIL1"
+        G_SHIM_CFG1="$TMP_DIR/gitshim-cfgfail1-s52"
+        mkdir -p "$G_SHIM_CFG1"
+        cat > "$G_SHIM_CFG1/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_CFGFAIL1
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  if [ "\$a" = "core.useReplaceRefs" ]; then
+    n=0
+    [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+    n=\$((n + 1))
+    printf '%s' "\$n" > "\$COUNT"
+    [ "\$n" = "1" ] && exit 129
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_CFG1/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_CFG1:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22dv.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_CFGFAIL1" ]; then
+            t_fail "identity gate: the setting was never read, so 22dv would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] \
+             && grep -q 'could not read core.useReplaceRefs on at least one side' "$TMP_DIR/gate-22dv.log" \
+             && ! grep -q 'core.useReplaceRefs changed' "$TMP_DIR/gate-22dv.log"; then
+            t_pass "identity gate: an unreadable CAPTURE is not reported as a change either"
+        else
+            t_fail "identity gate: a failed capture probe was reported as a change (rc=$G_RC; see $TMP_DIR/gate-22dv.log)"
+        fi
+
+        # 22dw / 22dx: ENDPOINT FRESHNESS IS NOT A REPLACEMENT QUESTION, so it
+        # cannot sit behind the replacement-state gate. Placed after it,
+        # "unconditional" held for exactly one of the three states: with
+        # `core.useReplaceRefs=false`, or with the operator's own documented
+        # `GIT_NO_REPLACE_OBJECTS` opt-out, the assertion returned before ever
+        # reaching the endpoint loop, so a branch could advance and the gate
+        # certified a range it was not asked about (Codex adversarial, section
+        # 52 round 21, [high]). 22du covers only the enabled state.
+        for G_STATE in disabled optout; do
+            G_FR_COUNT="$TMP_DIR/gate-22dw-$G_STATE-count"
+            rm -f "$G_FR_COUNT"
+            (cd "$GATE_REPO" && git branch -f s52-fresh-branch "$G_PROTO_BASE" >/dev/null 2>&1)
+            if [ "$G_STATE" = "disabled" ]; then
+                (cd "$GATE_REPO" && git config core.useReplaceRefs false >/dev/null 2>&1)
+            else
+                (cd "$GATE_REPO" && git config --unset core.useReplaceRefs >/dev/null 2>&1)
+            fi
+            G_SHIM_FR="$TMP_DIR/gitshim-fresh-$G_STATE-s52"
+            mkdir -p "$G_SHIM_FR"
+            cat > "$G_SHIM_FR/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_FR_COUNT
+REALGIT=$G_REAL_GIT
+TARGET=$G_CORRUPT
+for a in "\$@"; do
+  if [ "\$a" = "core.useReplaceRefs" ]; then
+    n=0
+    [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+    n=\$((n + 1))
+    printf '%s' "\$n" > "\$COUNT"
+    if [ "\$n" = "2" ]; then
+      out="\$("\$REALGIT" "\$@")"; rc=\$?
+      "\$REALGIT" branch -f s52-fresh-branch "\$TARGET" >/dev/null 2>&1
+      [ -n "\$out" ] && printf '%s\n' "\$out"
+      exit "\$rc"
+    fi
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+            chmod +x "$G_SHIM_FR/git"
+            if [ "$G_STATE" = "optout" ]; then
+                (cd "$GATE_REPO" && GIT_NO_REPLACE_OBJECTS=1 PATH="$G_SHIM_FR:$PATH" \
+                    bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head s52-fresh-branch \
+                    >"$TMP_DIR/gate-22dw-$G_STATE.log" 2>&1)
+            else
+                (cd "$GATE_REPO" && PATH="$G_SHIM_FR:$PATH" \
+                    bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head s52-fresh-branch \
+                    >"$TMP_DIR/gate-22dw-$G_STATE.log" 2>&1)
+            fi
+            G_RC=$?
+            if [ ! -f "$G_FR_COUNT" ] || [ "$(cat "$G_FR_COUNT" 2>/dev/null)" -lt 2 ]; then
+                t_fail "identity gate: the $G_STATE state never re-asserted, so its freshness case would pass vacuously"
+            elif [ "$G_RC" -eq 3 ] && grep -q 'no longer resolves to' "$TMP_DIR/gate-22dw-$G_STATE.log"; then
+                t_pass "identity gate: endpoint freshness holds with replacements $G_STATE"
+            else
+                t_fail "identity gate: freshness was skipped with replacements $G_STATE (rc=$G_RC; see $TMP_DIR/gate-22dw-$G_STATE.log)"
+            fi
+            (cd "$GATE_REPO" && git branch -D s52-fresh-branch >/dev/null 2>&1
+             cd "$GATE_REPO" && git config --unset core.useReplaceRefs >/dev/null 2>&1)
+        done
+
+        # 22dy: THE SETTING IS OBSERVED LAST, and that ordering is the fix.
+        # Read at the TOP of the assertion and compared there, a flip landing
+        # DURING the endpoint and metadata probes was invisible: those reads
+        # stay pinned to stored objects, the saved values compared equal, and
+        # the assertion returned success over a repository that had begun
+        # substituting (Codex adversarial, section 52 round 22, [high]). This
+        # fixture flips during the final assertion's LISTING read, which sits
+        # between the endpoint probes and the setting read.
+        G_LAST_COUNT="$TMP_DIR/gate-22dy-count"
+        rm -f "$G_LAST_COUNT"
+        # AN UNREACHABLE SUBJECT, so the capture runs but nothing refuses before
+        # the exit this fixture needs to reach. Replacing a reachable object
+        # instead made the base adjudication refuse first and the case passed
+        # vacuously, which its own probe control caught.
+        G_DY_EMPTY="$( (cd "$GATE_REPO" && git hash-object -t tree /dev/null 2>/dev/null) )"
+        G_DY_ORPHAN="$( (cd "$GATE_REPO" && git commit-tree "$G_DY_EMPTY" -m "22dy: unreachable" </dev/null 2>/dev/null) )"
+        if [ -z "$G_DY_ORPHAN" ]; then
+            t_fail "identity gate: could not build the 22dy unreachable subject"
+        fi
+        (cd "$GATE_REPO" && git replace -f "$G_DY_ORPHAN" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_SHIM_LAST="$TMP_DIR/gitshim-settinglast-s52"
+        mkdir -p "$G_SHIM_LAST"
+        cat > "$G_SHIM_LAST/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_LAST_COUNT
+REALGIT=$G_REAL_GIT
+seen_replace=0
+seen_list=0
+for a in "\$@"; do
+  [ "\$a" = "replace" ] && seen_replace=1
+  [ "\$a" = "-l" ] && seen_list=1
+done
+if [ "\$seen_replace\$seen_list" = "11" ]; then
+  n=0
+  [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+  n=\$((n + 1))
+  printf '%s' "\$n" > "\$COUNT"
+  if [ "\$n" = "3" ]; then
+    out="\$("\$REALGIT" "\$@")"; rc=\$?
+    "\$REALGIT" config core.useReplaceRefs false >/dev/null 2>&1
+    [ -n "\$out" ] && printf '%s\n' "\$out"
+    exit "\$rc"
+  fi
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_LAST/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_LAST:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_S52_HEAD" --head "$G_S52_HEAD" >"$TMP_DIR/gate-22dy.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_LAST_COUNT" ] || [ "$(cat "$G_LAST_COUNT" 2>/dev/null)" -lt 3 ]; then
+            t_fail "identity gate: the final assertion never re-read the listing, so 22dy would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] && grep -q 'core.useReplaceRefs changed' "$TMP_DIR/gate-22dy.log"; then
+            t_pass "identity gate: a setting flip during the final probes is still caught"
+        else
+            t_fail "identity gate: the setting was compared before the probes it must outlast (rc=$G_RC; see $TMP_DIR/gate-22dy.log)"
+        fi
+        (cd "$GATE_REPO" && git config --unset core.useReplaceRefs >/dev/null 2>&1
+         cd "$GATE_REPO" && git replace -d "$G_DY_ORPHAN" >/dev/null 2>&1)
+
+        # 22dz: THE REPLACEMENT WALK MUST NOT FAIL OPEN. The walk is supervised
+        # as one pipeline inside `bash -c`, and shell options do NOT cross that
+        # boundary -- so `pipefail` was absent, the pipeline reported awk's
+        # status, and a FAILED `rev-list` with no hit came back rc 0 and was
+        # read as "not substituted" (Codex adversarial, section 52 round 24,
+        # [high]). Of every direction this precondition can be wrong, that is
+        # the only one that matters: it lets a substituted repository through.
+        G_RLFAIL_SHIM="$TMP_DIR/gitshim-revlistfail-s52"
+        mkdir -p "$G_RLFAIL_SHIM"
+        cat > "$G_RLFAIL_SHIM/git" <<SHIM
+#!/usr/bin/env bash
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  [ "\$a" = "rev-list" ] && exit 128
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_RLFAIL_SHIM/git"
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        if [ -z "$( (cd "$GATE_REPO" && git replace -l 2>/dev/null) )" ]; then
+            t_fail "identity gate: the walk-failure fixture has no replacement, so it would pass vacuously"
+        else
+            (cd "$GATE_REPO" && PATH="$G_RLFAIL_SHIM:$PATH" bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22dz.log" 2>&1)
+            G_RC=$?
+            if [ "$G_RC" -eq 3 ] \
+               && grep -q 'could not determine whether repository replacement metadata' "$TMP_DIR/gate-22dz.log"; then
+                t_pass "identity gate: a failed replacement walk refuses instead of reading as clean"
+            else
+                t_fail "identity gate: the replacement walk failed OPEN (rc=$G_RC; see $TMP_DIR/gate-22dz.log)"
+            fi
+            (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+        fi
+
+        # 22dq: THE ENDPOINT PEELS EXPIRE TOO, and asserting them once mid-run
+        # was not enough. A branch can advance during the protocol, cache and
+        # resolver phases, after which the gate keeps adjudicating the OLD
+        # resolution and can return zero while the requested endpoint names a
+        # commit it never examined (Codex adversarial, section 52 round 19,
+        # [high]). The re-peel now lives inside the state assertion, which runs
+        # before every green exit; this fixture moves the ref during the LAST
+        # of those, so only that assertion can catch it.
+        G_ADV_COUNT="$TMP_DIR/gate-22dq-count"
+        rm -f "$G_ADV_COUNT"
+        (cd "$GATE_REPO" && git branch -f s52-adv-branch "$G_PROTO_BASE" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -f "$G_S52_ANC" "$G_PROTO_BASE" >/dev/null 2>&1)
+        G_SHIM_ADV="$TMP_DIR/gitshim-advance-s52"
+        mkdir -p "$G_SHIM_ADV"
+        cat > "$G_SHIM_ADV/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_ADV_COUNT
+REALGIT=$G_REAL_GIT
+TARGET=$G_CORRUPT
+seen_replace=0
+seen_list=0
+for a in "\$@"; do
+  [ "\$a" = "replace" ] && seen_replace=1
+  [ "\$a" = "-l" ] && seen_list=1
+done
+if [ "\$seen_replace\$seen_list" = "11" ]; then
+  n=0
+  [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+  n=\$((n + 1))
+  printf '%s' "\$n" > "\$COUNT"
+  if [ "\$n" = "3" ]; then
+    out="\$("\$REALGIT" "\$@")"; rc=\$?
+    "\$REALGIT" branch -f s52-adv-branch "\$TARGET" >/dev/null 2>&1
+    [ -n "\$out" ] && printf '%s\n' "\$out"
+    exit "\$rc"
+  fi
+fi
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_ADV/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_ADV:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head s52-adv-branch >"$TMP_DIR/gate-22dq.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_ADV_COUNT" ] || [ "$(cat "$G_ADV_COUNT" 2>/dev/null)" -lt 3 ]; then
+            t_fail "identity gate: the state was not re-asserted before the green exit, so 22dq would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] && grep -q 'no longer resolves to' "$TMP_DIR/gate-22dq.log"; then
+            t_pass "identity gate: an endpoint that advanced late is caught before the gate returns green"
+        else
+            t_fail "identity gate: a late endpoint advance reached a green exit (rc=$G_RC; see $TMP_DIR/gate-22dq.log)"
+        fi
+        (cd "$GATE_REPO" && git branch -D s52-adv-branch >/dev/null 2>&1)
+
+        # 22dr: AN UNREADABLE SETTING IS NOT AN OBSERVED CHANGE. Compared
+        # directly it produced a message asserting core.useReplaceRefs had
+        # CHANGED when the gate had merely failed to ask -- the same conflation
+        # the listing re-read was repaired for a round earlier (Codex
+        # consistency, section 52 round 19, [medium]).
+        G_CFGFAIL_COUNT="$TMP_DIR/gate-22dr-count"
+        rm -f "$G_CFGFAIL_COUNT"
+        G_SHIM_CFGFAIL="$TMP_DIR/gitshim-cfgfail-s52"
+        mkdir -p "$G_SHIM_CFGFAIL"
+        cat > "$G_SHIM_CFGFAIL/git" <<SHIM
+#!/usr/bin/env bash
+COUNT=$G_CFGFAIL_COUNT
+REALGIT=$G_REAL_GIT
+for a in "\$@"; do
+  if [ "\$a" = "core.useReplaceRefs" ]; then
+    n=0
+    [ -f "\$COUNT" ] && n=\$(cat "\$COUNT")
+    n=\$((n + 1))
+    printf '%s' "\$n" > "\$COUNT"
+    [ "\$n" = "2" ] && exit 129
+  fi
+done
+exec "\$REALGIT" "\$@"
+SHIM
+        chmod +x "$G_SHIM_CFGFAIL/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_CFGFAIL:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22dr.log" 2>&1)
+        G_RC=$?
+        if [ ! -f "$G_CFGFAIL_COUNT" ] || [ "$(cat "$G_CFGFAIL_COUNT" 2>/dev/null)" -lt 2 ]; then
+            t_fail "identity gate: the setting was never re-read, so 22dr would pass vacuously"
+        elif [ "$G_RC" -eq 3 ] \
+             && grep -q 'could not read core.useReplaceRefs on at least one side' "$TMP_DIR/gate-22dr.log" \
+             && ! grep -q 'core.useReplaceRefs changed' "$TMP_DIR/gate-22dr.log"; then
+            t_pass "identity gate: an unreadable setting is unanswerable, not an observed change"
+        else
+            t_fail "identity gate: a failed setting probe was reported as a change (rc=$G_RC; see $TMP_DIR/gate-22dr.log)"
+        fi
+
+        # 22ds: THE CONSUMER IS INSIDE THE DEADLINE TOO. `timeout` wraps the
+        # command it is given, so wrapping only the producer left awk outside
+        # it: killing git does not finish the command substitution while the
+        # consumer holds the pipe (Codex adversarial, section 52 round 19,
+        # [medium]).
+        G_AWK_SHIM="$TMP_DIR/awkshim-stall-s52"
+        mkdir -p "$G_AWK_SHIM"
+        cat > "$G_AWK_SHIM/awk" <<'AWKSHIM'
+#!/usr/bin/env bash
+exec sleep 20
+AWKSHIM
+        chmod +x "$G_AWK_SHIM/awk"
+        G_AWK_T0=$SECONDS
+        (cd "$GATE_REPO" && IDENTITY_GATE_BUDGET_SECS=2 PATH="$G_AWK_SHIM:$PATH" \
+            bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22ds.log" 2>&1)
+        G_RC=$?
+        G_AWK_ELAPSED=$(( SECONDS - G_AWK_T0 ))
+        if [ "$G_RC" -ne 0 ] && [ "$G_AWK_ELAPSED" -le 8 ]; then
+            t_pass "identity gate: a stalled walk consumer is inside the shared budget (${G_AWK_ELAPSED}s)"
+        else
+            t_fail "identity gate: the walk consumer escaped the shared budget (rc=$G_RC, ${G_AWK_ELAPSED}s; see $TMP_DIR/gate-22ds.log)"
+        fi
+        (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && git replace -d "$G_S52_ANC" >/dev/null 2>&1)
+    fi
 fi
 
 # ----------------------------------------------------------------------

@@ -92,6 +92,48 @@
 #        BASE_HISTORY_UNREADABLE      git could not traverse the base ancestry
 #        BASE_HISTORY_INCOMPLETE      shallow/grafted/replaced, so "never added
 #                                     in its history" would not be provable
+#        BASE_OBJECTS_SUBSTITUTED     replacement metadata makes the `--base`
+#                                     argument resolve to a DIFFERENT commit
+#                                     than the stored objects do -- an
+#                                     annotated tag whose tag object is
+#                                     replaced, say. Distinct from
+#                                     BASE_HISTORY_INCOMPLETE, which is about
+#                                     objects reachable FROM an agreed base;
+#                                     this one says the two sides do not agree
+#                                     which commit the base IS (section 52).
+#                                     ALSO emitted when the question could not
+#                                     be ANSWERED -- an uncapturable peel -- and
+#                                     the message says which of the two it is:
+#                                     an unanswered probe must refuse, and it
+#                                     shares the token because the operator
+#                                     action (clear the metadata, or use a
+#                                     clean clone) is the same
+#        HEAD_OBJECTS_SUBSTITUTED     replacement metadata makes the head not
+#                                     the head. TWO routes, one token, because
+#                                     the operator action is identical and the
+#                                     message says which: (a) an entry
+#                                     substitutes an object in the head commit
+#                                     itself, or (b) it makes the `--head`
+#                                     argument PEEL to a different commit than
+#                                     the stored objects do -- an annotated tag
+#                                     whose tag object is replaced, say, which
+#                                     is not in the head commit at all. The
+#                                     gate pins replacement reads OFF, so in
+#                                     neither case is it reading the substitute
+#                                     -- it is refusing to certify a commit
+#                                     that git shows the operator differently
+#                                     (section 52). A THIRD emission is the
+#                                     indeterminate one: either probe may fail
+#                                     to answer, and an unanswered question
+#                                     refuses rather than passes. The message
+#                                     distinguishes all three; the token does
+#                                     not, because the operator action is the
+#                                     same for each
+#                                     Named for object substitution rather
+#                                     than for a history claim: unlike the
+#                                     base, the head side makes no never-added
+#                                     inference, so it has no history to call
+#                                     incomplete
 #        HEAD_TREE_UNREADABLE         git could not say what the head commit
 #                                     contains
 #        BASE_PROTOCOL_NOT_A_FILE     the protocol PARSED, but through a path
@@ -113,6 +155,62 @@
 #        HEAD_PROTOCOL_UNMATERIALIZED the commit has it, the working tree does
 #                                     not: an incomplete/sparse checkout
 #        HEAD_PROTOCOL_UNREADABLE     complete at HEAD, but unparseable
+#
+#      Two belong to the ENDPOINTS (section 52) -- resolving the arguments,
+#      probing the fallback chain, and revalidating the replacement state and
+#      the endpoint peels. They are a separate family from the closure tokens
+#      below even though both are about the gate failing to hold its subject
+#      still.
+#
+#      THEIR PRECEDENCE IS NOT UNIFORM, and two drafts of this paragraph
+#      overclaimed it in opposite directions (Codex consistency, section 52
+#      rounds 23 and 24). What is actually true:
+#        - ACQUISITION failures come first, before anything else is read, and
+#          that includes HEAD ones: the head argument is resolved before the
+#          base is even established, so `--head <garbage>` reports ahead of
+#          every base and closure token. Base-first governs CLASSIFICATION, not
+#          the act of working out which commits were named.
+#        - REVALIDATION runs base before head within itself, so a base fault
+#          wins there.
+#        - The two head SUBSTITUTION results are the ones deliberately deferred
+#          to the head's own site, which is after the closure MEASUREMENT and
+#          after base protocol adjudication -- so those report first. It is
+#          NOT after the closure's structural re-check, which runs later still,
+#          so a non-regular or moved closure member reports AFTER a substituted
+#          head rather than before it. Saying "a closure fault reports first"
+#          without that distinction was wrong for exactly the structural half
+#          (Codex consistency, section 52 round 25).
+#        ENDPOINT_UNRESOLVABLE        the gate could not ASK what an endpoint
+#                                     argument resolves to: the probe failed,
+#                                     or the shared budget expired while it
+#                                     ran. Machinery, not a statement about
+#                                     the argument -- distinct from "'X' is
+#                                     not a commit", which is an answer
+#                                     (section 52)
+#        ENDPOINT_MOVED_UNDER_GATE    the repository moved under the endpoint
+#                                     snapshot: a spec resolved to two
+#                                     different commits while being read, a
+#                                     spec no longer resolves to what it did,
+#                                     the replacement metadata itself changed,
+#                                     or `core.useReplaceRefs` was turned on or
+#                                     off -- four causes, plus an INDETERMINATE
+#                                     fifth below for a probe that could not
+#                                     answer at all. All four say the captured
+#                                     state no longer describes the repository
+#                                     and all take the same repair, so they
+#                                     share a token and the message says
+#                                     which. The FIFTH emission is the
+#                                     indeterminate one: any of those probes
+#                                     may fail or run out of budget, and an
+#                                     unanswered question refuses rather than
+#                                     passes -- the message distinguishes "it
+#                                     changed" from "it could not be asked".
+#                                     Sibling of the closure token
+#                                     below. Published separately from the
+#                                     substitution tokens because blaming
+#                                     replacement metadata for a branch that
+#                                     simply advanced sends the operator to
+#                                     the wrong repair (section 52)
 #
 #      Two more are raised by the closure re-check that guards the exit
 #      (section 51). They say nothing about the protocol and nothing about the
@@ -263,11 +361,49 @@ esac
 # backward steps under WSL2 on 2026-08-06 (-1158ms, -262ms, -246ms) after a
 # suspend/resync, and refuses such readings for the same reason.
 # `time.monotonic()` cannot step backward by definition.
-GATE_MONO_START="$(python3 -c 'import time; print(int(time.monotonic()))')" \
-    || die_infra "cannot read a monotonic clock"
+# ONE BOUNDED READER FOR EVERY CLOCK READ IN THIS FILE. Bounding only the
+# newest caller left the initial reading and `remaining()` launching an
+# interpreter with no limit, so a wedged python could hang the gate BEFORE the
+# first bounded probe ever started -- and hard-killing a child cannot help when
+# the child is never spawned (Codex adversarial AND perf, section 52 round 17,
+# [medium], found independently by both). A FIXED small limit, never the
+# budget: this is what measures the budget, so it cannot spend it.
+# ASSIGNS, NEVER PRINTS. A caller writing `x="$(budget_left)"` forks a subshell,
+# and `budget_left` calling `$(mono_now)` inside it forked a second -- so the
+# clock that reads a file with builtins still cost two processes per bounded
+# probe, measured at ~2.19ms each and ~22% of the common unchanged path, while
+# this file claimed it cost nothing (Codex perf, section 52 round 24, [medium]).
+# Both now assign through a global and run in the current shell.
+mono_now() {   # sets MONO_NOW to integer monotonic seconds, or "" ; rc 1 if unreadable
+    local _up
+    MONO_NOW=""
+    # NO FORK ON THE PATH THAT RUNS PER QUERY. Every bounded probe asks the
+    # clock first, so an interpreter start per ask is a cost the deadline
+    # imposes on HEALTHY runs: measured at ~1.7s added to an ordinary
+    # unchanged-closure run, about half of it (Codex perf, section 52 round
+    # 21, [medium]). `/proc/uptime` is a counter that cannot step backward,
+    # which is the only property this deadline needs, and bash reads it with
+    # builtins alone -- no process at all.
+    if [ -r /proc/uptime ] && read -r _up _ < /proc/uptime; then
+        _up="${_up%%.*}"
+        case "$_up" in
+            ''|*[!0-9]*) ;;          # not a number: fall through to the probe
+            *) MONO_NOW="$_up"; return 0 ;;
+        esac
+    fi
+    # THE FALLBACK KEEPS ITS BOUND. Where /proc is absent the clock is a
+    # subprocess again, and a subprocess that never starts would stop the very
+    # probe it is meant to bound.
+    MONO_NOW="$(timeout --foreground -s KILL 5 \
+        python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null)" || MONO_NOW=""
+    [ -n "$MONO_NOW" ]
+}
+mono_now
+GATE_MONO_START="$MONO_NOW"
+[ -n "$GATE_MONO_START" ] || die_infra "cannot read a monotonic clock"
 remaining() {
     local _now _r
-    _now="$(python3 -c 'import time; print(int(time.monotonic()))')" || _now=""
+    mono_now && _now="$MONO_NOW" || _now=""
     if [ -z "$_now" ]; then
         # A clock we cannot read is INFRASTRUCTURE, never "plenty of time".
         printf '1'
@@ -278,8 +414,316 @@ remaining() {
     printf '%s' "$_r"
 }
 
-HEAD_RESOLVED="$(git rev-parse --verify "${HEAD_SHA}^{commit}" 2>/dev/null)" \
-    || die_infra "head '$HEAD_SHA' is not a commit"
+# THE SAME CLOCK, WITHOUT THE FLOOR -- and the floor is exactly why this exists.
+# `remaining` never returns less than 1, which is correct for a SINGLE call
+# (timeout(1) reads 0 as "no timeout at all") and wrong for a LOOP: every probe
+# in a batch is then granted a fresh second regardless of how long the batch has
+# already run, so a bounded-looking loop overruns the gate deadline in
+# proportion to how many probes it spawns. Measured on the staged script with a
+# 1s budget: a stalling revision search ran 6.19s (Codex perf, section 52 round
+# 13, [medium]). Callers that spawn repeatedly ask THIS one and refuse to spawn
+# at all once it answers 0.
+#
+# `?` when the clock is unreadable, which callers must treat as expired: a
+# budget that cannot be measured is infrastructure, never "plenty of time".
+budget_left() {   # sets BUDGET_LEFT to seconds remaining (>= 0), or `?`
+    local _r
+    # THE CLOCK ITSELF IS BOUNDED. Every probe below is wrapped in a deadline
+    # this function computes, so an interpreter that never starts would stop
+    # the wrapped probe from ever running and the gate would hang exactly where
+    # it claims to be bounded (Codex adversarial, section 52 round 16,
+    # [medium]). A FIXED small bound, not the budget: it is measuring the
+    # budget, so it cannot spend it, and an unreadable clock is `?` -- which
+    # every caller treats as expired.
+    if ! mono_now; then
+        BUDGET_LEFT="?"
+        return 0
+    fi
+    _r=$(( BUDGET_SECS - (MONO_NOW - GATE_MONO_START) ))
+    [ "$_r" -lt 0 ] && _r=0
+    BUDGET_LEFT="$_r"
+}
+
+# A LISTED REPLACEMENT IS NOT NECESSARILY AN ACTIVE ONE. `GIT_NO_REPLACE_OBJECTS`
+# and `core.useReplaceRefs=false` turn replacement reads OFF, so every read the
+# gate makes resolves stored objects while `git replace -l` still enumerates the
+# refs -- and a range whose base was never substituted was refused as
+# manufactured (Codex adversarial, section 50 round 11).
+#
+
+# SNAPSHOT FIRST, PIN SECOND, ADJUDICATE THIRD -- and the ORDER is the fix.
+#
+# The first cut asked the question after both endpoints were resolved, which
+# left the RESOLUTION itself running under substituted semantics: the fallback
+# base is `HEAD~1`, and reading HEAD's parent resolves THROUGH a replacement of
+# the head commit, so the gate could derive a base from an object the
+# repository manufactured. Removing the replacement before the guard's own
+# `git replace -l` then made the metadata look clean, and the manufactured
+# range was adjudicated and recorded as a baseline while the stored one went
+# unexamined (Codex adversarial, section 52 round 2, [high]).
+#
+# So the effective replacement state is captured HERE, before a single
+# revision is peeled or a parent traversed, and replacement reads are pinned
+# off immediately afterwards. Everything downstream -- endpoint resolution, the
+# closure measurement, the base worktree, every `ls-tree` -- then resolves
+# STORED objects, and the adjudication below tests the captured set against
+# those stored walks rather than re-asking a question whose answer could have
+# moved underneath it.
+# ONE READ OF THE SETTING, DERIVED INTO BOTH THE STATE AND THE BASELINE.
+# Reading it twice -- once to decide the state, once to record what to
+# revalidate against -- opened a window between the two in which they could
+# already disagree, which is the exact hazard the revalidation exists to close.
+#
+# AND IT IS CAPTURED IN EVERY STATE, not only the enabled one.
+# `core.useReplaceRefs` can be turned ON while the gate runs: with it initially
+# false the capture is skipped, the listing is never read, and the revalidation
+# was guarded on the enabled state -- so a concurrent enable left ordinary git
+# resolving through pre-existing replace refs while this gate stayed pinned to
+# stored objects and reported clean, returning rc 0 and advancing its baseline
+# over a substituted endpoint (Codex adversarial, section 52 round 16, [high]).
+# The same shape as the zero-to-one listing race, one level up.
+#
+# PRESENCE, NOT TRUTHINESS, for the environment override. git disables
+# replacement reads when `GIT_NO_REPLACE_OBJECTS` is SET, whatever its value --
+# confirmed directly: with `GIT_NO_REPLACE_OBJECTS=0`, `git cat-file -p` on a
+# replaced object prints the ORIGINAL. Recognising only plainly-true values and
+# calling the rest undecidable refused ranges git was definitively not
+# substituting (Codex adversarial, section 50 round 14).
+#
+# THE AMBIGUOUS CASE FAILS CLOSED RATHER THAN GUESSING WHICH WAY GIT READ IT.
+# Only a plainly-false value counts as "disabled"; a value that could not be
+# read is undecided, because being wrong in the other direction would mean
+# trusting a substituted tree, and an over-refusal is the cheaper error.
+budget_left; _left="$BUDGET_LEFT"
+if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+    REPLACE_SETTING="<unreadable>"
+else
+    REPLACE_SETTING="$(timeout -s KILL "$_left" \
+                           git config --bool --get core.useReplaceRefs 2>/dev/null)"
+    case "$?" in
+        0) ;;
+        1) REPLACE_SETTING="<unset>" ;;   # git's default is to use them
+        *) REPLACE_SETTING="<unreadable>" ;;
+    esac
+fi
+if [ "${GIT_NO_REPLACE_OBJECTS+set}" = set ]; then
+    REPLACE_STATE=1
+elif [ "$REPLACE_SETTING" = "false" ]; then
+    REPLACE_STATE=1
+elif [ "$REPLACE_SETTING" = "<unreadable>" ]; then
+    REPLACE_STATE=2
+else
+    REPLACE_STATE=0
+fi
+REPLACED_LIST=""
+if [ "$REPLACE_STATE" -eq 0 ]; then
+    # A FAILED LISTING IS NOT AN EMPTY ONE. `|| REPLACE_STATE=2` already said
+    # that; the bound makes it reachable rather than something the gate hangs
+    # before deciding.
+    budget_left; _left="$BUDGET_LEFT"
+    if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+        REPLACE_STATE=2
+    else
+        REPLACED_LIST="$(timeout -s KILL "$_left" \
+                             git replace -l 2>/dev/null)" || REPLACE_STATE=2
+    fi
+fi
+
+# THE ACTIVE PEEL OF EACH ENDPOINT SPEC IS CAPTURED HERE TOO, in the SAME
+# unpinned moment as the list above, and that adjacency is the point.
+#
+# The peel from a commit-ish to a commit is itself a substitutable read, and no
+# object walk can see it: `--head <annotated-tag>` resolves through the tag
+# OBJECT, and a tag object is not reachable from the commit it points at, so it
+# is in neither the history walk nor the snapshot walk. Under the pin the gate
+# peels the STORED tag while the operator's git peels the replacement to a
+# different commit, and the gate would certify a range nobody asked about
+# (Codex adversarial AND consistency, section 52 round 7, found independently
+# by both).
+#
+# ASKING GIT AGAIN LATER IS NOT THE SAME QUESTION. The first fix re-peeled with
+# the pin lifted at adjudication time, which read whatever refs existed THEN --
+# so a replacement deleted after capture and restored afterwards made the two
+# peels agree while the operator still resolved elsewhere, defeating the
+# point-in-time capture this block exists to take (Codex adversarial, section
+# 52 round 8). Captured here instead, the operator's answer and the replacement
+# metadata are read as one snapshot, and adjudication is pure comparison with
+# no further git call.
+#
+# NOTHING CAPTURED HERE IS EVER USED AS A RESOLUTION. It is only ever compared
+# against the stored peel taken after the pin, which is the value the gate
+# keeps -- so an endpoint the repository manufactured cannot become the range,
+# which is what asking before the pin cost the first time (round 2).
+#
+# ONLY THE SPECS KNOWABLE NOW. The derived `HEAD~1` base is not among them: it
+# is not formed until the head is resolved. It needs no entry, because reading
+# the head commit's parent is a read of the HEAD COMMIT OBJECT, and a
+# replacement of that object is already refused by the reachability
+# adjudication below.
+# PARALLEL ARRAYS, NOT A DELIMITED TABLE, because a revision spec is an
+# arbitrary string and git accepts whitespace inside one -- `HEAD^{/some
+# message}` is a legal endpoint. A `spec peel` table looked up by whitespace
+# field made every such spec MISS its own row, and a miss is deliberately read
+# as "no divergence", so the substituted-tag bypass reopened for exactly the
+# specs nobody would think to test (Codex adversarial, section 52 round 9,
+# [medium]). Exact-key comparison has no such failure mode.
+# BOTH PEELS OF A SPEC ARE TAKEN HERE, ADJACENTLY, AND COMPARED TO EACH OTHER.
+# The first cut captured only the ACTIVE peel and compared it against the
+# resolution taken after the pin -- two reads separated by the whole endpoint
+# resolution, so an endpoint ref that MOVED in between (a commit landing on the
+# branch under test) diverged for a reason that has nothing to do with
+# replacement metadata, and the gate emitted a token whose published meaning
+# says metadata caused it. A false rc 3 pointing the operator at the wrong
+# repair (Codex consistency, section 52 round 11, [medium]).
+#
+# MOVEMENT IS DETECTED RATHER THAN ASSUMED AWAY. The active peel is taken
+# TWICE, once on each side of the stored one; if those two disagree the spec
+# moved while this block was reading it, which is a different fact with a
+# different repair (re-run) and gets its own token. Only when they agree is a
+# difference against the stored peel attributable to replacement metadata --
+# which is the whole claim the substitution tokens make.
+ACTIVE_PEEL_SPECS=()
+ACTIVE_PEEL_VALS=()
+ACTIVE_PEEL_OIDS=()
+if [ "$REPLACE_STATE" -eq 0 ] && [ -n "$REPLACED_LIST" ]; then
+    for _spec in "$HEAD_SHA" "$BASE_SHA" \
+                 "${IDENTITY_GATE_LAST_GATED_SHA:-}" "${GITHUB_EVENT_BEFORE:-}"; do
+        [ -n "$_spec" ] || continue
+        # A FAILED PEEL IS RECORDED AS `?`, NOT AS ABSENT: absent means "no
+        # entry, nothing to compare", and a probe that could not answer must
+        # refuse rather than read as agreement. `!` is the moved-under-us
+        # sentinel; neither can collide with an oid, which is hex.
+        # BOUNDED LIKE EVERY OTHER LONG STEP. A revision spec is not always a
+        # cheap peel: `<rev>^{/regex}` SEARCHES history, and this file's own
+        # fixtures use that syntax, so three unbounded calls per spec across
+        # four specs is up to twelve history traversals ahead of any deadline
+        # -- measured at 118ms for a hit and 181ms for a miss on a 5,696-commit
+        # checkout, and unbounded on a larger or degraded one (Codex perf,
+        # section 52 round 12, [medium]).
+        budget_left; _left="$BUDGET_LEFT"
+        if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+            # NO SPAWN PAST THE DEADLINE. The batch shares one budget, so a
+            # probe that could only start by borrowing time the gate no longer
+            # has is not run; the spec records an unanswerable peel and the
+            # refusal says so.
+            _peel="" _stored="" _again=""
+        else
+            _peel="$(timeout -s KILL "$_left" \
+                         git rev-parse --verify --quiet "${_spec}^{commit}" 2>/dev/null)" || _peel=""
+            budget_left; _left="$BUDGET_LEFT"
+            if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+                _stored="" _again=""
+            else
+                _stored="$(GIT_NO_REPLACE_OBJECTS=1 timeout -s KILL "$_left" \
+                             git rev-parse --verify --quiet "${_spec}^{commit}" 2>/dev/null)" || _stored=""
+                budget_left; _left="$BUDGET_LEFT"
+                if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+                    _again=""
+                else
+                    _again="$(timeout -s KILL "$_left" \
+                                 git rev-parse --verify --quiet "${_spec}^{commit}" 2>/dev/null)" || _again=""
+                fi
+            fi
+        fi
+        # ALL THREE PROBES ARE TESTED FOR AN ANSWER BEFORE ANY OF THEM IS
+        # COMPARED. Checking only the first two let a failed THIRD peel -- an
+        # empty string -- read as "differs from the first", so an unanswered
+        # probe was reported as the endpoint having MOVED: a definite token for
+        # an indeterminate observation, sending the operator to re-run a
+        # repository that was never moving (Codex adversarial AND consistency,
+        # section 52 round 12, [medium], found independently by both).
+        if [ -z "$_peel" ] || [ -z "$_stored" ] || [ -z "$_again" ]; then
+            _peel="?"
+        elif [ "$_peel" != "$_again" ]; then
+            _peel="!"
+        elif [ "$_peel" = "$_stored" ]; then
+            _peel=""     # agrees: no divergence to record
+        fi
+        ACTIVE_PEEL_SPECS+=("$_spec")
+        ACTIVE_PEEL_VALS+=("${_peel:-=}")
+        ACTIVE_PEEL_OIDS+=("$_again")
+    done
+fi
+export GIT_NO_REPLACE_OBJECTS=1
+
+
+# EVERY ENDPOINT PEEL IS BOUNDED, INCLUDING THE ONES THAT RESOLVE THE RANGE.
+# A revision spec is arbitrary and `<rev>^{/regex}` searches history, so the
+# handful of `rev-parse` calls that establish the endpoints are as capable of
+# stalling as the capture batch below -- and they had no bound at all. A
+# 20s-per-call stall against a 2s budget spent 100s in the gate before any
+# section-52 probe ran, which is the same overrun the capture batch was just
+# repaired for and would have made that repair look ineffective.
+#
+# THREE OUTCOMES, KEPT APART. rc 0 is an answer; rc 1 is `--verify` saying the
+# spec does not resolve, which callers legitimately branch on; anything else --
+# including the timeout's 124/137 and an expired budget -- is the gate failing
+# to ASK, which must never read as "does not resolve" (this file's oldest
+# recurring fault).
+# THE SAME DISCIPLINE FOR ANY GIT QUERY THIS GATE DEPENDS ON. The closure
+# passes spawn `ls-tree`, `rev-parse`, `cat-file` and `hash-object` per member
+# and had no limit at all, so stalled repository or filesystem I/O could wedge
+# a local pre-push run indefinitely while the file advertised one shared
+# deadline (Codex adversarial AND perf, section 52 round 20, [medium], found
+# independently by both). Callers keep their existing `||` handling: rc 2 lands
+# in the same arm a git failure already did, so the bound is added without
+# changing what any failure MEANS.
+# NO `--foreground` ON THE GIT PROBES, DELIBERATELY -- AND THE FLAG STAYS
+# EVERYWHERE ELSE. Removing it wholesale reopened a documented section 50
+# round 24 [high]: `proto_of`, the transport read, the base checkout and its
+# cleanup removals are kept IN the gate's own process group on purpose, so a
+# TERM or INT delivered to the gate reaches them and `cleanup` can reap the
+# linked tree and the tempdir; the children caveat costs nothing there because
+# those probes spawn none (Codex adversarial, section 52 round 30, [high]). It
+# costs plenty here, which is why the git probes are the exception:
+#
+# That flag's documented meaning is that the
+# command is NOT put in its own process group, which excludes its CHILDREN from
+# the timeout -- measured directly: a 1s foreground timeout around a process
+# with a 5s child took the full 5s, and the same command without the flag took
+# 1s (Codex adversarial, section 52 round 29, [medium]). Git does spawn
+# descendants (hooks, promisor and lazy-fetch helpers), and a stalled one holds
+# the command substitution's pipe open past the budget. Without the flag the
+# whole group is signalled, which is what a shared deadline has to mean.
+bounded_git() {   # args after `git`; 0 ok, 1 git said no, 2 could not ask
+    local _left _out _rc
+    budget_left; _left="$BUDGET_LEFT"
+    { [ "$_left" = "?" ] || [ "$_left" -le 0 ]; } && return 2
+    _out="$(timeout -s KILL "$_left" git "$@" 2>/dev/null)"
+    _rc=$?
+    case "$_rc" in
+        0) printf '%s' "$_out"; return 0 ;;
+        1) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+bounded_rev_parse() {   # args after `git rev-parse`; 0 ok, 1 no-resolve, 2 could not ask
+    local _left _out _rc
+    budget_left; _left="$BUDGET_LEFT"
+    { [ "$_left" = "?" ] || [ "$_left" -le 0 ]; } && return 2
+    _out="$(timeout -s KILL "$_left" git rev-parse "$@" 2>/dev/null)"
+    _rc=$?
+    case "$_rc" in
+        0) printf '%s' "$_out"; return 0 ;;
+        1) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+HEAD_SPEC="$HEAD_SHA"
+# `--quiet` IS LOAD-BEARING HERE, not tidiness. Without it `--verify` exits 128
+# on an invalid revision, which the helper classifies as "could not ask" -- so
+# `--head definitely-not-a-ref`, a plain caller error, was reported as failed
+# machinery under ENDPOINT_UNRESOLVABLE and sent the operator to repair
+# infrastructure (Codex adversarial, section 52 round 14, [medium]). With it,
+# a non-resolving revision is rc 1, which is an ANSWER.
+HEAD_RESOLVED="$(bounded_rev_parse --verify --quiet "${HEAD_SHA}^{commit}")"
+case "$?" in
+    0) ;;
+    1) die_infra "head '$HEAD_SHA' is not a commit" ;;
+    *) die_infra "ENDPOINT_UNRESOLVABLE: the gate could not ask what '$HEAD_SHA' resolves to -- the probe failed or the budget expired while it ran, which is the gate's own machinery and not a statement about the argument, and no range is being guessed from it" ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Establish the base. Prefer the last SHA this gate actually PASSED (see the
@@ -294,36 +738,579 @@ HEAD_RESOLVED="$(git rev-parse --verify "${HEAD_SHA}^{commit}" 2>/dev/null)" \
 # the one requested. Found by fixture 22e, which passed a zero SHA and got a
 # green run over an entirely different range.
 if [ "$BASE_EXPLICIT" -eq 1 ]; then
-    git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null 2>&1 \
-        || die_infra "--base '$BASE_SHA' is not a commit in this repository"
+    bounded_rev_parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null
+    case "$?" in
+        0) ;;
+        1) die_infra "--base '$BASE_SHA' is not a commit in this repository" ;;
+        *) die_infra "ENDPOINT_UNRESOLVABLE: the gate could not ask what '--base $BASE_SHA' resolves to -- the probe failed or the budget expired while it ran, which is the gate's own machinery and not a statement about the argument, and no range is being guessed from it" ;;
+    esac
 fi
 
+# THE SPEC IS KEPT, NOT JUST THE RESOLUTION. A commit-ish is not always a
+# commit oid, and the peel from one to the other is itself a read git can
+# substitute, so the string that was peeled has to survive -- as the KEY that
+# locates its snapshot-time captured peel, which the check below compares
+# against the stored one. It is peeled again only by the revalidation pass,
+# which asks whether the spec still points where it did -- never to decide the
+# substitution verdict itself.
+BASE_SPEC="$BASE_SHA"
+BASE_SPEC_DERIVED=0
 if [ -z "$BASE_SHA" ]; then
     BASE_SHA="${IDENTITY_GATE_LAST_GATED_SHA:-}"
+    BASE_SPEC="$BASE_SHA"
 fi
-if [ -z "$BASE_SHA" ] || ! git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null 2>&1; then
+BASE_CAND_RC=0
+if [ -n "$BASE_SHA" ]; then
+    bounded_rev_parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null
+    BASE_CAND_RC=$?
+    # A PROBE THAT COULD NOT RUN IS NOT "THIS BASE IS NO GOOD". Folded into the
+    # `||` chain it silently advanced to the next candidate and answered about
+    # a different range -- the failed-question-as-negative-answer fault, here in
+    # the one place that chooses WHICH range is adjudicated.
+    [ "$BASE_CAND_RC" -eq 2 ] && die_infra "ENDPOINT_UNRESOLVABLE: the gate could not ask whether the last-gated base '$BASE_SHA' is still a commit here -- the probe failed or the budget expired while it ran, so no fallback is being taken and no range is being guessed"
+fi
+if [ -z "$BASE_SHA" ] || [ "$BASE_CAND_RC" -ne 0 ]; then
     # The zero sentinel is what GitHub sends for a branch's first push and can
     # also appear after a force-push; treat it as absent rather than as a SHA.
     CAND="${GITHUB_EVENT_BEFORE:-}"
     case "$CAND" in
         0000000000000000000000000000000000000000|"") CAND="" ;;
     esac
-    if [ -n "$CAND" ] && git rev-parse --verify --quiet "${CAND}^{commit}" >/dev/null 2>&1; then
+    # ONLY rc 1 PERMITS A FALLBACK. These three probes CHOOSE WHICH RANGE IS
+    # ADJUDICATED, so folding their status into a boolean is the worst place in
+    # the file for the failed-question-as-negative-answer fault: a stalled or
+    # failed event-base lookup read as "that candidate is unusable" and the
+    # chain quietly advanced to HEAD~1, adjudicating only the last commit of a
+    # multi-commit push and able to return GREEN over resolver changes it never
+    # compared (Codex adversarial AND consistency, section 52 round 14, [high],
+    # found independently by both). They were also the last unbounded spawns in
+    # the endpoint batch, so a stall here escaped the shared deadline entirely.
+    CAND_RC=1
+    if [ -n "$CAND" ]; then
+        bounded_rev_parse --verify --quiet "${CAND}^{commit}" >/dev/null
+        CAND_RC=$?
+        [ "$CAND_RC" -eq 2 ] && die_infra "ENDPOINT_UNRESOLVABLE: the gate could not ask whether the push event's before-SHA '$CAND' is a commit here -- the probe failed or the budget expired while it ran. No fallback is being taken, because falling back would silently adjudicate a narrower range than the one requested"
+    fi
+    PARENT_RC=1
+    if [ "$CAND_RC" -ne 0 ]; then
+        bounded_rev_parse --verify --quiet "${HEAD_RESOLVED}~1^{commit}" >/dev/null
+        PARENT_RC=$?
+        [ "$PARENT_RC" -eq 2 ] && die_infra "ENDPOINT_UNRESOLVABLE: the gate could not ask whether '$HEAD_RESOLVED~1' is a commit -- the probe failed or the budget expired while it ran, so no base is being derived and no range is being guessed"
+    fi
+    if [ "$CAND_RC" -eq 0 ]; then
         BASE_SHA="$CAND"
-    elif git rev-parse --verify --quiet "${HEAD_RESOLVED}~1^{commit}" >/dev/null 2>&1; then
-        BASE_SHA="$(git rev-parse "${HEAD_RESOLVED}~1")"
+        BASE_SPEC="$CAND"
+    elif [ "$PARENT_RC" -eq 0 ]; then
+        BASE_SHA="$(bounded_rev_parse "${HEAD_RESOLVED}~1")" \
+            || die_infra "ENDPOINT_UNRESOLVABLE: the gate could not resolve '$HEAD_RESOLVED~1' after confirming it exists -- the probe failed or the budget expired while it ran, and no range is being guessed from it"
+        BASE_SPEC="${HEAD_RESOLVED}~1"
+        BASE_SPEC_DERIVED=1
         log "no gated/event base reachable; falling back to HEAD~1"
     else
         die_infra "no usable base commit (no last-gated SHA, no reachable event before-SHA, no HEAD~1)"
     fi
 fi
-BASE_SHA="$(git rev-parse "${BASE_SHA}^{commit}")"
+BASE_SHA="$(bounded_rev_parse "${BASE_SHA}^{commit}")" \
+    || die_infra "ENDPOINT_UNRESOLVABLE: the gate could not peel the base '$BASE_SPEC' to a commit after confirming it is one -- the probe failed or the budget expired while it ran, and no range is being guessed from it"
 
 log "base $BASE_SHA"
 log "head $HEAD_RESOLVED"
 
-if [ "$BASE_SHA" = "$HEAD_RESOLVED" ]; then
+# THE PEEL FROM A COMMIT-ISH TO A COMMIT IS ITSELF A SUBSTITUTABLE READ, and
+# the walks above cannot see it. Endpoints are peeled UNDER the pin, so
+# `--head <annotated-tag>` resolves through the STORED tag object -- while the
+# operator's own git, and every other tool they run, resolves it through the
+# replacement to a different commit. The tag object is not reachable from the
+# commit it points at (tags point toward commits, not the reverse), so neither
+# the history walk nor the snapshot walk contains it, and the gate would
+# certify a range nobody asked about and advance its confidence over it (Codex
+# adversarial AND consistency, section 52 round 7, [medium], found
+# independently by both).
+#
+# ASKED AS A COMPARISON RATHER THAN A CHAIN WALK. Enumerating a peel chain
+# means re-implementing what `rev-parse` already does, including nested tags;
+# comparing the SNAPSHOT-TIME peel of the same spec against the stored one
+# answers the question that actually matters -- does this gate resolve the
+# endpoint the repository resolves -- and covers ref chains and nested tags
+# without knowing their shape. Nothing manufactured is ever USED: the stored
+# resolution is what the gate keeps, and a divergence is refused outright.
+#
+# THE VERDICT IS LOOKED UP, NOT RE-DERIVED, and that is the round-8 repair
+# rather than a detail: deciding it here read whatever refs existed at THIS
+# moment, so a replacement removed after capture and restored afterwards made
+# the two peels agree while the operator still resolved elsewhere. This
+# function spawns nothing. The freshness of what it reads back is not its job
+# either: the revalidation pass above has already confirmed the captured state
+# still describes the repository, which is why `ACTIVE_PEEL_OIDS` is retained.
+endpoint_peel_diverges() {  # $1 = spec, $2 = stored resolution, $3 = 1 if derived; 0 diverges, 1 same, 2 cannot tell
+    local _i _a=""
+    for _i in "${!ACTIVE_PEEL_SPECS[@]}"; do
+        if [ "${ACTIVE_PEEL_SPECS[$_i]}" = "$1" ]; then
+            _a="${ACTIVE_PEEL_VALS[$_i]}"
+            break
+        fi
+    done
+    if [ -z "$_a" ]; then
+        # A MISS IS ONLY BENIGN FOR THE ONE SPEC THAT CANNOT BE CAPTURED. The
+        # derived `HEAD~1` base is not formed until the head is resolved, and
+        # it needs no entry: reading the head commit's parent is a read of the
+        # HEAD COMMIT OBJECT, which the reachability adjudication refuses. Any
+        # OTHER miss means the capture and the resolution disagree about what
+        # was asked, and that is not something to assume away -- it is how a
+        # whitespace-bearing spec quietly skipped this check once already.
+        [ "$3" = "1" ] && return 1
+        return 2
+    fi
+    # THE VERDICT WAS DECIDED AT CAPTURE, comparing two peels taken in the same
+    # moment; this only reads it back. Comparing against the post-pin
+    # resolution instead is what let a moving ref look like a substitution.
+    case "$_a" in
+        "=") return 1 ;;   # the two peels agreed
+        "?") return 2 ;;   # a peel could not be taken
+        "!") return 3 ;;   # the spec moved while it was being read
+        *)   return 0 ;;   # they differed: replacement metadata is the cause
+    esac
+}
+
+# GUARDED ON THE CAPTURE, NOT ON REPLACEMENT SUPPORT BEING ENABLED. `REPLACE_STATE`
+# is 0 whenever git WOULD honour replacements, which is the default everywhere,
+# so testing it alone spawned two probes on every ordinary run for a repository
+# with no replacements at all -- measured at 2.69ms and flatly contradicting the
+# no-replacement fast path this block advertises (Codex perf, section 52 round
+# 8, [low]). An empty capture means there was nothing to diverge.
+# THE SNAPSHOT IS REVALIDATED BEFORE ANYTHING IS DECIDED FROM IT.
+#
+# Everything above was captured before the endpoints were resolved, and the
+# capture is what every substitution answer rests on -- so if the repository
+# moved in between, those answers describe a repository that is no longer
+# there. Two things can move, and BOTH were unchecked:
+#
+#   - THE REPLACEMENT METADATA ITSELF. An entry added after `git replace -l`
+#     was read is in no captured set and, when it targets a tag object, in
+#     neither commit walk either -- so the gate could return a GREEN verdict
+#     while ordinary git resolves the endpoint through a substitute it never
+#     saw. That is a false pass, not merely a mis-named refusal, which is why
+#     it is checked rather than argued away (Codex adversarial, section 52
+#     round 12, [medium]).
+#   - THE ENDPOINT REFS. A spec can move after its third peel and before it is
+#     resolved, leaving an `=` verdict recorded about a commit the gate is no
+#     longer adjudicating. Re-taking the peel is cheap and the captured oid was
+#     retained for exactly this comparison.
+#
+# WHAT THIS STILL CANNOT SEE, stated rather than implied: an A-B-A movement
+# INSIDE the capture triple is indistinguishable from a substitution, and this
+# check cannot separate them either. The outcome there is a refusal carrying
+# the substitution token rather than the movement one -- fail-closed, wrongly
+# named. Separating them needs an atomic read of refs and metadata together,
+# which git does not offer.
+# THE LISTING RE-READ IS NOT GUARDED ON THE CAPTURE HAVING FOUND ANYTHING, and
+# tying it to that was a false pass rather than an optimisation: a repository
+# that starts with NO replacements captures an empty set, so the guard skipped
+# the re-read entirely and the FIRST replacement created after capture was
+# never seen -- the gate pinned reads to stored objects, adjudicated an empty
+# captured set, and could return rc 0 while ordinary git resolved a substituted
+# endpoint (Codex adversarial, section 52 round 13, [medium]). Zero-to-one is
+# precisely the transition an attacker or a concurrent tool makes.
+# THE ENABLEMENT IS REVALIDATED WHATEVER STATE IT STARTED IN, and it is a
+# FUNCTION because once is not enough. Checked at a single point mid-run, an
+# enable landing AFTER that point still slipped through: the state stayed
+# "disabled", the listing check stayed skipped, and the gate could exit 0 while
+# ordinary git had begun resolving through pre-existing replace refs (Codex
+# adversarial, section 52 round 17, [high]). So it is asserted here AND
+# immediately before every successful exit -- the gate never returns green
+# without confirming the replacement state it captured still holds, which is
+# the same discipline section 51 applied to the closure.
+replacement_state_still_holds() {
+    local _left _now_setting _now_replaced _rc _i _re _spec _was
+    # THREE QUESTIONS, IN THIS ORDER, AND THE ORDER IS THE WHOLE REPAIR HISTORY
+    # OF THIS FUNCTION:
+    #
+    #   1. Do the ENDPOINTS still resolve to what the gate is adjudicating?
+    #      Asked FIRST, and unconditionally, because it is not a replacement
+    #      question at all. Behind the state gate below it was skipped whenever
+    #      `core.useReplaceRefs=false` or the operator's own
+    #      `GIT_NO_REPLACE_OBJECTS` opt-out was in force, so a branch could
+    #      advance and the gate certified a range it was not asked about (Codex
+    #      adversarial, section 52 round 21, [high]).
+    #   2. Does the captured replacement METADATA still match? Only meaningful
+    #      where replacements are in effect, so it is the one part the state
+    #      gates -- as an `if`, never an early return, because an early return
+    #      skips question 3 as well.
+    #   3. Is the replacement SETTING still what was captured? Asked LAST.
+    #      Asked first and compared first, a flip landing during questions 1
+    #      and 2 was invisible: those reads stay pinned to stored objects, the
+    #      saved values compared equal, and the function returned success over
+    #      a repository that had begun substituting (Codex adversarial, section
+    #      52 round 22, [high]). Asked last, the only window left is between
+    #      this read and the caller's own exit, which no snapshot can close.
+
+    # ---- 1. the endpoints
+    for _i in base head; do
+        case "$_i" in
+            head) _spec="$HEAD_SPEC"; _was="$HEAD_RESOLVED" ;;
+            base) _spec="$BASE_SPEC"; _was="$BASE_SHA" ;;
+        esac
+        [ -n "$_spec" ] || continue
+        _re="$(bounded_rev_parse --verify --quiet "${_spec}^{commit}")"
+        case "$?" in
+            0|1) ;;
+            *) die_infra "ENDPOINT_MOVED_UNDER_GATE: could not re-resolve '$_spec' to confirm it still points where it did, so whether this gate is still adjudicating the range it was asked about is unknown and no verdict is being guessed from it" ;;
+        esac
+        if [ "$_re" != "$_was" ]; then
+            die_infra "ENDPOINT_MOVED_UNDER_GATE: '$_spec' no longer resolves to $_was, which is the commit this gate has been adjudicating, so the range it was asked about has moved. Nothing is wrong with the tree under test; re-run against a repository that holds still"
+        fi
+    done
+
+    # ---- 2. the replacement metadata, and the peels taken through it
+    if [ "$REPLACE_STATE" -eq 0 ]; then
+        # PROBE FAILURE IS NOT AN OBSERVED CHANGE. Collapsing a failed listing
+        # into a synthetic mismatch emitted a message asserting the metadata
+        # CHANGED when the gate had merely failed to ask (Codex consistency,
+        # section 52 round 13, [medium]). Bounded like every other spawn, and
+        # an expired budget is itself unanswerable rather than clean.
+        budget_left; _left="$BUDGET_LEFT"
+        if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+            die_infra "ENDPOINT_MOVED_UNDER_GATE: the gate's budget expired before it could confirm the repository's replacement metadata still matches what it captured, so whether the endpoint answers still describe this repository is unknown and none is being guessed from it"
+        fi
+        _now_replaced="$(timeout -s KILL "$_left" \
+                             git replace -l 2>/dev/null)"
+        _rc=$?
+        if [ "$_rc" -ne 0 ]; then
+            die_infra "ENDPOINT_MOVED_UNDER_GATE: could not re-read the repository's replacement metadata to confirm it still matches what this gate captured, so whether the endpoint answers still describe this repository is unknown and none is being guessed from it"
+        fi
+        if [ "$_now_replaced" != "$REPLACED_LIST" ]; then
+            die_infra "ENDPOINT_MOVED_UNDER_GATE: the repository's replacement metadata changed while this gate was working, so the snapshot every endpoint answer was taken from no longer describes it. Nothing is wrong with the tree under test; re-run against a repository that holds still"
+        fi
+        for _i in "${!ACTIVE_PEEL_SPECS[@]}"; do
+            [ -n "${ACTIVE_PEEL_OIDS[$_i]}" ] || continue
+            # RE-PEELED WITH REPLACEMENTS ACTIVE, because `ACTIVE_PEEL_OIDS`
+            # holds the peels git gives the OPERATOR, not the stored ones.
+            # Routing this through the plain bounded helper dropped the `env -u`
+            # and compared a stored peel against an active capture, so every
+            # replaced-tag fixture began refusing as MOVEMENT -- three of them
+            # caught it in the same run.
+            budget_left; _left="$BUDGET_LEFT"
+            if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+                die_infra "ENDPOINT_MOVED_UNDER_GATE: the gate's budget expired before it could confirm '${ACTIVE_PEEL_SPECS[$_i]}' still resolves to what it did, so whether the endpoint answers still describe this repository is unknown and none is being guessed from it"
+            fi
+            _re="$(timeout -s KILL "$_left" \
+                       env -u GIT_NO_REPLACE_OBJECTS git rev-parse --verify --quiet \
+                       "${ACTIVE_PEEL_SPECS[$_i]}^{commit}")"
+            # rc 1 IS AN ANSWER: `--verify --quiet` reporting "this does not
+            # resolve" is, for a spec that resolved a moment ago, movement -- a
+            # deleted ref, say. Anything else is the probe failing, and that is
+            # unanswerable rather than movement.
+            case "$?" in
+                0|1) ;;
+                *) die_infra "ENDPOINT_MOVED_UNDER_GATE: could not re-resolve '${ACTIVE_PEEL_SPECS[$_i]}' to confirm it still points where it did, so whether the endpoint answers still describe this repository is unknown and none is being guessed from it" ;;
+            esac
+            if [ "$_re" != "${ACTIVE_PEEL_OIDS[$_i]}" ]; then
+                die_infra "ENDPOINT_MOVED_UNDER_GATE: '${ACTIVE_PEEL_SPECS[$_i]}' no longer resolves to what it did when this gate read it, so the endpoint answers were taken about a repository state that has since moved. Nothing is wrong with the tree under test; re-run against a repository that holds still"
+            fi
+        done
+    fi
+
+    # ---- 3. the setting
+    budget_left; _left="$BUDGET_LEFT"
+    if [ "$_left" = "?" ] || [ "$_left" -le 0 ]; then
+        _now_setting="<unreadable>"
+    else
+        _now_setting="$(timeout -s KILL "$_left" \
+                            git config --bool --get core.useReplaceRefs 2>/dev/null)"
+        case "$?" in
+            0) ;;
+            1) _now_setting="<unset>" ;;
+            *) _now_setting="<unreadable>" ;;
+        esac
+    fi
+    # EITHER SIDE UNREADABLE IS INDETERMINATE. Guarding only the re-read left
+    # the opposite direction claiming `changed from '<unreadable>'` -- movement
+    # asserted from a value that was never observed (Codex consistency, section
+    # 52 round 20, [medium]).
+    if [ "$_now_setting" = "<unreadable>" ] || [ "$REPLACE_SETTING" = "<unreadable>" ]; then
+        die_infra "ENDPOINT_MOVED_UNDER_GATE: could not read core.useReplaceRefs on at least one side of this gate's work (captured '$REPLACE_SETTING', now '$_now_setting'), so whether git substitutes objects is not known to be what it was, and no verdict is being guessed from it"
+    fi
+    if [ "$_now_setting" != "$REPLACE_SETTING" ]; then
+        die_infra "ENDPOINT_MOVED_UNDER_GATE: core.useReplaceRefs changed from '$REPLACE_SETTING' to '$_now_setting' while this gate was working, so whether git substitutes objects is not what it was when the endpoint answers were taken. Nothing is wrong with the tree under test; re-run against a repository that holds still"
+    fi
+    return 0
+}
+replacement_state_still_holds
+
+
+HEAD_PEEL_RC=1
+if [ "${#ACTIVE_PEEL_SPECS[@]}" -gt 0 ]; then
+    endpoint_peel_diverges "$BASE_SPEC" "$BASE_SHA" "$BASE_SPEC_DERIVED"
+    case "$?" in
+        3) die_infra "ENDPOINT_MOVED_UNDER_GATE: '$BASE_SPEC' resolved to two different commits while this gate was reading it, so the base moved under the question rather than being substituted by repository metadata. Nothing is wrong with the tree under test; re-run against a repository that holds still" ;;
+        0) die_infra "BASE_OBJECTS_SUBSTITUTED: repository replacement metadata makes '$BASE_SPEC' resolve to a different commit than the stored objects do, so the base this gate would adjudicate ($BASE_SHA) is not the base the repository resolves for that argument. Remove the replacement or re-run against a clean clone" ;;
+        2) die_infra "BASE_OBJECTS_SUBSTITUTED: the gate holds no usable snapshot of how '$BASE_SPEC' resolves with replacement metadata active, so whether it and the repository agree on which commit the base IS is unknown, and no classification is being guessed from it" ;;
+    esac
+    # RECORDED, EMITTED LATE, for the same base-first reason as the head
+    # substitution answer beside it.
+    endpoint_peel_diverges "$HEAD_SPEC" "$HEAD_RESOLVED" 0
+    HEAD_PEEL_RC=$?
+fi
+
+
+# ---------------------------------------------------------------------------
+# OBJECT SUBSTITUTION IS A REPOSITORY PRECONDITION, SETTLED BEFORE EITHER
+# ENDPOINT IS CLASSIFIED (section 52).
+#
+# Precisely: the replacement metadata is CAPTURED and replacement reads are
+# PINNED before the endpoints are resolved at all, so no resolution can be
+# manufactured; the endpoint-specific substitution questions are adjudicated
+# after that resolution and before any protocol classification. Saying the
+# whole precondition ran "before either endpoint is read" was a description of
+# the first draft that survived three redesigns (Codex consistency, section 52
+# round 14, [low]).
+# ---------------------------------------------------------------------------
+# `git replace` makes git hand back one object's bytes when another is asked
+# for. WITHOUT the pin installed far above, every read here would resolve
+# THROUGH those refs -- the base worktree checkout, `ls-tree` on either
+# endpoint, `rev-parse <sha>:<path>`, both protocol probes -- and a substituted
+# endpoint would make this gate adjudicate a tree the repository manufactured
+# rather than one stored at the commit named on the command line.
+#
+# WITH IT, THE READS ARE ALREADY SAFE AND THIS BLOCK DECIDES SOMETHING ELSE:
+# whether the repository's own effective state, as captured before anything was
+# resolved, WOULD have substituted an endpoint. That is a question about the
+# repository rather than about the reads, and it is asked because a verdict
+# reached over objects the operator's own git will not show them is not a
+# verdict they can act on. Describing this paragraph in the pre-pin tense read
+# as a live trust boundary that no longer exists (Codex consistency, section
+# 52 round 5, [medium]).
+#
+# SECTION 50 ASKED THIS IN ONE ARM; SECTION 52 ASKS IT ONCE, HERE. It sat
+# inside the base's UNREADABLE arm, so it ran only once `proto_of` had already
+# FAILED -- and the whole point of a substitution is that the synthetic tree
+# can parse perfectly. A replacement whose tree carries a clean protocol
+# therefore skipped the guard entirely and earned a real verdict, which is the
+# more consequential half of the family because it changes a PASS rather than a
+# refusal (named by section 50's round-8 reviewer, filed as section 52).
+#
+# THE HEAD ENDPOINT IS ASKED THE SAME QUESTION, which it never was at all: the
+# head side reads the head COMMIT for closure-member presence and mode, for the
+# executable-bit invariant, and for the commit-versus-worktree protocol
+# comparison, and none of those reads asked whether that commit is substituted.
+#
+# THE TWO SIDES GET DIFFERENT SCOPES BECAUSE THEY READ DIFFERENT THINGS, and
+# giving the head the base's scope would have been a deterministic false
+# refusal (Codex design review, section 52, [medium]; measured there at 70,526
+# objects against 2,799). The base's reads include its HISTORY --
+# `protocol_ever_added` and `history_is_complete` traverse the ancestry -- so
+# its read set is the full object walk. The head is read only as a SNAPSHOT:
+# `ls-tree` of the head commit's own tree, and nothing of its parents. So a
+# replacement targeting an ancestor of the head cannot change one head-side
+# answer, and `--no-walk` scopes the question to what is actually consulted.
+#
+# THE STATE THIS ADJUDICATES WAS CAPTURED AND PINNED FAR ABOVE, before either
+# endpoint was resolved. `git replace -l` is a point-in-time read, so asking it
+# HERE would leave the answer able to move behind the gate -- and, worse, would
+# leave endpoint RESOLUTION itself running under substituted semantics, where
+# the `HEAD~1` fallback base can be read out of a replaced head commit (Codex
+# design review, section 52, [high]; sharpened by section 52 round 2). What
+# runs below is therefore a test of the CAPTURED set against stored-object
+# walks rather than a fresh query -- `REPLACE_STATE` and `REPLACED_LIST` are
+# settled facts by the time this block is reached. They are settled, not
+# assumed: the revalidation above re-reads the listing and re-peels every
+# captured spec before any of it is used, and refuses if either moved.
+#
+# IT IS OPT-OUTABLE RATHER THAN A WEDGE. An operator who deliberately wants
+# stored-object adjudication sets `GIT_NO_REPLACE_OBJECTS` themselves, which
+# `GIT_NO_REPLACE_OBJECTS` is read as not-in-effect above, and the gate
+# then adjudicates the objects a fresh CI clone would read -- replace refs are
+# not fetched by default, so stored objects are what CI sees either way.
+#
+# Does any ACTIVE replacement change what this gate's reads of $1 return?
+#
+# REACHABILITY IS THE RIGHT TEST for every object type at once: a commit, a
+# tree or a blob that the endpoint's own object walk reaches is an object some
+# read below would resolve THROUGH the replacement. ONE walk answers for all of
+# them, and when there are no replacements at all it costs nothing -- an empty
+# `REPLACED_LIST` short-circuits before any walk is spawned, which is what
+# keeps this free on every real run.
+#
+# NO TEMP FILE. The first cut wrote the walk to a file under TMP_DIR and
+# re-scanned it once per replacement; this block now runs BEFORE TMP_DIR
+# exists, and a file created here would outlive an interrupt taken before the
+# cleanup trap is installed. Streaming it also removes the re-scan.
+commit_objects_are_substituted() {  # $1 = commit, $2 = history|snapshot, $3 = 1 if $1 is itself replaced, $4 = candidate oids
+    local _replaced _rc _hit _left _walk=()   # _replaced is the CAPTURED set, never a fresh query
+    local LIST
+    case "$2" in
+        history)  _walk=() ;;
+        snapshot) _walk=(--no-walk) ;;
+        *) return 2 ;;   # an unrecognised scope word is not a question
+    esac
+    case "$REPLACE_STATE" in
+        1) return 1 ;;   # git was not reading them: nothing is substituted
+        2) return 2 ;;
+    esac
+    # THE ENDPOINT IS ANSWERED WITHOUT A WALK, and BOTH endpoints are taken out
+    # of the candidate set rather than only this one. A commit is always
+    # reachable from its own object walk, so a replacement naming it needs no
+    # traversal to decide -- and this is the shape most likely to be present,
+    # since substituting an endpoint is the whole point of the attack.
+    #
+    # Scanning for `$1` ALONE was not enough, and the residue was measurable: a
+    # sole replacement naming the HEAD is not in the base's endpoint test, so
+    # the base call fell through and walked the entire history (70,513 objects,
+    # 184ms on this checkout) to find nothing, and only the head call that
+    # followed short-circuited. Near the shared deadline that walk can spend the
+    # budget and report an indeterminate BASE failure in place of the immediate
+    # HEAD refusal it was about to reach (Codex perf, section 52, rounds 1 and
+    # 5, [medium]). `REPLACED_NONENDPOINT` is what remains once both are
+    # removed, so an endpoint-only replacement set spawns no walk on either
+    # side.
+    [ "$3" = "1" ] && return 0
+    _replaced="$4"
+    [ -n "$_replaced" ] || return 1
+    LIST="$_replaced"; export LIST
+    # No `setsid`, unlike the python phases below: those spawn children a bare
+    # `timeout` could not reap, and `git rev-list` does not.
+    #
+    # AND IT ANSWERS TO THE SHARED DEADLINE, not to `remaining`'s one-second
+    # floor. This function is called for BOTH endpoints, so the floor let a
+    # second full object walk start after the budget was already spent -- the
+    # same defect the capture loop was repaired for, one phase later (Codex
+    # adversarial, section 52 round 15, [medium]).
+    budget_left; _left="$BUDGET_LEFT"
+    { [ "$_left" = "?" ] || [ "$_left" -le 0 ]; } && return 2
+    # THE WHOLE PIPELINE IS SUPERVISED, not just the producer. `timeout` wraps
+    # the command it is given, so wrapping only `git rev-list` left the awk
+    # CONSUMER outside the deadline: killing git does not finish the command
+    # substitution while the consumer holds the pipe, and the gate would hang
+    # past its own budget (Codex adversarial, section 52 round 19, [medium]).
+    # Wrapping the pipeline in one shell puts both under one bound.
+    # `set -o pipefail` INSIDE the nested shell, because shell options do not
+    # cross `bash -c`. Without it the pipeline reported awk's status, so a
+    # FAILED `rev-list` with no hit came back rc 0 and the function answered
+    # "not substituted" -- the replacement precondition failing OPEN, which is
+    # the one direction it must never fail (Codex adversarial, section 52 round
+    # 24, [high]).
+    _hit="$(timeout -s KILL "$_left" bash -c '
+                set -o pipefail
+                git --no-replace-objects rev-list --objects "$@" 2>/dev/null \
+                | awk -v list="$LIST" '"'"'
+                    BEGIN { n = split(list, a, "\n")
+                            for (i = 1; i <= n; i++) if (a[i] != "") want[a[i]] = 1 }
+                    ($1 in want) { print "HIT"; exit }'"'"'
+            ' _ ${_walk[@]+"${_walk[@]}"} "$1")"
+    _rc=$?
+    # A HIT IS CONCLUSIVE WHATEVER THE PRODUCER'S STATUS, and testing it FIRST
+    # is what makes the early `exit` safe. awk leaving the stream closes the
+    # pipe and SIGPIPEs git, which under `pipefail` is indistinguishable from a
+    # real probe failure -- so the answer is read before the status, and the
+    # status only decides the case where NOTHING was found. The sibling mistake
+    # this file already paid for, an `END { exit 1 }` overriding a rule's
+    # success, is gone with the END block (section 50; ordering per Codex perf,
+    # section 52).
+    [ "$_hit" = "HIT" ] && return 0
+    [ "$_rc" -ne 0 ] && return 2
+    return 1
+}
+
+# ONE PASS OVER THE CAPTURED SET, BEFORE EITHER SIDE IS ASKED. It answers both
+# endpoints and leaves behind exactly the candidates that still need a walk.
+BASE_ENDPOINT_REPLACED=0
+HEAD_ENDPOINT_REPLACED=0
+REPLACED_NONENDPOINT=""
+while IFS= read -r _r; do
+    [ -n "$_r" ] || continue
+    case "$_r" in
+        "$BASE_SHA")      BASE_ENDPOINT_REPLACED=1 ;;
+        "$HEAD_RESOLVED") HEAD_ENDPOINT_REPLACED=1 ;;
+        *) REPLACED_NONENDPOINT="$REPLACED_NONENDPOINT$_r"$'\n' ;;
+    esac
+done <<< "$REPLACED_LIST"
+
+# THE CANDIDATE SETS ARE PER QUERY, because ENDPOINT ROLES ARE NOT EXCLUSIVE.
+# Removing both endpoints from ONE shared residue looked symmetric and was
+# wrong: this gate takes arbitrary `--base`/`--head`, and after a rewind the
+# last-gated base can be a DESCENDANT of the head, so the head commit is an
+# object the BASE's history walk reaches. With it discarded globally the base
+# call answered "not substituted" without walking, and the range earned a base
+# classification where the promised BASE_HISTORY_INCOMPLETE was due (Codex
+# adversarial, section 52 round 6, [medium]).
+#
+# The head side needs no such care: its scope is `--no-walk` over the head
+# commit's own tree, and a DIFFERENT commit can never appear in that listing,
+# so dropping the base oid there is safe unconditionally.
+#
+# The base side decides with an ANCESTRY probe rather than an object walk --
+# `merge-base --is-ancestor` is a commit-graph question and costs nothing
+# beside the full `rev-list --objects` this exists to avoid. A provable
+# non-ancestor is dropped; an ancestor, or a probe that could not answer, is
+# kept and walked, so the cheap path is only taken where it is provably right.
+BASE_CANDIDATES="$REPLACED_NONENDPOINT"
+HEAD_CANDIDATES="$REPLACED_NONENDPOINT"
+if [ "$HEAD_ENDPOINT_REPLACED" -eq 1 ]; then
+    # BOUNDED, LIKE EVERY OTHER SPAWN IN THIS PHASE. It is cheap against a
+    # healthy commit-graph and unbounded against a degraded one, and it sits
+    # ahead of an ALREADY-KNOWN substitution refusal -- so a wedge here does
+    # not merely cost time, it suppresses a verdict the gate had already
+    # reached (Codex adversarial, section 52 round 15, [medium]).
+    budget_left; _mb_left="$BUDGET_LEFT"
+    if [ "$_mb_left" = "?" ] || [ "$_mb_left" -le 0 ]; then
+        # Cannot ask, so cannot drop it: keep the candidate and let the walk
+        # (which will refuse on the same spent budget) answer.
+        BASE_CANDIDATES="$BASE_CANDIDATES$HEAD_RESOLVED"$'\n'
+    else
+        timeout -s KILL "$_mb_left" \
+            git merge-base --is-ancestor "$HEAD_RESOLVED" "$BASE_SHA" >/dev/null 2>&1
+        case "$?" in
+            1) ;;   # provably unreachable from the base: not a candidate there
+            *) BASE_CANDIDATES="$BASE_CANDIDATES$HEAD_RESOLVED"$'\n' ;;
+        esac
+    fi
+fi
+
+# THE BASE IS ASKED FIRST, so a base substitution still wins over a head one --
+# the same base-first precedence the protocol classification below publishes.
+commit_objects_are_substituted "$BASE_SHA" history "$BASE_ENDPOINT_REPLACED" "$BASE_CANDIDATES"
+case "$?" in
+    0) die_infra "BASE_HISTORY_INCOMPLETE: an active refs/replace entry substitutes an object reachable from the base $BASE_SHA, so the tree and history this gate would read are manufactured by repository metadata rather than stored at that commit, and no classification of them would describe the base. Remove the replacement or re-run against a clean clone" ;;
+    2) die_infra "BASE_HISTORY_INCOMPLETE: could not determine whether repository replacement metadata substitutes anything reachable from the base $BASE_SHA, so whether its tree and history are the stored ones is unknown and no classification is being guessed from it" ;;
+esac
+# A SEPARATE TOKEN, NOT A BASE NAME REUSED. The base's is HISTORY_INCOMPLETE
+# because a truncated or substituted ancestry is what invalidates its
+# never-added inference. The head makes no such inference: what a substitution
+# breaks there is the reading of the head commit's own tree, so the refusal
+# says that instead of borrowing a history claim the head side never makes.
+# RECORDED HERE, EMITTED AFTER THE BASE IS FINISHED. Dying here put a HEAD
+# refusal ahead of every base-side classification, so a malformed base plus a
+# substituted head reported the head and said nothing about the base --
+# contradicting the base-first precedence this file's header publishes, and
+# sending the operator to repair the wrong end of the range (Codex adversarial,
+# section 52 round 2, [medium]). The ANSWER is safe to compute now: the
+# captured replacement set and the pin above make it a stable fact rather than
+# a fresh reading, so moving only the emission changes no verdict.
+commit_objects_are_substituted "$HEAD_RESOLVED" snapshot "$HEAD_ENDPOINT_REPLACED" "$HEAD_CANDIDATES"
+HEAD_SUBST_RC=$?
+
+# THE EMPTY-RANGE EXIT COMES LAST OF THE PRECONDITIONS, and it took two
+# findings to put it here. It compares the STORED resolutions, so:
+#
+#   - with a diverging head PEEL it was reached first and returned 0 --
+#     "nothing to differentiate" about a pair the repository does not even
+#     agree on, and the caller then advances its baseline over it. Caught by
+#     fixture 22da's base leg, which resolved a replaced tag to the current
+#     head and got rc 0 where BASE_OBJECTS_SUBSTITUTED was due;
+#   - and sitting ABOVE the substitution adjudication it did the same thing for
+#     a selfsame range: `--base X --head X` where X, or an object reachable
+#     from it, is replaced does not move `rev-parse X^{commit}`, so the peels
+#     agreed and a green rc 0 was returned over a commit git shows the operator
+#     differently (Codex adversarial, section 52 round 10, [medium]).
+#
+# So every substitution question is settled before "there is nothing here to
+# compare" is allowed to mean anything. A base fault has already died above; a
+# head divergence merely SUPPRESSES the exit, so base-first still holds and the
+# head refusal is emitted at its own site. The exit stays ABOVE every protocol
+# read, which is the placement fixture 22ci pins.
+if [ "$BASE_SHA" = "$HEAD_RESOLVED" ] && [ "$HEAD_PEEL_RC" -eq 1 ]; then
     log "base == head; nothing to differentiate."
+    replacement_state_still_holds
     exit 0
 fi
 
@@ -396,8 +1383,27 @@ CLOSURE_CHANGED=0
 FIRST_H=()
 for _i in "${!CLOSURE[@]}"; do
     f="${CLOSURE[$_i]}"
-    b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null || echo MISSING)"
-    h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING)"
+    # BOUNDED, WITHOUT TOUCHING WHAT A FAILURE MEANS. These two spawn per
+    # closure member and had no limit at all, so stalled repository or
+    # working-tree I/O could hang a local pre-push run indefinitely (Codex
+    # perf, section 52 round 19, [medium]). The MISSING collapse on failure is
+    # section 51's deliberate, documented choice -- it can only force a walk,
+    # never a pass -- so it is left exactly as it is; only the hang is fixed.
+    budget_left; _cl_left="$BUDGET_LEFT"
+    if [ "$_cl_left" = "?" ] || [ "$_cl_left" -le 0 ]; then
+        die_infra "CLOSURE_UNVERIFIABLE: the gate's budget expired while measuring the closure member $f, so what this range changes was never established and nothing here can be certified"
+    fi
+    b="$(timeout -s KILL "$_cl_left" \
+             git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null || echo MISSING)"
+    # RECOMPUTED BETWEEN SEQUENTIAL SPAWNS. One reading shared by two probes
+    # hands the second whatever the first did not spend, which is the same
+    # floor-shaped overrun in miniature (Codex perf, section 52 round 20).
+    budget_left; _cl_left="$BUDGET_LEFT"
+    if [ "$_cl_left" = "?" ] || [ "$_cl_left" -le 0 ]; then
+        die_infra "CLOSURE_UNVERIFIABLE: the gate's budget expired while measuring the closure member $f, so what this range changes was never established and nothing here can be certified"
+    fi
+    h="$(timeout -s KILL "$_cl_left" \
+             git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING)"
     FIRST_H[$_i]="$h"
     if [ "$b" != "$h" ]; then
         log "closure changed: $f"
@@ -455,9 +1461,9 @@ cleanup() {
         # registered after TMP_DIR is deleted, so a failed removal is pruned
         # rather than assumed harmless (Codex re-adversarial, section 51
         # review, [medium]).
-        timeout --foreground --kill-after=10s 60 \
+        timeout --foreground -s KILL 60 \
             git worktree remove --force "$BASE_TREE" >/dev/null 2>&1 \
-            || timeout --foreground --kill-after=10s 60 \
+            || timeout --foreground -s KILL 60 \
                git worktree prune >/dev/null 2>&1 || true
     fi
     if [ "$KEEP_TMP" -eq 0 ]; then
@@ -476,7 +1482,7 @@ trap 'cleanup; exit 143' TERM
 # constrain it and the CI job timeout was the only bound (Codex perf, section
 # 51 review). Slimming or deferring the materialization itself is a design
 # change tracked separately; bounding it is not.
-timeout --foreground --kill-after=10s "$(remaining)" \
+timeout --foreground -s KILL "$(remaining)" \
     git worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
     || die_infra "cannot materialize base worktree at $BASE_SHA (the checkout failed, or the gate's remaining budget expired while it ran)"
 
@@ -572,7 +1578,7 @@ proto_of() {  # $1 = tree root
     # leave the producer, cache and corpus phases nothing (Codex perf, section
     # 50 post-commit review). The cap is the SMALLER of the phase cap and what
     # is left, so it can never extend the global deadline.
-    timeout --foreground --kill-after=10s "$(probe_budget)" \
+    timeout --foreground -s KILL "$(probe_budget)" \
         python3 - "$1" 3>"$_rec" >/dev/null 2>/dev/null <<'PY'
 import base64, contextlib, hashlib, importlib.util, json, os, sys, pathlib
 # THE RECORD GOES OUT ON FD 3, which the shell opened. Rebinding sys.stdout to
@@ -735,7 +1741,7 @@ PY
         return 0
     fi
     local _line
-    _line="$(timeout --foreground --kill-after=10s "$(probe_budget)" head -n 1 "$_rec" 2>/dev/null)" \
+    _line="$(timeout --foreground -s KILL "$(probe_budget)" head -n 1 "$_rec" 2>/dev/null)" \
         || { rm -f "$_rec"; printf 'TRANSPORT\n'; return 0; }
     rm -f "$_rec"
     [ -n "$_line" ] || { printf 'TRANSPORT\n'; return 0; }
@@ -899,8 +1905,8 @@ proto_index_of() {  # $1 = path; echoes its index in PROTOCOL_PATHS, or nothing
 # quoting git applies to the path.
 path_is_regular_in_commit() {  # $1 commit, $2 path; 0 regular, 1 not, 2 cannot ask
     local _out _rc _mode _type
-    _out="$(git ls-tree "$1" -- "$2" 2>/dev/null)"; _rc=$?
-    [ "$_rc" -ne 0 ] && return 2
+    _out="$(bounded_git ls-tree "$1" -- "$2")"; _rc=$?
+    [ "$_rc" -eq 2 ] && return 2
     [ -n "$_out" ] || return 1
     _mode="${_out%% *}"
     _type="${_out#* }"; _type="${_type%% *}"
@@ -1013,9 +2019,11 @@ protocol_ever_added() {  # $1 = commit-ish, rest = paths; 0 yes, 1 no, 2 cannot 
     # unfiltered traversal whose first commit reads as a match, which is the
     # subshell bug above wearing its consequence.
     [ "$#" -gt 0 ] || return 2
-    _out="$(git log --full-history --diff-filter=A --format=%H -1 "$_c" -- "$@" 2>/dev/null)"
+    # BOUNDED: this is a FULL-HISTORY traversal, the most expensive read in the
+    # file after the object walks, and it had no limit at all.
+    _out="$(bounded_git log --full-history --diff-filter=A --format=%H -1 "$_c" -- "$@")"
     _rc=$?
-    [ "$_rc" -ne 0 ] && return 2
+    [ "$_rc" -eq 2 ] && return 2
     [ -n "$_out" ] && return 0
     return 1
 }
@@ -1042,10 +2050,10 @@ protocol_ever_added() {  # $1 = commit-ish, rest = paths; 0 yes, 1 no, 2 cannot 
 # (Codex consistency, section 50 post-commit review).
 history_is_complete() {  # $1 = subject; 0 readable, 1 truncated, 2 cannot ask
     local _shallow _replaced _p _rc
-    _shallow="$(git rev-parse --is-shallow-repository 2>/dev/null)"; _rc=$?
+    _shallow="$(bounded_git rev-parse --is-shallow-repository)"; _rc=$?
     [ "$_rc" -ne 0 ] && return 2
     [ "$_shallow" = "true" ] && return 1
-    _p="$(git rev-parse --git-path shallow 2>/dev/null)" || return 2
+    _p="$(bounded_git rev-parse --git-path shallow)" || return 2
     [ -s "$_p" ] && return 1
     # THE EFFECTIVE GRAFT SOURCE, not merely git's default one. `GIT_GRAFT_FILE`
     # overrides `info/grafts` and is inherited by every git call this function
@@ -1058,7 +2066,7 @@ history_is_complete() {  # $1 = subject; 0 readable, 1 truncated, 2 cannot ask
     if [ -n "${GIT_GRAFT_FILE:-}" ]; then
         [ -s "$GIT_GRAFT_FILE" ] && return 1
     else
-        _p="$(git rev-parse --git-path info/grafts 2>/dev/null)" || return 2
+        _p="$(bounded_git rev-parse --git-path info/grafts)" || return 2
         [ -s "$_p" ] && return 1
     fi
     # REPLACEMENT REFS ARE SCOPED TO THE ANCESTRY, not counted globally. Any
@@ -1079,90 +2087,12 @@ history_is_complete() {  # $1 = subject; 0 readable, 1 truncated, 2 cannot ask
     # REFUSAL, never a false classification -- it fails closed, and it names
     # exactly why.
     # REPLACEMENTS ARE NOT ADJUDICATED HERE. They are decided ONCE, before any
-    # form classification, by `base_reads_are_substituted` -- see the base case
-    # below for why that had to move out of this function.
+    # form classification, by `commit_objects_are_substituted`, which runs for
+    # BOTH endpoints after they are resolved and before either is CLASSIFIED --
+    # the metadata capture and the read pin are what precede resolution. See
+    # the precondition block far above for why that had to move out of this
+    # function.
     return 0
-}
-
-# Does any ACTIVE replacement change what a read of $1's tree or history
-# returns? ONE question, asked ONCE, before the base is classified at all.
-#
-# It lived inside history_is_complete and was therefore only asked by the arms
-# that make a never-added inference -- so the `complete` arm, which dies
-# immediately, never asked it. Replacing a base's reachable
-# snapshot_protocol.json blob with a malformed one of the same type then made
-# `proto_of` fail while `ls-tree` still reported a perfectly good regular blob,
-# and the gate called a VALID stored base malformed (Codex adversarial, section
-# 50 round 10). The same shape had already been paid for once at the commit
-# level in round 7; hoisting the question is what stops it recurring per arm.
-#
-# REACHABILITY IS THE RIGHT TEST for every object type at once: a commit, a
-# tree or a blob that the base's own object walk reaches is an object some read
-# below will resolve THROUGH the replacement. ONE walk answers for all of them,
-# and when there are no replacements at all it costs nothing.
-# A LISTED REPLACEMENT IS NOT NECESSARILY AN ACTIVE ONE. `GIT_NO_REPLACE_OBJECTS`
-# and `core.useReplaceRefs=false` turn replacement reads OFF, so every read the
-# gate makes resolves stored objects while `git replace -l` still enumerates the
-# refs -- and a range whose base was never substituted was refused as
-# manufactured (Codex adversarial, section 50 round 11).
-#
-# THE AMBIGUOUS CASE FAILS CLOSED RATHER THAN GUESSING WHICH WAY GIT READ IT.
-# Only a plainly-true value counts as "disabled"; anything else is undecided,
-# because being wrong here in the other direction would mean trusting a
-# substituted tree, and an over-refusal is the cheaper error.
-replacements_are_in_effect() {  # 0 in effect, 1 disabled, 2 cannot tell
-    local _v _rc
-    # PRESENCE, NOT TRUTHINESS. git disables replacement reads when this
-    # variable is SET, whatever its value -- confirmed directly: with
-    # `GIT_NO_REPLACE_OBJECTS=0`, `git cat-file -p` on a replaced object prints
-    # the ORIGINAL. Recognising only plainly-true values and calling the rest
-    # undecidable refused ranges git was definitively not substituting (Codex
-    # adversarial, section 50 round 14).
-    [ "${GIT_NO_REPLACE_OBJECTS+set}" = set ] && return 1
-    _v="$(git config --bool --get core.useReplaceRefs 2>/dev/null)"; _rc=$?
-    case "$_rc" in
-        0) [ "$_v" = "false" ] && return 1
-           return 0 ;;
-        1) return 0 ;;   # unset: git's default is to use them
-        *) return 2 ;;
-    esac
-}
-
-base_reads_are_substituted() {  # $1 = commit; 0 yes, 1 no, 2 cannot tell
-    local _replaced _rc _list _r
-    replacements_are_in_effect
-    case "$?" in
-        1) return 1 ;;   # git is not reading them: nothing is substituted
-        2) return 2 ;;
-    esac
-    _replaced="$(git replace -l 2>/dev/null)"; _rc=$?
-    [ "$_rc" -ne 0 ] && return 2
-    [ -n "$_replaced" ] || return 1
-    _list="$TMP_DIR/replace-reach.$$"
-    # No `setsid`, unlike the python phases below: those spawn children a bare
-    # `timeout` could not reap, and `git rev-list` does not.
-    timeout --kill-after=10s "$(remaining)" \
-        git --no-replace-objects rev-list --objects "$1" > "$_list" 2>/dev/null
-    _rc=$?
-    if [ "$_rc" -ne 0 ]; then
-        rm -f "$_list"
-        return 2
-    fi
-    while IFS= read -r _r; do
-        [ -n "$_r" ] || continue
-        # A FLAG, NOT `exit 0` INSIDE THE RULE. awk runs END even after a
-        # rule's `exit`, so an `END { exit 1 }` overrides the success and every
-        # object reads as unreachable -- which silently disables this guard
-        # entirely. That shipped once and its paired reachable-object control
-        # is what caught it.
-        if awk -v id="$_r" '$1 == id { found = 1; exit } END { exit found ? 0 : 1 }' \
-               "$_list"; then
-            rm -f "$_list"
-            return 0
-        fi
-    done <<< "$_replaced"
-    rm -f "$_list"
-    return 1
 }
 
 # Fills PROTO_MISSING (an ARRAY, so no caller has to word-split an unquoted
@@ -1178,7 +2108,7 @@ base_reads_are_substituted() {  # $1 = commit; 0 yes, 1 no, 2 cannot tell
 PROTO_MISSING=()
 PROTO_MISSING_TEXT=""
 # A DIRECT `refs/replace/<sha>` LOOKUP USED TO LIVE HERE, and it is gone
-# deliberately: `base_reads_are_substituted` subsumes it, because the base
+# deliberately: `commit_objects_are_substituted` subsumes it, because the base
 # commit is reachable from its own object walk. That also keeps the round-8
 # lesson without re-implementing it -- a hardcoded `refs/replace/` prefix
 # missed a relocated `GIT_REPLACE_REF_BASE` namespace, while `git replace -l`
@@ -1204,17 +2134,17 @@ case "$BASE_PROTO" in
 esac
 case "$BASE_PROTO" in
     UNREADABLE|*"?"*)
-        # BEFORE ANY TREE CLASSIFICATION, AND FOR EVERY ARM. Each probe below
-        # reads the base's tree or its history, and a replacement of ANY object
-        # those reads resolve -- the commit, one of its trees, one of its blobs
-        # -- substitutes something the base does not store. Asked once here
-        # rather than per arm, because asking it per arm is how the `complete`
-        # arm came to skip it entirely.
-        base_reads_are_substituted "$BASE_SHA"
-        case "$?" in
-            0) die_infra "BASE_HISTORY_INCOMPLETE: an active refs/replace entry substitutes an object reachable from the base $BASE_SHA, so the tree and history this gate would read are manufactured by repository metadata rather than stored at that commit, and no classification of them would describe the base. Remove the replacement or re-run against a clean clone" ;;
-            2) die_infra "BASE_HISTORY_INCOMPLETE: could not determine whether repository replacement metadata substitutes anything reachable from the base $BASE_SHA, so whether its tree and history are the stored ones is unknown and no classification is being guessed from it" ;;
-        esac
+        # THE SUBSTITUTION QUESTION IS NOT ASKED HERE ANY MORE. It ran in this
+        # arm alone, which meant it was asked only once `proto_of` had already
+        # failed -- so a replacement whose synthetic tree PARSES was never
+        # questioned at all. It is now a repository precondition adjudicated
+        # far above -- the metadata captured and reads pinned before the
+        # endpoints are resolved, the endpoint-specific questions adjudicated
+        # after that resolution and before any classification -- and for both
+        # endpoints (section 52). Asking it again here would be a second copy of a
+        # contract this file has already had to repair for disagreeing with
+        # itself, and the export up there has since made every read below
+        # resolve stored objects regardless.
         if ! protocol_present_in_commit "$BASE_SHA"; then
             die_infra "BASE_TREE_UNREADABLE: could not ask what the base $BASE_SHA contains ($PROTO_PROBE_ERR) -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it"
         fi
@@ -1307,6 +2237,22 @@ case "$?" in
     0) ;;
     1) die_infra "BASE_PROTOCOL_NOT_A_FILE: the base $BASE_SHA parsed its protocol through the '$BASE_SOURCE' form, but that form's files are not all regular files in that commit -- a symlink parses (the reader follows it) while resolving to bytes the commit may not even contain, so the protocol this gate would adjudicate is not the one stored at the base" ;;
     *) die_infra "BASE_TREE_UNREADABLE: could not ask whether the base $BASE_SHA stores the '$BASE_SOURCE' form's files as regular files -- git failed to answer, which is a repository failure and not a statement about the tree, so no classification is being guessed from it" ;;
+esac
+
+# THE BASE IS NOW FINISHED, so the head substitution answers recorded far above
+# can finally be emitted -- after every base token has had its chance, and
+# before the head side CLASSIFIES anything from the head commit. Not before
+# every head-side READ: the precondition's own reachability walk necessarily
+# read head objects to reach these answers. It is the classification that base-
+# first orders, and no head token is emitted until the base has none to give.
+case "$HEAD_PEEL_RC" in
+    3) die_infra "ENDPOINT_MOVED_UNDER_GATE: '$HEAD_SPEC' resolved to two different commits while this gate was reading it, so the head moved under the question rather than being substituted by repository metadata. Nothing is wrong with the tree under test; re-run against a repository that holds still" ;;
+    0) die_infra "HEAD_OBJECTS_SUBSTITUTED: repository replacement metadata makes '$HEAD_SPEC' resolve to a different commit than the stored objects do, so the tree under test ($HEAD_RESOLVED) is not the one the repository resolves for that argument. Remove the replacement or re-run against a clean clone" ;;
+    2) die_infra "HEAD_OBJECTS_SUBSTITUTED: the gate holds no usable snapshot of how '$HEAD_SPEC' resolves with replacement metadata active, so whether it and the repository agree on which commit the head IS is unknown, and no verdict is being guessed from it" ;;
+esac
+case "$HEAD_SUBST_RC" in
+    0) die_infra "HEAD_OBJECTS_SUBSTITUTED: an active refs/replace entry substitutes an object in the head commit $HEAD_RESOLVED. This gate pins replacement reads off, so it is not reading the substitute -- but what it would certify about that commit (which closure members it carries, how it stores them, whether it carries the snapshot protocol) is then not what the repository shows for it, and a verdict the operator cannot see is not one they can act on. Remove the replacement or re-run against a clean clone" ;;
+    2) die_infra "HEAD_OBJECTS_SUBSTITUTED: could not determine whether repository replacement metadata substitutes anything in the head commit $HEAD_RESOLVED, so whether a verdict about it would describe the commit the repository shows is unknown and none is being guessed from it" ;;
 esac
 
 # ACQUIRED HERE, NOT BESIDE THE BASE PROBE. Running it up front meant a head
@@ -1486,7 +2432,7 @@ protocol_source_is_regular "$HEAD_SOURCE" head \
 # section 54's, not this section's.
 for _i in "${!CLOSURE[@]}"; do
     f="${CLOSURE[$_i]}"
-    _bt="$(git ls-tree "$BASE_SHA" -- "$f" 2>/dev/null)" \
+    _bt="$(bounded_git ls-tree "$BASE_SHA" -- "$f")" \
         || die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA about the closure member $f -- the repository, not the range, is what failed, and an unanswered probe must never read as 'unchanged'"
     if [ -n "$_bt" ]; then
         # THE ENTRY'S TYPE, NOT MERELY ITS PRESENCE. A blob OID says what the
@@ -1504,20 +2450,20 @@ for _i in "${!CLOSURE[@]}"; do
             1) die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule) -- its blob may match byte-for-byte while naming rather than being the code, so nothing here can be certified and nothing here may be executed" ;;
             *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA how it stores the closure member $f -- the repository, not the range, is what failed" ;;
         esac
-        _b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null)" \
+        _b="$(bounded_git rev-parse --quiet --verify "$BASE_SHA:$f")" \
             || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA lists the closure member $f but its object could not be resolved"
         # AND THE OBJECT IS PRESENT, not merely named. A tree entry resolves to
         # an OID from the TREE; in a partial clone the blob behind it can be
         # absent, and comparing OIDs would then certify bytes nothing in this
         # repository can produce.
-        git cat-file -e "$_b" 2>/dev/null \
+        bounded_git cat-file -e "$_b" >/dev/null \
             || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA names object $_b for the closure member $f but that object is not present in this repository"
     else
         _b=ABSENT
     fi
     _hw=1
     if path_is_regular_in_worktree "$REPO_ROOT" "$f"; then
-        _h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null)" \
+        _h="$(bounded_git hash-object "$REPO_ROOT/$f")" \
             || die_infra "CLOSURE_UNVERIFIABLE: the closure member $f is a regular file in the working tree but could not be hashed"
     elif [ -e "$REPO_ROOT/$f" ] || [ -L "$REPO_ROOT/$f" ]; then
         die_infra "CLOSURE_UNVERIFIABLE: the closure member $f exists in the working tree but is not a regular file reached through regular directories -- the gate cannot certify, or execute, bytes it may be reading from outside this checkout"
@@ -1539,7 +2485,7 @@ for _i in "${!CLOSURE[@]}"; do
     # hash equal to the base's and exit 0 over a push that removed a
     # verdict-affecting file (Codex adversarial, section 51 round 6, [high]).
     # The inverse is the closure analogue of HEAD_PROTOCOL_UNMATERIALIZED.
-    _ht="$(git ls-tree "$HEAD_RESOLVED" -- "$f" 2>/dev/null)" \
+    _ht="$(bounded_git ls-tree "$HEAD_RESOLVED" -- "$f")" \
         || die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed"
     if [ -n "$_ht" ] && [ "$_hw" -eq 0 ]; then
         die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f but the working tree does not -- this checkout is not the commit it claims to test, so nothing here can be certified unchanged"
@@ -1585,12 +2531,13 @@ done
 # the bit and commit -- and it cannot wedge, because any head where the file IS
 # executable passes. Mode changes on every other closure member are no longer
 # refused at all; they were never the threat.
-if [ "$(git ls-tree "$HEAD_RESOLVED" -- "scripts/todo-graph/identity-gate.sh" 2>/dev/null | cut -d" " -f1)" = "100644" ]; then
+if [ "$(bounded_git ls-tree "$HEAD_RESOLVED" -- "scripts/todo-graph/identity-gate.sh" | cut -d" " -f1)" = "100644" ]; then
     die_infra "GATE_SCRIPT_NOT_EXECUTABLE: the head commit $HEAD_RESOLVED stores scripts/todo-graph/identity-gate.sh as mode 100644. The pre-push hook enters its identity-gate block only when that file is executable, so at this head the gate is silently skipped for every local push and only CI still adjudicates -- after main has already moved. Restore the bit (git update-index --chmod=+x) and commit"
 fi
 
 if [ "$CLOSURE_CHANGED" -eq 0 ]; then
     log "resolver closure byte-identical base..head; nothing to differentiate."
+    replacement_state_still_holds
     exit 0
 fi
 
@@ -1832,8 +2779,8 @@ if [ "$BUCKETS_CHANGED" -eq 1 ] || [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
     fi
     EXEC_CHANGED=""
     for f in "${EXEC_CLOSURE[@]}"; do
-        b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null || echo MISSING)"
-        h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING)"
+        b="$(bounded_git rev-parse --quiet --verify "$BASE_SHA:$f" || echo MISSING)"
+        h="$(bounded_git hash-object "$REPO_ROOT/$f" || echo MISSING)"
         [ "$b" = "$h" ] || EXEC_CHANGED="$EXEC_CHANGED $f"
     done
     if [ -n "$EXEC_CHANGED" ]; then
@@ -1856,6 +2803,7 @@ if [ "$BUCKETS_CHANGED" -eq 1 ] || [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
         # executable file is byte-identical, which is the whole content of the
         # claim the differential would otherwise have to establish.
         log "PASS -- snapshot schema migrated $BASE_SCHEMA -> $HEAD_SCHEMA as a DATA-ONLY change; every executable closure file is byte-identical base..head, so no resolver change can have ridden along. A cross-schema differential is not possible and is not needed."
+        replacement_state_still_holds
         exit 0
     fi
     # RELOCATION IS ADJUDICATED HERE, from the two TREES. A bucket moved across
@@ -1977,8 +2925,8 @@ fi
 # change to differentiate, and four extra corpus builds prove nothing. This is
 # the same reasoning as the whole-closure early exit above, scoped to one file.
 # ---------------------------------------------------------------------------
-PRODUCER_BASE="$(git rev-parse --quiet --verify "$BASE_SHA:scripts/todo-graph/build.py" 2>/dev/null || echo MISSING)"
-PRODUCER_HEAD="$(git hash-object "$REPO_ROOT/scripts/todo-graph/build.py" 2>/dev/null || echo MISSING)"
+PRODUCER_BASE="$(bounded_git rev-parse --quiet --verify "$BASE_SHA:scripts/todo-graph/build.py" || echo MISSING)"
+PRODUCER_HEAD="$(bounded_git hash-object "$REPO_ROOT/scripts/todo-graph/build.py" || echo MISSING)"
 PRODUCER_DIFF_OK=0
 # THE SKIP IS ALSO CONDITIONED ON THE CONTRACT. A byte-identical build.py still
 # emits a DIFFERENT artifact identity when cache_schema moved under it (the
@@ -2001,7 +2949,7 @@ else
     # executes the CHANGED head producer -- the code most likely to hang -- so
     # without this the budget was not a bound on the gate at all (Codex
     # adversarial, section 18 round 5).
-    setsid timeout --kill-after=10s "$(remaining)" python3 \
+    setsid timeout -s KILL "$(remaining)" python3 \
         "$REPO_ROOT/scripts/todo-graph/producer_differential.py" \
         "$BASE_TREE" "$REPO_ROOT" --strict >"$TMP_DIR/producer.log" 2>&1 &
     PROD_PID=$!
@@ -2030,7 +2978,7 @@ fi
 # and a relative STUB_LINT_CACHE would silently resolve against the wrong tree.
 # ---------------------------------------------------------------------------
 CACHE_ABS="$TMP_DIR/todo-cache.json"
-setsid timeout --kill-after=10s "$(remaining)" \
+setsid timeout -s KILL "$(remaining)" \
     python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet --output "$CACHE_ABS" \
     >"$TMP_DIR/build.log" 2>&1 &
 CACHE_PID=$!
@@ -2061,7 +3009,7 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     # the base worktree and would otherwise default to the BASE corpus, which
     # would make the two walks read different TODO text and attribute every
     # corpus edit to the resolver.
-    setsid timeout --kill-after=10s "$(remaining)" \
+    setsid timeout -s KILL "$(remaining)" \
         python3 "$BASE_TREE/scripts/todo-graph/build.py" --quiet \
         --root "$REPO_ROOT/todo" --repo-root "$REPO_ROOT" \
         --output "$BASE_CACHE_ABS" >"$TMP_DIR/build-base.log" 2>&1 &
@@ -2102,16 +3050,17 @@ HEADSHOT="$TMP_DIR/head.json"
 log "walking with BASE and HEAD resolver code concurrently (budget ${BUDGET_SECS}s)..."
 # Monotonic here too: a backward wall-clock step would otherwise print a
 # negative duration in the log line below.
-WALK_START="$(python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null || echo 0)"
+mono_now; WALK_START="$MONO_NOW"
+[ -n "$WALK_START" ] || die_infra "cannot read a monotonic clock before the resolver walks -- the gate's own deadline machinery is what failed here, and no classification is being guessed from it"
 
 STUB_LINT_CACHE="$BASE_CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
-    setsid timeout --kill-after=10s "$(remaining)" python3 \
+    setsid timeout -s KILL "$(remaining)" python3 \
     "$BASE_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
     write "$BASELINE" >"$TMP_DIR/base-walk.log" 2>&1 &
 BASE_PID=$!
 WALK_PIDS="$BASE_PID"
 STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
-    setsid timeout --kill-after=10s "$(remaining)" python3 \
+    setsid timeout -s KILL "$(remaining)" python3 \
     "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
     write "$HEADSHOT" >"$TMP_DIR/head-walk.log" 2>&1 &
 HEAD_PID=$!
@@ -2125,7 +3074,9 @@ WALK_PIDS="$WALK_PIDS $HEAD_PID"
 wait "$BASE_PID"; BASE_RC=$?
 wait "$HEAD_PID"; HEAD_RC=$?
 WALK_PIDS=""
-WALK_SECS=$(( $(python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null || echo "$WALK_START") - WALK_START ))
+mono_now; WALK_END="$MONO_NOW"
+[ -n "$WALK_END" ] || die_infra "cannot read a monotonic clock after the resolver walks -- the gate's own deadline machinery is what failed here, and no classification is being guessed from it"
+WALK_SECS=$(( WALK_END - WALK_START ))
 
 # 124 is timeout(1)'s "the budget fired". Report it as its own thing: it is not
 # a resolver defect and must never be read as one.
@@ -2144,7 +3095,7 @@ sed 's/^/    /' "$TMP_DIR/head-walk.log"
 log "both walks finished in ${WALK_SECS}s of the ${BUDGET_SECS}s budget."
 
 log "comparing the two snapshots (--strict)..."
-setsid timeout --kill-after=10s "$(remaining)" \
+setsid timeout -s KILL "$(remaining)" \
     python3 "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
     compare "$BASELINE" "$HEADSHOT" --strict \
     --base-halves-b64 "$(python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$BASE_PRE_B64" "$BASE_POST_B64")" \
@@ -2159,6 +3110,7 @@ sed 's/^/    /' "$TMP_DIR/compare.log"
 case "$CMP_RC" in
     0)
         log "PASS -- every prior verdict survived the resolver change."
+        replacement_state_still_holds
         exit 0
         ;;
     1)
