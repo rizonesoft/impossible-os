@@ -244,20 +244,46 @@
 #      the gate materializes for that commit. The operator's working tree is
 #      never adjudicated, so a verdict always describes the commit it names --
 #      which is what the pre-push caller needs, since it is pushing commits.
+#        MATERIALIZATION_UNFAITHFUL   the gate made a checkout for one of the
+#                                     endpoints and that checkout does not
+#                                     represent the commit: an entry git
+#                                     skipped (sparse or assume-unchanged),
+#                                     something that modified the tree after
+#                                     the write, a committed symlink flattened
+#                                     into a regular file by a host that cannot
+#                                     represent one, or a checkout filter that
+#                                     would make the gate execute or parse
+#                                     bytes the commit does not store. ALSO
+#                                     emitted when any of those questions could
+#                                     not be asked, and when the budget expired
+#                                     while asking -- an unanswered question
+#                                     refuses. This one is about the GATE'S OWN
+#                                     tree, not the operator's: it says the
+#                                     gate could not obtain the commit, which
+#                                     is why its repairs are host and
+#                                     repository settings rather than edits
 #      Exactly one head-side read cannot be redirected, and it refuses instead:
-#        GATE_DRIVER_NOT_AT_HEAD      the running identity-gate.sh differs from
-#                                     the copy in the head commit (or the
-#                                     commit does not carry it, or the question
-#                                     could not be asked). The hook executes
-#                                     the working-tree copy, so the certifier
-#                                     itself is the one thing that cannot be
-#                                     read from the commit. Re-executing the
-#                                     committed copy would change how the gate
-#                                     is INVOKED, which is section 16's
-#                                     surface; refusing does not, fails closed,
-#                                     and cannot wedge -- any push whose driver
-#                                     matches its own commit passes, and the
-#                                     repair is to commit or stash the edit
+#        GATE_DRIVER_NOT_AT_HEAD      the running identity-gate.sh is not the
+#                                     copy the selected head carries. The hook
+#                                     executes the working-tree copy, so the
+#                                     certifier itself is the one thing that
+#                                     cannot be read from the commit.
+#                                     Re-executing the committed copy would
+#                                     change how the gate is INVOKED, which is
+#                                     section 16's surface; refusing does not
+#                                     and fails closed. THREE causes, and they
+#                                     do NOT share a repair, which is why the
+#                                     message distinguishes them: with the
+#                                     default head an uncommitted edit, which
+#                                     committing or stashing clears; with an
+#                                     explicit `--head`, a clean tree that
+#                                     simply belongs to another commit, where
+#                                     the repair is to select or check out a
+#                                     matching head; and a commit that does not
+#                                     carry the driver at all, or a probe that
+#                                     could not answer, which is repository
+#                                     repair. It cannot wedge: any push whose
+#                                     driver matches its own commit passes
 #
 #      One NOTE is published alongside the refusals. It is NOT an rc 3 token
 #      and never changes the verdict; it exists so that "which tree was
@@ -1623,7 +1649,9 @@ cleanup() {
     # very stale entry nothing would ever collect (Codex adversarial, section
     # 54, [medium]). `--expire now` because the default expiry keeps a recent
     # entry that this gate knows for certain is dead. Skipped under
-    # `--keep-tmp`, where the directories deliberately survive.
+    # `--keep-tmp`, where the directories deliberately survive -- and skipped in
+    # two further cases the block below adds, so this paragraph describes WHEN
+    # the prune runs relative to the removal, not whether it runs at all.
     # AND THE PRUNE IS GATED ON OUR OWN ENTRY STILL BEING REGISTERED, because
     # `prune` has no path filter: it is a REPOSITORY-WIDE operation, so running
     # it whenever this gate merely suspects a leak can collect an unrelated
@@ -1649,11 +1677,17 @@ cleanup() {
             # network mount, as prunable, so sweeping on an unanswerable listing
             # can deregister somebody else's live worktree. What this gate might
             # have leaked is a stale administrative entry, which is inert and
-            # which the NEXT successful enumeration -- including this gate's own
-            # next run -- collects for free. Destroying real state to avoid
-            # leaving benign state is the wrong trade (Codex adversarial,
-            # section 54 round 5, [medium]).
-            log "NOTE: could not enumerate linked worktrees during cleanup, so no prune was attempted. If this run left a stale entry it will be collected by the next successful 'git worktree prune'."
+            # which any later `git worktree prune` collects for free. Destroying
+            # real state to avoid leaving benign state is the wrong trade (Codex
+            # adversarial, section 54 round 5, [medium]).
+            #
+            # AND THAT COLLECTION IS NOT AUTOMATIC, which an earlier draft of
+            # this comment claimed. A HEALTHY later run of this gate removes
+            # both of its trees successfully, leaves `_wt_prune` at 0, and never
+            # reaches the prune at all -- so it will not collect an entry an
+            # earlier run left. The note below says so; the comment now agrees
+            # with it (Codex consistency, section 54 post-ship, [low]).
+            log "NOTE: could not enumerate linked worktrees during cleanup, so no prune was attempted. If this run left a stale entry, it persists until someone runs 'git worktree prune' -- a later run of this gate will not collect it."
         else
             for _wt in ${WT_ATTEMPTED[@]+"${WT_ATTEMPTED[@]}"}; do
                 case $'\n'"$_wt_list"$'\n' in
@@ -1756,9 +1790,20 @@ tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
         && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired before it could ask the $3 checkout of $2 how it stores its entries, so the question was never asked and no verdict is being guessed from it"
     timeout -s KILL "$BUDGET_LEFT" git -C "$1" ls-files -s -z >"$_z" 2>/dev/null \
         || die_infra "MATERIALIZATION_UNFAITHFUL: could not ask the $3 checkout of $2 how it stores its entries, so whether the gate can read that commit faithfully is unknown and no verdict is being guessed from it"
+    # THE PARSE AND THE STATS ARE INSIDE THE DEADLINE, not merely followed by a
+    # check that one was exceeded. `timeout` bounds the git PRODUCER only; the
+    # record loop and the per-symlink stat run in this shell, so on a tree with
+    # many symlinked entries the advertised ceiling could be passed and only
+    # noticed afterwards (Codex perf, section 54 post-ship, [medium]). Checked
+    # per symlink rather than per record, because the record loop is a
+    # parameter expansion over an already-materialized string while the stat is
+    # the filesystem call that can actually block.
     while IFS= read -r -d '' _rec; do
         _mode="${_rec%% *}"
         [ "$_mode" = "120000" ] || continue
+        budget_left
+        { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
+            && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired while checking whether the $3 checkout of $2 represents that commit's symlinks faithfully, so the question was never finished and no verdict is being guessed from it"
         # <mode> <oid> <stage>TAB<path>, and the path is everything after the
         # first tab, so a path containing spaces or quotes survives exactly.
         _path="${_rec#*$'\t'}"
@@ -1768,9 +1813,33 @@ tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
     done <"$_z"
     # THE WALK IS INSIDE THE DEADLINE TOO. It is a filesystem stat per symlink,
     # which is nothing on this corpus and unbounded in principle.
+    # NO PATH THAT EXECUTES OR PARSES MAY BE FILTERED. A checkout applies
+    # smudge and working-tree-encoding filters, so the bytes bash and python
+    # actually run can differ from the blob the commit stores -- and every
+    # check here would still report clean, because `hash-object --path` and
+    # `status` apply the matching CLEAN filter and round-trip back to that same
+    # blob. Disabling hooks does not disable filters (Codex adversarial,
+    # section 54 post-ship, [high]). It is the same shape as the symlink
+    # emulation above: content faithful by git's measure, different by the only
+    # measure that matters here.
+    #
+    # ASKED OF THE PATHS WHOSE BYTES DECIDE THE VERDICT, not of the whole tree.
+    # `check-attr` over the closure plus the protocol paths is one process and
+    # covers everything this gate executes or parses. The CORPUS is deliberately
+    # NOT covered: it is read as data by both sides equally, so a filter there
+    # cannot make the two walks disagree, and refusing on it would wedge any
+    # repository that legitimately normalises its markdown.
+    local _attr
+    _attr="$(bounded_git -C "$1" check-attr filter text eol working-tree-encoding -- \
+                "${CLOSURE[@]}" "${PROTOCOL_PATHS[@]}")" \
+        || die_infra "MATERIALIZATION_UNFAITHFUL: could not ask the $3 checkout of $2 whether any verdict-affecting path is filtered, so whether the gate would execute that commit's own bytes is unknown and no verdict is being guessed from it"
+    _attr="$(printf '%s\n' "$_attr" | grep -v ': \(unspecified\|unset\)$' || true)"
+    if [ -n "$_attr" ]; then
+        die_infra "MATERIALIZATION_UNFAITHFUL: a checkout filter applies to a verdict-affecting path in the $3 tree of $2, so the bytes this gate would execute or parse are not the bytes that commit stores: $(printf '%s' "$_attr" | tr '\n' ';' | cut -c1-300). Clear the filter, text, eol or working-tree-encoding attribute for the resolver closure and the protocol paths"
+    fi
     budget_left
     { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
-        && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired while checking whether the $3 checkout of $2 represents that commit's symlinks faithfully, so the question was never answered and no verdict is being guessed from it"
+        && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired while checking whether the $3 checkout of $2 represents that commit faithfully, so the question was never answered and no verdict is being guessed from it"
     return 0
 }
 
@@ -2741,12 +2810,43 @@ log "head $HEAD_RESOLVED adjudicated from a materialized checkout at $HEAD_TREE"
 # already handled as "could not be determined".
 DIVERGE_CAP_SECS=10
 DIVERGE_LIST_MAX=40
-_dv_left="$(remaining)"
-[ "$_dv_left" -gt "$DIVERGE_CAP_SECS" ] && _dv_left="$DIVERGE_CAP_SECS"
-DIVERGE_TRACKED="$(timeout -s KILL "$_dv_left" git diff --name-only "$HEAD_RESOLVED" 2>/dev/null)"; DIVERGE_RC=$?
-_dv_left="$(remaining)"
-[ "$_dv_left" -gt "$DIVERGE_CAP_SECS" ] && _dv_left="$DIVERGE_CAP_SECS"
-DIVERGE_UNTRACKED="$(timeout -s KILL "$_dv_left" git ls-files --others --exclude-standard 2>/dev/null)"; DIVERGE_URC=$?
+# ONE ALLOWANCE SHARED BY BOTH PROBES, not one each. Giving each a fresh cap
+# made the advertised 10 seconds mean up to 20, and every second of it comes
+# off the same `GATE_MONO_START` the protocol checks are measured against -- so
+# an explicitly non-fatal disclosure could spend budget the verdict then lacks
+# (Codex perf, section 54 post-ship, [medium]).
+DIVERGE_START=""
+mono_now && DIVERGE_START="$MONO_NOW"
+diverge_left() {   # seconds this disclosure may still spend, 0 when spent
+    local _r _rem
+    [ -n "$DIVERGE_START" ] || { printf '0'; return; }
+    mono_now || { printf '0'; return; }
+    _r=$(( DIVERGE_CAP_SECS - (MONO_NOW - DIVERGE_START) ))
+    [ "$_r" -lt 1 ] && { printf '0'; return; }
+    # AND NEVER MORE THAN THE GATE HAS LEFT, so the disclosure cannot outlive
+    # the run it is describing.
+    _rem="$(remaining)"
+    [ "$_r" -gt "$_rem" ] && _r="$_rem"
+    printf '%s' "$_r"
+}
+# NO PIPE ON EITHER PROBE. `... | head -N` under `pipefail` reports FAILURE the
+# moment head closes the pipe and the producer takes SIGPIPE, which is the same
+# trap the prune confirmation had to be rewritten to avoid -- and here it would
+# turn a perfectly good listing into "could not be determined". The enumeration
+# is bounded by the shared allowance above; the DISPLAY is bounded where it is
+# printed.
+_dv_left="$(diverge_left)"
+if [ "$_dv_left" -eq 0 ]; then
+    DIVERGE_TRACKED=""; DIVERGE_RC=1
+else
+    DIVERGE_TRACKED="$(timeout -s KILL "$_dv_left" git diff --name-only "$HEAD_RESOLVED" 2>/dev/null)"; DIVERGE_RC=$?
+fi
+_dv_left="$(diverge_left)"
+if [ "$_dv_left" -eq 0 ]; then
+    DIVERGE_UNTRACKED=""; DIVERGE_URC=1
+else
+    DIVERGE_UNTRACKED="$(timeout -s KILL "$_dv_left" git ls-files --others --exclude-standard 2>/dev/null)"; DIVERGE_URC=$?
+fi
 if [ "$DIVERGE_RC" -ne 0 ] || [ "$DIVERGE_URC" -ne 0 ]; then
     log "NOTE: whether the working tree differs from $HEAD_RESOLVED could not be determined (the probe failed or the budget expired). The verdict below is about that commit regardless; only this disclosure is missing."
 else

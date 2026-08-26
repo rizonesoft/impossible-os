@@ -15607,6 +15607,76 @@ PY2
             fi
             rm -f "$G_MUT_LIST"
         fi
+        # 22en: A CHECKOUT FILTER MUST NOT DECIDE WHAT THE GATE EXECUTES. A
+        # smudge filter rewrites bytes on the way OUT of git and its clean
+        # counterpart rewrites them back on the way in, so `hash-object --path`
+        # and `status` both round-trip to the stored blob and report the tree
+        # faithful -- while bash and python run the smudged bytes. It is the
+        # same shape as symlink emulation: faithful by git's measure, different
+        # by the only measure that matters here. Disabling hooks does nothing
+        # about it (Codex adversarial, section 54 post-ship, [high]).
+        # THE FILTER PAIR ROUND-TRIPS, and that is the whole point of the case.
+        # A smudge whose clean does NOT undo it leaves the tree reporting
+        # MODIFIED, so `status` catches it and the run never reaches the check
+        # this case is about -- which is exactly what the first draft measured.
+        # The dangerous pair is the one git considers clean: smudge adds a line
+        # on the way out, clean removes it on the way in, `hash-object --path`
+        # and `status` both round-trip to the stored blob, and only the
+        # attribute itself reveals that the executed bytes are not the commit's.
+        G_S54_SMUDGE="$TMP_DIR/s54-smudge.sh"
+        G_S54_CLEAN="$TMP_DIR/s54-clean.sh"
+        printf '#!/bin/sh\ncat\necho "# s54smudge"\n' > "$G_S54_SMUDGE"
+        printf '#!/bin/sh\nsed "/^# s54smudge$/d"\n' > "$G_S54_CLEAN"
+        chmod +x "$G_S54_SMUDGE" "$G_S54_CLEAN"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            git config filter.s54evil.smudge "$G_S54_SMUDGE"
+            git config filter.s54evil.clean "$G_S54_CLEAN"
+            printf 'scripts/todo-graph/resolve_symbol.py filter=s54evil\n' > .gitattributes
+            git add .gitattributes >/dev/null 2>&1
+            printf '\n# 22en: a closure edit so the range is adjudicated\n' \
+                >> scripts/todo-graph/ref_resolution.py
+            git add scripts/todo-graph/ref_resolution.py >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22en: a filter over a closure member" >/dev/null 2>&1
+        )
+        G_S54_FLT_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD~1) )"
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_FLT_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22en.log" 2>&1)
+        G_S54_FLT_RC=$?
+        G_S54_FLT_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22en.log" | head -1)"
+        G_S54_FLT_ATTR="$( (cd "$GATE_REPO" && git check-attr filter -- scripts/todo-graph/resolve_symbol.py) )"
+        # PREMISE: the attribute really is in force, or this case proves only
+        # that an unfiltered tree passes.
+        case "$G_S54_FLT_ATTR" in
+            *s54evil*) G_S54_FLT_SET=yes ;;
+            *) G_S54_FLT_SET=no ;;
+        esac
+        if [ "$G_S54_FLT_SET" = yes ] && [ "$G_S54_FLT_RC" -eq 3 ] \
+           && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22en.log" \
+           && grep -q 'checkout filter' "$TMP_DIR/gate-22en.log"; then
+            t_pass "identity gate: a checkout filter over a closure member is refused, not executed"
+        else
+            t_fail "identity gate: a checkout filter reached the executed bytes (rc=$G_S54_FLT_RC; attr='$G_S54_FLT_ATTR'; got [$G_S54_FLT_TOKEN]; see $TMP_DIR/gate-22en.log)"
+        fi
+        # CONTROL: the same range with the attribute gone reaches an ordinary
+        # verdict, so the refusal is about the filter and not about the commit.
+        (
+            cd "$GATE_REPO" || exit 1
+            git rm --quiet -f .gitattributes >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22en: drop the filter attribute" >/dev/null 2>&1
+            git config --unset filter.s54evil.smudge >/dev/null 2>&1
+            git config --unset filter.s54evil.clean >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_FLT_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22en-control.log" 2>&1)
+        if ! grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22en-control.log"; then
+            t_pass "identity gate: CONTROL -- with the filter attribute gone the same range is adjudicated normally"
+        else
+            t_fail "identity gate: the filter refusal fires without a filter (see $TMP_DIR/gate-22en-control.log)"
+        fi
+
         # AND THE CONFIRMATION SURVIVES A TMPDIR CONTAINING A SPACE. `mktemp -t`
         # honours TMPDIR, so this is an ordinary path, not an exotic one -- and
         # while the attempted paths were held in a space-separated string they
