@@ -8443,6 +8443,50 @@ GATE_REPO="$TMP_DIR/gate-repo"
 # own copy also means the fixture exercises the script as that tree ships it.
 GATE_IN_CLONE="$GATE_REPO/scripts/todo-graph/identity-gate.sh"
 
+# g_s54_wtgate <output-path>: a copy of the gate whose head-side PROTOCOL AND
+# CLOSURE reads are put back on the LIVE WORKING TREE.
+#
+# ITS SCOPE IS THE READS, NOT THE WHOLE HEAD SIDE, and saying otherwise would
+# overstate what every control built from it proves. The later phases -- the
+# cache build, the producer differential, both resolver walks, the comparison --
+# still execute from the materialized head tree in this copy, because those are
+# not what any case below constructs a condition for. What it restores is
+# exactly the surface those conditions live on.
+#
+# WHY IT EXISTS. Section 54 moved the head side to the commit, and a family of
+# cases below built their condition in the WORKING TREE -- a removed protocol
+# file, a symlinked ancestor directory, a poisoned bytecode cache, a file
+# recreated after a committed deletion. Every one of those conditions is now
+# correctly IGNORED, which is the point, but it means each of those cases has to
+# assert the opposite of what it used to. An inverted assertion is easy to
+# satisfy vacuously (a gate that died early for an unrelated reason also fails
+# to emit the old token), so this copy is the control that proves the condition
+# was really constructed: run it against the same tree and the old refusal comes
+# back. It must be written INSIDE the clone -- the gate derives its repo root
+# from its own location, so a copy anywhere else adjudicates a different tree.
+g_s54_wtgate() {
+    sed -e 's#^proto_of "\$HEAD_TREE"$#proto_of "$REPO_ROOT"#' \
+        -e 's#protocol_present_in_worktree "\$HEAD_TREE"#protocol_present_in_worktree "$REPO_ROOT"#' \
+        -e 's#path_is_regular_in_worktree "\$HEAD_TREE" "\$f"#path_is_regular_in_worktree "$REPO_ROOT" "$f"#' \
+        -e 's#bounded_git hash-object "\$HEAD_TREE/\$f"#bounded_git hash-object "$REPO_ROOT/$f"#' \
+        -e 's#\[ -e "\$HEAD_TREE/\$f" \] || \[ -L "\$HEAD_TREE/\$f" \]#[ -e "$REPO_ROOT/$f" ] || [ -L "$REPO_ROOT/$f" ]#' \
+        -e 's#git rev-parse --quiet --verify "\$HEAD_RESOLVED:\$f" 2>/dev/null || echo MISSING#git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING#' \
+        "$GATE_IN_CLONE" > "$1"
+    # EVERY SUBSTITUTION IS VERIFIED, not just the first. Checking only
+    # `proto_of` was an overstatement in a helper whose whole job is to be a
+    # trustworthy control: a shape that moved anywhere else would leave that
+    # read on the commit, and the control would then agree with the case it is
+    # supposed to contradict while reporting that it had been built (Codex
+    # consistency, section 54, [medium]).
+    # AND THE MUTANT MUST DIFFER FROM ITS SOURCE. "No head-side read remains"
+    # is also true of a file the sed never touched, so the absence check alone
+    # would accept a copy of the unmutated gate the day one of these shapes
+    # moves -- which is exactly how the cleanup-reversion mutation came to run
+    # the original gate and report that its own fix did nothing.
+    ! cmp -s "$GATE_IN_CLONE" "$1" \
+        && ! grep -qE '^proto_of "\$HEAD_TREE"$|protocol_present_in_worktree "\$HEAD_TREE"|path_is_regular_in_worktree "\$HEAD_TREE"|hash-object "\$HEAD_TREE/\$f"|\[ -e "\$HEAD_TREE/\$f" \]|"\$HEAD_RESOLVED:\$f" 2>/dev/null \|\| echo MISSING' "$1"
+}
+
 gate_seed() {
     # Returns 0 if a usable fixture clone was built, 1 otherwise.
     rm -rf "$GATE_REPO" 2>/dev/null || true
@@ -9346,14 +9390,24 @@ PY2
     # 22an: THE MUTATION CHECK. Disarm the divergence branch in the clone's own
     # driver and the SAME fixture must go back to the rc 3 wedge -- otherwise
     # 22am would pass for some unrelated reason and prove nothing about the fix.
-    python3 - "$GATE_IN_CLONE" <<'PY2'
+    # THE MUTANT IS A SEPARATE FILE, as every other mutation case here already
+    # does it. This one edited the canonical driver IN PLACE, which section 54
+    # turned into a refusal in its own right: the gate now checks that the
+    # running `scripts/todo-graph/identity-gate.sh` matches the copy in the head
+    # commit, so an in-place mutation produces GATE_DRIVER_NOT_AT_HEAD and this
+    # case would assert a message it can no longer reach. A copy at another path
+    # is invisible to that check by design -- it is the canonical path the hook
+    # executes, not "any script", that has to match its own commit.
+    G_MUT_AN="$GATE_REPO/scripts/todo-graph/identity-gate-nodiverge.sh"
+    python3 - "$GATE_IN_CLONE" "$G_MUT_AN" <<'PY2'
 import sys, pathlib
-p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+s = src.read_text(encoding="utf-8")
 old = "    CONTRACT_DIVERGED=1\n"
 assert old in s, "divergence assignment anchor not found"
-p.write_text(s.replace(old, "    CONTRACT_DIVERGED=0\n", 1), encoding="utf-8")
+dst.write_text(s.replace(old, "    CONTRACT_DIVERGED=0\n", 1), encoding="utf-8")
 PY2
-    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+    (cd "$GATE_REPO" && bash "$G_MUT_AN" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22an.log" 2>&1)
     G_RC=$?
     # THE MESSAGE IS THE VERSION HALF, and that is deliberate rather than a
@@ -9367,7 +9421,7 @@ PY2
     else
         t_fail "identity gate: divergence branch is not load-bearing (rc=$G_RC; see $TMP_DIR/gate-22an.log)"
     fi
-    cp "$REPO_ROOT/scripts/todo-graph/identity-gate.sh" "$GATE_IN_CLONE"
+    rm -f "$G_MUT_AN"
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/cache_schema.py \
         && git commit --quiet --no-verify -am "restore after contract-identity fixture" >/dev/null 2>&1)
 
@@ -10124,12 +10178,18 @@ PY2
     # false and fell through to a HEAD_PROTOCOL_* token, blaming the tree under
     # test for a question the repository could not answer. Forced with a shim
     # that fails ls-tree ONLY for the head commit.
+    # THE REMOVAL IS COMMITTED, not left in the worktree (section 54). This
+    # case needs `proto_of` to FAIL so the classification branch is entered at
+    # all; since the head side reads the commit, only a committed removal gets
+    # it there. Removing from the worktree alone now changes nothing, which is
+    # the property 22as asserts.
     (
         cd "$GATE_REPO" || exit 1
-        rm -f scripts/todo-graph/snapshot_protocol.json \
+        git rm --quiet -f scripts/todo-graph/snapshot_protocol.json \
               scripts/todo-graph/snapshot_protocol.py \
               scripts/todo-graph/ref_resolution.py \
-              scripts/todo-graph/corpus_resolution_snapshot.py
+              scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ba: the protocol is gone from the commit" >/dev/null 2>&1
     )
     G_HEAD_SHA="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
     G_SHIM2="$TMP_DIR/gitshim2-s50"
@@ -10155,10 +10215,11 @@ PY2
     fi
     (
         cd "$GATE_REPO" || exit 1
-        git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json \
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
             scripts/todo-graph/snapshot_protocol.py \
             scripts/todo-graph/ref_resolution.py \
             scripts/todo-graph/corpus_resolution_snapshot.py >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22ba: restore the protocol in the commit" >/dev/null 2>&1
     )
 
     # 22bb: THE COMPLETENESS PROBE ITSELF MUST FAIL CLOSED. `history_is_complete`
@@ -10756,8 +10817,19 @@ PY2
         # SINGLE-QUOTED sed script: the first cut used double quotes, so the
         # shell expanded `$TMP_DIR` into the pattern before sed ever saw it and
         # the mutation silently matched nothing.
+        # TWO DEFENCES NOW, SO THE MUTATION MUST REMOVE BOTH (section 54).
+        # Stripping the cache prefix alone stopped firing: the head side reads a
+        # worktree the gate materializes for the commit, and that tree has no
+        # `__pycache__` for the poison to live in. So the poison is doubly
+        # unreachable, and a mutation that removes only the prefix would report
+        # "the fix works" while actually measuring the OTHER fix -- the precise
+        # vacuity this mutation exists to prevent. Composed, not rewritten: the
+        # head-read revert is the same shared helper every inverted case uses.
         G_MUT_PY="$GATE_REPO/scripts/todo-graph/identity-gate-nopycache.sh"
-        sed 's#^export PYTHONPYCACHEPREFIX=.*#:#' "$GATE_IN_CLONE" > "$G_MUT_PY"
+        if ! g_s54_wtgate "$G_MUT_PY"; then
+            t_fail "identity gate: could not build the pycache mutation (the head-read shape moved)"
+        else
+        sed -i 's#^export PYTHONPYCACHEPREFIX=.*#:#' "$G_MUT_PY"
         if grep -q '^export PYTHONPYCACHEPREFIX' "$G_MUT_PY"; then
             t_fail "identity gate: could not build the pycache mutation (the export line moved)"
         else
@@ -10773,6 +10845,7 @@ PY2
             else
                 t_fail "identity gate: the pycache mutation did not fire, so 22bo proves nothing (rc=$G_RC; see $TMP_DIR/gate-22bo-mut.log)"
             fi
+        fi
         fi
         rm -f "$G_MUT_PY"
     fi
@@ -10799,10 +10872,18 @@ PY2
             --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22bp.log" 2>&1)
         G_RC=$?
         G_BP_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22bp.log" | head -1)"
-        if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bp.log"; then
-            t_pass "identity gate: a symlinked ANCESTOR directory is refused, not followed"
+        # INVERTED BY SECTION 54 (control at 22as), and inverted in the
+        # STRONGEST direction available: the defect this case was written for
+        # is not merely detected now, it is unreachable. The gate executes and
+        # hashes from its own materialization of the head commit, so bytes
+        # outside the checkout cannot enter a verdict at all, whatever the
+        # operator's `scripts/todo-graph` happens to point at.
+        if [ "$G_RC" -ne 3 ] \
+           && grep -q 'HEAD_WORKTREE_DIVERGES' "$TMP_DIR/gate-22bp.log" \
+           && ! grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22bp.log"; then
+            t_pass "identity gate: an ancestor-directory symlink cannot reach a verdict about the commit"
         else
-            t_fail "identity gate: an ancestor-directory symlink bypassed the file contract (rc=$G_RC; got [$G_BP_TOKEN]; see $TMP_DIR/gate-22bp.log)"
+            t_fail "identity gate: out-of-checkout bytes still reached the verdict (rc=$G_RC; got [$G_BP_TOKEN]; see $TMP_DIR/gate-22bp.log)"
         fi
         (
             cd "$GATE_REPO" || exit 1
@@ -10861,12 +10942,17 @@ PY2
         >"$TMP_DIR/gate-22br.log" 2>&1)
     G_RC=$?
     G_BR_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22br.log" | head -1)"
-    if [ "$G_RC" -eq 3 ] \
-       && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22br.log" \
-       && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22br.log"; then
-        t_pass "identity gate: a loader missing from the WORKTREE is an incomplete checkout"
+    # INVERTED BY SECTION 54 (see 22as for the shared control). The loader is
+    # missing from the CHECKOUT only; the gate reads the commit, which carries
+    # it, so the range is adjudicated normally and the difference is disclosed.
+    # The COMMITTED removal below is the half that still refuses, and it is the
+    # half that was ever about the tree being pushed.
+    if [ "$G_RC" -ne 3 ] \
+       && grep -q 'diverges: scripts/todo-graph/snapshot_protocol.py' "$TMP_DIR/gate-22br.log" \
+       && ! grep -qE 'HEAD_PROTOCOL_UNMATERIALIZED|HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22br.log"; then
+        t_pass "identity gate: a loader missing from the WORKTREE only is disclosed, not adjudicated"
     else
-        t_fail "identity gate: a missing loader was blamed on the protocol (rc=$G_RC; got [$G_BR_TOKEN]; see $TMP_DIR/gate-22br.log)"
+        t_fail "identity gate: a checkout-only missing loader still decided the verdict (rc=$G_RC; got [$G_BR_TOKEN]; see $TMP_DIR/gate-22br.log)"
     fi
     (
         cd "$GATE_REPO" || exit 1
@@ -11288,11 +11374,13 @@ PY2
 
     # 22cb: ONLY THE JSON MISSING FROM THE WORKTREE. 22as removes all four
     # protocol paths and 22br removes only the loader; this removes only the
-    # JSON, and the surviving legacy pair then reads as a COMPLETE form on its
+    # JSON, and the surviving legacy pair then read as a COMPLETE form on its
     # own -- so the tree was called malformed when `proto_of` had failed
-    # because a file the commit DOES carry was not there to read. The head side
-    # now compares the worktree against the commit path by path, so what the
-    # worktree can satisfy by itself no longer decides the answer.
+    # because a file the commit DOES carry was not there to read. Section 50
+    # answered that with a path-by-path comparison against the commit; section
+    # 54 removed the question by not reading the worktree at all, so what this
+    # case now asserts is that the corrupted checkout is disclosed and
+    # otherwise ignored.
     (
         cd "$GATE_REPO" || exit 1
         printf '\n# 22cb: benign closure change, no behaviour\n' >> scripts/todo-graph/build.py
@@ -11303,12 +11391,17 @@ PY2
         >"$TMP_DIR/gate-22cb.log" 2>&1)
     G_RC=$?
     G_CB_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cb.log" | head -1)"
-    if [ "$G_RC" -eq 3 ] \
-       && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22cb.log" \
-       && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cb.log"; then
-        t_pass "identity gate: a single committed protocol file missing from the worktree is an incomplete checkout"
+    # INVERTED BY SECTION 54 (control at 22as). The surviving-legacy-pair
+    # ambiguity this case was written for cannot arise any more: the gate never
+    # asks what the worktree can satisfy on its own, because it never reads the
+    # worktree. The disclosure is asserted by NAME so the case still proves the
+    # file was really missing rather than passing on an unrelated clean run.
+    if [ "$G_RC" -ne 3 ] \
+       && grep -q 'diverges: scripts/todo-graph/snapshot_protocol.json' "$TMP_DIR/gate-22cb.log" \
+       && ! grep -qE 'HEAD_PROTOCOL_UNMATERIALIZED|HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22cb.log"; then
+        t_pass "identity gate: a single protocol file missing from the checkout is disclosed, not adjudicated"
     else
-        t_fail "identity gate: a missing committed JSON was called a malformed protocol (rc=$G_RC; got [$G_CB_TOKEN]; see $TMP_DIR/gate-22cb.log)"
+        t_fail "identity gate: a checkout-only missing JSON still decided the verdict (rc=$G_RC; got [$G_CB_TOKEN]; see $TMP_DIR/gate-22cb.log)"
     fi
     # CONTROL: restored, the same range reaches a normal verdict.
     (
@@ -11487,10 +11580,17 @@ PY2
             >"$TMP_DIR/gate-22ce.log" 2>&1)
         G_RC=$?
         G_CE_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ce.log" | head -1)"
-        if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22ce.log"; then
-            t_pass "identity gate: a byte-identical closure read through an ancestor symlink is refused"
+        # INVERTED BY SECTION 54 (control at 22as). The ordering question this
+        # case asked -- does the file contract get its say before the
+        # byte-identical exit -- is now moot on the head side: the exit is
+        # decided from the commit's own blobs, so a symlink in the checkout
+        # cannot make an out-of-tree file the thing that was measured.
+        if [ "$G_RC" -ne 3 ] \
+           && grep -q 'HEAD_WORKTREE_DIVERGES' "$TMP_DIR/gate-22ce.log" \
+           && ! grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22ce.log"; then
+            t_pass "identity gate: an out-of-tree protocol cannot ride the byte-identical exit it never enters"
         else
-            t_fail "identity gate: an out-of-tree protocol rode the byte-identical exit (rc=$G_RC; got [$G_CE_TOKEN]; see $TMP_DIR/gate-22ce.log)"
+            t_fail "identity gate: an out-of-tree protocol still reached the exit decision (rc=$G_RC; got [$G_CE_TOKEN]; see $TMP_DIR/gate-22ce.log)"
         fi
         (
             cd "$GATE_REPO" || exit 1
@@ -11507,15 +11607,17 @@ PY2
         t_fail "identity gate: could not stage the section 51 ancestor-symlink fixture"
     fi
 
-    # 22cf: THE MEASUREMENT MUST STILL BE TRUE WHEN IT IS ACTED ON (section 51).
-    # Moving the decision widened the gap between hashing the closure and
-    # exiting on it from nothing to a base worktree plus two protocol probes,
-    # and the head side hashes the WORKING TREE on purpose. So a resolver file
-    # saved into a shared local checkout inside that window would be measured in
-    # its old form and ride the exit, making an UNEXAMINED change the next
-    # baseline. Forced deterministically with a shim that mutates a closure file
-    # immediately after `git worktree add` -- inside the window by construction,
-    # rather than by racing a sleep.
+    # 22cf: THE MEASUREMENT MUST STILL BE TRUE WHEN IT IS ACTED ON (section 51,
+    # inverted by section 54). Moving the decision widened the gap between
+    # hashing the closure and exiting on it from nothing to a base worktree plus
+    # two protocol probes, and while the head side hashed the WORKING TREE a
+    # resolver file saved into a shared local checkout inside that window was
+    # measured in its old form and rode the exit, making an UNEXAMINED change
+    # the next baseline. The head side now reads an immutable commit, so the
+    # window is gone rather than narrowed. The shim is kept exactly as it was --
+    # it mutates a closure file immediately after `git worktree add`, inside the
+    # old window by construction -- because that is what makes the new
+    # assertion, that the mutation reaches nothing, worth anything.
     G_CF_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
     (
         cd "$GATE_REPO" || exit 1
@@ -11527,7 +11629,12 @@ PY2
     mkdir -p "$G_SHIM_S51"
     {
         printf '#!/usr/bin/env bash\n'
-        printf 'if [ "$1" = "worktree" ]; then\n'
+        # ANY ARGUMENT, NOT $1. The gate passes global options before the
+        # subcommand since section 54, so a shim keyed on $1 silently stops
+        # firing the moment one is added -- and a shim that never fires makes
+        # its case pass or fail for a reason unrelated to the code under test.
+        printf '_is_wt=0; for a in "$@"; do [ "$a" = "worktree" ] && _is_wt=1; done\n'
+        printf 'if [ "$_is_wt" = "1" ]; then\n'
         printf '  %s "$@"; _rc=$?\n' "$G_REAL_GIT"
         printf '  printf "\\n# 22cf: mutated under the gate\\n" >> %s\n' \
             "$GATE_REPO/scripts/todo-graph/ref_resolution.py"
@@ -11542,12 +11649,21 @@ PY2
     # rc 3, NOT a fall-through to the walk: the protocol constants were read
     # before the movement, so walking would adjudicate mixed-time evidence and
     # could return a real-looking verdict about a tree that never existed.
-    if [ "$G_RC" -eq 3 ] \
-       && grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cf.log" \
-       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cf.log"; then
-        t_pass "identity gate: a closure file that moves under the gate is refused by name"
+    # INVERTED BY SECTION 54, and this is the case that records what that
+    # section actually bought. Section 51 narrowed the measure-to-act window and
+    # said in its own text that only adjudicating an immutable snapshot would
+    # remove it. That is what the head side now reads, so a resolver file
+    # written into the checkout MID-RUN -- the exact race this fixture forces
+    # deterministically -- can no longer be measured at all, in either form.
+    # The refusal it used to require was the best available answer to a window
+    # that no longer exists; requiring it now would be requiring the gate to
+    # notice something it is right to be blind to.
+    if [ "$G_RC" -ne 3 ] \
+       && grep -q 'HEAD_WORKTREE_DIVERGES' "$TMP_DIR/gate-22cf.log" \
+       && ! grep -q 'CLOSURE_MOVED_UNDER_GATE' "$TMP_DIR/gate-22cf.log"; then
+        t_pass "identity gate: a closure file written under the gate cannot move an immutable head"
     else
-        t_fail "identity gate: a mid-run closure mutation was not refused (rc=$G_RC; see $TMP_DIR/gate-22cf.log)"
+        t_fail "identity gate: a mid-run worktree mutation still reached the head measurement (rc=$G_RC; see $TMP_DIR/gate-22cf.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/ref_resolution.py >/dev/null 2>&1)
 
@@ -11578,12 +11694,26 @@ PY2
         >"$TMP_DIR/gate-22cj.log" 2>&1)
     G_RC=$?
     G_CJ_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cj.log" | head -1)"
-    if [ "$G_RC" -eq 3 ] \
-       && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cj.log" \
-       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cj.log"; then
-        t_pass "identity gate: an unreadable closure member is refused, not read as unchanged"
+    # INVERTED BY SECTION 54 (control at 22as). The MISSING-collapse this case
+    # exploits is a property of hashing a FILESYSTEM path that cannot be read.
+    # The head side now asks the commit for a blob OID, and a commit either
+    # carries a member or does not -- there is no unreadable third state for a
+    # directory-shaped worktree path to occupy. The base side still hashes
+    # through git objects and is untouched, which is why the collapse itself is
+    # left exactly as section 51 documented it.
+    # NO DIVERGENCE IS DISCLOSED HERE, AND THAT IS CORRECT rather than a gap:
+    # the member is absent from both endpoints and the worktree holds an EMPTY
+    # DIRECTORY, which git does not track at all. There is nothing about this
+    # checkout that differs from the commit in git's own terms, so the honest
+    # outcome is the byte-identical exit -- which this case asserts by name, so
+    # it cannot pass on a run that died early instead.
+    G_CJ_DIR=no; [ -d "$GATE_REPO/scripts/todo-graph/producer_differential.py" ] && G_CJ_DIR=yes
+    if [ "$G_CJ_DIR" = yes ] && [ "$G_RC" -eq 0 ] \
+       && grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cj.log" \
+       && ! grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cj.log"; then
+        t_pass "identity gate: an unreadable WORKTREE path is not a state the commit can be in"
     else
-        t_fail "identity gate: an unreadable closure member rode the byte-identical exit (rc=$G_RC; got [$G_CJ_TOKEN]; see $TMP_DIR/gate-22cj.log)"
+        t_fail "identity gate: an unreadable worktree path still reached the head measurement (rc=$G_RC; got [$G_CJ_TOKEN]; dir-staged=$G_CJ_DIR; see $TMP_DIR/gate-22cj.log)"
     fi
     (
         cd "$GATE_REPO" || exit 1
@@ -11795,11 +11925,12 @@ PY2
     fi
 
     # 22cn: A COMMITTED DELETION MUST NOT BE RESURRECTED BY A DIRTY WORKING
-    # TREE. Content is read from the worktree on purpose, and applying that to
-    # PRESENCE let a push that DELETES a closure member exit 0: the recreated
-    # file hashes to the base OID, the head tree entry is empty so the mode
-    # comparison is skipped, and the two sides compare equal (Codex adversarial,
-    # section 51 round 6, [high]).
+    # TREE. While content was read from the worktree, applying that to PRESENCE
+    # let a push that DELETES a closure member exit 0: the recreated file hashed
+    # to the base OID, the head tree entry was empty so the mode comparison was
+    # skipped, and the two sides compared equal (Codex adversarial, section 51
+    # round 6, [high]). Section 54 reads both from the commit, so the two can no
+    # longer disagree and the deletion measures as a deletion.
     G_CN_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
     G_CN_OID="$( (cd "$GATE_REPO" && git rev-parse --quiet --verify "HEAD:scripts/todo-graph/producer_differential.py" 2>/dev/null) )"
     (
@@ -11818,11 +11949,20 @@ PY2
         >"$TMP_DIR/gate-22cn.log" 2>&1)
     G_RC=$?
     G_CN_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cn.log" | head -1)"
+    # SECTION 54 CLOSES THIS AT ITS SOURCE RATHER THAN CATCHING IT. The
+    # resurrection worked because the head CONTENT reading came from the
+    # worktree while the head PRESENCE reading came from the commit; the two
+    # disagreed and the presence check was the patch over that. Now both come
+    # from the commit, so the deleted member measures as absent, differs from
+    # the base, and the range is DIFFERENTIALLED instead of exiting 0 -- which
+    # is the honest outcome for a push that removes a resolver file. The premise
+    # (the worktree copy really does hash to the base blob) is still asserted:
+    # without it the case degenerates into an ordinary content difference and
+    # would pass for the wrong reason.
     if [ -n "$G_CN_OID" ] && [ "$G_CN_OID" = "$G_CN_HOID" ] \
-       && [ "$G_RC" -eq 3 ] \
-       && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cn.log" \
-       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cn.log"; then
-        t_pass "identity gate: a committed deletion is not resurrected by the working tree"
+       && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22cn.log" \
+       && grep -q 'closure changed: scripts/todo-graph/producer_differential.py' "$TMP_DIR/gate-22cn.log"; then
+        t_pass "identity gate: a committed deletion is measured as a deletion, whatever the worktree holds"
     else
         t_fail "identity gate: a committed closure deletion rode the exit (rc=$G_RC; got [$G_CN_TOKEN]; base=$G_CN_OID worktree=$G_CN_HOID; see $TMP_DIR/gate-22cn.log)"
     fi
@@ -11846,10 +11986,16 @@ PY2
         >"$TMP_DIR/gate-22cn-missing.log" 2>&1)
     G_RC=$?
     G_CN_MTOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22cn-missing.log" | head -1)"
-    if [ "$G_RC" -eq 3 ] && grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cn-missing.log"; then
-        t_pass "identity gate: a closure member the checkout never materialized is refused"
+    # INVERTED BY SECTION 54 (control at 22as). The gate materializes the head
+    # commit itself, so "the checkout never materialized this member" is a
+    # statement about the operator's tree and not about the range: it is
+    # disclosed by name and the commit is adjudicated on its own terms.
+    if [ "$G_RC" -ne 3 ] \
+       && grep -q 'diverges: scripts/todo-graph/producer_differential.py' "$TMP_DIR/gate-22cn-missing.log" \
+       && ! grep -q 'CLOSURE_UNVERIFIABLE' "$TMP_DIR/gate-22cn-missing.log"; then
+        t_pass "identity gate: a member the operator's checkout lacks is disclosed, not refused"
     else
-        t_fail "identity gate: an unmaterialized closure member was not refused (rc=$G_RC; got [$G_CN_MTOKEN]; see $TMP_DIR/gate-22cn-missing.log)"
+        t_fail "identity gate: an unmaterialized closure member still decided the verdict (rc=$G_RC; got [$G_CN_MTOKEN]; see $TMP_DIR/gate-22cn-missing.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph >/dev/null 2>&1)
 
@@ -12134,11 +12280,39 @@ PY3
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22as.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -eq 3 ] && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22as.log"; then
-        t_pass "identity gate: a commit-present but worktree-absent protocol is an incomplete checkout"
+    G_AS_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22as.log" | head -1)"
+    # INVERTED BY SECTION 54, and this is the whole point of that section. The
+    # gate materializes the head commit itself, so a checkout the OPERATOR broke
+    # is no longer the tree under test: it cannot make a sound commit refuse,
+    # and -- the half that actually mattered -- it cannot make a broken commit
+    # pass. What it MUST do is say the tree it read was not the one on disk.
+    if [ "$G_RC" -ne 3 ] \
+       && grep -q 'HEAD_WORKTREE_DIVERGES' "$TMP_DIR/gate-22as.log" \
+       && grep -q 'diverges: scripts/todo-graph/snapshot_protocol.json' "$TMP_DIR/gate-22as.log" \
+       && ! grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22as.log"; then
+        t_pass "identity gate: a broken checkout of a sound commit is disclosed, not adjudicated"
     else
-        t_fail "identity gate: unmaterialized protocol was not distinguished from an absent one (rc=$G_RC; see $TMP_DIR/gate-22as.log)"
+        t_fail "identity gate: an operator's broken checkout still decided the verdict (rc=$G_RC; got [$G_AS_TOKEN]; see $TMP_DIR/gate-22as.log)"
     fi
+    # THE CONTROL FOR EVERY INVERTED CASE BELOW. Put the head reads back on the
+    # working tree and this exact tree refuses again -- so "the gate ignores it
+    # now" is measured against "the gate acted on it before", not against
+    # nothing. Built once, on the broadest condition of the family.
+    G_WTGATE="$GATE_REPO/scripts/todo-graph/identity-gate-wtread.sh"
+    if g_s54_wtgate "$G_WTGATE"; then
+        (cd "$GATE_REPO" && bash "$G_WTGATE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22as-mut.log" 2>&1)
+        G_AS_MRC=$?
+        if [ "$G_AS_MRC" -eq 3 ] \
+           && grep -q 'HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22as-mut.log"; then
+            t_pass "identity gate: MUTATION -- reading the worktree makes the broken checkout decide again, so 22as measures the source"
+        else
+            t_fail "identity gate: the working-tree-read mutation did not refuse, so the inverted cases prove nothing (rc=$G_AS_MRC; see $TMP_DIR/gate-22as-mut.log)"
+        fi
+    else
+        t_fail "identity gate: could not build the working-tree-read control (the head-read shape moved)"
+    fi
+    rm -f "$G_WTGATE"
     (
         cd "$GATE_REPO" || exit 1
         git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json \
@@ -14901,6 +15075,560 @@ PY2
         fi
         rm -rf "$G_S53_RUN2"
         g_s53_restore
+    fi
+
+    # ------------------------------------------------------------------
+    # 22ee..22eh: WHICH TREE THE HEAD SIDE READS (section 54).
+    #
+    # Until section 54 every head-side read came from the LIVE WORKING TREE
+    # while the verdict was published about HEAD. A dirty checkout could
+    # therefore satisfy every check while the commit being pushed failed them,
+    # and CI would reject that same commit afterwards on a clean tree. These
+    # cases pin the head side to the COMMIT, and pin the two things that pins
+    # cannot cover: the driver, which the hook executes from the working tree
+    # and so cannot be redirected, and the base-first ordering the new
+    # materialization sits inside.
+    # ------------------------------------------------------------------
+    g_s53_restore 2>/dev/null || true
+    (cd "$GATE_REPO" && git checkout --quiet -- . 2>/dev/null)
+    G_S54_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    # PREMISE: the base really does carry a protocol this gate can read, so a
+    # failure below is about the head side and not about a fixture that walked
+    # in with a broken base.
+    G_S54_SEED_OK=no
+    (cd "$GATE_REPO" && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
+        scripts/todo-graph/snapshot_protocol.json) >/dev/null 2>&1 && G_S54_SEED_OK=yes
+    if [ "$G_S54_SEED_OK" != yes ]; then
+        t_fail "identity gate: section 54 fixtures cannot start -- the seeded base protocol does not parse"
+    else
+        # 22ee: THE SECTION'S OWN TEST CHECKPOINT. Commit a protocol the loader
+        # refuses TOGETHER with an unrelated closure change (so the
+        # byte-identical exit does not apply), then restore a VALID protocol in
+        # the worktree only. Before section 54 the head read succeeded on the
+        # restored bytes and the run continued; now it reports the committed
+        # protocol by name.
+        (
+            cd "$GATE_REPO" || exit 1
+            python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = 0
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+            printf '\n# 22ee: an unrelated closure edit, so the byte-identical exit does not apply\n' \
+                >> scripts/todo-graph/resolve_symbol.py
+            git commit --quiet --no-verify -am "22ee: a protocol the loader refuses, plus a closure edit" >/dev/null 2>&1
+        )
+        G_S54_HEAD="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        # THE DIRTY RESTORE: valid protocol bytes on disk, broken ones in the
+        # commit. This is the attack the section exists to close.
+        (cd "$GATE_REPO" && git checkout --quiet "$G_S54_BASE" -- scripts/todo-graph/snapshot_protocol.json)
+        G_S54_WT_OK=no
+        (cd "$GATE_REPO" && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["snapshot_schema"] != 0 else 1)' \
+            scripts/todo-graph/snapshot_protocol.json) >/dev/null 2>&1 && G_S54_WT_OK=yes
+        G_S54_COMMIT_BAD=no
+        (cd "$GATE_REPO" && git show "$G_S54_HEAD:scripts/todo-graph/snapshot_protocol.json" \
+            | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["snapshot_schema"] == 0 else 1)') \
+            >/dev/null 2>&1 && G_S54_COMMIT_BAD=yes
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22ee.log" 2>&1)
+        G_RC=$?
+        G_S54_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ee.log" | head -1)"
+        # THE PREMISES ARE ASSERTED, NOT ASSUMED: the worktree must really hold
+        # the good bytes and the commit the bad ones, or this case proves
+        # nothing about which of the two was read.
+        if [ "$G_S54_WT_OK" = yes ] && [ "$G_S54_COMMIT_BAD" = yes ] \
+           && [ "$G_RC" -eq 3 ] \
+           && grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22ee.log" \
+           && ! grep -q 'resolver closure byte-identical base\.\.head' "$TMP_DIR/gate-22ee.log"; then
+            t_pass "identity gate: a dirty worktree cannot restore a protocol the pushed commit breaks"
+        else
+            t_fail "identity gate: the head side read the working tree (rc=$G_RC; got [$G_S54_TOKEN]; wt-good=$G_S54_WT_OK commit-bad=$G_S54_COMMIT_BAD; see $TMP_DIR/gate-22ee.log)"
+        fi
+        # AND THE DIVERGENCE IS DISCLOSED BY NAME. A verdict about a commit,
+        # produced from a tree that differs from it, must say so rather than
+        # leave a reader to infer it from the invocation.
+        if grep -q 'HEAD_WORKTREE_DIVERGES' "$TMP_DIR/gate-22ee.log" \
+           && grep -q 'diverges: scripts/todo-graph/snapshot_protocol.json' "$TMP_DIR/gate-22ee.log"; then
+            t_pass "identity gate: an unadjudicated working-tree divergence is named, not inferred"
+        else
+            t_fail "identity gate: the run adjudicated the commit but never said the tree differed (see $TMP_DIR/gate-22ee.log)"
+        fi
+        # THE RECONCILIATION HALF: a CLEAN checkout of the same commit must
+        # reach the SAME verdict. Equal tokens are what proves the two sources
+        # were reconciled rather than one of them silently preferred.
+        # THE WHOLE TREE, not just the file this case dirtied. Earlier fixtures
+        # leave their own residue in the clone, and a "clean checkout" that is
+        # only clean in one path would still report a divergence -- which is a
+        # true statement about the tree and a false one about this case.
+        # `HEAD --` RATHER THAN A BARE `--`: this case staged its restore with
+        # `git checkout <base> -- <path>`, which writes the INDEX as well as the
+        # worktree, so a bare `git checkout -- .` copies that staged version
+        # straight back and the tree is never clean.
+        (cd "$GATE_REPO" && git checkout --quiet HEAD -- . >/dev/null 2>&1)
+        G_S54_DIRT="$( (cd "$GATE_REPO" && git status --porcelain --untracked-files=all | head -5) )"
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22ee-clean.log" 2>&1)
+        G_S54_CLEAN_RC=$?
+        G_S54_CLEAN_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22ee-clean.log" | head -1)"
+        if [ "$G_S54_CLEAN_RC" -eq "$G_RC" ] && [ -n "$G_S54_CLEAN_TOKEN" ] \
+           && [ "$G_S54_CLEAN_TOKEN" = "$G_S54_TOKEN" ] \
+           && ! grep -q 'HEAD_WORKTREE_DIVERGES' "$TMP_DIR/gate-22ee-clean.log"; then
+            t_pass "identity gate: a clean checkout of the same commit reaches the same verdict"
+        else
+            t_fail "identity gate: dirty and clean checkouts of one commit disagree (dirty rc=$G_RC [$G_S54_TOKEN]; clean rc=$G_S54_CLEAN_RC [$G_S54_CLEAN_TOKEN]; residual dirt [$G_S54_DIRT]; see $TMP_DIR/gate-22ee-clean.log)"
+        fi
+
+        # 22ef: MUTATION -- put the head protocol read back on the working
+        # tree. Without this the case cannot tell "the gate reads the commit"
+        # from "the restore never happened".
+        # THE SHARED CONTROL, not a second copy of the same sed. 22as builds the
+        # identical mutation for the inverted cases; one helper means the two
+        # cannot drift into disagreeing about what "the old behaviour" was.
+        G_MUT_S54="$GATE_REPO/scripts/todo-graph/identity-gate-s54wt.sh"
+        if ! g_s54_wtgate "$G_MUT_S54"; then
+            t_fail "identity gate: could not build the working-tree-read mutation (the shape moved)"
+        else
+            (cd "$GATE_REPO" && git checkout --quiet "$G_S54_BASE" -- scripts/todo-graph/snapshot_protocol.json)
+            (cd "$GATE_REPO" && bash "$G_MUT_S54" --base "$G_S54_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22ef-mut.log" 2>&1)
+            G_S54_MUT_RC=$?
+            if ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22ef-mut.log"; then
+                t_pass "identity gate: MUTATION -- reading the worktree lets the restored bytes past, so 22ee measures the source"
+            else
+                t_fail "identity gate: the working-tree-read mutation still refused, so 22ee proves nothing (rc=$G_S54_MUT_RC; see $TMP_DIR/gate-22ef-mut.log)"
+            fi
+            (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json)
+            rm -f "$G_MUT_S54"
+        fi
+
+        # 22eg: THE ONE HEAD-SIDE READ THAT CANNOT BE REDIRECTED. The hook
+        # executes the working-tree driver, so a driver that differs from its
+        # own commit is certifying a range with code that range does not carry.
+        # It refuses rather than re-executing the committed copy, because
+        # re-executing would change how the gate is INVOKED (section 16's
+        # surface). The recovery half is asserted too: a refusal with no
+        # demonstrated way out is a trap.
+        (
+            cd "$GATE_REPO" || exit 1
+            printf '\n# 22eg: an uncommitted edit to the running driver\n' \
+                >> scripts/todo-graph/identity-gate.sh
+        )
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22eg.log" 2>&1)
+        G_S54_DRV_RC=$?
+        (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/identity-gate.sh)
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22eg-recover.log" 2>&1)
+        if [ "$G_S54_DRV_RC" -eq 3 ] \
+           && grep -q 'GATE_DRIVER_NOT_AT_HEAD' "$TMP_DIR/gate-22eg.log" \
+           && ! grep -q 'GATE_DRIVER_NOT_AT_HEAD' "$TMP_DIR/gate-22eg-recover.log"; then
+            t_pass "identity gate: an uncommitted driver edit refuses, and committing it back clears"
+        else
+            t_fail "identity gate: the running driver was not checked against its own commit (rc=$G_S54_DRV_RC; see $TMP_DIR/gate-22eg.log)"
+        fi
+
+        # 22eh: BASE-FIRST STILL HOLDS ACROSS THE NEW MATERIALIZATION. The head
+        # checkout is a head-side ACQUISITION, and base-first governs
+        # classification, so a base this gate can classify must report even
+        # when the head materialization fails outright. Forced with a mutation
+        # rather than by contriving a disk failure, because the property under
+        # test is the ORDERING, not the cause.
+        G_MUT_S54B="$GATE_REPO/scripts/todo-graph/identity-gate-nohead.sh"
+        sed 's#^    git -c "core.hooksPath=\$NOHOOKS_DIR" worktree add --detach "\$HEAD_TREE" "\$HEAD_RESOLVED" >/dev/null 2>&1 \\$#    false \\#' \
+            "$GATE_IN_CLONE" > "$G_MUT_S54B"
+        if cmp -s "$GATE_IN_CLONE" "$G_MUT_S54B"; then
+            t_fail "identity gate: could not build the head-materialization-failure mutation (the shape moved; the mutant is identical to its source)"
+        else
+            # A base the gate can CLASSIFY: its own history added the protocol
+            # files and this commit removes them.
+            (
+                cd "$GATE_REPO" || exit 1
+                git rm --quiet -f scripts/todo-graph/snapshot_protocol.json \
+                    scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+                git commit --quiet --no-verify -m "22eh: a base with the protocol removed" >/dev/null 2>&1
+            )
+            G_S54_BADBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+            (
+                cd "$GATE_REPO" || exit 1
+                git checkout --quiet "$G_S54_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+                    scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+                printf '\n# 22eh: a closure edit on top of the restored protocol\n' \
+                    >> scripts/todo-graph/resolve_symbol.py
+                git commit --quiet --no-verify -am "22eh: restore the protocol and edit the closure" >/dev/null 2>&1
+            )
+            (cd "$GATE_REPO" && bash "$G_MUT_S54B" --base "$G_S54_BADBASE" --head HEAD \
+                >"$TMP_DIR/gate-22eh.log" 2>&1)
+            G_S54_ORD_RC=$?
+            G_S54_ORD_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22eh.log" | head -1)"
+            if [ "$G_S54_ORD_RC" -eq 3 ] \
+               && grep -qE 'BASE_PROTOCOL_(REMOVED|INCOMPLETE|UNREADABLE)|BASE_PREDATES_PROTOCOL' "$TMP_DIR/gate-22eh.log" \
+               && ! grep -q 'cannot materialize the head worktree' "$TMP_DIR/gate-22eh.log"; then
+                t_pass "identity gate: a classifiable base still reports ahead of a failed head materialization"
+            else
+                t_fail "identity gate: head materialization jumped the base-first queue (rc=$G_S54_ORD_RC; got [$G_S54_ORD_TOKEN]; see $TMP_DIR/gate-22eh.log)"
+            fi
+            # CONTROL: the same mutation against a base the gate CANNOT
+            # classify must reach the head materialization failure, or the case
+            # above would pass on a gate that never runs the checkout at all.
+            (cd "$GATE_REPO" && bash "$G_MUT_S54B" --base "$G_S54_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22eh-control.log" 2>&1)
+            if grep -q 'cannot materialize the head worktree' "$TMP_DIR/gate-22eh-control.log"; then
+                t_pass "identity gate: CONTROL -- with a clean base the forced head-checkout failure does surface"
+            else
+                t_fail "identity gate: the head-materialization mutation never fired, so 22eh proves nothing (see $TMP_DIR/gate-22eh-control.log)"
+            fi
+        fi
+        # UNCONDITIONALLY, including on the build-failure path above. Left
+        # inside the `else`, a mutation this case could not build stayed in the
+        # clone as an untracked file -- and 22ek's premise is that the working
+        # tree is CLEAN, so one case's failure produced a second, unrelated
+        # failure two cases later.
+        rm -f "$G_MUT_S54B"
+
+        # 22ei: NO HOOK FROM THE TREE UNDER TEST RUNS DURING MATERIALIZATION.
+        # `core.hooksPath` in the real repository is the RELATIVE path
+        # `.githooks`, so it resolves inside whatever worktree git is
+        # populating, and `git worktree add` runs `post-checkout` once the files
+        # are there. A head commit carrying an executable `.githooks/post-checkout`
+        # would therefore execute arbitrary code from the tree under test, before
+        # any check, with the whole corpus in reach. The clone is configured the
+        # same way ON PURPOSE -- a fixture that left hooks at `.git/hooks` would
+        # test a repository this one is not.
+        G_S54_HOOKMARK="$TMP_DIR/s54-post-checkout-ran"
+        rm -f "$G_S54_HOOKMARK"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            mkdir -p .githooks
+            {
+                printf '#!/usr/bin/env bash\n'
+                printf 'printf ran > %s\n' "$G_S54_HOOKMARK"
+                printf 'rm -f todo/*/TODO-*.md 2>/dev/null || true\n'
+                printf 'exit 0\n'
+            } > .githooks/post-checkout
+            chmod +x .githooks/post-checkout
+            git add .githooks/post-checkout >/dev/null 2>&1
+            git update-index --chmod=+x .githooks/post-checkout >/dev/null 2>&1
+            printf '\n# 22ei: a closure edit so the range is adjudicated\n' \
+                >> scripts/todo-graph/resolve_symbol.py
+            git add scripts/todo-graph/resolve_symbol.py >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22ei: a head commit carrying a post-checkout hook" >/dev/null 2>&1
+            git config core.hooksPath .githooks
+        )
+        G_S54_HOOKBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD~1) )"
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_HOOKBASE" --head HEAD \
+            >"$TMP_DIR/gate-22ei.log" 2>&1)
+        G_S54_HOOK_RC=$?
+        G_S54_HOOK_COMMITTED=no
+        (cd "$GATE_REPO" && git cat-file -e "HEAD:.githooks/post-checkout") >/dev/null 2>&1 \
+            && G_S54_HOOK_COMMITTED=yes
+        # THE PREMISE IS ASSERTED: the hook must really be in the commit, or the
+        # case proves only that a file nobody added did not run.
+        if [ "$G_S54_HOOK_COMMITTED" = yes ] && [ ! -e "$G_S54_HOOKMARK" ]; then
+            t_pass "identity gate: a post-checkout hook in the tree under test does not run during materialization"
+        else
+            t_fail "identity gate: the tree under test executed code during materialization (rc=$G_S54_HOOK_RC; committed=$G_S54_HOOK_COMMITTED; marker=$([ -e "$G_S54_HOOKMARK" ] && echo present || echo absent); see $TMP_DIR/gate-22ei.log)"
+        fi
+
+        # 22ej: MUTATION, AND THE SECOND NET. Take the hook-free setting back
+        # out of a copy and the SAME commit executes -- which proves 22ei
+        # measures the setting rather than a hook that never fired. It also
+        # reaches the independent net: the hook deletes corpus files, so the
+        # materialized tree no longer matches the commit and the faithfulness
+        # check must refuse rather than walk a thinned corpus. Two properties,
+        # one run, because the second only exists to catch what the first misses.
+        G_MUT_HOOK="$GATE_REPO/scripts/todo-graph/identity-gate-hookson.sh"
+        sed 's#git -c "core.hooksPath=\$NOHOOKS_DIR" worktree add#git worktree add#g' \
+            "$GATE_IN_CLONE" > "$G_MUT_HOOK"
+        if cmp -s "$GATE_IN_CLONE" "$G_MUT_HOOK"; then
+            t_fail "identity gate: could not build the hooks-enabled mutation (the shape moved; the mutant is identical to its source)"
+        else
+            rm -f "$G_S54_HOOKMARK"
+            (cd "$GATE_REPO" && bash "$G_MUT_HOOK" --base "$G_S54_HOOKBASE" --head HEAD \
+                >"$TMP_DIR/gate-22ej.log" 2>&1)
+            G_S54_MUTHOOK_RC=$?
+            if [ -e "$G_S54_HOOKMARK" ] \
+               && [ "$G_S54_MUTHOOK_RC" -eq 3 ] \
+               && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22ej.log"; then
+                t_pass "identity gate: MUTATION -- hooks enabled, the tree runs AND the faithfulness check refuses it"
+            else
+                t_fail "identity gate: the hooks mutation proved nothing (rc=$G_S54_MUTHOOK_RC; marker=$([ -e "$G_S54_HOOKMARK" ] && echo present || echo absent); see $TMP_DIR/gate-22ej.log)"
+            fi
+            rm -f "$G_MUT_HOOK"
+        fi
+        (
+            cd "$GATE_REPO" || exit 1
+            git config --unset core.hooksPath >/dev/null 2>&1
+            git rm --quiet -f .githooks/post-checkout >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22ei: drop the post-checkout hook" >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+        rm -f "$G_S54_HOOKMARK"
+
+        # 22ek: AN EXPLICIT --head THAT CARRIES A DIFFERENT DRIVER. The refusal
+        # is the same one an uncommitted edit gets, and for the same reason --
+        # the gate will not certify a range with code that range does not
+        # contain -- but the REPAIR is not: there is no edit to commit or stash,
+        # and telling the operator to do so sends them somewhere that cannot
+        # work. The two messages must differ, and the working tree here is
+        # CLEAN, which is what makes the distinction load-bearing.
+        G_S54_OLDHEAD="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            printf '\n# 22ek: a driver edit that lives only in this commit\n' \
+                >> scripts/todo-graph/identity-gate.sh
+            git commit --quiet --no-verify -am "22ek: a commit whose driver differs from the checkout" >/dev/null 2>&1
+            git checkout --quiet "$G_S54_OLDHEAD" -- scripts/todo-graph/identity-gate.sh >/dev/null 2>&1
+            git commit --quiet --no-verify -am "22ek: and a later commit that restores it" >/dev/null 2>&1
+        )
+        G_S54_OTHERHEAD="$( (cd "$GATE_REPO" && git rev-parse HEAD~1) )"
+        G_S54_CLEANTREE="$( (cd "$GATE_REPO" && git status --porcelain --untracked-files=all | head -3) )"
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_OLDHEAD" --head "$G_S54_OTHERHEAD" \
+            >"$TMP_DIR/gate-22ek.log" 2>&1)
+        G_S54_OH_RC=$?
+        if [ -z "$G_S54_CLEANTREE" ] && [ "$G_S54_OH_RC" -eq 3 ] \
+           && grep -q 'GATE_DRIVER_NOT_AT_HEAD' "$TMP_DIR/gate-22ek.log" \
+           && grep -q 'Re-run from a checkout whose' "$TMP_DIR/gate-22ek.log" \
+           && ! grep -q 'Commit or stash the driver edit' "$TMP_DIR/gate-22ek.log"; then
+            t_pass "identity gate: an explicit head with a different driver gets a repair it can actually perform"
+        else
+            t_fail "identity gate: the explicit-head driver refusal named the wrong repair (rc=$G_S54_OH_RC; dirt [$G_S54_CLEANTREE]; see $TMP_DIR/gate-22ek.log)"
+        fi
+
+        # 22el: A COMMITTED SYMLINK IS A SYMLINK WHATEVER THE FILESYSTEM CAN
+        # REPRESENT. With `core.symlinks` false -- the default wherever the host
+        # cannot create symlinks, which is an ordinary Windows checkout -- git
+        # writes a committed 120000 entry as a small REGULAR file holding the
+        # target path text and reports the tree clean. Neither the faithfulness
+        # check nor `git status` can see that, because the content IS faithful;
+        # only the type is not. Asking the filesystem would classify a symlinked
+        # protocol file as a regular one and adjudicate the range on semantics
+        # no symlink-capable checkout shares, so the head contract asks the
+        # COMMIT, symmetrically with the base.
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            cp scripts/todo-graph/snapshot_protocol.json "$TMP_DIR/s54-real-protocol.json"
+            rm -f scripts/todo-graph/snapshot_protocol.json
+            ln -s "$TMP_DIR/s54-real-protocol.json" scripts/todo-graph/snapshot_protocol.json
+            printf '\n# 22el: a closure edit so the range is adjudicated\n' \
+                >> scripts/todo-graph/resolve_symbol.py
+            git add -A scripts/todo-graph >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22el: commit the protocol JSON as a symlink" >/dev/null 2>&1
+            git config core.symlinks false
+        )
+        G_S54_SYMBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD~1) )"
+        G_S54_SYMMODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- scripts/todo-graph/snapshot_protocol.json | cut -d' ' -f1) )"
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S54_SYMBASE" --head HEAD \
+            >"$TMP_DIR/gate-22el.log" 2>&1)
+        G_S54_SYM_RC=$?
+        G_S54_SYM_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22el.log" | head -1)"
+        # THE PREMISE IS THE COMMITTED MODE, not what happens to be on disk:
+        # this case is only about a symlink the COMMIT carries.
+        # THE TOKEN IS `MATERIALIZATION_UNFAITHFUL`, NOT A PROTOCOL COMPLAINT,
+        # and the difference is the whole case. Emulated, the JSON's bytes are
+        # the target PATH TEXT, so the protocol simply fails to parse and the
+        # first draft of this fixture accepted `HEAD_PROTOCOL_UNREADABLE` --
+        # a refusal, but one that sends the operator to inspect JSON when the
+        # fault is that this host cannot represent the commit at all. It has to
+        # be caught before the parse, by the check that knows what the commit
+        # stores, or the classification is decided by whether the symlink target
+        # happened to be readable.
+        if [ "$G_S54_SYMMODE" = "120000" ] && [ "$G_S54_SYM_RC" -eq 3 ] \
+           && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22el.log" \
+           && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22el.log"; then
+            t_pass "identity gate: symlink emulation is named as an unfaithful checkout, not as a bad protocol"
+        else
+            t_fail "identity gate: symlink emulation was misclassified or let through (rc=$G_S54_SYM_RC; mode=$G_S54_SYMMODE; got [$G_S54_SYM_TOKEN]; see $TMP_DIR/gate-22el.log)"
+        fi
+        # AND THE COMMIT-SIDE CONTRACT IS PINNED SEPARATELY. The check above
+        # refuses BEFORE the head protocol contract is reached, so it proves the
+        # emulation probe and says nothing about the other half of the fix --
+        # reverting `protocol_present_in_commit` to the filesystem would leave it
+        # green. With the emulation probe disabled the run reaches that contract,
+        # and the commit's own recorded mode must still refuse (Codex
+        # adversarial, section 54 round 3, [low]).
+        G_MUT_SYM="$GATE_REPO/scripts/todo-graph/identity-gate-nosymprobe.sh"
+        sed 's#^        \[ -L "\$1/\$_path" \] && continue$#        continue#' \
+            "$GATE_IN_CLONE" > "$G_MUT_SYM"
+        if cmp -s "$GATE_IN_CLONE" "$G_MUT_SYM"; then
+            t_fail "identity gate: could not build the symlink-probe mutation (the shape moved; the mutant is identical to its source)"
+        else
+            (cd "$GATE_REPO" && git config core.symlinks true >/dev/null 2>&1)
+            (cd "$GATE_REPO" && git checkout --quiet HEAD -- . >/dev/null 2>&1)
+            (cd "$GATE_REPO" && bash "$G_MUT_SYM" --base "$G_S54_SYMBASE" --head HEAD \
+                >"$TMP_DIR/gate-22el-contract.log" 2>&1)
+            G_S54_CT_RC=$?
+            if [ "$G_S54_CT_RC" -eq 3 ] \
+               && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22el-contract.log"; then
+                t_pass "identity gate: the commit's own mode refuses a symlinked protocol file on a symlink-capable host"
+            else
+                t_fail "identity gate: the commit-side file-type contract did not refuse a committed symlink (rc=$G_S54_CT_RC; see $TMP_DIR/gate-22el-contract.log)"
+            fi
+            rm -f "$G_MUT_SYM"
+        fi
+        (
+            cd "$GATE_REPO" || exit 1
+            git config --unset core.symlinks >/dev/null 2>&1
+            rm -f scripts/todo-graph/snapshot_protocol.json
+            git checkout --quiet "$G_S54_SYMBASE" -- scripts/todo-graph/snapshot_protocol.json >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22el: restore the protocol JSON as a regular file" >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+        rm -f "$TMP_DIR/s54-real-protocol.json"
+
+        # 22em: A REGISTRATION OUTLIVES ITS DIRECTORY, so cleanup is driven by
+        # what the run ATTEMPTED and not by what is still on disk. The failure
+        # this pins is silent by construction: the gate exits with a perfectly
+        # ordinary verdict while leaving an administrative entry in
+        # `.git/worktrees` that nothing will ever collect, and it accumulates one
+        # per run. Forced with a shim that deletes the linked directory the
+        # moment it has been created, which is the shape an interrupted `add`
+        # and a head-side module deleting its own tree both reduce to.
+        G_S54_WTBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] section 54 fixture: a todo-only edit beside a vanishing linked tree\n' >>"$t"
+            git commit --quiet --no-verify -am "22em: todo-only edit, closure untouched" >/dev/null 2>&1
+        )
+        G_S54_WTBEFORE="$( (cd "$GATE_REPO" && git worktree list --porcelain | grep -c '^worktree ') )"
+        G_SHIM_S54="$TMP_DIR/gitshim-s54"
+        mkdir -p "$G_SHIM_S54"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf '_is_add=0\n'
+            printf 'for a in "$@"; do [ "$a" = "add" ] && _is_add=1; done\n'
+            printf '_is_wt=0\n'
+            printf 'for a in "$@"; do [ "$a" = "worktree" ] && _is_wt=1; done\n'
+            printf 'if [ "$_is_wt" = "1" ] && [ "$_is_add" = "1" ]; then\n'
+            printf '  %s "$@"; _rc=$?\n' "$G_REAL_GIT"
+            printf '  _last=""; for a in "$@"; do case "$a" in */base|*/head) _last="$a" ;; esac; done\n'
+            printf '  if [ -n "$_last" ]; then printf "%%s\\n" "$_last" >> %s; rm -rf "$_last"; fi\n' \
+                "$TMP_DIR/s54-adds-seen"
+            printf '  exit $_rc\n'
+            printf 'fi\n'
+            printf 'exec %s "$@"\n' "$G_REAL_GIT"
+        } > "$G_SHIM_S54/git"
+        chmod +x "$G_SHIM_S54/git"
+        (cd "$GATE_REPO" && PATH="$G_SHIM_S54:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_S54_WTBASE" --head HEAD >"$TMP_DIR/gate-22em.log" 2>&1)
+        G_S54_WT_RC=$?
+        G_S54_WTAFTER="$( (cd "$GATE_REPO" && git worktree list --porcelain | grep -c '^worktree ') )"
+        # THE SHIM MUST HAVE FIRED, AND THE REGISTRATION MUST BE GONE BY NAME.
+        # A count-only oracle passes when the gate exits before materializing
+        # anything at all, and passes again when the gate leaks its own entry
+        # while the repository-wide prune happens to collect an unrelated one --
+        # so it agrees with two of the regressions it exists to catch (Codex
+        # adversarial, section 54 round 3, [medium]).
+        G_S54_ADDS="$(grep -c . "$TMP_DIR/s54-adds-seen" 2>/dev/null || echo 0)"
+        G_S54_STILL="$( (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null \
+            | grep -c '/base$\|/head$') || true )"
+        if [ "${G_S54_ADDS:-0}" -ge 1 ] && [ "${G_S54_STILL:-0}" -eq 0 ] \
+           && [ "$G_S54_WTAFTER" = "$G_S54_WTBEFORE" ]; then
+            t_pass "identity gate: a linked tree that vanishes under the gate leaves no registration behind"
+        else
+            t_fail "identity gate: a vanished linked tree stayed registered (rc=$G_S54_WT_RC; adds=$G_S54_ADDS still=$G_S54_STILL; worktrees $G_S54_WTBEFORE -> $G_S54_WTAFTER; see $TMP_DIR/gate-22em.log)"
+        fi
+        # MUTATION: put the directory-existence guard back in place of the
+        # attempt list, and the same shim must leave the registration behind.
+        # Without it the case cannot tell "cleanup handled it" from "there was
+        # never anything to handle".
+        G_MUT_WT="$GATE_REPO/scripts/todo-graph/identity-gate-dirguard.sh"
+        sed 's#^        \[ "\$_wt_seen" -eq 1 \] || continue$#        [ -d "$_wt" ] || continue#' \
+            "$GATE_IN_CLONE" > "$G_MUT_WT"
+        # THE MUTANT MUST DIFFER FROM ITS SOURCE, asserted rather than inferred
+        # from the absence of the old text. The previous guard checked that the
+        # pre-mutation shape was gone -- which it was, because the shape had
+        # been REPLACED for an unrelated reason -- so the sed matched nothing,
+        # the case ran the unmutated gate, and it reported that the fix it was
+        # supposed to contradict did not leak. A mutation fixture that cannot
+        # tell "applied and had no effect" from "never applied" proves nothing
+        # in either direction.
+        if cmp -s "$GATE_IN_CLONE" "$G_MUT_WT"; then
+            t_fail "identity gate: could not build the cleanup-reversion mutation (the shape moved; the mutant is identical to its source)"
+        else
+            rm -f "$TMP_DIR/s54-adds-seen"
+            (cd "$GATE_REPO" && PATH="$G_SHIM_S54:$PATH" bash "$G_MUT_WT" \
+                --base "$G_S54_WTBASE" --head HEAD >"$TMP_DIR/gate-22em-mut.log" 2>&1)
+            G_S54_MUTSTILL="$( (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null \
+                | grep -c '/base$\|/head$') || true )"
+            if [ "${G_S54_MUTSTILL:-0}" -ge 1 ]; then
+                t_pass "identity gate: MUTATION -- the directory guard leaks the registration, so 22em measures the fix"
+            else
+                t_fail "identity gate: the cleanup reversion did not leak, so 22em proves nothing (still=$G_S54_MUTSTILL; see $TMP_DIR/gate-22em-mut.log)"
+            fi
+            # The mutation leaked on purpose; collect it so later cases start
+            # from the registry they expect.
+            (cd "$GATE_REPO" && git worktree prune --expire now >/dev/null 2>&1 || true)
+            rm -f "$G_MUT_WT"
+        fi
+        # AND AN UNANSWERABLE LISTING MUST NOT SUPPRESS THE SWEEP. The
+        # confirmation exists to stop a repository-wide prune firing on
+        # suspicion alone, so its failure mode is the dangerous one: read as
+        # "nothing of ours is registered" it would skip the sweep exactly when
+        # the gate cannot see what it left behind. Forced by replacing the
+        # listing with a failing command, which is also the shape a broken pipe
+        # produced before the pipeline was removed (Codex adversarial, section
+        # 54 round 4, [medium]).
+        G_MUT_LIST="$GATE_REPO/scripts/todo-graph/identity-gate-nolist.sh"
+        sed 's#^        _wt_list="\$(timeout --foreground -s KILL 60 git worktree list --porcelain 2>/dev/null)"$#        _wt_list="$(false)"#' \
+            "$GATE_IN_CLONE" > "$G_MUT_LIST"
+        if cmp -s "$GATE_IN_CLONE" "$G_MUT_LIST"; then
+            t_fail "identity gate: could not build the unanswerable-listing mutation (the shape moved; the mutant is identical to its source)"
+        else
+            rm -f "$TMP_DIR/s54-adds-seen"
+            # A BYSTANDER REGISTRATION THAT A PRUNE WOULD COLLECT. Its directory
+            # is deleted, so it is prunable by git's own rule; nothing about it
+            # belongs to this gate.
+            G_S54_BYST="$TMP_DIR/s54-bystander-wt"
+            rm -rf "$G_S54_BYST"
+            (cd "$GATE_REPO" && git worktree add --detach "$G_S54_BYST" HEAD >/dev/null 2>&1)
+            rm -rf "$G_S54_BYST"
+            (cd "$GATE_REPO" && PATH="$G_SHIM_S54:$PATH" bash "$G_MUT_LIST" \
+                --base "$G_S54_WTBASE" --head HEAD >"$TMP_DIR/gate-22em-nolist.log" 2>&1)
+            G_S54_NL_STILL="$( (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null \
+                | grep -c '/base$\|/head$') || true )"
+            G_S54_NL_BYSTANDER=0
+            (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null \
+                | grep -qxF "worktree $G_S54_BYST") && G_S54_NL_BYSTANDER=1
+            G_S54_NL_ADDS="$(grep -c . "$TMP_DIR/s54-adds-seen" 2>/dev/null || echo 0)"
+            # AN UNANSWERABLE LISTING MUST NOT DESTROY ANYTHING. `prune` is
+            # repository-wide, and git treats an unlocked worktree whose storage
+            # is momentarily unavailable as prunable, so sweeping on a failed
+            # enumeration can deregister somebody else's live worktree. The
+            # bystander here stands in for exactly that: its directory is gone,
+            # so a prune WOULD collect it, and it must survive.
+            if [ "${G_S54_NL_ADDS:-0}" -ge 1 ] && [ "${G_S54_NL_BYSTANDER:-0}" -eq 1 ]; then
+                t_pass "identity gate: a listing the gate cannot read prunes nothing, so an unrelated registration survives"
+            else
+                t_fail "identity gate: an unanswerable worktree listing swept the whole repository (adds=$G_S54_NL_ADDS bystander=$G_S54_NL_BYSTANDER still=$G_S54_NL_STILL; see $TMP_DIR/gate-22em-nolist.log)"
+            fi
+            rm -f "$G_MUT_LIST"
+        fi
+        # AND THE CONFIRMATION SURVIVES A TMPDIR CONTAINING A SPACE. `mktemp -t`
+        # honours TMPDIR, so this is an ordinary path, not an exotic one -- and
+        # while the attempted paths were held in a space-separated string they
+        # word-split, so neither was ever tested intact and the sweep silently
+        # never fired (Codex adversarial, section 54 round 5, [medium]).
+        G_S54_WSTMP="$TMP_DIR/s54 space tmp"
+        rm -rf "$G_S54_WSTMP"; mkdir -p "$G_S54_WSTMP"
+        rm -f "$TMP_DIR/s54-adds-seen"
+        (cd "$GATE_REPO" && TMPDIR="$G_S54_WSTMP" PATH="$G_SHIM_S54:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_S54_WTBASE" --head HEAD >"$TMP_DIR/gate-22em-space.log" 2>&1)
+        G_S54_WS_ADDS="$(grep -c . "$TMP_DIR/s54-adds-seen" 2>/dev/null || echo 0)"
+        G_S54_WS_STILL="$( (cd "$GATE_REPO" && git worktree list --porcelain 2>/dev/null \
+            | grep -c '/base$\|/head$') || true )"
+        if [ "${G_S54_WS_ADDS:-0}" -ge 1 ] && [ "${G_S54_WS_STILL:-0}" -eq 0 ]; then
+            t_pass "identity gate: a TMPDIR containing a space still confirms and sweeps its own registrations"
+        else
+            t_fail "identity gate: a whitespace TMPDIR defeated the attempted-path confirmation (adds=$G_S54_WS_ADDS still=$G_S54_WS_STILL; see $TMP_DIR/gate-22em-space.log)"
+        fi
+        rm -rf "$G_S54_WSTMP"
+        rm -f "$TMP_DIR/s54-adds-seen"
+        rm -rf "$G_SHIM_S54"
+        (cd "$GATE_REPO" && git worktree prune --expire now >/dev/null 2>&1 || true)
     fi
 fi
 
