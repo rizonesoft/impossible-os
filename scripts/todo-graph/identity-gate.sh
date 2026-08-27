@@ -142,6 +142,29 @@
 #        BASE_TRANSPORT_FAILED        the gate could not carry its OWN record
 #        HEAD_TRANSPORT_FAILED        between its own processes; machinery, not
 #                                     a statement about either tree
+#      One name is a TOMBSTONE: retired, never emitted, and deliberately not
+#      reused. It is published because the token vocabulary is a contract
+#      callers branch on, and a name that silently disappears and later comes
+#      back meaning something else is worse for such a caller than a name that
+#      says it is dead:
+#        CLOSURE_MOVED_UNDER_GATE     RETIRED (section 55, recorded here by
+#                                     section 58). It meant a closure member
+#                                     changed between the measurement and the
+#                                     decision. Section 55 stopped reading the
+#                                     head closure from a checkout, so there is
+#                                     no longer a tree in which a member could
+#                                     move, and section 55's own closure
+#                                     cross-probe refuses under
+#                                     CLOSURE_UNVERIFIABLE instead -- two
+#                                     probes disagreeing about an immutable
+#                                     commit is a repository or parser fault,
+#                                     not a member moving. It is NOT a reserved
+#                                     guard: no edit to this file short of
+#                                     re-introducing an emitter can provoke it,
+#                                     so unlike the two below it has no
+#                                     mutation fixture, and 22f3 asserts
+#                                     statically that no emitter has come back
+#
 #      Two of the names below are RESERVED SOURCE-INTEGRITY GUARDS rather than
 #      classifications a tree can provoke: with PROTOCOL_PATHS as shipped, no
 #      input reaches them, and only an edit to this file that adds a path
@@ -153,13 +176,22 @@
 #        HEAD_PROTOCOL_ABSENT         the tree under test has no mechanism
 #        HEAD_PROTOCOL_INCOMPLETE     the tree under test has part of one
 #        HEAD_PROTOCOL_UNMATERIALIZED the commit has it, the tree the gate
-#                                     read does not: an incomplete/sparse
-#                                     checkout. Since section 54 that tree is
-#                                     the gate's OWN materialization of the
-#                                     head commit, so this is defence in depth
-#                                     over a checkout it made itself rather
-#                                     than a statement about the operator's
-#                                     working tree
+#                                     read does not. Since section 54 that
+#                                     tree is the gate's OWN materialization
+#                                     of the head commit, so it is never a
+#                                     statement about the operator's working
+#                                     tree. Section 58 MEASURED what is left
+#                                     of it: the token needs BOTH an
+#                                     independent protocol failure (it sits
+#                                     under the UNREADABLE case, so `proto_of`
+#                                     must already have failed) AND the tree
+#                                     losing a member after section 55's
+#                                     re-binding verified it. Every earlier
+#                                     divergence is claimed by
+#                                     MATERIALIZATION_UNFAITHFUL, so the one
+#                                     surviving route is a probe descendant
+#                                     that left its process group; it is
+#                                     fixtured by 22f1
 #        HEAD_PROTOCOL_UNREADABLE     complete at HEAD, but unparseable
 #
 #      Two belong to the ENDPOINTS (section 52) -- resolving the arguments,
@@ -223,11 +255,6 @@
 #      range; they say this gate could not hold its own subject still long
 #      enough to certify it, so the operator action is to re-run, or to repair
 #      the checkout, rather than to re-point the base.
-#        CLOSURE_MOVED_UNDER_GATE     NO LONGER EMITTED (section 55). It meant
-#                                     a closure member changed between the
-#                                     measurement and the decision, so the
-#                                     protocol evidence describes a tree that
-#                                     is no longer here
 #        CLOSURE_UNVERIFIABLE         a closure member could not be asked about
 #                                     or hashed, or is not a regular file
 #                                     reached through regular directories -- an
@@ -3794,9 +3821,13 @@ esac
 # not an impossible one, and retiring a published token was not section 54's to
 # do. SECTION 55 THEN REMOVED THE LAST TREE IT COULD GUARD: the fast path
 # materializes no checkout at all, so there is no longer anything that can move
-# under the gate, and the token has NO EMITTER. That is left standing rather
-# than deleted for the same reason section 54 left it: retiring a published
-# token belongs to the section that owns the token surface.
+# under the gate, and the token has NO EMITTER. SECTION 58 THEN SETTLED WHAT
+# BECOMES OF IT: not deleted, and not a reserved guard either, but a TOMBSTONE
+# recorded in the header -- retired, never emitted, and not reusable for a
+# different fault. Deleting it would let the name come back later meaning
+# something else, which is worse for a caller branching on the vocabulary than
+# a name that says it is dead; calling it reserved would claim an edit to this
+# file could provoke it, and none can short of re-introducing an emitter.
 # -> XREF: [`TODO-06 section 58`](#58-head-versus-tree-checks-section-54-made-unreachable-are-retired-or-re-fixtured)
 #
 # MATERIALIZED HERE, NOT BESIDE THE BASE CHECKOUT, for exactly the reason the
@@ -4005,7 +4036,7 @@ case "$HEAD_PROTO" in
         fi
         for _i in "${!PROTOCOL_PATHS[@]}"; do
             if [ "${PROTO_HAS[$_i]}" = 1 ] && [ "${HEAD_WT_HAS[$_i]}" != 1 ]; then
-                die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries ${PROTOCOL_PATHS[$_i]} but the tree the gate assembled for it at $HEAD_MIN does not -- that materialization is incomplete (a partial clone missing the blob), so the gate is reading a tree that is not the commit it claims to test"
+                die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries ${PROTOCOL_PATHS[$_i]} but the tree the gate assembled for it at $HEAD_MIN does not. Since section 54 that tree is the gate's own materialization and section 55 re-binds it to the commit before this classification, so the reachable cause is that something removed the path AFTER that re-binding and before this read -- a descendant of the protocol probe that left its process group is the measured route (section 58). An incomplete materialization would have been claimed earlier as MATERIALIZATION_UNFAITHFUL; either way the gate is reading a tree that is not the commit it claims to test"
             fi
         done
         PROTO_HAS=("${HEAD_WT_HAS[@]}")
@@ -4026,8 +4057,24 @@ case "$HEAD_PROTO" in
         fi
         HEAD_COMMIT_FORM="$(protocol_form)"
         [ "$HEAD_COMMIT_FORM" = "UNMAPPED" ] && die_infra "HEAD_FORM_UNMAPPED: PROTOCOL_PATHS declares a set this gate's form mapping does not cover (${PROTOCOL_PATHS[*]}), so no classification can be made from it. Extend protocol_form alongside PROTOCOL_PATHS"
+        # REACHING HERE IS CONTAMINATION, NOT AN INCOMPLETE CHECKOUT, and the
+        # token said the opposite until section 58 measured the predicate. The
+        # loop above has already refused every path the commit carries and the
+        # tree lacks, so by this line the tree holds EVERYTHING the commit
+        # holds. The only way its form can still be weaker than the commit's is
+        # that it holds something MORE: a legacy-complete commit whose
+        # assembled tree gained snapshot_protocol.json without the data loader
+        # reads as a broken data form, while the commit still reads as a
+        # complete legacy one. Nothing is missing on that route, so "that
+        # materialization is incomplete (a partial clone missing the blob)"
+        # named a cause that cannot produce this branch, and sent the operator
+        # to repair a clone that was never partial (Codex design review,
+        # section 58, [medium]). An ADDED member is exactly what
+        # MATERIALIZATION_UNFAITHFUL publishes, and `min_tree_still_matches`
+        # refuses the same shape one phase earlier under that same name -- so
+        # this is one fault with one name, not a second vocabulary for it.
         if [ "$HEAD_COMMIT_FORM" = "complete" ]; then
-            die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries a complete snapshot protocol but the tree the gate assembled for it at $HEAD_MIN does not (missing$HEAD_MISSING) -- that materialization is incomplete (a partial clone missing the blob), so the gate is reading a tree that is not the commit it claims to test"
+            die_infra "MATERIALIZATION_UNFAITHFUL: the head tree assembled for $HEAD_RESOLVED holds every snapshot-protocol path that commit carries and still cannot express the commit's form (the commit is complete; the assembled tree reads as $HEAD_FORM, missing$HEAD_MISSING) -- so that tree has GAINED a protocol path the commit does not carry since the gate re-bound it, and every check that has already passed describes bytes that are no longer there"
         fi
         if [ "$HEAD_FORM" = "partial" ]; then
             die_infra "HEAD_PROTOCOL_INCOMPLETE: the tree under test carries part of the snapshot protocol but cannot express either form of it -- missing$HEAD_MISSING, so nothing here can be gated"
@@ -4130,18 +4177,22 @@ protocol_source_is_regular "$HEAD_SOURCE" head \
 # Structural validity is a precondition for adjudicating the range at all;
 # only the CONTENT comparison decides which way the range is adjudicated.
 #
-# THREE DISTINCT FAULTS, THREE DISTINCT TOKENS, because they have three
-# different repair actions and a caller branching on them needs to tell them
-# apart:
+# TWO LIVE FAULTS AND ONE TOMBSTONE, because they have different repair
+# actions and a caller branching on them needs to tell them apart. This block
+# said THREE DISTINCT TOKENS until section 58 retired one of them, which left
+# the contract describing a fault the loop below can no longer report:
 #   CLOSURE_UNVERIFIABLE      the gate could not establish what it is looking
 #                             at -- fix the repository or the checkout;
 #   CLOSURE_MOVED_UNDER_GATE  a member changed WHILE the gate ran -- re-run
-#                             against a tree that holds still. NO LONGER
-#                             EMITTED since section 55: the fast path holds no
-#                             checkout for a member to move in, and a
+#                             against a tree that holds still. RETIRED: no
+#                             emitter since section 55, because the fast path
+#                             holds no checkout for a member to move in, and a
 #                             cross-probe disagreement about an immutable
 #                             commit is a repository or parser fault, which is
-#                             CLOSURE_UNVERIFIABLE. Retiring it is section 58's;
+#                             CLOSURE_UNVERIFIABLE. Section 58 recorded it as a
+#                             TOMBSTONE in the header rather than deleting it,
+#                             so the name cannot be reused for another fault;
+#                             fixture 22f3 asserts no emitter has come back;
 # A third token, CLOSURE_MODE_CHANGED, briefly lived here for a base-vs-head
 # mode difference. It was withdrawn in the same review: deterministic, so it had
 # no business sharing the movement token (Codex consistency, [medium]) -- and
@@ -4161,9 +4212,18 @@ protocol_source_is_regular "$HEAD_SOURCE" head \
 # re-hash, that only adjudicating an immutable snapshot removes that, and that
 # the question belonged to section 54. Section 54 took it: the head side reads
 # $HEAD_RESOLVED, an immutable snapshot, so there is no live file left for a
-# member to move under. What survives is the residual case of the gate's own
-# materialized checkout being disturbed, which is what the re-hash below now
-# measures.
+# member to move under.
+#
+# AND NOTHING RESIDUAL SURVIVES HERE EITHER, which this comment claimed until
+# section 58 checked it against the loop underneath. It said the residual case
+# of the gate's own materialized checkout being disturbed was "what the re-hash
+# below now measures" -- but section 55 removed that re-hash when it stopped
+# reading the head closure from a checkout, and the loop below now compares two
+# readings of one IMMUTABLE COMMIT, which cannot disagree unless the repository
+# or this gate's own parsing is at fault. That is CLOSURE_UNVERIFIABLE. The
+# assembled tree is still guarded against disturbance, but by
+# `min_tree_still_matches` under MATERIALIZATION_UNFAITHFUL, not by anything in
+# this loop (Codex adversarial, section 58, [low]).
 for _i in "${!CLOSURE[@]}"; do
     f="${CLOSURE[$_i]}"
     # THE BATCH ABOVE ALREADY ASKED. Its failure is raised HERE, per member and
@@ -4256,10 +4316,12 @@ for _i in "${!CLOSURE[@]}"; do
     # leaves the other one alone (Codex adversarial, section 55 round 5,
     # [medium]).
     # -> XREF: [`TODO-06 section 58`](#58-head-versus-tree-checks-section-54-made-unreachable-are-retired-or-re-fixtured)
-    #    owns the published-token surface. This section leaves
-    #    CLOSURE_MOVED_UNDER_GATE with no emitter at all, which is exactly the
-    #    retire-or-re-fixture decision that section exists to make; the two
-    #    checkout-presence refusals removed just below are the same question.
+    #    owned the published-token surface and has now answered: this section
+    #    left CLOSURE_MOVED_UNDER_GATE with no emitter at all, and section 58
+    #    recorded it as a retired TOMBSTONE rather than deleting the name or
+    #    calling it a reserved guard. The two checkout-presence refusals
+    #    removed just below were the same question and are simply gone, since
+    #    a branch that no longer exists has nothing to retire.
     if [ "$_h" != "${FIRST_H[$_i]}" ] \
        && ! { [ "$_h" = ABSENT ] && [ "${FIRST_H[$_i]}" = MISSING ]; }; then
         die_infra "CLOSURE_UNVERIFIABLE: the two independent readings of the closure member $f in $HEAD_RESOLVED disagree ('${FIRST_H[$_i]}' then '$_h') -- one resolved the path expression, the other parsed the tree listing, and an immutable commit cannot answer them differently, so the repository or this gate's own parsing is what is failing and nothing here can be certified"

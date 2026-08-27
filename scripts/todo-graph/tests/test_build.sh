@@ -17973,6 +17973,613 @@ S55REBIND
         rm -rf "$G_SHIM_S54"
         (cd "$GATE_REPO" && git worktree prune --expire now >/dev/null 2>&1 || true)
     fi
+
+    # ------------------------------------------------------------------
+    # 22f1..22f3: EVERY PUBLISHED REFUSAL IS ONE SOMETHING CAN STILL
+    # PROVOKE (section 58).
+    #
+    # Section 54 moved the head side to the commit and section 55 replaced the
+    # full checkout with a narrow assembly, which between them changed the
+    # INPUTS to three published tokens without changing the tokens. Section 58
+    # measured what is left of each rather than deciding it by reading:
+    #
+    #   HEAD_PROTOCOL_UNMATERIALIZED  still reachable, but only under a
+    #     CONJUNCTION the section was originally filed without. Both emitters
+    #     sit under the `UNREADABLE|*"?"*` case, so `proto_of` must ALREADY
+    #     have failed for a reason of its own; and every divergence that
+    #     exists before section 55's re-binding is claimed by
+    #     MATERIALIZATION_UNFAITHFUL instead. So the one surviving route is a
+    #     tree that loses a member AFTER the re-binding verified it, which is
+    #     what 22f1 constructs (Codex design review, section 58, [high]).
+    #   the closure presence pair  gone: section 55 deleted both branches. A
+    #     deleted branch has nothing to fixture and nothing to retire.
+    #   CLOSURE_MOVED_UNDER_GATE  no emitter since section 55, and no input
+    #     can bring one back, so it is a TOMBSTONE rather than a reserved
+    #     guard -- 22f3 asserts statically that no emitter returned.
+    #
+    # THE SYNCHRONIZATION IS A BARRIER, NOT A SLEEP AND NOT A /proc POLL. The
+    # window is a handful of shell commands wide, so a fixed sleep would be the
+    # wall-clock shape section 34 forbids and this suite already flakes on;
+    # polling /proc for the re-binding probe can miss a short-lived process,
+    # and its exit does not schedule the descendant before bash reaches the
+    # read anyway (Codex design review, section 58). A gate copy therefore
+    # signals a FIFO once the re-binding has SUCCEEDED and blocks until the
+    # descendant acknowledges. The mutation is the CLOCK: the classification
+    # under test is untouched, and the descendant is a real escapee spawned by
+    # real tree code, not a fixture writing the condition directly.
+    # ------------------------------------------------------------------
+    (cd "$GATE_REPO" && git checkout --quiet -- . >/dev/null 2>&1 || true)
+    G_S58_FA="$TMP_DIR/s58-fifo-a"
+    G_S58_FB="$TMP_DIR/s58-fifo-b"
+    G_S58_MARK="$TMP_DIR/s58-child-pids"
+    rm -f "$G_S58_FA" "$G_S58_FB" "$G_S58_MARK"
+    mkfifo "$G_S58_FA" "$G_S58_FB" 2>/dev/null || true
+
+    # THE BASE IS RESTORED FROM THE REAL REPOSITORY, not from whatever the
+    # preceding cases left in the clone. A case that walks in with a broken
+    # base refuses for a reason that has nothing to do with what it asserts,
+    # and every assertion below is about a HEAD-side token.
+    (
+        cd "$GATE_REPO" || exit 1
+        for _p in snapshot_protocol.json snapshot_protocol.py ref_resolution.py \
+                  corpus_resolution_snapshot.py; do
+            cp "$REPO_ROOT/scripts/todo-graph/$_p" "scripts/todo-graph/$_p" 2>/dev/null || true
+        done
+        git add -A scripts/todo-graph >/dev/null 2>&1
+        git commit --quiet --no-verify -m "22f1: restore a sound protocol for the base" >/dev/null 2>&1
+    )
+    G_S58_BASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    G_S58_SEED=no
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S58_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22f1-seed.log" 2>&1) && G_S58_SEED=yes
+    if [ "$G_S58_SEED" != yes ]; then
+        t_fail "identity gate: the section 58 fixtures cannot start -- the restored base does not adjudicate cleanly (see $TMP_DIR/gate-22f1-seed.log)"
+    else
+    # g_s58_loader <spawn?>: write a snapshot_protocol.py that DISAGREES with
+    # the (still valid) JSON, so `proto_of` returns UNREADABLE at the
+    # loader-versus-data comparison without raising -- which matters, because a
+    # loader that raised might not have reached the spawn below. With `spawn`
+    # it first starts a detached descendant; `start_new_session` is what puts
+    # that child outside the probe's process group, which is precisely the
+    # containment limit section 56 measured and left in place, so this fixture
+    # is also a live regression test for that limit.
+    g_s58_loader() {   # $1 = spawn|quiet, $2 = action python, $3 = destination
+        {
+            printf '%s\n' 'import os, subprocess, sys'
+            if [ "$1" = spawn ]; then
+                printf '%s\n' '_root = os.path.dirname(os.path.dirname(os.path.dirname('
+                printf '%s\n' '    os.path.realpath(__file__))))'
+                printf '%s\n' '_child = r"""'
+                printf '%s\n' 'import os, signal, sys'
+                printf '%s\n' '# BOUNDED: if nothing ever signals, this child must not outlive the'
+                printf '%s\n' '# suite. The alarm is a failsafe, never the mechanism.'
+                printf '%s\n' 'signal.alarm(300)'
+                printf '%s\n' 'root = sys.argv[1]'
+                printf '%s\n' 'with open(os.environ["S58_MARK"], "a") as _m:'
+                printf '%s\n' '    _st = open("/proc/self/stat").read().split()[21]'
+                printf '%s\n' '    _m.write("%d %s\\n" % (os.getpid(), _st))'
+                printf '%s\n' 'with open(os.environ["S58_FA"]) as _f:'
+                printf '%s\n' '    _f.read(1)'
+                printf '%s\n' 'try:'
+                printf '%s\n' "$2"
+                printf '%s\n' '    open(os.environ["S58_MARK"] + ".acted", "w").close()'
+                printf '%s\n' 'except Exception:'
+                printf '%s\n' '    pass'
+                printf '%s\n' 'with open(os.environ["S58_FB"], "w") as _f:'
+                # THE ACK ENDS IN A NEWLINE. `read -r` returns NONZERO on
+                # EOF without its delimiter even when it read the byte, so a
+                # bare "a" made a successful rendezvous set the barrier-timeout
+                # sentinel, and the synchronization precondition then refused a
+                # case whose token had fired correctly.
+                printf '%s\n' '    _f.write("a\n")'
+                printf '%s\n' '"""'
+                printf '%s\n' 'try:'
+                printf '%s\n' '    subprocess.Popen([sys.executable, "-c", _child, _root],'
+                printf '%s\n' '                     start_new_session=True,'
+                printf '%s\n' '                     stdin=subprocess.DEVNULL,'
+                printf '%s\n' '                     stdout=subprocess.DEVNULL,'
+                printf '%s\n' '                     stderr=subprocess.DEVNULL)'
+                printf '%s\n' 'except Exception:'
+                printf '%s\n' '    pass'
+            fi
+            # DISAGREES WITH THE JSON rather than raising: identity-gate.sh
+            # compares the loader's constants against the data file and reports
+            # UNREADABLE on a mismatch, which is the independent protocol
+            # failure this fixture needs and the cleanest one available.
+            printf '%s\n' 'SNAPSHOT_SCHEMA = 99999'
+            printf '%s\n' 'PRE_RESOLUTION_BUCKETS = ("s58_not_the_declared_bucket",)'
+            printf '%s\n' 'POST_RESOLUTION_BUCKETS = ()'
+            printf '%s\n' 'ALL_BUCKETS = PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS'
+        } > "$3"
+    }
+
+    # g_s58_barrier <dest> [extra-python-sed]: the CLOCK. Inserted immediately
+    # before the head-side worktree read, which is the one point that is after
+    # section 55's re-binding and before the classification consumes the tree.
+    # A BARRIER THAT TIMED OUT IS A FIXTURE FAILURE, NOT A SLOWER PASS. With
+    # the timeouts swallowed, a run where the descendant never arrived simply
+    # proceeded to an UNSYNCHRONIZED observation, and the case then reported
+    # whatever that produced (Codex adversarial, section 58, [medium]). Each
+    # side now leaves a sentinel when its timeout fires, and the cases refuse.
+    g_s58_barrier() {   # $1 = destination
+        python3 - "$GATE_IN_CLONE" "$1" "$G_S58_FA" "$G_S58_FB" "$G_S58_MARK" <<'S58BAR'
+import sys
+src, dst, fa, fb, mark = sys.argv[1:6]
+text = open(src, encoding="utf-8").read()
+anchor = '        protocol_present_in_worktree "$HEAD_MIN_ADDR"\n'
+if text.count(anchor) != 1:
+    sys.exit(1)
+
+
+def q(p):
+    return "'" + p.replace("'", "'\\''") + "'"
+
+
+# THE BOUND IS A FAILSAFE AGAINST AN ABSENT CHILD, NOT A PERFORMANCE
+# ASSERTION, so it is generous. A rendezvous that works returns at once and
+# pays none of it, while a 30s bound only ever measured how loaded the host
+# was -- and this suite runs inside a tooling pack beside every other suite,
+# which is the wall-clock shape section 34 forbids and this file already
+# carries documented flakes from.
+bar = (
+    "        timeout 90 sh -c 'printf r > \"$0\"' %s >/dev/null 2>&1 \\\n"
+    "            || : > %s\n"
+    "        timeout 90 sh -c 'read -r _x < \"$0\"' %s >/dev/null 2>&1 \\\n"
+    "            || : > %s\n"
+) % (q(fa), q(mark + ".barrier-a-timeout"),
+     q(fb), q(mark + ".barrier-b-timeout"))
+open(dst, "w", encoding="utf-8").write(text.replace(anchor, bar + anchor))
+S58BAR
+    }
+
+    # g_s58_synced: did the barrier actually rendezvous, and did the descendant
+    # start AND complete its action? Asserted as a PRECONDITION of every token
+    # claim below rather than printed in the failure text, which is where the
+    # first cut left it -- so any other removal of the protocol path during the
+    # window could produce the expected token and pass.
+    g_s58_synced() {
+        [ ! -f "$G_S58_MARK.barrier-a-timeout" ] \
+            && [ ! -f "$G_S58_MARK.barrier-b-timeout" ] \
+            && [ -s "$G_S58_MARK" ] \
+            && [ -f "$G_S58_MARK.acted" ]
+    }
+
+    # THE DESCENDANTS ARE REAPED BY EXACT PID AND START TIME, never by a
+    # command-line match: a global sweep would kill another concurrent run's
+    # child, which is the discipline 22eq and the section 56 fixtures were
+    # repaired into having.
+    g_s58_reap() {
+        [ -f "$G_S58_MARK" ] || return 0
+        while IFS=" " read -r _s58p _s58st; do
+            [ -n "$_s58p" ] && [ -n "$_s58st" ] || continue
+            _s58now="$(awk '{print $22}' "/proc/$_s58p/stat" 2>/dev/null || true)"
+            if [ -n "$_s58now" ] && [ "$_s58now" = "$_s58st" ]; then
+                kill -KILL "$_s58p" 2>/dev/null || true
+                for _s58i in 1 2 3 4 5 6 7 8 9 10; do
+                    kill -0 "$_s58p" 2>/dev/null || break
+                    sleep 0.2
+                done
+            fi
+        done < "$G_S58_MARK"
+    }
+
+    # EVERY CASE STARTS FROM NO EVIDENCE. Left in place, 22f1's marker and
+    # `.acted` file would satisfy 22f2's synchronization precondition without
+    # 22f2's own descendant ever running -- the evidence check would then be
+    # reading the previous case.
+    g_s58_reset() {
+        g_s58_reap
+        rm -f "$G_S58_MARK" "$G_S58_MARK.acted" \
+              "$G_S58_MARK.barrier-a-timeout" "$G_S58_MARK.barrier-b-timeout"
+    }
+
+        # 22f1: THE ONE SURVIVING ROUTE TO HEAD_PROTOCOL_UNMATERIALIZED.
+        G_S58_ACT='    os.remove(os.path.join(root, "scripts/todo-graph/snapshot_protocol.json"))'
+        g_s58_loader spawn "$G_S58_ACT" "$GATE_REPO/scripts/todo-graph/snapshot_protocol.py"
+        (
+            cd "$GATE_REPO" || exit 1
+            git commit --quiet --no-verify -am "22f1: a loader that disagrees with the data and leaves a descendant" >/dev/null 2>&1
+        )
+        G_S58_BAR="$GATE_REPO/scripts/todo-graph/identity-gate-s58bar.sh"
+        rm -f "$G_S58_BAR"
+        g_s58_barrier "$G_S58_BAR"
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S58_BAR" 'read -r _x <'; then
+            t_fail "identity gate: could not build the section 58 barrier copy -- the head-side worktree read moved, so 22f1 cannot be trusted"
+        else
+            g_s58_reset
+            (cd "$GATE_REPO" && S58_FA="$G_S58_FA" S58_FB="$G_S58_FB" S58_MARK="$G_S58_MARK" \
+                bash "$G_S58_BAR" --base "$G_S58_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22f1.log" 2>&1)
+            G_S58_RC=$?
+            # THE DESCENDANT IS ASSERTED SEPARATELY FROM THE TOKEN, so a case
+            # that fails says WHICH half failed. A child that never ran and a
+            # child that ran at the wrong moment produce the same missing token
+            # and need opposite repairs.
+            G_S58_TOK="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22f1.log" | head -1)"
+            G_S58_RAN=no
+            [ -s "$G_S58_MARK" ] && G_S58_RAN=yes
+            G_S58_ACTED=no
+            [ -f "$G_S58_MARK.acted" ] && G_S58_ACTED=yes
+            G_S58_SYNC=no
+            g_s58_synced && G_S58_SYNC=yes
+            # MATCHED ON THE EMITTED TOKEN, NOT ON THE NAME ANYWHERE IN THE
+            # OUTPUT. `die_infra` prints `INFRASTRUCTURE: <token>: ...`, and
+            # the first cut of this assertion excluded the bare string
+            # MATERIALIZATION_UNFAITHFUL -- which the HEAD_PROTOCOL_UNMATERIALIZED
+            # message itself now contains, because that message explains which
+            # token would have claimed an earlier divergence. So the case failed
+            # while the token it wanted had fired correctly. A refusal is the
+            # token line, never a word in the prose beside it.
+            if [ "$G_S58_RC" -eq 3 ] \
+               && [ "$G_S58_SYNC" = yes ] \
+               && grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22f1.log" \
+               && grep -q 'snapshot_protocol.json' "$TMP_DIR/gate-22f1.log" \
+               && ! grep -q 'INFRASTRUCTURE: MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22f1.log"; then
+                t_pass "identity gate: a probe descendant that outlives its process group still provokes HEAD_PROTOCOL_UNMATERIALIZED, so the token is not dead"
+            else
+                cp "$TMP_DIR/gate-22f1.log" "$TMP_DIR/../s58-22f1-kept.log" 2>/dev/null || true
+                t_fail "identity gate: the surviving route to HEAD_PROTOCOL_UNMATERIALIZED did not fire (rc=$G_S58_RC; token=[$G_S58_TOK]; descendant ran=$G_S58_RAN acted=$G_S58_ACTED synced=$G_S58_SYNC; kept at $TMP_DIR/../s58-22f1-kept.log)"
+            fi
+        fi
+
+        # 22f1-control: THE INDEPENDENT PREMISE, ON ITS OWN. The same
+        # disagreeing loader WITHOUT the descendant, run against the UNMUTATED
+        # gate, must reach HEAD_PROTOCOL_UNREADABLE and not the token above.
+        # Without this the case above could pass for the wrong reason -- an
+        # UNREADABLE tree alone is not what the token is published to mean.
+        g_s58_loader quiet '' "$GATE_REPO/scripts/todo-graph/snapshot_protocol.py"
+        (
+            cd "$GATE_REPO" || exit 1
+            git commit --quiet --no-verify -am "22f1-control: the same disagreement, no descendant" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S58_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22f1-control.log" 2>&1)
+        G_S58_CRC=$?
+        if [ "$G_S58_CRC" -eq 3 ] \
+           && grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22f1-control.log" \
+           && ! grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22f1-control.log"; then
+            t_pass "identity gate: CONTROL -- the protocol failure alone reaches UNREADABLE, so 22f1 measures the tree change and not the loader"
+        else
+            t_fail "identity gate: the 22f1 control did not isolate the protocol failure (rc=$G_S58_CRC; see $TMP_DIR/gate-22f1-control.log)"
+        fi
+
+        # 22f2: THE SECOND EMITTER IS CONTAMINATION, AND IT NOW SAYS SO.
+        #
+        # The path loop above it has already refused every path the commit
+        # carries and the tree lacks, so by the form comparison the tree holds
+        # EVERYTHING the commit holds -- and the only way its form can still be
+        # weaker is that it holds something MORE. A legacy-complete commit
+        # whose assembled tree gains snapshot_protocol.json without the data
+        # loader is that shape. Until section 58 it reported
+        # HEAD_PROTOCOL_UNMATERIALIZED with "a partial clone missing the blob",
+        # a cause that cannot produce this branch (Codex design review,
+        # section 58, [medium]).
+        (
+            cd "$GATE_REPO" || exit 1
+            git rm --quiet -f scripts/todo-graph/snapshot_protocol.json \
+                scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+            python3 - scripts/todo-graph/ref_resolution.py <<'S58REF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+# A NON-SEQUENCE where the contract wants a sequence: the legacy arm of
+# `proto_of` refuses that as UNREADABLE, which is this case's independent
+# protocol failure. The spawn goes in the same file because the legacy arm is
+# what imports it.
+p.write_text(
+    'import os, subprocess, sys\n'
+    '_root = os.path.dirname(os.path.dirname(os.path.dirname(\n'
+    '    os.path.realpath(__file__))))\n'
+    '_child = r"""\n'
+    'import json, os, signal, sys\n'
+    'signal.alarm(300)\n'
+    'root = sys.argv[1]\n'
+    'with open(os.environ["S58_MARK"], "a") as _m:\n'
+    '    _st = open("/proc/self/stat").read().split()[21]\n'
+    '    _m.write("%d %s\\n" % (os.getpid(), _st))\n'
+    'with open(os.environ["S58_FA"]) as _f:\n'
+    '    _f.read(1)\n'
+    'try:\n'
+    '    with open(os.path.join(root, "scripts/todo-graph/snapshot_protocol.json"),\n'
+    '              "w") as _j:\n'
+    '        json.dump({"snapshot_schema": 2, "pre_resolution_buckets": [],\n'
+    '                   "post_resolution_buckets": [], "renamed_buckets": {},\n'
+    '                   "retired_buckets": []}, _j)\n'
+    '    open(os.environ["S58_MARK"] + ".acted", "w").close()\n'
+    'except Exception:\n'
+    '    pass\n'
+    'with open(os.environ["S58_FB"], "w") as _f:\n'
+    '    _f.write("a\\n")\n'
+    '"""\n'
+    'try:\n'
+    '    subprocess.Popen([sys.executable, "-c", _child, _root],\n'
+    '                     start_new_session=True, stdin=subprocess.DEVNULL,\n'
+    '                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+    'except Exception:\n'
+    '    pass\n'
+    'PRE_RESOLUTION_BUCKETS = 58\n'
+    'POST_RESOLUTION_BUCKETS = 58\n',
+    encoding="utf-8")
+S58REF
+            git add -A scripts/todo-graph >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22f2: a legacy-complete head whose tree gains the json" >/dev/null 2>&1
+        )
+        rm -f "$G_S58_BAR"
+        g_s58_barrier "$G_S58_BAR"
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S58_BAR" 'read -r _x <'; then
+            t_fail "identity gate: could not rebuild the barrier copy for 22f2"
+        else
+            g_s58_reset
+            (cd "$GATE_REPO" && S58_FA="$G_S58_FA" S58_FB="$G_S58_FB" S58_MARK="$G_S58_MARK" \
+                bash "$G_S58_BAR" --base "$G_S58_BASE" --head HEAD \
+                >"$TMP_DIR/gate-22f2.log" 2>&1)
+            G_S58_RC2=$?
+            G_S58_SYNC2=no
+            g_s58_synced && G_S58_SYNC2=yes
+            if [ "$G_S58_RC2" -eq 3 ] \
+               && [ "$G_S58_SYNC2" = yes ] \
+               && grep -q 'INFRASTRUCTURE: MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22f2.log" \
+               && grep -q 'GAINED a protocol path' "$TMP_DIR/gate-22f2.log" \
+               && ! grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22f2.log"; then
+                t_pass "identity gate: a tree that GAINS a protocol path is reported as contamination, not as a partial clone"
+            else
+                t_fail "identity gate: the contamination route did not reclassify (rc=$G_S58_RC2; synced=$G_S58_SYNC2; see $TMP_DIR/gate-22f2.log)"
+            fi
+            # MUTATION: put the old classification back and the same tree
+            # reports the old, wrong token again -- so 22f2 measures the
+            # reclassification and not some unrelated refusal.
+            G_S58_OLD="$GATE_REPO/scripts/todo-graph/identity-gate-s58old.sh"
+            rm -f "$G_S58_OLD"
+            python3 - "$G_S58_BAR" "$G_S58_OLD" <<'S58OLD'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+text = open(src, encoding="utf-8").read()
+needle = 'die_infra "MATERIALIZATION_UNFAITHFUL: the head tree assembled for $HEAD_RESOLVED holds every snapshot-protocol path'
+i = text.find(needle)
+if i < 0:
+    sys.exit(1)
+j = text.index("\n", i)
+old = ('die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED '
+       'carries a complete snapshot protocol but the tree the gate assembled '
+       'for it at $HEAD_MIN does not (missing$HEAD_MISSING)"')
+open(dst, "w", encoding="utf-8").write(text[:i] + old + text[j:])
+S58OLD
+            if ! g_mutant_ok "$G_S58_BAR" "$G_S58_OLD" 'HEAD_PROTOCOL_UNMATERIALIZED: the commit \$HEAD_RESOLVED carries a complete'; then
+                t_fail "identity gate: could not build the 22f2 reclassification mutant, so that case proves nothing"
+            else
+                g_s58_reset
+                (cd "$GATE_REPO" && S58_FA="$G_S58_FA" S58_FB="$G_S58_FB" S58_MARK="$G_S58_MARK" \
+                    bash "$G_S58_OLD" --base "$G_S58_BASE" --head HEAD \
+                    >"$TMP_DIR/gate-22f2-mut.log" 2>&1)
+                G_S58_MRC2=$?
+                # THE MUTATION ARM IS SYNCHRONIZATION-GATED TOO. Asserting only
+                # rc and the token let a timed-out barrier plus any other actor
+                # changing the json in the observation window satisfy it, which
+                # contradicts the guarantee the other arms carry (Codex
+                # adversarial, section 58, [medium]). An invocation nonce was
+                # considered and is not needed: `g_s58_reset` reaps the recorded
+                # descendants by exact pid AND start time before clearing the
+                # evidence, so a stale child cannot be the one that acted, and a
+                # timed-out barrier now leaves a sentinel this check reads.
+                G_S58_SYNCM=no
+                g_s58_synced && G_S58_SYNCM=yes
+                if [ "$G_S58_MRC2" -eq 3 ] \
+                   && [ "$G_S58_SYNCM" = yes ] \
+                   && grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22f2-mut.log"; then
+                    t_pass "identity gate: MUTATION -- restoring the old classification brings the wrong token back, so 22f2 measures the fix"
+                else
+                    t_fail "identity gate: the 22f2 mutation did not restore the old token (rc=$G_S58_MRC2; synced=$G_S58_SYNCM; see $TMP_DIR/gate-22f2-mut.log)"
+                fi
+            fi
+        fi
+
+        # 22f3: THE TOMBSTONE STAYS A TOMBSTONE.
+        #
+        # A retired name is only safe for a caller branching on the vocabulary
+        # while nothing quietly starts emitting it again for a different fault
+        # -- which is exactly what section 55 declined to do and recorded as
+        # section 58's to settle. This is a STATIC assertion because there is
+        # no input that can provoke the token: a firing fixture is not
+        # available for it at any price, and inventing one would mean
+        # resurrecting an emitter so a check could pass.
+        # THE ORACLE CLASSIFIES EVERY REFERENCE, it does not match one spelling
+        # of the emitter. Counting `die_infra "CLOSURE_MOVED_UNDER_GATE` was
+        # blind to a single-quoted call, to the token held in a variable, and
+        # to any other emission path -- so the suite could stay green after the
+        # retired public name was reused, which is the exact regression this
+        # case claims to prevent (Codex test-coverage, section 58, [medium]).
+        # The rule is stronger and simpler: a retired token may appear in
+        # COMMENTS, and nowhere else. Its honest limit is that a name assembled
+        # from pieces at runtime is not statically detectable; the mutation
+        # below pins the two shapes that are.
+        g_s58_tomb_scan() {   # $1 = script; prints "<executable-refs>|<tombstone-entries>"
+            python3 - "$1" <<'S58TOMB'
+import sys
+tok = "CLOSURE_MOVED_UNDER_GATE"
+
+# AN EXACT ALLOWLIST, NOT A COMMENT RULE. Three designs were tried and two
+# were MEASURABLY fail-open, which is why this ends as a literal list of the
+# lines that may name the retired token:
+#   * "the first non-blank character is #" -- Python lstrip() strips NBSP and
+#     bash does not, so an NBSP-prefixed line reads as a comment here and as a
+#     COMMAND to bash, printing the retired token from its own diagnostic;
+#   * "classify the trailing comment segment" -- bash starts a comment only
+#     where # begins a WORD, so an assignment of #TOKEN followed by a prefix
+#     stripping expansion emits the token with no escape at all;
+#   * and either of those still misses a token on the SECOND line of a
+#     multi-line quoted string, which is ordinary shell, not obfuscation.
+# Getting them right means carrying bash lexical state -- word boundaries,
+# quotes across newlines, here-documents -- a shell lexer inside one fixture,
+# which is section 59 open question for this whole file (Codex adversarial,
+# section 58 rounds 3 to 5; every one of those shapes was measured, not
+# argued).
+#
+# The allowlist has none of those failure modes: an occurrence is permitted
+# only when its line is EXACTLY one of the documentation lines below, so any
+# new reference at all -- comment, quoted, spliced or executable -- is
+# reported. The cost is that rewording one of these lines fails this case
+# until the list is updated, and that is the intended bargain: re-blessing the
+# prose about a retired token should be a deliberate act.
+ALLOWED = [
+    '#        CLOSURE_MOVED_UNDER_GATE     RETIRED (section 55, recorded here by',
+    '# before. Collapsing the two makes `CLOSURE_MOVED_UNDER_GATE` compare a value',
+    "# Section 51's CLOSURE_MOVED_UNDER_GATE was not retired by that -- it guarded",
+    '#   CLOSURE_MOVED_UNDER_GATE  a member changed WHILE the gate ran -- re-run',
+    '# is what `CLOSURE_MOVED_UNDER_GATE` is published as meaning, and quietly',
+    '#    left CLOSURE_MOVED_UNDER_GATE with no emitter at all, and section 58',
+]
+
+# CONTINUATIONS ARE SPLICED FIRST: a trailing backslash on one line and the
+# token on the next is ONE assignment to bash. A comment line is never
+# spliced, because bash ends a comment at the newline and joining one would
+# swallow the line after it.
+raw = open(sys.argv[1], encoding="utf-8").read().split("\n")
+merged, buf = [], ""
+for ln in raw:
+    cur = buf + ln
+    trailing = len(cur) - len(cur.rstrip("\\"))
+    if trailing % 2 == 1 and not cur.lstrip(" \t").startswith("#"):
+        buf = cur[:-1]
+        continue
+    merged.append(cur)
+    buf = ""
+if buf:
+    merged.append(buf)
+
+live, tomb = 0, 0
+for ln in merged:
+    if tok not in ln:
+        continue
+    t = ln.strip()
+    if t in ALLOWED:
+        if tok + "     RETIRED" in t:
+            tomb += 1
+        continue
+    live += 1
+print("%d|%d" % (live, tomb))
+S58TOMB
+        }
+        G_S58_SCAN="$(g_s58_tomb_scan "$GATE_IN_CLONE")"
+        G_S58_EMIT="${G_S58_SCAN%%|*}"; G_S58_TOMB="${G_S58_SCAN#*|}"
+        if [ "${G_S58_EMIT:-1}" -ne 0 ]; then
+            t_fail "identity gate: CLOSURE_MOVED_UNDER_GATE is referenced from $G_S58_EMIT executable line(s) -- a retired token was reused rather than a new one published"
+        elif [ "${G_S58_TOMB:-0}" -lt 1 ]; then
+            t_fail "identity gate: the CLOSURE_MOVED_UNDER_GATE tombstone entry is gone from the published vocabulary, so the name can be silently reused"
+        else
+            t_pass "identity gate: CLOSURE_MOVED_UNDER_GATE stays a published tombstone with no executable reference"
+        fi
+        # AND THE ORACLE IS MUTATION-PROVED, because a static check that cannot
+        # fail is not a check. Two plausible reintroductions are planted -- a
+        # single-quoted emitter and one whose token travels in a variable --
+        # and each must be seen.
+        G_S58_TOMBMUT="$GATE_REPO/scripts/todo-graph/identity-gate-s58tomb.sh"
+        for _s58shape in quoted variable escaped wordstart continuation nbsp mlquote; do
+            rm -f "$G_S58_TOMBMUT"
+            python3 - "$GATE_IN_CLONE" "$G_S58_TOMBMUT" "$_s58shape" <<'S58PLANT'
+import sys
+src, dst, shape = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(src, encoding="utf-8").read().split("\n")
+# ANCHORED ON A LINE, NOT ON A HAND-ESCAPED LITERAL. The first cut matched a
+# python string containing a real newline against a gate line containing the
+# two characters backslash-n, so it never matched, the mutant was never
+# written, and both arms reported only that they could not build it.
+at = [i for i, ln in enumerate(lines) if ln.startswith("log() {")]
+if len(at) != 1:
+    sys.exit(1)
+if shape == "quoted":
+    plant = ("s58_reintroduced() { die_infra "
+             "'CLOSURE_MOVED_UNDER_GATE: a member changed while the gate ran'; }")
+elif shape == "variable":
+    plant = ("s58_reintroduced() { _t=CLOSURE_MOVED_UNDER_GATE; "
+             "die_infra \"$_t: a member changed while the gate ran\"; }")
+elif shape == "escaped":
+    # THE ESCAPED-HASH SHAPE, missed until section 58 round 3: the shell strips
+    # the escape and the expansion strips the hash, so what reaches `die_infra`
+    # is exactly the retired token.
+    plant = ("s58_reintroduced() { _t=\\#CLOSURE_MOVED_UNDER_GATE; "
+             "die_infra \"${_t#?}: a member changed while the gate ran\"; }")
+elif shape == "wordstart":
+    # THE SIMPLEST SHAPE, and the one the segment scanner missed: no escape at
+    # all. Bash starts a comment only where "#" begins a WORD, so this hash is
+    # ordinary text inside an assignment (Codex adversarial, round 4).
+    plant = ("s58_reintroduced() { _t=#CLOSURE_MOVED_UNDER_GATE; "
+             "die_infra \"${_t#?}: a member changed while the gate ran\"; }")
+elif shape == "continuation":
+    # SPLIT ACROSS A BACKSLASH-NEWLINE, so the physical line carrying the token
+    # opens with "#" and reads as a comment while bash sees one assignment.
+    plant = ("s58_reintroduced() { _t=\\\n"
+             "#CLOSURE_MOVED_UNDER_GATE; "
+             "die_infra \"${_t#?}: a member changed while the gate ran\"; }")
+elif shape == "nbsp":
+    # A NO-BREAK SPACE BEFORE THE HASH. Python lstrip() strips it and bash does
+    # not, so this looks like a comment to a naive scanner and is a COMMAND to
+    # the shell (Codex adversarial, round 5, measured).
+    plant = ("\u00a0#CLOSURE_MOVED_UNDER_GATE is not a comment to bash\n"
+             "s58_reintroduced() { :; }")
+else:
+    # THE TOKEN ON THE SECOND LINE OF A MULTI-LINE QUOTED STRING: the line
+    # begins with "#" and is nonetheless inside an executable argument.
+    plant = ("s58_reintroduced() { die_infra 'prefix\n"
+             "#CLOSURE_MOVED_UNDER_GATE: reused'; }")
+lines.insert(at[0] + 1, plant)
+open(dst, "w", encoding="utf-8").write("\n".join(lines))
+S58PLANT
+            if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S58_TOMBMUT" 's58_reintroduced'; then
+                t_fail "identity gate: could not plant the $_s58shape CLOSURE_MOVED_UNDER_GATE emitter, so 22f3's oracle is unproven"
+            else
+                G_S58_MSCAN="$(g_s58_tomb_scan "$G_S58_TOMBMUT")"
+                if [ "${G_S58_MSCAN%%|*}" -ge 1 ]; then
+                    t_pass "identity gate: MUTATION -- the $_s58shape reintroduction of the retired token is seen by 22f3's oracle"
+                else
+                    t_fail "identity gate: the $_s58shape reintroduction of CLOSURE_MOVED_UNDER_GATE went unseen (scan=$G_S58_MSCAN), so 22f3 cannot catch the regression it exists for"
+                fi
+            fi
+        done
+        # AND THE STRICTNESS IS ASSERTED, not left to be discovered. Under the
+        # allowlist even a well-meaning NEW COMMENT naming the retired token is
+        # reported, because "is this line a comment?" is exactly the question no
+        # line-local rule can answer about shell -- two attempts at one were
+        # measurably fail-open. That is a deliberate bargain rather than an
+        # oversight, so it gets a case: whoever adds prose about this token adds
+        # the line to ALLOWED in the same edit, and this failure text says so.
+        rm -f "$G_S58_TOMBMUT"
+        python3 - "$GATE_IN_CLONE" "$G_S58_TOMBMUT" <<'S58NOTE'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+lines = open(src, encoding="utf-8").read().split("\n")
+at = [i for i, ln in enumerate(lines) if ln.startswith("log() {")]
+if len(at) != 1:
+    sys.exit(1)
+lines.insert(at[0] + 1,
+            's58_note() { die_infra "SOME_OTHER_TOKEN: unrelated"; }\n'
+            '# CLOSURE_MOVED_UNDER_GATE stays retired, and a full comment'
+            ' line is how you say so')
+open(dst, "w", encoding="utf-8").write("\n".join(lines))
+S58NOTE
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S58_TOMBMUT" 's58_note'; then
+            t_fail "identity gate: could not build the unblessed-mention case for 22f3"
+        else
+            G_S58_NSCAN="$(g_s58_tomb_scan "$G_S58_TOMBMUT")"
+            if [ "${G_S58_NSCAN%%|*}" -ge 1 ]; then
+                t_pass "identity gate: an UNBLESSED new mention of the retired token is reported even as a plain comment, which is the allowlist bargain"
+            else
+                t_fail "identity gate: 22f3's oracle admitted an unblessed new mention (scan=$G_S58_NSCAN) -- a line-local comment rule is back, and no such rule can see a token inside a multi-line quote"
+            fi
+        fi
+        rm -f "$G_S58_TOMBMUT"
+
+        g_s58_reset
+        rm -f "$G_S58_FA" "$G_S58_FB" "$G_S58_BAR" "$G_S58_OLD"
+        (
+            cd "$GATE_REPO" || exit 1
+            for _p in snapshot_protocol.json snapshot_protocol.py ref_resolution.py \
+                      corpus_resolution_snapshot.py; do
+                cp "$REPO_ROOT/scripts/todo-graph/$_p" "scripts/todo-graph/$_p" 2>/dev/null || true
+            done
+            git add -A scripts/todo-graph >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22f3: restore the protocol after the section 58 cases" >/dev/null 2>&1
+        )
+    fi
+
 fi
 
 # ----------------------------------------------------------------------
