@@ -8564,36 +8564,23 @@ done#' \
         && grep -q '^for _wti in' "$1"
 }
 
-gate_seed() {
-    # Returns 0 if a usable fixture clone was built, 1 otherwise.
-    rm -rf "$GATE_REPO" 2>/dev/null || true
+gate_seed_tree() {   # $1 = destination path
+    # THE SEEDED TREE, BEFORE ANY PRUNING -- shared by `gate_seed` and by the
+    # `22f8` control, which needs a tree identical to the real one in every
+    # respect except that its closure derivation is crippled. Duplicating these
+    # steps in the control is exactly the drift sections 17 and 18 each paid
+    # for in this same function (a hardcoded closure list that stopped matching
+    # the gate's own array, then a CLOSURE read that missed EXEC_CLOSURE's
+    # expansion), so the control shares the code rather than mirroring it.
+    rm -rf "$1" 2>/dev/null || true
     # HARDLINKED local clone. `--no-hardlinks` forced a physical copy of the
     # whole object store -- ~212 MiB in this checkout -- on every tooling run
     # (Codex perf, section 16). Hardlinks are safe here: git never rewrites an
     # existing object, the fixture only ADDS commits, and removing the clone
     # cannot affect the source through a hardlink.
-    #
-    # SECTION 59 TRIED `--no-checkout` HERE AND MEASURED WHY IT DOES NOT WORK,
-    # recorded so the next reader does not re-spend the round trip. Skipping
-    # the checkout and hand-seeding only the closure array's files plus a
-    # handful of TODOs builds a repo the GATE can run against (it only reads
-    # the closure it declares), but not one the RESOLVER can WALK: the ~134
-    # refs those TODOs carry point at source files the minimal set does not
-    # contain, so every walk resolved 0 of 134 instead of the ~47 a full
-    # checkout gives it, and `corpus_resolution_snapshot` correctly REFUSES a
-    # zero-resolution baseline as vacuous ("there is nothing to protect, so a
-    # pass would be vacuous") -- which then fails every case in this group
-    # that depends on a real comparison, not just the ones this section added.
-    # Closing that for real means deriving the closure of files the KEPT
-    # TODOs actually reference (measured: 433+ distinct backtick-quoted paths
-    # across just the six kept files, by a rough count that is itself not the
-    # resolver's own extraction logic) and copying THAT set too -- a second,
-    # separate derivation this section did not build, filed instead as its own
-    # item below rather than shipped half-working.
-    git clone --quiet --local "$REPO_ROOT" "$GATE_REPO" \
-        >/dev/null 2>&1 || return 1
+    git clone --quiet --local "$REPO_ROOT" "$1" >/dev/null 2>&1 || return 1
     (
-        cd "$GATE_REPO" || exit 1
+        cd "$1" || exit 1
         git config user.email "test@example.invalid"
         git config user.name "identity gate fixture"
         # Seed with the working-tree closure files (the code under test).
@@ -8632,6 +8619,276 @@ gate_seed() {
             [ "$keep" -le 6 ] && continue
             rm -f "$t"
         done < <(find todo -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | sort)
+    ) || return 1
+    return 0
+}
+
+gate_reference_closure_prune() {
+    # SECTION 59, ITEM 3 -- cut what every gate INVOCATION materializes.
+    #
+    # `gate_seed` clones once; the ~167 gate invocations in this group each
+    # check out the fixture commit TWICE (base worktree + head worktree), so
+    # the cost that repeats is the fixture COMMIT'S TREE, not the clone. A
+    # full tree is 2,352 files / 94 MiB and checks out in ~637ms; the pruned
+    # one is ~2,140 files / 24 MiB at ~246ms. Measured saving across the
+    # group: ~390ms x 334 checkouts, roughly 130s of the ~361s the ceiling at
+    # `22f7` measures.
+    #
+    # WHY A CLOSURE AND NOT A HAND-PICKED SET. Section 59's first attempt
+    # seeded a `--no-checkout` clone with the code closure plus a few TODOs
+    # and measured why that does not work: the kept TODOs' refs point at real
+    # source files the minimal set does not contain, so both walks resolved
+    # 0 of 134 refs instead of 47 and `corpus_resolution_snapshot` correctly
+    # refused the vacuous baseline. The closure below is derived from the
+    # RESOLVER'S OWN functions -- `section_candidate_files`, `classify_ref`
+    # and `resolve_ref` -- never a backtick-regex approximation of the ref
+    # grammar, so it cannot drift from the rule the gate actually applies.
+    #
+    # EMPTY PLACEHOLDERS, NOT DELETIONS, FOR THE REST OF THE .c/.h TREE.
+    # `_basename_index` (ref_resolution.py:443) indexes every .c/.h path in
+    # the tree, and a bare-basename ref resolves only when its basename is
+    # UNIQUE there. Deleting 1,300 unrelated sources would turn ambiguous
+    # basenames unique and silently re-resolve refs the full tree leaves in
+    # `missing_file` -- measured on the first draft of this prune, which
+    # moved five mappings (two `unpaired_ref` -> resolved, three
+    # `no_calllike_token` -> `missing_file`). An empty file preserves the
+    # index's shape exactly and costs no bytes; content is never read,
+    # because every file any section scope names is in the closure.
+    #
+    # AND THE PRUNE PROVES ITSELF. A snapshot is taken over the FULL tree
+    # before the prune and again after it, and the two `mappings` must be
+    # byte-identical -- 134 refs, 47 resolved, same buckets. That check is
+    # what makes the closure safe to re-derive on every run: a TODO edit that
+    # reaches a file the derivation misses fails the fixture build loudly
+    # instead of quietly changing the corpus the whole group compares against.
+    python3 - "$PWD" "$TMP_DIR/gate-seed-cache.json" <<'PY'
+import os, pathlib, subprocess, sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+cache = pathlib.Path(sys.argv[2]).resolve()
+
+# TEST-ONLY: drop one leg of the closure derivation, so `22f8` can prove the
+# before/after check below actually REFUSES an incomplete closure instead of
+# being a comparison that can only ever agree with itself. Unset in every real
+# seed; a value the derivation does not recognise is a hard error rather than a
+# silent no-op, because a typo that quietly disabled the mutation would make the
+# control pass while proving nothing.
+DROP_LEG = os.environ.get("GATE_CLOSURE_DROP_LEG", "")
+if DROP_LEG not in ("", "section_candidates", "classify", "resolve"):
+    sys.stderr.write("gate_seed: unknown GATE_CLOSURE_DROP_LEG %r\n" % DROP_LEG)
+    sys.exit(2)
+
+# The cache lives OUTSIDE the fixture clone on purpose: the gate invocations
+# build their own, and a stray build/todo-cache.json in the seeded tree would
+# be committed into the fixture base and read by cases that never wrote it.
+cache.parent.mkdir(parents=True, exist_ok=True)
+rc = subprocess.run(
+    [sys.executable, "scripts/todo-graph/build.py", "--root", "todo",
+     "--output", str(cache), "--quiet"],
+    cwd=str(root), capture_output=True, text=True)
+if rc.returncode != 0:
+    sys.stderr.write("gate_seed: could not build the fixture cache:\n"
+                     + rc.stdout[-2000:] + rc.stderr[-2000:] + "\n")
+    sys.exit(1)
+
+os.environ["STUB_LINT_REPO_ROOT"] = str(root)
+os.environ["STUB_LINT_CACHE"] = str(cache)
+sys.path.insert(0, str(root / "scripts" / "todo-graph"))
+import corpus_resolution_snapshot as crs   # noqa: E402
+import ref_resolution as rr                # noqa: E402
+
+
+def snapshot():
+    with rr.walk_scope():
+        return crs.collect()
+
+
+def closure():
+    """Every repo file the resolver consults for the kept corpus, via its own
+    functions. `section_candidate_files` gives the authored pairing evidence
+    (already basename-repaired to effective paths), `classify_ref` gives the
+    file each symbol ref is finally checked against, and `resolve_ref` gives
+    where it landed -- declaration-following can end in a header nothing
+    authored.
+
+    ALL THREE LEGS, AND ONLY ONE OF THEM FIRES THE CONTROL TODAY. Removing
+    the `section_candidate_files` leg moves two mappings (`unpaired_ref` ->
+    resolved: a symbol the full tree finds in several of its section's files
+    and a pruned tree finds in one) and the before/after check refuses the
+    prune, which is the control this derivation was verified against. The
+    `classify_ref` leg is currently redundant for the six kept TODOs --
+    removing it changes nothing -- because every basename-repaired symbol ref
+    they carry names a file some `kind=file` ref names too. It is kept
+    because that is a property of TODAY'S corpus, not of the rule: a symbol
+    ref naming a bare basename no `kind=file` ref mentions needs its file
+    present to stay in `no_calllike_token` instead of falling to
+    `missing_file`, and the six kept TODOs are ordinary roadmap files that
+    change under this fixture."""
+    keep = set()
+
+    def add(p):
+        if not p:
+            return
+        try:
+            rel = os.path.relpath(pathlib.Path(p).resolve(), root)
+        except (OSError, ValueError):
+            return
+        if not rel.startswith(".."):
+            keep.add(rel)
+
+    nodes, _corpus = crs._load_nodes()
+    with rr.walk_scope():
+        for node in nodes:
+            by_sec = {}
+            for it in (node.get("stamped_items") or []):
+                by_sec.setdefault(it.get("section_n"), []).append(it)
+            for sec, items in by_sec.items():
+                if DROP_LEG != "section_candidates":
+                    for f in rr.section_candidate_files(items, root):
+                        add(f)
+                scope = rr.section_scope(items, root)
+                for it in items:
+                    for ref in (it.get("refs") or []):
+                        if ref.get("kind") != "symbol":
+                            continue
+                        if DROP_LEG != "classify":
+                            add(rr.classify_ref(ref, scope, root).abs_path)
+                        if DROP_LEG != "resolve":
+                            add(getattr(rr.resolve_ref(ref, scope, root),
+                                        "def_rel", None))
+    return keep
+
+
+# BULK TREES ONLY. Everything outside these four carries the gate's own code,
+# its lints, the corpus and the tooling the fixtures invoke by path, and is
+# small (~500 files); pruning it would trade ~40ms of checkout for a fixture
+# that breaks whenever a case reaches for a script it no longer has.
+BULK = ("src", "include", "user", "resources")
+
+before = snapshot()
+keep = closure()
+
+# NEVER WRITE THROUGH A LINK, AND NEVER WALK THROUGH ONE.
+# `Path.is_file()` FOLLOWS a symlink and `write_bytes` opens the TARGET, so
+# truncating a placeholder in place let a `.c`/`.h` symlink under a bulk tree
+# zero out whatever it points at -- including an absolute path outside this
+# clone, on a host running the tooling suite. Reproduced directly: a `link.c`
+# pointing at an outside file reported `is_file() True`, and `write_bytes(b"")`
+# emptied that file (Codex adversarial, section 59 round 2, [high]). No bulk
+# tree carries a tracked symlink today, so this was latent -- but section 55
+# deliberately kept `materialize_subtree` faithful to symlink entries rather
+# than refusing them, so one appearing here is a state this repo has already
+# decided to support. `22f9` is the regression control.
+#
+# The order below is the fix: `unlink()` removes the LINK and never the
+# target, and the placeholder that replaces it is a fresh regular file at the
+# same NAME, which is all `_basename_index` reads. `os.walk(followlinks=False)`
+# replaces `rglob`, whose symlinked-directory behaviour is version-dependent
+# (3.12 did not descend; relying on that is not a boundary).
+pruned = placeholders = 0
+for top in BULK:
+    base = root / top
+    if not base.is_dir() or base.is_symlink():
+        continue
+    for dirpath, dirnames, filenames in os.walk(base, topdown=False,
+                                                followlinks=False):
+        here = pathlib.Path(dirpath)
+        for name in filenames:
+            path = here / name
+            rel = os.path.relpath(path, root)
+            if rel in keep:
+                continue
+            path.unlink()
+            if path.suffix in (".c", ".h"):
+                path.write_bytes(b"")
+                placeholders += 1
+            else:
+                pruned += 1
+        # A symlinked DIRECTORY is listed in `dirnames`, never descended into,
+        # and REMOVED AS A LINK WITH NO PLACEHOLDER -- it must not share the
+        # branch above even when its name ends in `.c`. `_basename_index`
+        # (`ref_resolution.py:443`) indexes `os.walk`'s FILENAMES only, so a
+        # directory called `alias.c` is absent from the full tree's index;
+        # replacing it with an empty regular file would ADD that basename to
+        # the pruned index, and the before/after mapping check cannot see it
+        # while no current ref names it -- a later fixture mutation would then
+        # resolve differently here than in the full tree (Codex adversarial,
+        # section 59 round 3, [medium]).
+        for name in dirnames:
+            sub = here / name
+            if not sub.is_symlink():
+                continue
+            if os.path.relpath(sub, root) in keep:
+                continue
+            sub.unlink()
+            pruned += 1
+        # Drop the directories the prune emptied, so the fixture commit does
+        # not carry a skeleton of `resources/` that nothing reads. `topdown`
+        # is False, so a child is already gone by the time its parent is seen.
+        for name in dirnames:
+            sub = here / name
+            if sub.is_symlink() or not sub.is_dir():
+                continue
+            if not any(sub.iterdir()):
+                sub.rmdir()
+
+after = snapshot()
+if before != after:
+    moved = sorted(k for k in set(before) | set(after)
+                   if before.get(k) != after.get(k))
+    sys.stderr.write(
+        "gate_seed: pruning the fixture tree MOVED %d of %d resolutions -- the "
+        "reference closure is incomplete, so the fixture would compare a "
+        "corpus the live resolver does not produce:\n" % (len(moved), len(before)))
+    for k in moved[:10]:
+        sys.stderr.write("  %s\n    full: %r\n    pruned: %r\n"
+                         % (k, before.get(k), after.get(k)))
+    sys.exit(1)
+
+resolved = sum(1 for v in before.values() if isinstance(v, list))
+if not resolved:
+    # Belt and braces against the vacuity the first attempt hit: an identical
+    # BEFORE and AFTER is worth nothing if both resolved nothing.
+    sys.stderr.write("gate_seed: the kept corpus resolves no refs at all, so "
+                     "every comparison in this group would be vacuous\n")
+    sys.exit(1)
+sys.stderr.write("gate_seed: reference closure %d files, %d/%d refs resolved, "
+                 "%d placeholders, %d files dropped\n"
+                 % (len(keep), resolved, len(before), placeholders, pruned))
+PY
+}
+
+gate_seed() {
+    # Returns 0 if a usable fixture clone was built, 1 otherwise.
+    rm -rf "$GATE_REPO" 2>/dev/null || true
+    # HARDLINKED local clone. `--no-hardlinks` forced a physical copy of the
+    # whole object store -- ~212 MiB in this checkout -- on every tooling run
+    # (Codex perf, section 16). Hardlinks are safe here: git never rewrites an
+    # existing object, the fixture only ADDS commits, and removing the clone
+    # cannot affect the source through a hardlink.
+    #
+    # THE CLONE STAYS FULL; THE FIXTURE COMMIT DOES NOT. Section 59 first
+    # tried `--no-checkout` here and measured why that does not work, kept so
+    # the next reader does not re-spend the round trip: hand-seeding only the
+    # closure array's files plus a handful of TODOs builds a repo the GATE can
+    # run against (it reads only the closure it declares) but not one the
+    # RESOLVER can WALK, so every walk resolved 0 of 134 refs instead of 47
+    # and `corpus_resolution_snapshot` correctly refused the vacuous baseline.
+    #
+    # The cost that actually repeats is not this clone (once, ~0.5s) but the
+    # fixture COMMIT'S TREE, which the group's ~167 gate invocations check out
+    # twice each. So the tree is pruned AFTER the seed is assembled, by
+    # `gate_reference_closure_prune` below, against a closure derived from the
+    # resolver's own functions and proved by a before/after snapshot that must
+    # be byte-identical. See that helper for the measurements and the failure
+    # modes it exists to refuse.
+    gate_seed_tree "$GATE_REPO" || return 1
+    (
+        cd "$GATE_REPO" || exit 1
+        # Cut the tree the ~334 per-invocation checkouts materialize, down
+        # to the closure the resolver itself consults. Fails the seed rather
+        # than committing a corpus the live resolver does not produce.
+        gate_reference_closure_prune || exit 1
         git add -A >/dev/null 2>&1
         git commit --quiet --no-verify -m "fixture base" >/dev/null 2>&1
     ) || return 1
@@ -18910,6 +19167,115 @@ S59HDQ
     rm -f "$G_S59B_COUNT"
 
     # ------------------------------------------------------------------
+    # 22f8: THE REFERENCE-CLOSURE PRUNE REFUSES AN INCOMPLETE CLOSURE (s59).
+    #
+    # `gate_reference_closure_prune` is what makes the pruned fixture tree safe
+    # to compare against at all: it snapshots resolution over the FULL seeded
+    # tree, prunes, snapshots again, and refuses unless all 134 mappings are
+    # byte-identical. A comparison that can only ever agree with itself proves
+    # nothing, so this case CRIPPLES the derivation and requires the refusal to
+    # fire -- the same control discipline `22f4` uses for its scanner.
+    #
+    # THE LEG CHOSEN IS THE ONE THAT ACTUALLY MOVES VERDICTS.
+    # `section_candidate_files` supplies the section-scope pairing evidence;
+    # without it two symbols the FULL tree leaves `unpaired_ref` (several of
+    # their section's files define them) RESOLVE in the pruned tree (only one
+    # of those files survives), which is exactly the silent corpus change the
+    # check exists to refuse. Dropping the `classify_ref` leg is deliberately
+    # NOT used here: it changes nothing for today's six kept TODOs, which is
+    # recorded at the derivation rather than dressed up as a second control.
+    G_S59C_REPO="$TMP_DIR/gate-closure-control"
+    G_S59C_ERR="$TMP_DIR/gate-22f8.err"
+    if ! gate_seed_tree "$G_S59C_REPO" >/dev/null 2>&1; then
+        t_fail "identity gate: could not seed the closure-control tree"
+    else
+        if ( cd "$G_S59C_REPO" \
+                && export GATE_CLOSURE_DROP_LEG=section_candidates \
+                && gate_reference_closure_prune ) >/dev/null 2>"$G_S59C_ERR"; then
+            t_fail "identity gate: a crippled reference closure was ACCEPTED -- the before/after resolution check cannot see an incomplete closure (see $G_S59C_ERR)"
+        elif grep -q 'reference closure is incomplete' "$G_S59C_ERR" \
+             && grep -qE 'MOVED [1-9][0-9]* of [0-9]+ resolutions' "$G_S59C_ERR"; then
+            t_pass "identity gate: an incomplete reference closure is refused, naming the resolutions it moved"
+        else
+            t_fail "identity gate: the crippled closure failed for the wrong reason, so the control proves nothing (see $G_S59C_ERR)"
+        fi
+        rm -rf "$G_S59C_REPO"
+    fi
+
+    # 22f9: THE PRUNE NEVER WRITES THROUGH A SYMLINK (section 59 round 2).
+    #
+    # The placeholder step used to truncate a non-closure `.c`/`.h` in place,
+    # and `write_bytes` opens the LINK'S TARGET -- so a tracked `.c` symlink
+    # under a bulk tree would have emptied whatever it pointed at, including an
+    # absolute path on the host running the tooling suite. This plants exactly
+    # that shape against a sentinel OUTSIDE the fixture clone and requires the
+    # sentinel to survive, which is a property no assertion about the clone's
+    # own contents can express.
+    #
+    # AND A DIRECTORY LINK NAMED `.c` IS THE SECOND ARM. `_basename_index`
+    # indexes FILENAMES only, so a directory called `alias.c` is not in the
+    # full tree's index; if the prune replaced it with an empty regular file
+    # the pruned index would gain a basename the real one never had (Codex
+    # adversarial, section 59 round 3, [medium]).
+    #
+    # THE CONTROL FAILS CLOSED ON ITS OWN CONSTRUCTION. `ln -s` returns 1 on an
+    # existing path, and ignoring that let the case assert against an ordinary
+    # tracked file that the prune had merely placeholdered -- every assertion
+    # passing while nothing was ever linked, which is precisely the write-
+    # through regression going undetected. Both links are therefore required to
+    # be created AND verified as links at their exact targets before the prune
+    # runs. The sentinel comparison is `cmp -s` against a pristine copy rather
+    # than `[ "$(cat ...)" = ... ]`, because command substitution strips
+    # trailing newlines and cannot be byte-exact (same finding).
+    #
+    # THE BASENAMES ARE DELIBERATELY UNIQUE. Adding a `.c` path changes
+    # `_basename_index`, and a name colliding with an existing basename would
+    # flip a bare-basename ref from resolved to ambiguous and make the prune's
+    # own before/after check refuse for an unrelated reason -- the case would
+    # then fail while proving nothing about symlinks.
+    G_S59D_REPO="$TMP_DIR/gate-symlink-control"
+    G_S59D_SENTINEL="$TMP_DIR/gate-22f9-sentinel.txt"
+    G_S59D_EXPECT="$TMP_DIR/gate-22f9-expected.txt"
+    printf 'SENTINEL MUST SURVIVE\n' > "$G_S59D_SENTINEL"
+    cp "$G_S59D_SENTINEL" "$G_S59D_EXPECT"
+    G_S59D_DIRTARGET="$TMP_DIR/gate-22f9-dirtarget"
+    mkdir -p "$G_S59D_DIRTARGET"
+    printf 'DIR TARGET MUST SURVIVE\n' > "$G_S59D_DIRTARGET/keep.txt"
+    if ! gate_seed_tree "$G_S59D_REPO" >/dev/null 2>&1; then
+        t_fail "identity gate: could not seed the symlink-control tree"
+    else
+        G_S59D_LINK="$G_S59D_REPO/src/kernel/zz_s59_symlink_control.c"
+        G_S59D_DIRLINK="$G_S59D_REPO/src/kernel/zz_s59_dirlink_control.c"
+        if ! ln -s "$G_S59D_SENTINEL" "$G_S59D_LINK" 2>/dev/null \
+           || ! ln -s "$G_S59D_DIRTARGET" "$G_S59D_DIRLINK" 2>/dev/null \
+           || [ ! -L "$G_S59D_LINK" ] || [ ! -L "$G_S59D_DIRLINK" ] \
+           || [ "$(readlink "$G_S59D_LINK")" != "$G_S59D_SENTINEL" ] \
+           || [ "$(readlink "$G_S59D_DIRLINK")" != "$G_S59D_DIRTARGET" ]; then
+            t_fail "identity gate: could not PLANT the 22f9 symlink mutation, so the control would have proved nothing (checked before running the prune)"
+        else
+            ( cd "$G_S59D_REPO" && git add -A >/dev/null 2>&1 ) || true
+            ( cd "$G_S59D_REPO" && gate_reference_closure_prune ) \
+                >/dev/null 2>"$TMP_DIR/gate-22f9.err"
+            G_S59D_RC=$?
+            if ! cmp -s "$G_S59D_SENTINEL" "$G_S59D_EXPECT"; then
+                t_fail "identity gate: the prune wrote THROUGH a symlink and altered a file outside the fixture ($G_S59D_SENTINEL)"
+            elif [ ! -f "$G_S59D_DIRTARGET/keep.txt" ]; then
+                t_fail "identity gate: the prune followed a DIRECTORY symlink out of the fixture and removed its contents"
+            elif [ "$G_S59D_RC" -ne 0 ]; then
+                t_fail "identity gate: the symlink control did not complete the prune (rc=$G_S59D_RC; see $TMP_DIR/gate-22f9.err)"
+            elif [ -L "$G_S59D_LINK" ] || [ -L "$G_S59D_DIRLINK" ]; then
+                t_fail "identity gate: a non-closure symlink survived the prune as a link, so a later checkout still carries it"
+            elif [ -e "$G_S59D_DIRLINK" ]; then
+                t_fail "identity gate: the pruned DIRECTORY link left something at $G_S59D_DIRLINK -- a `.c` placeholder there adds a basename the full tree's index never had"
+            elif [ -f "$G_S59D_LINK" ] && [ ! -s "$G_S59D_LINK" ]; then
+                t_pass "identity gate: a non-closure .c symlink becomes an empty REGULAR placeholder, a .c DIRECTORY link leaves nothing, and both targets are untouched"
+            else
+                t_fail "identity gate: the pruned file symlink left neither a link nor an empty regular file at $G_S59D_LINK"
+            fi
+        fi
+        rm -rf "$G_S59D_REPO"
+    fi
+
     # 22f7: THE GROUP'S RUNTIME STAYS UNDER A MEASURED CEILING (section 59).
     #
     # Baseline at section 53's ship: 408.75s over four runs, 438.5s with
@@ -18927,6 +19293,15 @@ S59HDQ
     # flaked 2059-2349ms under load) while still catching the failure mode
     # this item names -- a later section silently doubling the group's cost
     # -- rather than tripping on a busy host.
+    #
+    # RE-MEASURED after this section's reference-closure prune and left at
+    # 760s: 363.4s, 361.3s, 342.0s, 332.3s (mean 349.8s against the pre-prune
+    # mean of 361.0s). The prune's saving is real per full-path invocation
+    # (~1.15s of ~3.9s, measured directly on a full versus a pruned fixture
+    # tree) but it is INSIDE this group's own run-to-run band, because section
+    # 55 had already moved both full worktree checkouts behind the fast path
+    # and most invocations never reach them. Tightening the bar on a mean that
+    # moved less than the spread would buy flakes, not coverage.
     G_S59_GROUP_END_NS="$(mono_ns)"
     if ! G_S59_GROUP_MS=$(elapsed_ms "$G_S59_GROUP_START_NS" "$G_S59_GROUP_END_NS"); then
         t_fail "identity gate: could not measure the fixture group's own elapsed time (unreadable clock reading)"
