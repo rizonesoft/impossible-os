@@ -15143,9 +15143,14 @@ PY2
         # loader must leak. This is the whole content of 22ed -- without it the
         # case cannot tell a reaped descendant from one that was never started.
         G_MUT_S53B="$GATE_REPO/scripts/todo-graph/identity-gate-noreap2.sh"
-        sed 's#^    if ! kill -0 "$_prb" 2>/dev/null && kill -0 -- "-$_prb" 2>/dev/null; then$#    if false; then#' \
+        # RE-ANCHORED ON THE EXTRACTED HELPER (section 56). The reap this case
+        # mutates used to be written out inline at every site; it is now one
+        # `reap_walk_group` call per phase, so the anchor is that CALL. Removing
+        # the call at the probe leaves every other phase reaping, which is what
+        # keeps this case about the probe.
+        sed 's#^    reap_walk_group "$_prb"$#    :#' \
             "$GATE_IN_CLONE" > "$G_MUT_S53B"
-        if grep -q '^    if ! kill -0 "\$_prb" 2>/dev/null && kill -0 -- "-\$_prb" 2>/dev/null; then$' "$G_MUT_S53B"; then
+        if grep -q '^    reap_walk_group "\$_prb"$' "$G_MUT_S53B"; then
             t_fail "identity gate: could not build the success-path reap mutation (the shape moved)"
         else
             rm -f "$G_S53_RUN2/desc.pid"
@@ -15162,6 +15167,653 @@ PY2
         fi
         rm -rf "$G_S53_RUN2"
         g_s53_restore
+
+        # ------------------------------------------------------------------
+        # 22eu: THE SUPERVISED PHASES 22ed CANNOT REACH (section 56).
+        #
+        # 22ed proves the ordering for the protocol PROBE. Every other
+        # supervised phase in the gate has the identical shape -- record the
+        # leader in WALK_PIDS, `wait`, clear WALK_PIDS -- and until section 56
+        # none of them signalled on that path, so `cleanup` (the only other
+        # thing that ever signals) had nothing left to find. Measured before
+        # the fix: the gate exited 0 with its ordinary PASS verdict and the
+        # descendants of the two resolver walks were still alive.
+        #
+        # ONE POSITIVE RUN, THEN ONE MUTATION PER PHASE THAT ACTUALLY FIRED.
+        # The mutation removes the reap at ONE phase and requires THAT phase's
+        # descendant to survive while the others still die, which is what
+        # proves per-site wiring rather than merely that the shared helper
+        # works. Phases that did not run in this configuration produce no pid
+        # file and are not mutated, so the case scopes itself instead of
+        # asserting about a phase the gate skipped.
+        g_s56_restore() {
+            (cd "$GATE_REPO" || exit 1
+             git checkout --quiet "$G_PROTO_BASE" -- \
+                 scripts/todo-graph/cache_schema.py \
+                 scripts/todo-graph/producer_differential.py \
+                 scripts/todo-graph/build.py >/dev/null 2>&1
+             git commit --quiet --no-verify -am "s56: restore an honest tree" >/dev/null 2>&1) || true
+        }
+        g_s56_loader() {   # $1 = run dir, $2 = spawn kwargs, $3 = pid-file suffix
+            printf '\n\n'
+            printf '# section 56: spawn a descendant and return normally, ONE PER PHASE.\n'
+            printf '# Keyed on argv, because these modules are imported by several phases and\n'
+            printf '# an ungated spawn would record whichever ran last -- the scoping mistake\n'
+            printf '# section 53 paid for once already.\n'
+            printf 'import os as _s56_os, sys as _s56_sys, subprocess as _s56_sp\n'
+            printf 'def _s56_gate_own(_p):\n'
+            printf '    # THE GATE OWN TEMPORARY DIRECTORY, not merely a matching\n'
+            printf '    # basename. The producer differential runs `build.py` ITSELF, with\n'
+            printf '    # its own `--output` under its own tempdir, so keying on the\n'
+            printf '    # basename alone attributed one of ITS builds to the gate head cache\n'
+            printf '    # phase and the case stopped being about the phase it names -- the\n'
+            printf '    # same scoping mistake section 53 paid for, in a new shape.\n'
+            printf '    return _s56_os.path.basename(_s56_os.path.dirname(_p)).startswith("identity-gate.")\n'
+            printf 'def _s56_phase():\n'
+            printf '    _a = [str(_x) for _x in _s56_sys.argv]\n'
+            printf '    _p0 = _s56_os.path.basename(_a[0]) if _a else ""\n'
+            printf '    if _p0 == "producer_differential.py":\n'
+            printf '        return "prod"\n'
+            printf '    if _p0 == "build.py":\n'
+            printf '        for _i, _x in enumerate(_a):\n'
+            printf '            if _x == "--output" and _i + 1 < len(_a):\n'
+            printf '                if not _s56_gate_own(_a[_i+1]):\n'
+            printf '                    return ""\n'
+            printf '                return "bcache" if _s56_os.path.basename(_a[_i+1]) == "todo-cache-base.json" else "hcache"\n'
+            printf '        return ""\n'
+            printf '    if _p0 == "corpus_resolution_snapshot.py":\n'
+            printf '        if len(_a) > 2 and _a[1] == "compare" and _s56_gate_own(_a[2]):\n'
+            printf '            return "cmp"\n'
+            printf '        if len(_a) > 2 and _a[1] == "write" and _s56_gate_own(_a[2]):\n'
+            printf '            return "hwalk" if _s56_os.path.basename(_a[2]).startswith("head") else "bwalk"\n'
+            printf '    return ""\n'
+            printf '_s56_p = _s56_phase()\n'
+            printf 'if _s56_p:\n'
+            printf '    # EVERY STREAM TO DEVNULL. The descendant would otherwise INHERIT its\n'
+            printf '    # phase stdio, and the producer differential runs `build.py` under\n'
+            printf '    # `capture_output=True` -- a pipe whose read does not finish until\n'
+            printf '    # every writer closes it. A `sleep 900` holding that pipe hung the\n'
+            printf '    # differential until the budget killed it, so the fixture measured a\n'
+            printf '    # timeout instead of a reap (measured, section 56).\n'
+            printf '    _s56_kid = _s56_sp.Popen(["sleep", "900"], stdin=_s56_sp.DEVNULL, stdout=_s56_sp.DEVNULL, stderr=_s56_sp.DEVNULL%s)\n' "$2"
+            printf "    open('%s/desc' + _s56_p + '%s', 'w').write(str(_s56_kid.pid))\n" "$1" "$3"
+        }
+        g_s56_inject() {   # $1 = loader file; injects into both import roots
+            # `cache_schema` is APPENDED to: it is a plain module, so
+            # module-level code at the end runs on import, and it is what the
+            # two cache builds, the two resolver walks and the comparison all
+            # reach.
+            #
+            # `producer_differential` is SPLICED IN AT THE TOP, and that
+            # difference is load-bearing rather than stylistic. The file ends
+            # with `sys.exit(main(sys.argv[1:]))`, so anything appended after it
+            # is never reached -- measured: an appended loader left the `prod`
+            # phase silently uncovered while every other phase reported
+            # correctly, which is precisely the shape the coverage check below
+            # exists to catch.
+            (cd "$GATE_REPO" || exit 1
+             cat "$1" >> scripts/todo-graph/cache_schema.py
+             python3 - scripts/todo-graph/producer_differential.py "$1" <<'S56PD'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text(encoding="utf-8")
+key = "from __future__ import annotations\n"
+if key not in t:
+    raise SystemExit("producer_differential.py __future__ import moved")
+p.write_text(t.replace(key, key + pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"), 1),
+             encoding="utf-8")
+S56PD
+            ) || return 1
+            return 0
+        }
+        g_s56_gone() {   # $1 = pid; 0 once it is really gone, bounded
+            # POLLED, NOT PROBED ONCE. `kill -KILL` is immediate but REAPING is
+            # not: these descendants are reparented when their leader exits, so
+            # `kill -0` still succeeds on the zombie for as long as it takes
+            # init to collect it. A single check therefore fails intermittently
+            # -- observed in the suite while the identical arm passed standalone
+            # (section 56).
+            local _i
+            for _i in $(seq 1 60); do
+                kill -0 "$1" 2>/dev/null || return 0
+                sleep 0.1
+            done
+            return 1
+        }
+        g_s56_collect() {   # $1 = run dir; ANSWERS in G_S56_RAN / G_S56_LIVE
+            local _pf _ph _pid
+            G_S56_RAN=""; G_S56_LIVE=""
+            for _pf in "$1"/desc*.pid; do
+                [ -e "$_pf" ] || continue
+                _ph="${_pf##*/desc}"; _ph="${_ph%.pid}"
+                _pid="$(cat "$_pf" 2>/dev/null)"
+                case "$_pid" in ''|*[!0-9]*) continue ;; esac
+                G_S56_RAN="$G_S56_RAN $_ph"
+                # A SHORT SETTLE before believing "still alive", for the same
+                # reaping race `g_s56_gone` exists for: a just-KILLed descendant
+                # answers `kill -0` until init collects it.
+                kill -0 "$_pid" 2>/dev/null && { sleep 0.5; kill -0 "$_pid" 2>/dev/null && G_S56_LIVE="$G_S56_LIVE $_ph"; }
+                g_s53_reap "$_pid"
+            done
+        }
+        g_s56_pidvar() {   # $1 = phase key -> the gate's leader variable
+            case "$1" in
+                prod)   printf 'PROD_PID' ;;
+                hcache) printf 'CACHE_PID' ;;
+                bcache) printf 'BCACHE_PID' ;;
+                bwalk)  printf 'BASE_PID' ;;
+                hwalk)  printf 'HEAD_PID' ;;
+                cmp)    printf 'CMP_PID' ;;
+                *)      printf '' ;;
+            esac
+        }
+
+        g_s56_restore
+        G_S56_RUN="$TMP_DIR/s56-normal"
+        rm -rf "$G_S56_RUN"; mkdir -p "$G_S56_RUN/tmp"
+        G_S56_LOADER="$TMP_DIR/s56-loader.py"
+        g_s56_loader "$G_S56_RUN" "" ".pid" > "$G_S56_LOADER"
+        # BOTH MODULES, because no single one is imported by every phase:
+        # `cache_schema` reaches the two cache builds, the two resolver walks
+        # and the comparison, and `producer_differential` imports nothing local
+        # at all. Both are already in the gate's EXEC_CLOSURE, which is the same
+        # surface 22ed appends to.
+        g_s56_inject "$G_S56_LOADER" \
+            || t_fail "identity gate: could not inject the 22eu loader (producer_differential.py moved)"
+        (cd "$GATE_REPO" && git commit --quiet --no-verify -am "22eu: loaders that spawn and return, one per supervised phase" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && TMPDIR="$G_S56_RUN/tmp" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22eu.log" 2>&1)
+        G_S56_RC=$?
+        g_s56_collect "$G_S56_RUN"
+        G_S56_PHASES="$G_S56_RAN"
+        if [ -z "$G_S56_PHASES" ]; then
+            t_fail "identity gate: no supervised phase reached the 22eu loader, so the case measured nothing (rc=$G_S56_RC; see $TMP_DIR/gate-22eu.log)"
+        elif [ -n "$G_S56_LIVE" ]; then
+            t_fail "identity gate: supervised phases leaked what the tree spawned on their SUCCESS path:$G_S56_LIVE (ran:$G_S56_PHASES; see $TMP_DIR/gate-22eu.log)"
+        else
+            t_pass "identity gate: every supervised phase that ran ($G_S56_PHASES) left nothing behind on its success path"
+        fi
+        G_S56_COVERED="$G_S56_PHASES"
+
+        # NO MUTATION LOOP HERE. 22ew below mutates every one of the six sites
+        # in a configuration that reaches all of them, so repeating three of
+        # them in this one would buy nothing and cost three more end-to-end gate
+        # invocations in a suite already charged to every qualifying pre-push.
+        # What this case owns is that the DEFAULT configuration -- no contract
+        # divergence, which is what CI sees on almost every push -- leaks
+        # nothing.
+        rm -rf "$G_S56_RUN"
+        g_s56_restore
+
+        # ------------------------------------------------------------------
+        # 22ew: THE THREE PHASES 22eu's CONFIGURATION CANNOT REACH (section 56).
+        #
+        # 22eu appends its loader at HEAD only, so the BASE-side phases import
+        # a module that does not carry it -- and two further phases are
+        # CONDITIONAL: the producer differential is skipped while `build.py` is
+        # byte-identical base..head with an unmoved contract, and the base-side
+        # cache build runs only when the producer contract identity DIVERGED.
+        # Measured: 22eu covers cmp, hcache and hwalk and nothing else, which
+        # would have left three of the six reap sites asserted about by a case
+        # that never executed them. Coverage is therefore CHECKED at the end of
+        # this block rather than assumed from the fixture's intent.
+        #
+        # So this case commits the loader FIRST and takes that commit as the
+        # base -- both worktrees then carry it -- and then moves
+        # `CACHE_FORMAT_VERSION` at head, which is the documented hand-bump for
+        # a semantic change and is what turns both conditional phases on.
+        g_s56_restore
+        G_S56_RUN2="$TMP_DIR/s56-bothsides"
+        rm -rf "$G_S56_RUN2"; mkdir -p "$G_S56_RUN2/tmp"
+        G_S56_LOADER2="$TMP_DIR/s56-loader-both.py"
+        g_s56_loader "$G_S56_RUN2" "" ".pid" > "$G_S56_LOADER2"
+        g_s56_inject "$G_S56_LOADER2" \
+            || t_fail "identity gate: could not inject the 22ew loader (producer_differential.py moved)"
+        (cd "$GATE_REPO" && git commit --quiet --no-verify -am "22ew: loaders that spawn and return, on BOTH sides" >/dev/null 2>&1)
+        G_S56_BOTH_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD 2>/dev/null)"
+        G_S56_SETUP_OK=1
+        (
+            cd "$GATE_REPO" || exit 1
+            python3 - scripts/todo-graph/cache_schema.py <<'S56PY'
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text(encoding="utf-8")
+t2, n = re.subn(r'^CACHE_FORMAT_VERSION = (\d+)$',
+                lambda m: "CACHE_FORMAT_VERSION = %d" % (int(m.group(1)) + 1),
+                t, count=1, flags=re.M)
+if n != 1:
+    raise SystemExit("CACHE_FORMAT_VERSION declaration moved")
+p.write_text(t2, encoding="utf-8")
+S56PY
+        ) || G_S56_SETUP_OK=0
+        # NO PRODUCER CHANGE. `build.py` is deliberately left alone: a moved
+        # contract identity ALONE already runs the differential ("byte-identical
+        # but the contract identity moved; running it anyway"), and it is what
+        # turns the base-side cache build on. Changing build.py as well made the
+        # differential compare two genuinely different producers and the gate
+        # stopped before the walks -- measured, and it cost the three phases
+        # this case exists to reach.
+        (cd "$GATE_REPO" && git commit --quiet --no-verify -am "22ew: diverge the producer contract at head" >/dev/null 2>&1)
+        if [ "$G_S56_SETUP_OK" -ne 1 ] || [ -z "$G_S56_BOTH_BASE" ]; then
+            t_fail "identity gate: could not build the 22ew both-sides fixture (the CACHE_FORMAT_VERSION declaration moved, or the base commit could not be read)"
+        else
+            (cd "$GATE_REPO" && TMPDIR="$G_S56_RUN2/tmp" bash "$GATE_IN_CLONE" \
+                --base "$G_S56_BOTH_BASE" --head HEAD >"$TMP_DIR/gate-22ew.log" 2>&1)
+            G_S56_RC2=$?
+            g_s56_collect "$G_S56_RUN2"
+            if [ -z "$G_S56_RAN" ]; then
+                t_fail "identity gate: no supervised phase reached the 22ew loader, so the base-side and conditional sites were not measured (rc=$G_S56_RC2; see $TMP_DIR/gate-22ew.log)"
+            elif [ -n "$G_S56_LIVE" ]; then
+                t_fail "identity gate: supervised phases leaked what the tree spawned on their SUCCESS path:$G_S56_LIVE (ran:$G_S56_RAN; see $TMP_DIR/gate-22ew.log)"
+            else
+                t_pass "identity gate: with the loader on BOTH sides every phase that ran ($G_S56_RAN) still left nothing behind"
+            fi
+            # EVERY PHASE THIS CASE RAN IS MUTATED, not only the ones 22eu did
+            # not reach: the mutation is what turns "the descendant is gone"
+            # into "this site reaped it", and a site proved only by a positive
+            # case is a site the fixture cannot distinguish from one that never
+            # spawned.
+            G_S56_COVERED="$G_S56_RAN"
+            for G_S56_PH in $G_S56_RAN; do
+                G_S56_VAR="$(g_s56_pidvar "$G_S56_PH")"
+                if [ -z "$G_S56_VAR" ]; then
+                    t_fail "identity gate: 22ew saw an unknown phase key '$G_S56_PH', so its mutation table is stale"
+                    continue
+                fi
+                G_S56_MUT2="$GATE_REPO/scripts/todo-graph/identity-gate-noreap-$G_S56_PH.sh"
+                sed "s#^\([ ]*\)reap_walk_group \"\\\$$G_S56_VAR\"\$#\1:#" \
+                    "$GATE_IN_CLONE" > "$G_S56_MUT2"
+                if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S56_MUT2" 'reap_walk_group' \
+                   || grep -q "^[ ]*reap_walk_group \"\$$G_S56_VAR\"\$" "$G_S56_MUT2"; then
+                    t_fail "identity gate: could not build the $G_S56_PH success-path reap mutation (the shape moved)"
+                    rm -f "$G_S56_MUT2"
+                    continue
+                fi
+                rm -f "$G_S56_RUN2"/desc*.pid
+                (cd "$GATE_REPO" && TMPDIR="$G_S56_RUN2/tmp" bash "$G_S56_MUT2" \
+                    --base "$G_S56_BOTH_BASE" --head HEAD >"$TMP_DIR/gate-22ew-$G_S56_PH.log" 2>&1)
+                g_s56_collect "$G_S56_RUN2"
+                case " $G_S56_LIVE " in
+                    *" $G_S56_PH "*)
+                        t_pass "identity gate: MUTATION -- without its own reap call the $G_S56_PH phase leaks, so 22ew measures that site" ;;
+                    *)
+                        t_fail "identity gate: removing the $G_S56_PH reap did not leak, so 22ew proves nothing about that site (ran:$G_S56_RAN live:$G_S56_LIVE; see $TMP_DIR/gate-22ew-$G_S56_PH.log)" ;;
+                esac
+                rm -f "$G_S56_MUT2"
+            done
+        fi
+        rm -rf "$G_S56_RUN2"
+        g_s56_restore
+
+        # COVERAGE IS CHECKED, NOT ASSUMED. Every leader this file `wait`s for
+        # and then reaps must have been exercised by one of the two cases above;
+        # a phase the fixture's configuration never triggers is a site asserted
+        # about by a case that did not run it, which is the failure 22eu had on
+        # its own. A NEW supervised phase added later without a fixture fails
+        # here rather than shipping unmeasured.
+        G_S56_MISSING=""
+        for G_S56_PH in prod hcache bcache bwalk hwalk cmp; do
+            case " $G_S56_COVERED " in
+                *" $G_S56_PH "*) ;;
+                *) G_S56_MISSING="$G_S56_MISSING $G_S56_PH" ;;
+            esac
+        done
+        if [ -n "$G_S56_MISSING" ]; then
+            t_fail "identity gate: supervised phases never mutation-proved by 22ew:$G_S56_MISSING (covered:$G_S56_COVERED) -- their success-path reaps are unmeasured"
+        else
+            t_pass "identity gate: all six supervised phases reaped on their success path, each mutation-proved at its own site"
+        fi
+
+        # ------------------------------------------------------------------
+        # 22ev: THE LIMIT, MEASURED RATHER THAN BELIEVED (section 56).
+        #
+        # A group signal reaches a descendant only while it is IN the group. A
+        # child started with `start_new_session=True`, `setsid` or `setpgid`
+        # leaves it, so neither the success-path reap nor `cleanup` can touch
+        # it. This case pins that as the SHIPPED behaviour so the boundary is a
+        # measurement rather than an assumption.
+        #
+        # AND IT IS NOT A CLAIM THAT NOTHING WOULD CONTAIN IT. Measured on the
+        # development host with a control that had to fire (util-linux 2.39.3,
+        # WSL2 kernel 6.18.33.2): a detached child SURVIVED with no namespace
+        # and was KILLED when its phase ran as the init of an unprivileged
+        # `unshare --user --map-root-user --pid --fork` namespace, because the
+        # kernel SIGKILLs a pid namespace's remaining members when its init
+        # exits and a member cannot rejoin an ancestor namespace. Adopting that
+        # is a HOST decision this section does not take: it re-parents every
+        # phase, changes how exit status and `timeout` compose, and its
+        # availability on the GitHub runner is unmeasured -- and a containment
+        # that works locally while returning EPERM in CI would advertise a
+        # property exactly where the leak is charged to the next job. So the
+        # assertion below pins what ships, and flipping it is the visible half
+        # of adopting a namespace backend later.
+        g_s56_restore
+        G_S56_RUN3="$TMP_DIR/s56-detach"
+        rm -rf "$G_S56_RUN3"; mkdir -p "$G_S56_RUN3/tmp"
+        G_S56_LOADER3="$TMP_DIR/s56-loader-detach.py"
+        g_s56_loader "$G_S56_RUN3" ", start_new_session=True" ".pid" > "$G_S56_LOADER3"
+        (cd "$GATE_REPO" || exit 1
+         cat "$G_S56_LOADER3" >> scripts/todo-graph/cache_schema.py
+         git commit --quiet --no-verify -am "22ev: a loader whose descendant leaves the group" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && TMPDIR="$G_S56_RUN3/tmp" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22ev.log" 2>&1)
+        G_S56_RC3=$?
+        g_s56_collect "$G_S56_RUN3"
+        if [ -z "$G_S56_RAN" ]; then
+            t_fail "identity gate: no phase reached the 22ev detaching loader, so the limit was not measured (rc=$G_S56_RC3; see $TMP_DIR/gate-22ev.log)"
+        elif [ -n "$G_S56_LIVE" ]; then
+            t_pass "identity gate: a descendant that LEAVES the group survives the reap ($G_S56_LIVE) -- the documented limit, measured"
+        else
+            t_fail "identity gate: a detached descendant did NOT survive, so either the loader failed to detach or the gate gained containment this case does not describe (ran:$G_S56_RAN; see $TMP_DIR/gate-22ev.log)"
+        fi
+        rm -rf "$G_S56_RUN3"
+        g_s56_restore
+
+        # ------------------------------------------------------------------
+        # 22ex: THE HELPER'S OWN BRANCHES, IN ISOLATION (section 56).
+        #
+        # 22eu/22ew drive `reap_walk_group` end to end, and they can only ever
+        # reach its COOPERATIVE path: they hand it a freshly `wait`ed leader
+        # whose descendant is an ordinary `sleep`, which dies on the first TERM.
+        # Three branches are therefore invisible to them -- the recycled-leader
+        # guard, the KILL escalation after a descendant ignores TERM, and the
+        # deadline break in the grace loop -- and a mutation to any of them
+        # stays green (Codex test-coverage, section 56, [high]).
+        #
+        # Driven directly rather than through the gate: the function is lifted
+        # out of the file under test with its own `remaining()` stubbed, so the
+        # three branches are reachable in about a second each instead of behind
+        # an end-to-end gate invocation apiece. The extraction is anchored, so a
+        # renamed function fails here rather than silently testing nothing.
+        g_s56_harness() {   # $1 = gate file, $2 = remaining() answer, $3 = out path
+            {
+                echo 'set -uo pipefail'
+                echo "remaining() { echo $2; }"
+                sed -n '/^reap_walk_group() {/,/^}$/p' "$1"
+                echo 'reap_walk_group "$@"'
+            } > "$3"
+            grep -q '^reap_walk_group() {' "$3" && grep -q '^    for _rg in' "$3" && bash -n "$3" 2>/dev/null
+        }
+        G_S56_HRUN="$TMP_DIR/s56-helper"
+        rm -rf "$G_S56_HRUN"; mkdir -p "$G_S56_HRUN"
+        G_S56_H="$G_S56_HRUN/harness.sh"
+        if ! g_s56_harness "$GATE_IN_CLONE" 9999 "$G_S56_H"; then
+            t_fail "identity gate: could not lift reap_walk_group out of the gate (the function head moved)"
+        else
+            # ARM 1: a leader that is STILL ALIVE means its pid was recycled, so
+            # the group belongs to somebody else and must not be signalled.
+            # THE LEADER REPORTS ITS OWN PID, never `$!`. `setsid` FORKS when
+            # its caller is already a process-group leader, which is exactly
+            # what happens when the harness shell has job control on -- `$!` is
+            # then the short-lived `setsid` process and the real session leader
+            # is a pid nobody recorded, so both arms below would pass for the
+            # wrong reason (measured while building this case).
+            setsid bash -c 'echo $$ > '"$G_S56_HRUN"'/ldr1; sleep 300 >/dev/null 2>&1 & echo $! > '"$G_S56_HRUN"'/kid1; sleep 300' >/dev/null 2>&1 &
+            for _i in $(seq 1 100); do
+                [ -s "$G_S56_HRUN/kid1" ] && [ -s "$G_S56_HRUN/ldr1" ] && break
+                sleep 0.1
+            done
+            G_S56_L1="$(cat "$G_S56_HRUN/ldr1" 2>/dev/null)"
+            G_S56_K1="$(cat "$G_S56_HRUN/kid1" 2>/dev/null)"
+            if [ -z "$G_S56_K1" ] || [ -z "$G_S56_L1" ]; then
+                t_fail "identity gate: the 22ex live-leader arm never started its descendant"
+            else
+                bash "$G_S56_H" "$G_S56_L1" >/dev/null 2>&1
+                if kill -0 "$G_S56_K1" 2>/dev/null && kill -0 "$G_S56_L1" 2>/dev/null; then
+                    t_pass "identity gate: a LIVE leader pid is treated as recycled, so its group is left alone"
+                else
+                    t_fail "identity gate: reap_walk_group signalled a live leader's group, which is how a recycled pid takes a stranger with it"
+                fi
+                # MUTATION: drop the leader-is-gone half of the guard and the
+                # same call must now reap the stranger's group.
+                G_S56_HM="$G_S56_HRUN/harness-noguard.sh"
+                sed 's#^        if ! kill -0 "$_rg" 2>/dev/null && kill -0 -- "-$_rg" 2>/dev/null; then$#        if kill -0 -- "-$_rg" 2>/dev/null; then#' \
+                    "$G_S56_H" > "$G_S56_HM"
+                if grep -q '^        if ! kill -0 "\$_rg" 2>/dev/null && kill -0 -- "-\$_rg" 2>/dev/null; then$' "$G_S56_HM"; then
+                    t_fail "identity gate: could not build the recycled-leader guard mutation (the shape moved)"
+                else
+                    bash "$G_S56_HM" "$G_S56_L1" >/dev/null 2>&1
+                    if kill -0 "$G_S56_K1" 2>/dev/null; then
+                        t_fail "identity gate: removing the leader-is-gone guard did not reap the group, so 22ex proves nothing about it"
+                    else
+                        t_pass "identity gate: MUTATION -- without the leader-is-gone guard a live pid's group IS signalled, so the guard is load-bearing"
+                    fi
+                fi
+                g_s53_reap "$G_S56_K1" "$G_S56_L1"
+            fi
+
+            # ARM 2: a descendant that IGNORES TERM must still be gone, which is
+            # the KILL escalation. The loop keeps re-entering `sleep` so the
+            # group TERM cannot end it by killing the sleep alone.
+            g_s56_stubborn() {   # $1 = pid file; ANSWERS the leader pgid in G_S56_LS
+                rm -f "$G_S56_HRUN/ldrs"
+                setsid bash -c 'echo $$ > '"$G_S56_HRUN"'/ldrs; bash -c '"'"'trap "" TERM; echo $$ > '"$1"'; while :; do sleep 1; done'"'"' >/dev/null 2>&1 & sleep 0.4' >/dev/null 2>&1 &
+                for _i in $(seq 1 100); do
+                    [ -s "$1" ] && [ -s "$G_S56_HRUN/ldrs" ] && break
+                    sleep 0.1
+                done
+                G_S56_LS="$(cat "$G_S56_HRUN/ldrs" 2>/dev/null)"
+                # The leader must be GONE before the helper is called: that is
+                # the success-path ordering this whole section is about.
+                for _i in $(seq 1 60); do
+                    kill -0 "$G_S56_LS" 2>/dev/null || break
+                    sleep 0.1
+                done
+            }
+            g_s56_stubborn "$G_S56_HRUN/kid2"
+            G_S56_K2="$(cat "$G_S56_HRUN/kid2" 2>/dev/null)"
+            if [ -z "$G_S56_K2" ]; then
+                t_fail "identity gate: the 22ex TERM-resistant arm never started its descendant"
+            else
+                bash "$G_S56_H" "$G_S56_LS" >/dev/null 2>&1
+                if g_s56_gone "$G_S56_K2"; then
+                    t_pass "identity gate: a descendant that ignores TERM is still gone, so the KILL escalation runs"
+                else
+                    t_fail "identity gate: a TERM-resistant descendant survived reap_walk_group, so the KILL escalation is not reached"
+                fi
+                G_S56_HK="$G_S56_HRUN/harness-nokill.sh"
+                sed 's#^            kill -KILL -- "-$_rg" 2>/dev/null || true$#            :#' "$G_S56_H" > "$G_S56_HK"
+                if grep -q '^            kill -KILL -- "-\$_rg" 2>/dev/null || true$' "$G_S56_HK"; then
+                    t_fail "identity gate: could not build the KILL-escalation mutation (the shape moved)"
+                else
+                    g_s56_stubborn "$G_S56_HRUN/kid3"
+                    G_S56_K3="$(cat "$G_S56_HRUN/kid3" 2>/dev/null)"
+                    bash "$G_S56_HK" "$G_S56_LS" >/dev/null 2>&1
+                    if [ -n "$G_S56_K3" ] && kill -0 "$G_S56_K3" 2>/dev/null; then
+                        t_pass "identity gate: MUTATION -- without the KILL escalation the TERM-resistant descendant survives"
+                    else
+                        t_fail "identity gate: removing the KILL escalation did not leak, so 22ex proves nothing about it"
+                    fi
+                    g_s53_reap "$G_S56_K3"
+                fi
+                g_s53_reap "$G_S56_K2"
+            fi
+
+            # ARM 3: THE GRACE LOOP ANSWERS TO THE DEADLINE. With `remaining()`
+            # at 1 the loop must break on its first turn rather than spend six
+            # half-second sleeps -- eleven sites at 3s each is how a bounded
+            # gate stops being bounded. The bar is deliberately wide: the two
+            # outcomes are ~0s and ~3s, so this is not a close call on a busy
+            # host (this suite already carries a documented wall-clock flake).
+            G_S56_H1="$G_S56_HRUN/harness-nobudget.sh"
+            g_s56_harness "$GATE_IN_CLONE" 1 "$G_S56_H1" || true
+            g_s56_stubborn "$G_S56_HRUN/kid4"
+            G_S56_K4="$(cat "$G_S56_HRUN/kid4" 2>/dev/null)"
+            G_S56_T0=$(date +%s)
+            bash "$G_S56_H1" "$G_S56_LS" >/dev/null 2>&1
+            G_S56_D1=$(( $(date +%s) - G_S56_T0 ))
+            g_s53_reap "$G_S56_K4"
+            G_S56_HB="$G_S56_HRUN/harness-nobreak.sh"
+            grep -v -- '-gt 1 \] || break' "$G_S56_H1" > "$G_S56_HB"
+            if grep -q 'remaining' "$G_S56_HB" && ! grep -q '\-gt 1 \] || break' "$G_S56_HB"; then
+                g_s56_stubborn "$G_S56_HRUN/kid5"
+                G_S56_K5="$(cat "$G_S56_HRUN/kid5" 2>/dev/null)"
+                G_S56_T0=$(date +%s)
+                bash "$G_S56_HB" "$G_S56_LS" >/dev/null 2>&1
+                G_S56_D2=$(( $(date +%s) - G_S56_T0 ))
+                g_s53_reap "$G_S56_K5"
+                if [ "$G_S56_D1" -lt 2 ] && [ "$G_S56_D2" -ge 2 ]; then
+                    t_pass "identity gate: an expired budget breaks the grace loop at once (${G_S56_D1}s), and removing the break spends it in full (${G_S56_D2}s)"
+                else
+                    t_fail "identity gate: the grace loop's deadline break is not measurable (shipped=${G_S56_D1}s mutated=${G_S56_D2}s; want shipped < 2 and mutated >= 2)"
+                fi
+            else
+                t_fail "identity gate: could not build the grace-loop deadline mutation (the shape moved)"
+            fi
+            g_s53_reap "$G_S56_LS"
+        fi
+        rm -rf "$G_S56_HRUN"
+
+        # ------------------------------------------------------------------
+        # 22ey/22ez: THE ANCHOR REFUSAL AND THE CLEANUP THAT MUST NOT DELETE
+        # WHAT IT DID NOT CREATE (section 56).
+        #
+        # Nothing else in the suite substitutes the gate's own temporary
+        # directory, so both halves of the TMP_DIR identity work -- the
+        # phase-boundary refusal and cleanup removing what the DESCRIPTOR holds
+        # -- could regress green (Codex test-coverage, section 56, [high]).
+        # The loader derives TMP_DIR from the exported `PYTHONPYCACHEPREFIX`,
+        # which is the same route a hostile tree would take and is documented as
+        # such in `proto_of`'s own comment.
+        g_s56_swap_loader() {   # $1 = mode (rename|delete), $2 = marker path
+            # THE CONTENTS MOVE WITH IT, which is what makes this a test of the
+            # IDENTITY rather than of a broken run. A bare rename leaves the
+            # phase writing into an EMPTY replacement, so the phase fails on its
+            # own and the gate refuses for that reason instead -- at which point
+            # disarming the anchor check changes nothing and the mutation proves
+            # nothing (measured while building this case: the run refused with
+            # "cache build failed", not with the boundary diagnostic). Moving
+            # every entry back leaves the substituted directory complete and
+            # USABLE, so the only thing wrong with it is that it is a different
+            # inode from the one the gate anchored -- the property under test.
+            printf '\n\n'
+            printf '# section 56: substitute the gate own temporary directory from inside a phase.\n'
+            printf 'import os as _s56s_os, shutil as _s56s_sh, sys as _s56s_sys\n'
+            printf '_s56s_pc = _s56s_os.environ.get("PYTHONPYCACHEPREFIX", "")\n'
+            printf '_s56s_td = _s56s_os.path.dirname(_s56s_pc) if _s56s_pc else ""\n'
+            printf '_s56s_go = _s56s_os.path.basename(_s56s_td).startswith("identity-gate.")\n'
+            printf '_s56s_me = _s56s_os.path.basename(_s56s_sys.argv[0]) if _s56s_sys.argv else ""\n'
+            printf 'if _s56s_go and _s56s_me == "build.py" and not _s56s_os.path.exists("%s"):\n' "$2"
+            printf '    try:\n'
+            printf '        _s56s_old = _s56s_td + ".moved"\n'
+            printf '        _s56s_os.rename(_s56s_td, _s56s_old)\n'
+            printf '        _s56s_os.mkdir(_s56s_td)\n'
+            printf '        for _s56s_n in _s56s_os.listdir(_s56s_old):\n'
+            printf '            _s56s_os.rename(_s56s_os.path.join(_s56s_old, _s56s_n),\n'
+            printf '                            _s56s_os.path.join(_s56s_td, _s56s_n))\n'
+            printf "        open(_s56s_os.path.join(_s56s_td, 'REPLACEMENT'), 'w').write('not the gate')\n"
+            if [ "$1" = "delete" ]; then
+                # AND THE ANCHORED INODE IS DESTROYED, which is the OTHER
+                # cleanup branch: the descriptor then resolves to nothing, so
+                # there is nothing for the gate to remove and the replacement
+                # must survive untouched rather than be taken for the original.
+                printf '        _s56s_sh.rmtree(_s56s_old)\n'
+            fi
+            printf "        open('%s', 'w').write(_s56s_td)\n" "$2"
+            printf '    except OSError:\n'
+            printf '        pass\n'
+        }
+        for G_S56_MODE in rename delete; do
+            g_s56_restore
+            G_S56_SRUN="$TMP_DIR/s56-swap-$G_S56_MODE"
+            rm -rf "$G_S56_SRUN"; mkdir -p "$G_S56_SRUN/tmp"
+            G_S56_MARK="$G_S56_SRUN/swapped"
+            g_s56_swap_loader "$G_S56_MODE" "$G_S56_MARK" > "$TMP_DIR/s56-swap.py"
+            (cd "$GATE_REPO" || exit 1
+             cat "$TMP_DIR/s56-swap.py" >> scripts/todo-graph/cache_schema.py
+             git commit --quiet --no-verify -am "22e$G_S56_MODE: substitute TMP_DIR from inside a phase" >/dev/null 2>&1)
+            (cd "$GATE_REPO" && TMPDIR="$G_S56_SRUN/tmp" bash "$GATE_IN_CLONE" \
+                --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22e-$G_S56_MODE.log" 2>&1)
+            G_S56_SRC=$?
+            G_S56_SWAPPED="$(cat "$G_S56_MARK" 2>/dev/null)"
+            if [ -z "$G_S56_SWAPPED" ]; then
+                t_fail "identity gate: the $G_S56_MODE loader never substituted TMP_DIR, so the case measured nothing (rc=$G_S56_SRC; see $TMP_DIR/gate-22e-$G_S56_MODE.log)"
+            elif [ "$G_S56_SRC" -ne 3 ]; then
+                t_fail "identity gate: a substituted TMP_DIR did not refuse the run (rc=$G_S56_SRC, want 3; see $TMP_DIR/gate-22e-$G_S56_MODE.log)"
+            elif [ ! -e "$G_S56_SWAPPED/REPLACEMENT" ]; then
+                t_fail "identity gate: cleanup DELETED the replacement directory it did not create ($G_S56_SWAPPED); this is the failure the descriptor-resolved removal exists to prevent"
+            else
+                t_pass "identity gate: a TMP_DIR substituted mid-phase ($G_S56_MODE) refuses at the next boundary and cleanup leaves the replacement alone"
+            fi
+            if [ "$G_S56_MODE" = "rename" ] && [ -n "$G_S56_SWAPPED" ]; then
+                if [ -d "$G_S56_SWAPPED.moved" ]; then
+                    t_fail "identity gate: cleanup leaked the anchored directory after it was renamed ($G_S56_SWAPPED.moved survived)"
+                else
+                    t_pass "identity gate: cleanup removed what the descriptor holds, so a renamed anchored directory is not leaked"
+                fi
+                # MUTATION: disarm the phase-boundary anchor check and the run
+                # must reach a verdict over the substituted directory instead of
+                # refusing.
+                G_S56_SMUT="$GATE_REPO/scripts/todo-graph/identity-gate-noanchor.sh"
+                sed 's#^    if \[ \-n "${TMP_FD:-}" \] && ! tmp_dir_anchor_ok; then$#    if false; then#' \
+                    "$GATE_IN_CLONE" > "$G_S56_SMUT"
+                if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S56_SMUT" 'tmp_dir_anchor_ok' \
+                   || grep -q '^    if \[ -n "${TMP_FD:-}" \] && ! tmp_dir_anchor_ok; then$' "$G_S56_SMUT"; then
+                    t_fail "identity gate: could not build the phase-boundary anchor mutation (the shape moved)"
+                else
+                    rm -f "$G_S56_MARK"
+                    rm -rf "$G_S56_SRUN/tmp"; mkdir -p "$G_S56_SRUN/tmp"
+                    (cd "$GATE_REPO" && TMPDIR="$G_S56_SRUN/tmp" bash "$G_S56_SMUT" \
+                        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22ey-mut.log" 2>&1)
+                    G_S56_MRC=$?
+                    if [ -s "$G_S56_MARK" ] && [ "$G_S56_MRC" -ne 3 ]; then
+                        t_pass "identity gate: MUTATION -- without the phase-boundary anchor check the run continues past a substituted TMP_DIR (rc=$G_S56_MRC)"
+                    else
+                        t_fail "identity gate: disarming the anchor check still refused (rc=$G_S56_MRC), so 22ey does not measure that check (see $TMP_DIR/gate-22ey-mut.log)"
+                    fi
+                fi
+                rm -f "$G_S56_SMUT"
+            fi
+            # GUARDED ON A NON-EMPTY VALUE: an unset `G_S56_SWAPPED` would make
+            # the second and third arguments `""` and `".moved"`, and the
+            # relative one resolves against the repository root.
+            rm -rf "$G_S56_SRUN" 2>/dev/null
+            [ -n "$G_S56_SWAPPED" ] && rm -rf "$G_S56_SWAPPED" "$G_S56_SWAPPED.moved" 2>/dev/null
+            g_s56_restore
+        done
+
+        # ------------------------------------------------------------------
+        # 22f0: THE ORDERING, STRUCTURALLY (section 56).
+        #
+        # The claim every call site rests on is that `WALK_PIDS` is cleared only
+        # AFTER the reap, so a trap firing mid-reap still finds a target. A
+        # timing-raced fixture for that would have to land a signal inside a
+        # sub-second window in a suite that already carries documented
+        # wall-clock flakes; the ordering is a STATIC property of the eleven
+        # sites, so it is asserted statically instead -- and that also catches a
+        # twelfth site added later without a reap at all.
+        G_S56_ORD="$(cd "$GATE_REPO" && python3 - "$GATE_IN_CLONE" <<'S56ORD2'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+sites, bad = [], []
+for i, ln in enumerate(lines):
+    if ln.lstrip().startswith("#"):
+        continue
+    m = re.search(r'WALK_WAITED="\$([A-Za-z_][A-Za-z0-9_]*)"', ln)
+    if not m:
+        continue
+    var = m.group(1)
+    sites.append((i + 1, var))
+    reaped = False
+    for j in range(i + 1, min(i + 12, len(lines))):
+        nxt = lines[j]
+        if nxt.lstrip().startswith("#"):
+            continue
+        if re.search(r'reap_walk_group "\$%s"' % re.escape(var), nxt):
+            reaped = True
+        if re.match(r'^\s*WALK_PIDS=""\s*$', nxt):
+            break
+    if not reaped:
+        bad.append((i + 1, var))
+print("%d|%s" % (len(sites), ",".join("%d:%s" % b for b in bad)))
+S56ORD2
+)"
+        G_S56_NSITES="${G_S56_ORD%%|*}"; G_S56_BAD="${G_S56_ORD#*|}"
+        if [ "$G_S56_NSITES" != "11" ]; then
+            t_fail "identity gate: expected 11 supervised-phase wait sites, found $G_S56_NSITES -- a phase was added or removed without updating this assertion"
+        elif [ -n "$G_S56_BAD" ]; then
+            t_fail "identity gate: these waited leaders are untracked before they are reaped, so a trap landing mid-reap finds nothing: $G_S56_BAD"
+        else
+            t_pass "identity gate: all 11 waited leaders are reaped BEFORE WALK_PIDS is cleared, so the reap window stays covered by the trap"
+        fi
     fi
 
     # ------------------------------------------------------------------

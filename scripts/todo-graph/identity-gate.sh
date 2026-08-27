@@ -765,6 +765,21 @@ phase_budget() {   # $1 = phase name; ANSWERS in PHASE_BUDGET, refuses if expire
     if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
         die_infra "the gate's budget expired before the $1 phase could start, so it was never launched and no verdict is being guessed from it"
     fi
+    # AND THE ANCHOR IS RE-ASKED AT EVERY PHASE BOUNDARY. This is DETECTION, not
+    # containment, and saying so is the point: `phase_budget` runs BEFORE a
+    # phase, so a descendant can still substitute the directory after this check
+    # and before the redirection that follows it. What it buys is that the
+    # substitution becomes an infrastructure REFUSAL at the next boundary
+    # instead of a PASS computed over files the gate never wrote -- the window
+    # narrows from the whole run to a single phase. Closing it properly means
+    # binding every name-resolved use to the descriptor, which is parked in this
+    # section's own checklist rather than claimed here (Codex design review,
+    # section 56, [high]). The check is builtins only, so a boundary costs
+    # nothing; it is skipped before the anchor exists, which is the only state
+    # in which TMP_FD is unset.
+    if [ -n "${TMP_FD:-}" ] && ! tmp_dir_anchor_ok; then
+        die_infra "the gate's own temporary directory is no longer reached by the name it was created under, so the $1 phase was never launched: $TMP_DIR does not name the directory this run anchored a descriptor on, and every path under it is therefore untrusted"
+    fi
     PHASE_BUDGET="$BUDGET_LEFT"
 }
 
@@ -796,6 +811,84 @@ bounded_fs() {   # a filesystem command whose failure is tolerated, but not its 
         return 0
     fi
     timeout --foreground -s KILL "$BUDGET_LEFT" "$@" 2>/dev/null || true
+    return 0
+}
+
+tmp_dir_anchor_ok() {   # 0 = the NAME still names the anchored directory itself
+    # A PATHNAME IS NOT AN IDENTITY, and section 55 only closed half of that.
+    # The narrow assembler reaches everything it writes descriptor-relative from
+    # `TMP_FD`, so a rename cannot redirect it. Every OTHER use of TMP_DIR
+    # resolves the NAME -- the cache paths, the walk logs, the two full
+    # checkouts, and `cleanup`'s own removal -- so a descendant the gate could
+    # not reap can rename the directory, leave something else at the name, and
+    # have the gate delete the replacement while the original leaks.
+    #
+    # NOT `-ef` ALONE. `test -ef` STATS both operands, so a symlink left at
+    # TMP_DIR pointing back at the anchored directory satisfies it -- and
+    # `rm -rf "$TMP_DIR"` would then unlink the symlink and leave the directory
+    # it names behind, which is the very leak this check exists to catch (Codex
+    # design review, section 56, [high]). The name must BE the directory, not a
+    # route to it, so the symlink test comes first.
+    #
+    # NO FORK. `-L`, `-e` and `-ef` are all shell builtins, which is what makes
+    # it affordable to ask at every phase boundary.
+    [ -n "${TMP_FD:-}" ] || return 1
+    [ ! -L "$TMP_DIR" ] || return 1
+    [ -e "/proc/self/fd/$TMP_FD" ] || return 1
+    [ "$TMP_DIR" -ef "/proc/self/fd/$TMP_FD" ]
+}
+
+reap_walk_group() {   # $@ = leader pids already `wait`ed for
+    # ONE REAP, ELEVEN SITES. Every supervised phase in this file ends the same
+    # way: capture the status, declare the leader waited, reap whatever the
+    # phase left in its process group, untrack. Sections 53 and 55 wrote that
+    # block five times by hand and the copies were byte-identical apart from the
+    # pid variable name, which is the argument for extracting it.
+    #
+    # AND IT IS SAFE TO EXTRACT because the block never reads or writes the
+    # caller's STATUS. Every site captures its own `$?` into a named variable
+    # BEFORE calling this, and the file runs without `errexit`, so this
+    # function's return value cannot reach a caller's control flow. The things
+    # the sites genuinely differ in -- which status they preserve, what they
+    # have already waited for, which tokens they raise -- all stay at the site.
+    # That is the answer to this section's own question about whether a shared
+    # abstraction could quietly change a status somewhere it is not read: the
+    # extracted region does not touch one (Codex design review, section 56).
+    #
+    # `WALK_PIDS` AND `WALK_WAITED` STAY THE CALLER'S. This function only
+    # signals; the caller keeps its tracking assignments around the call, so a
+    # trap firing inside the reap still finds a target and `cleanup` can finish
+    # what this started.
+    #
+    # EVERY SCRATCH NAME IS `local`, because bash has dynamic scope: an
+    # unlocalized loop variable here would overwrite a caller's local of the
+    # same name, and two of the call sites are inside functions that use
+    # `local` (Codex design review, section 56).
+    local _rg _i
+    for _rg in "$@"; do
+        [ -n "$_rg" ] || continue
+        # ONLY WHILE THE NUMBER STILL MEANS WHAT IT MEANT. `wait` has released
+        # the leader pid, so the group id is a number the kernel may reissue. A
+        # leader that is ALIVE again has been recycled and the group belongs to
+        # a stranger, so the reap is skipped rather than aimed at one; a leader
+        # that is gone while the negative group still answers means the members
+        # are what the tree left behind (section 53). Probing first also makes
+        # the honest path cost exactly one failed signal.
+        if ! kill -0 "$_rg" 2>/dev/null && kill -0 -- "-$_rg" 2>/dev/null; then
+            kill -TERM -- "-$_rg" 2>/dev/null || true
+            # THE GRACE ANSWERS TO THE GLOBAL DEADLINE like every other wait in
+            # this file. Left unbounded at up to 3s a site, eleven sites could
+            # push the gate far past its advertised budget (section 53 perf).
+            for _i in 1 2 3 4 5 6; do
+                kill -0 -- "-$_rg" 2>/dev/null || break
+                [ "$(remaining)" -gt 1 ] || break
+                sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
+            done
+            kill -KILL -- "-$_rg" 2>/dev/null || true
+        fi
+    done
+    # EXPLICIT, so the status of the last `kill` in the loop is never what a
+    # caller sees if one is ever written that reads it.
     return 0
 }
 
@@ -1536,6 +1629,14 @@ TMP_DIR="$(timeout --foreground -s KILL "$BUDGET_LEFT" mktemp -d -t identity-gat
 # directory is the whole job.
 trap 'timeout --foreground -s KILL 30 rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT INT TERM  # fixed-allowance: an emergency trap that runs before the budget machinery is fully wired
 exec {TMP_FD}<"$TMP_DIR" || die_infra "cannot hold a descriptor on the gate's own temporary directory, so the narrow materializations below could not be anchored and nothing is being guessed from this range"
+# AND THE ANCHOR IS PROVED USABLE HERE, once, rather than at whichever phase
+# boundary first consults it. `tmp_dir_anchor_ok` compares the name against the
+# descriptor through `/proc/self/fd`, so a host where that does not resolve
+# would make every later check fail identically to a real substitution -- an
+# infrastructure limitation reported as an attack. Asking once at the anchor
+# separates the two: a failure HERE says this host cannot support the check, and
+# a failure later says the name stopped naming the directory.
+tmp_dir_anchor_ok || die_infra "cannot verify the gate's own temporary directory through its descriptor on this host (/proc/self/fd did not resolve to $TMP_DIR), so a later substitution could not be distinguished from this limitation and no verdict is being guessed from it"
 
 # EVERY CLOSURE MEMBER IN ONE PROBE PER COMMIT, NOT FOUR PER MEMBER (section 55).
 #
@@ -1815,11 +1916,27 @@ cleanup() {
         # (Codex adversarial, section 18 round 4, reproduced with a child
         # ignoring SIGTERM). `setsid` below puts each walk in its own group so
         # `kill -- -PGID` reaches the wrapper AND its children.
+        # AND NEVER POSITIVELY, FOR AN UN-WAITED LEADER EITHER. The fallback
+        # here used to signal the bare pid when the group signal failed, and
+        # that is reachable on the ORDINARY path: `wait "$X"` and the
+        # `WALK_WAITED="$X"` beside it are separate simple commands, so a
+        # pending TERM can run this trap after the leader has been reaped and
+        # before it is declared waited -- at which point the pid is released,
+        # the group is gone, the group signal fails, and the positive fallback
+        # lands on whoever the kernel reissued the number to (Codex adversarial,
+        # section 56, [medium]).
+        #
+        # IT COSTS NOTHING TO DROP, because the fallback was for a shape this
+        # file does not have. MEASURED: a plain background child is NOT its own
+        # process-group leader, and every leader tracked in `WALK_PIDS` is
+        # launched through `setsid` -- all eleven of them -- so `kill -- -$p` is
+        # the complete route to a live one and the positive spelling could only
+        # ever reach a stranger. `WALK_WAITED` therefore no longer selects
+        # BETWEEN two signal shapes; it is what the reap helper and the grace
+        # loop below still consult.
         for _p in $WALK_PIDS; do
-            case " $WALK_WAITED " in
-                *" $_p "*) kill -0 "$_p" 2>/dev/null || kill -TERM -- "-$_p" 2>/dev/null || true ;;
-                *) kill -TERM -- "-$_p" 2>/dev/null || kill -TERM "$_p" 2>/dev/null || true ;;
-            esac
+            kill -0 "$_p" 2>/dev/null || kill -0 -- "-$_p" 2>/dev/null || continue
+            kill -TERM -- "-$_p" 2>/dev/null || true
         done
         for _i in 1 2 3 4 5 6 7 8 9 10; do
             _alive=0
@@ -1828,10 +1945,8 @@ cleanup() {
             sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
         done
         for _p in $WALK_PIDS; do
-            case " $WALK_WAITED " in
-                *" $_p "*) kill -0 "$_p" 2>/dev/null || kill -KILL -- "-$_p" 2>/dev/null || true ;;
-                *) kill -KILL -- "-$_p" 2>/dev/null || kill -KILL "$_p" 2>/dev/null || true ;;
-            esac
+            kill -0 "$_p" 2>/dev/null || kill -0 -- "-$_p" 2>/dev/null || continue
+            kill -KILL -- "-$_p" 2>/dev/null || true
         done
         for _p in $WALK_PIDS; do wait "$_p" 2>/dev/null || true; done
         WALK_PIDS=""
@@ -1895,16 +2010,68 @@ cleanup() {
                  log "NOTE: could not remove the linked worktree $_wt. If it is locked, no prune will collect it: run 'git worktree unlock $_wt' then 'git worktree remove --force --force $_wt'." ; }
     done
     if [ "$KEEP_TMP" -eq 0 ]; then
-        # BOUNDED, because a recursive removal is the one cleanup step that can
-    # block on a stalled filesystem -- the same condition every other bound in
-    # this file exists for. `budget_left` rather than a fixed number, and a
-    # failure is still tolerated: cleanup must never be the thing that fails.
-    budget_left
-    if [ "$BUDGET_LEFT" != "?" ] && [ "$BUDGET_LEFT" -gt 0 ]; then
-        timeout --foreground -s KILL "$BUDGET_LEFT" rm -rf "$TMP_DIR" 2>/dev/null || true
-    else
-        timeout --foreground -s KILL 30 rm -rf "$TMP_DIR" 2>/dev/null || true  # fixed-allowance: the expired-budget branch of cleanup, which by definition has none left
-    fi
+        # WHAT THE DESCRIPTOR NAMES, NEVER WHAT THE NAME SAYS. This removal is
+        # the one place where trusting the NAME is irreversible: a descendant
+        # the gate could not reap renames TMP_DIR and leaves something else
+        # there, and `rm -rf "$TMP_DIR"` then destroys the replacement -- which
+        # may be anything the invoking user can write -- while the directory
+        # this run actually created leaks. `TMP_FD` has been held on that
+        # directory since before any tree code ran, so `/proc/self/fd` resolves
+        # to it wherever it now lives, and the mismatch is REPORTED rather than
+        # silently repaired (Codex design review, section 56, [high]).
+        #
+        # THE ALREADY-GONE CASE IS SILENT, deliberately. `cleanup` runs twice on
+        # a signal (the INT/TERM handler calls it, then `exit` fires the EXIT
+        # trap), so on the second pass neither the name nor the descriptor
+        # resolves -- there is nothing to remove and nothing to report, and a
+        # NOTE there would fire on every ordinary cancellation.
+        local _rm_target=""
+        if [ -n "${TMP_FD:-}" ]; then
+            # ONCE THE DESCRIPTOR HAS EXISTED, THE NAME IS NEVER A FALLBACK.
+            # An earlier cut fell back to `$TMP_DIR` whenever the descriptor no
+            # longer resolved, and that inverted the whole fix on the SECOND
+            # cleanup pass: the INT/TERM handler calls `cleanup` and then
+            # `exit`, which fires the EXIT trap and calls it again, so pass 1
+            # removes the relocated anchored directory, and pass 2 -- finding
+            # the descriptor pointing at something deleted -- deleted the
+            # untrusted replacement sitting at the name, which is exactly the
+            # destruction this block exists to prevent (Codex adversarial,
+            # section 56, [high]). An unresolvable descriptor now means the
+            # anchored directory is gone: there is nothing to remove, and the
+            # silence is deliberate, because that is also the ORDINARY second
+            # pass after a successful first one.
+            if [ -e "/proc/self/fd/$TMP_FD" ]; then
+                if tmp_dir_anchor_ok; then
+                    _rm_target="$TMP_DIR"
+                else
+                    _rm_target="$(timeout --foreground -s KILL 30 readlink -f "/proc/self/fd/$TMP_FD" 2>/dev/null)"  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
+                    if [ -n "$_rm_target" ] && [ -d "$_rm_target" ]; then
+                        log "NOTE: the gate's temporary directory is no longer reached by the name it was created under. Removing what the descriptor still holds ($_rm_target) and leaving $TMP_DIR alone, because whatever is at that name now was not created by this run."
+                    else
+                        _rm_target=""
+                        log "NOTE: the gate's temporary directory is no longer reached by the name it was created under ($TMP_DIR) and the descriptor could not be resolved to its current path, so nothing was removed. Whatever is at that name was not created by this run and is deliberately left alone."
+                    fi
+                fi
+            fi
+        elif [ -e "$TMP_DIR" ]; then
+            # NO DESCRIPTOR AT ALL means the run failed before the anchor was
+            # opened, so no tree code has executed and the name is all there is
+            # -- the pre-section-55 behaviour, correct for exactly that window.
+            _rm_target="$TMP_DIR"
+        fi
+        if [ -n "$_rm_target" ]; then
+            # BOUNDED, because a recursive removal is the one cleanup step that
+            # can block on a stalled filesystem -- the same condition every
+            # other bound in this file exists for. `budget_left` rather than a
+            # fixed number, and a failure is still tolerated: cleanup must never
+            # be the thing that fails.
+            budget_left
+            if [ "$BUDGET_LEFT" != "?" ] && [ "$BUDGET_LEFT" -gt 0 ]; then
+                timeout --foreground -s KILL "$BUDGET_LEFT" rm -rf "$_rm_target" 2>/dev/null || true
+            else
+                timeout --foreground -s KILL 30 rm -rf "$_rm_target" 2>/dev/null || true  # fixed-allowance: the expired-budget branch of cleanup, which by definition has none left
+            fi
+        fi
     else
         log "kept working files in $TMP_DIR"
     fi
@@ -2328,15 +2495,10 @@ MATPY
     # outlived a killed python. Guarded on the leader being gone AND the group
     # still answering, so a recycled pid is never signalled -- the discipline
     # section 53 established.
-    if ! kill -0 "$_mat_pid" 2>/dev/null && kill -0 -- "-$_mat_pid" 2>/dev/null; then
-        kill -TERM -- "-$_mat_pid" 2>/dev/null || true
-        for _i in 1 2 3 4 5 6; do
-            kill -0 -- "-$_mat_pid" 2>/dev/null || break
-            [ "$(remaining)" -gt 1 ] || break
-            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
-        done
-        kill -KILL -- "-$_mat_pid" 2>/dev/null || true  # launch-exempt: filters a shell variable already in memory, so nothing here opens a file or can block
-    fi
+    # THE GROUP IS REAPED WHETHER OR NOT THE ASSEMBLY SUCCEEDED. A `cat-file
+    # --batch` that outlived a completed python is the same orphan as one that
+    # outlived a killed python.
+    reap_walk_group "$_mat_pid"
     WALK_PIDS=""
     WALK_WAITED=""
     if [ "$_mat_rc" -eq 2 ]; then
@@ -2578,15 +2740,9 @@ REBINDPY
     wait "$_rb_pid"
     local _rb_rc=$?
     WALK_WAITED="$_rb_pid"
-    if ! kill -0 "$_rb_pid" 2>/dev/null && kill -0 -- "-$_rb_pid" 2>/dev/null; then
-        kill -TERM -- "-$_rb_pid" 2>/dev/null || true
-        for _i in 1 2 3 4 5 6; do
-            kill -0 -- "-$_rb_pid" 2>/dev/null || break
-            [ "$(remaining)" -gt 1 ] || break
-            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
-        done
-        kill -KILL -- "-$_rb_pid" 2>/dev/null || true
-    fi
+    # THE SUCCESS PATH REAPS HERE TOO: the re-binding probe imports tree code,
+    # and a module that starts a child and returns normally leaves it behind.
+    reap_walk_group "$_rb_pid"
     WALK_PIDS=""
     WALK_WAITED=""
     case "$_rb_rc" in
@@ -3028,28 +3184,7 @@ PY
     # cannot reach (Codex test-coverage, section 53, [high]). Probing the GROUP
     # for liveness first costs nothing on the ordinary path: the leader is gone
     # and an honest tree left no members, so this is one failed signal.
-    # AND ONLY WHILE THE NUMBER STILL MEANS WHAT IT MEANT. `wait` has released
-    # the leader pid, so the group id is a number the kernel may reissue. If
-    # `$_prb` is ALIVE again it has been recycled and the group is somebody
-    # else's, so the reap is skipped rather than aimed at a stranger; if it is
-    # gone and the group still answers, the members are what the tree left
-    # behind (Codex adversarial, section 53 round 2, [medium]).
-    if ! kill -0 "$_prb" 2>/dev/null && kill -0 -- "-$_prb" 2>/dev/null; then
-        kill -TERM -- "-$_prb" 2>/dev/null || true
-        # THE GRACE ANSWERS TO THE GLOBAL DEADLINE like every other wait in this
-        # file. Left unbounded it was up to 3s per probe and there are two, so a
-        # tree that leaves descendants on both sides could push the gate ~7s
-        # past its advertised budget -- small, but this file's whole discipline
-        # is that no step escapes `remaining()` (Codex perf, section 53 review).
-        # A tree that leaves nothing never reaches here at all: the negative
-        # group probe above fails and the loop is skipped.
-        for _i in 1 2 3 4 5 6; do
-            kill -0 -- "-$_prb" 2>/dev/null || break
-            [ "$(remaining)" -gt 1 ] || break
-            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
-        done
-        kill -KILL -- "-$_prb" 2>/dev/null || true
-    fi
+    reap_walk_group "$_prb"
     # ONLY NOW is the probe untracked: a TERM landing mid-reap must still find
     # a target, so `cleanup` can finish what this block started.
     WALK_PIDS=""
@@ -4215,15 +4350,9 @@ fi
     wait "$_be_pid"
     EMITTED_RC=$?
     WALK_WAITED="$_be_pid"
-    if ! kill -0 "$_be_pid" 2>/dev/null && kill -0 -- "-$_be_pid" 2>/dev/null; then
-        kill -TERM -- "-$_be_pid" 2>/dev/null || true
-        for _i in 1 2 3 4 5 6; do
-            kill -0 -- "-$_be_pid" 2>/dev/null || break
-            [ "$(remaining)" -gt 1 ] || break
-            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
-        done
-        kill -KILL -- "-$_be_pid" 2>/dev/null || true
-    fi
+    # THE SUCCESS PATH REAPS: this checker executes from the narrow head tree,
+    # so what it spawned is the tree's, not the gate's.
+    reap_walk_group "$_be_pid"
     WALK_PIDS=""
     WALK_WAITED=""
     # RE-BOUND BEFORE ITS RESULT IS READ, not merely before the walks. This
@@ -4656,17 +4785,8 @@ PY
     # THE SUCCESS PATH REAPS, for the reason section 53 established at the other
     # call site: `timeout` bounds the probe, never what the imported module
     # spawned, and a module that starts a child and returns normally leaves it
-    # behind at a clean exit. Guarded on the leader being gone AND the group
-    # still answering, so a recycled pid is never signalled.
-    if ! kill -0 "$_crb" 2>/dev/null && kill -0 -- "-$_crb" 2>/dev/null; then
-        kill -TERM -- "-$_crb" 2>/dev/null || true
-        for _i in 1 2 3 4 5 6; do
-            kill -0 -- "-$_crb" 2>/dev/null || break
-            [ "$(remaining)" -gt 1 ] || break
-            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
-        done
-        kill -KILL -- "-$_crb" 2>/dev/null || true
-    fi
+    # behind at a clean exit.
+    reap_walk_group "$_crb"
     WALK_PIDS=""
     WALK_WAITED=""
     if [ "$_crc" -ne 0 ]; then
@@ -4805,6 +4925,12 @@ else
     PROD_PID=$!
     WALK_PIDS="$PROD_PID"
     wait "$PROD_PID"; PROD_RC=$?; WALK_WAITED="$PROD_PID"
+    # AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
+    # LAUNCHED; it does not bound what that process leaves behind, and a phase
+    # that returns NORMALLY clears `WALK_PIDS` without signalling anything --
+    # so `cleanup`, which is the only other thing that ever signals, has
+    # nothing left to find (section 56).
+    reap_walk_group "$PROD_PID"
     WALK_PIDS=""
     WALK_WAITED=""
     phase_budget "log read"
@@ -4837,6 +4963,12 @@ setsid timeout -s KILL "$PHASE_BUDGET" \
 CACHE_PID=$!
 WALK_PIDS="$CACHE_PID"
 wait "$CACHE_PID"; CACHE_RC=$?; WALK_WAITED="$CACHE_PID"
+# AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
+# LAUNCHED; it does not bound what that process leaves behind, and a phase
+# that returns NORMALLY clears `WALK_PIDS` without signalling anything --
+# so `cleanup`, which is the only other thing that ever signals, has
+# nothing left to find (section 56).
+reap_walk_group "$CACHE_PID"
 WALK_PIDS=""
 WALK_WAITED=""
 case "$CACHE_RC" in
@@ -4871,6 +5003,12 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     BCACHE_PID=$!
     WALK_PIDS="$BCACHE_PID"
     wait "$BCACHE_PID"; BCACHE_RC=$?; WALK_WAITED="$BCACHE_PID"
+    # AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
+    # LAUNCHED; it does not bound what that process leaves behind, and a phase
+    # that returns NORMALLY clears `WALK_PIDS` without signalling anything --
+    # so `cleanup`, which is the only other thing that ever signals, has
+    # nothing left to find (section 56).
+    reap_walk_group "$BCACHE_PID"
     WALK_PIDS=""
     WALK_WAITED=""
     case "$BCACHE_RC" in
@@ -4934,8 +5072,21 @@ WALK_PIDS="$WALK_PIDS $HEAD_PID"
 # for all of it BASE_PID sat in WALK_PIDS looking active -- so a TERM in that
 # window sent `cleanup` down the positive-pid fallback for a pid the kernel
 # had already released (Codex consistency, section 53 review, [high]).
+# AND EACH LEADER'S GROUP IS REAPED THE MOMENT ITS OWN `wait` RETURNS, not
+# once the pair is done. Reaping both after the second wait leaves the BASE
+# walk's surviving members running for the whole of the HEAD budget -- and
+# `$BASELINE` is a path the tree knows, written by the base walk and read by
+# the comparison phase below, so a descendant that outlives its leader can
+# rewrite a verdict INPUT on the ordinary success path. The trap covers
+# cancellation and does nothing here (Codex design review, section 56, [high]).
 wait "$BASE_PID"; BASE_RC=$?; WALK_WAITED="$BASE_PID"
-wait "$HEAD_PID"; HEAD_RC=$?; WALK_WAITED="$WALK_WAITED $HEAD_PID"
+reap_walk_group "$BASE_PID"
+# UNTRACKED ONLY AFTER ITS OWN REAP, and the head walk stays tracked alone, so
+# a trap landing in the head wait still reaches the one leader that is live.
+WALK_PIDS="$HEAD_PID"
+WALK_WAITED=""
+wait "$HEAD_PID"; HEAD_RC=$?; WALK_WAITED="$HEAD_PID"
+reap_walk_group "$HEAD_PID"
 WALK_PIDS=""
 WALK_WAITED=""
 mono_now; WALK_END="$MONO_NOW"
@@ -4986,6 +5137,12 @@ setsid timeout -s KILL "$PHASE_BUDGET" \
 CMP_PID=$!
 WALK_PIDS="$CMP_PID"
 wait "$CMP_PID"; CMP_RC=$?; WALK_WAITED="$CMP_PID"
+# AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
+# LAUNCHED; it does not bound what that process leaves behind, and a phase
+# that returns NORMALLY clears `WALK_PIDS` without signalling anything --
+# so `cleanup`, which is the only other thing that ever signals, has
+# nothing left to find (section 56).
+reap_walk_group "$CMP_PID"
 WALK_PIDS=""
 WALK_WAITED=""
 phase_budget "log read"
