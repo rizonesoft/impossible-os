@@ -104,7 +104,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  53   |   §53   | The protocol probe executes the tree it is judging, so no in-process channel is trusted    | §50           |  [x]   |
 | 💎  |  54   |   §54   | The gate adjudicates the WORKING TREE while the push carries the COMMIT                    | §16, §50      |  [x]   |
 | ⭐  |  55   |   §55   | The byte-identical path pays for a full base checkout it does not need                     | §51           |  [x]   |
-| ⭐  |  56   |   §56   | The resolver walks leak what the tree spawns on the path where they SUCCEED                | §53           |  [ ]   |
+| ⭐  |  56   |   §56   | The resolver walks leak what the tree spawns on the path where they SUCCEED                | §53           |  [x]   |
 | 💎  |  57   |   §57   | The hook certifies repository HEAD, not the commit being pushed                            | §16, §54      |  [/]   |
 | ⭐  |  58   |   §58   | Head-versus-tree checks section 54 made unreachable are retired or re-fixtured             | §50, §51, §54 |  [ ]   |
 | ⭐  |  59   |   §59   | The identity-gate fixture group pays for a whole repository and proves less than it claims | §54, §55, §56 |  [ ]   |
