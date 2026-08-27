@@ -1895,11 +1895,31 @@ HEAD_MIN_ADDR=""
 WT_ATTEMPTED=()
 WALK_PIDS=""
 # Leaders in WALK_PIDS that have ALREADY been `wait`ed, so their pid is a
-# number the kernel may have reissued. `cleanup` may still address their
-# GROUP, guarded by a liveness check, but must never fall back to signalling
-# the positive pid: that is how a recycled stranger gets killed (Codex
-# adversarial, section 53 round 3).
+# number the kernel may have reissued. `cleanup` reads this to decide which
+# GROUP it may address: for a waited leader only once the positive pid is GONE
+# (a live one means the number was reissued and the group is a stranger's), and
+# for an un-waited leader whenever its group still answers. It never falls back
+# to signalling the positive pid in either case -- that is how a recycled
+# stranger gets killed (Codex adversarial, section 53 round 3; the waited-case
+# predicate restored after section 56 briefly collapsed the two branches).
 WALK_WAITED=""
+cl_signal_walk() {   # $1 = TERM|KILL, $2 = leader pid; cleanup's only signaller
+    # AT COLUMN 0 ON PURPOSE. Section 55's launch inventory (fixture 22er)
+    # recognises a shell function by `^name() {`, so a helper nested inside
+    # `cleanup` reads as an unknown command in command position and is reported
+    # as an unbounded external launch. That report was CORRECT about what it
+    # could see, so the fix is to define the function where the inventory can
+    # see it rather than to mark the call sites exempt -- a `launch-exempt:`
+    # marker here would have asserted something untrue about the code, which is
+    # the exact failure section 55 recorded when it removed the false `rm -f`
+    # exemptions.
+    case " $WALK_WAITED " in
+        *" $2 "*) kill -0 "$2" 2>/dev/null && return 0 ;;
+    esac
+    kill -0 -- "-$2" 2>/dev/null || return 0
+    kill -"$1" -- "-$2" 2>/dev/null || true
+    return 0
+}
 cleanup() {
     # REAP BEFORE REMOVING. cleanup ran only on EXIT and never touched the
     # background walks, so a TERM/INT after they were spawned deleted the base
@@ -1931,23 +1951,32 @@ cleanup() {
         # process-group leader, and every leader tracked in `WALK_PIDS` is
         # launched through `setsid` -- all eleven of them -- so `kill -- -$p` is
         # the complete route to a live one and the positive spelling could only
-        # ever reach a stranger. `WALK_WAITED` therefore no longer selects
-        # BETWEEN two signal shapes; it is what the reap helper and the grace
-        # loop below still consult.
-        for _p in $WALK_PIDS; do
-            kill -0 "$_p" 2>/dev/null || kill -0 -- "-$_p" 2>/dev/null || continue
-            kill -TERM -- "-$_p" 2>/dev/null || true
-        done
+        # ever reach a stranger.
+        #
+        # BUT `WALK_WAITED` STILL DECIDES WHICH GROUP MAY BE ADDRESSED, and the
+        # first cut of this change lost that. Dropping the positive fallback
+        # also collapsed the two branches into one precondition -- "the pid OR
+        # the group answers" -- which INVERTS the waited case: a leader whose
+        # pid has been released and REISSUED answers positively, and that then
+        # authorised a group signal at exactly the moment the number stopped
+        # meaning what it meant. `reap_walk_group` refuses precisely that, and
+        # cleanup has to use the same predicate (Codex adversarial + Codex
+        # consistency, section 56, [high], reported independently by both).
+        #
+        # So: a WAITED leader is signalled only when its pid is GONE and its
+        # group still answers; an UN-WAITED leader still owns its pid, so its
+        # group is still its own and only has to answer. Neither spelling
+        # signals a bare pid, and the liveness poll between the two rounds asks
+        # about the GROUP for the same reason -- a released number answering
+        # positively is not evidence that anything of ours is still running.
+        for _p in $WALK_PIDS; do cl_signal_walk TERM "$_p"; done
         for _i in 1 2 3 4 5 6 7 8 9 10; do
             _alive=0
-            for _p in $WALK_PIDS; do kill -0 "$_p" 2>/dev/null && _alive=1; done
+            for _p in $WALK_PIDS; do kill -0 -- "-$_p" 2>/dev/null && _alive=1; done
             [ "$_alive" -eq 0 ] && break
             sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
         done
-        for _p in $WALK_PIDS; do
-            kill -0 "$_p" 2>/dev/null || kill -0 -- "-$_p" 2>/dev/null || continue
-            kill -KILL -- "-$_p" 2>/dev/null || true
-        done
+        for _p in $WALK_PIDS; do cl_signal_walk KILL "$_p"; done
         for _p in $WALK_PIDS; do wait "$_p" 2>/dev/null || true; done
         WALK_PIDS=""
         WALK_WAITED=""
@@ -2041,16 +2070,28 @@ cleanup() {
             # silence is deliberate, because that is also the ORDINARY second
             # pass after a successful first one.
             if [ -e "/proc/self/fd/$TMP_FD" ]; then
-                if tmp_dir_anchor_ok; then
-                    _rm_target="$TMP_DIR"
+                # THE REMOVAL ARGUMENT IS ALWAYS THE DESCRIPTOR'S PATH, never
+                # `$TMP_DIR`, even when the two agree right now. Using the name
+                # in the agreeing branch put the identity check back in front of
+                # a pathname: a descendant swapping the name between
+                # `tmp_dir_anchor_ok` and the `rm` below made `rm` delete the
+                # replacement, which is the failure this whole block exists to
+                # prevent (Codex adversarial, section 56, [high]).
+                _rm_target="$(timeout --foreground -s KILL 30 readlink -f "/proc/self/fd/$TMP_FD" 2>/dev/null)"  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
+                # AND THE RESOLVED PATH IS CHECKED BACK AGAINST THE DESCRIPTOR.
+                # Command substitution STRIPS trailing newlines, so an anchored
+                # directory relocated to a sibling whose name ends in a newline
+                # resolves to a DIFFERENT existing directory -- which passes a
+                # bare `-d` guard and then gets deleted (Codex adversarial,
+                # section 56, [high]). Directories cannot be hard-linked, so
+                # `-ef` against the descriptor is an exact identity test and the
+                # truncated sibling can never satisfy it.
+                if [ -n "$_rm_target" ] && [ -d "$_rm_target" ] \
+                   && [ "$_rm_target" -ef "/proc/self/fd/$TMP_FD" ]; then
+                    tmp_dir_anchor_ok || log "NOTE: the gate's temporary directory is no longer reached by the name it was created under. Removing what the descriptor still holds ($_rm_target) and leaving $TMP_DIR alone, because whatever is at that name now was not created by this run."
                 else
-                    _rm_target="$(timeout --foreground -s KILL 30 readlink -f "/proc/self/fd/$TMP_FD" 2>/dev/null)"  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
-                    if [ -n "$_rm_target" ] && [ -d "$_rm_target" ]; then
-                        log "NOTE: the gate's temporary directory is no longer reached by the name it was created under. Removing what the descriptor still holds ($_rm_target) and leaving $TMP_DIR alone, because whatever is at that name now was not created by this run."
-                    else
-                        _rm_target=""
-                        log "NOTE: the gate's temporary directory is no longer reached by the name it was created under ($TMP_DIR) and the descriptor could not be resolved to its current path, so nothing was removed. Whatever is at that name was not created by this run and is deliberately left alone."
-                    fi
+                    _rm_target=""
+                    log "NOTE: the gate's temporary directory could not be resolved through its own descriptor to a path that is still the same directory, so nothing was removed by name. Whatever is at $TMP_DIR was not necessarily created by this run and is deliberately left alone."
                 fi
             fi
         elif [ -e "$TMP_DIR" ]; then
@@ -2490,11 +2531,6 @@ MATPY
     wait "$_mat_pid"
     _mat_rc=$?
     WALK_WAITED="$_mat_pid"
-    # THE GROUP IS REAPED WHETHER OR NOT THE ASSEMBLY SUCCEEDED. A `cat-file
-    # --batch` that outlived a completed python is the same orphan as one that
-    # outlived a killed python. Guarded on the leader being gone AND the group
-    # still answering, so a recycled pid is never signalled -- the discipline
-    # section 53 established.
     # THE GROUP IS REAPED WHETHER OR NOT THE ASSEMBLY SUCCEEDED. A `cat-file
     # --batch` that outlived a completed python is the same orphan as one that
     # outlived a killed python.
@@ -4926,10 +4962,10 @@ else
     WALK_PIDS="$PROD_PID"
     wait "$PROD_PID"; PROD_RC=$?; WALK_WAITED="$PROD_PID"
     # AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
-    # LAUNCHED; it does not bound what that process leaves behind, and a phase
-    # that returns NORMALLY clears `WALK_PIDS` without signalling anything --
-    # so `cleanup`, which is the only other thing that ever signals, has
-    # nothing left to find (section 56).
+    # LAUNCHED; it does not bound what that process leaves behind. Until
+    # section 56 this site cleared `WALK_PIDS` after a normal `wait` without
+    # signalling anything, so `cleanup` -- the only other thing that ever
+    # signals -- had nothing left to find.
     reap_walk_group "$PROD_PID"
     WALK_PIDS=""
     WALK_WAITED=""
@@ -4964,10 +5000,10 @@ CACHE_PID=$!
 WALK_PIDS="$CACHE_PID"
 wait "$CACHE_PID"; CACHE_RC=$?; WALK_WAITED="$CACHE_PID"
 # AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
-# LAUNCHED; it does not bound what that process leaves behind, and a phase
-# that returns NORMALLY clears `WALK_PIDS` without signalling anything --
-# so `cleanup`, which is the only other thing that ever signals, has
-# nothing left to find (section 56).
+# LAUNCHED; it does not bound what that process leaves behind. Until
+# section 56 this site cleared `WALK_PIDS` after a normal `wait` without
+# signalling anything, so `cleanup` -- the only other thing that ever
+# signals -- had nothing left to find.
 reap_walk_group "$CACHE_PID"
 WALK_PIDS=""
 WALK_WAITED=""
@@ -5004,10 +5040,10 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     WALK_PIDS="$BCACHE_PID"
     wait "$BCACHE_PID"; BCACHE_RC=$?; WALK_WAITED="$BCACHE_PID"
     # AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
-    # LAUNCHED; it does not bound what that process leaves behind, and a phase
-    # that returns NORMALLY clears `WALK_PIDS` without signalling anything --
-    # so `cleanup`, which is the only other thing that ever signals, has
-    # nothing left to find (section 56).
+    # LAUNCHED; it does not bound what that process leaves behind. Until
+    # section 56 this site cleared `WALK_PIDS` after a normal `wait` without
+    # signalling anything, so `cleanup` -- the only other thing that ever
+    # signals -- had nothing left to find.
     reap_walk_group "$BCACHE_PID"
     WALK_PIDS=""
     WALK_WAITED=""
@@ -5138,10 +5174,10 @@ CMP_PID=$!
 WALK_PIDS="$CMP_PID"
 wait "$CMP_PID"; CMP_RC=$?; WALK_WAITED="$CMP_PID"
 # AND THE SUCCESS PATH REAPS. `timeout` bounds the process this phase
-# LAUNCHED; it does not bound what that process leaves behind, and a phase
-# that returns NORMALLY clears `WALK_PIDS` without signalling anything --
-# so `cleanup`, which is the only other thing that ever signals, has
-# nothing left to find (section 56).
+# LAUNCHED; it does not bound what that process leaves behind. Until
+# section 56 this site cleared `WALK_PIDS` after a normal `wait` without
+# signalling anything, so `cleanup` -- the only other thing that ever
+# signals -- had nothing left to find.
 reap_walk_group "$CMP_PID"
 WALK_PIDS=""
 WALK_WAITED=""

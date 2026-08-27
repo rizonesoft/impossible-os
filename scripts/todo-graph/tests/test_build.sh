@@ -15148,9 +15148,17 @@ PY2
         # `reap_walk_group` call per phase, so the anchor is that CALL. Removing
         # the call at the probe leaves every other phase reaping, which is what
         # keeps this case about the probe.
+        # THE ANCHOR'S ABSENCE ALONE IS NOT PROOF. If the source anchor MOVES,
+        # sed matches nothing, the mutant is an unchanged copy -- and the
+        # anchor is absent from it for the wrong reason, so this guard used to
+        # wave the case through against a non-mutant (Codex consistency,
+        # section 56, [medium]). `g_mutant_ok` requires a non-empty, parseable
+        # file that DIFFERS from its source, which is what 22ew and 22ey
+        # already do; the absence check then says which line changed.
         sed 's#^    reap_walk_group "$_prb"$#    :#' \
             "$GATE_IN_CLONE" > "$G_MUT_S53B"
-        if grep -q '^    reap_walk_group "\$_prb"$' "$G_MUT_S53B"; then
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_MUT_S53B" 'reap_walk_group' \
+           || grep -q '^    reap_walk_group "\$_prb"$' "$G_MUT_S53B"; then
             t_fail "identity gate: could not build the success-path reap mutation (the shape moved)"
         else
             rm -f "$G_S53_RUN2/desc.pid"
@@ -15272,8 +15280,9 @@ S56PD
             # init to collect it. A single check therefore fails intermittently
             # -- observed in the suite while the identical arm passed standalone
             # (section 56).
-            local _i
-            for _i in $(seq 1 60); do
+            local _i _n
+            _n="${2:-60}"
+            for _i in $(seq 1 "$_n"); do
                 kill -0 "$1" 2>/dev/null || return 0
                 sleep 0.1
             done
@@ -15288,10 +15297,15 @@ S56PD
                 _pid="$(cat "$_pf" 2>/dev/null)"
                 case "$_pid" in ''|*[!0-9]*) continue ;; esac
                 G_S56_RAN="$G_S56_RAN $_ph"
-                # A SHORT SETTLE before believing "still alive", for the same
+                # BOUNDED-POLLED before believing "still alive", for the same
                 # reaping race `g_s56_gone` exists for: a just-KILLed descendant
-                # answers `kill -0` until init collects it.
-                kill -0 "$_pid" 2>/dev/null && { sleep 0.5; kill -0 "$_pid" 2>/dev/null && G_S56_LIVE="$G_S56_LIVE $_ph"; }
+                # answers `kill -0` until init collects it. A FIXED settle was
+                # the first cut and is the shape that flakes under load (Codex
+                # perf, section 56, [medium]). Two seconds, not six: the arms
+                # that legitimately expect a LIVE descendant pay this bound in
+                # full, so it is the reaping delay it has to cover, not a
+                # generous timeout.
+                g_s56_gone "$_pid" 20 || G_S56_LIVE="$G_S56_LIVE $_ph"
                 g_s53_reap "$_pid"
             done
         }
@@ -15628,35 +15642,57 @@ S56PY
             fi
 
             # ARM 3: THE GRACE LOOP ANSWERS TO THE DEADLINE. With `remaining()`
-            # at 1 the loop must break on its first turn rather than spend six
+            # at 1 the loop must break on its FIRST turn rather than spend six
             # half-second sleeps -- eleven sites at 3s each is how a bounded
-            # gate stops being bounded. The bar is deliberately wide: the two
-            # outcomes are ~0s and ~3s, so this is not a close call on a busy
-            # host (this suite already carries a documented wall-clock flake).
-            G_S56_H1="$G_S56_HRUN/harness-nobudget.sh"
-            g_s56_harness "$GATE_IN_CLONE" 1 "$G_S56_H1" || true
-            g_s56_stubborn "$G_S56_HRUN/kid4"
-            G_S56_K4="$(cat "$G_S56_HRUN/kid4" 2>/dev/null)"
-            G_S56_T0=$(date +%s)
-            bash "$G_S56_H1" "$G_S56_LS" >/dev/null 2>&1
-            G_S56_D1=$(( $(date +%s) - G_S56_T0 ))
-            g_s53_reap "$G_S56_K4"
-            G_S56_HB="$G_S56_HRUN/harness-nobreak.sh"
-            grep -v -- '-gt 1 \] || break' "$G_S56_H1" > "$G_S56_HB"
-            if grep -q 'remaining' "$G_S56_HB" && ! grep -q '\-gt 1 \] || break' "$G_S56_HB"; then
-                g_s56_stubborn "$G_S56_HRUN/kid5"
-                G_S56_K5="$(cat "$G_S56_HRUN/kid5" 2>/dev/null)"
-                G_S56_T0=$(date +%s)
-                bash "$G_S56_HB" "$G_S56_LS" >/dev/null 2>&1
-                G_S56_D2=$(( $(date +%s) - G_S56_T0 ))
-                g_s53_reap "$G_S56_K5"
-                if [ "$G_S56_D1" -lt 2 ] && [ "$G_S56_D2" -ge 2 ]; then
-                    t_pass "identity gate: an expired budget breaks the grace loop at once (${G_S56_D1}s), and removing the break spends it in full (${G_S56_D2}s)"
-                else
-                    t_fail "identity gate: the grace loop's deadline break is not measurable (shipped=${G_S56_D1}s mutated=${G_S56_D2}s; want shipped < 2 and mutated >= 2)"
-                fi
+            # gate stops being bounded.
+            #
+            # COUNTED, NOT TIMED. The first cut asserted a wall-clock delta on
+            # `date +%s`, which is exactly the shape section 34 of this TODO
+            # forbids: a clock STEP can satisfy or break a budget assertion that
+            # measures nothing about the code (Codex perf, section 56,
+            # [medium]). The harness instead shadows `sleep` with a counter, so
+            # the assertion is on the number of grace turns the loop actually
+            # takes -- deterministic under any load, and it also removes the 3s
+            # the mutated arm used to spend really sleeping.
+            G_S56_CNT="$G_S56_HRUN/graceturns"
+            g_s56_counting_harness() {   # $1 = gate file, $2 = remaining(), $3 = out
+                {
+                    echo 'set -uo pipefail'
+                    echo "remaining() { echo $2; }"
+                    echo "sleep() { echo x >> \"\$G_S56_CNT\"; }"
+                    sed -n '/^reap_walk_group() {/,/^}$/p' "$1"
+                    echo 'reap_walk_group "$@"'
+                } > "$3"
+                grep -q '^reap_walk_group() {' "$3" && bash -n "$3" 2>/dev/null
+            }
+            export G_S56_CNT
+            G_S56_H1="$G_S56_HRUN/harness-counting.sh"
+            if ! g_s56_counting_harness "$GATE_IN_CLONE" 1 "$G_S56_H1"; then
+                t_fail "identity gate: could not build the counting reap harness (the function head moved)"
             else
-                t_fail "identity gate: could not build the grace-loop deadline mutation (the shape moved)"
+                g_s56_stubborn "$G_S56_HRUN/kid4"
+                G_S56_K4="$(cat "$G_S56_HRUN/kid4" 2>/dev/null)"
+                : > "$G_S56_CNT"
+                bash "$G_S56_H1" "$G_S56_LS" >/dev/null 2>&1
+                G_S56_N1=$(wc -l < "$G_S56_CNT" 2>/dev/null | tr -d ' ')
+                g_s53_reap "$G_S56_K4"
+                G_S56_HB="$G_S56_HRUN/harness-nobreak.sh"
+                grep -v -- '-gt 1 \] || break' "$G_S56_H1" > "$G_S56_HB"
+                if grep -q 'remaining' "$G_S56_HB" && ! grep -q -- '-gt 1 \] || break' "$G_S56_HB"; then
+                    g_s56_stubborn "$G_S56_HRUN/kid5"
+                    G_S56_K5="$(cat "$G_S56_HRUN/kid5" 2>/dev/null)"
+                    : > "$G_S56_CNT"
+                    bash "$G_S56_HB" "$G_S56_LS" >/dev/null 2>&1
+                    G_S56_N2=$(wc -l < "$G_S56_CNT" 2>/dev/null | tr -d ' ')
+                    g_s53_reap "$G_S56_K5"
+                    if [ "$G_S56_N1" -eq 0 ] && [ "$G_S56_N2" -ge 6 ]; then
+                        t_pass "identity gate: an expired budget breaks the grace loop before its first sleep (${G_S56_N1} turns), and removing the break spends every turn (${G_S56_N2})"
+                    else
+                        t_fail "identity gate: the grace loop's deadline break is not measurable (shipped=${G_S56_N1} turns mutated=${G_S56_N2}; want 0 and >= 6)"
+                    fi
+                else
+                    t_fail "identity gate: could not build the grace-loop deadline mutation (the shape moved)"
+                fi
             fi
             g_s53_reap "$G_S56_LS"
         fi
