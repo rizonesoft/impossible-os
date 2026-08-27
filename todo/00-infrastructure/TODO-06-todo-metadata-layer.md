@@ -47,66 +47,67 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                              | Depends On    | Status |
-| --- | :---: | :-----: | ---------------------------------------------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                            | --            |  [x]   |
-| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                   | §1            |  [x]   |
-| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                      | §1, §2        |  [x]   |
-| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema            | §2            |  [x]   |
-| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code      | §2            |  [x]   |
-| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                               | §3, §4        |  [x]   |
-| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                          | §2, §4        |  [x]   |
-| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                        | §4            |  [x]   |
-| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                  | §2            |  [x]   |
-| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)             | §9            |  [x]   |
-| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                              | §10           |  [x]   |
-| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                           | §10, §11      |  [x]   |
-| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                   | §2, §11       |  [x]   |
-| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)             | §13           |  [x]   |
-| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles                | §13, §14      |  [x]   |
-| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)                 | §12, §14      |  [x]   |
-| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                        | §14, §16      |  [x]   |
-| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction            | §16           |  [x]   |
-| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed             | §17           |  [x]   |
-| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                  | §18           |  [x]   |
-| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                       | §17, §19      |  [x]   |
-| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)            | §19, §8       |  [x]   |
-| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)              | §19, §3       |  [x]   |
-| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile             | §21, §22      |  [x]   |
-| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)        | §2, §7        |  [x]   |
-| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)             | §3, §22       |  [x]   |
-| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)         | §21, §24      |  [x]   |
-| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has        | §25, §26      |  [x]   |
-| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                   | §23, §26      |  [x]   |
-| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)          | §24, §27      |  [x]   |
-| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id           | §21, §27      |  [x]   |
-| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                       | §3            |  [x]   |
-| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)         | §2, §26       |  [x]   |
-| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)          | §2            |  [x]   |
-| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line          | §29           |  [x]   |
-| ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35)   | §2, §32, §35  |  [x]   |
-| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)           | §33           |  [x]   |
-| ⭐  |  38   |   §38   | Every gate parser adopts the shared fence tracker (split out of §36)                     | §36           |  [x]   |
-| ⭐  |  39   |   §41   | The two mutating repair tools adopt the shared fence tracker (split out of §38)          | §36, §38      |  [x]   |
-| ⭐  |  40   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                      | §36, §38, §41 |  [x]   |
-| ⭐  |  41   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges      | §37           |  [x]   |
-| ⭐  |  42   |   §42   | HTML blocks join the tracker, and the terminal contract carries the block kind           | §39           |  [/]   |
-| ⭐  |  43   |   §43   | Finish the one-contract consolidation across the consumer closure (split from §42)       | §39, §40, §42 |  [x]   |
-| ⭐  |  44   |   §44   | Inline span precedence + the Inputs table cell reaching the parser (split from §43)      | §39, §40      |  [x]   |
-| ⭐  |  45   |   §45   | Container phase: cost model, indent check, one section context for five walks            | §39, §42, §43 |  [x]   |
-| ⭐  |  46   |   §46   | CommonMark HTML block type 7 needs a non-backtracking matcher (split from §43)           | §42, §43      |  [x]   |
-| ⭐  |  47   |   §47   | The gate consumers adopt the section-context projections (spawned by §45 review)         | §45           |  [x]   |
-| ⭐  |  48   |   §48   | The mutating repair tool stops rewriting the raw HTML it is shown (split from §47)       | §42, §46      |  [x]   |
-| ⭐  |  49   |   §49   | Decide whether `alias-staleness` is producer-assertable, then promote or record why not  | §36, §43      |  [x]   |
-| 💎  |  50   |   §50   | A base older than the gate's own protocol must not be reported as a broken gate          | §16, §18      |  [x]   |
-| ⭐  |  51   |   §51   | The byte-identical closure exit must not outrank the protocol refusals                   | §18, §50      |  [x]   |
-| ⭐  |  52   |   §52   | Object-replacement metadata can misrepresent an endpoint by routes other than its commit | §50           |  [x]   |
-| ⭐  |  53   |   §53   | The protocol probe executes the tree it is judging, so no in-process channel is trusted  | §50           |  [x]   |
-| 💎  |  54   |   §54   | The gate adjudicates the WORKING TREE while the push carries the COMMIT                  | §16, §50      |  [x]   |
-| ⭐  |  55   |   §55   | The byte-identical path pays for a full base checkout it does not need                   | §51           |  [x]   |
-| ⭐  |  56   |   §56   | The resolver walks leak what the tree spawns on the path where they SUCCEED              | §53           |  [ ]   |
-| 💎  |  57   |   §57   | The hook certifies repository HEAD, not the commit being pushed                          | §16, §54      |  [/]   |
-| ⭐  |  58   |   §58   | Head-versus-tree checks section 54 made unreachable are retired or re-fixtured           | §50, §51, §54 |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                                | Depends On    | Status |
+| --- | :---: | :-----: | ------------------------------------------------------------------------------------------ | ------------- | :----: |
+| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                              | --            |  [x]   |
+| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                     | §1            |  [x]   |
+| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                        | §1, §2        |  [x]   |
+| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema              | §2            |  [x]   |
+| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code        | §2            |  [x]   |
+| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                                 | §3, §4        |  [x]   |
+| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                            | §2, §4        |  [x]   |
+| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                          | §4            |  [x]   |
+| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                    | §2            |  [x]   |
+| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)               | §9            |  [x]   |
+| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                                | §10           |  [x]   |
+| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                             | §10, §11      |  [x]   |
+| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                     | §2, §11       |  [x]   |
+| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)               | §13           |  [x]   |
+| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles                  | §13, §14      |  [x]   |
+| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)                   | §12, §14      |  [x]   |
+| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                          | §14, §16      |  [x]   |
+| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction              | §16           |  [x]   |
+| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed               | §17           |  [x]   |
+| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                    | §18           |  [x]   |
+| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                         | §17, §19      |  [x]   |
+| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)              | §19, §8       |  [x]   |
+| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)                | §19, §3       |  [x]   |
+| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile               | §21, §22      |  [x]   |
+| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)          | §2, §7        |  [x]   |
+| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)               | §3, §22       |  [x]   |
+| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)           | §21, §24      |  [x]   |
+| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has          | §25, §26      |  [x]   |
+| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                     | §23, §26      |  [x]   |
+| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)            | §24, §27      |  [x]   |
+| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id             | §21, §27      |  [x]   |
+| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                         | §3            |  [x]   |
+| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)           | §2, §26       |  [x]   |
+| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)            | §2            |  [x]   |
+| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line            | §29           |  [x]   |
+| ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35)     | §2, §32, §35  |  [x]   |
+| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)             | §33           |  [x]   |
+| ⭐  |  38   |   §38   | Every gate parser adopts the shared fence tracker (split out of §36)                       | §36           |  [x]   |
+| ⭐  |  39   |   §41   | The two mutating repair tools adopt the shared fence tracker (split out of §38)            | §36, §38      |  [x]   |
+| ⭐  |  40   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                        | §36, §38, §41 |  [x]   |
+| ⭐  |  41   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges        | §37           |  [x]   |
+| ⭐  |  42   |   §42   | HTML blocks join the tracker, and the terminal contract carries the block kind             | §39           |  [/]   |
+| ⭐  |  43   |   §43   | Finish the one-contract consolidation across the consumer closure (split from §42)         | §39, §40, §42 |  [x]   |
+| ⭐  |  44   |   §44   | Inline span precedence + the Inputs table cell reaching the parser (split from §43)        | §39, §40      |  [x]   |
+| ⭐  |  45   |   §45   | Container phase: cost model, indent check, one section context for five walks              | §39, §42, §43 |  [x]   |
+| ⭐  |  46   |   §46   | CommonMark HTML block type 7 needs a non-backtracking matcher (split from §43)             | §42, §43      |  [x]   |
+| ⭐  |  47   |   §47   | The gate consumers adopt the section-context projections (spawned by §45 review)           | §45           |  [x]   |
+| ⭐  |  48   |   §48   | The mutating repair tool stops rewriting the raw HTML it is shown (split from §47)         | §42, §46      |  [x]   |
+| ⭐  |  49   |   §49   | Decide whether `alias-staleness` is producer-assertable, then promote or record why not    | §36, §43      |  [x]   |
+| 💎  |  50   |   §50   | A base older than the gate's own protocol must not be reported as a broken gate            | §16, §18      |  [x]   |
+| ⭐  |  51   |   §51   | The byte-identical closure exit must not outrank the protocol refusals                     | §18, §50      |  [x]   |
+| ⭐  |  52   |   §52   | Object-replacement metadata can misrepresent an endpoint by routes other than its commit   | §50           |  [x]   |
+| ⭐  |  53   |   §53   | The protocol probe executes the tree it is judging, so no in-process channel is trusted    | §50           |  [x]   |
+| 💎  |  54   |   §54   | The gate adjudicates the WORKING TREE while the push carries the COMMIT                    | §16, §50      |  [x]   |
+| ⭐  |  55   |   §55   | The byte-identical path pays for a full base checkout it does not need                     | §51           |  [x]   |
+| ⭐  |  56   |   §56   | The resolver walks leak what the tree spawns on the path where they SUCCEED                | §53           |  [ ]   |
+| 💎  |  57   |   §57   | The hook certifies repository HEAD, not the commit being pushed                            | §16, §54      |  [/]   |
+| ⭐  |  58   |   §58   | Head-versus-tree checks section 54 made unreachable are retired or re-fixtured             | §50, §51, §54 |  [ ]   |
+| ⭐  |  59   |   §59   | The identity-gate fixture group pays for a whole repository and proves less than it claims | §54, §55, §56 |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -3197,27 +3198,14 @@ Measurement, on the §53 fixture clone with a loader that spawns a `sleep` in ev
   - `pgrep`-style sweeping is NOT the fallback: it would kill by name across the whole user session, which is the same defect as the fixture reaper's first draft in §53 wearing production clothes.
   - A legitimate outcome is that the answer is NO, recorded with the reason: the gate documents what it does not contain and stops there. Whichever way it goes, a fixture whose child detaches must exist, so the behaviour is measured rather than believed.
   - -> XREF: [`TODO-06 §53`](#53-the-protocol-probe-executes-the-tree-it-is-judging-so-no-in-process-channel-is-trusted) -- measured the escape and states it as a limit rather than closing it.
-- [ ] Decide whether the launch inventory needs a real bash parser, or whether the shapes this file uses are the right boundary.
-  - §55 added fixture 22er, which enumerates every external launch in `identity-gate.sh` and requires each to carry a bound or a `launch-exempt:` marker with its reason. It parses `$( ... )` (nested, and inside double quotes), heredocs, comments, continuations and case arms. It does NOT understand backticks, process substitution, arithmetic contexts, or a quoted-versus-expanding heredoc tag.
-  - None of them carries a LAUNCH in the file today -- arithmetic expansion appears six times and spawns nothing -- so the inventory is a real net over the real code. What it is not is a proof about shell: a launch written in one of those forms would pass unreported, and the next person to add one would have no signal.
-  - The choice is genuinely open. A bash parser closes it properly and is a dependency decision, not a patch. The cheaper answer is a lint that REFUSES the unparsed shapes outright -- if the file may not contain a backtick or a process substitution, the inventory's boundary stops mattering. That is probably the better trade and should be priced first, but it cannot be a blanket ban: arithmetic expansion is already used six times, so such a lint has to name the shapes it forbids rather than forbidding everything the inventory cannot parse.
-  - -> XREF: [`TODO-06 §55`](#55-the-byte-identical-path-pays-for-a-full-base-checkout-it-does-not-need) -- built the inventory and wrote its boundary down rather than claiming completeness.
 - [ ] Decide whether TMP_DIR itself needs an identity, not just a name, now that one path through it is anchored and the rest are not.
   - §55 anchored the NARROW materializations: the gate holds a descriptor on TMP_DIR from the moment `mktemp` creates it, and the assembler creates and opens every directory it writes relative to that descriptor, so renaming a created directory and leaving a symlink behind it redirects nothing. Every OTHER use of TMP_DIR resolves it by NAME and always has: the cache paths, the walk logs, the two full checkouts, and `cleanup`.
   - So the exposure is unchanged from before §55 and is not a regression -- but it is now the only half of the question still open, which is the shape that goes unnoticed once the noisy half is fixed. A descendant that renames TMP_DIR makes `cleanup` remove the replacement and leak the original, and points every later phase at whatever the name now resolves to.
   - It belongs here rather than in §55 because it is not about the fast path's COST, and because the actor is the one this section already owns: a process the tree spawned and the gate cannot reap.
   - -> XREF: [`TODO-06 §55`](#55-the-byte-identical-path-pays-for-a-full-base-checkout-it-does-not-need) -- anchored the narrow assembly and states this remainder in `materialize_subtree`'s own comment rather than implying it is closed.
-- [ ] Put a measured runtime ceiling on the identity-gate fixture group, so a later section cannot silently extend the pre-push pack.
-  - Measured at §53's ship: `test_build.sh` averaged 408.75s over four baseline runs and 438.5s over four with §53's eight fixtures, about 30s or 7.3%. The pack is charged to every qualifying pre-push and to CI, so the growth is real even though each case earns its place.
-  - The guard wanted is a CEILING that fails the suite when the group exceeds it, not a budget per case: the failure mode is a later section adding a ninth and tenth end-to-end gate invocation without anyone measuring the total.
-  - Pick the bar from measurement, and expect it to be load-sensitive: `test_build.sh` already carries a wall-clock sub-test that flakes under load (see the live-gotchas note of 2026-08-26), so a tight ceiling would trade a silent cost for a noisy gate. Wide enough to catch doubling, not tight enough to catch a busy host.
-- [ ] Cut what each gate invocation MATERIALIZES, which is the term the ceiling above only measures.
-  - `gate_seed` clones the whole repository and prunes only the TODO corpus, so roughly 2,351 unrelated tracked files and 78 MiB stay in every synthetic commit -- and §54 added a second checkout per run on top of that. Codex's post-ship perf pass put the group's delta at about 141,000 file creations and 4.58 GiB against the pre-§54 structure.
-  - The shape proposed is a minimal fixture repository carrying the dynamically derived resolver closure, the schemas and helpers it imports, and a handful of TODO documents -- with ONE full-clone canary retained, because the derived-closure list is exactly the thing that has silently drifted before.
-  - -> XREF: [`TODO-06 §54`](#54-the-gate-adjudicates-the-working-tree-while-the-push-carries-the-commit) -- added the second checkout these fixtures pay for twice.
 - [ ] Commit: `"todo-graph: a walk that succeeds still reaps what the tree spawned"`
 
-**Test checkpoint:** for each supervised phase, a fixture whose loader spawns a descendant only in that phase and returns normally requires the gate to reach its ordinary verdict AND the descendant to be gone once the gate exits; each is paired with a mutation removing that phase's success-path reap which requires the same descendant to survive; the existing §53 cases 22ec and 22ed still pass unchanged, and the full suite stays green. Scope: this section owns the SUCCESS path of the supervised phases. It does NOT re-open `cleanup`'s cancellation loop, which already reaps `WALK_PIDS` correctly, nor §53's probe, which is done. Platforms: host tooling only, proven by `bash scripts/test-tooling.sh` (group `[todo-graph]`); no kernel surface.
+**Test checkpoint:** for each supervised phase, a fixture whose loader spawns a descendant only in that phase and returns normally requires the gate to reach its ordinary verdict AND the descendant to be gone once the gate exits; each is paired with a mutation removing that phase's success-path reap which requires the same descendant to survive; the existing §53 cases 22ec and 22ed still pass unchanged, and the full suite stays green. Scope: this section owns the SUCCESS path of the supervised phases. It does NOT re-open `cleanup`'s cancellation loop, which already reaps `WALK_PIDS` correctly, nor §53's probe, which is done, nor the fixture harness's own cost and parse boundary, which split out to §59 before implementation because they are charged to `test_build.sh` rather than to the gate. Platforms: host tooling only, proven by `bash scripts/test-tooling.sh` (group `[todo-graph]`); no kernel surface.
 
 ---
 
@@ -3279,6 +3267,31 @@ Filed 2026-08-26 by §54 itself, from what its own fixture run measured rather t
 - [ ] Commit: `"todo-graph: every published refusal is one something can still provoke"`
 
 **Test checkpoint:** for `HEAD_PROTOCOL_UNMATERIALIZED`, either the header records it as a reserved guard AND a mutation fixture requires it to fire, or the token and its code are gone and no fixture or comment still names it; for `CLOSURE_MOVED_UNDER_GATE`, which §55 left with no emitter, either it is deleted everywhere or the header records it as reserved-and-unreachable with the reason -- no firing mutation is required or possible for it; for the closure presence pair, whose branches §55 deleted, only that no comment or fixture still describes them as live; `grep` for each token across `scripts/` and `todo/` returns only intended matches; `bash scripts/test-tooling.sh` green. Scope: this section owns the REACHABILITY of tokens §54 changed the inputs to. It does NOT re-open which tree the head side reads, which is settled, and it does not touch the base side. Platforms: host tooling only, proven by `bash scripts/test-tooling.sh` (group `[todo-graph]`); no kernel surface.
+
+---
+
+## 59. The Identity-Gate Fixture Group Pays for a Whole Repository and Proves Less Than It Claims
+
+> **Spawned-by:** §56 (split)
+
+Split out of §56 before implementation, on the section-manifest complexity verdict (8 work items against this file's raised split bar of 8). §56 owns the GATE's control over what the tree spawns; this section owns the FIXTURE HARNESS that proves it -- what `scripts/todo-graph/tests/test_build.sh` charges every qualifying pre-push and every CI run, and what its §55 launch inventory can and cannot see. The two are separable because they touch different files and fail in opposite directions: a missed reap leaks a process on a green verdict, while an unbounded fixture group slows a gate that is otherwise correct.
+
+- [ ] Decide whether the launch inventory needs a real bash parser, or whether the shapes this file uses are the right boundary.
+  - §55 added fixture 22er, which enumerates every external launch in `identity-gate.sh` and requires each to carry a bound or a `launch-exempt:` marker with its reason. It parses `$( ... )` (nested, and inside double quotes), heredocs, comments, continuations and case arms. It does NOT understand backticks, process substitution, arithmetic contexts, or a quoted-versus-expanding heredoc tag.
+  - None of them carries a LAUNCH in the file today -- arithmetic expansion appears six times and spawns nothing -- so the inventory is a real net over the real code. What it is not is a proof about shell: a launch written in one of those forms would pass unreported, and the next person to add one would have no signal.
+  - The choice is genuinely open. A bash parser closes it properly and is a dependency decision, not a patch. The cheaper answer is a lint that REFUSES the unparsed shapes outright -- if the file may not contain a backtick or a process substitution, the inventory's boundary stops mattering. That is probably the better trade and should be priced first, but it cannot be a blanket ban: arithmetic expansion is already used six times, so such a lint has to name the shapes it forbids rather than forbidding everything the inventory cannot parse.
+  - -> XREF: [`TODO-06 §55`](#55-the-byte-identical-path-pays-for-a-full-base-checkout-it-does-not-need) -- built the inventory and wrote its boundary down rather than claiming completeness.
+- [ ] Put a measured runtime ceiling on the identity-gate fixture group, so a later section cannot silently extend the pre-push pack.
+  - Measured at §53's ship: `test_build.sh` averaged 408.75s over four baseline runs and 438.5s over four with §53's eight fixtures, about 30s or 7.3%. The pack is charged to every qualifying pre-push and to CI, so the growth is real even though each case earns its place.
+  - The guard wanted is a CEILING that fails the suite when the group exceeds it, not a budget per case: the failure mode is a later section adding a ninth and tenth end-to-end gate invocation without anyone measuring the total.
+  - Pick the bar from measurement, and expect it to be load-sensitive: `test_build.sh` already carries a wall-clock sub-test that flakes under load (see the live-gotchas note of 2026-08-26), so a tight ceiling would trade a silent cost for a noisy gate. Wide enough to catch doubling, not tight enough to catch a busy host.
+- [ ] Cut what each gate invocation MATERIALIZES, which is the term the ceiling above only measures.
+  - `gate_seed` clones the whole repository and prunes only the TODO corpus, so roughly 2,351 unrelated tracked files and 78 MiB stay in every synthetic commit -- and §54 added a second checkout per run on top of that. Codex's post-ship perf pass put the group's delta at about 141,000 file creations and 4.58 GiB against the pre-§54 structure.
+  - The shape proposed is a minimal fixture repository carrying the dynamically derived resolver closure, the schemas and helpers it imports, and a handful of TODO documents -- with ONE full-clone canary retained, because the derived-closure list is exactly the thing that has silently drifted before.
+  - -> XREF: [`TODO-06 §54`](#54-the-gate-adjudicates-the-working-tree-while-the-push-carries-the-commit) -- added the second checkout these fixtures pay for twice.
+- [ ] Commit: `"todo-graph: the identity-gate fixture group is bounded and stops cloning the repository"`
+
+**Test checkpoint:** the identity-gate fixture group carries a measured runtime ceiling that FAILS `test_build.sh` when the group exceeds it, with the bar chosen from at least four timed runs and wide enough to survive the load-sensitivity already recorded for this suite; `gate_seed` builds its synthetic commits from a minimal fixture repository rather than a full clone, with one full-clone canary retained and the per-invocation file-creation and byte counts recorded before and after; the launch inventory's parse boundary is either closed or explicitly refused by a lint naming the shapes it forbids (arithmetic expansion stays legal -- it appears six times and spawns nothing); every existing identity-gate fixture still passes unchanged and `bash scripts/test-tooling.sh` is green. Scope: this section owns the fixture harness's COST and its inventory's COVERAGE. It does NOT re-open the success-path reap or the TMP_DIR identity question, both owned by §56. Platforms: host tooling only; no kernel surface.
 
 ---
 
