@@ -8464,13 +8464,77 @@ GATE_IN_CLONE="$GATE_REPO/scripts/todo-graph/identity-gate.sh"
 # was really constructed: run it against the same tree and the old refusal comes
 # back. It must be written INSIDE the clone -- the gate derives its repo root
 # from its own location, so a copy anywhere else adjudicates a different tree.
+# g_mutant_ok <source> <mutant> <needle>: is this mutant fit to draw a verdict
+# from?
+#
+# DIFFERING FROM ITS SOURCE IS NECESSARY AND NOT SUFFICIENT, and the gap between
+# those two is a live false-positive this file has now produced twice. A `sed`
+# whose delimiter appears inside its own replacement is REJECTED, and the
+# redirection has already truncated the output, so the mutant is ZERO BYTES --
+# which `cmp -s` reports as "differs", and which `bash` runs as an empty script
+# exiting 0 in silence. Every mutation case asserting the ABSENCE of a token
+# then passes while the gate under test never ran at all. Found in the section 55
+# 22eo case by its own failure, and then in 22el-wt and 22ef by looking for the
+# shape (Codex adversarial, section 55 rounds 1 and 2).
+#
+# The needle is the text the substitution was supposed to INTRODUCE, so a sed
+# that silently matched nothing is caught too.
+g_mutant_ok() {
+    ! cmp -s "$1" "$2" \
+        && [ -s "$2" ] \
+        && bash -n "$2" 2>/dev/null \
+        && grep -q "$3" "$2"
+}
+
 g_s54_wtgate() {
-    sed -e 's#^proto_of "\$HEAD_TREE"$#proto_of "$REPO_ROOT"#' \
-        -e 's#protocol_present_in_worktree "\$HEAD_TREE"#protocol_present_in_worktree "$REPO_ROOT"#' \
-        -e 's#path_is_regular_in_worktree "\$HEAD_TREE" "\$f"#path_is_regular_in_worktree "$REPO_ROOT" "$f"#' \
-        -e 's#bounded_git hash-object "\$HEAD_TREE/\$f"#bounded_git hash-object "$REPO_ROOT/$f"#' \
-        -e 's#\[ -e "\$HEAD_TREE/\$f" \] || \[ -L "\$HEAD_TREE/\$f" \]#[ -e "$REPO_ROOT/$f" ] || [ -L "$REPO_ROOT/$f" ]#' \
-        -e 's#git rev-parse --quiet --verify "\$HEAD_RESOLVED:\$f" 2>/dev/null || echo MISSING#git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING#' \
+    # THE SHAPE IT REWRITES MOVED IN SECTION 55, and the helper moved with it.
+    # The head side no longer reads a full checkout at all before the
+    # byte-identical exit: `proto_of` reads the narrow tree assembled from the
+    # head commit's own blobs, and the closure reading is the OID carried by that
+    # commit's tree entry, acquired for every member in one batch. So there are
+    # two head-side reads left to put back on the working tree, not five -- the
+    # protocol root, and the batched closure entries, which are overridden in
+    # place immediately after they are acquired and before the first loop that
+    # consumes them.
+    #
+    # THE ROOT IS NOW ADDRESSED THROUGH A DESCRIPTOR, so these anchors name
+    # `$HEAD_MIN_ADDR` rather than `$HEAD_MIN`. Section 55 bound execution and
+    # verification to one directory identity by passing `/proc/self/fd/N`; three
+    # mutation builders anchored on the old spelling and correctly refused to
+    # certify a mutant they had not actually built.
+    # BOTH CLOSURE READINGS, not just the listing one. Section 55 acquires the
+    # head closure twice by different plumbing -- `H_OID` from the tree listing
+    # and `H_VOID` from the path expression -- and overriding only `H_OID` left
+    # this control INCOHERENT: the measurement loop still read the COMMIT, so the
+    # closure decision was the commit's while the decision loop's reading was the
+    # working tree's, and every case built on this helper reached
+    # `CLOSURE_MOVED_UNDER_GATE` for a reason that had nothing to do with what it
+    # was testing. It went unnoticed because those cases assert the ABSENCE of a
+    # protocol token, and an unrelated refusal satisfies that (Codex adversarial,
+    # section 55 round 3, [medium]).
+    #
+    # AND THE OVERRIDE IS ANCHORED ON THE LAST OF THE TWO ASSIGNMENTS. Anchored
+    # on the `H_OID=` line it was inserted BEFORE `H_VOID=`, so the very next
+    # statement put the commit's values straight back over it -- the override ran
+    # and was then undone, one line later.
+    sed -e 's#^proto_of "\$HEAD_MIN_ADDR"$#proto_of "$REPO_ROOT"#' \
+        -e 's#protocol_present_in_worktree "\$HEAD_MIN_ADDR"#protocol_present_in_worktree "$REPO_ROOT"#' \
+        -e 's#^H_VOID=("\${ENT_VOID\[@\]}")$#&\
+for _wti in "${!CLOSURE[@]}"; do\
+    _wtf="${CLOSURE[$_wti]}"\
+    if [ -f "$REPO_ROOT/$_wtf" ] \&\& [ ! -L "$REPO_ROOT/$_wtf" ]; then\
+        H_OID[$_wti]="$(git hash-object "$REPO_ROOT/$_wtf" 2>/dev/null)"\
+        H_VOID[$_wti]="${H_OID[$_wti]}"\
+        H_PRESENT[$_wti]=1; H_TYPE[$_wti]=blob; H_MODE[$_wti]=100644; H_OBJ[$_wti]=1\
+    elif [ -e "$REPO_ROOT/$_wtf" ] || [ -L "$REPO_ROOT/$_wtf" ]; then\
+        H_PRESENT[$_wti]=1; H_TYPE[$_wti]=blob; H_MODE[$_wti]=120000; H_OBJ[$_wti]=1\
+        H_OID[$_wti]="$(git hash-object "$REPO_ROOT/$_wtf" 2>/dev/null)"\
+        H_VOID[$_wti]="${H_OID[$_wti]}"\
+    else\
+        H_PRESENT[$_wti]=0; H_OID[$_wti]=""; H_TYPE[$_wti]=""; H_MODE[$_wti]=""; H_OBJ[$_wti]=0\
+        H_VOID[$_wti]=""\
+    fi\
+done#' \
         "$GATE_IN_CLONE" > "$1"
     # EVERY SUBSTITUTION IS VERIFIED, not just the first. Checking only
     # `proto_of` was an overstatement in a helper whose whole job is to be a
@@ -8483,8 +8547,16 @@ g_s54_wtgate() {
     # would accept a copy of the unmutated gate the day one of these shapes
     # moves -- which is exactly how the cleanup-reversion mutation came to run
     # the original gate and report that its own fix did nothing.
+    # NON-EMPTY AND PARSABLE TOO, not merely different and free of the old
+    # shapes. A sed that rejects its own expression writes nothing, and an empty
+    # file is both "different from its source" and "contains no head-side read"
+    # -- so every check here passed on a mutant that cannot run. See
+    # `g_mutant_ok` above for where that hole was found.
     ! cmp -s "$GATE_IN_CLONE" "$1" \
-        && ! grep -qE '^proto_of "\$HEAD_TREE"$|protocol_present_in_worktree "\$HEAD_TREE"|path_is_regular_in_worktree "\$HEAD_TREE"|hash-object "\$HEAD_TREE/\$f"|\[ -e "\$HEAD_TREE/\$f" \]|"\$HEAD_RESOLVED:\$f" 2>/dev/null \|\| echo MISSING' "$1"
+        && [ -s "$1" ] \
+        && bash -n "$1" 2>/dev/null \
+        && ! grep -qE '^proto_of "\$HEAD_MIN_ADDR"$|protocol_present_in_worktree "\$HEAD_MIN_ADDR"' "$1" \
+        && grep -q '^for _wti in' "$1"
 }
 
 gate_seed() {
@@ -11633,8 +11705,23 @@ PY2
         # subcommand since section 54, so a shim keyed on $1 silently stops
         # firing the moment one is added -- and a shim that never fires makes
         # its case pass or fail for a reason unrelated to the code under test.
+        # THE TRIGGER FOLLOWS THE MATERIALIZATION, WHICH MOVED (section 55).
+        # This fired on `git worktree`, and a byte-identical range no longer
+        # runs one at all -- the head side is assembled from the commit's blobs
+        # with `ls-tree -r -z`. A shim that never fires makes its case pass or
+        # fail for a reason unrelated to the code under test, which is the same
+        # hazard the $1-keying note below records. Both shapes are kept, so the
+        # case forces its mutation on the fast path AND on a range that checks
+        # out.
         printf '_is_wt=0; for a in "$@"; do [ "$a" = "worktree" ] && _is_wt=1; done\n'
-        printf 'if [ "$_is_wt" = "1" ]; then\n'
+        printf '_is_asm=0; _saw_ls=0; _saw_r=0; _saw_z=0\n'
+        printf 'for a in "$@"; do\n'
+        printf '  [ "$a" = "ls-tree" ] && _saw_ls=1\n'
+        printf '  [ "$a" = "-r" ] && _saw_r=1\n'
+        printf '  [ "$a" = "-z" ] && _saw_z=1\n'
+        printf 'done\n'
+        printf '[ "$_saw_ls$_saw_r$_saw_z" = "111" ] && _is_asm=1\n'
+        printf 'if [ "$_is_wt" = "1" ] || [ "$_is_asm" = "1" ]; then\n'
         printf '  %s "$@"; _rc=$?\n' "$G_REAL_GIT"
         printf '  printf "\\n# 22cf: mutated under the gate\\n" >> %s\n' \
             "$GATE_REPO/scripts/todo-graph/ref_resolution.py"
@@ -15193,10 +15280,28 @@ PY2
             (cd "$GATE_REPO" && bash "$G_MUT_S54" --base "$G_S54_BASE" --head HEAD \
                 >"$TMP_DIR/gate-22ef-mut.log" 2>&1)
             G_S54_MUT_RC=$?
-            if ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22ef-mut.log"; then
-                t_pass "identity gate: MUTATION -- reading the worktree lets the restored bytes past, so 22ee measures the source"
+            # THE MUTANT'S OWN TERMINAL VERDICT IS ASSERTED, not "the log is not
+            # empty". Absence of a token is satisfied by a run that never
+            # started, and a non-empty log is satisfied by ANY early
+            # infrastructure failure -- the same false positive one step weaker
+            # (Codex adversarial, section 55 round 3, [medium]).
+            #
+            # THE MARKER IS "IT GOT PAST THE PROTOCOL CONTRACT", which is the
+            # only thing this mutation is about. A first attempt pinned rc 0 on
+            # the fast-path exit and was WRONG about this fixture: earlier cases
+            # in this block append to `resolve_symbol.py`, so the range is not
+            # byte-identical and the mutant correctly runs the differential --
+            # where it then fails, because the COMMIT's protocol really is broken
+            # and the walks execute the commit. That later failure is not this
+            # case's subject. Reaching the materialized checkout is emitted only
+            # after the head protocol contract has been satisfied, so it says
+            # exactly what is meant: the restored working-tree bytes were read
+            # and accepted.
+            if grep -q 'walked from a materialized checkout' "$TMP_DIR/gate-22ef-mut.log" \
+               && ! grep -qE 'HEAD_PROTOCOL_[A-Z_]+' "$TMP_DIR/gate-22ef-mut.log"; then
+                t_pass "identity gate: MUTATION -- reading the worktree lets the restored bytes past the head protocol contract, so 22ee measures the source"
             else
-                t_fail "identity gate: the working-tree-read mutation still refused, so 22ee proves nothing (rc=$G_S54_MUT_RC; see $TMP_DIR/gate-22ef-mut.log)"
+                t_fail "identity gate: the working-tree-read mutation never got past the head protocol contract (rc=$G_S54_MUT_RC; see $TMP_DIR/gate-22ef-mut.log)"
             fi
             (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/snapshot_protocol.json)
             rm -f "$G_MUT_S54"
@@ -15426,19 +15531,31 @@ PY2
         G_S54_SYM_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22el.log" | head -1)"
         # THE PREMISE IS THE COMMITTED MODE, not what happens to be on disk:
         # this case is only about a symlink the COMMIT carries.
-        # THE TOKEN IS `MATERIALIZATION_UNFAITHFUL`, NOT A PROTOCOL COMPLAINT,
-        # and the difference is the whole case. Emulated, the JSON's bytes are
-        # the target PATH TEXT, so the protocol simply fails to parse and the
-        # first draft of this fixture accepted `HEAD_PROTOCOL_UNREADABLE` --
-        # a refusal, but one that sends the operator to inspect JSON when the
-        # fault is that this host cannot represent the commit at all. It has to
-        # be caught before the parse, by the check that knows what the commit
-        # stores, or the classification is decided by whether the symlink target
-        # happened to be readable.
+        #
+        # THE NEGATIVE IS THE LOAD-BEARING HALF, and it is unchanged: the run
+        # must NEVER reach `HEAD_PROTOCOL_UNREADABLE`. Emulated, the JSON's
+        # bytes are the target PATH TEXT, so the protocol would simply fail to
+        # parse -- a refusal, but one that sends the operator to inspect JSON
+        # when the fault is that the commit stores a symlink where code must be.
+        #
+        # THE POSITIVE MOVED WITH SECTION 55, AND SAYS MORE THAN IT USED TO. The
+        # head protocol was read from a `git worktree add` checkout, so on this
+        # host git EMULATED the symlink as a regular file and the emulation
+        # probe in `tree_is_faithful` was the only thing standing between that
+        # and a parse: hence `MATERIALIZATION_UNFAITHFUL`. Section 55 assembles
+        # the narrow head tree from the commit's own blobs and writes a 120000
+        # entry with `os.symlink`, so `core.symlinks` cannot change what the
+        # gate sees at all, and the commit-side type contract answers first with
+        # `HEAD_PROTOCOL_NOT_A_FILE` -- the SAME token a symlink-capable host
+        # produces, which the second half of this case pins independently. The
+        # assertion is therefore that emulation no longer changes the verdict,
+        # which is strictly stronger than requiring it to be caught.
+        # The emulation probe itself is still guarded, on the surface where it
+        # still applies -- the full checkout -- by 22el-wt immediately below.
         if [ "$G_S54_SYMMODE" = "120000" ] && [ "$G_S54_SYM_RC" -eq 3 ] \
-           && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22el.log" \
+           && grep -q 'HEAD_PROTOCOL_NOT_A_FILE' "$TMP_DIR/gate-22el.log" \
            && ! grep -q 'HEAD_PROTOCOL_UNREADABLE' "$TMP_DIR/gate-22el.log"; then
-            t_pass "identity gate: symlink emulation is named as an unfaithful checkout, not as a bad protocol"
+            t_pass "identity gate: symlink emulation cannot change the answer, because the gate no longer reads an emulated checkout to decide it"
         else
             t_fail "identity gate: symlink emulation was misclassified or let through (rc=$G_S54_SYM_RC; mode=$G_S54_SYMMODE; got [$G_S54_SYM_TOKEN]; see $TMP_DIR/gate-22el.log)"
         fi
@@ -15478,6 +15595,1456 @@ PY2
         )
         rm -f "$TMP_DIR/s54-real-protocol.json"
 
+        # 22el-wt: THE EMULATION PROBE STILL GUARDS THE FULL CHECKOUT.
+        #
+        # Section 55 removed the two eager checkouts from the byte-identical
+        # path and assembles the narrow trees from each commit's own blobs, so
+        # `core.symlinks` can no longer decide what the PROTOCOL read sees --
+        # which is why 22el above now asserts a commit-side token. The
+        # emulation hazard did not disappear, it MOVED: a range that touches the
+        # resolver closure still materializes both trees in full, and there
+        # `tree_is_faithful` is the only thing that can tell a 120000 entry
+        # written as a plain regular file from the real one. Left unfixtured,
+        # section 54's probe would have become a check nothing exercises -- the
+        # quiet way a guard stops working.
+        #
+        # THE SYMLINK IS ON AN UNRELATED PATH ON PURPOSE. On a protocol or
+        # closure member the commit-side type contract refuses first and this
+        # case would pass without the probe ever running, which is the shape
+        # that makes a fixture agree with the regression it exists to catch.
+        G_S55_WTBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            git config core.symlinks true >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            ln -sfn "TODO-Claude-Overnight-Runner.md" todo/s55-emulated-link.md
+            printf '\n# 22el-wt: a benign closure edit, so the range checks out in full\n' \
+                >> scripts/todo-graph/resolve_symbol.py
+            git add -A todo/s55-emulated-link.md scripts/todo-graph/resolve_symbol.py >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22el-wt: an unrelated committed symlink beside a closure edit" >/dev/null 2>&1
+            git config core.symlinks false >/dev/null 2>&1
+        )
+        G_S55_WTMODE="$( (cd "$GATE_REPO" && git ls-tree HEAD -- todo/s55-emulated-link.md | cut -d' ' -f1) )"
+        # The emulation only happens if git REWRITES the entry, so force it:
+        # remove the symlink and let a fresh checkout re-create it under the
+        # setting, which is what an ordinary clone on such a host does.
+        (cd "$GATE_REPO" && rm -f todo/s55-emulated-link.md \
+            && git checkout --quiet HEAD -- todo/s55-emulated-link.md >/dev/null 2>&1)
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S55_WTBASE" --head HEAD \
+            >"$TMP_DIR/gate-22el-wt.log" 2>&1)
+        G_S55_WT_RC=$?
+        G_S55_WT_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22el-wt.log" | head -1)"
+        if [ "$G_S55_WTMODE" = "120000" ] && [ "$G_S55_WT_RC" -eq 3 ] \
+           && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22el-wt.log"; then
+            t_pass "identity gate: symlink emulation in the FULL checkout is still named as an unfaithful materialization"
+        else
+            t_fail "identity gate: the full-checkout emulation probe did not fire (rc=$G_S55_WT_RC; mode=$G_S55_WTMODE; got [$G_S55_WT_TOKEN]; see $TMP_DIR/gate-22el-wt.log)"
+        fi
+        # MUTATION: without the probe the same range must NOT earn that token,
+        # which is what proves the probe rather than the range is doing the work.
+        G_S55_MUT="$GATE_REPO/scripts/todo-graph/identity-gate-s55nosym.sh"
+        sed 's#^        \[ -L "\$1/\$_path" \] && continue$#        continue#' \
+            "$GATE_IN_CLONE" > "$G_S55_MUT"
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S55_MUT" 'MATERIALIZATION_UNFAITHFUL'; then
+            t_fail "identity gate: could not build the full-checkout symlink-probe mutation (the shape moved, or the mutant is empty or unparsable)"
+        else
+            (cd "$GATE_REPO" && bash "$G_S55_MUT" --base "$G_S55_WTBASE" --head HEAD \
+                >"$TMP_DIR/gate-22el-wt-mut.log" 2>&1)
+            G_S55_MUT_RC=$?
+            # THE MUTANT MUST REACH ITS ORDINARY VERDICT, not merely fail to
+            # print one token. Absence alone is satisfied by a run that never
+            # started, which is exactly the hole `g_mutant_ok` above closes one
+            # level up; asserting the terminal rc closes the other half.
+            if [ "$G_S55_MUT_RC" -eq 0 ] \
+               && ! grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22el-wt-mut.log"; then
+                t_pass "identity gate: MUTATION -- with the symlink probe removed the emulated entry walks through to an ordinary verdict, so 22el-wt measures the fix"
+            else
+                t_fail "identity gate: the symlink-probe reversion did not reach an ordinary verdict (rc=$G_S55_MUT_RC; see $TMP_DIR/gate-22el-wt-mut.log)"
+            fi
+        fi
+        rm -f "$G_S55_MUT"
+        (
+            cd "$GATE_REPO" || exit 1
+            git config --unset core.symlinks >/dev/null 2>&1
+            git rm --quiet -f todo/s55-emulated-link.md >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22el-wt: remove the emulated symlink" >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+
+        # 22en: THE NARROW DESTINATION IS CREATED, NEVER ADOPTED.
+        #
+        # The base-side protocol probe EXECUTES code from the base commit, and
+        # it runs before the head side is assembled. `PYTHONPYCACHEPREFIX` is
+        # exported as `$TMP_DIR/pycache`, so that code can name the gate's own
+        # temporary directory -- a channel section 53 already had to close for
+        # the probe's pid file. If the head destination were merely `mkdir -p`ed,
+        # a symlink pre-planted at that path would be ADOPTED and every write of
+        # the head assembly would land wherever it pointed, overwriting and
+        # chmoding live files. `git worktree add` refused an occupied
+        # destination, so this was a weakening introduced by replacing it (Codex
+        # adversarial, section 55 round 1, [high]).
+        #
+        # THE POISON IS COMMITTED ON BOTH SIDES, because the range has to reach
+        # the head assembly: a closure that differs would send the run down the
+        # differential instead of the fast path this case is about. The symlink
+        # TARGET is handed in by the fixture rather than derived, only so the
+        # damage is observable in one place; a real one would aim at the
+        # repository it was imported from.
+        G_S55_CANARY="$TMP_DIR/s55-canary"
+        rm -rf "$G_S55_CANARY"; mkdir -p "$G_S55_CANARY"
+        printf 'untouched\n' > "$G_S55_CANARY/witness.txt"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            cat >> scripts/todo-graph/snapshot_protocol.py <<'S55POISON'
+
+
+# 22en fixture: a base-side import that pre-plants the head destination.
+import os as _os22en
+try:
+    _p22 = _os22en.environ.get("PYTHONPYCACHEPREFIX", "")
+    _c22 = _os22en.environ.get("S55_CANARY_DIR", "")
+    if _p22 and _c22:
+        _d22 = _os22en.path.join(_os22en.path.dirname(_p22), "head-min")
+        if not _os22en.path.lexists(_d22):
+            _os22en.symlink(_c22, _d22)
+except Exception:
+    pass
+S55POISON
+            git commit --quiet --no-verify -am "22en: a protocol module that plants the head destination" >/dev/null 2>&1
+        )
+        G_S55_PBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] 22en: a todo-only edit, so the closure stays byte-identical\n' >>"$t"
+            git commit --quiet --no-verify -am "22en: todo-only edit beside the planted destination" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && S55_CANARY_DIR="$G_S55_CANARY" bash "$GATE_IN_CLONE" \
+            --base "$G_S55_PBASE" --head HEAD >"$TMP_DIR/gate-22en.log" 2>&1)
+        G_S55_PL_RC=$?
+        G_S55_PL_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22en.log" | head -1)"
+        G_S55_PL_WITNESS="$(cat "$G_S55_CANARY/witness.txt" 2>/dev/null)"
+        G_S55_PL_EXTRA="$(find "$G_S55_CANARY" -mindepth 1 | wc -l | tr -d ' ')"
+        # THE REFUSAL AND THE ABSENCE OF DAMAGE ARE BOTH ASSERTED. A refusal
+        # alone would pass a gate that wrote the whole head tree into the canary
+        # and only then noticed, which is most of what this case is about.
+        if [ "$G_S55_PL_RC" -eq 3 ] \
+           && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22en.log" \
+           && [ "$G_S55_PL_WITNESS" = "untouched" ] && [ "${G_S55_PL_EXTRA:-0}" -eq 1 ]; then
+            t_pass "identity gate: a destination planted by base-side tree code is refused, and nothing is written through it"
+        else
+            t_fail "identity gate: a planted narrow destination was adopted (rc=$G_S55_PL_RC; got [$G_S55_PL_TOKEN]; witness='$G_S55_PL_WITNESS'; entries=$G_S55_PL_EXTRA; see $TMP_DIR/gate-22en.log)"
+        fi
+        # MUTATION: restore the adopting `mkdir -p` and the same range must let
+        # the write through, which is what proves the check rather than the
+        # fixture is doing the work.
+        G_S55_PMUT="$GATE_REPO/scripts/todo-graph/identity-gate-s55adopt.sh"
+        # THE REVERSION HAS TO UNDO BOTH LAYERS, and finding that out is what the
+        # mutation is for. Reverting one alone left the case writing nothing,
+        # because the assembler refuses an occupied destination AND opens it
+        # `O_NOFOLLOW` relative to a descriptor held on TMP_DIR -- so the planted
+        # symlink was still refused, one level down. Two independent checks is
+        # the intended state; a mutation that removes one and finds the hole
+        # still closed is evidence of that, not a broken fixture. It has to
+        # remove both to show what either is worth.
+        sed -e 's@    fail("something already exists at the destination %s" % dest_name)@    pass  # MUTATION: adopt whatever is there@' \
+            -e 's@os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW@os.O_RDONLY | os.O_DIRECTORY@g' \
+            "$GATE_IN_CLONE" > "$G_S55_PMUT"
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S55_PMUT" 'MUTATION: adopt whatever is there'; then
+            t_fail "identity gate: could not build the destination-adoption mutation (the shape moved, or the mutant is empty or unparsable)"
+        else
+            rm -rf "$G_S55_CANARY"; mkdir -p "$G_S55_CANARY"
+            printf 'untouched\n' > "$G_S55_CANARY/witness.txt"
+            (cd "$GATE_REPO" && S55_CANARY_DIR="$G_S55_CANARY" bash "$G_S55_PMUT" \
+                --base "$G_S55_PBASE" --head HEAD >"$TMP_DIR/gate-22en-mut.log" 2>&1)
+            G_S55_PM_EXTRA="$(find "$G_S55_CANARY" -mindepth 1 | wc -l | tr -d ' ')"
+            if [ "${G_S55_PM_EXTRA:-0}" -gt 1 ]; then
+                t_pass "identity gate: MUTATION -- an adopted destination is written through, so 22en measures the fix"
+            else
+                t_fail "identity gate: the adoption reversion wrote nothing, so 22en proves nothing (entries=$G_S55_PM_EXTRA; see $TMP_DIR/gate-22en-mut.log)"
+            fi
+        fi
+        rm -f "$G_S55_PMUT"
+        rm -rf "$G_S55_CANARY"
+
+        # 22en-swap: AND THE NAME MAY BE SWAPPED AFTER IT IS CREATED.
+        #
+        # The half above plants the destination BEFORE the gate makes it, which a
+        # bare `mkdir` refuses. It cannot see the other order: a descendant that
+        # WAITS for the assembly to create `head-min`, renames it away and leaves
+        # a symlink in its place. A name-keyed record of "this run created that
+        # directory" stays true of the name while the name now points somewhere
+        # else, so the fixture for one order proves nothing about the other
+        # (Codex adversarial, section 55 round 2, [high]).
+        #
+        # THE POISON IS A DETACHED WAITER, which is the honest actor: the gate
+        # reaps the probe's process group, so a child that `setsid`s itself is
+        # what actually survives to race. It polls for the destination and swaps
+        # it; the gate must still write nothing into the canary.
+        G_S55_CANARY2="$TMP_DIR/s55-canary2"
+        rm -rf "$G_S55_CANARY2"; mkdir -p "$G_S55_CANARY2"
+        printf 'untouched\n' > "$G_S55_CANARY2/witness.txt"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            # FROM AN UNPOISONED MODULE. 22en's poison plants the destination
+            # SYNCHRONOUSLY at import, so leaving it in place made the gate
+            # refuse before this case's waiter had anything to swap -- the case
+            # then failed for 22en's reason and proved nothing about its own.
+            git checkout --quiet "$G_S55_PBASE"~1 -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+            cat >> scripts/todo-graph/snapshot_protocol.py <<'S55SWAP'
+
+
+# 22en-swap fixture: a detached waiter that swaps the destination after it exists.
+import os as _os22s, subprocess as _sp22s, sys as _sys22s
+try:
+    _p22s = _os22s.environ.get("PYTHONPYCACHEPREFIX", "")
+    _c22s = _os22s.environ.get("S55_CANARY_DIR", "")
+    _m22s = _os22s.environ.get("S55_SWAP_MARKER", "")
+    if _p22s and _c22s and _m22s:
+        _t22s = _os22s.path.dirname(_p22s)
+        _prog = (
+            "import os,time\n"
+            "d=%r\nc=%r\nm=%r\n" % (_os22s.path.join(_t22s, "head-min"), _c22s, _m22s) +
+            # PUBLISHED BEFORE THE LOOP, not after a successful swap. Recording
+            # the identity only on success meant a waiter still POLLING had none
+            # -- so it survived the fixture and could interfere with a later or
+            # concurrent case, while the cleanup below believed it had signalled
+            # everything (Codex adversarial, section 55, [medium]).
+            "open(m, 'w').write('%d %s' % (os.getpid(), "
+            "open('/proc/self/stat').read().split()[21]))\n"
+            "for _ in range(20000):\n"
+            "    try:\n"
+            "        if os.path.isdir(d) and not os.path.islink(d):\n"
+            "            os.rename(d, d + '.moved')\n"
+            "            os.symlink(c, d)\n"
+            "            open(m + '.swapped', 'w').write('yes')\n"
+            "            break\n"
+            "    except OSError:\n"
+            "        pass\n"
+            "    time.sleep(0.0005)\n"
+        )
+        _sp22s.Popen([_sys22s.executable, "-c", _prog], start_new_session=True)
+except Exception:
+    pass
+S55SWAP
+            git commit --quiet --no-verify -am "22en-swap: a protocol module that detaches a destination-swapping waiter" >/dev/null 2>&1
+        )
+        G_S55_SBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] 22en-swap: a todo-only edit, so the closure stays byte-identical\n' >>"$t"
+            git commit --quiet --no-verify -am "22en-swap: todo-only edit beside the swapping waiter" >/dev/null 2>&1
+        )
+        G_S55_MARKER="$TMP_DIR/s55-swap-fired"
+        rm -f "$G_S55_MARKER"
+        (cd "$GATE_REPO" && S55_CANARY_DIR="$G_S55_CANARY2" S55_SWAP_MARKER="$G_S55_MARKER" \
+            bash "$GATE_IN_CLONE" \
+            --base "$G_S55_SBASE" --head HEAD >"$TMP_DIR/gate-22en-swap.log" 2>&1)
+        G_S55_SW_RC=$?
+        G_S55_SW_WITNESS="$(cat "$G_S55_CANARY2/witness.txt" 2>/dev/null)"
+        G_S55_SW_EXTRA="$(find "$G_S55_CANARY2" -mindepth 1 | wc -l | tr -d ' ')"
+        # THE VERDICT IS NOT PINNED, THE DAMAGE IS. Whether the waiter wins its
+        # race is genuinely nondeterministic, so requiring a particular rc would
+        # make this case flaky -- and the property that matters is not which
+        # answer the gate gives but that the swap cannot make it write outside
+        # its own directory. Every write is descriptor-relative, so the answer is
+        # the same whether the waiter fired early or late.
+        #
+        # BUT THE WAITER MUST HAVE FIRED, or the case is vacuous: "the canary is
+        # untouched" is equally true of a run where the swap never happened, and
+        # a green suite would then be reporting a race it never ran (Codex
+        # adversarial, section 55 round 3, [medium]). The marker is written only
+        # after a rename AND a symlink both succeeded, so its presence is the
+        # swap itself and not an attempt at one.
+        #
+        # WHAT THIS PROVES AND WHAT IT DOES NOT, said rather than implied: it
+        # proves a real swap of a directory the assembly created let no byte
+        # reach the canary. It does NOT prove the swap landed inside the
+        # assembly's write window; the marker says rename-plus-symlink succeeded,
+        # not that it succeeded BEFORE the last write (Codex adversarial, section
+        # 55 round 4, [medium]). A test-controlled barrier was considered and is
+        # not available: the fixture drives the TREE, and the assembler is the
+        # gate's own python with nothing for a barrier to block on, so any
+        # "synchronisation" would be another poll wearing a better name.
+        #
+        # SO THE DETERMINISTIC HALVES ARE ELSEWHERE, and this case is the
+        # end-to-end sanity check that sits on top of them. 22en plants the
+        # destination BEFORE creation and its mutation shows the write goes
+        # through once both checks are removed; 22ep below asserts STRUCTURALLY
+        # that the assembler contains no pathname-resolving write at all, which
+        # is the property a timing test could only sample.
+        # THE WITNESS AND THE IDENTITY ARE NOW TWO FILES. The marker is written
+        # before the loop and says WHICH process to clean up; the `.swapped`
+        # companion is written only after a rename AND a symlink both succeeded
+        # and says the case actually exercised its race.
+        if [ ! -f "$G_S55_MARKER.swapped" ]; then
+            t_fail "identity gate: the 22en-swap waiter never performed a swap, so this case would have passed without testing anything (rc=$G_S55_SW_RC; see $TMP_DIR/gate-22en-swap.log)"
+        elif [ "$G_S55_SW_WITNESS" = "untouched" ] && [ "${G_S55_SW_EXTRA:-0}" -eq 1 ]; then
+            t_pass "identity gate: an observed post-creation swap of an assembled directory reached nothing outside the gate (rc=$G_S55_SW_RC)"
+        else
+            t_fail "identity gate: a post-creation destination swap redirected the assembly (rc=$G_S55_SW_RC; witness='$G_S55_SW_WITNESS'; entries=$G_S55_SW_EXTRA; see $TMP_DIR/gate-22en-swap.log)"
+        fi
+        # NOT `pkill -f`. A global command-line match kills every same-user
+        # process that happens to contain the snippet -- including another
+        # concurrent run's waiter -- which is a fixture reaching outside its own
+        # run, the exact discipline 22eq was repaired into having (Codex
+        # adversarial, section 55, [medium]). The waiter records its own pid and
+        # start time; only that exact process is signalled.
+        # READ BEFORE IT IS REMOVED, which the first version got backwards: it
+        # deleted the marker and then tested for it, so the exact-PID branch
+        # could never run at all.
+        if [ -f "$G_S55_MARKER" ]; then
+            while IFS=" " read -r _swp _swst; do
+                [ -n "$_swp" ] && [ -n "$_swst" ] || continue
+                _swnow="$(awk '{print $22}' "/proc/$_swp/stat" 2>/dev/null || true)"
+                if [ -n "$_swnow" ] && [ "$_swnow" = "$_swst" ]; then
+                    kill -KILL "$_swp" 2>/dev/null || true
+                    for _swi in 1 2 3 4 5 6 7 8 9 10; do
+                        kill -0 "$_swp" 2>/dev/null || break
+                        sleep 0.2
+                    done
+                fi
+            done < <(cat "$G_S55_MARKER" 2>/dev/null)
+        fi
+        rm -f "$G_S55_MARKER" "$G_S55_MARKER.swapped"
+        rm -rf "$G_S55_CANARY2"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet "$G_S55_SBASE"~1 -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22en-swap: restore the unpoisoned protocol module" >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+
+        # 22eo: THE CLOSURE CROSS-PROBE IS REAL, NOT A VALUE COMPARED WITH
+        # ITSELF. `FIRST_H` is the path-EXPRESSION reading and the decision
+        # loop's `$_h` is the tree-LISTING reading, so a member attributed to the
+        # wrong entry must be refused. The first cut of section 55 took both from
+        # the listing, which made the branch unable to fire while its comment
+        # claimed a cross-probe -- a check that cannot fail is not a check (Codex
+        # adversarial, section 55 round 1, [medium]).
+        # The token is `CLOSURE_UNVERIFIABLE`: two probes disagreeing about one
+        # immutable commit is a parser or repository fault, not a member moving,
+        # and re-pointing the movement token at it would be this section
+        # redefining a published token section 58 owns.
+        # The mutation misattributes at the CONSUMPTION point, so the object
+        # presence probe is untouched and the base side classifies normally --
+        # otherwise the run would refuse for an unrelated reason and this case
+        # would pass without exercising the comparison at all.
+        G_S55_XBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] 22eo: a todo-only edit for the closure cross-probe\n' >>"$t"
+            git commit --quiet --no-verify -am "22eo: todo-only edit, closure untouched" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && S55_CANARY_DIR="" bash "$GATE_IN_CLONE" \
+            --base "$G_S55_XBASE" --head HEAD >"$TMP_DIR/gate-22eo-control.log" 2>&1)
+        G_S55_X_RC=$?
+        if [ "$G_S55_X_RC" -eq 0 ] \
+           && grep -q 'byte-identical base..head' "$TMP_DIR/gate-22eo-control.log"; then
+            t_pass "identity gate: CONTROL -- the unmutated cross-probe agrees and the range exits on the fast path"
+        else
+            t_fail "identity gate: the 22eo control did not reach the fast-path exit (rc=$G_S55_X_RC; see $TMP_DIR/gate-22eo-control.log)"
+        fi
+        G_S55_XMUT="$GATE_REPO/scripts/todo-graph/identity-gate-s55skew.sh"
+        # THE DELIMITER IS NOT `#`, AND THAT COST A ROUND. The replacement text
+        # first held `${#CLOSURE[@]}`, and that expansion contains BOTH `#` and
+        # `@` -- each of which CLOSES the `s` command that uses it as a
+        # delimiter. sed then rejected the expression, wrote nothing, and left a
+        # ZERO-BYTE mutant. An empty bash script exits 0, so the case reported "a
+        # misattributed closure entry rode the exit" while the gate under test
+        # had never run, and `cmp -s` differs happily from an empty file, so the
+        # build check every mutation here carries did not catch it. The
+        # replacement now swaps adjacent indices with `^ 1`, which needs no array
+        # length and so needs no delimiter-hostile expansion.
+        sed 's@^        _h="\${H_OID\[\$_i\]}"$@        _h="${H_OID[$(( _i ^ 1 ))]}"@' \
+            "$GATE_IN_CLONE" > "$G_S55_XMUT"
+        # SO THE MUTANT IS PROVEN RUNNABLE, not merely different. Differing from
+        # its source is necessary and not sufficient: a mutant that cannot parse,
+        # or has no content at all, produces a verdict about nothing.
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S55_XMUT" '_i \^ 1'; then
+            t_fail "identity gate: could not build the closure-misattribution mutation (the shape moved, or the mutant is empty or unparsable)"
+        else
+            (cd "$GATE_REPO" && S55_CANARY_DIR="" bash "$G_S55_XMUT" \
+                --base "$G_S55_XBASE" --head HEAD >"$TMP_DIR/gate-22eo-mut.log" 2>&1)
+            G_S55_XM_RC=$?
+            if [ "$G_S55_XM_RC" -eq 3 ] \
+               && grep -q 'CLOSURE_UNVERIFIABLE: the two independent readings' "$TMP_DIR/gate-22eo-mut.log"; then
+                t_pass "identity gate: MUTATION -- a listing entry attributed to the wrong member is refused by the cross-probe"
+            else
+                t_fail "identity gate: a misattributed closure entry rode the exit (rc=$G_S55_XM_RC; see $TMP_DIR/gate-22eo-mut.log)"
+            fi
+        fi
+        rm -f "$G_S55_XMUT"
+
+        # 22ep: EVERY WRITE IN THE ASSEMBLER IS DESCRIPTOR-RELATIVE, ASSERTED
+        # STRUCTURALLY RATHER THAN SAMPLED.
+        #
+        # The swap cases above are end-to-end and their timing is
+        # nondeterministic, so neither can prove the absence of a
+        # pathname-resolving write -- only that one particular swap did not find
+        # one. The property itself is static and can simply be read: inside
+        # `materialize_subtree`s python, no `os.mkdir`, `os.open`, `os.symlink`
+        # or `os.chmod` may resolve a path, and the mode must be applied through
+        # a descriptor. A check on the source cannot be vacuous and cannot be
+        # timing-lucky.
+        G_S55_ASM="$TMP_DIR/s55-assembler.py"
+        sed -n "/^import os, posixpath, subprocess, sys, pathlib$/,/^MATPY$/p" \
+            "$GATE_IN_CLONE" > "$G_S55_ASM"
+        # THE DETECTOR IS PYTHON, NOT `grep`, AND THAT IS NOT A STYLE CHOICE.
+        # The first cut grepped line by line and reported `os.open(dest_name,
+        # ...` as a name-resolving write because its `dir_fd=` sits on the NEXT
+        # line -- a false positive from the detector, on the very call that
+        # anchors everything else. A check that cannot read a wrapped call is not
+        # reading the code. Logical lines are joined first, then judged.
+        #
+        # AND THE DETECTOR IS ITSELF MUTATION-TESTED, in the same process: the
+        # same routine is run over a copy whose `os.fchmod` has been put back to
+        # a path-resolving `os.chmod`, and it must flag that. A detector that
+        # finds nothing on clean code and nothing on broken code has told you
+        # nothing about either.
+        G_S55_ASM_OUT="$(python3 - "$G_S55_ASM" <<'S55ASMPY'
+import ast, sys, pathlib
+
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if len(src.splitlines()) < 40 or "def dir_fd_for" not in src or "os.fchmod" not in src:
+    print("EXTRACT-BAD")
+    raise SystemExit(0)
+
+# ALLOW BY LIST, OVER AN AST, and the first half of that took three attempts to
+# get right.
+#
+# Cut one was a textual denylist of four spellings: a write through the builtin
+# `open`, `pathlib.Path.write_bytes`, `os.replace` or an aliased import returned
+# CLEAN. Cut two moved to an AST and added more forbidden names, which is the
+# same mistake with a longer list -- `pathlib.Path(rel).open("wb").write(...)`
+# still returned CLEAN, because neither `.open` nor `.write` had been thought of
+# (Codex adversarial, section 55 rounds 5 and 6). A denylist can only find the
+# mistakes someone predicted, which is the wrong shape for a check whose entire
+# job is to catch one nobody predicted.
+#
+# So every call in the assembler must be NAMED HERE to pass. Adding a spelling
+# is a deliberate edit to this list, which is the review this check stands in
+# for. The rules on top of the list:
+#   * `os.*` mutators are allowed only in their descriptor-relative form;
+#   * an aliased import or any from-import is refused, so no name can be
+#     reached under a spelling this list has never seen;
+#   * everything else must appear in the allowed sets below, or it is reported.
+#
+# The AST also fixes what reading the source as TEXT could not: a `dir_fd` on a
+# continuation line, and a nested call truncated by a non-greedy paren match --
+# two false positives this detector produced on the very code it exists to
+# clear.
+
+OS_DIRFD_REQUIRED = {"mkdir", "open", "symlink", "link", "mknod", "rename",
+                     "replace", "remove", "unlink", "rmdir", "truncate"}
+# Non-mutating os helpers the assembler legitimately uses.
+# `fstat` and `write` are added DELIBERATELY, which is what an allowlist is for:
+# the assembler records the identity of the root it created so the parent can
+# refuse a substituted one, and it does that on a descriptor the shell opened
+# rather than by resolving a path (section 55). The audit flagged the first
+# version of that code, which is the check working -- new code writing a path is
+# exactly what it is meant to notice.
+OS_ALLOWED_PLAIN = {"fsdecode", "fdopen", "fchmod", "read", "fstat", "write"}
+# Attribute calls on locals: file objects, pipes, strings, containers. Anything
+# NOT here is reported, which is what makes `Path(x).open(...)` fail.
+# `run` AND `Popen` ARE NOT HERE. They are reachable only through the exact
+# `subprocess.run` / `subprocess.Popen` branch, which validates the whole argv.
+# Listed generically, a local alias -- `sp = subprocess; sp.run(["touch", ...])`
+# -- fell through to this allowlist and never reached that validation, so the
+# checker certified CLEAN over a pathname-resolving write (Codex adversarial,
+# section 55 round 19, [medium], measured). The aliased-IMPORT rule did not
+# help: a rebind is not an import.
+ATTR_ALLOWED = {"write", "flush", "fileno", "readline", "read", "close",
+                "wait", "split", "rsplit", "strip", "lstrip", "startswith",
+                "decode", "encode", "join", "append", "add", "items", "get",
+                "dirname", "basename"}
+# `print` IS NOT HERE, AND ITS ABSENCE IS THE POINT. It was allowed because it
+# is harmless-looking, and `print(content[oid], file=sys.stderr)` then wrote
+# commit bytes to whatever the gate's stderr is redirected to, outside the
+# anchored materialization, while the checker reported CLEAN (Codex adversarial,
+# section 55 round 17, [medium], measured). The assembler reports through
+# `fail()`, which writes to `sys.stderr` explicitly; it has no use for `print`,
+# so allowing it bought nothing and cost a bypass.
+NAME_ALLOWED = {"int", "len", "str", "bytes", "set", "list", "dict",
+                "any", "all", "enumerate", "range", "isinstance", "OSError",
+                "fail", "cannot_ask", "dir_fd_for", "parent_of", "SystemExit"}
+ALLOWED_IMPORTS = {"os", "posixpath", "subprocess", "sys", "pathlib"}
+
+
+def dotted(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+# EACH TRUSTED VARIABLE'S PERMITTED PROVENANCE, EXACTLY. Rejecting selected RHS
+# FORMS was still a denylist: a walrus binding `(dest_name := "/tmp/x")` was not
+# an Assign and slipped past the scan entirely, and `str("/tmp/x")` was an
+# allowed Call rather than a Constant, so both reported clean while making
+# Python ignore `dir_fd` (Codex adversarial, section 55 round 12, [medium],
+# both measured). An allowlist of shapes cannot be walked around by finding a
+# spelling nobody enumerated: anything that is not the ONE way each of these is
+# legitimately produced is reported, whatever syntax produced it.
+TRUSTED_PROVENANCE = {
+    "dest_name": {"sub:sys.argv"},
+    "tmp_fd": {"call:int"},
+    "part": {"for:call:rel.split"},
+    "name": {"call:posixpath.basename"},
+    "fd": {"@root_fd", "call:os.open", "sub:dir_fds"},
+    "pfd": {"call:dir_fd_for"},
+    # THE FILE HANDLE TOO. `fh.write` was trusted by SPELLING, so putting
+    # `fh = sys.stderr` in front of the existing write made every later call --
+    # write, flush, fileno, and the `fchmod` taken through `fh.fileno()` --
+    # operate on inherited stderr, which is a log file outside the anchored
+    # materialization, while the checker reported CLEAN (Codex adversarial,
+    # section 55 round 16, [medium], measured). A name is trusted because of
+    # where it came from or not at all.
+    "fh": {"call:os.fdopen"},
+}
+TRUSTED_NAMES = set(TRUSTED_PROVENANCE)
+
+
+def shape_of(node, is_for=False):
+    prefix = "for:" if is_for else ""
+    if node is None:
+        return prefix + "<none>"
+    if isinstance(node, ast.Name):
+        return prefix + "@" + node.id
+    if isinstance(node, ast.Call):
+        return prefix + "call:" + (dotted(node.func) or "<expr>")
+    if isinstance(node, ast.Subscript):
+        base = node.value
+        return prefix + "sub:" + (dotted(base) or "<expr>")
+    if isinstance(node, ast.Attribute):
+        return prefix + (dotted(node) or "<expr>")
+    return prefix + "<expr>"
+
+
+def offenders(text):
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return ["UNPARSABLE: %s" % exc]
+    bad = []
+    # THE TRUSTED VARIABLES' DEFINITIONS ARE PINNED, NOT JUST THEIR NAMES.
+    # Accepting an operand because it is spelled `dest_name` proves nothing
+    # about what `dest_name` holds: assigning it the literal "/tmp/22ep-bypass"
+    # left `os.mkdir(dest_name, 0o700, dir_fd=tmp_fd)` reported clean, and an
+    # absolute path makes Python IGNORE `dir_fd` -- so the anchor was removed
+    # while the structural proof stayed green (Codex adversarial, section 55
+    # round 11, [medium], measured). A trusted name must never be bound to a
+    # literal: every legitimate one here is derived from argv, from a split, or
+    # from a descriptor call.
+    for node in ast.walk(tree):
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = [(tgt, node.value, False) for tgt in node.targets]
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [(node.target, node.value, False)]
+        elif isinstance(node, ast.NamedExpr):
+            # The walrus. Not an Assign, and the first thing that walked past
+            # the previous scan.
+            targets = [(node.target, node.value, False)]
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            targets = [(node.target, node.iter, True)]
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            targets = [(node.optional_vars, node.context_expr, False)]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            # A PARAMETER IS A BINDING. `def fail(msg, part="/tmp/x", fd=tmp_fd)`
+            # rebinds two trusted names for the whole body, and every existing
+            # call then performs an absolute write -- with the detector
+            # reporting no offenders, because its scan covered assignments,
+            # loops, with-items, walruses and comprehensions but not `ast.arg`
+            # (Codex adversarial, section 55 round 18, [medium], measured). No
+            # trusted name may be a parameter at all: each is produced at one
+            # place in this assembler and shadowing it is never legitimate.
+            spec = node.args if not isinstance(node, ast.Lambda) else node.args
+            for a in (list(spec.posonlyargs) + list(spec.args) + list(spec.kwonlyargs)
+                      + ([spec.vararg] if spec.vararg else [])
+                      + ([spec.kwarg] if spec.kwarg else [])):
+                if a.arg in TRUSTED_NAMES:
+                    bad.append("%s bound as a parameter" % a.arg)
+            targets = []
+        elif isinstance(node, ast.comprehension):
+            # A comprehension binds like a `for` and is not a `For`. Left out,
+            # `[os.mkdir(part, 0o700, dir_fd=fd) for part in ['/tmp/x']]`
+            # rebinds a trusted name to an absolute path -- which makes Python
+            # ignore `dir_fd` -- and the detector reported it clean (Codex
+            # adversarial, section 55 round 13, [medium], measured).
+            targets = [(node.target, node.iter, True)]
+        for tgt, val, is_for in targets:
+            names = ([e for e in tgt.elts] if isinstance(tgt, (ast.Tuple, ast.List))
+                     else [tgt])
+            if (isinstance(tgt, (ast.Tuple, ast.List))
+                    and isinstance(val, (ast.Tuple, ast.List))
+                    and len(val.elts) == len(names)):
+                vals = list(val.elts)
+            else:
+                vals = [val] * len(names)
+            for nm, vl in zip(names, vals):
+                if not isinstance(nm, ast.Name) or nm.id not in TRUSTED_NAMES:
+                    continue
+                got = shape_of(vl, is_for)
+                if got not in TRUSTED_PROVENANCE[nm.id]:
+                    bad.append("%s bound from %s" % (nm.id, got))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname or a.name not in ALLOWED_IMPORTS:
+                    bad.append("import %s%s" % (a.name, " as " + a.asname if a.asname else ""))
+        elif isinstance(node, ast.ImportFrom):
+            bad.append("from %s import ..." % (node.module or "?"))
+        elif isinstance(node, ast.Call):
+            kw = {k.arg for k in node.keywords if k.arg}
+            # THE VALUE, NOT MERELY THE KEYWORD. `os.mkdir(part, dir_fd=None)`
+            # carries the keyword and is Python's ordinary PATHNAME-RELATIVE
+            # behaviour, so a presence test reported it clean while it removed
+            # the anchor the whole check exists to prove (Codex adversarial,
+            # section 55 round 9, [medium]). The accepted expressions are the
+            # three trusted descriptors this assembler holds, by name.
+            TRUSTED_FDS = {"tmp_fd", "fd", "pfd"}
+            dirfd_ok = any(
+                k.arg == "dir_fd" and isinstance(k.value, ast.Name)
+                and k.value.id in TRUSTED_FDS
+                for k in node.keywords)
+            # AND THE PATH OPERAND, because a trusted descriptor is IGNORED when
+            # the path is absolute: `os.mkdir("/tmp/x", dir_fd=fd)` creates the
+            # directory outside the anchored tree and satisfied every check
+            # above (Codex adversarial, section 55 round 10, [medium]). The
+            # assembler only ever names single components it computed itself, so
+            # the operand is pinned to those variables. `os.symlink` is the one
+            # whose PATH is the second argument -- its first is the link's target
+            # text, which is commit content and legitimately arbitrary.
+            TRUSTED_PATHS = {"part", "name", "dest_name"}
+
+            def path_operand_ok(call, attr):
+                idx = 1 if attr == "symlink" else 0
+                if len(call.args) <= idx:
+                    return False
+                a = call.args[idx]
+                return isinstance(a, ast.Name) and a.id in TRUSTED_PATHS
+            name = dotted(node.func)
+            if isinstance(node.func, ast.Name):
+                if node.func.id not in NAME_ALLOWED:
+                    bad.append(node.func.id + "()")
+            elif isinstance(node.func, ast.Attribute):
+                attr = node.func.attr
+                if name and name.split(".")[0] == "os" and name.count(".") == 1:
+                    if attr in OS_DIRFD_REQUIRED:
+                        if not dirfd_ok:
+                            bad.append(name + "() without a trusted dir_fd")
+                        elif not path_operand_ok(node, attr):
+                            bad.append(name + "() on a path that is not a trusted component")
+                    elif attr == "fchmod":
+                        # `os.fchmod(1, 0o777)` re-modes whatever fd 1 points
+                        # at, which is the gate's stdout and outside the
+                        # materialization by construction (Codex adversarial,
+                        # section 55 round 15, [medium], measured).
+                        arg = node.args[0] if node.args else None
+                        ok = (isinstance(arg, ast.Call)
+                              and dotted(arg.func) in ("fh.fileno",))
+                        if not ok:
+                            bad.append("os.fchmod() on an untrusted descriptor")
+                    elif attr == "fdopen":
+                        # A FILE OBJECT IS ONLY AS ANCHORED AS THE DESCRIPTOR IT
+                        # WRAPS. `os.fdopen` and `.write` were allowlisted
+                        # independently, so `os.fdopen(1, "wb").write(b"...")`
+                        # reported clean -- and fd 1 is wherever the gate's
+                        # stdout happens to point, which is outside the
+                        # materialization by construction (Codex adversarial,
+                        # section 55 round 14, [medium], measured). The wrapped
+                        # descriptor must be one this assembly opened.
+                        arg = node.args[0] if node.args else None
+                        if not (isinstance(arg, ast.Name) and arg.id in TRUSTED_FDS):
+                            bad.append("os.fdopen() on an untrusted descriptor")
+                    elif attr not in OS_ALLOWED_PLAIN:
+                        bad.append(name + "()")
+                elif name in ("posixpath.dirname", "posixpath.basename",
+                              "posixpath.join", "sys.stderr.write"):
+                    pass
+                elif name in ("subprocess.run", "subprocess.Popen"):
+                    # PINNED TO THE TWO READ-ONLY SHAPES, because "subprocess is
+                    # allowed" is a hole the size of the shell:
+                    # `subprocess.run(["touch", rel])` resolves a pathname and
+                    # writes, and the previous cut of this allowlist returned
+                    # CLEAN for it (Codex adversarial, section 55 round 7,
+                    # [medium]). The assembler makes exactly two subprocess
+                    # calls and both are git reads; anything else is reported.
+                    # THE WHOLE ARGV, not its first two words. Checking a
+                    # prefix allows any tail, and git's tail is where the
+                    # writing subcommands live. The two shapes this assembler
+                    # uses are pinned exactly: every element must be a literal
+                    # except the two named variables, and a starred element is
+                    # allowed only where the prefix list legitimately expands.
+                    LS_TREE = ["git", "ls-tree", "-r", "-z", "@commit", "--", "*prefixes"]
+                    CAT_FILE = ["git", "cat-file", "--batch"]
+                    argv = node.args[0] if node.args else None
+                    shape = None
+                    if isinstance(argv, (ast.List, ast.Tuple)):
+                        shape = []
+                        for e in argv.elts:
+                            if isinstance(e, ast.Constant):
+                                shape.append(e.value)
+                            elif isinstance(e, ast.Name):
+                                shape.append("@" + e.id)
+                            elif isinstance(e, ast.Starred) and isinstance(e.value, ast.Name):
+                                shape.append("*" + e.value.id)
+                            else:
+                                shape.append("<expr>")
+                    if shape not in (LS_TREE, CAT_FILE):
+                        bad.append(name + "(" + repr(shape) + ")")
+                elif name and name.startswith("pathlib."):
+                    # pathlib is imported for PurePosixPath only; a Path(...)
+                    # anywhere here is a pathname handle, which is the thing
+                    # this check exists to keep out of the write paths.
+                    if name != "pathlib.PurePosixPath":
+                        bad.append(name + "()")
+                elif attr in ("write", "flush", "fileno"):
+                    # A WRITE IS ONLY ANCHORED IF ITS RECEIVER IS. `.write` was
+                    # allowed on any receiver, so `sys.stdout.buffer.write(...)`
+                    # reported clean while writing wherever the gate's stdout
+                    # points (Codex adversarial, section 55 round 15, [medium],
+                    # measured). The only handle this assembler writes through is
+                    # the one it opened.
+                    recv = dotted(node.func)
+                    if recv not in ("fh.write", "fh.flush", "fh.fileno",
+                                    "sys.stderr.write", "proc.stdin.write"):
+                        bad.append("." + attr + "() on " + str(recv))
+                elif attr not in ATTR_ALLOWED:
+                    bad.append("." + attr + "()")
+            else:
+                # A CALLEE THAT IS NEITHER A NAME NOR AN ATTRIBUTE IS REPORTED,
+                # not skipped. `os.__dict__["unlink"](rel)` has a Subscript
+                # callee and fell straight through every branch above -- the
+                # detector returned CLEAN over a real filesystem mutation, which
+                # is the same fail-open it has now been repaired from three
+                # times (Codex adversarial, section 55 round 8, [medium],
+                # measured). Deny-by-default has to mean the DEFAULT branch
+                # denies.
+                bad.append("<%s callee>()" % type(node.func).__name__)
+    return bad
+
+
+clean = offenders(src)
+# EVERY ALLOWED CATEGORY IS MUTATION-TESTED, and one of these was added because
+# the detector passed it: `Path(rel).open("wb")` reaches a write through two
+# calls neither of which had been named.
+MUTATIONS = {
+    "fchmod-to-chmod": ("os.fchmod(fh.fileno(), ", "os.chmod(dest_name + '/' + rel, "),
+    "dirfd-dropped": ("os.mkdir(part, dir_fd=fd)", "os.mkdir(part)"),
+    "builtin-open": ("with os.fdopen(fd, \"wb\") as fh:", "with open(rel, \"wb\") as fh:"),
+    "pathlib-write": ("fh.write(content[oid])", "pathlib.Path(rel).write_bytes(content[oid])"),
+    "pathlib-open": ("fh.write(content[oid])", "pathlib.Path(rel).open('wb').write(content[oid])"),
+    "aliased-import": ("import os, posixpath, subprocess, sys, pathlib",
+                       "import os as _o, posixpath, subprocess, sys, pathlib"),
+    "subprocess-run-write": ("fh.write(content[oid])",
+                             "subprocess.run(['touch', rel])"),
+    "subprocess-popen-write": ("fh.write(content[oid])",
+                               "subprocess.Popen(['tee', rel]).communicate()"),
+    "subprocess-argv-tail": ('["git", "cat-file", "--batch"]',
+                             '["git", "cat-file", "--batch", rel]'),
+    "dynamic-callee": ("fh.write(content[oid])",
+                       "os.__dict__['unlink'](rel)"),
+    "dirfd-none": ("os.mkdir(part, dir_fd=fd)", "os.mkdir(part, dir_fd=None)"),
+    "dirfd-expression": ("os.mkdir(part, dir_fd=fd)",
+                         "os.mkdir(part, dir_fd=int(open('/dev/null').fileno()))"),
+    "absolute-operand": ("os.mkdir(part, dir_fd=fd)",
+                         "os.mkdir('/tmp/22ep-bypass', dir_fd=fd)"),
+    "dotdot-operand": ("os.mkdir(part, dir_fd=fd)",
+                       "os.mkdir('../22ep-bypass', dir_fd=fd)"),
+    # The three that pin the VARIABLES rather than the call sites. Without
+    # these the operand checks above are satisfied by a name whose value was
+    # replaced somewhere else entirely.
+    "dest-name-absolute": ("prefixes = sys.argv[4:]",
+                           "prefixes = sys.argv[4:]\ndest_name = '/tmp/22ep-bypass'"),
+    "name-dotdot": ("    name = posixpath.basename(rel)",
+                    "    name = '../22ep-bypass'"),
+    "part-literal": ("        cur = posixpath.join(cur, part) if cur else part",
+                     "        part = '/tmp/22ep-bypass'\n        cur = posixpath.join(cur, part) if cur else part"),
+    # The two that walked past a denylist of RHS forms.
+    "walrus-rebind": ("os.mkdir(dest_name, 0o700, dir_fd=tmp_fd)",
+                      "os.mkdir((dest_name := '/tmp/22ep-bypass'), 0o700, dir_fd=tmp_fd)"),
+    "wrapped-literal": ("prefixes = sys.argv[4:]",
+                        "prefixes = sys.argv[4:]\ndest_name = str('/tmp/22ep-bypass')"),
+    "inherited-fd-write": ("fh.write(content[oid])",
+                           'os.fdopen(1, "wb").write(b"corrupt")'),
+    "inherited-fchmod": ('os.fchmod(fh.fileno(), 0o755 if mode == "100755" else 0o644)',
+                         "os.fchmod(1, 0o777)"),
+    "stdout-write": ("fh.write(content[oid])",
+                     "sys.stdout.buffer.write(content[oid])"),
+    "subprocess-alias": ("fh.write(content[oid])",
+                         'sp = subprocess\n        sp.run(["touch", "/tmp/22ep-bypass"])'),
+    "param-rebind": ("def fail(msg):",
+                     'def fail(msg, part="/tmp/22ep-bypass", fd=tmp_fd):'),
+    "print-to-stderr": ("fh.write(content[oid])",
+                        "print(content[oid], file=sys.stderr)"),
+    "fh-rebind": ("        fh.write(content[oid])",
+                  "        fh = sys.stderr\n        fh.write(content[oid])"),
+    "comprehension-rebind": ("os.mkdir(dest_name, 0o700, dir_fd=tmp_fd)",
+                             "[os.mkdir(part, 0o700, dir_fd=tmp_fd) "
+                             "for part in ['/tmp/22ep-comprehension-bypass']]"),
+}
+undetected = []
+for label, (old, new) in MUTATIONS.items():
+    mutant = src.replace(old, new, 1)
+    if mutant == src:
+        undetected.append(label + ":unchanged")
+    elif not offenders(mutant):
+        undetected.append(label + ":undetected")
+
+if undetected:
+    print("MUTANT-BAD " + ",".join(undetected))
+elif clean:
+    print("DIRTY " + "; ".join(clean)[:300])
+else:
+    print("CLEAN")
+S55ASMPY
+)"
+        case "$G_S55_ASM_OUT" in
+            CLEAN)
+                t_pass "identity gate: no path-resolving write survives in the narrow assembler, over a deny-by-default AST audit whose every allowed category is mutation-tested" ;;
+            EXTRACT-BAD)
+                t_fail "identity gate: could not extract the assembler body to check it (the shape moved)" ;;
+            MUTANT-*)
+                t_fail "identity gate: the descriptor-relative-write detector does not detect (got [$G_S55_ASM_OUT]), so 22ep proves nothing" ;;
+            *)
+                t_fail "identity gate: the narrow assembler still resolves a pathname to write ($G_S55_ASM_OUT)" ;;
+        esac
+        rm -f "$G_S55_ASM"
+
+        # 22er: EVERY EXTERNAL LAUNCH IS INSIDE THE DEADLINE, ENUMERATED FROM
+        # THE SOURCE RATHER THAN FROM MEMORY.
+        #
+        # Five separate adversarial rounds each found ONE more launch outside
+        # the budget -- contract_of, then the bucket checker, then the
+        # relocation interpreter, then the comparison's argument substitutions,
+        # then three `mktemp`s, then the reads that consume the checker's
+        # output. Every one was found by a reader looking, and every fix was
+        # scoped to what that reader happened to name. That is a losing shape:
+        # the defect is not any particular call, it is that nothing enumerates
+        # the set. This does.
+        #
+        # WHAT IT COVERS AND WHAT IT DOES NOT, said plainly. It reads the shell
+        # body with heredoc bodies removed (their contents are python, and 22ep
+        # audits those), joins line continuations, and requires every
+        # command-position launch of a binary that has actually bitten -- python3,
+        # git, mktemp, cat, base64, head -- to carry a `timeout` on the same
+        # logical line. It does NOT prove the bound is the RIGHT one, and it does
+        # not cover every binary in the file; it covers the ones whose unbounded
+        # use is the recurring defect, and adding another is one word here.
+        G_S55_INV="$(python3 - "$GATE_IN_CLONE" <<'S55INVPY'
+import re, sys, pathlib
+
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+
+# ONE TOKENIZER WITH A CONTEXT STACK, emitting every command piece it finds.
+#
+# This is the seventh version and the second rewrite. Version six was a single
+# character pass and was still wrong in a way only a mutation could show: it
+# kept the OUTER quote state while inside `$( ... )`, so the heredoc opening a
+# command substitution was never recognised, and a separate paren-counter then
+# walked the embedded python counting brackets it had no business reading. A
+# removed bound on the relocation interpreter went undetected as a result
+# (Codex adversarial, section 55 round 14, [medium], measured).
+#
+# The fix is structural: a command substitution is its OWN context, with its own
+# quote state and its own heredocs, so the tokenizer pushes a frame at `$(` and
+# pops at the matching `)`. Each frame's text is emitted as a piece in its own
+# right. Comments and heredoc bodies never enter a frame at all.
+#
+# The history is kept in this comment deliberately. Every earlier version was
+# confidently wrong in the same direction -- it reported CLEAN -- and each was
+# caught only because this fixture mutation-tests itself. A structural checker
+# that is not mutation-tested is a checker that reports what you hoped for.
+
+
+def command_pieces(text):
+    # PIECES CARRY THE LINES THEY CAME FROM. A `launch-exempt:` marker is a
+    # trailing comment on a source line, and a nested `$( ... )` body is emitted
+    # as its own piece WITHOUT that trailing text -- so the marker on
+    # `SCRIPT_DIR="$(cd "$(dirname ...)" && pwd)"` never reached the `dirname`
+    # piece it was written for. Recording each piece's line range lets the
+    # exemption apply to everything that line launches, which is what a reader
+    # writing the marker means by it.
+    pieces, stack = [], [{"buf": "", "s": False, "d": False, "line": 1}]
+    i, n = 0, len(text)
+    line = 1
+    pending_heredocs = []
+    while i < n:
+        ch = text[i]
+        top = stack[-1]
+
+        if ch == "\n":
+            line += 1
+            # Heredocs opened on this line consume the following lines. THE
+            # SKIPPED NEWLINES ARE COUNTED: jumping the cursor past a body
+            # without advancing the line number made every reported location
+            # after the first heredoc point at unrelated code, which is a
+            # diagnostic that actively misleads whoever reads it.
+            _hd_start = i
+            for tag in pending_heredocs:
+                j = text.find("\n" + tag + "\n", i)
+                end_j = text.find("\n", i + 1) if j == -1 else j + len(tag) + 1
+                i = end_j if end_j != -1 else n
+            line += text.count("\n", _hd_start, i)
+            pending_heredocs = []
+            if len(stack) == 1 and not top["s"] and not top["d"]:
+                if top["buf"].strip():
+                    pieces.append((top["buf"].strip(), top["line"], line))
+                top["buf"] = ""
+                top["line"] = line
+            else:
+                top["buf"] += " "
+            i += 1
+            continue
+
+        if ch == "\\" and not top["s"]:
+            # A backslash-newline is a continuation; otherwise it escapes. THE
+            # LINE STILL ADVANCES: it did not, so every location after the first
+            # continued command drifted earlier -- and a drifted location landed
+            # on an unrelated `launch-exempt:` marker and SUPPRESSED a real
+            # launch. A checker whose provenance is wrong does not merely
+            # mis-report; it silently applies the wrong exemption (Codex
+            # adversarial, section 55 round 15, [medium], measured).
+            if i + 1 < n and text[i + 1] == "\n":
+                i += 2
+                line += 1
+                top["buf"] += " "
+                continue
+            top["buf"] += text[i:i + 2]
+            i += 2
+            continue
+
+        if ch == "'" and not top["d"]:
+            top["s"] = not top["s"]
+            top["buf"] += ch
+            i += 1
+            continue
+
+        if ch == '"' and not top["s"]:
+            top["d"] = not top["d"]
+            top["buf"] += ch
+            i += 1
+            continue
+
+        # A SUBSTITUTION IS ENTERED FROM INSIDE DOUBLE QUOTES TOO. `"$( ... )"`
+        # is the commonest spelling in this file, and requiring the outer
+        # context to be unquoted meant the frame was never pushed: everything
+        # inside ran in the OUTER quote state, so an `awk` program's own quoting
+        # flipped it and the tokenizer began emitting fragments of an awk script
+        # as though they were commands. Only a SINGLE quote suppresses a
+        # substitution.
+        if not top["s"] and text.startswith("$(", i):
+            stack.append({"buf": "", "s": False, "d": False, "line": line})
+            i += 2
+            continue
+
+        if not top["s"] and not top["d"]:
+            if ch == "#":
+                rest_end = text.find("\n", i)
+                rest_end = n if rest_end == -1 else rest_end
+                if "launch-exempt:" in text[i:rest_end]:
+                    top["buf"] += text[i:rest_end]
+                i = rest_end
+                continue
+            if ch == ")" and len(stack) > 1:
+                done = stack.pop()
+                if done["buf"].strip():
+                    pieces.append((done["buf"].strip(), done["line"], line))
+                stack[-1]["buf"] += " "
+                i += 1
+                continue
+            m = re.match(r"<<-?'?([A-Za-z0-9_]+)'?", text[i:])
+            if m:
+                pending_heredocs.append(m.group(1))
+                top["buf"] += " "
+                i += m.end()
+                continue
+
+        top["buf"] += ch
+        i += 1
+
+    for frame in stack:
+        if frame["buf"].strip():
+            pieces.append((frame["buf"].strip(), frame["line"], line))
+    return pieces
+
+
+def exempt_lines(text):
+    return {i for i, l in enumerate(text.splitlines(), 1) if "launch-exempt:" in l}
+
+
+def fixed_lines(text):
+    return {i for i, l in enumerate(text.splitlines(), 1) if "fixed-allowance:" in l}
+
+
+pieces = command_pieces(src)
+
+# DENY BY DEFAULT OVER EXTERNAL COMMANDS, not a watchlist of six binaries. A
+# watchlist only finds the launches someone predicted, and `sed` -- absent from
+# it -- was reading logs the tree's own processes had just held open, reachable
+# by the same rename-and-FIFO route already fixed elsewhere in this file (Codex
+# adversarial, section 55 round 14, [medium]). Anything in command position that
+# is not a shell builtin or a function this file defines is an external launch
+# and must carry a bound, or a `launch-exempt:` marker on its line.
+#
+# WHAT THIS DOES NOT COVER, STATED RATHER THAN LEFT TO BE DISCOVERED. It reads
+# the shapes this file actually uses: `$( ... )` substitutions (nested, and
+# inside double quotes), heredocs, comments, continuations and case arms. It
+# does NOT understand backtick substitution, process substitution `<( )`,
+# arithmetic contexts, or the difference between a quoted and an expanding
+# heredoc tag -- so a launch written in any of those would not be reported
+# (Codex adversarial, section 55 round 15, [medium], each measured against a
+# synthetic case).
+#
+# THE ACCURATE CLAIM IS ABOUT LAUNCHES, NOT SYNTAX. An earlier wording said none
+# of those shapes appears in this file, which is false: arithmetic expansion is
+# used in six places. What is true, and checkable, is that no EXTERNAL LAUNCH is
+# written inside any of them -- the arithmetic sites compute with shell
+# variables and spawn nothing. So the inventory is a real net over the real
+# code, and not a proof about shell in general. Closing the remainder means a
+# bash parser, which is a project rather than a patch and is filed as one.
+# -> the follow-up is TODO-06 section 56, which owns this gate's spawn surface.
+BUILTINS = {
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done",
+    "case", "esac", "function", "return", "break", "continue", "in",
+    "echo", "printf", "read", "local", "export", "unset", "set", "shift",
+    "eval", "exec", "exit", "trap", "wait", "kill", "cd", "pwd", "test",
+    "true", "false", ":", "[", "[[", "]]", "declare", "typeset", "readonly",
+    "source", ".", "let", "shopt", "builtin", "command", "hash", "type",
+    "getopts", "umask", "ulimit", "times", "jobs", "disown", "alias",
+    "mapfile", "readarray", "pushd", "popd", "dirs",
+}
+# `sleep` IS NOT A BASH BUILTIN. Listing it as one was a factual error that
+# silently exempted five real launches (Codex adversarial, section 55 round 15,
+# [medium], measured). It is external; the grace loops that use it carry a
+# marker instead, which states why a sleep cannot block rather than asserting
+# something untrue about bash.
+SELF_BOUNDING = ("bounded_git", "bounded_rev_parse")
+
+FUNCS = set(re.findall(r"(?m)^([a-z_][a-z_0-9]*)\(\)\s*\{", src))
+PREFIX = re.compile(r"^\s*(?:setsid|exec|nohup|command|env|time|[A-Za-z_][A-Za-z_0-9]*(?:\[[^]]*\])?=\S*)\s+")
+CASE_LABEL = re.compile(r"^\s*\(?\s*[A-Za-z0-9_*?.|\[\]-]+\)\s")
+# The alternation class allows WHITESPACE, because `QUOTED` has already blanked
+# any quoted alternative: `0000...|"")` arrives here as `0000...| )`.
+CASE_LABEL_ALT = re.compile(r"^\s*\(?\s*[A-Za-z0-9_*?.\[\]| \t-]+\)(\s|$)")
+REDIR = re.compile(r"\d?>>?&?\s*\d*|<&?\s*\d*")
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def unbounded_launches(all_pieces, exempt=frozenset(), fixed_ok=frozenset()):
+    found = []
+    for piece, lo, hi in all_pieces:
+        if "launch-exempt:" in piece or any(l in exempt for l in range(lo, hi + 1)):
+            continue
+        # THE FIXED-ALLOWANCE MARKER NEEDS LINE PROVENANCE TOO, for the same
+        # reason `launch-exempt:` does: a `$( ... )` body is emitted without the
+        # trailing comment on the line that contains it.
+        allow_fixed = any(l in fixed_ok for l in range(lo, hi + 1))
+        code = QUOTED.sub(" ", piece)
+        # THE BOUND IS CHECKED PER SEGMENT, NOT PER PIECE. A whole-piece test
+        # meant `timeout 1 true; sort` was clean because the piece contained the
+        # word `timeout` somewhere -- so a second command sharing the line was
+        # never examined (Codex adversarial, section 55 round 15, [medium],
+        # measured).
+        # SELF-BOUNDING IS A PROPERTY OF A SEGMENT, NOT OF A LINE. Tested over
+        # the whole piece, `bounded_git ... | cut ...` was skipped entirely
+        # because `bounded_git` appeared somewhere in it -- so a real, unbounded
+        # `cut` in the same pipeline was never examined (Codex adversarial,
+        # section 55 round 16, [medium], measured). It is now recognised only
+        # when it is that segment's own command head, which is the only position
+        # in which it bounds anything.
+        # REDIRECTIONS ARE NOT COMMANDS. `printf ... >&2` splits on the `&` and
+        # leaves a bare `2`, which matched the command-name shape and was
+        # reported as an unbounded launch -- the scanner inventing a binary
+        # called 2. Removed before anything is split.
+        code = REDIR.sub(" ", code)
+        # AND A CASE ARM IS STRIPPED WHOLE, alternations included. Splitting on
+        # `|` first tore `0|1)` apart and left `0` looking like a command; the
+        # arms are separated on `;;` and each label removed before the operator
+        # split runs.
+        segments = []
+        for arm in code.split(";;"):
+            segments.extend(re.split(r"[|;&]|\bthen\b|\bdo\b|\belse\b",
+                                     CASE_LABEL_ALT.sub(" ", arm, count=1)))
+        for segment in segments:
+            seg = segment
+            while True:
+                seg2 = CASE_LABEL.sub(" ", seg, count=1)
+                seg2 = PREFIX.sub("", seg2, count=1)
+                if seg2 == seg:
+                    break
+                seg = seg2
+            words = seg.strip().split()
+            if not words:
+                continue
+            if words[0] == "timeout" or "timeout" in words[:3]:
+                # A BOUND IS NOT AUTOMATICALLY THE GLOBAL DEADLINE. Accepting any
+                # `timeout`-headed segment let a FIXED allowance pass as though
+                # it were derived from the remaining budget, which is how a
+                # cleanup helper came to launch work ten seconds past the
+                # ceiling (Codex adversarial, section 55 round 18, [medium]). A
+                # literal allowance is legitimate in a few places -- the clock
+                # probe cannot measure itself, and exit cleanup runs after the
+                # budget is gone by definition -- so it is allowed only where
+                # the line says so.
+                # `-s KILL` takes a VALUE, and skipping only dash-words read
+                # `KILL` as the allowance -- so every fixed bound in the file
+                # passed the check that was written to find them.
+                allowance = ""
+                for w_i, w in enumerate(words):
+                    if w == "timeout":
+                        rest = words[w_i + 1:]
+                        k = 0
+                        while k < len(rest):
+                            w2 = rest[k]
+                            if w2 in ("-s", "--signal", "-k", "--kill-after"):
+                                k += 2
+                                continue
+                            if w2.startswith("-"):
+                                k += 1
+                                continue
+                            allowance = w2
+                            break
+                        break
+                if allowance.isdigit() and not allow_fixed and "fixed-allowance:" not in piece:
+                    found.append("line %d: fixed allowance %ss -- %s"
+                                 % (lo, allowance, piece.strip()[:80]))
+                    break
+                continue
+            head_word = words[0]
+            if head_word in SELF_BOUNDING:
+                continue
+            if (head_word in BUILTINS or head_word in FUNCS
+                    or "=" in head_word or head_word.startswith("$")
+                    or head_word.startswith("-") or head_word.startswith("{")
+                    or head_word.startswith("}") or head_word.startswith("!")
+                    or not re.match(r"^[A-Za-z0-9_./-]+$", head_word)):
+                continue
+            found.append("line %d: %s" % (lo, piece.strip()[:100]))
+            break
+    return found
+
+
+bad = unbounded_launches(pieces, exempt_lines(src), fixed_lines(src))
+
+# EVERY BOUND THIS SECTION ADDED IS MUTATION-TESTED, including the one whose
+# heredoc broke the previous tokenizer.
+# The separator is `[\s\\]+`, not `\s+`: these launches wrap with a
+# backslash-newline, and a backslash is not whitespace -- so three of the five
+# patterns matched nothing and reported "unchanged", which is the mutation
+# harness correctly refusing to certify a mutation it never made.
+_SEP = r"[\s\\]+"
+MUTATIONS = {
+    "assembler": r'timeout -s KILL "\$BUDGET_LEFT"' + _SEP + r'(?=python3 - "\$_commit")',
+    "checker-output-cat": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=cat "\$TMP_DIR/bucket-contract\.out")',
+    "protocol-record-head": r'timeout --foreground -s KILL "\$PROBE_BUDGET"' + _SEP + r'(?=head -n 1 "\$_rec")',
+    "relocation-interpreter": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=python3 - "\$BASE_PRE_B64")',
+    "walk-log-sed": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=sed \047s/\^/    /\047 "\$TMP_DIR/base-walk\.log")',
+    # The filesystem helper that replaced a false exemption. Removing its bound
+    # must be caught, or the helper is only the exemption in a longer form.
+    "bounded-fs": r'timeout --foreground -s KILL "\$BUDGET_LEFT"' + _SEP + r'(?="\$@" 2>/dev/null)',
+}
+missed = []
+for label, pattern in MUTATIONS.items():
+    mutated = re.sub(pattern, "", src, count=1)
+    if mutated == src:
+        missed.append(label + ":unchanged")
+    elif not unbounded_launches(command_pieces(mutated), exempt_lines(mutated), fixed_lines(mutated)):
+        missed.append(label + ":undetected")
+
+if missed:
+    print("MUTANT-BAD " + ",".join(missed))
+elif bad:
+    print("UNBOUNDED " + " || ".join(bad[:6]))
+else:
+    print("CLEAN")
+S55INVPY
+)"
+        case "$G_S55_INV" in
+            CLEAN) t_pass "identity gate: every watched external launch in the shell body carries a timeout, enumerated from the source and proven by removing one" ;;
+            MUTANT-*) t_fail "identity gate: the launch inventory does not detect an unbounded launch ($G_S55_INV), so 22er proves nothing" ;;
+            *)     t_fail "identity gate: an external launch runs outside the deadline ($G_S55_INV)" ;;
+        esac
+
+        # 22eq: A STALLED `git` UNDER THE ASSEMBLER DOES NOT OUTLIVE THE GATE.
+        #
+        # The assembler runs two git processes of its own. It was bounded with
+        # `timeout --foreground`, which documents that it does not time out
+        # CHILDREN of the command -- so a KILL delivered to python while it was
+        # blocked reading a stalled `cat-file --batch` orphaned that git, past
+        # the deadline this file advertises (Codex adversarial, section 55 round
+        # 4, [medium]). Whose child it is has no bearing on whether it outlives
+        # the bound, which is why the assembler now runs supervised in its own
+        # session like every other phase.
+        # THE ORACLE IS FIXTURE-OWNED, not a global process search. The first
+        # cut accepted "rc 3 and no `sleep 120` anywhere on this host", which is
+        # wrong in both directions: an unrelated early refusal satisfies it
+        # without the stall ever being reached, and an unrelated same-user sleep
+        # fails it and is then killed by a global `pkill` -- a fixture reaching
+        # outside its own run, which is the defect section 53's fixture reaper
+        # was repaired for (Codex adversarial, section 55 round 5, [medium]).
+        # The shim records that it was REACHED and the exact pid it became, so
+        # the case asserts about that process and cleans up only that one.
+        G_S55_STALLDIR="$TMP_DIR/gitshim-s55stall"
+        G_S55_STALLPID="$TMP_DIR/s55-stall.pid"
+        rm -f "$G_S55_STALLPID"
+        mkdir -p "$G_S55_STALLDIR"
+        # PUBLISHED AFTER THE CHILD EXISTS, NEVER BEFORE THE EXEC. Writing the
+        # marker and then `exec`ing meant a FAILED exec still left the marker: the
+        # gate would refuse for an unrelated reason, no process would survive, and
+        # the case would report a reaped stall that never existed. The helper now
+        # starts the blocking child FIRST and publishes only once it has confirmed
+        # it running, so the marker is evidence rather than intent.
+        #
+        # AND THE IDENTITY IS PID PLUS START TIME, not pid plus a substring. A pid
+        # is reused; `/proc/<pid>/stat` field 22 is the process's start time in
+        # clock ticks, so the pair identifies THIS process and cannot match a
+        # stranger that inherited its number (Codex adversarial, section 55 round
+        # 6, [medium]).
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf '_cf=0; _b=0\n'
+            printf 'for a in "$@"; do [ "$a" = "cat-file" ] && _cf=1; [ "$a" = "--batch" ] && _b=1; done\n'
+            printf 'if [ "$_cf" = "1" ] && [ "$_b" = "1" ]; then\n'
+            printf '  sleep 120 &\n'
+            printf '  _sp=$!\n'
+            printf '  if kill -0 "$_sp" 2>/dev/null; then\n'
+            printf '    _st="$(awk "{print \\$22}" /proc/$_sp/stat 2>/dev/null)"\n'
+            printf '    [ -n "$_st" ] && printf "%%s %%s\\n" "$_sp" "$_st" >> %s\n' "$G_S55_STALLPID"
+            printf '  fi\n'
+            printf '  wait "$_sp"\n'
+            printf '  exit 0\n'
+            printf 'fi\n'
+            printf 'exec %s "$@"\n' "$G_REAL_GIT"
+        } > "$G_S55_STALLDIR/git"
+        chmod +x "$G_S55_STALLDIR/git"
+        G_S55_QBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] 22eq: a todo-only edit for the stalled-assembler case\n' >>"$t"
+            git commit --quiet --no-verify -am "22eq: todo-only edit" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && PATH="$G_S55_STALLDIR:$PATH" IDENTITY_GATE_BUDGET_SECS=8 \
+            bash "$GATE_IN_CLONE" --base "$G_S55_QBASE" --head HEAD \
+            >"$TMP_DIR/gate-22eq.log" 2>&1)
+        G_S55_Q_RC=$?
+        # THE STALL MUST HAVE BEEN REACHED, or the case proves nothing: an
+        # unrelated rc 3 is not evidence that a child was ever created, let alone
+        # reaped.
+        G_S55_Q_HITS="$(grep -c . "$G_S55_STALLPID" 2>/dev/null || echo 0)"
+        G_S55_Q_LEFT=0
+        while IFS=" " read -r _qp _qst; do
+            [ -n "$_qp" ] && [ -n "$_qst" ] || continue
+            # IDENTIFIED BY START TIME, so a reissued pid is neither counted nor
+            # signalled. An unreadable stat is treated as GONE rather than as a
+            # survivor: the fixture must not fail on a process it cannot see, and
+            # it must never signal one it cannot identify.
+            _qnow="$(awk '{print $22}' "/proc/$_qp/stat" 2>/dev/null || true)"
+            if [ -n "$_qnow" ] && [ "$_qnow" = "$_qst" ]; then
+                G_S55_Q_LEFT=$((G_S55_Q_LEFT + 1))
+                kill -KILL "$_qp" 2>/dev/null || true
+            fi
+        done < <(cat "$G_S55_STALLPID" 2>/dev/null)
+        if [ "${G_S55_Q_HITS:-0}" -lt 1 ]; then
+            t_fail "identity gate: the 22eq stall was never reached, so the case would have passed without testing anything (rc=$G_S55_Q_RC; see $TMP_DIR/gate-22eq.log)"
+        elif [ "$G_S55_Q_RC" -eq 3 ] && [ "$G_S55_Q_LEFT" -eq 0 ]; then
+            t_pass "identity gate: a stalled git under the narrow assembler is reaped with it, not orphaned past the deadline"
+        else
+            t_fail "identity gate: a stalled assembler child outlived the gate (rc=$G_S55_Q_RC; reached=$G_S55_Q_HITS survivors=$G_S55_Q_LEFT; see $TMP_DIR/gate-22eq.log)"
+        fi
+        rm -f "$G_S55_STALLPID"
+        rm -rf "$G_S55_STALLDIR"
+
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet "$G_S55_PBASE"~1 -- scripts/todo-graph/snapshot_protocol.py >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22en: restore the unpoisoned protocol module" >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+
+        # 22es: A FAILED MODE PROBE IS NOT A PASSING MODE.
+        #
+        # The gate refuses a head that stores `identity-gate.sh` non-executable,
+        # because the pre-push hook enters its identity-gate block only when that
+        # file is executable -- so such a head has the local gate silently
+        # disabled for every later push, with only CI still adjudicating, after
+        # `main` has already moved. A refactor that removed a `cut` from that
+        # line also discarded `bounded_git`'s status, and `bounded_git` answers 2
+        # for "could not ask": ONE failed probe left the mode empty, the refusal
+        # was skipped, and the range reached the byte-identical exit (Codex
+        # adversarial, section 55, [high]).
+        #
+        # The shim fails ONLY that probe. It is distinguishable from the batched
+        # closure listing by shape: this one names the driver path and does not
+        # pass `-z`, while the batch passes `-z` and names every member.
+        G_S55_MODEDIR="$TMP_DIR/gitshim-s55mode"
+        mkdir -p "$G_S55_MODEDIR"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf '_lt=0; _z=0; _drv=0\n'
+            printf 'for a in "$@"; do\n'
+            printf '  [ "$a" = "ls-tree" ] && _lt=1\n'
+            printf '  [ "$a" = "-z" ] && _z=1\n'
+            printf '  [ "$a" = "scripts/todo-graph/identity-gate.sh" ] && _drv=1\n'
+            printf 'done\n'
+            printf 'if [ "$_lt" = "1" ] && [ "$_z" = "0" ] && [ "$_drv" = "1" ]; then exit 128; fi\n'
+            printf 'exec %s "$@"\n' "$G_REAL_GIT"
+        } > "$G_S55_MODEDIR/git"
+        chmod +x "$G_S55_MODEDIR/git"
+        G_S55_MBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] 22es: a todo-only edit for the mode-probe case\n' >>"$t"
+            git commit --quiet --no-verify -am "22es: todo-only edit" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && PATH="$G_S55_MODEDIR:$PATH" bash "$GATE_IN_CLONE" \
+            --base "$G_S55_MBASE" --head HEAD >"$TMP_DIR/gate-22es.log" 2>&1)
+        G_S55_M_RC=$?
+        if [ "$G_S55_M_RC" -eq 3 ] \
+           && ! grep -q 'byte-identical base..head' "$TMP_DIR/gate-22es.log"; then
+            t_pass "identity gate: an unreadable driver-mode probe refuses instead of skipping the executable-bit invariant"
+        else
+            t_fail "identity gate: a failed mode probe let the range through (rc=$G_S55_M_RC; see $TMP_DIR/gate-22es.log)"
+        fi
+        # MUTATION: discard the probe's status again, and the same shim must let
+        # the range reach the byte-identical exit -- which is what proves this
+        # case measures the check and not the shim.
+        # THE MUTATION TOUCHES ONE BRANCH, and the first version did not. A bare
+        # `s@^case "$?" in@case 0 in@` hit all FIVE occurrences in the file,
+        # including the replacement-substitution check whose ordinary rc 1 then
+        # became `case 0` -- so the mutant refused with BASE_HISTORY_INCOMPLETE
+        # before it ever reached the mode probe, and the assertion accepted that
+        # unrelated rc 3 as proof (Codex adversarial, section 55, [medium]). A
+        # mutation that changes five things proves nothing about any of them.
+        # Anchored on the assignment and applied to the NEXT line only, with the
+        # replacement count asserted.
+        G_S55_MMUT="$GATE_REPO/scripts/todo-graph/identity-gate-s55mode.sh"
+        # AND IT REMOVES BOTH GUARDS, because there are two. The status check is
+        # backed by an emptiness check, so discarding the status alone still
+        # refuses -- correctly, and the stricter assertion below is what
+        # revealed it. Two independent guards is the intended state; a mutation
+        # that removes one and finds the hole still closed is evidence of that,
+        # not a broken fixture. It has to remove both to show what either is
+        # worth, which is the same lesson the destination-adoption mutation
+        # taught in this section.
+        sed -e '/_GATE_MODE_ENTRY="\$(bounded_git ls-tree/{n;s@^case "\$?" in@case 0 in@;}' \
+            -e 's@^\[ -n "\$_GATE_MODE_ENTRY" \] \\$@[ 1 ] \\@' \
+            "$GATE_IN_CLONE" > "$G_S55_MMUT"
+        G_S55_MM_COUNT="$(grep -c '^case 0 in$' "$G_S55_MMUT" 2>/dev/null || echo 0)"
+        G_S55_MM_COUNT2="$(grep -c '^\[ 1 \] \\$' "$G_S55_MMUT" 2>/dev/null || echo 0)"
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S55_MMUT" '^case 0 in$' \
+           || [ "${G_S55_MM_COUNT:-0}" -ne 1 ] || [ "${G_S55_MM_COUNT2:-0}" -ne 1 ]; then
+            t_fail "identity gate: could not build the discarded-status mutation targeting exactly one branch (status=$G_S55_MM_COUNT emptiness=$G_S55_MM_COUNT2; the shape moved)"
+        else
+            (cd "$GATE_REPO" && PATH="$G_S55_MODEDIR:$PATH" bash "$G_S55_MMUT" \
+                --base "$G_S55_MBASE" --head HEAD >"$TMP_DIR/gate-22es-mut.log" 2>&1)
+            G_S55_MM_RC=$?
+            # THE MUTANT MUST REACH THE EXIT THE REAL GATE REFUSES. Accepting
+            # "any rc other than 3" is what let an unrelated refusal pass as
+            # proof; the fixed gate refuses this range, so the mutant has to
+            # sail past it to the byte-identical exit and say so.
+            if [ "$G_S55_MM_RC" -eq 0 ] \
+               && grep -q 'byte-identical base..head' "$TMP_DIR/gate-22es-mut.log"; then
+                t_pass "identity gate: MUTATION -- discarding the probe status lets the range reach the byte-identical exit, so 22es measures the check"
+            else
+                t_fail "identity gate: the discarded-status mutation did not reach the byte-identical exit (rc=$G_S55_MM_RC; see $TMP_DIR/gate-22es-mut.log)"
+            fi
+        fi
+        rm -f "$G_S55_MMUT"
+        rm -rf "$G_S55_MODEDIR"
+
+        # 22et: THE ASSEMBLED TREE IS RE-BOUND AFTER CODE RUNS FROM IT.
+        #
+        # `proto_of` executes modules out of the narrow head tree, so between
+        # that probe and everything downstream of it there is a window in which
+        # the tree can change. Section 55 removed the `hash-object` over the
+        # materialized tree when it took the closure reading from the commit --
+        # and that hash was the only thing tying the bytes the gate EXECUTES to
+        # the commit it names. Both readings then agreed by construction and
+        # noticed nothing about the directory in between (Codex adversarial,
+        # section 55, [high]).
+        #
+        # The poison is the protocol module itself, which is what `proto_of`
+        # imports: at import it locates its own directory and rewrites a SIBLING
+        # closure member there. Nothing else in the run would see that.
+        G_S55_RBASE_PRE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+            cat >> scripts/todo-graph/snapshot_protocol.py <<'S55REBIND'
+
+
+# 22et fixture: at import, rewrite a sibling closure member in whatever
+# directory this module was loaded from.
+import os as _os22t
+try:
+    _d22t = _os22t.path.dirname(_os22t.path.abspath(__file__))
+    with open(_os22t.path.join(_d22t, "resolve_symbol.py"), "a") as _f22t:
+        _f22t.write("\n# 22et: rewritten after the gate read me\n")
+except Exception:
+    pass
+S55REBIND
+            git commit --quiet --no-verify -am "22et: a protocol module that rewrites a sibling after being read" >/dev/null 2>&1
+        )
+        G_S55_RBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+        (
+            cd "$GATE_REPO" || exit 1
+            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+            printf '\n- [ ] 22et: a todo-only edit, so the closure stays byte-identical\n' >>"$t"
+            git commit --quiet --no-verify -am "22et: todo-only edit beside the rewriting module" >/dev/null 2>&1
+        )
+        (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_S55_RBASE" --head HEAD \
+            >"$TMP_DIR/gate-22et.log" 2>&1)
+        G_S55_RB_RC=$?
+        # ASSERTED ON THE TOKEN, NOT ON PROSE. The first version grepped a
+        # sentence fragment and broke the moment the check was rewritten to say
+        # the same thing differently -- a fixture pinned to wording fails for
+        # reasons that have nothing to do with behaviour.
+        if [ "$G_S55_RB_RC" -eq 3 ] \
+           && grep -q 'MATERIALIZATION_UNFAITHFUL' "$TMP_DIR/gate-22et.log" \
+           && ! grep -q 'byte-identical base..head' "$TMP_DIR/gate-22et.log"; then
+            t_pass "identity gate: a closure member rewritten by the tree's own protocol module is caught before anything consumes the read"
+        else
+            t_fail "identity gate: a tree that changed under the gate reached its verdict (rc=$G_S55_RB_RC; see $TMP_DIR/gate-22et.log)"
+        fi
+        # MUTATION: remove the re-binding and the same range must reach the exit,
+        # which is what proves the check rather than the poison is doing the work.
+        G_S55_RBMUT="$GATE_REPO/scripts/todo-graph/identity-gate-s55norebind.sh"
+        sed 's@^min_tree_still_matches @: min_tree_still_matches @' \
+            "$GATE_IN_CLONE" > "$G_S55_RBMUT"
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S55_RBMUT" '^: min_tree_still_matches '; then
+            t_fail "identity gate: could not build the no-rebinding mutation (the shape moved)"
+        else
+            (cd "$GATE_REPO" && bash "$G_S55_RBMUT" --base "$G_S55_RBASE" --head HEAD \
+                >"$TMP_DIR/gate-22et-mut.log" 2>&1)
+            G_S55_RBM_RC=$?
+            if [ "$G_S55_RBM_RC" -eq 0 ] \
+               && grep -q 'byte-identical base..head' "$TMP_DIR/gate-22et-mut.log"; then
+                t_pass "identity gate: MUTATION -- without the re-binding the rewritten tree rides the exit, so 22et measures the check"
+            else
+                t_fail "identity gate: the no-rebinding mutation did not reach the exit, so 22et proves nothing (rc=$G_S55_RBM_RC; see $TMP_DIR/gate-22et-mut.log)"
+            fi
+        fi
+        rm -f "$G_S55_RBMUT"
+        (
+            cd "$GATE_REPO" || exit 1
+            git checkout --quiet "$G_S55_RBASE_PRE" -- scripts/todo-graph/snapshot_protocol.py scripts/todo-graph/resolve_symbol.py >/dev/null 2>&1
+            git commit --quiet --no-verify -m "22et: restore the unpoisoned modules" >/dev/null 2>&1
+            git checkout --quiet HEAD -- . >/dev/null 2>&1
+        )
+
         # 22em: A REGISTRATION OUTLIVES ITS DIRECTORY, so cleanup is driven by
         # what the run ATTEMPTED and not by what is still on disk. The failure
         # this pins is silent by construction: the gate exits with a perfectly
@@ -15489,9 +17056,18 @@ PY2
         G_S54_WTBASE="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
         (
             cd "$GATE_REPO" || exit 1
-            t="$(find todo -name 'TODO-*.md' | sort | head -1)"
-            printf '\n- [ ] section 54 fixture: a todo-only edit beside a vanishing linked tree\n' >>"$t"
-            git commit --quiet --no-verify -am "22em: todo-only edit, closure untouched" >/dev/null 2>&1
+            # A CLOSURE-TOUCHING RANGE, BECAUSE THAT IS THE ONE THAT CHECKS
+            # OUT (section 55). This was a todo-only edit, which now takes the
+            # byte-identical fast path and materializes no linked tree at all --
+            # so the shim never fired, `adds` stayed 0, and the case measured
+            # nothing while reporting a failure. The registration hygiene this
+            # pins is unrelated to WHY a tree is created, so the cheapest honest
+            # repair is to give it a range that creates one. The edit is a
+            # comment, so the resolver differential still agrees and the run
+            # reaches its ordinary verdict, which is what this case needs.
+            printf '\n# 22em: a benign closure edit, so the range materializes a linked tree\n' \
+                >> scripts/todo-graph/resolve_symbol.py
+            git commit --quiet --no-verify -am "22em: benign closure change beside a vanishing linked tree" >/dev/null 2>&1
         )
         G_S54_WTBEFORE="$( (cd "$GATE_REPO" && git worktree list --porcelain | grep -c '^worktree ') )"
         G_SHIM_S54="$TMP_DIR/gitshim-s54"
@@ -15573,9 +17149,14 @@ PY2
         # produced before the pipeline was removed (Codex adversarial, section
         # 54 round 4, [medium]).
         G_MUT_LIST="$GATE_REPO/scripts/todo-graph/identity-gate-nolist.sh"
-        sed 's#^        _wt_list="\$(timeout --foreground -s KILL 60 git worktree list --porcelain 2>/dev/null)"$#        _wt_list="$(false)"#' \
+        # ANCHORED ON THE ASSIGNMENT, NOT THE WHOLE LINE. Section 55 appended a
+        # `fixed-allowance:` marker to this command's line, and a `$`-anchored
+        # pattern stopped matching -- so the mutant came back identical to its
+        # source and the case correctly refused to draw a verdict from it. The
+        # anchor now ends at the substitution it replaces.
+        sed 's#^        _wt_list="\$(timeout --foreground -s KILL 60 git worktree list --porcelain 2>/dev/null)"#        _wt_list="$(false)"#' \
             "$GATE_IN_CLONE" > "$G_MUT_LIST"
-        if cmp -s "$GATE_IN_CLONE" "$G_MUT_LIST"; then
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_MUT_LIST" '_wt_list="\$(false)"'; then
             t_fail "identity gate: could not build the unanswerable-listing mutation (the shape moved; the mutant is identical to its source)"
         else
             rm -f "$TMP_DIR/s54-adds-seen"

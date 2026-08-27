@@ -223,7 +223,8 @@
 #      range; they say this gate could not hold its own subject still long
 #      enough to certify it, so the operator action is to re-run, or to repair
 #      the checkout, rather than to re-point the base.
-#        CLOSURE_MOVED_UNDER_GATE     a closure member changed between the
+#        CLOSURE_MOVED_UNDER_GATE     NO LONGER EMITTED (section 55). It meant
+#                                     a closure member changed between the
 #                                     measurement and the decision, so the
 #                                     protocol evidence describes a tree that
 #                                     is no longer here
@@ -299,7 +300,7 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # launch-exempt: runs before the gate's clock exists, and reads a shell variable rather than the filesystem
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # The resolver behaviour closure. If every one of these is byte-identical
@@ -459,7 +460,7 @@ mono_now() {   # sets MONO_NOW to integer monotonic seconds, or "" ; rc 1 if unr
     # subprocess again, and a subprocess that never starts would stop the very
     # probe it is meant to bound.
     MONO_NOW="$(timeout --foreground -s KILL 5 \
-        python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null)" || MONO_NOW=""
+        python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null)" || MONO_NOW=""  # fixed-allowance: this IS the clock probe, so it cannot be bounded by the budget it is measuring
     [ -n "$MONO_NOW" ]
 }
 mono_now
@@ -749,6 +750,55 @@ export GIT_NO_REPLACE_OBJECTS=1
 # descendants (hooks, promisor and lazy-fetch helpers), and a stalled one holds
 # the command substitution's pipe open past the budget. Without the flag the
 # whole group is signalled, which is what a shared deadline has to mean.
+# REFUSE TO LAUNCH A PHASE PAST THE DEADLINE, rather than launch it with a
+# floor (section 55). `remaining()` never answers less than 1, which is correct
+# as a `timeout` ARGUMENT -- 0 disables the bound outright -- and wrong as a
+# DECISION: every phase launched with it was granted a fresh second no matter
+# how long the run had already taken, so a gate at its ceiling could still start
+# six more processes. Section 52 gave the git probes this refusal and did not
+# widen into the python phases; `contract_of` got it when section 55 bounded it;
+# these six are the rest of the set, and leaving them was the residue that
+# section's own item recorded.
+PHASE_BUDGET=""
+phase_budget() {   # $1 = phase name; ANSWERS in PHASE_BUDGET, refuses if expired
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
+        die_infra "the gate's budget expired before the $1 phase could start, so it was never launched and no verdict is being guessed from it"
+    fi
+    PHASE_BUDGET="$BUDGET_LEFT"
+}
+
+bounded_fs() {   # a filesystem command whose failure is tolerated, but not its duration
+    # THE EXEMPTION THIS REPLACES WAS WRONG, WHICH IS WORSE THAN ABSENT. Every
+    # `rm -f` here carried `launch-exempt: unlink does not open the file, so it
+    # cannot block`, and that reasoning does not hold: `unlink` updates
+    # DIRECTORY METADATA, which blocks on degraded, networked or FUSE-backed
+    # storage exactly as any other write does, and `mkdir` is the same (Codex
+    # adversarial, section 55 round 17, [medium]). A marker states a claim about
+    # the code; a false one is a hole with a justification written over it, and
+    # it survives review precisely because it looks considered.
+    #
+    # These calls are cleanup-shaped, so their FAILURE stays tolerated -- what is
+    # no longer tolerated is their duration.
+    #
+    # AND AN EXPIRED BUDGET DECLINES THE LAUNCH, which reverses this function's
+    # first version. That one gave a spent budget a fixed ten seconds, reasoning
+    # that declining to tidy up was worse than tidying up slowly. It is not:
+    # every file these calls remove lives under TMP_DIR, and the exit cleanup
+    # removes TMP_DIR whole, under its own bound. So the post-expiry launch
+    # bought nothing that was not already covered, and it kept a push alive for
+    # ten seconds past a ceiling this file advertises -- which made section 55's
+    # own deadline claim false while it was written (Codex adversarial, section
+    # 55 round 18, [medium]). A cleanup that is redundant is the easiest kind to
+    # decline.
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
+        return 0
+    fi
+    timeout --foreground -s KILL "$BUDGET_LEFT" "$@" 2>/dev/null || true
+    return 0
+}
+
 bounded_git() {   # args after `git`; 0 ok, 1 git said no, 2 could not ask
     local _left _out _rc
     budget_left; _left="$BUDGET_LEFT"
@@ -1445,6 +1495,186 @@ fi
 # to cure: a base predating the protocol hashes MISSING against a real blob, so
 # it changes the closure and never arrives here at all.
 CLOSURE_CHANGED=0
+# CREATED BEFORE THE FIRST CLOSURE READING (section 55), because the batched
+# probe below writes NUL-delimited `ls-tree` output to a file: bash DISCARDS NUL
+# bytes in a command substitution, so a variable cannot carry that output and a
+# non-NUL listing would C-QUOTE any path holding a tab, newline, quote or
+# backslash. Nothing between the old creation site and here used TMP_DIR, and
+# `cleanup` is installed further down in both orderings, so this is a pure move.
+# BOUNDED AND CHECKED, LIKE EVERY OTHER LAUNCH. All three `mktemp` calls in
+# this file ran unbounded and without a budget check, so degraded filesystem
+# I/O -- which is exactly the condition the rest of this deadline machinery
+# exists for -- could hold the gate past its advertised ceiling before a single
+# python phase started (Codex adversarial, section 55 round 11, [medium]).
+# `budget_left` rather than `remaining()`, so an expired budget refuses instead
+# of buying a floored second.
+budget_left
+{ [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
+    && die_infra "the gate's budget expired before it could create its own temporary directory, so nothing was started and no verdict is being guessed from it"
+TMP_DIR="$(timeout --foreground -s KILL "$BUDGET_LEFT" mktemp -d -t identity-gate.XXXXXX)" \
+    || die_infra "mktemp failed (or the gate's remaining budget expired while it ran)"
+# AND A DESCRIPTOR ON IT, OPENED NOW, BEFORE ANY TREE CODE HAS RUN.
+#
+# A PATHNAME IS NOT AN IDENTITY. The narrow assembly below resolves everything
+# it writes from strings, and a descendant that the base protocol probe detached
+# can rename a directory the assembly just created and put a symlink in its
+# place -- so a check that the path was created by this run stays true of a name
+# that now refers to somewhere else, and `O_NOFOLLOW` on the leaf does not help
+# when the PARENT was swapped (Codex adversarial, section 55 round 2, [high]).
+# A descriptor cannot be swapped: it refers to the directory it was opened on,
+# whatever later happens to the name. Every path the assembler touches is
+# reached descriptor-relative from this one, so the whole chain is anchored to a
+# directory that existed before the tree under test had executed anything.
+# AND A CLEANUP EXISTS FROM THIS MOMENT, not from where the full one is
+# installed. Moving the creation earlier widened the window in which TMP_DIR
+# exists with no trap behind it: the descriptor open below, the hook-free
+# directory's own failure paths, and both closure batches all run in it, so a
+# refusal or a cancellation there leaked the directory outright. Calling that
+# move "pure" was wrong -- it moved the creation without moving what protects
+# it (Codex adversarial, section 55, [medium]). This minimal trap is replaced by
+# the full `cleanup` once the state it needs exists; until then, removing the
+# directory is the whole job.
+trap 'timeout --foreground -s KILL 30 rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT INT TERM  # fixed-allowance: an emergency trap that runs before the budget machinery is fully wired
+exec {TMP_FD}<"$TMP_DIR" || die_infra "cannot hold a descriptor on the gate's own temporary directory, so the narrow materializations below could not be anchored and nothing is being guessed from this range"
+
+# EVERY CLOSURE MEMBER IN ONE PROBE PER COMMIT, NOT FOUR PER MEMBER (section 55).
+#
+# The two loops below asked, per member and per side: does the commit list it,
+# how does it store it, what OID does it name, is that object present. On a
+# ten-member closure that is roughly 70 `git` processes to decide a question
+# whose answer is one tree listing. Section 51 declined to batch it and said why
+# -- `-z` parsing is the subtle-probe-semantics surface every defect in this file
+# has come from, and it was not worth adding to a stamp commit. It is worth
+# adding to a commit whose whole subject is what this path costs.
+#
+# NO `-r`. A recursive listing EXPANDS a directory pathspec to its descendants,
+# so a member replaced by a directory of the same name would be reported through
+# its children and read as present -- the exact membership fault section 50
+# round 3 fixed for the protocol paths. Without `-r` the directory arrives as its
+# own `tree` entry and the type test refuses it.
+#
+# A FAILED BATCH IS NOT A NEGATIVE ANSWER, and it does not raise here either.
+# `ENT_ERR` records that the question could not be asked, and each member then
+# raises its OWN existing token at its OWN point in the loops below, so the
+# base-first classification order and the token precedence this file publishes
+# are exactly what they were (Codex design review, section 55).
+#
+# TWO READINGS, BY DIFFERENT PLUMBING, AND THAT IS DELIBERATE. `ENT_OID` comes
+# from parsing the tree LISTING; `ENT_VOID` comes from resolving the path
+# EXPRESSION `<commit>:<path>`, which is what the per-member `rev-parse` did
+# before. Collapsing the two makes `CLOSURE_MOVED_UNDER_GATE` compare a value
+# with itself -- which the first cut of this section did, while its comment
+# claimed a cross-probe (Codex adversarial, section 55 round 1, [medium]). The
+# measurement loop reads the expression, the decision loop reads the listing, so
+# a mis-attribution in either parser surfaces as a disagreement instead of
+# riding the exit.
+ENT_ERR=0
+ENT_MODE=(); ENT_TYPE=(); ENT_OID=(); ENT_PRESENT=(); ENT_OBJ=(); ENT_VOID=()
+closure_entries() {   # $1 = commit, $2 = label
+    local _z _rec _meta _path _i _mode _type _oid _oids _line
+    ENT_ERR=0
+    ENT_MODE=(); ENT_TYPE=(); ENT_OID=(); ENT_PRESENT=(); ENT_OBJ=(); ENT_VOID=()
+    for _i in "${!CLOSURE[@]}"; do
+        ENT_MODE[$_i]=""; ENT_TYPE[$_i]=""; ENT_OID[$_i]=""
+        ENT_PRESENT[$_i]=0; ENT_OBJ[$_i]=0; ENT_VOID[$_i]=""
+    done
+    _z="$TMP_DIR/closure-$2.z"
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then ENT_ERR=1; return 0; fi
+    timeout -s KILL "$BUDGET_LEFT" git ls-tree -z "$1" -- "${CLOSURE[@]}" >"$_z" 2>/dev/null \
+        || { ENT_ERR=1; return 0; }
+    while IFS= read -r -d '' _rec; do
+        _meta="${_rec%%$'\t'*}"
+        _path="${_rec#*$'\t'}"
+        _mode="${_meta%% *}"
+        _type="${_meta#* }"; _type="${_type%% *}"
+        _oid="${_meta##* }"
+        # MATCHED BY EXACT PATH. `ls-tree` emits in tree order, not argument
+        # order, so position says nothing about which member an entry is.
+        for _i in "${!CLOSURE[@]}"; do
+            [ "${CLOSURE[$_i]}" = "$_path" ] || continue
+            ENT_MODE[$_i]="$_mode"; ENT_TYPE[$_i]="$_type"
+            ENT_OID[$_i]="$_oid"; ENT_PRESENT[$_i]=1
+            break
+        done
+    done <"$_z"
+    bounded_fs rm -f "$_z"
+    # AND THE OBJECTS ARE PRESENT, not merely named. A tree entry resolves to an
+    # OID from the TREE; in a partial clone the blob behind it can be absent, and
+    # comparing OIDs would then certify bytes nothing in this repository can
+    # produce. One `--batch-check` answers for every member at once.
+    _oids=""
+    for _i in "${!CLOSURE[@]}"; do
+        [ "${ENT_PRESENT[$_i]}" -eq 1 ] || continue
+        [ "${ENT_TYPE[$_i]}" = "blob" ] || continue
+        _oids="$_oids${ENT_OID[$_i]}"$'\n'
+    done
+    [ -n "$_oids" ] || return 0
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then ENT_ERR=1; return 0; fi
+    _z="$TMP_DIR/closure-$2.chk"
+    printf '%s' "$_oids" | timeout -s KILL "$BUDGET_LEFT" \
+        git cat-file --batch-check >"$_z" 2>/dev/null \
+        || { bounded_fs rm -f "$_z"; ENT_ERR=1; return 0; }
+    while IFS= read -r _line; do
+        # "<oid> <type> <size>" for a present object, "<oid> missing" otherwise.
+        case "$_line" in
+            *" missing"|*" ambiguous") continue ;;
+        esac
+        _oid="${_line%% *}"
+        for _i in "${!CLOSURE[@]}"; do
+            [ "${ENT_OID[$_i]}" = "$_oid" ] && ENT_OBJ[$_i]=1
+        done
+    done <"$_z"
+    bounded_fs rm -f "$_z"
+    # THE SECOND, INDEPENDENT READING. One `--batch-check` over the path
+    # EXPRESSIONS, in CLOSURE order, consumed POSITIONALLY and never matched
+    # back by the OID it is meant to verify -- matching by OID would reintroduce
+    # the very dependence this exists to break. It replaces the per-member
+    # `rev-parse --quiet --verify <commit>:<path>` exactly: a line that does not
+    # resolve leaves the entry empty, which the callers read as MISSING, which
+    # is section 51's documented collapse and can only force a walk.
+    _oids=""
+    for _i in "${!CLOSURE[@]}"; do
+        _oids="$_oids$1:${CLOSURE[$_i]}"$'\n'
+    done
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then ENT_ERR=1; return 0; fi
+    _z="$TMP_DIR/closure-$2.expr"
+    printf '%s' "$_oids" | timeout -s KILL "$BUDGET_LEFT" \
+        git cat-file --batch-check >"$_z" 2>/dev/null
+    # `--batch-check` exits nonzero when ANY line failed to resolve, which is an
+    # ordinary answer here, so the STATUS is not the error signal -- the line
+    # count is. A truncated listing would otherwise be consumed positionally and
+    # silently attribute every later member to the wrong entry.
+    _i=0
+    while IFS= read -r _line; do
+        case "$_line" in
+            *" missing"|*" ambiguous"|*"dangling"*) ;;
+            *)
+                _oid="${_line%% *}"
+                case "$_oid" in
+                    *[!0-9a-f]*|"") ;;
+                    *) ENT_VOID[$_i]="$_oid" ;;
+                esac
+                ;;
+        esac
+        _i=$((_i + 1))
+    done <"$_z"
+    bounded_fs rm -f "$_z"
+    if [ "$_i" -ne "${#CLOSURE[@]}" ]; then ENT_ERR=1; fi
+    return 0
+}
+
+closure_entries "$BASE_SHA" base
+B_ERR="$ENT_ERR"; B_MODE=("${ENT_MODE[@]}"); B_TYPE=("${ENT_TYPE[@]}")
+B_OID=("${ENT_OID[@]}"); B_PRESENT=("${ENT_PRESENT[@]}"); B_OBJ=("${ENT_OBJ[@]}")
+B_VOID=("${ENT_VOID[@]}")
+closure_entries "$HEAD_RESOLVED" head
+H_ERR="$ENT_ERR"; H_MODE=("${ENT_MODE[@]}"); H_TYPE=("${ENT_TYPE[@]}")
+H_OID=("${ENT_OID[@]}"); H_PRESENT=("${ENT_PRESENT[@]}"); H_OBJ=("${ENT_OBJ[@]}")
+H_VOID=("${ENT_VOID[@]}")
+
 # The head-side hash of each member AS FIRST SEEN, kept so that "this member
 # moved while the gate was working" stays a different question from "this
 # member differs base-vs-head". Conflating them gave one token two meanings and
@@ -1452,25 +1682,11 @@ CLOSURE_CHANGED=0
 FIRST_H=()
 for _i in "${!CLOSURE[@]}"; do
     f="${CLOSURE[$_i]}"
-    # BOUNDED, WITHOUT TOUCHING WHAT A FAILURE MEANS. These two spawn per
-    # closure member and had no limit at all, so stalled repository or
-    # working-tree I/O could hang a local pre-push run indefinitely (Codex
-    # perf, section 52 round 19, [medium]). The MISSING collapse on failure is
-    # section 51's deliberate, documented choice -- it can only force a walk,
-    # never a pass -- so it is left exactly as it is; only the hang is fixed.
-    budget_left; _cl_left="$BUDGET_LEFT"
-    if [ "$_cl_left" = "?" ] || [ "$_cl_left" -le 0 ]; then
-        die_infra "CLOSURE_UNVERIFIABLE: the gate's budget expired while measuring the closure member $f, so what this range changes was never established and nothing here can be certified"
-    fi
-    b="$(timeout -s KILL "$_cl_left" \
-             git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null || echo MISSING)"
-    # RECOMPUTED BETWEEN SEQUENTIAL SPAWNS. One reading shared by two probes
-    # hands the second whatever the first did not spend, which is the same
-    # floor-shaped overrun in miniature (Codex perf, section 52 round 20).
-    budget_left; _cl_left="$BUDGET_LEFT"
-    if [ "$_cl_left" = "?" ] || [ "$_cl_left" -le 0 ]; then
-        die_infra "CLOSURE_UNVERIFIABLE: the gate's budget expired while measuring the closure member $f, so what this range changes was never established and nothing here can be certified"
-    fi
+    # BOTH READINGS COME FROM THE BATCH ABOVE, and the MISSING collapse on a
+    # failed probe is section 51's deliberate, documented choice -- it can only
+    # force a walk, never a pass -- so it is preserved exactly, now applied to
+    # the batch's failure rather than to two per-member spawns.
+    #
     # THE HEAD READING COMES FROM THE COMMIT, SYMMETRICALLY WITH THE BASE
     # (section 54). This was `git hash-object "$REPO_ROOT/$f"` -- the LIVE
     # WORKING TREE -- so the measurement deciding whether the closure changed
@@ -1478,15 +1694,14 @@ for _i in "${!CLOSURE[@]}"; do
     # also what lets the head side be measured BEFORE any head worktree exists,
     # which is what keeps materialization deferred until every base
     # classification has cleared (Codex design review, section 54).
-    h="$(timeout -s KILL "$_cl_left" \
-             git rev-parse --quiet --verify "$HEAD_RESOLVED:$f" 2>/dev/null || echo MISSING)"
+    if [ "$B_ERR" -eq 1 ] || [ -z "${B_VOID[$_i]}" ]; then b=MISSING; else b="${B_VOID[$_i]}"; fi
+    if [ "$H_ERR" -eq 1 ] || [ -z "${H_VOID[$_i]}" ]; then h=MISSING; else h="${H_VOID[$_i]}"; fi
     FIRST_H[$_i]="$h"
     if [ "$b" != "$h" ]; then
         log "closure changed: $f"
         CLOSURE_CHANGED=1
     fi
 done
-TMP_DIR="$(mktemp -d -t identity-gate.XXXXXX)" || die_infra "mktemp failed"
 
 # A GATE-OWNED BYTECODE CACHE FOR EVERY PYTHON PHASE THIS GATE RUNS, not just
 # the protocol read. `spec_from_file_location` + `exec_module` execute a
@@ -1515,7 +1730,11 @@ export PYTHONPYCACHEPREFIX="$TMP_DIR/pycache"
 # it: the base has always had the same exposure, and fixing one while leaving
 # the other would be a hole with a comment over it.
 NOHOOKS_DIR="$TMP_DIR/nohooks"
-mkdir -p "$NOHOOKS_DIR" || die_infra "cannot create the hook-free directory for the gate's checkouts"
+budget_left
+{ [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
+    && die_infra "the gate's budget expired before it could create the hook-free directory for its checkouts"
+timeout --foreground -s KILL "$BUDGET_LEFT" mkdir -p "$NOHOOKS_DIR" \
+    || die_infra "cannot create the hook-free directory for the gate's checkouts (or the gate's remaining budget expired while it ran)"
 BASE_TREE="$TMP_DIR/base"
 # THE HEAD IS MATERIALIZED TOO (section 54), but NOT here -- the path is only
 # named here so `cleanup` can reap it whatever point the run dies at. The
@@ -1524,6 +1743,44 @@ BASE_TREE="$TMP_DIR/base"
 # ahead of a classifiable base token would report head machinery for a range
 # whose real fault is the base (Codex design review, section 54).
 HEAD_TREE="$TMP_DIR/head"
+# THE NARROW TREES THE FAST PATH READS INSTEAD (section 55).
+#
+# Nothing before the byte-identical exit needs a repository. `proto_of` needs
+# `scripts/todo-graph/` because it EXECUTES the protocol loader even on the JSON
+# data path (it imports snapshot_protocol.py to bind the loader to the data, and
+# ref_resolution.py + corpus_resolution_snapshot.py on the legacy path);
+# `contract_of` needs cache_schema.py from the same directory; the bucket
+# emission contract needs `scripts/lint/`. Measured on this repository:
+# 27 files and 2.8 MB against 2,577 files and 87 MiB for a full checkout, and
+# the gate materialized TWO of the latter before deciding it had nothing to
+# differentiate. Most pushes do not touch the resolver closure, so that was the
+# COMMON case paying for the rare one (section 51 measured the regression and
+# declined to own it; this section owns the cost and never the verdicts).
+#
+# These are NOT registered worktrees. They are assembled by the gate from the
+# named commit's blobs, so they take no `git worktree` administrative entry, no
+# lock, and no prune -- `cleanup` removes them with TMP_DIR and nothing else has
+# to know about them.
+MIN_SUBTREES=("scripts/todo-graph" "scripts/lint")
+BASE_MIN="$TMP_DIR/base-min"
+HEAD_MIN="$TMP_DIR/head-min"
+# AND THE ROOT EACH PHASE USES IS A DESCRIPTOR, NOT A NAME. Anchoring the
+# verifier on TMP_DIR and reopening `head-min` beneath it closes a SYMLINK
+# substitution and nothing else: tree code can rename the assembled root, put a
+# clean real directory at that name, and go on operating from the renamed
+# original. `O_NOFOLLOW` has no opinion about a different directory. The
+# verifier would then hash the clean replacement while the result being consumed
+# came from the original -- which is worse than not checking, because it
+# certifies the wrong tree (Codex adversarial, section 55, [high]).
+#
+# So a descriptor is held on each root the moment it is assembled, and BOTH the
+# phases that execute from it and the check that re-binds it address it through
+# that descriptor. Execution and verification then cannot be talking about
+# different directories, which is the property the check exists to have. The
+# descriptor is read-only and points at a directory the tree is already
+# executing from, so handing it across grants nothing it did not have.
+BASE_MIN_ADDR=""
+HEAD_MIN_ADDR=""
 # WHICH LINKED TREES THIS RUN HAS ASKED GIT TO REGISTER. `cleanup` consults
 # this rather than the filesystem, because a registration outlives its
 # directory and the directory is exactly what an interrupted `add` leaves
@@ -1568,7 +1825,7 @@ cleanup() {
             _alive=0
             for _p in $WALK_PIDS; do kill -0 "$_p" 2>/dev/null && _alive=1; done
             [ "$_alive" -eq 0 ] && break
-            sleep 0.5
+            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
         done
         for _p in $WALK_PIDS; do
             case " $WALK_WAITED " in
@@ -1611,18 +1868,18 @@ cleanup() {
         [ "$_wt_seen" -eq 1 ] || continue
         if [ ! -d "$_wt" ]; then
             _wt_prune=1
-            timeout --foreground -s KILL 60 git worktree unlock "$_wt" >/dev/null 2>&1 || true
+            timeout --foreground -s KILL 60 git worktree unlock "$_wt" >/dev/null 2>&1 || true  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
             continue
         fi
         timeout --foreground -s KILL 60 \
-            git worktree remove --force "$_wt" >/dev/null 2>&1 && continue
+            git worktree remove --force "$_wt" >/dev/null 2>&1 && continue  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
         # AND A LOCKED WORKTREE IS UNLOCKED AND RETRIED. `--force` overrides a
         # dirty tree, not a LOCK, and `prune` skips a locked entry too -- so a
         # single forced removal leaves it registered forever. A lock is
         # reachable from the tree under test, because until this cleanup was
         # hardened a `post-checkout` hook could take one (Codex adversarial,
         # section 54, [medium]).
-        timeout --foreground -s KILL 60 git worktree unlock "$_wt" >/dev/null 2>&1 || true
+        timeout --foreground -s KILL 60 git worktree unlock "$_wt" >/dev/null 2>&1 || true  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
         # `--force` TWICE, because once is not enough for a LOCKED tree -- git
         # requires the flag repeated for exactly that case. Relying on the
         # unlock above to have worked was the gap: its failure is discarded (it
@@ -1634,11 +1891,20 @@ cleanup() {
         # section 54 round 6, [medium]).
         timeout --foreground -s KILL 60 \
             git worktree remove --force --force "$_wt" >/dev/null 2>&1 \
-            || { _wt_prune=1
+            || { _wt_prune=1  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
                  log "NOTE: could not remove the linked worktree $_wt. If it is locked, no prune will collect it: run 'git worktree unlock $_wt' then 'git worktree remove --force --force $_wt'." ; }
     done
     if [ "$KEEP_TMP" -eq 0 ]; then
-        rm -rf "$TMP_DIR" 2>/dev/null || true
+        # BOUNDED, because a recursive removal is the one cleanup step that can
+    # block on a stalled filesystem -- the same condition every other bound in
+    # this file exists for. `budget_left` rather than a fixed number, and a
+    # failure is still tolerated: cleanup must never be the thing that fails.
+    budget_left
+    if [ "$BUDGET_LEFT" != "?" ] && [ "$BUDGET_LEFT" -gt 0 ]; then
+        timeout --foreground -s KILL "$BUDGET_LEFT" rm -rf "$TMP_DIR" 2>/dev/null || true
+    else
+        timeout --foreground -s KILL 30 rm -rf "$TMP_DIR" 2>/dev/null || true  # fixed-allowance: the expired-budget branch of cleanup, which by definition has none left
+    fi
     else
         log "kept working files in $TMP_DIR"
     fi
@@ -1668,7 +1934,7 @@ cleanup() {
         # genuine list failure into "not listed" (Codex adversarial, section 54
         # round 4, [medium]).
         _wt_listed=0
-        _wt_list="$(timeout --foreground -s KILL 60 git worktree list --porcelain 2>/dev/null)"
+        _wt_list="$(timeout --foreground -s KILL 60 git worktree list --porcelain 2>/dev/null)"  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
         if [ $? -ne 0 ]; then
             # UNANSWERABLE MEANS SAY SO, not sweep -- and the first version of
             # this branch had the asymmetry backwards. `prune` is
@@ -1697,7 +1963,7 @@ cleanup() {
         fi
         if [ "$_wt_listed" -eq 1 ]; then
             timeout --foreground -s KILL 60 \
-                git worktree prune --expire now >/dev/null 2>&1 || true
+                git worktree prune --expire now >/dev/null 2>&1 || true  # fixed-allowance: cleanup runs on the exit trap, after the budget is spent by definition
         fi
     fi
     # IDEMPOTENT, because this function runs TWICE on a signal: the INT and TERM
@@ -1739,11 +2005,582 @@ trap 'cleanup; exit 143' TERM
 # Asked of the tree itself rather than inferred from configuration, so a route
 # nobody thought of still refuses. `ls-files -v` marks a skipped entry `S` and
 # an assume-unchanged one with a lowercase letter; `H` is the ordinary case.
+materialize_subtree() {   # $1 = commit, $2 = dest, $3 = side label, $4.. = path prefixes
+    # ASSEMBLE THE NAMED COMMIT'S BLOBS, AND NOTHING ELSE (section 55).
+    #
+    # `git worktree add` gives four things this needs: bytes from the commit,
+    # the entry's type, the entry's mode, and no interference from the working
+    # tree. It also gives a repository, a registration, a lock, a prune
+    # obligation, an index, hooks that must be disabled, and gitattributes that
+    # can filter the very bytes about to be executed -- every one of which this
+    # file has had to defend against, and none of which the protocol probe
+    # wants. Reading the tree directly gives the first four and none of the
+    # rest: one `ls-tree` says type and mode, one `cat-file --batch` says
+    # content, no attribute is consulted (unlike `git archive`, whose
+    # `export-ignore` could silently OMIT a protocol file and earn a confident
+    # wrong classification), no smudge filter runs, and no hook exists to run.
+    #
+    # THE ASSEMBLY IS FAITHFUL, NOT NARROWED, and that distinction is the whole
+    # of a design-review finding. The first draft refused every symlink and
+    # submodule inside the subtree, which would have made a byte-identical range
+    # that merely added an unrelated documentation symlink under
+    # `scripts/todo-graph/` REFUSE where it passes today -- a verdict change, in
+    # a section whose declared scope is cost alone (Codex design review, section
+    # 55, [medium]; measured: all 21 entries under that path are 100644/100755
+    # today, so the new refusal would have been latent and invisible). So every
+    # entry is reproduced as what it IS -- a symlink as a symlink from its blob's
+    # target text, a submodule as the empty directory a plain checkout leaves --
+    # and the EXISTING type checks (`path_is_regular_in_worktree`,
+    # `protocol_source_is_regular`, `path_is_regular_in_commit`) decide verdicts
+    # exactly as before, on exactly the paths they already covered.
+    #
+    # A MISSING BLOB IS A REFUSAL, NOT AN ABSENT FILE. In a partial clone a tree
+    # entry can name an object this repository does not have; writing nothing
+    # there would hand the protocol checks a tree that looks incomplete and earn
+    # the INCOMPLETE token, which is a statement about the COMMIT. It is not one
+    # -- it is a statement about this repository -- so it refuses as
+    # infrastructure, the same separation every other probe here keeps.
+    # THE DESTINATION IS CREATED, NEVER ADOPTED, and that is not a detail --
+    # it is the property `git worktree add` was providing for free. `mkdir -p`
+    # SUCCEEDS on a path that already exists, INCLUDING a symlink to a
+    # directory, and every write below then follows it. The base-side protocol
+    # probe executes tree code before the head side is assembled, and that code
+    # can derive TMP_DIR from its own `__file__` or from the exported
+    # `PYTHONPYCACHEPREFIX`, so it could pre-plant `head-min` as a symlink to
+    # the live repository and have the head assembly overwrite and chmod the
+    # operator's working files. `add` refused an occupied destination, so
+    # adopting one was a concrete weakening rather than a new risk (Codex
+    # adversarial, section 55 round 1, [high]).
+    #
+    # AND THE CREATION ITSELF IS ANCHORED, which a `mkdir "$TMP_DIR/head-min"`
+    # in this shell is not. That spelling resolves TMP_DIR by NAME, so a detached
+    # descendant that renames TMP_DIR and leaves a symlink behind it redirects
+    # the creation before the descriptor ever gets to refuse anything -- the
+    # anchor would then be faithfully protecting a directory that is already the
+    # wrong one (Codex adversarial, section 55 round 3, [high]).
+    # `os.mkdir(dest_name, dir_fd=...)` is the same atomic test carried out
+    # relative to the descriptor, so no name resolution is left in the creation
+    # path at all.
+    #
+    # WHAT IS STILL NAME-BASED, SAID PLAINLY: every OTHER use of TMP_DIR in this
+    # file -- the cache paths, the walk logs, the two full checkouts, `cleanup`
+    # -- resolves it by name, and always has. This section did not introduce
+    # that and does not close it; closing it is a change to how the whole file
+    # addresses its own scratch space.
+    # -> XREF: [`TODO-06 section 56`](#56-the-resolver-walks-leak-what-the-tree-spawns-on-the-path-where-they-succeed)
+    #    owns what the tree spawns and what it can still reach.
+    local _dest="$2" _side="$3" _commit="$1" _mat_pid _mat_rc _i
+    shift 3
+    local _destname="${_dest##*/}"
+    budget_left
+    { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
+        && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired before the $_side side of $_commit could be materialized, so no bytes were read and no verdict is being guessed from it"
+    # ITS OWN INTERPRETER, BOUNDED, RUNNING THE GATE'S CODE AND NEVER THE TREE'S.
+    # Nothing below imports anything from the commit under test; it copies bytes.
+    #
+    # SUPERVISED ANYWAY, AND THE REASON IS NOT TRUST -- IT IS ARITHMETIC. An
+    # earlier cut used `timeout --foreground`, on the ground that this spawns no
+    # descendant of the TREE's choosing. That is true and it is the wrong
+    # question: `--foreground` documents that it does not time out CHILDREN of
+    # the command, and this command has two of its own -- `git ls-tree` and
+    # `git cat-file --batch`. A KILL delivered to python while it is blocked
+    # reading from a stalled `cat-file` orphans that git process, unrecorded and
+    # unbounded, past the deadline this whole file advertises (Codex adversarial,
+    # section 55 round 4, [medium]). Whose child it is has no bearing on whether
+    # it outlives the bound.
+    #
+    # So it takes the shape sections 18, 50 and 53 already settled on: its own
+    # session, backgrounded, `wait`ed for its status, recorded in `WALK_PIDS` so
+    # a trap can reach it, and its GROUP reaped on the success path as well as
+    # the failing one.
+    setsid timeout -s KILL "$BUDGET_LEFT" \
+        python3 - "$_commit" "$_destname" "$TMP_FD" "$@" 4>"$_dest.id" <<'MATPY' &
+import os, posixpath, subprocess, sys, pathlib
+
+commit, dest_name, tmp_fd = sys.argv[1], sys.argv[2], int(sys.argv[3])
+prefixes = sys.argv[4:]
+
+
+# TWO FAILURE KINDS, TWO EXIT CODES, because they are two different statements
+# and this file's whole discipline is not to collapse them. 2 means the
+# REPOSITORY could not be asked what the commit contains, which is what
+# `<SIDE>_TREE_UNREADABLE` has always meant; 1 means it answered and the answer
+# could not be faithfully reproduced, which is `MATERIALIZATION_UNFAITHFUL`.
+# Collapsing them would have re-blamed the tree under test for a question git
+# refused to answer -- the exact fault fixtures 22ba and 22cc pin.
+def fail(msg):
+    sys.stderr.write(msg + "\n")
+    raise SystemExit(1)
+
+
+def cannot_ask(msg):
+    sys.stderr.write(msg + "\n")
+    raise SystemExit(2)
+
+
+try:
+    raw = subprocess.run(["git", "ls-tree", "-r", "-z", commit, "--", *prefixes],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+except OSError as exc:
+    cannot_ask("could not run git ls-tree: %s" % exc)
+if raw.returncode != 0:
+    cannot_ask("git ls-tree failed for %s" % commit)
+
+entries = []
+for rec in raw.stdout.split(b"\0"):
+    if not rec:
+        continue
+    # "<mode> <type> <oid>\t<path>", and the path is everything after the
+    # first tab, so a path holding a space, quote or newline survives exactly.
+    # `-z` emits raw bytes with no C-quoting, which is why it is used here.
+    try:
+        meta, path = rec.split(b"\t", 1)
+        mode, typ, oid = meta.split(b" ")
+    except ValueError:
+        fail("unparsable ls-tree record from %s" % commit)
+    entries.append((mode.decode(), typ.decode(), oid.decode(), path))
+
+# NO ENTRY MAY ESCAPE THE DESTINATION. git itself refuses to record a `..`
+# component or an absolute path in a tree, so this cannot fire on a tree git
+# produced -- which is exactly why it is cheap to assert and unsafe to omit.
+for _mode, _typ, _oid, path in entries:
+    parts = pathlib.PurePosixPath(path.decode("utf-8", "surrogateescape")).parts
+    if not parts or any(p in ("..", "") for p in parts) or path.startswith(b"/"):
+        fail("refusing to write an entry that escapes the destination: %r" % path)
+
+blobs = [(m, o, p) for (m, t, o, p) in entries if t == "blob" and m != "120000"]
+links = [(o, p) for (m, t, o, p) in entries if t == "blob" and m == "120000"]
+subs = [p for (m, t, o, p) in entries if t == "commit"]
+
+# EVERY WRITE IS DESCRIPTOR-RELATIVE, AND NO PATHNAME IS RESOLVED TWICE.
+#
+# The destination is fresh and empty, so every directory under it is one this
+# process makes -- but "this process made a directory of that NAME" is not the
+# same claim as "that name still refers to it". A detached descendant can rename
+# a created directory and leave a symlink behind it, and a name-keyed record
+# would go on trusting it, while `O_NOFOLLOW` on the leaf says nothing about a
+# swapped PARENT. So each directory is opened as it is created and the
+# DESCRIPTOR is what is kept; a name swapped afterwards refers to somewhere this
+# assembly simply never writes to again.
+try:
+    os.mkdir(dest_name, 0o700, dir_fd=tmp_fd)
+except FileExistsError:
+    fail("something already exists at the destination %s" % dest_name)
+except OSError as exc:
+    fail("cannot create the destination %s: %s" % (dest_name, exc))
+try:
+    root_fd = os.open(dest_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                      dir_fd=tmp_fd)
+except OSError as exc:
+    fail("cannot open the destination %s: %s" % (dest_name, exc))
+
+# THE ROOT'S IDENTITY IS RECORDED FOR THE PARENT TO CHECK.
+#
+# The parent opens this directory by NAME after this process exits, and between
+# those two moments the name is substitutable: a detached descendant can rename
+# the assembled root away and put a replacement at that name, and the parent
+# would then bind both execution and verification to the replacement (Codex
+# adversarial, section 55, [high]). A descriptor cannot be handed back across an
+# exit, so the identity is written down instead and the parent refuses unless
+# what it opened is this same directory.
+#
+# THAT RAISES THE BAR; IT DOES NOT CLOSE THE WINDOW, and an earlier version of
+# this comment said it did. The reference record is itself reached by a
+# pathname, so a descendant able to win the window can forge it too -- the
+# comparison defeats a substitution that does not ALSO rewrite the record, and
+# nothing more. `root_fd_is_the_assembly` states the same limit at the reading
+# end, so the two ends of this channel agree about what it is worth.
+# -> XREF: [`TODO-06 section 56`](#56-the-resolver-walks-leak-what-the-tree-spawns-on-the-path-where-they-succeed)
+# IT GOES OUT ON FD 4, WHICH THE SHELL OPENED, so this assembler resolves no
+# path of its own to write it -- the same discipline `proto_of` uses for its
+# record, and the reason 22ep's audit stays a flat "every write is
+# descriptor-relative" rather than gaining an exception.
+_st = os.fstat(root_fd)
+os.write(4, b"%d:%d\n" % (_st.st_dev, _st.st_ino))
+
+dir_fds = {"": root_fd}
+
+
+def dir_fd_for(rel):
+    if rel in dir_fds:
+        return dir_fds[rel]
+    fd, cur = root_fd, ""
+    for part in rel.split("/"):
+        if not part:
+            continue
+        cur = posixpath.join(cur, part) if cur else part
+        if cur in dir_fds:
+            fd = dir_fds[cur]
+            continue
+        try:
+            os.mkdir(part, dir_fd=fd)
+        except FileExistsError:
+            fail("refusing to write through %s, which this assembly did not create" % cur)
+        except OSError as exc:
+            fail("cannot create %s: %s" % (cur, exc))
+        try:
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError as exc:
+            fail("cannot open %s after creating it: %s" % (cur, exc))
+        dir_fds[cur] = fd
+    return fd
+
+
+for path in subs:
+    # What a plain checkout leaves for an uninitialised submodule.
+    dir_fd_for(os.fsdecode(path))
+
+want = [o for (_m, o, _p) in blobs] + [o for (o, _p) in links]
+content = {}
+if want:
+    try:
+        proc = subprocess.Popen(["git", "cat-file", "--batch"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        cannot_ask("could not run git cat-file: %s" % exc)
+    proc.stdin.write(("\n".join(want) + "\n").encode())
+    proc.stdin.close()
+    out = proc.stdout
+    for oid in want:
+        header = out.readline()
+        if not header:
+            fail("git cat-file ended before object %s" % oid)
+        fields = header.split()
+        if len(fields) != 3 or fields[1] != b"blob":
+            # "<oid> missing" is a partial clone, not an absent path.
+            fail("object %s for the %s side is not present in this repository "
+                 "(git said: %s)" % (oid, commit, header.decode(errors="replace").strip()))
+        size = int(fields[2])
+        body = out.read(size)
+        if len(body) != size:
+            fail("short read for object %s" % oid)
+        out.read(1)   # the trailing newline cat-file appends
+        content[oid] = body
+    proc.stdout.close()
+    if proc.wait() != 0:
+        cannot_ask("git cat-file --batch failed for %s" % commit)
+
+for mode, oid, path in blobs:
+    rel = os.fsdecode(path)
+    pfd = dir_fd_for(posixpath.dirname(rel))
+    name = posixpath.basename(rel)
+    # O_EXCL, so a file planted at this name during the assembly is a refusal
+    # rather than a target; O_NOFOLLOW, so a symlink planted there is not
+    # followed even for one write; `dir_fd`, so neither question is asked of a
+    # parent that may have been swapped since it was created.
+    try:
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=pfd)
+    except OSError as exc:
+        fail("refusing to write %s: %s" % (rel, exc))
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(content[oid])
+        fh.flush()
+        # THE MODE IS THE COMMIT'S, not the umask's. `[ -x ]` is asked of these
+        # files later, and a checkout that lost the bit would answer differently
+        # from every other checkout of the same commit. Applied THROUGH THE
+        # DESCRIPTOR, which cannot be redirected between the write and the mode.
+        os.fchmod(fh.fileno(), 0o755 if mode == "100755" else 0o644)
+
+for oid, path in links:
+    rel = os.fsdecode(path)
+    pfd = dir_fd_for(posixpath.dirname(rel))
+    name = posixpath.basename(rel)
+    # A 120000 blob's CONTENT IS THE TARGET PATH TEXT. Reproducing it as a real
+    # symlink is what keeps the type questions asked later answerable; writing
+    # the text as a regular file is precisely the `core.symlinks=false`
+    # emulation `tree_is_faithful` refuses for a checkout.
+    #
+    # NOT UNLINKED FIRST. The first cut removed anything already at the path and
+    # then created the link, which is the same adopt-what-is-there fault the
+    # destination check exists to refuse, one level down. `os.symlink` fails on
+    # an occupied name, which is the answer wanted.
+    try:
+        os.symlink(os.fsdecode(content[oid]), name, dir_fd=pfd)
+    except OSError as exc:
+        fail("refusing to link %s: %s" % (rel, exc))
+MATPY
+    _mat_pid=$!
+    WALK_PIDS="$_mat_pid"
+    wait "$_mat_pid"
+    _mat_rc=$?
+    WALK_WAITED="$_mat_pid"
+    # THE GROUP IS REAPED WHETHER OR NOT THE ASSEMBLY SUCCEEDED. A `cat-file
+    # --batch` that outlived a completed python is the same orphan as one that
+    # outlived a killed python. Guarded on the leader being gone AND the group
+    # still answering, so a recycled pid is never signalled -- the discipline
+    # section 53 established.
+    if ! kill -0 "$_mat_pid" 2>/dev/null && kill -0 -- "-$_mat_pid" 2>/dev/null; then
+        kill -TERM -- "-$_mat_pid" 2>/dev/null || true
+        for _i in 1 2 3 4 5 6; do
+            kill -0 -- "-$_mat_pid" 2>/dev/null || break
+            [ "$(remaining)" -gt 1 ] || break
+            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
+        done
+        kill -KILL -- "-$_mat_pid" 2>/dev/null || true  # launch-exempt: filters a shell variable already in memory, so nothing here opens a file or can block
+    fi
+    WALK_PIDS=""
+    WALK_WAITED=""
+    if [ "$_mat_rc" -eq 2 ]; then
+        # A QUESTION GIT REFUSED TO ANSWER IS NEVER A STATEMENT ABOUT THE TREE.
+        # `<SIDE>_TREE_UNREADABLE` is the published token for exactly this and
+        # has been since section 50; the assembly reaching it first, before any
+        # protocol classification, is the same ordering the probe it replaced
+        # had (fixtures 22ba, 22cc).
+        case "$_side" in
+            base) die_infra "BASE_TREE_UNREADABLE: could not ask what the base $_commit contains -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it" ;;
+            *)    die_infra "HEAD_TREE_UNREADABLE: could not ask what the head commit $_commit contains -- the repository state, not the tree under test, is what failed here, and no classification is being guessed from it" ;;
+        esac
+    fi
+    if [ "$_mat_rc" -ne 0 ]; then
+        die_infra "MATERIALIZATION_UNFAITHFUL: git said what the $_side side of $_commit contains, but the gate could not reproduce it (rc=$_mat_rc; an object this repository does not have, an entry it will not write, or the gate's remaining budget expiring while it ran), so the gate has no bytes it can attribute to that commit and no verdict is being guessed from it"
+    fi
+    budget_left
+    { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
+        && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired while assembling the $_side side of $_commit, so the materialization never finished and no verdict is being guessed from it"
+    return 0
+}
+
+root_fd_is_the_assembly() {   # $1 = fd, $2 = side, $3 = dir (for the message)
+    # WHAT THE PARENT OPENED SHOULD BE WHAT THE ASSEMBLER MADE -- and this
+    # RAISES THE BAR rather than closing the hole, which is the honest statement
+    # and replaces one that was not.
+    #
+    # The parent cannot create a directory relative to a descriptor from bash,
+    # so it opens the root by name after the assembler exits, and that name is
+    # substitutable in between. The assembler records its root's device and
+    # inode and this compares them, which defeats a substitution that does not
+    # also rewrite the record. It does NOT defeat one that does: an earlier
+    # version of this comment claimed exploitation was DETECTED, and the
+    # reference record is itself reached by a pathname, so a descendant that can
+    # win the window can forge it too (Codex adversarial, section 55, [high]).
+    # The record is read through the anchored TMP_DIR descriptor with
+    # `O_NOFOLLOW`, which stops it being redirected by a symlink -- not a
+    # descendant that simply overwrites it.
+    #
+    # THE ACTOR THIS NEEDS IS ONE THE GATE ALREADY CANNOT CONTAIN: a descendant
+    # that DETACHED itself from the process group every phase here reaps. That
+    # is a filed, owned limit, not a new one, and the only boundary a detached
+    # child cannot leave is a cgroup killed as a unit -- a host decision, not a
+    # shell change.
+    # -> XREF: [`TODO-06 section 56`](#56-the-resolver-walks-leak-what-the-tree-spawns-on-the-path-where-they-succeed)
+    local _fd="$1" _side="$2" _dir="$3"
+    phase_budget "$_side root identity"
+    timeout --foreground -s KILL "$PHASE_BUDGET" \
+        python3 -c '
+import os, sys
+fd, idname, tmp_fd = int(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+try:
+    # Through the anchor, no-follow: the record cannot be redirected by a
+    # symlink planted at its name. It can still be overwritten by whatever can
+    # win the window, which is stated above rather than papered over.
+    rfd = os.open(idname, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=tmp_fd)
+    with os.fdopen(rfd) as rf:
+        want = rf.read().strip()
+except OSError as exc:
+    sys.stderr.write("cannot read the recorded root identity: %s\n" % exc)
+    raise SystemExit(2)
+st = os.fstat(fd)
+got = "%d:%d" % (st.st_dev, st.st_ino)
+if got != want:
+    sys.stderr.write("root identity %s is not the assembled %s\n" % (got, want))
+    raise SystemExit(1)
+' "$_fd" "${_dir##*/}.id" "$TMP_FD"
+    case "$?" in
+        0) return 0 ;;
+        2) die_infra "could not establish whether the $_side tree the gate is holding is the one it assembled, so nothing is being guessed from this range" ;;
+        *) die_infra "MATERIALIZATION_UNFAITHFUL: the directory the gate is holding for the $_side side is NOT the one it assembled from that commit -- something replaced it between the assembly finishing and the gate taking hold of it, so every phase that would read it would be reading a tree the gate never built" ;;
+    esac
+}
+
+min_tree_still_matches() {   # $1 = assembled dir, $2 = commit, $3 = side label
+    # THE ASSEMBLED TREE IS RE-BOUND TO ITS COMMIT AFTER ANYTHING RUNS FROM IT,
+    # THROUGH THE SAME DESCRIPTOR THE ASSEMBLY USED.
+    #
+    # Section 55 took the closure reading from the commit's own tree entry and
+    # removed the `hash-object` over the materialized tree -- and that
+    # `hash-object` was the ONLY thing tying the bytes the gate EXECUTES to the
+    # commit it names. Both readings became commit plumbing, so they agree by
+    # construction and notice nothing about the directory in between, while
+    # `proto_of`, the bucket-emission checker and `contract_of` all execute
+    # modules from that directory (Codex adversarial, section 55, [high]).
+    #
+    # THREE VERSIONS, AND THE FIRST TWO WERE WEAKER IN WAYS THAT MATTER:
+    #   * one filtered its comparison set by what the directory CURRENTLY held,
+    #     so a member replaced by a symlink or deleted outright was silently
+    #     omitted -- it passed over exactly the substitution it exists to catch;
+    #   * the next took the set from the commit but still resolved every path
+    #     afresh BY NAME, so a detached descendant could rename an assembled
+    #     ancestor and leave a symlink to a clean mirror, and the check verified
+    #     the mirror while the result being consumed came from the original.
+    # A pathname is not an identity -- the same lesson the assembler learned,
+    # relearned by its own verifier.
+    #
+    # So this walks descriptor-relatively from the anchor held on TMP_DIR, with
+    # `O_NOFOLLOW` at every component, and hashes bytes read from the opened
+    # descriptor rather than from a path. It computes git's blob hash itself,
+    # which also means the whole check is one process rather than a `hash-object`
+    # spawn on top of it.
+    local _dir="$1" _commit="$2" _side="$3" _rootfd="$4"
+    local _unreadable="HEAD_TREE_UNREADABLE"
+    [ "$_side" = "base" ] && _unreadable="BASE_TREE_UNREADABLE"
+    phase_budget "$_side assembled-tree re-binding"
+    setsid timeout -s KILL "$PHASE_BUDGET" \
+        python3 - "$_commit" "$_rootfd" "${CLOSURE[@]}" "${PROTOCOL_PATHS[@]}" <<'REBINDPY' &
+import hashlib, os, subprocess, sys
+
+commit, root = sys.argv[1], int(sys.argv[2])
+# Duplicates are harmless but wasteful; the closure and protocol lists overlap.
+wanted, seen = [], set()
+for p in sys.argv[3:]:
+    if p not in seen:
+        seen.add(p)
+        wanted.append(p)
+
+
+def cannot_ask(msg):
+    sys.stderr.write(msg + "\n")
+    raise SystemExit(2)
+
+
+def unfaithful(msg):
+    sys.stderr.write(msg + "\n")
+    raise SystemExit(1)
+
+
+try:
+    raw = subprocess.run(["git", "ls-tree", "-z", commit, "--", *wanted],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+except OSError as exc:
+    cannot_ask("could not run git ls-tree: %s" % exc)
+if raw.returncode != 0:
+    cannot_ask("git ls-tree failed for %s" % commit)
+
+expect = {}
+for rec in raw.stdout.split(b"\0"):
+    if not rec:
+        continue
+    try:
+        meta, path = rec.split(b"\t", 1)
+        mode, _typ, oid = meta.split(b" ")
+    except ValueError:
+        cannot_ask("unparsable ls-tree record from %s" % commit)
+    expect[os.fsdecode(path)] = (mode.decode(), oid.decode())
+
+# THE ROOT IS THE INHERITED DESCRIPTOR, never reopened by name. Reopening it --
+# even `O_NOFOLLOW` beneath an anchored TMP_DIR -- would let a rename plus a
+# clean real directory at the same name send this check to a mirror while the
+# consumed result came from the original.
+
+
+def walk(rel):
+    """Return (parent_fd, leaf) reached with no-follow at every component."""
+    parts = rel.split("/")
+    fd = root
+    opened = []
+    try:
+        for part in parts[:-1]:
+            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            opened.append(nxt)
+            fd = nxt
+        return fd, parts[-1], opened
+    except OSError:
+        for x in opened:
+            os.close(x)
+        return None, parts[-1], []
+
+
+def blob_hash(data):
+    h = hashlib.sha1()
+    h.update(b"blob %d\0" % len(data))
+    h.update(data)
+    return h.hexdigest()
+
+
+for rel in wanted:
+    want = expect.get(rel)
+    pfd, leaf, opened = walk(rel)
+    try:
+        if pfd is None:
+            if want is None:
+                continue
+            unfaithful("%s cannot be reached in the assembled tree without "
+                       "following something that is not a directory" % rel)
+        try:
+            st = os.stat(leaf, dir_fd=pfd, follow_symlinks=False)
+        except FileNotFoundError:
+            if want is None:
+                continue
+            unfaithful("%s is carried by %s but is missing from the assembled "
+                       "tree -- something removed it after the gate read it" % (rel, commit))
+        except OSError as exc:
+            cannot_ask("could not stat %s in the assembled tree: %s" % (rel, exc))
+        if want is None:
+            unfaithful("%s is not carried by %s, but the assembled tree now holds "
+                       "it -- something created it after the gate read the tree" % (rel, commit))
+        mode, oid = want
+        import stat as _stat
+        if mode in ("100644", "100755"):
+            if not _stat.S_ISREG(st.st_mode):
+                unfaithful("%s stores %s as a regular file but the assembled tree now "
+                           "holds something else there -- something replaced it after "
+                           "the gate read it, and a later phase would execute or parse "
+                           "whatever that is" % (commit, rel))
+            try:
+                fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=pfd)
+            except OSError as exc:
+                cannot_ask("could not open %s in the assembled tree: %s" % (rel, exc))
+            with os.fdopen(fd, "rb") as fh:
+                got = blob_hash(fh.read())
+            if got != oid:
+                unfaithful("%s in the assembled tree no longer matches %s (%s became %s) "
+                           "-- something changed it after the gate read it, so every check "
+                           "that has already passed describes bytes that are no longer there"
+                           % (rel, commit, oid, got))
+        elif mode == "120000":
+            if not _stat.S_ISLNK(st.st_mode):
+                unfaithful("%s stores %s as a symlink but the assembled tree no longer "
+                           "holds one there" % (commit, rel))
+            got = blob_hash(os.readlink(leaf, dir_fd=pfd).encode())
+            if got != oid:
+                unfaithful("the symlink %s in the assembled tree no longer points where "
+                           "%s says (%s became %s)" % (rel, commit, oid, got))
+    finally:
+        for x in opened:
+            os.close(x)
+REBINDPY
+    local _rb_pid=$!
+    WALK_PIDS="$_rb_pid"
+    wait "$_rb_pid"
+    local _rb_rc=$?
+    WALK_WAITED="$_rb_pid"
+    if ! kill -0 "$_rb_pid" 2>/dev/null && kill -0 -- "-$_rb_pid" 2>/dev/null; then
+        kill -TERM -- "-$_rb_pid" 2>/dev/null || true
+        for _i in 1 2 3 4 5 6; do
+            kill -0 -- "-$_rb_pid" 2>/dev/null || break
+            [ "$(remaining)" -gt 1 ] || break
+            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
+        done
+        kill -KILL -- "-$_rb_pid" 2>/dev/null || true
+    fi
+    WALK_PIDS=""
+    WALK_WAITED=""
+    case "$_rb_rc" in
+        0) return 0 ;;
+        # A FAILED PROBE IS NOT AN UNFAITHFUL TREE -- the distinction fixture
+        # 22bq pins one level up, and which this check got wrong on its first
+        # run by reporting a git failure as a bad directory.
+        2) die_infra "$_unreadable: could not establish whether the $_side tree assembled for $_commit still holds that commit's bytes -- the repository or the probe, not the tree, is what failed here" ;;
+        *) die_infra "MATERIALIZATION_UNFAITHFUL: the $_side tree assembled for $_commit no longer holds that commit's bytes (rc=$_rb_rc; the detail is on stderr above), so every check that has already passed describes bytes that are no longer there" ;;
+    esac
+}
+
 tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
     local _odd _dirty
     _odd="$(bounded_git -C "$1" ls-files -v)" \
         || die_infra "MATERIALIZATION_UNFAITHFUL: could not ask the $3 checkout of $2 which of its entries were actually written, so whether the gate is reading that commit is unknown and no verdict is being guessed from it"
-    _odd="$(printf '%s\n' "$_odd" | grep -cv '^H ' || true)"
+    _odd="$(printf '%s\n' "$_odd" | grep -cv '^H ' || true)"  # launch-exempt: filters a shell variable already in memory
     if [ "${_odd:-0}" -ne 0 ]; then
         die_infra "MATERIALIZATION_UNFAITHFUL: the $3 checkout of $2 has $_odd entr(y/ies) git did not write normally (skip-worktree or assume-unchanged), so the gate would adjudicate fewer bytes than that commit carries. Clear sparse-checkout and assume-unchanged settings, or run the gate from a repository that has none"
     fi
@@ -1799,9 +2636,9 @@ tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
     # parameter expansion over an already-materialized string while the stat is
     # the filesystem call that can actually block.
     while IFS= read -r -d '' _rec; do
-        _mode="${_rec%% *}"
+        _mode="${_rec%% *}"  # launch-exempt: filters a shell variable already in memory, so nothing here opens a file or can block
         [ "$_mode" = "120000" ] || continue
-        budget_left
+        budget_left  # launch-exempt: filters a shell variable already in memory, so nothing here opens a file or can block
         { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
             && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired while checking whether the $3 checkout of $2 represents that commit's symlinks faithfully, so the question was never finished and no verdict is being guessed from it"
         # <mode> <oid> <stage>TAB<path>, and the path is everything after the
@@ -1833,9 +2670,11 @@ tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
     _attr="$(bounded_git -C "$1" check-attr filter text eol working-tree-encoding -- \
                 "${CLOSURE[@]}" "${PROTOCOL_PATHS[@]}")" \
         || die_infra "MATERIALIZATION_UNFAITHFUL: could not ask the $3 checkout of $2 whether any verdict-affecting path is filtered, so whether the gate would execute that commit's own bytes is unknown and no verdict is being guessed from it"
-    _attr="$(printf '%s\n' "$_attr" | grep -v ': \(unspecified\|unset\)$' || true)"
+    _attr="$(printf '%s\n' "$_attr" | grep -v ': \(unspecified\|unset\)$' || true)"  # launch-exempt: filters a shell variable already in memory
     if [ -n "$_attr" ]; then
-        die_infra "MATERIALIZATION_UNFAITHFUL: a checkout filter applies to a verdict-affecting path in the $3 tree of $2, so the bytes this gate would execute or parse are not the bytes that commit stores: $(printf '%s' "$_attr" | tr '\n' ';' | cut -c1-300). Clear the filter, text, eol or working-tree-encoding attribute for the resolver closure and the protocol paths"
+        local _attr_excerpt
+        _attr_excerpt="$(printf '%s' "$_attr" | tr '\n' ';' | cut -c1-300)"  # launch-exempt: reformats a shell variable already in memory
+        die_infra "MATERIALIZATION_UNFAITHFUL: a checkout filter applies to a verdict-affecting path in the $3 tree of $2, so the bytes this gate would execute or parse are not the bytes that commit stores: $_attr_excerpt. Clear the filter, text, eol or working-tree-encoding attribute for the resolver closure and the protocol paths"
     fi
     budget_left
     { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
@@ -1843,15 +2682,15 @@ tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
     return 0
 }
 
-budget_left
-if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
-    die_infra "the gate's budget expired before the base worktree at $BASE_SHA could be materialized, so no checkout was started and nothing about this range was read"
-fi
-WT_ATTEMPTED+=("$BASE_TREE")
-timeout --foreground -s KILL "$(remaining)" \
-    git -c "core.hooksPath=$NOHOOKS_DIR" worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
-    || die_infra "cannot materialize base worktree at $BASE_SHA (the checkout failed, or the gate's remaining budget expired while it ran)"
-tree_is_faithful "$BASE_TREE" "$BASE_SHA" base
+# THE BASE SIDE IS ASSEMBLED NARROW HERE AND CHECKED OUT IN FULL ONLY IF THE
+# DIFFERENTIAL IS ACTUALLY GOING TO RUN (section 55). Everything between here
+# and the byte-identical exit reads the protocol and the closure, both of which
+# live under the subtrees below; the corpus is not read until a walk needs it.
+materialize_subtree "$BASE_SHA" "$BASE_MIN" base "${MIN_SUBTREES[@]}"
+exec {BASE_MIN_FD}<"$BASE_MIN" \
+    || die_infra "cannot hold a descriptor on the base tree just assembled, so the phases that read it and the check that re-binds it could not be tied to one directory"
+root_fd_is_the_assembly "$BASE_MIN_FD" base "$BASE_MIN"
+BASE_MIN_ADDR="/proc/self/fd/$BASE_MIN_FD"
 
 # ---------------------------------------------------------------------------
 # PROTOCOL SKEW. The base process WRITES with its own SNAPSHOT_SCHEMA and
@@ -1868,13 +2707,29 @@ tree_is_faithful "$BASE_TREE" "$BASE_SHA" base
 # share of the budget rather than all of it -- bounded by `remaining()` so the
 # global deadline still dominates.
 PROTOCOL_PROBE_CAP_SECS=60
-probe_budget() {
-    local _r
-    _r="$(remaining)"
-    if [ "$_r" -gt "$PROTOCOL_PROBE_CAP_SECS" ]; then
-        printf '%s' "$PROTOCOL_PROBE_CAP_SECS"
+# AND IT REFUSES ON AN EXPIRED BUDGET, like every other phase. This was built on
+# `remaining()`, which floors to 1 -- correct as a `timeout` ARGUMENT, wrong as a
+# DECISION -- so the protocol probe could START after the global deadline had
+# passed and then execute tree-controlled imports, which is the one phase where
+# starting late is least defensible. It was the last floor-as-a-decision left in
+# the file after section 55 gave the other seven `phase_budget` (Codex
+# adversarial, section 55 round 8, [medium]).
+#
+# ANSWERS IN A VARIABLE, NOT ON STDOUT, because a function that can refuse must
+# not be called from a command substitution: `die_infra` inside one runs in a
+# SUBSHELL and cannot end this script, so the refusal would print and execution
+# would carry on -- the lost-tri-state fault this file has already fixed several
+# times, in a new place.
+PROBE_BUDGET=""
+probe_budget() {   # $1 = what it is about to do; ANSWERS in PROBE_BUDGET
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
+        die_infra "the gate's budget expired before it could $1, so nothing was started and no verdict is being guessed from it"
+    fi
+    if [ "$BUDGET_LEFT" -gt "$PROTOCOL_PROBE_CAP_SECS" ]; then
+        PROBE_BUDGET="$PROTOCOL_PROBE_CAP_SECS"
     else
-        printf '%s' "$_r"
+        PROBE_BUDGET="$BUDGET_LEFT"
     fi
 }
 
@@ -1926,7 +2781,8 @@ proto_of() {  # $1 = tree root; ANSWERS IN $PROTO_RESULT, never on a path
     # reappearing in the machinery this section itself introduced (Codex
     # adversarial, section 50 round 20).
     local _rec _prc _prb _i
-    _rec="$(mktemp "$TMP_DIR/proto.XXXXXX" 2>/dev/null)" \
+    probe_budget "create the file its protocol record travels on"
+    _rec="$(timeout --foreground -s KILL "$PROBE_BUDGET" mktemp "$TMP_DIR/proto.XXXXXX" 2>/dev/null)" \
         || { PROTO_RESULT=TRANSPORT; return 0; }
     # THE RECORD'S ADDRESS IS NEVER HANDED TO THE TREE. Passing the path as
     # argv[2] told the very code being imported where the gate's own answer
@@ -1970,8 +2826,14 @@ proto_of() {  # $1 = tree root; ANSWERS IN $PROTO_RESULT, never on a path
     # leave the producer, cache and corpus phases nothing (Codex perf, section
     # 50 post-commit review). The cap is the SMALLER of the phase cap and what
     # is left, so it can never extend the global deadline.
-    setsid timeout -s KILL "$(probe_budget)" \
-        python3 - "$1" 3>"$_rec" >/dev/null 2>/dev/null <<'PY' &
+    # THE ANCHOR DESCRIPTOR IS CLOSED FOR ANYTHING THAT RUNS TREE CODE. This
+    # probe IMPORTS the tree under test, and an inherited directory descriptor on
+    # TMP_DIR would hand that code exactly the swap-proof handle the assembly
+    # uses to defend itself -- a channel of precisely the kind section 53 had to
+    # close for this function's pid file.
+    probe_budget "read the protocol constants"
+    setsid timeout -s KILL "$PROBE_BUDGET" \
+        python3 - "$1" 3>"$_rec" {TMP_FD}<&- >/dev/null 2>/dev/null <<'PY' &
 import base64, contextlib, hashlib, importlib.util, json, os, sys, pathlib
 # THE RECORD GOES OUT ON FD 3, which the shell opened. Rebinding sys.stdout to
 # it keeps every `print` below -- including the UNREADABLE sentinels --
@@ -2161,7 +3023,7 @@ PY
         for _i in 1 2 3 4 5 6; do
             kill -0 -- "-$_prb" 2>/dev/null || break
             [ "$(remaining)" -gt 1 ] || break
-            sleep 0.5
+            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
         done
         kill -KILL -- "-$_prb" 2>/dev/null || true
     fi
@@ -2177,7 +3039,7 @@ PY
         # import or a blocked read could burn the whole gate budget and be
         # terminated externally instead of returning a token (Codex
         # adversarial, section 50 round 22).
-        rm -f "$_rec"
+        bounded_fs rm -f "$_rec"
         PROTO_RESULT=TRANSPORT
         return 0
     fi
@@ -2187,14 +3049,17 @@ PY
     # inert instead of authoritative. The framing is still checked rather than
     # assumed: an empty file is not a record.
     if [ ! -s "$_rec" ]; then
-        rm -f "$_rec"
+        bounded_fs rm -f "$_rec"
         PROTO_RESULT=TRANSPORT
         return 0
     fi
     local _line
-    _line="$(timeout --foreground -s KILL "$(probe_budget)" head -n 1 "$_rec" 2>/dev/null)" \
-        || { rm -f "$_rec"; PROTO_RESULT=TRANSPORT; return 0; }
-    rm -f "$_rec"
+    # THE ALLOWANCE IS REFRESHED FOR THE READ, not reused from the launch: the
+    # probe has just spent an unknown amount of it.
+    probe_budget "read the protocol record it just wrote"
+    _line="$(timeout --foreground -s KILL "$PROBE_BUDGET" head -n 1 "$_rec" 2>/dev/null)" \
+        || { bounded_fs rm -f "$_rec"; PROTO_RESULT=TRANSPORT; return 0; }
+    bounded_fs rm -f "$_rec"
     [ -n "$_line" ] || { PROTO_RESULT=TRANSPORT; return 0; }
     PROTO_RESULT="$_line"
 }
@@ -2203,8 +3068,9 @@ PY
 # `cleanup` -- which runs here -- could never reach the probe. The answer comes
 # back in `PROTO_RESULT` rather than on stdout precisely so that neither a
 # subshell nor a tree-addressable pathname is involved (section 53 rounds 2, 3).
-proto_of "$BASE_TREE"
+proto_of "$BASE_MIN_ADDR"
 BASE_PROTO="$PROTO_RESULT"
+min_tree_still_matches "$BASE_MIN" "$BASE_SHA" base "$BASE_MIN_FD"
 # EXACTLY ONE RECORD PER SIDE. `redirect_stdout` moves PYTHON-level import
 # noise aside, but a module writing straight to fd 1 goes around it -- and a
 # contaminated capture makes the caller's `read` consume the noise line and die
@@ -2729,10 +3595,15 @@ esac
 # window section 51 documented and deliberately left open: a materialized
 # commit cannot be edited between the measurement and the decision, so the
 # closure's evidence describes a tree that is still there by construction.
-# Section 51's CLOSURE_MOVED_UNDER_GATE is not retired by that -- it now guards
+# Section 51's CLOSURE_MOVED_UNDER_GATE was not retired by that -- it guarded
 # the materialized tree instead of the live one, which is a weaker threat but
-# not an impossible one, and retiring a published token is not this section's
-# to do.
+# not an impossible one, and retiring a published token was not section 54's to
+# do. SECTION 55 THEN REMOVED THE LAST TREE IT COULD GUARD: the fast path
+# materializes no checkout at all, so there is no longer anything that can move
+# under the gate, and the token has NO EMITTER. That is left standing rather
+# than deleted for the same reason section 54 left it: retiring a published
+# token belongs to the section that owns the token surface.
+# -> XREF: [`TODO-06 section 58`](#58-head-versus-tree-checks-section-54-made-unreachable-are-retired-or-re-fixtured)
 #
 # MATERIALIZED HERE, NOT BESIDE THE BASE CHECKOUT, for exactly the reason the
 # protocol probe below is acquired here: base-first governs classification, so
@@ -2782,16 +3653,18 @@ if [ "$DRIVER_AT_HEAD" != "$DRIVER_LIVE" ]; then
     die_infra "GATE_DRIVER_NOT_AT_HEAD: the running $GATE_DRIVER_PATH is not the copy carried by '$HEAD_SPEC' ($HEAD_RESOLVED), which this run was explicitly pointed at. The working tree may be perfectly clean; the selected head simply carries a different driver, and this gate will not certify a range with code that range does not contain. Re-run from a checkout whose $GATE_DRIVER_PATH matches that commit, or select a head that matches this one"
 fi
 
-budget_left
-if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
-    die_infra "the gate's budget expired before the head worktree at $HEAD_RESOLVED could be materialized, so no checkout was started and nothing about the tree under test was read"
-fi
-WT_ATTEMPTED+=("$HEAD_TREE")
-timeout --foreground -s KILL "$(remaining)" \
-    git -c "core.hooksPath=$NOHOOKS_DIR" worktree add --detach "$HEAD_TREE" "$HEAD_RESOLVED" >/dev/null 2>&1 \
-    || die_infra "cannot materialize the head worktree at $HEAD_RESOLVED (the checkout failed, or the gate's remaining budget expired while it ran)"
-tree_is_faithful "$HEAD_TREE" "$HEAD_RESOLVED" head
-log "head $HEAD_RESOLVED adjudicated from a materialized checkout at $HEAD_TREE"
+# THE HEAD SIDE, SAME TREATMENT AND FOR THE SAME REASON (section 55). Section
+# 54's property is untouched: every head-side read still comes from
+# $HEAD_RESOLVED and never from the working tree. What changes is HOW those
+# bytes are put where the protocol loader can execute them -- assembled from
+# that commit's own blobs rather than checked out with the other 2,550 files
+# this phase never opens.
+materialize_subtree "$HEAD_RESOLVED" "$HEAD_MIN" head "${MIN_SUBTREES[@]}"
+exec {HEAD_MIN_FD}<"$HEAD_MIN" \
+    || die_infra "cannot hold a descriptor on the head tree just assembled, so the phases that read it and the check that re-binds it could not be tied to one directory"
+root_fd_is_the_assembly "$HEAD_MIN_FD" head "$HEAD_MIN"
+HEAD_MIN_ADDR="/proc/self/fd/$HEAD_MIN_FD"
+log "head $HEAD_RESOLVED adjudicated from its own blobs, assembled at $HEAD_MIN"
 
 # AND THE WORKING TREE IS NEVER SILENTLY PREFERRED OR SILENTLY IGNORED. A
 # reader who runs this gate from a dirty checkout would otherwise have to infer
@@ -2825,7 +3698,20 @@ diverge_left() {   # seconds this disclosure may still spend, 0 when spent
     [ "$_r" -lt 1 ] && { printf '0'; return; }
     # AND NEVER MORE THAN THE GATE HAS LEFT, so the disclosure cannot outlive
     # the run it is describing.
-    _rem="$(remaining)"
+    #
+    # CLAMPED AGAINST THE UNFLOORED BUDGET. This read `remaining()`, which
+    # answers 1 on an expired or unreadable clock -- so once the gate's global
+    # budget was spent, the cap above still had room and this clamp still handed
+    # back a second, and a SECOND disclosure probe launched for it. The
+    # disclosure is explicitly non-fatal, which is exactly why it must not be
+    # the one step that outlives the deadline (Codex adversarial, section 55
+    # round 10, [medium]).
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
+        printf '0'
+        return
+    fi
+    _rem="$BUDGET_LEFT"
     [ "$_r" -gt "$_rem" ] && _r="$_rem"
     printf '%s' "$_r"
 }
@@ -2855,15 +3741,20 @@ else
     # diff --name-only` emits one path per line (quoting the exotic ones), so
     # lines are the unit and an unquoted expansion would be a second bug in a
     # disclosure whose whole job is to be accurate.
-    DIVERGE_ALL="$(printf '%s\n%s\n' "$DIVERGE_TRACKED" "$DIVERGE_UNTRACKED" | grep -c . || true)"
+    DIVERGE_ALL="$(printf '%s\n%s\n' "$DIVERGE_TRACKED" "$DIVERGE_UNTRACKED" | grep -c . || true)"  # launch-exempt: counts a shell variable already in memory
     if [ "${DIVERGE_ALL:-0}" -gt 0 ]; then
         log "NOTE HEAD_WORKTREE_DIVERGES: the working tree differs from $HEAD_RESOLVED in $DIVERGE_ALL path(s), none of which were adjudicated. This gate reports on the commit, not on what is on disk:"
         # THE COUNT IS COMPLETE, THE LIST IS BOUNDED. A tree with thousands of
         # untracked files would otherwise bury the verdict under its own
         # disclosure; the number above is the answer, the names are the
         # convenience (Codex perf, section 54, [medium]).
+        # Every stage below reads a pipe fed from a shell variable already in
+        # memory, so none can block on I/O and a deadline around them would
+        # bound nothing. The marker sits on the command's own logical line
+        # because that is where the inventory reads it -- a reason written above
+        # the call is a reason the checker never sees.
         printf '%s\n%s\n' "$DIVERGE_TRACKED" "$DIVERGE_UNTRACKED" \
-            | grep . | head -"$DIVERGE_LIST_MAX" | sed 's/^/    diverges: /'
+            | grep . | head -"$DIVERGE_LIST_MAX" | sed 's/^/    diverges: /'  # launch-exempt: in-memory pipeline, nothing here can block
         if [ "$DIVERGE_ALL" -gt "$DIVERGE_LIST_MAX" ]; then
             log "    ... and $(( DIVERGE_ALL - DIVERGE_LIST_MAX )) more (list capped; the count above is complete)"
         fi
@@ -2875,9 +3766,13 @@ fi
 # emitting its token -- base-first ordering has to hold for the acquisition as
 # well as the adjudication, or the base's answer waits on the head's machinery
 # (Codex adversarial, section 50 round 22).
-proto_of "$HEAD_TREE"
+proto_of "$HEAD_MIN_ADDR"
 HEAD_PROTO="$PROTO_RESULT"
 case "$HEAD_PROTO" in *$'\n'*) HEAD_PROTO=UNREADABLE ;; esac
+# RE-BOUND BEFORE ANYTHING CONSUMES THE RESULT. The probe above executed modules
+# from this tree; the closure decision, the protocol adjudication and every
+# later phase that reads it are downstream of that.
+min_tree_still_matches "$HEAD_MIN" "$HEAD_RESOLVED" head "$HEAD_MIN_FD"
 
 # THE HEAD SIDE IS REACHED ONLY ONCE THE BASE HAS NOTHING TO SAY. Placing this
 # transport check beside the base one put a HEAD machinery failure AHEAD of a
@@ -2891,7 +3786,7 @@ case "$HEAD_PROTO" in
 esac
 case "$HEAD_PROTO" in
     UNREADABLE|*"?"*)
-        protocol_present_in_worktree "$HEAD_TREE"
+        protocol_present_in_worktree "$HEAD_MIN_ADDR"
         HEAD_FORM="$(protocol_form)"
         [ "$HEAD_FORM" = "UNMAPPED" ] && die_infra "HEAD_FORM_UNMAPPED: PROTOCOL_PATHS declares a set this gate's form mapping does not cover (${PROTOCOL_PATHS[*]}), so no classification can be made from it. Extend protocol_form alongside PROTOCOL_PATHS"
         missing_protocol_paths
@@ -2916,7 +3811,7 @@ case "$HEAD_PROTO" in
         fi
         for _i in "${!PROTOCOL_PATHS[@]}"; do
             if [ "${PROTO_HAS[$_i]}" = 1 ] && [ "${HEAD_WT_HAS[$_i]}" != 1 ]; then
-                die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries ${PROTOCOL_PATHS[$_i]} but the checkout the gate materialized for it at $HEAD_TREE does not -- that materialization is incomplete (a sparse checkout, or a partial clone missing the blob), so the gate is reading a tree that is not the commit it claims to test"
+                die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries ${PROTOCOL_PATHS[$_i]} but the tree the gate assembled for it at $HEAD_MIN does not -- that materialization is incomplete (a partial clone missing the blob), so the gate is reading a tree that is not the commit it claims to test"
             fi
         done
         PROTO_HAS=("${HEAD_WT_HAS[@]}")
@@ -2938,7 +3833,7 @@ case "$HEAD_PROTO" in
         HEAD_COMMIT_FORM="$(protocol_form)"
         [ "$HEAD_COMMIT_FORM" = "UNMAPPED" ] && die_infra "HEAD_FORM_UNMAPPED: PROTOCOL_PATHS declares a set this gate's form mapping does not cover (${PROTOCOL_PATHS[*]}), so no classification can be made from it. Extend protocol_form alongside PROTOCOL_PATHS"
         if [ "$HEAD_COMMIT_FORM" = "complete" ]; then
-            die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries a complete snapshot protocol but the checkout the gate materialized for it at $HEAD_TREE does not (missing$HEAD_MISSING) -- that materialization is incomplete (a sparse checkout, or a partial clone missing the blob), so the gate is reading a tree that is not the commit it claims to test"
+            die_infra "HEAD_PROTOCOL_UNMATERIALIZED: the commit $HEAD_RESOLVED carries a complete snapshot protocol but the tree the gate assembled for it at $HEAD_MIN does not (missing$HEAD_MISSING) -- that materialization is incomplete (a partial clone missing the blob), so the gate is reading a tree that is not the commit it claims to test"
         fi
         if [ "$HEAD_FORM" = "partial" ]; then
             die_infra "HEAD_PROTOCOL_INCOMPLETE: the tree under test carries part of the snapshot protocol but cannot express either form of it -- missing$HEAD_MISSING, so nothing here can be gated"
@@ -3047,7 +3942,12 @@ protocol_source_is_regular "$HEAD_SOURCE" head \
 #   CLOSURE_UNVERIFIABLE      the gate could not establish what it is looking
 #                             at -- fix the repository or the checkout;
 #   CLOSURE_MOVED_UNDER_GATE  a member changed WHILE the gate ran -- re-run
-#                             against a tree that holds still;
+#                             against a tree that holds still. NO LONGER
+#                             EMITTED since section 55: the fast path holds no
+#                             checkout for a member to move in, and a
+#                             cross-probe disagreement about an immutable
+#                             commit is a repository or parser fault, which is
+#                             CLOSURE_UNVERIFIABLE. Retiring it is section 58's;
 # A third token, CLOSURE_MODE_CHANGED, briefly lived here for a base-vs-head
 # mode difference. It was withdrawn in the same review: deterministic, so it had
 # no business sharing the movement token (Codex consistency, [medium]) -- and
@@ -3072,8 +3972,13 @@ protocol_source_is_regular "$HEAD_SOURCE" head \
 # measures.
 for _i in "${!CLOSURE[@]}"; do
     f="${CLOSURE[$_i]}"
-    _bt="$(bounded_git ls-tree "$BASE_SHA" -- "$f")" \
+    # THE BATCH ABOVE ALREADY ASKED. Its failure is raised HERE, per member and
+    # in this loop's own order, so nothing about which token a range earns or
+    # which side is classified first has moved (section 55).
+    [ "$B_ERR" -eq 0 ] \
         || die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA about the closure member $f -- the repository, not the range, is what failed, and an unanswered probe must never read as 'unchanged'"
+    _bt=""
+    [ "${B_PRESENT[$_i]}" -eq 1 ] && _bt=present
     if [ -n "$_bt" ]; then
         # THE ENTRY'S TYPE, NOT MERELY ITS PRESENCE. A blob OID says what the
         # entry CONTAINS and nothing about what it IS: git stores a symlink as
@@ -3084,58 +3989,86 @@ for _i in "${!CLOSURE[@]}"; do
         # `path_is_regular_in_commit` already asks this for the protocol
         # contract, checking type and mode together, and rejects a submodule
         # entry (type `commit`) by the same test.
-        path_is_regular_in_commit "$BASE_SHA" "$f"
-        case "$?" in
-            0) ;;
-            1) die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule) -- its blob may match byte-for-byte while naming rather than being the code, so nothing here can be certified and nothing here may be executed" ;;
-            *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the base $BASE_SHA how it stores the closure member $f -- the repository, not the range, is what failed" ;;
-        esac
-        _b="$(bounded_git rev-parse --quiet --verify "$BASE_SHA:$f")" \
+        # THE TYPE AND MODE COME FROM THE SAME ENTRY, asked exactly as
+        # `path_is_regular_in_commit` asks them (type `blob`, mode 100644 or
+        # 100755), which is what rejects a symlink whose blob equals a regular
+        # file's bytes and what rejects a submodule entry.
+        if [ "${B_TYPE[$_i]}" != "blob" ] \
+           || { [ "${B_MODE[$_i]}" != "100644" ] && [ "${B_MODE[$_i]}" != "100755" ]; }; then
+            die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule) -- its blob may match byte-for-byte while naming rather than being the code, so nothing here can be certified and nothing here may be executed"
+        fi
+        # THE EXPRESSION READING, exactly as the `rev-parse --quiet --verify
+        # <commit>:<path>` this replaced: the listing said the entry is there,
+        # so a path expression that will not resolve is a repository fault.
+        _b="${B_VOID[$_i]}"
+        [ -n "$_b" ] \
             || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA lists the closure member $f but its object could not be resolved"
         # AND THE OBJECT IS PRESENT, not merely named. A tree entry resolves to
         # an OID from the TREE; in a partial clone the blob behind it can be
         # absent, and comparing OIDs would then certify bytes nothing in this
-        # repository can produce.
-        bounded_git cat-file -e "$_b" >/dev/null \
+        # repository can produce. The batch `--batch-check` above answered this
+        # for every member in one process.
+        [ "${B_OBJ[$_i]}" -eq 1 ] \
             || die_infra "CLOSURE_UNVERIFIABLE: the base $BASE_SHA names object $_b for the closure member $f but that object is not present in this repository"
     else
         _b=ABSENT
     fi
-    _hw=1
-    if path_is_regular_in_worktree "$HEAD_TREE" "$f"; then
-        _h="$(bounded_git hash-object "$HEAD_TREE/$f")" \
-            || die_infra "CLOSURE_UNVERIFIABLE: the closure member $f is a regular file in the tree under test but could not be hashed"
-    elif [ -e "$HEAD_TREE/$f" ] || [ -L "$HEAD_TREE/$f" ]; then
-        die_infra "CLOSURE_UNVERIFIABLE: the closure member $f exists in the materialized head checkout at $HEAD_TREE but is not a regular file reached through regular directories -- the gate cannot certify, or execute, bytes it may be reading from outside this checkout"
+    # THE HEAD READING IS THE COMMIT'S OWN BLOB, TAKEN FROM THE ENTRY ITSELF
+    # (section 55). It was `git hash-object` over the materialized checkout,
+    # which cost a process per member and required that checkout to exist here
+    # -- and the checkout is the thing this section is removing from the fast
+    # path. The tree entry read on the very next line already carries the OID,
+    # so the same answer is now free, and it is the answer section 54 wanted:
+    # the bytes the COMMIT stores, with no filesystem in between at all.
+    [ "$H_ERR" -eq 0 ] \
+        || die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed"
+    if [ "${H_PRESENT[$_i]}" -eq 1 ]; then
+        _h="${H_OID[$_i]}"
+        # THE HEAD TYPE IS ASKED WHENEVER THE HEAD CARRIES THE MEMBER, not only
+        # when the base does too. Previously `path_is_regular_in_worktree` ran
+        # unconditionally over the checkout and refused a symlink or directory
+        # there, while the commit-side type test below is guarded on BOTH sides
+        # being present -- so dropping the worktree read without this would have
+        # left a head-only closure member's type unchecked. Asked here, the
+        # coverage is the same as before and it is asked of the commit.
+        if [ "${H_TYPE[$_i]}" != "blob" ] \
+           || { [ "${H_MODE[$_i]}" != "100644" ] && [ "${H_MODE[$_i]}" != "100755" ]; }; then
+            die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule) -- its blob may match byte-for-byte while naming rather than being the code, so nothing here can be certified and nothing here may be executed"
+        fi
+        _ht=present
     else
         _h=ABSENT
-        _hw=0
+        _ht=""
     fi
-    # MOVEMENT IS MEASURED AGAINST THE FIRST READING, not against the base.
-    # This is the only question here whose answer changes on a re-run.
+    # THE TWO INDEPENDENT READS OF THE SAME COMMIT MUST AGREE, and they are
+    # independent by construction rather than by assertion. `FIRST_H` is the
+    # PATH EXPRESSION reading (`<commit>:<path>`, resolved by `cat-file
+    # --batch-check`) and `$_h` is the TREE LISTING reading (`ls-tree`, parsed
+    # in this file), so a member attributed to the wrong entry, or silently
+    # dropped, by either parser surfaces here instead of riding the exit. An
+    # earlier cut of this section took BOTH from the listing and kept a comment
+    # claiming a cross-probe, which made the branch unable to fire (Codex
+    # adversarial, section 55 round 1, [medium]).
+    #
+    # AND IT IS `CLOSURE_UNVERIFIABLE`, NOT THE MOVEMENT TOKEN, which is a
+    # distinction about OWNERSHIP rather than wording. What this branch now
+    # detects is a parser or repository fault: two probes disagreeing about one
+    # immutable commit. That is not "a member changed while the gate ran", which
+    # is what `CLOSURE_MOVED_UNDER_GATE` is published as meaning, and quietly
+    # re-pointing a published token at a different fault would hand every caller
+    # a movement diagnosis for a repository fault. This section owns the fast
+    # path's COST; the token surface belongs to section 58, so the check reports
+    # under the token that already covers "this member cannot be certified" and
+    # leaves the other one alone (Codex adversarial, section 55 round 5,
+    # [medium]).
+    # -> XREF: [`TODO-06 section 58`](#58-head-versus-tree-checks-section-54-made-unreachable-are-retired-or-re-fixtured)
+    #    owns the published-token surface. This section leaves
+    #    CLOSURE_MOVED_UNDER_GATE with no emitter at all, which is exactly the
+    #    retire-or-re-fixture decision that section exists to make; the two
+    #    checkout-presence refusals removed just below are the same question.
     if [ "$_h" != "${FIRST_H[$_i]}" ] \
        && ! { [ "$_h" = ABSENT ] && [ "${FIRST_H[$_i]}" = MISSING ]; }; then
-        die_infra "CLOSURE_MOVED_UNDER_GATE: the closure member $f changed between the measurement above and this decision, so the evidence already gathered describes a tree that is no longer here -- re-run the gate against a tree that holds still"
-    fi
-    # PRESENCE MUST AGREE BETWEEN THE HEAD COMMIT AND THE TREE THE GATE READ,
-    # and that is a SEPARATE question from content. While content came from the
-    # live worktree this was the net that stopped a commit DELETING a closure
-    # member, with a dirty worktree recreating it from the base bytes, from
-    # producing a head hash equal to the base's and exiting 0 over a push that
-    # removed a verdict-affecting file (Codex adversarial, section 51 round 6,
-    # [high]). Section 54 removed that route at its source by reading the
-    # commit, so this pair is now defence in depth over the gate's own
-    # materialization -- kept, not retired, because a check that costs one
-    # ls-tree and would catch a broken checkout is not worth deleting, and
-    # because CLOSURE_UNVERIFIABLE is a published token.
-    # The inverse is the closure analogue of HEAD_PROTOCOL_UNMATERIALIZED.
-    _ht="$(bounded_git ls-tree "$HEAD_RESOLVED" -- "$f")" \
-        || die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed"
-    if [ -n "$_ht" ] && [ "$_hw" -eq 0 ]; then
-        die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f but the checkout the gate materialized for it at $HEAD_TREE does not -- that materialization is not the commit it claims to test, so nothing here can be certified unchanged"
-    fi
-    if [ -z "$_ht" ] && [ "$_hw" -eq 1 ]; then
-        die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED does not carry the closure member $f but the checkout the gate materialized for it at $HEAD_TREE does -- that materialization does not match the commit, so what the gate can read is not what the range carries"
+        die_infra "CLOSURE_UNVERIFIABLE: the two independent readings of the closure member $f in $HEAD_RESOLVED disagree ('${FIRST_H[$_i]}' then '$_h') -- one resolved the path expression, the other parsed the tree listing, and an immutable commit cannot answer them differently, so the repository or this gate's own parsing is what is failing and nothing here can be certified"
     fi
     # THE MODE IS ASKED OF BOTH COMMITS, NEVER OF THE FILESYSTEM, and only to
     # establish that the head entry is a regular file at all. Taking the head
@@ -3145,14 +4078,15 @@ for _i in "${!CLOSURE[@]}"; do
     # range there refused -- wedging every resolver push on that host, and
     # invisible locally because this checkout preserves modes (Codex
     # adversarial, section 51 round 5, [high]).
-    if [ -n "$_bt" ] && [ -n "$_ht" ]; then
-        path_is_regular_in_commit "$HEAD_RESOLVED" "$f"
-        case "$?" in
-            0) ;;
-            1) die_infra "CLOSURE_UNVERIFIABLE: the head commit $HEAD_RESOLVED carries the closure member $f as something other than a regular file (a symlink, a directory, or a submodule), so nothing here can be certified and nothing here may be executed" ;;
-            *) die_infra "CLOSURE_UNVERIFIABLE: could not ask the head commit $HEAD_RESOLVED how it stores the closure member $f -- the repository, not the range, is what failed" ;;
-        esac
-    fi
+    #
+    # ASKED ONCE, ABOVE, AND NOW OF STRICTLY MORE RANGES (section 55). This test
+    # stood here guarded on BOTH sides carrying the member, because the head's
+    # type was separately covered by `path_is_regular_in_worktree` over the
+    # checkout. That checkout is gone from this path, so the test moved up to the
+    # point the head entry is read and lost the base-side guard with it: a
+    # member the head ADDS is now type-checked too, where before neither probe
+    # reached it. Repeating it here would spend a process per member to re-derive
+    # an answer already in hand, which is the fan-out this section removes.
 done
 
 # THE ONE MODE THAT IS LOAD-BEARING, ASKED AS AN INVARIANT RATHER THAN A DIFF.
@@ -3175,7 +4109,26 @@ done
 # the bit and commit -- and it cannot wedge, because any head where the file IS
 # executable passes. Mode changes on every other closure member are no longer
 # refused at all; they were never the threat.
-if [ "$(bounded_git ls-tree "$HEAD_RESOLVED" -- "scripts/todo-graph/identity-gate.sh" | cut -d" " -f1)" = "100644" ]; then
+# THE PROBE'S STATUS IS NOT DISCARDED, and discarding it is exactly what the
+# refactor that removed a `cut` from this line did. `bounded_git` answers 2 for
+# "could not ask", and the result was read as a plain string -- so ONE timed-out
+# or failed `ls-tree` left `_GATE_MODE` empty, the 100644 branch was skipped,
+# and a head storing this file non-executable reached the byte-identical exit.
+# That head then has the local hook's identity-gate block disabled for every
+# subsequent push, which is the precise failure this check exists to catch, and
+# it would have been reached by an unreadable probe rather than by a decision
+# (Codex adversarial, section 55, [high]). A failed question is never a negative
+# answer -- the rule this file states in a dozen other places, broken here by a
+# change whose only intent was to remove a process.
+_GATE_MODE_ENTRY="$(bounded_git ls-tree "$HEAD_RESOLVED" -- "scripts/todo-graph/identity-gate.sh")"
+case "$?" in
+    0) ;;
+    *) die_infra "could not ask the head commit $HEAD_RESOLVED how it stores scripts/todo-graph/identity-gate.sh -- the repository, not the range, is what failed, and whether this gate would still run locally at that head is therefore unknown" ;;
+esac
+[ -n "$_GATE_MODE_ENTRY" ] \
+    || die_infra "the head commit $HEAD_RESOLVED does not carry scripts/todo-graph/identity-gate.sh at all, so there is no mode to check and nothing here can be certified"
+_GATE_MODE="${_GATE_MODE_ENTRY%% *}"   # launch-exempt: parameter expansion, no process at all
+if [ "$_GATE_MODE" = "100644" ]; then
     die_infra "GATE_SCRIPT_NOT_EXECUTABLE: the head commit $HEAD_RESOLVED stores scripts/todo-graph/identity-gate.sh as mode 100644. The pre-push hook enters its identity-gate block only when that file is executable, so at this head the gate is silently skipped for every local push and only CI still adjudicates -- after main has already moved. Restore the bit (git update-index --chmod=+x) and commit"
 fi
 
@@ -3215,17 +4168,81 @@ fi
 # not run. Both must refuse -- reading either as "the bucket is not there" is
 # the same fail-open inversion that made an unreadable emitter approve a
 # retirement (fixture 22af).
-    EMITTED_SET="$(python3 "$HEAD_TREE/scripts/lint/check_bucket_emission.py" \
-        --emitter "$HEAD_TREE/scripts/todo-graph/ref_resolution.py" \
-        --protocol "$HEAD_TREE/scripts/todo-graph/snapshot_protocol.json" \
-        --allow-undeclared --emitted-set 2>"$TMP_DIR/bucket-contract.err")"
+    # SUPERVISED, BECAUSE THIS ONE RUNS THE TREE'S CODE. It was a bare command
+    # substitution with no timeout and no budget check, so a checker that would
+    # not finish held the gate past its published ceiling -- the same defect
+    # section 55 fixed in `contract_of`, at a call site the first pass did not
+    # reach (Codex adversarial, section 55 round 7, [medium]). It takes the
+    # shape the other tree-executing phases use: its own session, backgrounded,
+    # `wait`ed, tracked in `WALK_PIDS`, and its group reaped -- so what the
+    # checker spawns is bounded too, which `timeout` alone would not give.
+    phase_budget "bucket-emission contract"
+    # THE ANCHOR DESCRIPTOR IS CLOSED HERE TOO. This checker executes code from
+    # the tree under test, so it gets the same treatment `proto_of` and
+    # `contract_of` do: an inherited directory descriptor on TMP_DIR would hand
+    # it the swap-proof handle the assembly and its re-binding both rely on.
+    setsid timeout -s KILL "$PHASE_BUDGET" \
+        python3 "$HEAD_MIN_ADDR/scripts/lint/check_bucket_emission.py" {TMP_FD}<&- \
+        --emitter "$HEAD_MIN_ADDR/scripts/todo-graph/ref_resolution.py" \
+        --protocol "$HEAD_MIN_ADDR/scripts/todo-graph/snapshot_protocol.json" \
+        --allow-undeclared --emitted-set \
+        >"$TMP_DIR/bucket-contract.out" 2>"$TMP_DIR/bucket-contract.err" &
+    _be_pid=$!
+    WALK_PIDS="$_be_pid"
+    wait "$_be_pid"
     EMITTED_RC=$?
-    if [ "$EMITTED_RC" -ne 0 ]; then
-        die_infra "the bucket-emission contract does not hold at HEAD (rc=$EMITTED_RC), so the set of buckets the resolver can emit is unknown and no retirement can be adjudicated: $(head -3 "$TMP_DIR/bucket-contract.err" 2>/dev/null | tr '\n' ' ')"
+    WALK_WAITED="$_be_pid"
+    if ! kill -0 "$_be_pid" 2>/dev/null && kill -0 -- "-$_be_pid" 2>/dev/null; then
+        kill -TERM -- "-$_be_pid" 2>/dev/null || true
+        for _i in 1 2 3 4 5 6; do
+            kill -0 -- "-$_be_pid" 2>/dev/null || break
+            [ "$(remaining)" -gt 1 ] || break
+            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
+        done
+        kill -KILL -- "-$_be_pid" 2>/dev/null || true
     fi
-    EMITTED_B64="$(printf '%s' "$EMITTED_SET" | base64 -w0)" \
+    WALK_PIDS=""
+    WALK_WAITED=""
+    # RE-BOUND BEFORE ITS RESULT IS READ, not merely before the walks. This
+    # checker executes from the narrow head tree too, and its emitted set
+    # AUTHORIZES the protocol-migration path -- so a checker that rewrites an
+    # emitter or another closure member on its way out could have its own result
+    # accepted, and the schema-migration branch can exit successfully long
+    # before the later `contract_of` re-bindings run. The claim that every
+    # tree-executing phase was followed by a re-binding was false while it was
+    # written, and this is the phase it was false about (Codex adversarial,
+    # section 55, [high]).
+    min_tree_still_matches "$HEAD_MIN" "$HEAD_RESOLVED" head "$HEAD_MIN_FD"
+    # READING THE OUTPUT IS A LAUNCH TOO, and this one reads a path the TREE'S
+    # OWN CODE just had a handle on. The checker can rename its still-open
+    # output and leave a FIFO at that name before exiting: its stdout keeps
+    # writing to the renamed file, and a bare `cat` then opens the FIFO and
+    # blocks forever, past the ceiling this file advertises -- a tree-controlled
+    # hang reintroduced AFTER the supervision that was added to prevent one
+    # (Codex adversarial, section 55 round 12, [medium]). Bounding the read does
+    # not stop the substitution and is not meant to: the content was always the
+    # checker's to choose. It stops the HANG, which was not.
+    phase_budget "bucket-emission output read"
+    EMITTED_SET="$(timeout --foreground -s KILL "$PHASE_BUDGET" \
+        cat "$TMP_DIR/bucket-contract.out" 2>/dev/null)"
+    if [ "$EMITTED_RC" -ne 0 ]; then
+        phase_budget "bucket-emission error read"
+        _be_excerpt="$(timeout --foreground -s KILL "$PHASE_BUDGET" head -3 "$TMP_DIR/bucket-contract.err" 2>/dev/null)"
+        _be_excerpt="$(printf '%s' "$_be_excerpt" | tr '\n' ' ')"  # launch-exempt: reformats a shell variable already in memory
+        die_infra "the bucket-emission contract does not hold at HEAD (rc=$EMITTED_RC), so the set of buckets the resolver can emit is unknown and no retirement can be adjudicated: $_be_excerpt"
+    fi
+    phase_budget "emitted-set encoding"
+    EMITTED_B64="$(printf '%s' "$EMITTED_SET" | timeout --foreground -s KILL "$PHASE_BUDGET" base64 -w0)" \
         || die_infra "could not encode the declared emitted-bucket set"
-    RELOC="$(python3 - "$BASE_PRE_B64" "$BASE_POST_B64" "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64" "$BASE_MIG_B64" \
+    # BOUNDED, THOUGH IT RUNS ONLY THIS FILE'S OWN CODE. `--foreground` is
+    # right here and would not be for the checker above: this interpreter is
+    # written inline below, imports nothing from the tree, and spawns no child
+    # for the documented no-children caveat to apply to. What it can still do is
+    # not start, or not finish, on a loaded host -- and an unbounded step is
+    # unbounded whoever wrote it.
+    phase_budget "bucket relocation"
+    RELOC="$(timeout --foreground -s KILL "$PHASE_BUDGET" \
+        python3 - "$BASE_PRE_B64" "$BASE_POST_B64" "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64" "$BASE_MIG_B64" \
         "$EMITTED_B64" <<'RELOCPY'
 import base64, json, sys
 from collections import Counter
@@ -3404,7 +4421,9 @@ print(json.dumps({"moved": moved, "undeclared_removals": undeclared,
                   "bad_declarations": []}))
 RELOCPY
 )" || die_infra "could not compare the bucket halves base..head"
-    RELOC_N="$(printf '%s' "$RELOC" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["moved"]) + len(d["undeclared_removals"]) + len(d["bad_declarations"]))')" \
+    phase_budget "relocation count"
+    RELOC_N="$(printf '%s' "$RELOC" | timeout --foreground -s KILL "$PHASE_BUDGET" \
+        python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["moved"]) + len(d["undeclared_removals"]) + len(d["bad_declarations"]))')" \
         || die_infra "could not read the bucket-halves comparison"
     if [ "$RELOC_N" != "0" ]; then
         printf '[identity-gate] FAIL: the bucket vocabulary was RELOCATED across the pre/post-resolution boundary: %s\n' "$RELOC" >&2
@@ -3504,10 +4523,66 @@ fi
 # single file gave, established by measurement instead of by construction. The
 # differential is therefore REQUIRED here, not skippable.
 # ---------------------------------------------------------------------------
-contract_of() {  # $1 = tree root -> "<version>|<digest>" | ABSENT | UNREADABLE
-    python3 - "$1" <<'PY' 2>/dev/null || echo UNREADABLE
-import importlib.util, pathlib, sys
+contract_of() {  # $1 = tree root, $2 = side; ANSWERS IN $CONTRACT_RESULT
+    # SUPERVISED, IN THIS SHELL, AND BEFORE ANY CORPUS EXISTS (section 55).
+    #
+    # This function EXECUTES cache_schema.py from the tree under test --
+    # `PRODUCER_CONTRACT_DIGEST` is `_producer_contract_digest()`, a call, so
+    # there is no inert route to the value and reading it means running the
+    # module. It nevertheless ran in a `$(...)` command substitution with NO
+    # timeout and no pid recorded anywhere, while the gate's published ceiling
+    # says 600s: a module that blocked on import held the gate open forever, and
+    # one that returned the expected constants could ALSO edit the corpus on the
+    # way, because the import ran after the faithfulness and closure checks but
+    # BEFORE both cache builds and both resolver walks. Both walks would then
+    # agree over bytes the named commit does not carry (Codex design review,
+    # section 55, [high]; the same call site imported from the live tree before
+    # section 54, so this is not a section 54 regression).
+    #
+    # THREE CHANGES, AND THE THIRD IS THE ONE THAT MATTERS. It is bounded like
+    # every other phase; it runs in the parent shell so its pid reaches
+    # `cleanup`, exactly as section 53 had to do for `proto_of` and for the same
+    # reason; and it is called BEFORE the full checkouts exist, so a synchronous
+    # write during import has no corpus to reach -- only the narrow tree, which
+    # is thrown away and never walked.
+    #
+    # WHAT THIS DOES NOT CLOSE, STATED RATHER THAN IMPLIED. A module that
+    # `setsid`s its own descendant escapes the process group this reaps, so it
+    # can outlive the probe, wait for the checkout below to appear, and write
+    # into it. Reordering and supervision NARROW that from "write directly" to
+    # "poll for a directory and win a race against the walks"; they do not
+    # remove it, and claiming otherwise would be exactly the confident-wrong
+    # answer this file keeps having to repair.
+    # -> XREF: [`TODO-06 section 56`](#56-the-resolver-walks-leak-what-the-tree-spawns-on-the-path-where-they-succeed)
+    #    owns what the tree spawns and survives on the SUCCESS path; the
+    #    detached-descendant residue here is the same question at a second call
+    #    site and belongs with it, not to a second half-fix here.
+    CONTRACT_RESULT=UNREADABLE
+    local _crec _crb _crc
+    probe_budget "create the file its contract record travels on"
+    _crec="$(timeout --foreground -s KILL "$PROBE_BUDGET" mktemp "$TMP_DIR/contract.XXXXXX" 2>/dev/null)" \
+        || return 0
+    budget_left
+    if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
+        # REFUSE TO LAUNCH RATHER THAN LAUNCH WITH A FLOOR. `remaining()` never
+        # answers less than 1 -- correct for a single `timeout` argument, wrong
+        # as a decision -- so a phase could still START after the deadline had
+        # passed. Section 52 gave the git probes this refusal; the python phases
+        # were left out of it, which is the residue this item names.
+        bounded_fs rm -f "$_crec"
+        die_infra "the gate's budget expired before the $2 producer contract identity could be read, so the probe was never started and no identity is being guessed from it"
+    fi
+    # Same closure as `proto_of`, and for the same reason: this executes
+    # cache_schema.py from the tree under test.
+    setsid timeout -s KILL "$BUDGET_LEFT" \
+        python3 - "$1" 3>"$_crec" {TMP_FD}<&- >/dev/null 2>/dev/null <<'PY' &
+import importlib.util, os, pathlib, sys
+# THE RECORD LEAVES ON FD 3, and the subject path is scrubbed from argv before
+# the tree's module is executed -- the same two properties `proto_of` had to be
+# repaired into having, for the same reasons (sections 50 and 53).
+sys.stdout = os.fdopen(3, "w", encoding="utf-8", buffering=1)
 tg = pathlib.Path(sys.argv[1]) / "scripts/todo-graph"
+sys.argv = [sys.argv[0]]
 mod_path = tg / "cache_schema.py"
 # ABSENT IS A VALUE, NOT A FAILURE. A tree predating cache_schema, or predating
 # the identity fields inside it, has no producer identity to compare and no
@@ -3534,9 +4609,55 @@ if (isinstance(ver, bool) or not isinstance(ver, int)
     raise SystemExit(0)
 print("%d|%s" % (ver, dig))
 PY
+    _crb=$!
+    WALK_PIDS="$_crb"
+    wait "$_crb"
+    _crc=$?
+    WALK_WAITED="$_crb"
+    # THE SUCCESS PATH REAPS, for the reason section 53 established at the other
+    # call site: `timeout` bounds the probe, never what the imported module
+    # spawned, and a module that starts a child and returns normally leaves it
+    # behind at a clean exit. Guarded on the leader being gone AND the group
+    # still answering, so a recycled pid is never signalled.
+    if ! kill -0 "$_crb" 2>/dev/null && kill -0 -- "-$_crb" 2>/dev/null; then
+        kill -TERM -- "-$_crb" 2>/dev/null || true
+        for _i in 1 2 3 4 5 6; do
+            kill -0 -- "-$_crb" 2>/dev/null || break
+            [ "$(remaining)" -gt 1 ] || break
+            sleep 0.5  # launch-exempt: a fixed sub-second sleep does no I/O, and the loop re-checks the budget each turn
+        done
+        kill -KILL -- "-$_crb" 2>/dev/null || true
+    fi
+    WALK_PIDS=""
+    WALK_WAITED=""
+    if [ "$_crc" -ne 0 ]; then
+        # The probe reports ABSENT/UNREADABLE itself, so a nonzero status is the
+        # interpreter failing to run at all -- including 124/137, the budget
+        # killing an import that would not finish.
+        bounded_fs rm -f "$_crec"
+        CONTRACT_RESULT=UNREADABLE
+        return 0
+    fi
+    if [ ! -s "$_crec" ]; then
+        bounded_fs rm -f "$_crec"
+        CONTRACT_RESULT=UNREADABLE
+        return 0
+    fi
+    local _cline
+    # THE FIRST LINE ONLY, so an `atexit` handler can append but not replace.
+    probe_budget "read the producer contract record it just wrote"
+    _cline="$(timeout --foreground -s KILL "$PROBE_BUDGET" head -n 1 "$_crec" 2>/dev/null)" \
+        || { bounded_fs rm -f "$_crec"; CONTRACT_RESULT=UNREADABLE; return 0; }
+    bounded_fs rm -f "$_crec"
+    [ -n "$_cline" ] || { CONTRACT_RESULT=UNREADABLE; return 0; }
+    CONTRACT_RESULT="$_cline"
 }
-BASE_CONTRACT="$(contract_of "$BASE_TREE")"
-HEAD_CONTRACT="$(contract_of "$HEAD_TREE")"
+contract_of "$BASE_MIN_ADDR" base
+BASE_CONTRACT="$CONTRACT_RESULT"
+min_tree_still_matches "$BASE_MIN" "$BASE_SHA" base "$BASE_MIN_FD"
+contract_of "$HEAD_MIN_ADDR" head
+HEAD_CONTRACT="$CONTRACT_RESULT"
+min_tree_still_matches "$HEAD_MIN" "$HEAD_RESOLVED" head "$HEAD_MIN_FD"
 # An identity this gate cannot READ is infrastructure, never "the same as the
 # other side" -- the same rule proto_of applies to the protocol constants, and
 # for the same reason: read as a value it merely compares equal and sends the
@@ -3551,6 +4672,51 @@ if [ "$BASE_CONTRACT" != "$HEAD_CONTRACT" ]; then
     CONTRACT_DIVERGED=1
     log "producer contract identity CHANGED base..head (base=$BASE_CONTRACT head=$HEAD_CONTRACT): no single cache is readable by both readers, so each walk reads a cache built by its own producer and the producer differential below is REQUIRED."
 fi
+
+# ---------------------------------------------------------------------------
+# ONLY NOW ARE THE FULL TREES CHECKED OUT (section 55).
+#
+# Everything above reads the protocol, the closure and the producer contract,
+# all of which live in the narrow trees assembled from each commit's own blobs.
+# What follows is the first thing that needs a REPOSITORY: the producer
+# differential, the cache builds and both resolver walks read `todo/**` and
+# resolve paths against a repo root. A range that never gets here -- which is
+# most of them, because most pushes do not touch the resolver closure -- now
+# pays nothing for either checkout.
+#
+# MEASURED on this repository over a byte-identical todo-only range in a fixture
+# clone (`scripts/todo-graph/tests/measure_gate_fastpath.sh`): 129 git
+# invocations and 5,154 file creations across two 87 MiB checkouts before. The
+# after numbers are recorded in section 55's Notes. The checkouts were the
+# dominant term and neither was read.
+#
+# THE ORDER IS ALSO A CONTAINMENT PROPERTY, not only a cost one: `contract_of`
+# executes a module from the tree under test, and it now runs while there is no
+# corpus for a synchronous write during that import to reach.
+#
+# SECTION 54'S PROPERTY IS UNCHANGED. Both sides are still materialized from a
+# named commit and never from the working tree, and `tree_is_faithful` still
+# adjudicates each checkout the moment it exists.
+# THE VALUE PASSED IS THE ONE THAT WAS CHECKED. These two sites inspected
+# `BUDGET_LEFT` and then took a SECOND clock reading through `remaining()`,
+# which floors an expired or unreadable budget to 1 -- so a deadline crossing
+# between the check and the launch handed the checkout a fresh second anyway,
+# and section 55's own claim that no floor is left as a decision was false while
+# it was written (Codex adversarial, section 55 round 9, [medium]).
+phase_budget "base worktree materialization"
+WT_ATTEMPTED+=("$BASE_TREE")
+timeout --foreground -s KILL "$PHASE_BUDGET" \
+    git -c "core.hooksPath=$NOHOOKS_DIR" worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
+    || die_infra "cannot materialize base worktree at $BASE_SHA (the checkout failed, or the gate's remaining budget expired while it ran)"
+tree_is_faithful "$BASE_TREE" "$BASE_SHA" base
+
+phase_budget "head worktree materialization"
+WT_ATTEMPTED+=("$HEAD_TREE")
+timeout --foreground -s KILL "$PHASE_BUDGET" \
+    git -c "core.hooksPath=$NOHOOKS_DIR" worktree add --detach "$HEAD_TREE" "$HEAD_RESOLVED" >/dev/null 2>&1 \
+    || die_infra "cannot materialize the head worktree at $HEAD_RESOLVED (the checkout failed, or the gate's remaining budget expired while it ran)"
+tree_is_faithful "$HEAD_TREE" "$HEAD_RESOLVED" head
+log "head $HEAD_RESOLVED walked from a materialized checkout at $HEAD_TREE"
 
 # ---------------------------------------------------------------------------
 # PRODUCER DIFFERENTIAL, BEFORE the resolver differential (section 18).
@@ -3593,7 +4759,8 @@ else
     # executes the CHANGED head producer -- the code most likely to hang -- so
     # without this the budget was not a bound on the gate at all (Codex
     # adversarial, section 18 round 5).
-    setsid timeout -s KILL "$(remaining)" python3 \
+    phase_budget "producer differential"
+    setsid timeout -s KILL "$PHASE_BUDGET" python3 \
         "$HEAD_TREE/scripts/todo-graph/producer_differential.py" \
         "$BASE_TREE" "$HEAD_TREE" --strict >"$TMP_DIR/producer.log" 2>&1 &
     PROD_PID=$!
@@ -3601,7 +4768,8 @@ else
     wait "$PROD_PID"; PROD_RC=$?; WALK_WAITED="$PROD_PID"
     WALK_PIDS=""
     WALK_WAITED=""
-    sed 's/^/    /' "$TMP_DIR/producer.log"
+    phase_budget "log read"
+    timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/producer.log"
     case "$PROD_RC" in
         0) PRODUCER_DIFF_OK=1
            log "producer differential PASS -- both producers emit the same stamped-ref population." ;;
@@ -3623,7 +4791,8 @@ fi
 # and a relative STUB_LINT_CACHE would silently resolve against the wrong tree.
 # ---------------------------------------------------------------------------
 CACHE_ABS="$TMP_DIR/todo-cache.json"
-setsid timeout -s KILL "$(remaining)" \
+phase_budget "head cache build"
+setsid timeout -s KILL "$PHASE_BUDGET" \
     python3 "$HEAD_TREE/scripts/todo-graph/build.py" --quiet --output "$CACHE_ABS" \
     >"$TMP_DIR/build.log" 2>&1 &
 CACHE_PID=$!
@@ -3655,7 +4824,8 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     # the base worktree and would otherwise default to the BASE corpus, which
     # would make the two walks read different TODO text and attribute every
     # corpus edit to the resolver.
-    setsid timeout -s KILL "$(remaining)" \
+    phase_budget "base cache build"
+    setsid timeout -s KILL "$PHASE_BUDGET" \
         python3 "$BASE_TREE/scripts/todo-graph/build.py" --quiet \
         --root "$HEAD_TREE/todo" --repo-root "$HEAD_TREE" \
         --output "$BASE_CACHE_ABS" >"$TMP_DIR/build-base.log" 2>&1 &
@@ -3700,14 +4870,16 @@ log "walking with BASE and HEAD resolver code concurrently (budget ${BUDGET_SECS
 mono_now; WALK_START="$MONO_NOW"
 [ -n "$WALK_START" ] || die_infra "cannot read a monotonic clock before the resolver walks -- the gate's own deadline machinery is what failed here, and no classification is being guessed from it"
 
+phase_budget "base resolver walk"
 STUB_LINT_CACHE="$BASE_CACHE_ABS" STUB_LINT_REPO_ROOT="$HEAD_TREE" \
-    setsid timeout -s KILL "$(remaining)" python3 \
+    setsid timeout -s KILL "$PHASE_BUDGET" python3 \
     "$BASE_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
     write "$BASELINE" >"$TMP_DIR/base-walk.log" 2>&1 &
 BASE_PID=$!
 WALK_PIDS="$BASE_PID"
+phase_budget "head resolver walk"
 STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$HEAD_TREE" \
-    setsid timeout -s KILL "$(remaining)" python3 \
+    setsid timeout -s KILL "$PHASE_BUDGET" python3 \
     "$HEAD_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
     write "$HEADSHOT" >"$TMP_DIR/head-walk.log" 2>&1 &
 HEAD_PID=$!
@@ -3739,27 +4911,46 @@ for pair in "BASE:$BASE_RC:$TMP_DIR/base-walk.log" "HEAD:$HEAD_RC:$TMP_DIR/head-
         die_infra "the $side walk exceeded the ${BUDGET_SECS}s budget and was killed. The gate is approaching the CI job ceiling: shard the corpus or raise IDENTITY_GATE_BUDGET_SECS deliberately, but do not discover this as a job timeout."
     fi
     if [ "$rc" -ne 0 ]; then
-        sed 's/^/    /' "$logf" >&2 || true
+        phase_budget "failed-walk log read"
+        timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$logf" >&2 || true
         die_infra "the $side resolver could not complete its walk (rc=$rc)"
     fi
 done
-sed 's/^/    /' "$TMP_DIR/base-walk.log"
-sed 's/^/    /' "$TMP_DIR/head-walk.log"
+phase_budget "log read"
+timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/base-walk.log"
+phase_budget "log read"
+timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/head-walk.log"
 log "both walks finished in ${WALK_SECS}s of the ${BUDGET_SECS}s budget."
 
 log "comparing the two snapshots (--strict)..."
-setsid timeout -s KILL "$(remaining)" \
+# THE ARGUMENTS ARE PREPARED IN THEIR OWN BOUNDED PHASE, AND THE BUDGET IS
+# REFRESHED AFTERWARDS. Written inline in the argument list, these two
+# substitutions were evaluated BEFORE the supervised `timeout` process started,
+# so they ran outside its bound entirely -- and the comparison then launched on
+# a budget measured before they had spent any of it (Codex adversarial, section
+# 55 round 7, [medium]). Two phases, each measured when it starts.
+phase_budget "comparison arguments"
+_CMP_BASE_HALVES="$(timeout --foreground -s KILL "$PHASE_BUDGET" \
+    python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$BASE_PRE_B64" "$BASE_POST_B64")" \
+    || die_infra "could not encode the base bucket halves for the comparison (the encoder failed, or the gate's remaining budget expired while it ran)"
+phase_budget "comparison arguments"
+_CMP_HEAD_HALVES="$(timeout --foreground -s KILL "$PHASE_BUDGET" \
+    python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$HEAD_PRE_B64" "$HEAD_POST_B64")" \
+    || die_infra "could not encode the head bucket halves for the comparison (the encoder failed, or the gate's remaining budget expired while it ran)"
+phase_budget "snapshot comparison"
+setsid timeout -s KILL "$PHASE_BUDGET" \
     python3 "$HEAD_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
     compare "$BASELINE" "$HEADSHOT" --strict \
-    --base-halves-b64 "$(python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$BASE_PRE_B64" "$BASE_POST_B64")" \
-    --head-halves-b64 "$(python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$HEAD_PRE_B64" "$HEAD_POST_B64")" \
+    --base-halves-b64 "$_CMP_BASE_HALVES" \
+    --head-halves-b64 "$_CMP_HEAD_HALVES" \
     >"$TMP_DIR/compare.log" 2>&1 &
 CMP_PID=$!
 WALK_PIDS="$CMP_PID"
 wait "$CMP_PID"; CMP_RC=$?; WALK_WAITED="$CMP_PID"
 WALK_PIDS=""
 WALK_WAITED=""
-sed 's/^/    /' "$TMP_DIR/compare.log"
+phase_budget "log read"
+timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/compare.log"
 
 case "$CMP_RC" in
     0)
