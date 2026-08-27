@@ -18220,7 +18220,7 @@ S58BAR
                 t_pass "identity gate: a probe descendant that outlives its process group still provokes HEAD_PROTOCOL_UNMATERIALIZED, so the token is not dead"
             else
                 cp "$TMP_DIR/gate-22f1.log" "$TMP_DIR/../s58-22f1-kept.log" 2>/dev/null || true
-                t_fail "identity gate: the surviving route to HEAD_PROTOCOL_UNMATERIALIZED did not fire (rc=$G_S58_RC; token=[$G_S58_TOK]; descendant ran=$G_S58_RAN acted=$G_S58_ACTED synced=$G_S58_SYNC; kept at $TMP_DIR/../s58-22f1-kept.log)"
+                t_fail "identity gate: the surviving route to HEAD_PROTOCOL_UNMATERIALIZED did not fire (rc=$G_S58_RC; token=[$G_S58_TOK]; descendant ran=$G_S58_RAN acted=$G_S58_ACTED synced=$G_S58_SYNC barrier_a=$([ -f "$G_S58_MARK.barrier-a-timeout" ] && echo timeout || echo ok) barrier_b=$([ -f "$G_S58_MARK.barrier-b-timeout" ] && echo timeout || echo ok); kept at $TMP_DIR/../s58-22f1-kept.log)"
             fi
         fi
 
@@ -18324,7 +18324,8 @@ S58REF
                && ! grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22f2.log"; then
                 t_pass "identity gate: a tree that GAINS a protocol path is reported as contamination, not as a partial clone"
             else
-                t_fail "identity gate: the contamination route did not reclassify (rc=$G_S58_RC2; synced=$G_S58_SYNC2; see $TMP_DIR/gate-22f2.log)"
+                cp "$TMP_DIR/gate-22f2.log" "$TMP_DIR/../s58-22f2-kept.log" 2>/dev/null || true
+                t_fail "identity gate: the contamination route did not reclassify (rc=$G_S58_RC2; synced=$G_S58_SYNC2 barrier_a=$([ -f "$G_S58_MARK.barrier-a-timeout" ] && echo timeout || echo ok) barrier_b=$([ -f "$G_S58_MARK.barrier-b-timeout" ] && echo timeout || echo ok) ran=$([ -s "$G_S58_MARK" ] && echo yes || echo no) acted=$([ -f "$G_S58_MARK.acted" ] && echo yes || echo no); kept at $TMP_DIR/../s58-22f2-kept.log)"
             fi
             # MUTATION: put the old classification back and the same tree
             # reports the old, wrong token again -- so 22f2 measures the
@@ -18369,7 +18370,8 @@ S58OLD
                    && grep -q 'INFRASTRUCTURE: HEAD_PROTOCOL_UNMATERIALIZED' "$TMP_DIR/gate-22f2-mut.log"; then
                     t_pass "identity gate: MUTATION -- restoring the old classification brings the wrong token back, so 22f2 measures the fix"
                 else
-                    t_fail "identity gate: the 22f2 mutation did not restore the old token (rc=$G_S58_MRC2; synced=$G_S58_SYNCM; see $TMP_DIR/gate-22f2-mut.log)"
+                    cp "$TMP_DIR/gate-22f2-mut.log" "$TMP_DIR/../s58-22f2mut-kept.log" 2>/dev/null || true
+                    t_fail "identity gate: the 22f2 mutation did not restore the old token (rc=$G_S58_MRC2; synced=$G_S58_SYNCM barrier_a=$([ -f "$G_S58_MARK.barrier-a-timeout" ] && echo timeout || echo ok) barrier_b=$([ -f "$G_S58_MARK.barrier-b-timeout" ] && echo timeout || echo ok); kept at $TMP_DIR/../s58-22f2mut-kept.log)"
                 fi
             fi
         fi
