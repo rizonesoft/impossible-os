@@ -8434,6 +8434,11 @@ fi
 # than whatever is committed.
 # ----------------------------------------------------------------------
 GATE_REPO="$TMP_DIR/gate-repo"
+# THE GROUP'S OWN RUNTIME CEILING STARTS HERE (section 59), bracketing every
+# case from this line to the group's closing `fi`. `mono_ns`/`elapsed_ms`
+# match the pattern Test 7 already uses for a wall-clock budget; the verdict
+# and the chosen bar are recorded where the bracket closes.
+G_S59_GROUP_START_NS="$(mono_ns)"
 # Invoke the CLONE's copy, not the live one. identity-gate.sh derives its repo
 # root from its own location and cd's there, so running the live script from
 # inside the clone silently operates on the LIVE repo -- which is exactly what
@@ -8567,6 +8572,24 @@ gate_seed() {
     # (Codex perf, section 16). Hardlinks are safe here: git never rewrites an
     # existing object, the fixture only ADDS commits, and removing the clone
     # cannot affect the source through a hardlink.
+    #
+    # SECTION 59 TRIED `--no-checkout` HERE AND MEASURED WHY IT DOES NOT WORK,
+    # recorded so the next reader does not re-spend the round trip. Skipping
+    # the checkout and hand-seeding only the closure array's files plus a
+    # handful of TODOs builds a repo the GATE can run against (it only reads
+    # the closure it declares), but not one the RESOLVER can WALK: the ~134
+    # refs those TODOs carry point at source files the minimal set does not
+    # contain, so every walk resolved 0 of 134 instead of the ~47 a full
+    # checkout gives it, and `corpus_resolution_snapshot` correctly REFUSES a
+    # zero-resolution baseline as vacuous ("there is nothing to protect, so a
+    # pass would be vacuous") -- which then fails every case in this group
+    # that depends on a real comparison, not just the ones this section added.
+    # Closing that for real means deriving the closure of files the KEPT
+    # TODOs actually reference (measured: 433+ distinct backtick-quoted paths
+    # across just the six kept files, by a rough count that is itself not the
+    # resolver's own extraction logic) and copying THAT set too -- a second,
+    # separate derivation this section did not build, filed instead as its own
+    # item below rather than shipped half-working.
     git clone --quiet --local "$REPO_ROOT" "$GATE_REPO" \
         >/dev/null 2>&1 || return 1
     (
@@ -18592,6 +18615,325 @@ S58NOTE
             git add -A scripts/todo-graph >/dev/null 2>&1
             git commit --quiet --no-verify -m "22f3: restore the protocol after the section 58 cases" >/dev/null 2>&1
         )
+    fi
+
+    # ------------------------------------------------------------------
+    # 22f4: THE FILE MAY NOT CONTAIN A BACKTICK OR A PROCESS SUBSTITUTION
+    # (section 59).
+    #
+    # Section 59 decided 22er's (the launch inventory) and 22f3's (the
+    # tombstone scanner) shared parse boundary the cheap way rather than the
+    # expensive one: neither shape is used anywhere in this file today, so
+    # refusing them outright is a REGRESSION GUARD, not new capability, and it
+    # closes 22er's own documented gap for good -- a backtick or `<( )`/`>( )`
+    # launch can no longer be written here without this case catching it.
+    #
+    # ARITHMETIC EXPANSION STAYS LEGAL, on purpose: `$(( ... ))` is used six
+    # times in this file and spawns nothing, and this scanner's frame rule --
+    # borrowed byte-for-byte from 22er's `command_pieces`, itself
+    # mutation-tested across five adversarial rounds -- treats `$((` as an
+    # ordinary `$(` frame open, so an arithmetic expression is never itself
+    # mistaken for a launch.
+    #
+    # WHAT THIS DOES NOT CLOSE: 22f3's own residual gap -- a mutant that opens
+    # a multi-line quote AROUND a blessed line from the line before -- is NOT
+    # fixed by banning multi-line quoted strings. They are common and
+    # necessary here (every `"$(timeout ... \` continued onto the next line
+    # before its closing `)"` is one), so forbidding them would be an invasive
+    # reformat of the file, not a lint. Closing that gap for real needs the
+    # shell lexer this section declined to build (a project, not a patch, per
+    # 22er's own header); 22f3's exact-line allowlist remains the accepted,
+    # narrower bound for that one.
+    g_s59_shape_scan() {   # $1 = script; prints "<line>:<kind>[|...]" or CLEAN
+        python3 - "$1" <<'S59SHAPE'
+import re, sys
+
+def scan(path):
+    text = open(path, encoding="utf-8").read()
+    findings = []
+    stack = [{"s": False, "d": False, "extra": 0}]
+    i, n = 0, len(text)
+    line = 1
+    pending_heredocs = []
+    while i < n:
+        ch = text[i]
+        top = stack[-1]
+        if ch == "\n":
+            line += 1
+            hd_start = i
+            for tag in pending_heredocs:
+                j = text.find("\n" + tag + "\n", i)
+                end_j = text.find("\n", i + 1) if j == -1 else j + len(tag) + 1
+                i = end_j if end_j != -1 else n
+            line += text.count("\n", hd_start, i)
+            pending_heredocs = []
+            i += 1
+            continue
+        if ch == "\\" and not top["s"]:
+            if i + 1 < n and text[i + 1] == "\n":
+                i += 2
+                line += 1
+                continue
+            i += 2
+            continue
+        if ch == "'" and not top["d"]:
+            top["s"] = not top["s"]
+            i += 1
+            continue
+        if ch == '"' and not top["s"]:
+            top["d"] = not top["d"]
+            i += 1
+            continue
+        if not top["s"] and text.startswith("$(", i):
+            stack.append({"s": False, "d": False, "extra": 0})
+            i += 2
+            continue
+        if ch == "`" and not top["s"]:
+            findings.append((line, "backtick"))
+            i += 1
+            continue
+        if not top["s"] and not top["d"]:
+            if text.startswith("<(", i) or text.startswith(">(", i):
+                findings.append((line, "process-substitution"))
+                # ITS OWN PAREN NEEDS A MATCHING CLOSE, tracked the same as a
+                # bare subshell below -- see the note there for why.
+                top["extra"] += 1
+                i += 2
+                continue
+            if ch == "#":
+                rest_end = text.find("\n", i)
+                rest_end = n if rest_end == -1 else rest_end
+                i = rest_end
+                continue
+            if ch == "(":
+                # A BARE GROUPING PAREN -- a subshell `(...)`, or the tail of
+                # a process substitution already counted above. ITS `)` MUST
+                # NOT BE MISTAKEN FOR THE ENCLOSING `$(` FRAME'S: popping the
+                # substitution frame on this inner `)` let everything after
+                # it re-enter the OUTER quote state early, which hid a LATER
+                # `<( )` on the same logical line from this scanner entirely
+                # (Codex adversarial, section 59, [high], measured against
+                # `x="$( (echo first); diff <(echo a) <(echo b) )"`).
+                top["extra"] += 1
+                i += 1
+                continue
+            if ch == ")":
+                if top["extra"] > 0:
+                    top["extra"] -= 1
+                elif len(stack) > 1:
+                    stack.pop()
+                i += 1
+                continue
+            # HEREDOC TAGS COME IN THREE LEGAL SHAPES -- unquoted, single- or
+            # double-quoted. Recognising only the first two let a `<<"TAG"`
+            # body scan as ordinary code, and a literal backtick inside that
+            # body (e.g. prose inside an embedded python heredoc) then read
+            # as a live launch (Codex adversarial, section 59, [medium],
+            # measured).
+            m = re.match(r"""<<-?(?:'([A-Za-z0-9_]+)'|"([A-Za-z0-9_]+)"|([A-Za-z0-9_]+))""",
+                         text[i:])
+            if m:
+                pending_heredocs.append(next(g for g in m.groups() if g))
+                i += m.end()
+                continue
+        i += 1
+    return findings
+
+f = scan(sys.argv[1])
+print("CLEAN" if not f else "|".join("%d:%s" % (ln, k) for ln, k in f))
+S59SHAPE
+    }
+    G_S59_SCAN="$(g_s59_shape_scan "$GATE_IN_CLONE")"
+    if [ "$G_S59_SCAN" = "CLEAN" ]; then
+        t_pass "identity gate: no backtick or process substitution anywhere in the file, so 22er's and 22f3's shared parse boundary cannot be exploited by either shape"
+    else
+        t_fail "identity gate: a backtick or process substitution reached identity-gate.sh ($G_S59_SCAN) -- the launch inventory and the tombstone scanner cannot see either shape"
+    fi
+
+    # MUTATION-PROVED: a planted launch of each forbidden shape must be seen,
+    # including the one Codex's adversarial pass found this scanner missing:
+    # a process substitution written AFTER an inner subshell on the SAME
+    # substitution frame, which used to close that frame early (on the
+    # subshell's own `)`) and blind the scanner to everything after it.
+    for _s59shape in backtick process-substitution process-substitution-nested; do
+        G_S59_MUT="$GATE_REPO/scripts/todo-graph/identity-gate-s59shape.sh"
+        rm -f "$G_S59_MUT"
+        python3 - "$GATE_IN_CLONE" "$G_S59_MUT" "$_s59shape" <<'S59PLANT'
+import sys
+src, dst, shape = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(src, encoding="utf-8").read().split("\n")
+at = [i for i, ln in enumerate(lines) if ln.startswith("log() {")]
+if len(at) != 1:
+    sys.exit(1)
+if shape == "backtick":
+    plant = "s59_reintroduced() { X=`date +%s`; echo \"$X\"; }"
+elif shape == "process-substitution":
+    plant = "s59_reintroduced() { diff <(echo a) <(echo b) >/dev/null; }"
+else:
+    plant = ('s59_reintroduced() { x="$( (echo first); diff <(echo a)'
+              ' <(echo b) )"; }')
+lines.insert(at[0] + 1, plant)
+open(dst, "w", encoding="utf-8").write("\n".join(lines))
+S59PLANT
+        if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S59_MUT" 's59_reintroduced'; then
+            t_fail "identity gate: could not plant the $_s59shape shape, so 22f4's oracle is unproven"
+        else
+            G_S59_MSCAN="$(g_s59_shape_scan "$G_S59_MUT")"
+            case "$G_S59_MSCAN" in
+                *process-substitution*|*backtick*)
+                    t_pass "identity gate: MUTATION -- a planted $_s59shape launch is caught by 22f4's scanner" ;;
+                *)
+                    t_fail "identity gate: a planted $_s59shape launch went unseen ($G_S59_MSCAN), so 22f4 cannot catch the regression it exists for" ;;
+            esac
+        fi
+        rm -f "$G_S59_MUT"
+    done
+
+    # CONTROL, the other direction: a double-quoted heredoc delimiter must
+    # NOT be misread as ordinary code. A backtick inside the BODY of a
+    # `<<"TAG"` heredoc is inert prose, never executed as shell -- the
+    # earlier regex understood only unquoted and single-quoted tags, so this
+    # shape false-positived (Codex adversarial, section 59, [medium]).
+    G_S59_HDQ="$GATE_REPO/scripts/todo-graph/identity-gate-s59hdq.sh"
+    rm -f "$G_S59_HDQ"
+    python3 - "$GATE_IN_CLONE" "$G_S59_HDQ" <<'S59HDQ'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+lines = open(src, encoding="utf-8").read().split("\n")
+at = [i for i, ln in enumerate(lines) if ln.startswith("log() {")]
+if len(at) != 1:
+    sys.exit(1)
+plant = ('s59_hdq_control() { cat <<"S59HDQBODY"\n'
+         'this line names a `backtick` only in prose, inside a\n'
+         'double-quoted heredoc body -- never executed as shell\n'
+         'S59HDQBODY\n'
+         '}')
+lines.insert(at[0] + 1, plant)
+open(dst, "w", encoding="utf-8").write("\n".join(lines))
+S59HDQ
+    if ! g_mutant_ok "$GATE_IN_CLONE" "$G_S59_HDQ" 's59_hdq_control'; then
+        t_fail "identity gate: could not plant the double-quoted-heredoc control, so its false-positive risk is unproven"
+    else
+        G_S59_HDQSCAN="$(g_s59_shape_scan "$G_S59_HDQ")"
+        if [ "$G_S59_HDQSCAN" = "CLEAN" ]; then
+            t_pass "identity gate: a backtick inside a double-quoted heredoc body scans CLEAN, not as a false-positive launch"
+        else
+            t_fail "identity gate: a double-quoted heredoc's own body was misread as code ($G_S59_HDQSCAN) -- the heredoc-tag regex regressed"
+        fi
+    fi
+    rm -f "$G_S59_HDQ"
+
+    # ------------------------------------------------------------------
+    # 22f5: A SECOND HEAD_TREE_UNREADABLE PROBE, DISTINCT FROM THE
+    # ASSEMBLER'S (section 59).
+    #
+    # 22ba/22cc already prove the assembler's own probe (`materialize_subtree`,
+    # identity-gate.sh:2575): they fail EVERY `ls-tree` naming the head SHA,
+    # which fires before `proto_of` is even called. This case leaves that call
+    # untouched and instead fails only the LATER, PLAIN (non `-r`) `ls-tree`
+    # call `min_tree_still_matches` makes to re-verify the assembled tree
+    # still holds the commit's bytes AFTER `proto_of` already read it
+    # (identity-gate.sh:2816, `_unreadable` bound to `HEAD_TREE_UNREADABLE`
+    # for the head side at :2668-2669) -- a genuinely different probe, only
+    # reachable once materialization has already succeeded.
+    G_S59_HEAD="$( (cd "$GATE_REPO" && git rev-parse HEAD) )"
+    G_SHIM_S59A="$TMP_DIR/gitshim-s59a"
+    mkdir -p "$G_SHIM_S59A"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "$1" = "ls-tree" ]; then\n'
+        printf '  has_r=0\n'
+        printf '  for a in "$@"; do [ "$a" = "-r" ] && has_r=1; done\n'
+        printf '  if [ "$has_r" -eq 0 ]; then\n'
+        printf '    for a in "$@"; do [ "$a" = "%s" ] && exit 128; done\n' "$G_S59_HEAD"
+        printf '  fi\n'
+        printf 'fi\n'
+        printf 'exec %s "$@"\n' "$G_REAL_GIT"
+    } > "$G_SHIM_S59A/git"
+    chmod +x "$G_SHIM_S59A/git"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_S59A:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22f5.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_TREE_UNREADABLE' "$TMP_DIR/gate-22f5.log" \
+       && grep -q "still holds that commit's bytes" "$TMP_DIR/gate-22f5.log"; then
+        t_pass "identity gate: the re-binding probe's own HEAD_TREE_UNREADABLE fires independently of the assembler's -- a second, distinct probe this group did not exercise before"
+    else
+        t_fail "identity gate: the re-binding probe's HEAD_TREE_UNREADABLE did not fire as expected (rc=$G_RC; see $TMP_DIR/gate-22f5.log)"
+    fi
+    # CONTROL: the same base/head pair, unshimmed, must pass cleanly -- proves
+    # the failure above comes from the shim, not from stale fixture state.
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22f5-control.log" 2>&1)
+    G_CTL_RC=$?
+    if [ "$G_CTL_RC" -eq 0 ] && grep -q '^\[identity-gate\] PASS' "$TMP_DIR/gate-22f5-control.log"; then
+        t_pass "identity gate: the 22f5 control (same pair, no shim) passes cleanly, so the failure above measures the shim and not a broken fixture"
+    else
+        t_fail "identity gate: the 22f5 control did not pass on its own (rc=$G_CTL_RC; see $TMP_DIR/gate-22f5-control.log)"
+    fi
+
+    # ------------------------------------------------------------------
+    # 22f6: HEAD_TRANSPORT_FAILED REACHED FROM A SOUND BASE (section 59).
+    #
+    # 22bw/22bx/22by/22bz already prove this gate's plumbing failures are
+    # named rather than mis-blamed on the tree, but every one of them pairs
+    # the head-transport failure with an already MALFORMED or REMOVED base
+    # (`$G_CORRUPT`), so none of them shows the token firing when nothing else
+    # is wrong. This shims only the SECOND non-`-d` `mktemp` call: base-first
+    # ordering (identity-gate.sh:3989-3994) means the base's own transport
+    # `mktemp` is always the first such call and the head's is always the
+    # second, so a sound, unmodified base still resolves its own protocol
+    # before the head's transport ever fails.
+    G_SHIM_S59B="$TMP_DIR/gitshim-s59b-mktemp"
+    mkdir -p "$G_SHIM_S59B"
+    G_S59B_COUNT="$TMP_DIR/s59b-mktemp-calls"
+    rm -f "$G_S59B_COUNT"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'for a in "$@"; do [ "$a" = "-d" ] && exec %s "$@"; done\n' "$G_REAL_MKTEMP"
+        printf 'printf x >> "%s"\n' "$G_S59B_COUNT"
+        printf 'if [ "$(wc -c < "%s")" -ge 2 ]; then exit 7; fi\n' "$G_S59B_COUNT"
+        printf 'exec %s "$@"\n' "$G_REAL_MKTEMP"
+    } > "$G_SHIM_S59B/mktemp"
+    chmod +x "$G_SHIM_S59B/mktemp"
+    (cd "$GATE_REPO" && PATH="$G_SHIM_S59B:$PATH" bash "$GATE_IN_CLONE" \
+        --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-22f6.log" 2>&1)
+    G_RC=$?
+    G_S59B_TOKEN="$(grep -oE 'INFRASTRUCTURE: [A-Z_]+' "$TMP_DIR/gate-22f6.log" | head -1)"
+    if [ "$G_RC" -eq 3 ] \
+       && grep -q 'HEAD_TRANSPORT_FAILED' "$TMP_DIR/gate-22f6.log" \
+       && ! grep -qE 'BASE_[A-Z_]+' "$TMP_DIR/gate-22f6.log"; then
+        t_pass "identity gate: HEAD_TRANSPORT_FAILED fires from a completely sound base, not only alongside an already-malformed one"
+    else
+        t_fail "identity gate: HEAD_TRANSPORT_FAILED did not fire cleanly from a sound base (rc=$G_RC; got [$G_S59B_TOKEN]; see $TMP_DIR/gate-22f6.log)"
+    fi
+    rm -f "$G_S59B_COUNT"
+
+    # ------------------------------------------------------------------
+    # 22f7: THE GROUP'S RUNTIME STAYS UNDER A MEASURED CEILING (section 59).
+    #
+    # Baseline at section 53's ship: 408.75s over four runs, 438.5s with
+    # section 53's eight fixtures (+30s/7.3%). That number is for the WHOLE
+    # suite and predates sections 54, 56, 58 and this section's own additions,
+    # so it is not reused as the bar. MEASURED at the section 59 ship, this
+    # group alone (bracketed from `GATE_REPO=` above to here, so it excludes
+    # every OTHER group in this 28,000-line file), over FOUR timed runs per
+    # this section's own test checkpoint (Codex adversarial, section 59,
+    # [medium] -- a single-run baseline cannot show a 2x margin is
+    # non-flaky): 349.1s, 356.0s, 359.7s, 379.0s -- mean 361.0s, max 379.0s.
+    # The ceiling below is 760s, roughly DOUBLE the observed MAX rather than
+    # the mean: wide enough to survive the load-sensitivity already on record
+    # for this suite (a 2s wall-clock sub-test elsewhere in this file has
+    # flaked 2059-2349ms under load) while still catching the failure mode
+    # this item names -- a later section silently doubling the group's cost
+    # -- rather than tripping on a busy host.
+    G_S59_GROUP_END_NS="$(mono_ns)"
+    if ! G_S59_GROUP_MS=$(elapsed_ms "$G_S59_GROUP_START_NS" "$G_S59_GROUP_END_NS"); then
+        t_fail "identity gate: could not measure the fixture group's own elapsed time (unreadable clock reading)"
+    elif [ "$G_S59_GROUP_MS" -lt 760000 ]; then
+        t_pass "identity gate: the fixture group finished in ${G_S59_GROUP_MS}ms, under its 760s ceiling"
+    else
+        t_fail "identity gate: the fixture group took ${G_S59_GROUP_MS}ms, at or over its 760s ceiling -- a later section grew the pre-push pack without anyone pricing it"
     fi
 
 fi
