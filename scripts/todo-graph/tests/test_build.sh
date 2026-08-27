@@ -8624,15 +8624,27 @@ gate_seed_tree() {   # $1 = destination path
 }
 
 gate_reference_closure_prune() {
-    # SECTION 59, ITEM 3 -- cut what every gate INVOCATION materializes.
+    # SECTION 59, ITEM 3 -- cut what a gate INVOCATION materializes.
     #
-    # `gate_seed` clones once; the ~167 gate invocations in this group each
-    # check out the fixture commit TWICE (base worktree + head worktree), so
-    # the cost that repeats is the fixture COMMIT'S TREE, not the clone. A
-    # full tree is 2,352 files / 94 MiB and checks out in ~637ms; the pruned
-    # one is ~2,140 files / 24 MiB at ~246ms. Measured saving across the
-    # group: ~390ms x 334 checkouts, roughly 130s of the ~361s the ceiling at
-    # `22f7` measures.
+    # `gate_seed` clones once, so the clone is not the term that repeats; what
+    # repeats is the fixture COMMIT'S TREE, which an invocation checks out
+    # twice (base worktree + head worktree) at `identity-gate.sh:4966` and
+    # `:4973`. Full tree 2,352 files / 94 MiB, pruned 2,199 / 25 MiB;
+    # `git checkout-index -a` over each, three runs: 383/391/377ms against
+    # 176/167/159ms, so ~217ms per checkout, and a whole full-path invocation
+    # measured 5141/3866/3239ms before against 3047/2688/2728ms after.
+    #
+    # AND THE SAVING DOES **NOT** SCALE BY THE INVOCATION COUNT, which is the
+    # cost model this comment carried while it was being written and which the
+    # measurement disproved. Section 55 moved BOTH full checkouts behind the
+    # fast path (see its banner at `identity-gate.sh:4934`, "most of them"
+    # never get there), so multiplying ~217ms by two checkouts times every
+    # invocation in the group is wrong: only the invocations that reach the
+    # producer differential pay it at all. The group-level effect is real but
+    # sits inside this suite's own run-to-run spread and is NOT demonstrable
+    # from a single run -- the four post-change timings are recorded at `22f7`
+    # alongside the four before them. Do not re-derive a per-invocation
+    # multiplier from this comment.
     #
     # WHY A CLOSURE AND NOT A HAND-PICKED SET. Section 59's first attempt
     # seeded a `--no-checkout` clone with the code closure plus a few TODOs
@@ -8876,18 +8888,21 @@ gate_seed() {
     # and `corpus_resolution_snapshot` correctly refused the vacuous baseline.
     #
     # The cost that actually repeats is not this clone (once, ~0.5s) but the
-    # fixture COMMIT'S TREE, which the group's ~167 gate invocations check out
-    # twice each. So the tree is pruned AFTER the seed is assembled, by
+    # fixture COMMIT'S TREE, which a FULL-PATH invocation checks out twice.
+    # So the tree is pruned AFTER the seed is assembled, by
     # `gate_reference_closure_prune` below, against a closure derived from the
     # resolver's own functions and proved by a before/after snapshot that must
-    # be byte-identical. See that helper for the measurements and the failure
-    # modes it exists to refuse.
+    # be byte-identical. That helper carries the measurements AND states why
+    # the saving must not be multiplied by the group's invocation count (most
+    # invocations never reach either checkout, `identity-gate.sh:4934`); do
+    # not re-derive a cost model from this preamble.
     gate_seed_tree "$GATE_REPO" || return 1
     (
         cd "$GATE_REPO" || exit 1
-        # Cut the tree the ~334 per-invocation checkouts materialize, down
-        # to the closure the resolver itself consults. Fails the seed rather
-        # than committing a corpus the live resolver does not produce.
+        # Cut the tree that a full-path gate invocation checks out, down to
+        # the closure the resolver itself consults. Fails the seed rather
+        # than committing a corpus the live resolver does not produce. The
+        # cost model (and what it is NOT) is at the helper's own comment.
         gate_reference_closure_prune || exit 1
         git add -A >/dev/null 2>&1
         git commit --quiet --no-verify -m "fixture base" >/dev/null 2>&1
