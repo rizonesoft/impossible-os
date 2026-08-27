@@ -18122,12 +18122,14 @@ def q(p):
 # which is the wall-clock shape section 34 forbids and this file already
 # carries documented flakes from.
 bar = (
-    "        timeout 90 sh -c 'printf r > \"$0\"' %s >/dev/null 2>&1 \\\n"
-    "            || : > %s\n"
-    "        timeout 90 sh -c 'read -r _x < \"$0\"' %s >/dev/null 2>&1 \\\n"
-    "            || : > %s\n"
-) % (q(fa), q(mark + ".barrier-a-timeout"),
-     q(fb), q(mark + ".barrier-b-timeout"))
+    "        if timeout 90 sh -c 'printf r > \"$0\"' %s >/dev/null 2>&1; then\n"
+    "            timeout 90 sh -c 'read -r _x < \"$0\"' %s >/dev/null 2>&1 \\\n"
+    "                || : > %s\n"
+    "        else\n"
+    "            : > %s\n"
+    "        fi\n"
+) % (q(fa), q(fb), q(mark + ".barrier-b-timeout"),
+     q(mark + ".barrier-a-timeout"))
 open(dst, "w", encoding="utf-8").write(text.replace(anchor, bar + anchor))
 S58BAR
     }
@@ -18419,6 +18421,16 @@ tok = "CLOSURE_MOVED_UNDER_GATE"
 # reported. The cost is that rewording one of these lines fails this case
 # until the list is updated, and that is the intended bargain: re-blessing the
 # prose about a retired token should be a deliberate act.
+#
+# AND WHAT IT PROVES IS BOUNDED, stated here rather than left to be inferred
+# from the case name: no reference OUTSIDE the blessed lines, and every
+# blessed line byte-exact. It does NOT prove "no executable reference exists",
+# because a mutant can leave a blessed line untouched and open a multi-line
+# quote AROUND it from the line before, which no line-equality rule can see
+# (Codex adversarial, section 58 post-ship review, [medium], measured). That
+# is the same shell-lexing boundary as the two evasions above, owned by
+# section 59 rather than answered with a third rule here -- so the claim is
+# narrowed to match instead of the check being widened to bluff.
 ALLOWED = [
     '#        CLOSURE_MOVED_UNDER_GATE     RETIRED (section 55, recorded here by',
     '# before. Collapsing the two makes `CLOSURE_MOVED_UNDER_GATE` compare a value',
@@ -18465,7 +18477,7 @@ S58TOMB
         elif [ "${G_S58_TOMB:-0}" -lt 1 ]; then
             t_fail "identity gate: the CLOSURE_MOVED_UNDER_GATE tombstone entry is gone from the published vocabulary, so the name can be silently reused"
         else
-            t_pass "identity gate: CLOSURE_MOVED_UNDER_GATE stays a published tombstone with no executable reference"
+            t_pass "identity gate: CLOSURE_MOVED_UNDER_GATE stays a published tombstone, named only on its blessed documentation lines"
         fi
         # AND THE ORACLE IS MUTATION-PROVED, because a static check that cannot
         # fail is not a check. Two plausible reintroductions are planted -- a
