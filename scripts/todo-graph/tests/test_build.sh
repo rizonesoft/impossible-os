@@ -16048,7 +16048,8 @@ OS_DIRFD_REQUIRED = {"mkdir", "open", "symlink", "link", "mknod", "rename",
 # rather than by resolving a path (section 55). The audit flagged the first
 # version of that code, which is the check working -- new code writing a path is
 # exactly what it is meant to notice.
-OS_ALLOWED_PLAIN = {"fsdecode", "fdopen", "fchmod", "read", "fstat", "write"}
+OS_ALLOWED_PLAIN = {"fsdecode", "fdopen", "fchmod", "read", "fstat", "write",
+                    "close"}
 # Attribute calls on locals: file objects, pipes, strings, containers. Anything
 # NOT here is reported, which is what makes `Path(x).open(...)` fail.
 # `run` AND `Popen` ARE NOT HERE. They are reachable only through the exact
@@ -16096,6 +16097,9 @@ def dotted(node):
 # legitimately produced is reported, whatever syntax produced it.
 TRUSTED_PROVENANCE = {
     "dest_name": {"sub:sys.argv"},
+    # The identity record's name comes from argv for the same reason the
+    # destination's does: so the assembler resolves no name it composed itself.
+    "id_name": {"sub:sys.argv"},
     "tmp_fd": {"call:int"},
     "part": {"for:call:rel.split"},
     "name": {"call:posixpath.basename"},
@@ -16224,7 +16228,7 @@ def offenders(text):
             # the operand is pinned to those variables. `os.symlink` is the one
             # whose PATH is the second argument -- its first is the link's target
             # text, which is commit content and legitimately arbitrary.
-            TRUSTED_PATHS = {"part", "name", "dest_name"}
+            TRUSTED_PATHS = {"part", "name", "dest_name", "id_name"}
 
             def path_operand_ok(call, attr):
                 idx = 1 if attr == "symlink" else 0
@@ -16364,8 +16368,8 @@ MUTATIONS = {
     # The three that pin the VARIABLES rather than the call sites. Without
     # these the operand checks above are satisfied by a name whose value was
     # replaced somewhere else entirely.
-    "dest-name-absolute": ("prefixes = sys.argv[4:]",
-                           "prefixes = sys.argv[4:]\ndest_name = '/tmp/22ep-bypass'"),
+    "dest-name-absolute": ("prefixes = sys.argv[5:]",
+                           "prefixes = sys.argv[5:]\ndest_name = '/tmp/22ep-bypass'"),
     "name-dotdot": ("    name = posixpath.basename(rel)",
                     "    name = '../22ep-bypass'"),
     "part-literal": ("        cur = posixpath.join(cur, part) if cur else part",
@@ -16373,8 +16377,8 @@ MUTATIONS = {
     # The two that walked past a denylist of RHS forms.
     "walrus-rebind": ("os.mkdir(dest_name, 0o700, dir_fd=tmp_fd)",
                       "os.mkdir((dest_name := '/tmp/22ep-bypass'), 0o700, dir_fd=tmp_fd)"),
-    "wrapped-literal": ("prefixes = sys.argv[4:]",
-                        "prefixes = sys.argv[4:]\ndest_name = str('/tmp/22ep-bypass')"),
+    "wrapped-literal": ("prefixes = sys.argv[5:]",
+                        "prefixes = sys.argv[5:]\ndest_name = str('/tmp/22ep-bypass')"),
     "inherited-fd-write": ("fh.write(content[oid])",
                            'os.fdopen(1, "wb").write(b"corrupt")'),
     "inherited-fchmod": ('os.fchmod(fh.fileno(), 0o755 if mode == "100755" else 0o644)',

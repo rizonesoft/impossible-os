@@ -2094,11 +2094,12 @@ materialize_subtree() {   # $1 = commit, $2 = dest, $3 = side label, $4.. = path
     # a trap can reach it, and its GROUP reaped on the success path as well as
     # the failing one.
     setsid timeout -s KILL "$BUDGET_LEFT" \
-        python3 - "$_commit" "$_destname" "$TMP_FD" "$@" 4>"$_dest.id" <<'MATPY' &
+        python3 - "$_commit" "$_destname" "$_destname.id" "$TMP_FD" "$@" <<'MATPY' &
 import os, posixpath, subprocess, sys, pathlib
 
-commit, dest_name, tmp_fd = sys.argv[1], sys.argv[2], int(sys.argv[3])
-prefixes = sys.argv[4:]
+commit, dest_name, id_name, tmp_fd = (sys.argv[1], sys.argv[2], sys.argv[3],
+                                      int(sys.argv[4]))
+prefixes = sys.argv[5:]
 
 
 # TWO FAILURE KINDS, TWO EXIT CODES, because they are two different statements
@@ -2191,12 +2192,28 @@ except OSError as exc:
 # nothing more. `root_fd_is_the_assembly` states the same limit at the reading
 # end, so the two ends of this channel agree about what it is worth.
 # -> XREF: [`TODO-06 section 56`](#56-the-resolver-walks-leak-what-the-tree-spawns-on-the-path-where-they-succeed)
-# IT GOES OUT ON FD 4, WHICH THE SHELL OPENED, so this assembler resolves no
-# path of its own to write it -- the same discipline `proto_of` uses for its
-# record, and the reason 22ep's audit stays a flat "every write is
-# descriptor-relative" rather than gaining an exception.
+# CREATED HERE, EXCLUSIVELY AND DESCRIPTOR-RELATIVELY -- not opened by the shell.
+#
+# It was a `4>"$_dest.id"` redirection, and bash resolves that BEFORE `timeout`
+# even starts. On the head side the base protocol probe has already executed
+# commit-controlled code by then, and that code can derive TMP_DIR from
+# `PYTHONPYCACHEPREFIX` and pre-create the predictable `head-min.id`: a FIFO
+# there hangs the redirection past the gate deadline, and a symlink makes it
+# TRUNCATE whatever the operator can write (Codex adversarial, section 55,
+# [high]). That is a SYNCHRONOUS pre-plant by code the gate itself invoked --
+# not the detached-descendant class section 56 owns -- so it is closed here
+# rather than filed there.
+#
+# `O_EXCL` refuses anything already at the name, `O_NOFOLLOW` refuses a symlink,
+# and `dir_fd` means the name is never resolved from this process cwd.
 _st = os.fstat(root_fd)
-os.write(4, b"%d:%d\n" % (_st.st_dev, _st.st_ino))
+try:
+    _idfd = os.open(id_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600, dir_fd=tmp_fd)
+except OSError as exc:
+    fail("refusing to write the root identity record %s: %s" % (id_name, exc))
+os.write(_idfd, b"%d:%d\n" % (_st.st_dev, _st.st_ino))
+os.close(_idfd)
 
 dir_fds = {"": root_fd}
 
@@ -2515,7 +2532,13 @@ for rel in wanted:
             unfaithful("%s is carried by %s but is missing from the assembled "
                        "tree -- something removed it after the gate read it" % (rel, commit))
         except OSError as exc:
-            cannot_ask("could not stat %s in the assembled tree: %s" % (rel, exc))
+            # NOT `cannot_ask`. That maps to `<SIDE>_TREE_UNREADABLE`, whose
+            # published meaning is that GIT could not answer -- so a permissions
+            # change or a filesystem error after git answered perfectly well
+            # sent the operator to repair a repository that was never broken
+            # (Codex consistency, section 55, [medium]). Failing to inspect the
+            # materialization is a materialization failure.
+            unfaithful("could not stat %s in the assembled tree: %s" % (rel, exc))
         if want is None:
             unfaithful("%s is not carried by %s, but the assembled tree now holds "
                        "it -- something created it after the gate read the tree" % (rel, commit))
@@ -2530,7 +2553,7 @@ for rel in wanted:
             try:
                 fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=pfd)
             except OSError as exc:
-                cannot_ask("could not open %s in the assembled tree: %s" % (rel, exc))
+                unfaithful("could not open %s in the assembled tree: %s" % (rel, exc))
             with os.fdopen(fd, "rb") as fh:
                 got = blob_hash(fh.read())
             if got != oid:
@@ -4440,10 +4463,26 @@ if [ "$BUCKETS_CHANGED" -eq 1 ] || [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
         # than extend an inference to a tree it was never true of.
         die_infra "the protocol changed base..head, but one side predates the snapshot_protocol.json extraction (base=$BASE_SOURCE head=$HEAD_SOURCE), so its constants are only reachable by executing code and a protocol-only change cannot be proven inert. Re-run once both sides carry the extracted protocol."
     fi
+    # READ FROM THE BATCH THAT ALREADY ANSWERED THIS. Every member here is a
+    # CLOSURE member, and `closure_entries` resolved the path expression for all
+    # of them on both sides before the measurement loop ran -- so a per-member
+    # `rev-parse` pair was eighteen redundant processes on the protocol-migration
+    # path, in a section whose subject is exactly that fan-out (Codex perf,
+    # section 55, [medium]). The MISSING collapse is preserved: an unresolved
+    # expression is empty in `*_VOID`, and both sides empty compares equal, which
+    # is what the `|| echo MISSING` pair did.
     EXEC_CHANGED=""
     for f in "${EXEC_CLOSURE[@]}"; do
-        b="$(bounded_git rev-parse --quiet --verify "$BASE_SHA:$f" || echo MISSING)"
-        h="$(bounded_git rev-parse --quiet --verify "$HEAD_RESOLVED:$f" || echo MISSING)"
+        _ec_i=-1
+        for _ci in "${!CLOSURE[@]}"; do
+            [ "${CLOSURE[$_ci]}" = "$f" ] && { _ec_i="$_ci"; break; }
+        done
+        if [ "$_ec_i" -lt 0 ]; then
+            die_infra "the executable closure lists $f, which is not a member of CLOSURE -- the two lists have drifted and no protocol inference can be made from them"
+        fi
+        b="${B_VOID[$_ec_i]}"; [ -n "$b" ] || b=MISSING
+        h="${H_VOID[$_ec_i]}"; [ -n "$h" ] || h=MISSING
+        { [ "$B_ERR" -eq 1 ] || [ "$H_ERR" -eq 1 ]; } && { b=MISSING; h=MISSING; }
         [ "$b" = "$h" ] || EXEC_CHANGED="$EXEC_CHANGED $f"
     done
     if [ -n "$EXEC_CHANGED" ]; then
