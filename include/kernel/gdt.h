@@ -87,6 +87,34 @@ _Static_assert(__builtin_offsetof(struct tss, ist7)
 /* Set the kernel stack pointer in the TSS (called during task switches) */
 void tss_set_kernel_stack(uint64_t stack_top);
 
+/* --- BSP ring-0 entry stack (bare-metal hardening: BSP entry-stack guard) -------------------------
+ *
+ * The stack the CPU loads into RSP on a ring-3 -> ring-0 transition while
+ * TSS.rsp0 still holds the boot value. Allocated from the PMM by gdt_init()
+ * with a guard page beneath it, replacing the unguarded BSS array that used to
+ * publish a `stack_top` label from boot_hw.c.
+ *
+ * It is NOT the Phase-0/1 execution stack: the UEFI bootloader calls the
+ * kernel entry on its own stack without switching RSP, so early boot never
+ * runs here. This stack is live from the first ring-3 entry until the
+ * scheduler writes an incoming thread's kernel_rsp over TSS.rsp0.
+ *
+ * All five are read-only queries over state written once on the BSP in Phase 1
+ * before any AP starts, so none takes a lock and all are callable from a fault
+ * path. 16 KiB matches AP_STACK_SIZE. */
+#define BSP_ENTRY_STACK_SIZE 16384
+
+uintptr_t bsp_entry_stack_guard(void);   /* base of the guard page itself */
+uintptr_t bsp_entry_stack_base(void);    /* lowest usable byte */
+uint64_t  bsp_entry_stack_top(void);     /* stack top: base + BSP_ENTRY_STACK_SIZE */
+int       bsp_entry_stack_guarded(void); /* 0 = guard install degraded */
+
+/* Deepest byte ever disturbed, in bytes below the top -- the measured margin
+ * against BSP_ENTRY_STACK_SIZE rather than an assumed one. 0 when the run was
+ * never poisoned (guard install degraded). A lower bound in principle: a frame
+ * that leaves a hole, or writes the poison value itself, reads as untouched. */
+uint32_t  bsp_entry_stack_peak_used(void);
+
 /* Read-only accessor for a TSS Interrupt Stack Table entry: the stack TOP the
  * CPU loads when it delivers a vector whose IDT descriptor names IST slot
  * `index`. `index` is that 1-based IDT encoding, so 1..TSS_IST_COUNT are the

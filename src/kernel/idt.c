@@ -19,6 +19,19 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/serial.h"   /* abort-safe emergency serial (fatal paths) */
 #include "kernel/panic.h"
+#include "kernel/mm/vmm.h"   /* vmm_guard_page_label -- names a stack overflow on #DF */
+
+/* CR2 read, local to this file for the same reason vmm.c keeps its own: the
+ * only consumer is a fault path, and a shared header for one instruction would
+ * put a control-register accessor in everyone's include graph. Used on the #DF
+ * abort path below, where CR2 still holds the address of the #PF that
+ * escalated and is the only trustworthy key to it. */
+static inline uintptr_t read_cr2(void)
+{
+    uintptr_t v;
+    __asm__ volatile ("mov %%cr2, %0" : "=r"(v));
+    return v;
+}
 #include "kernel/sched/irql.h"
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring */
 #include "kernel/smp.h"
@@ -328,6 +341,96 @@ void idt_nmi_exit(void)
         __atomic_fetch_sub(&g_nmi_depth[id], 1u, __ATOMIC_ACQ_REL);
 }
 
+/* Name a #DF that is really a kernel stack overflow, or hand back `fallback`.
+ *
+ * Pure apart from two read-only global reads (the write-once BSP guard base and
+ * the guard registry), and split out of the ISR so the classification can be
+ * unit-tested directly -- a fault path that can only be exercised by crashing
+ * the machine is a fault path nobody checks.
+ *
+ * WHY THIS EXISTS AT ALL. A downward kernel stack overflow does not surface as
+ * #PF: crossing the guard faults at an RSP that can no longer accept an
+ * exception frame, so #PF delivery escalates to #DF, which the generic abort
+ * path reports as "Double Fault" and nothing else. The guard label registered
+ * by vmm_install_guard_page is consulted only in the #PF handler, so without
+ * this the one diagnosis the operator gets names no stack.
+ *
+ * CR2 IS THE KEY; THE SAVED RSP CORROBORATES IT. #DF is an abort and its saved
+ * program state is not architecturally reliable, so RSP cannot be the primary
+ * key. CR2 is written by the #PF that escalated, and for an overflow that
+ * address is the guard page.
+ *
+ * THE RESIDUAL RISK, AND WHY CR2 ALONE IS NOT ENOUGH. #DF also arises from two
+ * contributory exceptions, where CR2 still holds the address of an EARLIER #PF
+ * -- and this kernel has recoverable #PF paths (the guarded kernel reads in
+ * vmm.c) that can leave a guard address there. So a bare CR2 hit would let an
+ * unrelated abort be reported, confidently, as a stack overflow, destroying the
+ * only diagnosis a terminal failure gets.
+ *
+ * WHAT THIS CANNOT SEE. The guard is one page, and this kernel is not built
+ * with stack-clash probing, so a single `sub rsp` larger than 4 KiB can move
+ * RSP clear past the guard before any access. Such an access lands on whatever
+ * is mapped below and may not fault at all. That shape is NOT detected here and
+ * is not detectable here -- it needs page-by-page probing at the compiler
+ * level, filed with the guard work in the kernel-security-hardening TODO. What
+ * a guard page catches, and what this names, is recursion and ordinary frame
+ * growth, which always step through it.
+ *
+ * CORROBORATION IS AGAINST THE RUN, NOT THE GUARD PAGE. An earlier attempt
+ * required CR2 and RSP in the SAME PAGE and was wrong: a faulting PUSH or CALL
+ * reports the pre-instruction RSP, which still sits on the usable page above
+ * the guard, so the commonest real overflow failed its own test. The correct
+ * predicate is RSP inside [guard, top) -- the whole run -- which admits both
+ * that shape and an RSP already in the guard.
+ *
+ * The write-once BSP entry-stack guard is matched ahead of the registry, and
+ * only when its install actually succeeded: the base is published even on a
+ * degraded install, where the page is ordinary mapped memory. That match needs
+ * no lock, so unlike the registry lookup -- try-lock, because blocking here
+ * would deadlock against a mutator -- it cannot be lost to a concurrent task
+ * create or teardown on another CPU. */
+const char *idt_df_guard_reason(uint64_t vec, uintptr_t cr2, uintptr_t rsp,
+                                const char *fallback)
+{
+    uintptr_t cr2_page, bspg;
+
+    if (vec != VECTOR_DOUBLE_FAULT)
+        return fallback;
+
+    cr2_page = cr2 & ~(uintptr_t)0xFFF;
+    bspg = bsp_entry_stack_guarded() ? bsp_entry_stack_guard() : (uintptr_t)0;
+
+    /* The BSP entry stack is the one guard whose USABLE RANGE is known from
+     * here, so it is the one that can be corroborated. A real overflow leaves
+     * CR2 in the guard and the saved RSP inside the run -- either still on the
+     * usable page above (the PUSH/CALL shape) or already in the guard. Both are
+     * covered by [guard, top). Corroborated, the specific stack is named. */
+    if (bspg != 0 && cr2_page == bspg)
+        return (rsp >= bspg && rsp < bsp_entry_stack_top())
+                   ? "GUARD: BSP kernel entry stack overflow"
+                   : "Double Fault (possible kernel stack guard overflow)";
+
+    /* Any other registered guard: the registry stores no run extent, so there
+     * is nothing here to corroborate a CR2 hit against, and an uncorroborated
+     * CR2 hit is NOT proof -- see the residual-risk note above. Report the
+     * possibility and keep the label out of it. Naming the wrong stack with
+     * confidence on a terminal failure costs more than declining to name one,
+     * and nothing is actually lost: the #PF handler still labels ordinary guard
+     * hits, and the trap dump carries CR2 for an operator to resolve. Giving
+     * the registry a run extent so these can be corroborated too belongs with
+     * the guard-entry metadata work in the kernel-security-hardening TODO. */
+    if (vmm_guard_page_label(cr2_page) != (const char *)0)
+        return "Double Fault (possible kernel stack guard overflow)";
+
+    /* RSP-only: the weakest evidence there is, since #DF saved state is not
+     * architecturally reliable. Still worth surfacing as a possibility. */
+    if ((bspg != 0 && (rsp & ~(uintptr_t)0xFFF) == bspg) ||
+        vmm_guard_page_label(rsp & ~(uintptr_t)0xFFF) != (const char *)0)
+        return "Double Fault (possible kernel stack guard overflow)";
+
+    return fallback;
+}
+
 uint64_t isr_handler(struct interrupt_frame *frame)
 {
     uint8_t vec = (uint8_t)frame->int_no;
@@ -461,8 +564,37 @@ uint64_t isr_handler(struct interrupt_frame *frame)
          * (except.c general faults, vmm.c #PF); unregistered ring-3 FP/SIMD faults
          * (#MF/#XM) reach WER once mapped into that terminal by the TODO-23 fault-
          * to-exception mapping follow-up. */
-        panic_screen(frame, frame->err_code, exception_names[vec],
-                     "idt.c", 0);
+        /* A downward kernel-stack overflow reaches THIS path, not the #PF
+         * handler: crossing the guard page faults at an RSP that can no longer
+         * accept an exception frame, so #PF delivery escalates to #DF, which
+         * this vector range reports. Without the attribution below the operator
+         * sees "Double Fault" and nothing about which stack ran out -- the
+         * guard label registered by vmm_install_guard_page is consulted only in
+         * the #PF handler. int_no in the trap dump still identifies the vector.
+         *
+         * KEY ON CR2, NOT THE SAVED RSP. #DF is an abort: the saved program
+         * state is not architecturally reliable, so frame->rsp cannot be
+         * trusted here. CR2 IS written by the #PF that escalated, and for a
+         * stack overflow that address is the guard page itself. The saved RSP
+         * is kept only as a fallback for an escalation that did not come
+         * through #PF. A #DF from an unrelated cause could in principle carry a
+         * stale CR2 pointing into some guard; that costs a misleading REASON
+         * STRING on an already-terminal path and drives no control decision,
+         * which is the right side of the trade against losing the attribution.
+         *
+         * The write-once BSP entry-stack guard is matched DIRECTLY, ahead of
+         * the registry. The registry lookup is try-lock based -- correct, since
+         * blocking here would deadlock against a mutator -- but that means a
+         * concurrent task create/teardown on another CPU silently costs the
+         * label. bsp_entry_stack_guard() is written once on the BSP in Phase 1
+         * and never mutated, so it needs no lock and cannot be lost that way.
+         * A lock-free registry for the RUNTIME guards is owned by the SMP-safe
+         * guard table item in the kernel-security-hardening TODO, not here. */
+        const char *reason = idt_df_guard_reason(vec, read_cr2(),
+                                                 (uintptr_t)frame->rsp,
+                                                 exception_names[vec]);
+
+        panic_screen(frame, frame->err_code, reason, "idt.c", 0);
         /* panic_screen never returns */
     }
 

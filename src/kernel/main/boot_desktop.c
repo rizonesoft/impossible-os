@@ -11,6 +11,7 @@
 
 #include "kernel/types.h"
 #include "kernel/klog.h"
+#include "kernel/gdt.h"   /* bsp_entry_stack_peak_used -- boot-complete margin report */
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
 #include "kernel/cpuid_platform.h"
@@ -486,6 +487,38 @@ void boot_phase3(void)
         klog(LOG_INFO, "boot",
              "Boot complete in %u.%03us (PIT uptime from interrupt init)",
              (uint64_t)(ms / 1000), (uint64_t)(ms % 1000));
+    }
+
+    /* BSP ring-0 entry stack margin (bare-metal hardening: BSP entry-stack
+     * guard), sampled once at boot completion.
+     *
+     * The SAMPLING POINT is named in the line, not left implicit, and the
+     * reading is phrased as what was OBSERVED rather than as what it implies.
+     * An earlier wording said 0 meant "the first user process has not run
+     * yet"; that is false on a test boot, where boot_tests_run() has already
+     * executed 17 user-mode binaries by this point. The scanner is also a lower
+     * bound by construction, so 0 says only that no scanned qword differs from
+     * the poison value at this sample -- not that the stack was provably never
+     * entered. The expected reading is still 0, because the scheduler installs
+     * each thread's own kernel_rsp over TSS.rsp0 on its first switch and this
+     * stack is the fallback almost nothing arrives on.
+     *
+     * And an unguarded run is reported as UNAVAILABLE rather than as a full
+     * margin: the poison fill is skipped when the guard install degrades, so
+     * bsp_entry_stack_peak_used() would return the same 0 and the line would
+     * claim 16 KiB of proven headroom it never measured. */
+    if (!bsp_entry_stack_guarded()) {
+        klog(LOG_WARN, "cpu",
+             "BSP entry stack peak: unavailable (run is unguarded, so it was "
+             "never poisoned -- no watermark exists)");
+    } else {
+        uint32_t peak = bsp_entry_stack_peak_used();
+        klog(LOG_INFO, "cpu",
+             "BSP entry stack peak at boot completion: %u of %u bytes used "
+             "(%u bytes margin; 0 = no non-poison qword observed at this "
+             "sampling point)",
+             (uint64_t)peak, (uint64_t)BSP_ENTRY_STACK_SIZE,
+             (uint64_t)(BSP_ENTRY_STACK_SIZE - peak));
     }
 
     boot_progress(3, "DESKTOP_READY", POST16_DESKTOP_OK);

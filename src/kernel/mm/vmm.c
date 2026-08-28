@@ -665,7 +665,7 @@ static int guard_va_is_kernel_identity(uintptr_t page)
  * page-table lock (see the note in vmm_protect_range) -- which is tracked with
  * the TLB-shootdown gap in 03-memory-concurrency/TODO-07-smp-phase2.
  *
- * guard_page_lookup() runs inside the #PF
+ * vmm_guard_page_label() runs inside the #PF
  * handler -- a panic-context path that must never BLOCK on a lock some faulting
  * context might already hold (kernel-code-quality Gate 4) -- so it acquires the
  * same lock with spin_trylock and simply reports no label if the acquire fails.
@@ -739,7 +739,12 @@ uint32_t vmm_guard_pages_free(void)
     return (n < VMM_MAX_GUARD_PAGES) ? (VMM_MAX_GUARD_PAGES - n) : 0;
 }
 
-static const char *guard_page_lookup(uintptr_t fault_addr)
+/* Public form (vmm.h): name the guard a faulting address landed in, or NULL.
+ * Non-blocking, so it is callable from any fault context -- the #PF handler
+ * below, and the #DF abort path in idt.c, which is the ONLY report a downward
+ * kernel-stack overflow ever produces (crossing the guard faults while RSP can
+ * no longer take an exception frame, so #PF delivery escalates to #DF). */
+const char *vmm_guard_page_label(uintptr_t fault_addr)
 {
     uintptr_t page = fault_addr & ~((uintptr_t)0xFFF);
     const char *label = (const char *)0;
@@ -919,7 +924,7 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
      * user SOURCE); a copy_to / write-touch recovers only a WRITE fault (its
      * user DEST). A wrong-direction fault is the KERNEL operand and falls
      * through to the guard/terminal path, so a kernel-buffer overflow into a
-     * guard page still bugchecks. Runs BEFORE guard_page_lookup so a user
+     * guard page still bugchecks. Runs BEFORE vmm_guard_page_label so a user
      * pointer that happens to hit a registered (low, identity-mapped) guard page
      * fails the copy gracefully instead of panicking the kernel. */
     if (fault_addr < MM_USER_END) {
@@ -949,7 +954,7 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
      * guard fault reaches here and stays terminal). User-stack auto-grow hooks
      * in ahead of this in a later section; today every remaining hit is fatal. */
     {
-        const char *label = guard_page_lookup(fault_addr);
+        const char *label = vmm_guard_page_label(fault_addr);
         if (label) {
             panic_screen(frame, err_code, label, "vmm.c", 0);
             return (uint64_t)frame;  /* unreachable */

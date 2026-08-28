@@ -257,6 +257,36 @@ int vmm_install_guard_page(uintptr_t virt, const char *label);
  * ever INSPECTED, never rewritten. */
 int vmm_uninstall_guard_page(uintptr_t virt);
 
+/* Name the registered guard page containing `fault_addr`, or NULL if that
+ * address is not inside one. Non-blocking (try-lock): a failed acquire reports
+ * NULL rather than a label that might belong to a different guard, so this is
+ * safe from any fault context.
+ *
+ * Two callers. The #PF handler names the region on an ordinary guard hit. The
+ * second is idt.c's #DF classifier, and it exists because a DOWNWARD kernel
+ * stack overflow does not surface as #PF at all: crossing the guard faults at
+ * an RSP that can no longer accept an exception frame, so #PF delivery
+ * escalates to #DF, which runs on IST1 and reaches the generic abort path.
+ * That path queries this function with CR2 -- the address of the #PF that
+ * escalated -- rather than with the saved RSP, whose #DF value is not
+ * architecturally reliable.
+ *
+ * WHAT THIS FUNCTION CANNOT ANSWER, because it bounds what the #DF classifier
+ * may claim: a guard entry records an ADDRESS and a LABEL, not the extent of
+ * the run it protects. So a hit says "this address is a guard", never "the
+ * fault came from an overflow of that run" -- and CR2 can hold a residue from
+ * an earlier RECOVERED #PF (the guarded kernel reads below). The classifier
+ * therefore names a specific stack only where it can corroborate the hit
+ * against a known run extent, which today is the BSP entry stack alone.
+ * Extending the entry with the run extent is filed with the guard-entry
+ * metadata work in the kernel-security-hardening TODO.
+ *
+ * Also keyed strictly on the address given: a frame large enough to move RSP
+ * clear past the 4 KiB guard in one `sub` lands below it and is not matched.
+ * Recursion and ordinary frame growth -- the shapes a guard page exists to
+ * catch -- always land in it. */
+const char *vmm_guard_page_label(uintptr_t fault_addr);
+
 /* Guard-table slots still available. Diagnostics + the saturation unit test;
  * a caller that merely wants to install a guard should call
  * vmm_install_guard_page() and check its return instead of pre-testing. */

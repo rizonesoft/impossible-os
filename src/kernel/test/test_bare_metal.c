@@ -21,7 +21,13 @@
 #include "kernel/boot_info.h"
 #include "kernel/gdt.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/idt.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/drivers/lapic.h"
+
+/* strcmp lives in the kernel libc, not the freestanding headers (see snprintf
+ * above). The guard-label assertion below compares the exact registered text. */
+extern int strcmp(const char *a, const char *b);
 
 /* snprintf is not in the freestanding kernel headers (see ob_section.c). */
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
@@ -468,6 +474,186 @@ static void test_bm_cpu_hardening_verified_by_smoke(void)
     TEST_SKIP("cpu_verify_hardening halts on NX failure; smoke asserts its line");
 }
 
+/* ---- BSP ring-0 entry stack guard ----------------------------------------
+ *
+ * The stack TSS.rsp0 holds on a ring-3 -> ring-0 transition before the
+ * scheduler installs a thread's own kernel_rsp. It was the one stack in the
+ * kernel without a guard page and is now a PMM-backed guarded run.
+ *
+ * What is testable here is the STRUCTURE -- page alignment, the guard sitting
+ * exactly one page below the usable base, and the guard being registered under
+ * its label. The behaviour on an actual overflow (escalation to #DF and the
+ * label appearing on serial) is a bare-metal validation item, not a unit test:
+ * provoking it deliberately would take the machine down mid-suite.
+ */
+
+static void test_bm_bsp_entry_stack_is_page_aligned(void)
+{
+    uintptr_t base  = bsp_entry_stack_base();
+    uintptr_t guard = bsp_entry_stack_guard();
+    uint64_t  top   = bsp_entry_stack_top();
+
+    TEST_ASSERT(base != 0, "BSP entry stack was never allocated");
+    TEST_ASSERT((base & 0xFFFu) == 0, "BSP entry stack base is not page-aligned");
+    TEST_ASSERT((guard & 0xFFFu) == 0, "BSP entry stack guard is not page-aligned");
+    TEST_ASSERT_EQ(top, (uint64_t)(base + BSP_ENTRY_STACK_SIZE),
+                   "stack top must be base + BSP_ENTRY_STACK_SIZE");
+    TEST_ASSERT_EQ((uint64_t)base, (uint64_t)(guard + 4096u),
+                   "the guard page must sit immediately below the usable base");
+}
+
+static void test_bm_bsp_entry_stack_guard_is_registered(void)
+{
+    const char *label;
+
+    TEST_ASSERT(bsp_entry_stack_guarded() != 0,
+                "BSP entry stack shipped UNGUARDED -- guard table full or split failed");
+
+    label = vmm_guard_page_label(bsp_entry_stack_guard());
+    TEST_ASSERT(label != (const char *)0,
+                "no guard-table entry for the BSP entry stack guard page");
+
+    /* TEST_ASSERT records and RETURNS TO THE CALLER -- it does not abort the
+     * test function -- so the NULL case has to be bailed out of explicitly.
+     * Falling through would hand strcmp a null pointer on exactly the registry
+     * failure this test exists to catch, turning a reported failure into a
+     * kernel panic that truncates the suite. */
+    if (!label)
+        return;
+
+    /* The label is what a #DF on this stack prints, so pin the text, not just
+     * its presence. */
+    TEST_ASSERT(strcmp(label, "GUARD: BSP kernel entry stack overflow") == 0,
+                "BSP entry stack guard is registered under the wrong label");
+
+    /* The usable run itself must NOT be a guard: a lookup that matched it
+     * would mean the stack's own pages are unmapped. */
+    TEST_ASSERT(vmm_guard_page_label(bsp_entry_stack_base()) == (const char *)0,
+                "the usable BSP entry stack base must not be a registered guard");
+    TEST_ASSERT(vmm_guard_page_label(bsp_entry_stack_top() - 8) == (const char *)0,
+                "the BSP entry stack top must not be a registered guard");
+}
+
+static void test_bm_bsp_entry_stack_peak_is_bounded(void)
+{
+    uint32_t peak = bsp_entry_stack_peak_used();
+
+    /* The poison watermark turns the 16 KiB size into a measured margin. A
+     * peak at or above the full size means the run was exhausted, which the
+     * guard page below would have caught first -- so reaching here with that
+     * value means the watermark itself is wrong. Zero is legitimate and is the
+     * expected reading while no ring-3 entry has occurred yet. */
+    TEST_ASSERT(peak < BSP_ENTRY_STACK_SIZE,
+                "BSP entry stack watermark reports the whole run as used");
+
+    /* The watermark must be qword-granular: it is derived by scanning 8-byte
+     * poison cells, so any other value means the scan arithmetic is wrong. */
+    TEST_ASSERT((peak & 7u) == 0,
+                "BSP entry stack watermark is not a whole number of qwords");
+}
+
+/* The #DF stack-overflow classifier. This is the ONLY reachable test of the
+ * attribution path: a real hit requires overflowing a kernel stack, which takes
+ * the machine down. idt_df_guard_reason() is pure over its arguments plus two
+ * read-only globals, so the four shapes that matter are checkable directly. */
+static void test_bm_df_classifier_names_the_guard(void)
+{
+    uintptr_t guard = bsp_entry_stack_guard();
+    uintptr_t usable = bsp_entry_stack_base();
+    const char *bsp_label = "GUARD: BSP kernel entry stack overflow";
+    const char *possible = "Double Fault (possible kernel stack guard overflow)";
+    const char *fallback = "Double Fault";
+    const char *r;
+
+    TEST_ASSERT(bsp_entry_stack_guarded() != 0,
+                "classifier test needs the BSP guard installed");
+
+    /* The commonest REAL shape, and the one an earlier corroboration rule got
+     * wrong: a faulting PUSH/CALL reports the pre-instruction RSP, which is
+     * still on the usable page while CR2 is already in the guard. This must
+     * still name the stack. */
+    r = idt_df_guard_reason(8, guard + 0x40, usable + 0x10, fallback);
+    TEST_ASSERT(r != (const char *)0 && strcmp(r, bsp_label) == 0,
+                "CR2 in the guard with RSP on the usable page must name the stack");
+
+    /* Both keys in the guard -- also a real overflow, same answer. */
+    r = idt_df_guard_reason(8, guard + 0x40, guard + 0x8, fallback);
+    TEST_ASSERT(r != (const char *)0 && strcmp(r, bsp_label) == 0,
+                "both keys in the guard must name the stack");
+
+    /* RSP-only match: the saved #DF state is not architecturally reliable, so
+     * this is reported as a possibility rather than as a specific stack. */
+    r = idt_df_guard_reason(8, usable + 0x10, guard + 0x8, fallback);
+    TEST_ASSERT(r != (const char *)0 && strcmp(r, possible) == 0,
+                "an RSP-only match must be reported as possible, not definitive");
+
+    /* Neither key in any guard -- a #DF that is not a stack overflow keeps the
+     * vector name. This is the stale-CR2-elsewhere case. */
+    r = idt_df_guard_reason(8, usable + 0x10, usable + 0x20, fallback);
+    TEST_ASSERT(r == fallback,
+                "a #DF with no guard match must keep the vector name");
+
+    /* Every other vector is untouched, whatever CR2 holds. */
+    r = idt_df_guard_reason(14, guard + 0x40, guard + 0x8, fallback);
+    TEST_ASSERT(r == fallback,
+                "the classifier must only act on #DF");
+}
+
+/* The BSP guard short-circuits ahead of the registry, so the cases above never
+ * reach the registry branches. Without this, deleting those branches would
+ * leave the suite green while task, AP and IST overflows lost their reports.
+ * Install a real guard on a scratch frame to drive them. */
+static void test_bm_df_classifier_uses_the_guard_registry(void)
+{
+    const char *possible = "Double Fault (possible kernel stack guard overflow)";
+    const char *fallback = "Double Fault";
+    uintptr_t frame = pmm_alloc_frame();
+    const char *r;
+    int rc;
+
+    if (!frame) {
+        TEST_SKIP("no free frame for a scratch guard");
+        return;
+    }
+
+    rc = vmm_install_guard_page(frame, "GUARD: classifier scratch");
+    if (rc != VMM_GUARD_OK) {
+        /* VMM_GUARD_VA_UNSAFE means the frame is not PMM-safe: quarantine it
+         * rather than freeing it, exactly as the production callers do. */
+        if (rc != VMM_GUARD_VA_UNSAFE)
+            pmm_free_frame(frame);
+        TEST_SKIP("scratch guard could not be installed");
+        return;
+    }
+
+    /* CR2 in a REGISTRY guard: reported as a possibility, not as a named stack.
+     * The registry stores no run extent, so there is nothing to corroborate
+     * against and a confident name would be unearned. */
+    r = idt_df_guard_reason(8, frame + 0x40, frame + 0x1000, fallback);
+    TEST_ASSERT(r != (const char *)0 && strcmp(r, possible) == 0,
+                "a registry CR2 hit must report a possible guard overflow");
+
+    /* RSP-only through the registry reaches the last branch. */
+    r = idt_df_guard_reason(8, frame + 0x8000, frame + 0x40, fallback);
+    TEST_ASSERT(r != (const char *)0 && strcmp(r, possible) == 0,
+                "a registry RSP hit must report a possible guard overflow");
+
+    /* Neither key in the scratch guard: unchanged verdict. */
+    r = idt_df_guard_reason(8, frame + 0x8000, frame + 0x9000, fallback);
+    TEST_ASSERT(r == fallback,
+                "addresses outside every guard must keep the vector name");
+
+    /* Teardown is ASSERTED, not merely attempted. vmm_uninstall_guard_page
+     * deliberately keeps the registry entry on failure, so a silent failure
+     * here would leave this test's guard live in the boot-time address space
+     * for every later test and for the rest of boot, while the suite stayed
+     * green. Free only on success, per the vmm.h contract. */
+    rc = vmm_uninstall_guard_page(frame);
+    TEST_ASSERT_EQ(rc, 0, "scratch guard must uninstall cleanly");
+    if (rc == 0)
+        pmm_free_frame(frame);
+}
+
 /* ---- Registration ---- */
 
 void test_register_bare_metal(void)
@@ -504,6 +690,21 @@ void test_register_bare_metal(void)
                             test_bm_degraded_mask_is_well_formed, TEST_CAT_BOOT);
     test_suite_register_cat("BM: CPU hardening verified by smoke",
                             test_bm_cpu_hardening_verified_by_smoke,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: BSP entry stack is page-aligned",
+                            test_bm_bsp_entry_stack_is_page_aligned,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: BSP entry stack guard is registered",
+                            test_bm_bsp_entry_stack_guard_is_registered,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: BSP entry stack peak is bounded",
+                            test_bm_bsp_entry_stack_peak_is_bounded,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: #DF classifier names the guard",
+                            test_bm_df_classifier_names_the_guard,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: #DF classifier uses the registry",
+                            test_bm_df_classifier_uses_the_guard_registry,
                             TEST_CAT_BOOT);
 }
 

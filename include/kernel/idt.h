@@ -44,6 +44,16 @@
  *   ---     ---
  *   176 total (22 x 8 bytes)
  */
+/* Classify a #DF as a kernel stack-overflow guard hit, or return `fallback`.
+ * Exposed for unit tests: the real path can only be reached by crashing the
+ * machine, so the classification is tested as a pure function instead. Returns
+ * the specific guard label on a CR2 match (CR2 is written by the #PF that
+ * escalated), a "possible" string on an RSP-only match (the saved #DF state is
+ * not architecturally reliable), and `fallback` otherwise. Full reasoning at
+ * the definition in idt.c. */
+const char *idt_df_guard_reason(uint64_t vec, uintptr_t cr2, uintptr_t rsp,
+                                const char *fallback);
+
 struct interrupt_frame {
     /* Pushed by our common stub (in reverse order) */
     uint64_t r15, r14, r13, r12, r11, r10, r9, r8;

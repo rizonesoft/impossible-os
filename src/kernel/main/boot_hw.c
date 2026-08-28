@@ -42,36 +42,18 @@
  * alternate-boot-protocol policy doc. */
 struct boot_info g_boot_info;
 
-/* BSP kernel boot stack. The UEFI bootloader calls kernel_main directly
- * on its own EfiLoaderData stack; this static array provides a stable
- * kernel-owned stack region whose top is exposed as the label `stack_top`
- * for TSS.rsp0 (used on ring 3 -> ring 0 transitions) and IST setup.
+/* The BSP's ring-0 entry stack is NOT here any more (bare-metal hardening: BSP entry-stack guard).
+ * It used to be a plain 16 KiB BSS array whose top was published as the
+ * `stack_top` label for TSS.rsp0; a BSS array cannot carry a guard page
+ * without growing the kernel image, and the image already ends at 0x7ff000
+ * against the 0x800000 firmware floor that scripts/build.sh enforces. It is
+ * now a PMM-backed guarded allocation made in gdt_init() -- the same shape
+ * the IST stacks use -- which removes 16 KiB from .bss instead of adding to
+ * it. See src/kernel/gdt.c (bsp_entry_stack_*).
  *
- * `stack_top` is declared via module-scope inline asm as a TRUE LABEL
- * (symbol address == bsp_boot_stack + BSP_BOOT_STACK_SIZE), preserving
- * the ABI that the previous entry.asm-defined `global stack_top`
- * provided. `gdt.c` imports it as `extern char stack_top[]` and casts
- * the symbol address directly into kernel_tss.rsp0; declaring it as a
- * C `char *const` would put the pointer in .rodata and TSS.rsp0 would
- * land at the address of the pointer object rather than the stack top.
- *
- * `used` + `retain` prevent LTO / --gc-sections from discarding the
- * stack region (no direct C reads -- only the assembly-side label
- * arithmetic and the gdt.c symbol cast). 16 KB matches AP_STACK_SIZE
- * in include/kernel/smp.h. */
-#define BSP_BOOT_STACK_SIZE 16384
-__attribute__((aligned(16), used, retain))
-char bsp_boot_stack[BSP_BOOT_STACK_SIZE];
-/* Define `stack_top` as a true label symbol so its address arithmetic
- * matches the original entry.asm `global stack_top` ABI exactly. Keep
- * the literal size in sync with BSP_BOOT_STACK_SIZE above; the
- * _Static_assert below pins the contract at compile time. */
-__asm__ (
-    ".globl stack_top\n\t"
-    ".set stack_top, bsp_boot_stack + 16384\n\t"
-);
-_Static_assert(BSP_BOOT_STACK_SIZE == 16384,
-    "BSP_BOOT_STACK_SIZE must match the literal in the stack_top inline asm above");
+ * Nothing outside gdt.c ever consumed `stack_top`, so the label is gone with
+ * the array rather than being kept as a compatibility stub. */
+
 
 /* UEFI boot magic */
 #define UEFI_BOOT_MAGIC 0x55454649ULL  /* "UEFI" */

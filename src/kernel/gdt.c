@@ -111,6 +111,121 @@ static uint64_t ist_alloc(const char *guard_label)
     return (uint64_t)(base + (uint64_t)(IST_STACK_PAGES + 1) * VMM_PAGE_SIZE);
 }
 
+/* --- BSP ring-0 entry stack (bare-metal hardening: BSP entry-stack guard) -------------------------
+ *
+ * TSS.rsp0 is the stack the CPU switches to on a ring-3 -> ring-0 transition.
+ * It was a bare 16 KiB BSS array in boot_hw.c: the ONE stack in the kernel
+ * with no guard page under it, while task, thread, AP and IST stacks all
+ * carry one. An overflow therefore wrote into neighbouring BSS and the
+ * machine continued into a wrong state.
+ *
+ * It could not simply be page-aligned with a guard prepended in place: the
+ * kernel image already ends at 0x7ff000 against the 0x800000 firmware floor
+ * scripts/build.sh enforces (the bootloader refuses a PT_LOAD into the
+ * ACPIMemoryNVS region that begins there), and the alignment plus guard needed
+ * ~7.4 KiB against ~4 KiB of headroom. Moving it to PMM frees 16 KiB of image
+ * instead.
+ *
+ * SCOPE, stated because the obvious reading is wrong: this is NOT the Phase-0
+ * or Phase-1 execution stack. src/boot/uefi/bootx64.c jump_to_kernel() loads
+ * CR3 and CALLS the kernel entry without writing RSP, so early boot runs on
+ * the UEFI loader's own stack and never touches this one. This stack goes live
+ * at the first ring-3 -> ring-0 entry and stays live only until the scheduler
+ * installs an incoming thread's kernel_rsp over TSS.rsp0 (task.c
+ * context_switch). Guarding the Phase-0/1 stack is a separate question that
+ * needs an RSP handoff in the boot path; it is filed, not done here. */
+#define BSP_ENTRY_STACK_PAGES 4                  /* 16 KiB usable, matches AP_STACK_SIZE */
+#define BSP_ENTRY_STACK_POISON 0xB5B5B5B5B5B5B5B5ULL
+
+_Static_assert(BSP_ENTRY_STACK_PAGES * 4096u == BSP_ENTRY_STACK_SIZE,
+    "BSP_ENTRY_STACK_PAGES must describe BSP_ENTRY_STACK_SIZE (gdt.h)");
+
+static uintptr_t bsp_entry_stack_guard_base;   /* the guard page itself */
+static uintptr_t bsp_entry_stack_lo;           /* first usable byte */
+static uint64_t  bsp_entry_stack_hi;           /* stack top (RSP starts here) */
+static int       bsp_entry_stack_is_guarded;
+static int       bsp_entry_stack_is_poisoned;
+
+/* Allocate the BSP ring-0 entry stack: one guard page plus the usable run.
+ * Failure policy differs per VMM result, which the guard contract in vmm.h
+ * requires and a flat "warn and carry on" would erase:
+ *
+ *   - allocation failure    -> fatal. Every ring-3 -> ring-0 entry needs a
+ *                              valid RSP0, and some bare-metal Intel parts
+ *                              validate it at interrupt delivery.
+ *   - VMM_GUARD_VA_UNSAFE   -> fatal. The frame's identity VA is absent,
+ *                              aliased, or read-only, so it is not safe to run
+ *                              a stack on and not safe to hand back to the PMM.
+ *   - VMM_GUARD_UNAVAILABLE -> degraded. The mapping is intact and the run is
+ *                              usable; only the diagnostic net is missing,
+ *                              which is exactly the state this section found.
+ *                              Say so and continue rather than refusing a boot
+ *                              that worked yesterday. */
+static void bsp_entry_stack_alloc(void)
+{
+    uintptr_t base = pmm_alloc_contiguous(BSP_ENTRY_STACK_PAGES + 1);
+    int guard_rc;
+
+    if (!base)
+        boot_halt("BSP entry stack allocation failed (out of physical memory)");
+
+    guard_rc = vmm_install_guard_page(base, "GUARD: BSP kernel entry stack overflow");
+    if (guard_rc == VMM_GUARD_VA_UNSAFE)
+        boot_halt("BSP entry stack: identity mapping is not usable for a stack");
+
+    bsp_entry_stack_guard_base = base;
+    bsp_entry_stack_lo         = base + VMM_PAGE_SIZE;
+    bsp_entry_stack_hi         = (uint64_t)(bsp_entry_stack_lo + BSP_ENTRY_STACK_SIZE);
+    bsp_entry_stack_is_guarded = (guard_rc == VMM_GUARD_OK);
+
+    /* Poison AFTER the install, never before: the fill writes through the very
+     * identity mapping vmm_install_guard_page is there to validate, so filling
+     * first would scribble on an unrelated frame in exactly the aliased case
+     * VMM_GUARD_VA_UNSAFE exists to catch. Safe to do at all only because
+     * nothing has run on this stack yet -- TSS.rsp0 is written below, and no
+     * ring-3 code exists until Phase 2.
+     *
+     * The fill is what turns the 16 KiB size from an assumption into a
+     * measurement: bsp_entry_stack_peak_used() reports the deepest byte ever
+     * disturbed. */
+    if (bsp_entry_stack_is_guarded) {
+        uint64_t *p = (uint64_t *)bsp_entry_stack_lo;
+        uint32_t i;
+        for (i = 0; i < BSP_ENTRY_STACK_SIZE / sizeof(uint64_t); i++)
+            p[i] = BSP_ENTRY_STACK_POISON;
+        bsp_entry_stack_is_poisoned = 1;
+    }
+}
+
+uintptr_t bsp_entry_stack_guard(void)  { return bsp_entry_stack_guard_base; }
+uintptr_t bsp_entry_stack_base(void)   { return bsp_entry_stack_lo; }
+uint64_t  bsp_entry_stack_top(void)    { return bsp_entry_stack_hi; }
+int       bsp_entry_stack_guarded(void){ return bsp_entry_stack_is_guarded; }
+
+/* High-water mark in bytes: scan up from the lowest usable qword for the first
+ * one still holding the poison. Everything below that has been written at some
+ * point, so the answer is (top - first_intact).
+ *
+ * Reports 0 when the run was never poisoned (guard install degraded), and it
+ * is a LOWER bound in principle -- a frame that leaves a hole, or writes the
+ * poison value itself, reads as untouched. Both are diagnostics-grade
+ * imprecision, not correctness. */
+uint32_t bsp_entry_stack_peak_used(void)
+{
+    const uint64_t *p = (const uint64_t *)bsp_entry_stack_lo;
+    uint32_t n = BSP_ENTRY_STACK_SIZE / sizeof(uint64_t);
+    uint32_t i;
+
+    if (!bsp_entry_stack_is_poisoned)
+        return 0;
+
+    for (i = 0; i < n; i++)
+        if (p[i] != BSP_ENTRY_STACK_POISON)
+            break;
+
+    return (uint32_t)((n - i) * sizeof(uint64_t));
+}
+
 void gdt_init(void)
 {
     uint64_t tss_base = (uint64_t)(uintptr_t)&kernel_tss;
@@ -122,13 +237,20 @@ void gdt_init(void)
     for (i = 0; i < sizeof(struct tss); i++)
         tss_ptr[i] = 0;
 
-    /* Set RSP0 to the boot stack so ring 3→0 transitions have a valid
-     * kernel stack.  Also required on some bare-metal Intel CPUs that
-     * check RSP0 validity on interrupt delivery. */
-    {
-        extern char stack_top[];  /* defined in entry.asm */
-        kernel_tss.rsp0 = (uint64_t)(uintptr_t)stack_top;
-    }
+    /* Set RSP0 so ring 3→0 transitions have a valid kernel stack.  Also
+     * required on some bare-metal Intel CPUs that check RSP0 validity on
+     * interrupt delivery.  PMM-backed with a guard page beneath it, so an
+     * overflow of this stack faults with a label instead of corrupting
+     * whatever sits below (bare-metal hardening: BSP entry-stack guard). */
+    POST16(0xD1F0);
+    bsp_entry_stack_alloc();
+    kernel_tss.rsp0 = bsp_entry_stack_top();
+    if (!bsp_entry_stack_guarded())
+        klog(LOG_WARN, "cpu",
+             "BSP entry stack at %p is UNGUARDED (guard table full or split "
+             "failed) -- an overflow will corrupt memory below it silently",
+             (uint64_t)bsp_entry_stack_base());
+    POST16(0xD1F1);
 
     /* IST stacks for critical exceptions: #DF, NMI, MCE. Allocated from PMM
      * (identity-mapped, phys = virt). PMM is up in Phase 0, GDT in Phase 1.
@@ -143,6 +265,12 @@ void gdt_init(void)
          "IST stacks: DF=%p NMI=%p MCE=%p (%u KiB each + guard page)",
          kernel_tss.ist1, kernel_tss.ist2, kernel_tss.ist3,
          (uint64_t)(IST_STACK_PAGES * 4));
+    klog(LOG_INFO, "cpu",
+         "BSP entry stack: %p..%p (%u KiB usable, guard %p %s)",
+         (uint64_t)bsp_entry_stack_base(), bsp_entry_stack_top(),
+         (uint64_t)(BSP_ENTRY_STACK_SIZE / 1024),
+         (uint64_t)bsp_entry_stack_guard(),
+         bsp_entry_stack_guarded() ? "installed" : "UNAVAILABLE");
     POST16(0xD201);
 
     /* Set the I/O Permission Bitmap offset to beyond the TSS (no IOPB) */
