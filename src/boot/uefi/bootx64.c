@@ -2809,9 +2809,23 @@ static UINTN g_staged_payload_count = 0;
 static UINT32 g_staged_payload_overflow = 0;
 
 /* Which implicit publishers have already taken their reserved slot. One bit
- * per entry in BOOT_IMPLICIT_PAYLOAD_LIST; zero for the whole boot until a
- * publisher succeeds. */
+ * per entry in BOOT_IMPLICIT_PAYLOAD_LIST.
+ *
+ * The `= 0` here is DOCUMENTATION, NOT INITIALIZATION. This loader does not
+ * zero `.bss` and firmware poisons it with 0xAF (see the note near the top of
+ * this file), so at entry this word reads 0xAFAFAFAF -- both publisher bits
+ * already set, both publishers refused as duplicates, and the section that
+ * exists to stop an entropy seed being dropped would drop it on every boot.
+ * The staged-payload counters below carry the same hazard and are reset the
+ * same way; `reset_implicit_payload_claims()` is called from
+ * `parse_boot_conf()`, which runs before `load_staged_payloads()` and before
+ * either publisher. */
 static UINT32 g_implicit_payload_claimed = 0;
+
+static void reset_implicit_payload_claims(void)
+{
+    g_implicit_payload_claimed = 0;
+}
 
 /* Publish one implicit payload, or refuse LOUDLY and change nothing.
  *
@@ -2836,7 +2850,7 @@ static BOOLEAN publish_implicit_payload(const struct boot_payload_desc *desc)
 
     if (g_boot_info_ptr == (struct boot_info *)0 || desc == (const struct boot_payload_desc *)0) {
         serial_early_print("[WARN] implicit payload: no boot_info or no descriptor -- not published\n");
-        return (BOOLEAN)0;
+        return 0;
     }
 
     r = boot_implicit_payload_claim((unsigned int)desc->type,
@@ -2867,7 +2881,7 @@ static BOOLEAN publish_implicit_payload(const struct boot_payload_desc *desc)
         serial_early_print("; machine is DEGRADED: ");
         serial_early_print(boot_implicit_payload_degradation((unsigned int)desc->type));
         serial_early_print("\n");
-        return (BOOLEAN)0;
+        return 0;
     }
 
     /* Commit. The slot write and both counter updates happen together, with
@@ -2875,7 +2889,7 @@ static BOOLEAN publish_implicit_payload(const struct boot_payload_desc *desc)
      * so the kernel-side tests execute these exact lines rather than a fixture
      * that re-implements them. */
     BOOT_IMPLICIT_PAYLOAD_COMMIT(g_boot_info_ptr, desc);
-    return (BOOLEAN)1;
+    return 1;
 }
 
 /* Append one payload to the staging list. Type is already resolved to
@@ -3290,12 +3304,17 @@ static void parse_boot_conf(void)
      * fill unused pool / BSS memory with 0xAF, and in practice these
      * statics come up with that poison pattern instead of zero --
      * enough to make stage_payload's count >= STAGE_MAX check fail
-     * early (0xAFAFAFAF >= 31) and leak payload_overflow=0xAFAFAFAF
+     * early (0xAFAFAFAF >= BOOT_PAYLOAD_STAGE_MAX) and leak payload_overflow=0xAFAFAFAF
      * into the validator. Initializing at parse entry guarantees a
      * clean slate on every boot regardless of PE loader behavior. */
     g_staged_payload_count = 0;
     g_staged_payload_overflow = 0;
     efi_memset(g_staged_payloads, 0, sizeof(g_staged_payloads));
+
+    /* Same hazard, same remedy: the implicit-publisher claim mask is a static
+     * in the same non-zeroed `.bss`, and 0xAFAFAFAF has every publisher bit
+     * set. Left poisoned it refuses BOTH implicit payloads as duplicates. */
+    reset_implicit_payload_claims();
 
     serial_early_print("[BOOT] parse_boot_conf...\n");
 
@@ -10629,11 +10648,15 @@ static void publish_headless_authz_payload(void)
 
     status = locate_boot_fs(&fs);
     if (EFI_ERROR(status)) {
+        /* Silence here read as "no authorization present", which is a
+         * different thing from "could not look". */
+        serial_early_print("[WARN] headless authz: no boot filesystem -- not published\n");
         post_code16(POST16_BL_HL_AUTHZ_OK);
         return;
     }
     status = fs->OpenVolume(fs, &root_dir);
     if (EFI_ERROR(status)) {
+        serial_early_print("[WARN] headless authz: OpenVolume failed -- not published\n");
         post_code16(POST16_BL_HL_AUTHZ_OK);
         return;
     }

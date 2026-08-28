@@ -1423,6 +1423,18 @@ _Static_assert(BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX) + BOOT_IMPLICIT_PAYL
                "staging bound plus implicit reservation must exactly fill the descriptor table");
 _Static_assert(BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX) > 0,
                "implicit reservation must leave room for at least one boot.conf payload");
+/* The shared list spells its payload types as literals because the kernel enum
+ * and the UEFI mirror declare the same constants differently, and it asks each
+ * includer to pin its own side. `bootx64.c` pins the mirror; these pin the
+ * kernel. Without them `include/kernel/boot_info.h` could renumber either
+ * enumerator and still build, leaving the loader publishing 7 and 10 while
+ * kernel consumers searched for the drifted value. The generated ABI manifest
+ * does not cover enum VALUES -- that is section 26's deferred surface -- so a
+ * compile-time pin on each side is the guard that exists today. */
+_Static_assert(BOOT_PAYLOAD_RANDOM_SEED == 7u,
+               "implicit-payload list literal 7 must stay BOOT_PAYLOAD_RANDOM_SEED");
+_Static_assert(BOOT_PAYLOAD_HEADLESS_AUTHZ == 10u,
+               "implicit-payload list literal 10 must stay BOOT_PAYLOAD_HEADLESS_AUTHZ");
 
 /* Table-driven so the whole matrix costs one loop rather than one call site and
  * one message string per case. The kernel test image sits within a page of the
