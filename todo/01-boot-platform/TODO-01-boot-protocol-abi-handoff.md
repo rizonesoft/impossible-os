@@ -96,7 +96,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  23   | Integrity coverage for the handoff payload body    | §2, §3                             |  [/]   |
 | ⭐  |  24   | Scripted anti-rollback NVRAM fixture harness       | §13, §16, §19                      |  [x]   |
 | 💎  |  25   | Bounded retry for a transient rollback-floor write | §13, §16, §24                      |  [x]   |
-| 💎  |  26   | Enum-VALUE drift detection for the mirror          | §2, §3                             |  [ ]   |
+| 💎  |  26   | Enum-VALUE drift detection for the mirror          | §2, §3                             |  [/]   |
 | 💎  |  27   | Descriptor capacity for the implicit publishers    | §4, §26                            |  [ ]   |
 
 ---
@@ -981,15 +981,19 @@ That leaves `enum boot_payload_type` and `enum boot_payload_producer` synchroniz
 
 The failure is quiet in a way the struct-drift failure is not: a wrong OFFSET corrupts a field and something usually misbehaves loudly, whereas a wrong TYPE NUMBER means `boot_payload_find` looks for a value nobody published and returns NULL, which every consumer is required to handle gracefully. The mirror also splits the enum across two places (`BOOT_PAYLOAD_WARM_UPDATE_STATE` is defined down in the warm-update block, away from the others), so a reader checking the list by eye can miss a value entirely.
 
-- [ ] Emit every `enum boot_payload_type` and `enum boot_payload_producer` member NAME and VALUE into the generated manifest from both sides, so `compare.sh` adjudicates them exactly as it adjudicates field offsets.
+- [/] operator-gated: emit every `enum boot_payload_type` and `enum boot_payload_producer` member NAME and VALUE into the generated manifest from both sides, so `compare.sh` adjudicates them exactly as it adjudicates field offsets.
   - The kernel side reads the enum directly. The mirror side is `#define`s, so the dumper has to evaluate the macro rather than reflect an enum -- the same shape `dump-mirror.c` already uses for the struct offsets.
   - A member present on one side and absent on the other must FAIL, not be skipped: an unmirrored value is exactly the case where the loader can publish something the kernel will never look for.
-- [ ] Cover the producer enum and any future mirrored enum by CONSTRUCTION rather than by a hand-maintained list, so the next enum added to the ABI is checked without anyone remembering to add it.
-- [ ] Collect `BOOT_PAYLOAD_WARM_UPDATE_STATE` back with the rest of `enum boot_payload_type` in the mirror, or leave it where it is and make the check the thing that reads it, so physical placement stops being load-bearing for a human reader.
-- [ ] Unit-test the checker against a deliberately skewed pair of inputs, so a checker that silently passes everything is caught.
-- [ ] Commit: `"boot: enum-value drift detection for the bootloader mirror"`
+- [/] operator-gated: cover the producer enum and any future mirrored enum by CONSTRUCTION rather than by a hand-maintained list, so the next enum added to the ABI is checked without anyone remembering to add it.
+- [/] operator-gated: collect `BOOT_PAYLOAD_WARM_UPDATE_STATE` back with the rest of `enum boot_payload_type` in the mirror, or leave it and make the check read it.
+  - The point is that physical placement stops being load-bearing for a human reader.
+  - Moving the `#define` is the one item here that touches only `src/boot/uefi/boot_info_mirror.h` and is not itself gated. It is parked WITH the rest deliberately: the section's own framing makes the move optional if the checker reads the value, and rearranging a boot-ABI mirror header for readability with no checker watching is a change whose only net is the thing this section cannot build.
+- [/] operator-gated: unit-test the checker against a deliberately skewed pair of inputs, so a checker that silently passes everything is caught.
+- [/] operator-gated: Commit: `"boot: enum-value drift detection for the bootloader mirror"`
 
 **Test checkpoint:** a fixture in which the mirror declares one payload type at a different number than the kernel FAILS `compare.sh` with the member named, and the unmodified tree passes. A member added to the kernel enum and not to the mirror fails the same way. Scope: this section owns enum-member drift only; struct field offsets and sizes are §2 and §3 and are unchanged, and the ABI version contract is §1. Platforms: host build gate, no hardware.
+
+> **Deferred:** [H] every deliverable in this section lands in the RECEIPT SURFACE the unattended runner is forbidden to edit -- `tools/boot-info-manifest/*` (the ABI generator) and `scripts/build.sh`, both in `receipt_surface_guard.py`'s PROTECTED set and named in CLAUDE.md's "The run captures; the attended session repairs". The reason is exactly this section's own subject: a wrong drift checker keeps producing a receipt that says everything is fine, so an unattended edit to the thing that certifies the build is unrecoverable in the way a wrong kernel function is not. Recorded here with its evidence for an attended session. -> XREF: `01-boot-platform/TODO-01 §3` (item: "Header -> manifest coverage gate" at line 168) -- the completeness gate this section extends from struct fields to enum members, shipped as `check_manifest_completeness()` in commit `a197fa2ad`.
 
 ---
 
