@@ -115,8 +115,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 - [x] `int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)` -- full implementation with: `%d`/`%i`, `%u`, `%x`/`%X`, `%o`, `%s`, `%c`, `%p`, `%%`, length modifiers (`l`/`ll`/`h`/`hh`/`z`), width, precision (`.*`), zero-padding, left-align (`-`), sign flags (`+`/` `). Returns total chars that *would* have been written.
 - [x] `int snprintf(char *buf, size_t size, const char *fmt, ...)` -- thin varargs wrapper
-- [ ] Update `panic.c` to use `snprintf` -- deferred (current hand-rolled formatter works; changing it during active development risks boot regression)
-- [ ] Update `klog` / `printk` to use `vsnprintf` internally -- deferred (same reason; `vformat_buf` is battle-tested)
+- [/] Update `panic.c` to use `snprintf`
+      - Blocked on: this section's own Deferred stamp. The hand-rolled formatter works and the dedup is cosmetic, so migrating it while the boot path is still moving buys a boot-regression risk for no functional gain. No other TODO owns it; re-open here once the boot path stops changing.
+- [/] Update `klog` / `printk` to use `vsnprintf` internally
+      - Blocked on: same as the `panic.c` item above. `vformat_buf` is battle-tested and the swap is cosmetic dedup, not a fix.
 
 - [x] Commit: `"libc: freestanding string library -- memcpy/memset/str*, snprintf/vsnprintf"`
 
@@ -158,7 +160,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] `kmath_trunc` -- toward zero; `>= 2^52` and `+/-0` pass through
 - [x] `kmath_cbrt` -- `exp(log/3)` seed + 2 Newton steps; preserves sign, zero, +/-inf
 
-- [ ] Unify float/double special values: hardened float cosf/acosf/sqrtf/powf diverge from font-grade kmath.h double cos/acos/pow/sqrt; promote the doubles (or add hardened non-overlapping names), gated on a stb golden-raster baseline.
+- [/] Unify float/double special values: hardened float `cosf`/`acosf`/`sqrtf`/`powf` diverge from font-grade `kmath.h` double `cos`/`acos`/`pow`/`sqrt`.
+      - Blocked on: `kmath.h` ODR ownership. Promoting the doubles (or adding hardened non-overlapping names) changes what the font rasterizer computes, so it needs an stb golden-raster baseline first. Owned by this section; no cross-TODO owner.
 
 - [x] Commit: `"libc: floating-point math -- sin/tan/asin/atan/atan2/exp/log/cbrt + float variants"`
 
@@ -224,7 +227,9 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [/] Compress a known 8 KiB buffer; decompress; verify byte-for-byte integrity -- DEFERRED with the port
 - [/] Open a ZIP archive from memory; list entries; extract one; verify against a known SHA-256 (Monocypher Blake2b from §5) -- DEFERRED with the port
 
-- [ ] Commit: `"libs: miniz deflate/inflate, ZIP archive reading"`
+- [/] Commit: `"libs: miniz deflate/inflate, ZIP archive reading"`
+      - Blocked on: the section itself is deferred, so there is nothing to commit yet. The port needs a consumer-owned workspace lifecycle -- miniz's states exceed the `kmalloc` ceiling, `pmm` is unsynchronized, and they are too large for the stack.
+      - No owner can be named yet: this section's Deferred stamp points at `07-networking/TODO-03 §3` as "the gzip-decode consumer", but that section is HTTP POST and no gzip Content-Encoding decode is filed as an item anywhere. The consumer has to exist before the workspace lifecycle can be owned.
 
 **Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; the consumer-owned workspace covers the >4 KiB state with no hidden per-call allocation. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -284,8 +289,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] Kernel wrapper `src/kernel/json.c` + `include/kernel/json.h`: `json_parse`/`json_parse_len`/`get`/`str`/`int`/`u32`/`u64`/`double`/`bool`/`is_array`/`array_size`/`array_get`/`array_first`/`array_next`/`print`/`free`.
 - [x] In use by `src/kernel/firmware_advisor.c` + `src/kernel/main/boot_trend.c`; theme.json/settings/manifests/NTP are future consumers owned by their domains.
 - [x] Test: `test_json_lib` parses the sample doc + extracts fields, and checks the hardening (depth>32 rejected, length-bounded parse, trailing-garbage rejected, print round-trip).
-- [ ] Make kernel cJSON parse reentrant: cJSON's `global_error` is written per parse (SMP race); add per-CPU error state or strip global-error publication. Benign today (no wrapper consumer reads `cJSON_GetErrorPtr`). Consumer: `json_parse_len`.
-- [ ] Bound parse heap for untrusted JSON: a near-cap flat doc of many small nodes can transiently pressure the 2 MiB heap; add a per-parse PMM allocation budget. Today bounded by kmalloc's 4 KiB per-alloc ceiling + graceful failure.
+- [/] Make kernel cJSON parse reentrant: `global_error` is written per parse (SMP race). Add per-CPU error state or strip global-error publication.
+      - Blocked on: benign today because no wrapper consumer reads `cJSON_GetErrorPtr`, and locking across a `kmalloc`-heavy parse is worse than the race it would close. Re-open here when a consumer starts reading the error pointer. Consumer surface: `json_parse_len`.
+- [/] Bound parse heap for untrusted JSON: a near-cap flat doc of many small nodes can transiently pressure the 2 MiB heap. Add a per-parse PMM allocation budget.
+      - Blocked on: no untrusted producer exists yet -- the only file consumer is the self-written boot-time cache -- and each allocation is already bounded by `kmalloc`'s 4 KiB ceiling with graceful failure. Re-open here when JSON from off-box is parsed.
 
 - [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
 
@@ -318,18 +325,25 @@ title: "TODO-03 -- Kernel Embedded Libraries"
   - `MBEDTLS_SSL_TLS_C` + `MBEDTLS_SSL_PROTO_TLS1_3` -- TLS 1.3 record layer
   - `MBEDTLS_CTR_DRBG_C` backed by the kernel CSPRNG (§5)
   - **Disable:** `MBEDTLS_NET_C`, `MBEDTLS_TIMING_C`, `MBEDTLS_FS_IO` -- all OS-dependent components
-- [ ] Platform abstraction layer (`include/libs/mbedtls/mbedtls_platform.h`):
+- [/] Platform abstraction layer (`include/libs/mbedtls/mbedtls_platform.h`):
   - `mbedtls_calloc` -> `kmalloc` (zero-initialised, <= 4 KiB)
   - `mbedtls_free` -> `kfree`
   - Large crypto scratch buffers (key agreement, certificate parsing) use `pmm_alloc_contiguous()`; wrap via custom `mbedtls_platform_set_calloc_free`
   - `mbedtls_printf` -> `klog(LOG_DEBUG, "tls", ...)`
   - Entropy source -> `csprng_fill()` (§5) fed into `mbedtls_entropy_add_source`
 
-- [ ] Build the minimal Mbed TLS subset with the kernel flags: `-ffreestanding -nostdlib -fno-stack-protector -mno-red-zone -O2 -g` -- confirm zero link errors
-- [ ] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` -- pass means AES and SHA-256 are functionally correct in freestanding mode
-- [ ] The full TLS session layer (handshake, certificates, SNI) is implemented in `07-networking`; this section only validates the port
+- [/] Build the minimal Mbed TLS subset with the kernel flags: `-ffreestanding -nostdlib -fno-stack-protector -mno-red-zone -O2 -g` -- confirm zero link errors
+      - Blocked on: the Mbed TLS freestanding port is deferred on scope, not on a missing prerequisite: the 3.6.2 LTS source is vendored in `src/libs/mbedtls/` and the tree is excluded from the C-source auto-glob until ported. Pull the whole section forward when HTTPS needs it.
+      -> XREF: `07-networking/TODO-03-http-tls.md §5` (item: "entropy source backed by the kernel CSPRNG" at line 133) -- the Mbed TLS Kernel Port, the HTTPS consumer whose arrival unblocks this section. This section's own Deferred stamp cites that TODO as §3, which is now its HTTP POST section: the Mbed TLS port renumbered to §5.
+- [/] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` -- pass means AES and SHA-256 are functionally correct in freestanding mode
+      - Blocked on: the same section-wide scope deferral as the item above; the selftest cannot run until the subset builds.
+- [/] The full TLS session layer (handshake, certificates, SNI) is NOT this section's work -- it is implemented in `07-networking`, and this section only validates the port.
+      - Kept as a scope boundary rather than a work item, parked because the port it bounds has not shipped.
+      -> XREF: `07-networking/TODO-03-http-tls.md §5` (item: "entropy source backed by the kernel CSPRNG" at line 133) -- the Mbed TLS Kernel Port, the HTTPS consumer whose arrival unblocks this section. This section's own Deferred stamp cites that TODO as §3, which is now its HTTP POST section: the Mbed TLS port renumbered to §5.
 
-- [ ] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/TLS1.3 config, CSPRNG entropy hook"`
+- [/] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/TLS1.3 config, CSPRNG entropy hook"`
+      - Blocked on: the section itself is deferred, so there is nothing to commit yet.
+      -> XREF: `07-networking/TODO-03-http-tls.md §5` (item: "entropy source backed by the kernel CSPRNG" at line 133) -- the Mbed TLS Kernel Port, the HTTPS consumer whose arrival unblocks this section. This section's own Deferred stamp cites that TODO as §3, which is now its HTTP POST section: the Mbed TLS port renumbered to §5.
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -374,7 +388,9 @@ Zstandard is now a first-class compression baseline on both platforms: Linux shi
 - [/] Untrusted-frame hardening (reject declared content size > `dst_cap`; cap decode window; never panic) -- DEFERRED with the port
 - [/] Makefile build rule for `src/libs/zstd/` -- DEFERRED with the port
 - [/] Wire into IXFS transparent compression as the `algo=2` (Zstd) path -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
-- [ ] Commit: `"libs: Zstandard freestanding port -- zstd_compress/decompress/bound, kmalloc+pmm allocator hooks"`
+- [/] Commit: `"libs: Zstandard freestanding port -- zstd_compress/decompress/bound, kmalloc+pmm allocator hooks"`
+      - Blocked on: the section itself is deferred, so there is nothing to commit yet. The port needs an operator source fetch (this host is headless, no network) and a consumer-owned workspace: the CCtx and window exceed the `kmalloc` ceiling and `pmm` is unsynchronized.
+      -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` (item: "ixfs_compress_block" at line 113) -- Transparent LZ4/Zstd Compression, the consumer that owns the workspace.
 
 **Test checkpoint:** 64 KiB structured buffer round-trips through `zstd_compress` (level 3) / `zstd_decompress` byte-for-byte; `zstd_compress_bound(65536)` >= actual compressed size; a frame declaring content size larger than `dst_cap` is rejected without overrun; decode of a malformed frame returns -1 without panic; `klog(LOG_INFO, "zstd", ...)` selftest line on boot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
