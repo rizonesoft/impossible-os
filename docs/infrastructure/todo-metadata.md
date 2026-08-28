@@ -251,5 +251,5 @@ PY
 
 - [`docs/infrastructure/todo-metadata.schema.json`](todo-metadata.schema.json) -- machine-readable JSON Schema Draft 2020-12 sidecar
 - [`scripts/todo-graph/build.py`](../../scripts/todo-graph/build.py) -- generator that parses frontmatter into `build/todo-cache.json`
-- [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) -- regression suite (12 sub-tests covering the parser surfaces named in this spec)
+- [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) -- regression suite covering the parser surfaces named in this spec. The sub-test count is not hand-tracked here (it grows with the surface and was 844 at the 2026-08-28 TODO-06 close-out); the runner prints its own `[test_build] N/N passed` summary.
 - [`todo/00-infrastructure/TODO-06-todo-metadata-layer.md`](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md) -- the TODO-metadata-layer plan (this spec is shipped under the schema-and-spec section; the generator under the next)

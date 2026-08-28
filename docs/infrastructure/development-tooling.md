@@ -1011,6 +1011,38 @@ Enable with `bash scripts/install-hooks.sh --enable-pre-push`; disable with `--d
 
 Bypass for one push: `git push --no-verify ...` (CI remains the mandatory gate).
 
+### The identity gate
+
+`CLAUDE.md` points here for the identity gate's lifecycle, so this is that section. The gate is [`scripts/todo-graph/identity-gate.sh`](../../scripts/todo-graph/identity-gate.sh), shipped by [the TODO metadata layer's gate-wiring section](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#16-wire-the-identity-gate-so-something-actually-runs-it) and hardened across a dozen sections after it. It runs `corpus_resolution_snapshot.py` as a gate instead of as a thing a human remembers to invoke.
+
+**Where it runs.** Two callers, and neither is opt-in for the surface it protects:
+
+| Caller | Trigger | Range |
+| --- | --- | --- |
+| [`.github/workflows/todo-graph.yml`](../../.github/workflows/todo-graph.yml) (line 112) | every push | last successfully gated SHA `..` HEAD |
+| [`.githooks/pre-push`](../../.githooks/pre-push) (always on, conditional) | a push touching the resolver closure (`scripts/todo-graph/*.py`, the gate itself, `snapshot_protocol.json`, `check_bucket_emission.py`) | pushed ref's remote OID `..` HEAD |
+
+The pre-push half was added 2026-08-10 because the gate was the last CI-only gate of its class: it turned `main` red twice (`todo-graph.yml` runs 31381391940, 31388159279) having passed every local gate, since nothing local ran it. It is conditional, so a push that does not touch the closure pays nothing. Override with `SKIP_IDENTITY_GATE=1`.
+
+**Why the range walks back.** With `cancel-in-progress`, a push carrying a regression can be cancelled by the next push, whose own `before..HEAD` range no longer contains it. Starting from the last SHA this gate actually PASSED absorbs a cancelled run's range into the next completed one, so nothing is silently unadjudicated. The gate detects rather than prevents (this repo pushes directly to `main`); preventing would need a pre-receive hook or a merge queue, both operator-reserved.
+
+**What it checks.** Three questions over that range: the resolver-code differential (does the resolver still return the same verdict for every symbol ref it judged before?), the producer differential (do base and head `build.py` emit the same stamped-ref population, over both corpora?), and protocol separation (is a vocabulary or schema change provably data-only, with every executable closure file byte-identical?).
+
+**How it reads each side.** Both endpoints are read from their COMMIT, never from the working tree, so a dirty checkout cannot satisfy a gate whose verdict names a commit. The common byte-identical path assembles a narrow subtree (`materialize_subtree` into `BASE_MIN` / `HEAD_MIN`, roughly 28 files via `ls-tree` + `cat-file --batch`) rather than checking out a full `git worktree`; a real worktree materializes only on the uncommon path where the producer differential actually runs. Both are reached by DESCRIPTOR rather than by name, so a path swapped underneath the gate cannot redirect a read. The one file that cannot be redirected is the gate driver itself: when the on-disk copy differs from the one in the commit under test, it refuses with `GATE_DRIVER_NOT_AT_HEAD`.
+
+**Exit codes.** Every non-zero fails the job; "could not run" is never "passed".
+
+| rc | Meaning |
+| :-: | --- |
+| 0 | no prior verdict changed, and nothing was gained or added unreviewed |
+| 1 | REGRESSION -- a prior verdict was dropped, lost, moved or reclassified, or an unreviewed GAINED/ADDED mapping appeared (see `--strict`) |
+| 2 | USAGE -- the gate was invoked wrongly (unknown argument, missing option value, malformed `IDENTITY_GATE_BUDGET_SECS`). A caller mistake, never a statement about the tree |
+| 3 | INFRASTRUCTURE -- the gate could not run |
+
+**rc 3 carries a stable leading token** so a caller branches on WHICH failure it is without parsing prose (§50). They are not interchangeable: some say nothing is wrong with the tree under test, others say the REPOSITORY could not answer. The base side is adjudicated first, so a base token wins when both endpoints fail. The authoritative list is the header comment of `identity-gate.sh` itself -- it is generated from the same block the code branches on, which is why this document points at it rather than duplicating it. The families are `BASE_*` / `HEAD_*` (endpoint history, protocol, tree or transport unreadable; objects substituted; form unmapped), `ENDPOINT_UNRESOLVABLE`, `CLOSURE_UNVERIFIABLE`, `MATERIALIZATION_UNFAITHFUL`, `GATE_SCRIPT_NOT_EXECUTABLE`, `GATE_DRIVER_NOT_AT_HEAD`, `HEAD_WORKTREE_DIVERGES`, and the two under-gate movement tokens `CLOSURE_MOVED_UNDER_GATE` / `ENDPOINT_MOVED_UNDER_GATE`.
+
+**Known gap.** `.githooks/pre-push` passes the remote OID as `--base` but no `--head`, so the gate defaults to repository `HEAD` rather than the OID actually being pushed; and the gate block is predicated on the working-tree executable bit, so an uncommitted `chmod -x` skips it silently. Both are recorded, with evidence, in [the TODO metadata layer's "hook certifies repository HEAD" section](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#57-the-hook-certifies-repository-head-not-the-commit-being-pushed) and are operator-reserved: `.githooks/**` is control-plane code the unattended runner may not edit.
+
 ### Claude Code harness hooks (separate system)
 
 The Claude Code agent harness has its own PostToolUse hooks configured in [`.claude/settings.json`](../../.claude/settings.json) that run after a successful `git commit` inside an agent session:
