@@ -3427,6 +3427,9 @@ The obvious fix is not available as a substitution. Resolving through `/proc/sel
 
 **Test checkpoint:** a fixture whose detached descendant substitutes TMP_DIR while a supervised phase is running requires the gate to REFUSE rather than publish a verdict, paired with a control proving the same fixture defeats the pre-§60 gate; every existing identity-gate fixture still passes unchanged; `bash scripts/test-tooling.sh` green. Scope: this section owns the USE of TMP_DIR by name. It does NOT re-open `cleanup`'s removal or the phase-boundary refusal, both shipped and stamped in §56. Platforms: host tooling only; no kernel surface.
 
+> **Verified:** 2026-08-28 | commit `13ba5ebf5` | 5/5 items | build OK | test_build.sh 844/844
+> **Quality reviewed:** 2026-08-28 | Codex 3x (adversarial, consistency, perf) | 0H+0M+0L fixed, 0 open | scope: host tooling, no kernel/boot/desktop/shell/userland surface
+
 ---
 
 ## OS Comparison
