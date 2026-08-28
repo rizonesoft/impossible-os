@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 21`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 23`.
 
 ## Top-level `struct boot_info` fields
 

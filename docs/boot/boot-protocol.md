@@ -17,12 +17,12 @@ Physical address 0x10000  ────┐
                               │
         struct boot_info {    │  <-- bootloader writes here before jumping
           struct boot_info_header header;   (offset 0, 8 bytes)
-          ... all ABI fields ...            (v20: see boot_info.h sizeof for total)
+          ... all ABI fields ...            (v23: see boot_info.h sizeof for total)
         }                     │
 ```
 
 - **Handoff base**: `BOOT_INFO_PHYS_ADDR = 0x10000`.
-- **Version gate**: `BOOT_INFO_VERSION = 21` (current; this prose is updated alongside every bump but the authoritative live value lives in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) -- check the changelog for the field-level history).
+- **Version gate**: `BOOT_INFO_VERSION = 23` (current; this prose is updated alongside every bump but the authoritative live value lives in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) -- check the changelog for the field-level history).
 - **Magic gate**: `BOOT_INFO_MAGIC = 0x49504F53` (`"IPOS"`, little-endian).
 - **Size gate**: `sizeof(struct boot_info)` is ABI-pinned via `_Static_assert`. The kernel refuses any handoff whose `header.size` does not equal this exact value.
 - **Early map bound**: `BOOT_INFO_EARLY_MAP_END` is the bootloader's 4 GiB identity map. The kernel rejects handoff pointers outside `[0x1000 .. BOOT_INFO_EARLY_MAP_END)`.
