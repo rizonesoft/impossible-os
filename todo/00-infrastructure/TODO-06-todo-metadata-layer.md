@@ -108,7 +108,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | 💎  |  57   |   §57   | The hook certifies repository HEAD, not the commit being pushed                            | §16, §54      |  [/]   |
 | ⭐  |  58   |   §58   | Head-versus-tree checks section 54 made unreachable are retired or re-fixtured             | §50, §51, §54 |  [x]   |
 | ⭐  |  59   |   §59   | The identity-gate fixture group pays for a whole repository and proves less than it claims | §54, §55, §56 |  [x]   |
-| 💎  |  60   |   §60   | Every name-resolved use of TMP_DIR is still a name                                         | §55, §56      |  [ ]   |
+| 💎  |  60   |   §60   | Every name-resolved use of TMP_DIR is still a name                                         | §55, §56      |  [x]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -3402,17 +3402,28 @@ What §56 did NOT close, and said so in `phase_budget`'s own comment, is the USE
 
 The obvious fix is not available as a substitution. Resolving through `/proc/self/fd/$TMP_FD` works for anything the GATE'S OWN SHELL opens, because the redirection is performed in the parent where the descriptor exists. It does NOT work for a path handed to a child in argv: the phases that execute tree code have `TMP_FD` deliberately CLOSED (`{TMP_FD}<&-`, three sites), which is the property §53 established and must not be given back.
 
-- [ ] Route every gate-side open of a path under TMP_DIR through the descriptor rather than the name, and state in the code which uses are covered by that and which are not.
-  - The redirections are the tractable half: `>"$TMP_DIR/producer.log"`, the two walk logs, `build.log`, `build-base.log`, `compare.log` and the bucket-contract pair are all opened by the gate's own shell.
-  - -> XREF: [`TODO-06 §55`](#55-the-byte-identical-path-pays-for-a-full-base-checkout-it-does-not-need) -- established the descriptor and the assembler that already resolves relative to it.
-- [ ] Decide what a child that must be handed a PATH gets, given it may not be handed the descriptor.
-  - The candidates are a per-phase directory created and opened by the assembler and passed as an already-open fd where the consumer can take one; re-verifying the anchor immediately before and after the phase and refusing on any change; or accepting the exposure and naming it. Each is defensible and they are not equally cheap.
-  - The two full checkouts are the hardest case: `git worktree add` takes a path, not a descriptor, and the tree under test can hold a `post-checkout` hook.
-- [ ] Fixture a substitution that lands INSIDE a phase, not between phases, and require the shipped answer to hold against it.
-  - §56's fixtures spawn and return; this one has to detach, wait for a named path to appear, and swap it while the phase is mid-flight. The existing 22ev loader is the starting point, because a descendant that cannot be reaped is the actor in both.
-  - A control that must fire is mandatory here: the case has to fail against the pre-§60 gate, or it is measuring the swap racing rather than the defence working.
-- [ ] Re-state `phase_budget`'s detection comment against whatever ships, so the code does not keep describing a gap that closed.
-- [ ] Commit: `"todo-graph: the gate reaches its own temporary directory by descriptor, not by name"`
+- [x] Route every gate-side open of a path under TMP_DIR through the descriptor rather than the name, and state in the code which uses are covered by that and which are not.
+  - `tmp_path()` (new, `identity-gate.sh`) resolves relative to `/proc/self/fd/$TMP_FD`; applied to every scratch path the gate's own shell or a non-tree subprocess opens under TMP_DIR: closure/staged temp files, both `mktemp` templates, `NOHOOKS_DIR`, `producer.log`, the bucket-contract pair (redirects reordered before `{TMP_FD}<&-`), `build.log`/`build-base.log`, both cache JSON paths, `baseline.json`/`head.json`, both walk logs, `compare.log`.
+  - The function's own comment states what is covered and what is deliberately not (`PYTHONPYCACHEPREFIX`, `cleanup`'s removal, both §56's territory).
+  - -> XREF: [`TODO-06 §55`](#55-the-byte-identical-path-pays-for-a-full-base-checkout-it-does-not-need) -- established the descriptor and assembler this reuses.
+- [x] Decide what a child that must be handed a PATH gets, given it may not be handed the descriptor.
+  - Split decision, per candidate. The two full checkouts get their OWN descriptors (`BASE_TREE_FD`/`HEAD_TREE_FD`, `exec {FD}<"$BASE_TREE"` right after `git worktree add` succeeds); `base_tree_path()`/`head_tree_path()` (new) route `tree_is_faithful` through them -- closing a Codex design-review finding that a post-check-only design left `tree_is_faithful`'s second, name-based re-open unguarded.
+  - `build.py`/`producer_differential.py`/`corpus_resolution_snapshot.py` keep `$BASE_TREE`/`$HEAD_TREE` by name (candidate 3, accepted and named): `subprocess.run()` defaults `close_fds=True` on POSIX, so threading the fd through their OWN further subprocess launches (build.py from producer_differential.py, git from build.py's and cache_schema.py's history probes, plus a path-consistency issue in resolve_symbol.py's declaration-following) touches 4 more files and broke 24-26 fixtures when attempted; reverted as materially larger than this section's scope.
+  - -> XREF: [`TODO-06 §55`](#55-the-byte-identical-path-pays-for-a-full-base-checkout-it-does-not-need) -- `root_fd_is_the_assembly`'s "raises the bar, does not close the window" framing is reused verbatim for the `tree_is_faithful` binding.
+- [x] Fixture a substitution that lands INSIDE a phase, not between phases, and require the shipped answer to hold against it.
+  - s60a (`test_build.sh`): a loader injected into the head cache build phase, discovered via `PYTHONPYCACHEPREFIX`, renames TMP_DIR mid-phase; the gate refuses at the very next `reap_walk_group` call. Mutation control strips only the new post-reap check and loses that refusal.
+  - s60b (`test_build.sh`, added after a Codex test-coverage finding that s60a proves detection but not resolution): extracts `tmp_path`/`base_tree_path`/`head_tree_path` verbatim and calls each directly against a real rename-plus-decoy, deterministically -- the shipped shape reads the anchored REAL content, a name-based mutation reads the DECOY, for all three descriptors.
+- [x] Re-state `phase_budget`'s detection comment against whatever ships, so the code does not keep describing a gap that closed.
+  - Now names both narrowing mechanisms (`tmp_path`-family resolution, `reap_walk_group`'s post-phase check) and all three remaining names (`PYTHONPYCACHEPREFIX`, `cleanup`, the Python producer/resolver chain).
+- [x] Commit: `"todo-graph: the gate reaches its own temporary directory by descriptor, not by name"`
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` (part of `scripts/test-tooling.sh` `[todo-graph]` block) | expected: all `t_pass`, 0 `t_fail`. Verified 2026-08-28: 844/844 sub-tests PASS (839 pre-section baseline + s60a + s60b's 3 per-helper cases). Existing fixtures 22eu/22ev/22ew (`g_s56_loader` gate-own scoping) and 22er (launch-inventory mutation regexes) updated to recognize `/proc/self/fd/` paths alongside the `identity-gate.XXXXXX` name pattern; both still fire on their original mutations.
+
+> **Notes:**
+> - `tmp_path()` resolves gate-owned scratch paths via `TMP_FD`; `base_tree_path()`/`head_tree_path()` bind `BASE_TREE_FD`/`HEAD_TREE_FD`, used by `tree_is_faithful` only; `reap_walk_group()` re-checks the anchor right after every phase.
+> - Bucket-contract's `{TMP_FD}<&-` moved after its output redirects (bash resolves left to right); the two `worktree add`s bind their own fd right after creation.
+> - Deliberately still name-based: `PYTHONPYCACHEPREFIX`, `cleanup`'s removal path (§56's), and the `build.py`/`producer_differential.py`/`corpus_resolution_snapshot.py` chain (candidate 3, item 2).
+> - Scope boundary: closes the rename-redirection vector for TMP_DIR and the full checkouts' `tree_is_faithful` read; does not thread the descriptor into the Python subprocess chain.
 
 **Test checkpoint:** a fixture whose detached descendant substitutes TMP_DIR while a supervised phase is running requires the gate to REFUSE rather than publish a verdict, paired with a control proving the same fixture defeats the pre-§60 gate; every existing identity-gate fixture still passes unchanged; `bash scripts/test-tooling.sh` green. Scope: this section owns the USE of TMP_DIR by name. It does NOT re-open `cleanup`'s removal or the phase-boundary refusal, both shipped and stamped in §56. Platforms: host tooling only; no kernel surface.
 
@@ -3496,7 +3507,7 @@ The obvious fix is not available as a substitution. Resolving through `/proc/sel
 | ⭐  | A gate states what executing the tree under test can NOT vouch for    | ❌ None                 | ❌ None                             | ✅ §53 forgery only costs the cheap path; cancelling reaps the tree's spawns     |
 | 💎  | A pre-push gate adjudicates the COMMIT, not the checkout it runs from | ❌ None                 | ❌ Hooks lint the worktree          | ✅ §54 head materialized from `HEAD_RESOLVED`; divergence named, driver refused  |
 | ⭐  | A phase reaps what it spawned on the path where it SUCCEEDS           | ❌ None                 | ❌ Job-level kill after the fact    | ✅ §56 one reap at 11 sites; six mutation-proved, the detach limit fixtured      |
-| 💎  | The gate reaches its own scratch directory by IDENTITY, not by name   | ❌ None                 | ❌ Path strings throughout          | ✅ §56 cleanup removes what the descriptor holds; a moved name refuses the run   |
+| 💎  | The gate reaches its own scratch directory by IDENTITY, not by name   | ❌ None                 | ❌ Path strings throughout          | ✅ §56 cleanup; §60 scratch I/O + checkout faithfulness are descriptor-bound     |
 | ⭐  | A test fixture materializes only what the code under test READS       | ❌ Full repo checkouts  | ❌ Full repo checkouts              | ✅ §59 closure from the resolver's own functions; 94 MiB tree cut to 25 MiB      |
 | 💎  | The pruned fixture PROVES it did not change the corpus                | ❌ None                 | ❌ None                             | ✅ §59 before/after resolution snapshot must be identical; 22f8 is its control   |
 

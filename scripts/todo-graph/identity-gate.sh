@@ -795,15 +795,32 @@ phase_budget() {   # $1 = phase name; ANSWERS in PHASE_BUDGET, refuses if expire
     # AND THE ANCHOR IS RE-ASKED AT EVERY PHASE BOUNDARY. This is DETECTION, not
     # containment, and saying so is the point: `phase_budget` runs BEFORE a
     # phase, so a descendant can still substitute the directory after this check
-    # and before the redirection that follows it. What it buys is that the
-    # substitution becomes an infrastructure REFUSAL at the next boundary
-    # instead of a PASS computed over files the gate never wrote -- the window
-    # narrows from the whole run to a single phase. Closing it properly means
-    # binding every name-resolved use to the descriptor, which is parked in this
-    # section's own checklist rather than claimed here (Codex design review,
-    # section 56, [high]). The check is builtins only, so a boundary costs
-    # nothing; it is skipped before the anchor exists, which is the only state
-    # in which TMP_FD is unset.
+    # and before the redirection that follows it.
+    #
+    # RESTATED FOR WHAT SHIPPED (section 60; this comment described an open gap
+    # from section 56 to section 59 and would otherwise keep describing one that
+    # closed). Two things now narrow that window from opposite ends: every
+    # gate-owned redirection, mktemp target and mkdir this file makes under
+    # TMP_DIR resolves through `tmp_path()` (the descriptor), not the name, so a
+    # substitution here no longer redirects anything to READ OR WRITE -- it can
+    # only be DETECTED. And `reap_walk_group()` re-asks this same anchor
+    # immediately after every supervised phase completes, not only before the
+    # next one starts, so detection no longer waits for however many phases
+    # separate this one from the next boundary check. The two full checkouts
+    # ($BASE_TREE/$HEAD_TREE) get their own descriptor binding through
+    # `base_tree_path()`/`head_tree_path()`, bound right after `worktree add`
+    # creates them, because `git worktree add` takes a path and this file
+    # cannot make it take a descriptor instead -- but that binding covers
+    # `tree_is_faithful` ONLY, not every downstream reader (see
+    # `base_tree_path()`'s own comment for why). What remains a name on
+    # purpose: `PYTHONPYCACHEPREFIX` (tree code can already derive it, and it
+    # buys nothing once nothing here trusts the name back); `cleanup`'s own
+    # removal path (section 56's, not reopened here); and the
+    # `build.py`/`producer_differential.py`/`corpus_resolution_snapshot.py`
+    # chain (accepted, not closed -- a `subprocess.run()` boundary this file
+    # does not control). The check below is builtins only, so a boundary
+    # costs nothing; it is skipped before the anchor exists, which is the
+    # only state in which TMP_FD is unset.
     if [ -n "${TMP_FD:-}" ] && ! tmp_dir_anchor_ok; then
         die_infra "the gate's own temporary directory is no longer reached by the name it was created under, so the $1 phase was never launched: $TMP_DIR does not name the directory this run anchored a descriptor on, and every path under it is therefore untrusted"
     fi
@@ -865,6 +882,74 @@ tmp_dir_anchor_ok() {   # 0 = the NAME still names the anchored directory itself
     [ "$TMP_DIR" -ef "/proc/self/fd/$TMP_FD" ]
 }
 
+tmp_path() {   # $1 = path relative to the gate's own temporary directory
+    # RESOLVED THROUGH THE DESCRIPTOR, NEVER THE NAME (section 60). Every
+    # OTHER use of TMP_DIR in this file resolved it as a pathname, so a
+    # detached descendant that renamed TMP_DIR and left a replacement at the
+    # name redirected the read or write before `tmp_dir_anchor_ok` ever got a
+    # chance to refuse anything -- the check runs at phase boundaries, not on
+    # every open. `/proc/self/fd/$TMP_FD` is a magic symlink the kernel
+    # resolves against the OPEN FILE DESCRIPTION `exec {TMP_FD}<"$TMP_DIR"`
+    # captured at creation, not against whatever $TMP_DIR currently names, so
+    # every caller of this function keeps landing in the directory this run
+    # anchored regardless of what happens to the name afterward.
+    #
+    # $1 IS ALWAYS A LITERAL RELATIVE PATH THIS FILE SUPPLIES, never data read
+    # from the tree under test -- there is no containment check here because
+    # nothing untrusted reaches this function.
+    #
+    # WHAT THIS COVERS: every redirection, mktemp template and mkdir target
+    # the gate's OWN shell or a non-tree subprocess (mktemp, the resolver's
+    # own build.py/corpus_resolution_snapshot.py invocations, which inherit
+    # this fd because they are not among the three explicit `{TMP_FD}<&-`
+    # closes) opens directly under TMP_DIR. The two full checkouts get the
+    # symmetric `base_tree_path`/`head_tree_path` treatment below, bound to
+    # their OWN descriptors rather than this one, because `git worktree add`
+    # creates by name and this fd is not open on their contents.
+    #
+    # WHAT THIS DELIBERATELY DOES NOT COVER: `PYTHONPYCACHEPREFIX` stays a
+    # name (tree code can already derive it, and once every GATE-OWNED read
+    # or write stops trusting the name, knowing the name buys an adversary
+    # nothing); `WT_ATTEMPTED`'s cleanup-time worktree removal stays name-based
+    # (`cleanup`'s own removal path is section 56's, not reopened here, same as
+    # `phase_budget`'s comment already states for TMP_DIR's own removal).
+    [ -n "${TMP_FD:-}" ] || die_infra "tmp_path() called before the descriptor anchor on the gate's own temporary directory exists ($1)"
+    printf '%s/%s' "/proc/self/fd/$TMP_FD" "$1"
+}
+
+base_tree_path() {   # $1 = path relative to the base checkout, or "" for its root
+    # SAME SHAPE AS tmp_path(), BOUND TO $BASE_TREE_FD INSTEAD (section 60).
+    # `git worktree add` creates $BASE_TREE by name, so unlike TMP_DIR there is
+    # no way to have the checkout materialize relative to a descriptor that
+    # predates it -- the descriptor is opened right after, at the worktree-add
+    # call site, and `tree_is_faithful` reads through here instead of
+    # re-deriving $BASE_TREE by name a second time, which was the specific gap
+    # a Codex design-review finding named: a post-check-only design left that
+    # second, name-based re-open unguarded.
+    #
+    # SCOPED TO tree_is_faithful, NOT EVERY DOWNSTREAM READ. build.py,
+    # producer_differential.py and corpus_resolution_snapshot.py still take
+    # $BASE_TREE/$HEAD_TREE by name: they are separate Python processes, and
+    # `subprocess.run()` defaults to `close_fds=True` on POSIX, so an
+    # fd-relative argv string handed to one of THEIR OWN further subprocess
+    # launches (build.py invoked from producer_differential.py, git invoked
+    # from build.py's history walk, from cache_schema.py's history probe, and
+    # a path-consistency issue found one layer deeper in resolve_symbol.py's
+    # declaration-following) goes stale in exactly the process it was passed
+    # to. Closing that requires threading `pass_fds` through every subprocess
+    # layer across four other files, which is materially larger than this
+    # section's own scope and was reverted after it broke 24-26 fixtures
+    # (measured); tracked as a residual rather than attempted piecemeal.
+    [ -n "${BASE_TREE_FD:-}" ] || die_infra "base_tree_path() called before the base checkout descriptor exists ($1)"
+    if [ -z "$1" ]; then printf '%s' "/proc/self/fd/$BASE_TREE_FD"; else printf '%s/%s' "/proc/self/fd/$BASE_TREE_FD" "$1"; fi
+}
+
+head_tree_path() {   # $1 = path relative to the head checkout, or "" for its root
+    # SAME AS base_tree_path(), for $HEAD_TREE_FD.
+    [ -n "${HEAD_TREE_FD:-}" ] || die_infra "head_tree_path() called before the head checkout descriptor exists ($1)"
+    if [ -z "$1" ]; then printf '%s' "/proc/self/fd/$HEAD_TREE_FD"; else printf '%s/%s' "/proc/self/fd/$HEAD_TREE_FD" "$1"; fi
+}
+
 reap_walk_group() {   # $@ = leader pids already `wait`ed for
     # ONE REAP, ELEVEN SITES. Every supervised phase in this file ends the same
     # way: capture the status, declare the leader waited, reap whatever the
@@ -914,6 +999,28 @@ reap_walk_group() {   # $@ = leader pids already `wait`ed for
             kill -KILL -- "-$_rg" 2>/dev/null || true
         fi
     done
+    # THE ANCHOR IS RE-ASKED HERE TOO, AFTER THE REAP, NOT ONLY BEFORE THE
+    # NEXT PHASE (section 60). `phase_budget` checks BEFORE a phase launches;
+    # a substitution landing WHILE this phase's process group was running is
+    # first caught at the START of whatever phase happens to run next, by
+    # which time THIS phase's output has already been consumed as if it were
+    # legitimate -- the exact gap `phase_budget`'s own comment names as still
+    # open. This is the one place every supervised phase already returns
+    # through (eleven sites), so checking here shrinks the window to this
+    # phase's own duration instead of however many phases separate it from the
+    # next boundary check.
+    #
+    # A DIE HERE DOES NOT VIOLATE THIS FUNCTION'S OWN "return 0 always, never
+    # touches caller status" INVARIANT documented above: `die_infra` calls
+    # `exit` directly and never returns, so no caller ever observes a non-zero
+    # return from this function because of it -- the two mechanisms are
+    # orthogonal (Codex design review, section 60).
+    #
+    # BUILTINS ONLY (`-L`/`-e`/`-ef`), so this costs nothing on the success
+    # path, same as the boundary check it complements.
+    if [ -n "${TMP_FD:-}" ] && ! tmp_dir_anchor_ok; then
+        die_infra "the gate's own temporary directory is no longer reached by the name it was created under, discovered immediately after a supervised phase completed: \$TMP_DIR does not name the directory this run anchored a descriptor on, and whatever that phase just read or wrote is therefore untrusted"
+    fi
     # EXPLICIT, so the status of the last `kill` in the loop is never what a
     # caller sees if one is ever written that reads it.
     return 0
@@ -1706,7 +1813,7 @@ closure_entries() {   # $1 = commit, $2 = label
         ENT_MODE[$_i]=""; ENT_TYPE[$_i]=""; ENT_OID[$_i]=""
         ENT_PRESENT[$_i]=0; ENT_OBJ[$_i]=0; ENT_VOID[$_i]=""
     done
-    _z="$TMP_DIR/closure-$2.z"
+    _z="$(tmp_path "closure-$2.z")"
     budget_left
     if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then ENT_ERR=1; return 0; fi
     timeout -s KILL "$BUDGET_LEFT" git ls-tree -z "$1" -- "${CLOSURE[@]}" >"$_z" 2>/dev/null \
@@ -1740,7 +1847,7 @@ closure_entries() {   # $1 = commit, $2 = label
     [ -n "$_oids" ] || return 0
     budget_left
     if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then ENT_ERR=1; return 0; fi
-    _z="$TMP_DIR/closure-$2.chk"
+    _z="$(tmp_path "closure-$2.chk")"
     printf '%s' "$_oids" | timeout -s KILL "$BUDGET_LEFT" \
         git cat-file --batch-check >"$_z" 2>/dev/null \
         || { bounded_fs rm -f "$_z"; ENT_ERR=1; return 0; }
@@ -1768,7 +1875,7 @@ closure_entries() {   # $1 = commit, $2 = label
     done
     budget_left
     if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then ENT_ERR=1; return 0; fi
-    _z="$TMP_DIR/closure-$2.expr"
+    _z="$(tmp_path "closure-$2.expr")"
     printf '%s' "$_oids" | timeout -s KILL "$BUDGET_LEFT" \
         git cat-file --batch-check >"$_z" 2>/dev/null
     # `--batch-check` exits nonzero when ANY line failed to resolve, which is an
@@ -1857,7 +1964,7 @@ export PYTHONPYCACHEPREFIX="$TMP_DIR/pycache"
 # whatever git does with a hooks path that does not exist. Both checkouts get
 # it: the base has always had the same exposure, and fixing one while leaving
 # the other would be a hole with a comment over it.
-NOHOOKS_DIR="$TMP_DIR/nohooks"
+NOHOOKS_DIR="$(tmp_path nohooks)"
 budget_left
 { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
     && die_infra "the gate's budget expired before it could create the hook-free directory for its checkouts"
@@ -2863,7 +2970,7 @@ tree_is_faithful() {   # $1 = tree, $2 = commit, $3 = side label
     # tested before anything is parsed, which is the property the pipeline this
     # replaced could not offer either.
     local _rec _mode _path _z
-    _z="$TMP_DIR/staged-$3.z"
+    _z="$(tmp_path "staged-$3.z")"
     budget_left
     { [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; } \
         && die_infra "MATERIALIZATION_UNFAITHFUL: the gate's budget expired before it could ask the $3 checkout of $2 how it stores its entries, so the question was never asked and no verdict is being guessed from it"
@@ -3024,7 +3131,7 @@ proto_of() {  # $1 = tree root; ANSWERS IN $PROTO_RESULT, never on a path
     # adversarial, section 50 round 20).
     local _rec _prc _prb _i
     probe_budget "create the file its protocol record travels on"
-    _rec="$(timeout --foreground -s KILL "$PROBE_BUDGET" mktemp "$TMP_DIR/proto.XXXXXX" 2>/dev/null)" \
+    _rec="$(timeout --foreground -s KILL "$PROBE_BUDGET" mktemp "$(tmp_path proto.XXXXXX)" 2>/dev/null)" \
         || { PROTO_RESULT=TRANSPORT; return 0; }
     # THE RECORD'S ADDRESS IS NEVER HANDED TO THE TREE. Passing the path as
     # argv[2] told the very code being imported where the gate's own answer
@@ -4437,12 +4544,23 @@ fi
     # the tree under test, so it gets the same treatment `proto_of` and
     # `contract_of` do: an inherited directory descriptor on TMP_DIR would hand
     # it the swap-proof handle the assembly and its re-binding both rely on.
+    # THE OUTPUT REDIRECTIONS ARE OPENED BEFORE THE ANCHOR CLOSES, NOT AFTER
+    # (section 60). Bash sets up a simple command's redirections in the order
+    # WRITTEN, left to right, regardless of where they fall among the argv
+    # words -- so with `{TMP_FD}<&-` first, the two `>`/`2>` targets below
+    # would be opened AFTER the descriptor that resolves them was already
+    # closed, and `/proc/self/fd/$TMP_FD/...` would refuse with ENOENT
+    # (reproduced: rc 1, "No such file or directory", Codex design review,
+    # section 60, [medium]). Ordered this way the shell opens both files
+    # through the still-live descriptor first, THEN closes it, so the tree
+    # code that execs next never inherits it and the outputs still land in
+    # the anchored directory regardless of what happens to $TMP_DIR's name.
     setsid timeout -s KILL "$PHASE_BUDGET" \
-        python3 "$HEAD_MIN_ADDR/scripts/lint/check_bucket_emission.py" {TMP_FD}<&- \
+        python3 "$HEAD_MIN_ADDR/scripts/lint/check_bucket_emission.py" \
         --emitter "$HEAD_MIN_ADDR/scripts/todo-graph/ref_resolution.py" \
         --protocol "$HEAD_MIN_ADDR/scripts/todo-graph/snapshot_protocol.json" \
         --allow-undeclared --emitted-set \
-        >"$TMP_DIR/bucket-contract.out" 2>"$TMP_DIR/bucket-contract.err" &
+        >"$(tmp_path bucket-contract.out)" 2>"$(tmp_path bucket-contract.err)" {TMP_FD}<&- &
     _be_pid=$!
     WALK_PIDS="$_be_pid"
     wait "$_be_pid"
@@ -4474,10 +4592,10 @@ fi
     # checker's to choose. It stops the HANG, which was not.
     phase_budget "bucket-emission output read"
     EMITTED_SET="$(timeout --foreground -s KILL "$PHASE_BUDGET" \
-        cat "$TMP_DIR/bucket-contract.out" 2>/dev/null)"
+        cat "$(tmp_path bucket-contract.out)" 2>/dev/null)"
     if [ "$EMITTED_RC" -ne 0 ]; then
         phase_budget "bucket-emission error read"
-        _be_excerpt="$(timeout --foreground -s KILL "$PHASE_BUDGET" head -3 "$TMP_DIR/bucket-contract.err" 2>/dev/null)"
+        _be_excerpt="$(timeout --foreground -s KILL "$PHASE_BUDGET" head -3 "$(tmp_path bucket-contract.err)" 2>/dev/null)"
         _be_excerpt="$(printf '%s' "$_be_excerpt" | tr '\n' ' ')"  # launch-exempt: reformats a shell variable already in memory
         die_infra "the bucket-emission contract does not hold at HEAD (rc=$EMITTED_RC), so the set of buckets the resolver can emit is unknown and no retirement can be adjudicated: $_be_excerpt"
     fi
@@ -4826,7 +4944,7 @@ contract_of() {  # $1 = tree root, $2 = side; ANSWERS IN $CONTRACT_RESULT
     CONTRACT_RESULT=UNREADABLE
     local _crec _crb _crc
     probe_budget "create the file its contract record travels on"
-    _crec="$(timeout --foreground -s KILL "$PROBE_BUDGET" mktemp "$TMP_DIR/contract.XXXXXX" 2>/dev/null)" \
+    _crec="$(timeout --foreground -s KILL "$PROBE_BUDGET" mktemp "$(tmp_path contract.XXXXXX)" 2>/dev/null)" \
         || return 0
     budget_left
     if [ "$BUDGET_LEFT" = "?" ] || [ "$BUDGET_LEFT" -le 0 ]; then
@@ -4965,14 +5083,31 @@ WT_ATTEMPTED+=("$BASE_TREE")
 timeout --foreground -s KILL "$PHASE_BUDGET" \
     git -c "core.hooksPath=$NOHOOKS_DIR" worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
     || die_infra "cannot materialize base worktree at $BASE_SHA (the checkout failed, or the gate's remaining budget expired while it ran)"
-tree_is_faithful "$BASE_TREE" "$BASE_SHA" base
+# BOUND TO A DESCRIPTOR THE MOMENT THE CHECKOUT EXISTS (section 60), mirroring
+# section 55's BASE_MIN_FD for the narrow tree. `git worktree add` cannot
+# create relative to a descriptor -- it only takes a path -- so this opens the
+# result by name immediately afterward. `tree_is_faithful` reads through the
+# fd from here on rather than re-deriving $BASE_TREE by name a second time --
+# exactly the substitutable gap `min_tree_still_matches` was written to close
+# for the narrow trees, left open here (Codex design review, section 60,
+# [high]). The Python producers below ($BASE_TREE/$HEAD_TREE by name) are
+# NOT covered by this binding -- see `base_tree_path()`'s own comment for why
+# threading it through their subprocess chains was reverted as out of scope.
+# THIS RAISES THE BAR; IT DOES NOT CLOSE THE WINDOW between `worktree add`
+# finishing and this `exec` running -- the same residual `root_fd_is_the_assembly`
+# states for its own binding, for the same reason: nothing hands a freshly
+# created directory's descriptor back across a process boundary atomically.
+exec {BASE_TREE_FD}<"$BASE_TREE" || die_infra "cannot hold a descriptor on the base checkout at $BASE_TREE right after creating it, so nothing downstream can be anchored to it"
+tree_is_faithful "$(base_tree_path '')" "$BASE_SHA" base
 
 phase_budget "head worktree materialization"
 WT_ATTEMPTED+=("$HEAD_TREE")
 timeout --foreground -s KILL "$PHASE_BUDGET" \
     git -c "core.hooksPath=$NOHOOKS_DIR" worktree add --detach "$HEAD_TREE" "$HEAD_RESOLVED" >/dev/null 2>&1 \
     || die_infra "cannot materialize the head worktree at $HEAD_RESOLVED (the checkout failed, or the gate's remaining budget expired while it ran)"
-tree_is_faithful "$HEAD_TREE" "$HEAD_RESOLVED" head
+# SAME BINDING, SAME REASON -- see the base side above.
+exec {HEAD_TREE_FD}<"$HEAD_TREE" || die_infra "cannot hold a descriptor on the head checkout at $HEAD_TREE right after creating it, so nothing downstream can be anchored to it"
+tree_is_faithful "$(head_tree_path '')" "$HEAD_RESOLVED" head
 log "head $HEAD_RESOLVED walked from a materialized checkout at $HEAD_TREE"
 
 # ---------------------------------------------------------------------------
@@ -5019,7 +5154,7 @@ else
     phase_budget "producer differential"
     setsid timeout -s KILL "$PHASE_BUDGET" python3 \
         "$HEAD_TREE/scripts/todo-graph/producer_differential.py" \
-        "$BASE_TREE" "$HEAD_TREE" --strict >"$TMP_DIR/producer.log" 2>&1 &
+        "$BASE_TREE" "$HEAD_TREE" --strict >"$(tmp_path producer.log)" 2>&1 &
     PROD_PID=$!
     WALK_PIDS="$PROD_PID"
     wait "$PROD_PID"; PROD_RC=$?; WALK_WAITED="$PROD_PID"
@@ -5032,7 +5167,7 @@ else
     WALK_PIDS=""
     WALK_WAITED=""
     phase_budget "log read"
-    timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/producer.log"
+    timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$(tmp_path producer.log)"
     case "$PROD_RC" in
         0) PRODUCER_DIFF_OK=1
            log "producer differential PASS -- both producers emit the same stamped-ref population." ;;
@@ -5053,11 +5188,11 @@ fi
 # the key set stable. Absolute paths: the base walk runs with a different CWD,
 # and a relative STUB_LINT_CACHE would silently resolve against the wrong tree.
 # ---------------------------------------------------------------------------
-CACHE_ABS="$TMP_DIR/todo-cache.json"
+CACHE_ABS="$(tmp_path todo-cache.json)"
 phase_budget "head cache build"
 setsid timeout -s KILL "$PHASE_BUDGET" \
     python3 "$HEAD_TREE/scripts/todo-graph/build.py" --quiet --output "$CACHE_ABS" \
-    >"$TMP_DIR/build.log" 2>&1 &
+    >"$(tmp_path build.log)" 2>&1 &
 CACHE_PID=$!
 WALK_PIDS="$CACHE_PID"
 wait "$CACHE_PID"; CACHE_RC=$?; WALK_WAITED="$CACHE_PID"
@@ -5072,7 +5207,7 @@ WALK_WAITED=""
 case "$CACHE_RC" in
     0) ;;
     124|137) die_infra "the cache build exceeded the ${BUDGET_SECS}s budget and was killed" ;;
-    *) die_infra "cache build failed (see $TMP_DIR/build.log)" ;;
+    *) die_infra "cache build failed (see $(tmp_path build.log))" ;;
 esac
 [ -s "$CACHE_ABS" ] || die_infra "cache build produced an empty file"
 
@@ -5088,7 +5223,7 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     if [ "$PRODUCER_DIFF_OK" -ne 1 ]; then
         die_infra "the producer contract identity diverged base..head, so the base walk needs a cache of its own -- but the producer differential did not pass, so nothing establishes that the two caches carry the same stamped-ref population. Refusing to differential two walks over unproven inputs."
     fi
-    BASE_CACHE_ABS="$TMP_DIR/todo-cache-base.json"
+    BASE_CACHE_ABS="$(tmp_path todo-cache-base.json)"
     # --root/--repo-root EXPLICITLY at $HEAD_TREE: the base build.py lives in
     # the base worktree and would otherwise default to the BASE corpus, which
     # would make the two walks read different TODO text and attribute every
@@ -5097,7 +5232,7 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     setsid timeout -s KILL "$PHASE_BUDGET" \
         python3 "$BASE_TREE/scripts/todo-graph/build.py" --quiet \
         --root "$HEAD_TREE/todo" --repo-root "$HEAD_TREE" \
-        --output "$BASE_CACHE_ABS" >"$TMP_DIR/build-base.log" 2>&1 &
+        --output "$BASE_CACHE_ABS" >"$(tmp_path build-base.log)" 2>&1 &
     BCACHE_PID=$!
     WALK_PIDS="$BCACHE_PID"
     wait "$BCACHE_PID"; BCACHE_RC=$?; WALK_WAITED="$BCACHE_PID"
@@ -5112,14 +5247,14 @@ if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
     case "$BCACHE_RC" in
         0) ;;
         124|137) die_infra "the base-side cache build exceeded the ${BUDGET_SECS}s budget and was killed" ;;
-        *) die_infra "the base-side cache build failed (see $TMP_DIR/build-base.log)" ;;
+        *) die_infra "the base-side cache build failed (see $(tmp_path build-base.log))" ;;
     esac
     [ -s "$BASE_CACHE_ABS" ] || die_infra "the base-side cache build produced an empty file"
     log "base-side cache built by the BASE producer over the HEAD corpus; the two caches are population-identical per the differential above."
 fi
 
-BASELINE="$TMP_DIR/baseline.json"
-HEADSHOT="$TMP_DIR/head.json"
+BASELINE="$(tmp_path baseline.json)"
+HEADSHOT="$(tmp_path head.json)"
 
 # ---------------------------------------------------------------------------
 # THE TWO WALKS RUN CONCURRENTLY (section 18).
@@ -5149,14 +5284,14 @@ phase_budget "base resolver walk"
 STUB_LINT_CACHE="$BASE_CACHE_ABS" STUB_LINT_REPO_ROOT="$HEAD_TREE" \
     setsid timeout -s KILL "$PHASE_BUDGET" python3 \
     "$BASE_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
-    write "$BASELINE" >"$TMP_DIR/base-walk.log" 2>&1 &
+    write "$BASELINE" >"$(tmp_path base-walk.log)" 2>&1 &
 BASE_PID=$!
 WALK_PIDS="$BASE_PID"
 phase_budget "head resolver walk"
 STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$HEAD_TREE" \
     setsid timeout -s KILL "$PHASE_BUDGET" python3 \
     "$HEAD_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
-    write "$HEADSHOT" >"$TMP_DIR/head-walk.log" 2>&1 &
+    write "$HEADSHOT" >"$(tmp_path head-walk.log)" 2>&1 &
 HEAD_PID=$!
 WALK_PIDS="$WALK_PIDS $HEAD_PID"
 
@@ -5193,7 +5328,7 @@ WALK_SECS=$(( WALK_END - WALK_START ))
 
 # 124 is timeout(1)'s "the budget fired". Report it as its own thing: it is not
 # a resolver defect and must never be read as one.
-for pair in "BASE:$BASE_RC:$TMP_DIR/base-walk.log" "HEAD:$HEAD_RC:$TMP_DIR/head-walk.log"; do
+for pair in "BASE:$BASE_RC:$(tmp_path base-walk.log)" "HEAD:$HEAD_RC:$(tmp_path head-walk.log)"; do
     side="${pair%%:*}"; rest="${pair#*:}"; rc="${rest%%:*}"; logf="${rest#*:}"
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
         die_infra "the $side walk exceeded the ${BUDGET_SECS}s budget and was killed. The gate is approaching the CI job ceiling: shard the corpus or raise IDENTITY_GATE_BUDGET_SECS deliberately, but do not discover this as a job timeout."
@@ -5205,9 +5340,9 @@ for pair in "BASE:$BASE_RC:$TMP_DIR/base-walk.log" "HEAD:$HEAD_RC:$TMP_DIR/head-
     fi
 done
 phase_budget "log read"
-timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/base-walk.log"
+timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$(tmp_path base-walk.log)"
 phase_budget "log read"
-timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/head-walk.log"
+timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$(tmp_path head-walk.log)"
 log "both walks finished in ${WALK_SECS}s of the ${BUDGET_SECS}s budget."
 
 log "comparing the two snapshots (--strict)..."
@@ -5231,7 +5366,7 @@ setsid timeout -s KILL "$PHASE_BUDGET" \
     compare "$BASELINE" "$HEADSHOT" --strict \
     --base-halves-b64 "$_CMP_BASE_HALVES" \
     --head-halves-b64 "$_CMP_HEAD_HALVES" \
-    >"$TMP_DIR/compare.log" 2>&1 &
+    >"$(tmp_path compare.log)" 2>&1 &
 CMP_PID=$!
 WALK_PIDS="$CMP_PID"
 wait "$CMP_PID"; CMP_RC=$?; WALK_WAITED="$CMP_PID"
@@ -5244,7 +5379,7 @@ reap_walk_group "$CMP_PID"
 WALK_PIDS=""
 WALK_WAITED=""
 phase_budget "log read"
-timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$TMP_DIR/compare.log"
+timeout --foreground -s KILL "$PHASE_BUDGET" sed 's/^/    /' "$(tmp_path compare.log)"
 
 case "$CMP_RC" in
     0)

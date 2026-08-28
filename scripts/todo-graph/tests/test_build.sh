@@ -15511,6 +15511,12 @@ PY2
             printf '    # basename alone attributed one of ITS builds to the gate head cache\n'
             printf '    # phase and the case stopped being about the phase it names -- the\n'
             printf '    # same scoping mistake section 53 paid for, in a new shape.\n'
+            printf '    if _p.startswith("/proc/self/fd/"):\n'
+            printf '        # section 60: the gate reaches its own cache/walk/comparison\n'
+            printf '        # paths through its inherited TMP_FD descriptor rather than by\n'
+            printf '        # name, so an fd-relative path IS the gate-own signal now -- only\n'
+            printf '        # a process holding that inherited fd can construct one.\n'
+            printf '        return True\n'
             printf '    return _s56_os.path.basename(_s56_os.path.dirname(_p)).startswith("identity-gate.")\n'
             printf 'def _s56_phase():\n'
             printf '    _a = [str(_x) for _x in _s56_sys.argv]\n'
@@ -15815,6 +15821,219 @@ S56PY
         fi
         rm -rf "$G_S56_RUN3"
         g_s56_restore
+
+        # ------------------------------------------------------------------
+        # s60a: A MID-PHASE SUBSTITUTION IS DETECTED, NOT PUBLISHED THROUGH
+        # (section 60).
+        #
+        # 22eu/22ev/22ew prove the REAP contains what a phase spawns. This
+        # proves something narrower and newer: a detached descendant that
+        # renames the gate's own temporary directory WHILE a supervised phase
+        # is running is caught the moment that phase's reap runs, not merely
+        # at the START of whatever phase happens to run next. Discovery is
+        # through PYTHONPYCACHEPREFIX, which section 60's own tmp_path()
+        # comment names as the one name this section deliberately still
+        # exports -- the fixture exercises that documented route rather than
+        # inventing an easier one.
+        #
+        # NOT A CLAIM THAT THE VERDICT WOULD HAVE BEEN WRONG WITHOUT THIS.
+        # Item 1's descriptor-relative reads already make every operational
+        # read and write in this window immune to the rename by construction
+        # -- proven by every other identity-gate case in this file still
+        # passing. What this adds is SURFACING the tampering attempt as a
+        # loud refusal instead of the gate silently completing as if nothing
+        # happened. The control below proves the refusal is THIS code, not
+        # `phase_budget`'s older boundary check firing one phase later.
+        g_s56_restore
+        G_S60_RUN="$TMP_DIR/s60-swap"
+        rm -rf "$G_S60_RUN"; mkdir -p "$G_S60_RUN/tmp"
+        G_S60_LOADER="$TMP_DIR/s60-loader.py"
+        {
+            printf '\n\n'
+            printf '# section 60: rename the gate own temporary directory away and leave a\n'
+            printf '# fresh, empty one at the original name, from INSIDE the head cache build\n'
+            printf '# phase -- the swap a detached descendant makes, discovered through the\n'
+            printf '# one name section 60 deliberately still exports.\n'
+            printf 'import os as _s60_os, sys as _s60_sys\n'
+            printf 'def _s60_gate_own(_p):\n'
+            printf '    return _p.startswith("/proc/self/fd/") or _s60_os.path.basename(_s60_os.path.dirname(_p)).startswith("identity-gate.")\n'
+            printf 'def _s60_phase():\n'
+            printf '    _a = [str(_x) for _x in _s60_sys.argv]\n'
+            printf '    _p0 = _s60_os.path.basename(_a[0]) if _a else ""\n'
+            printf '    if _p0 == "build.py":\n'
+            printf '        for _i, _x in enumerate(_a):\n'
+            printf '            if _x == "--output" and _i + 1 < len(_a):\n'
+            printf '                _s60_p = _a[_i + 1]\n'
+            printf '                if not _s60_gate_own(_s60_p):\n'
+            printf '                    return ""\n'
+            printf '                return "bcache" if _s60_os.path.basename(_s60_p) == "todo-cache-base.json" else "hcache"\n'
+            printf '    return ""\n'
+            printf 'if _s60_phase() == "hcache":\n'
+            printf '    _pp = _s60_os.environ.get("PYTHONPYCACHEPREFIX", "")\n'
+            printf '    if _pp.endswith("/pycache"):\n'
+            printf '        _td = _pp[:-len("/pycache")]\n'
+            printf '        try:\n'
+            printf '            _s60_os.rename(_td, _td + ".s60bak")\n'
+            printf '            _s60_os.mkdir(_td, 0o700)\n'
+            printf "            open('%s/swapped', 'w').close()\n" "$G_S60_RUN"
+            printf '        except OSError as _e:\n'
+            printf "            open('%s/error', 'w').write(str(_e))\n" "$G_S60_RUN"
+        } > "$G_S60_LOADER"
+        (cd "$GATE_REPO" || exit 1
+         cat "$G_S60_LOADER" >> scripts/todo-graph/cache_schema.py
+         git commit --quiet --no-verify -am "s60: rename TMP_DIR from inside the head cache build phase" >/dev/null 2>&1)
+        (cd "$GATE_REPO" && TMPDIR="$G_S60_RUN/tmp" bash "$GATE_IN_CLONE" \
+            --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-s60a.log" 2>&1)
+        G_S60_RC=$?
+        if [ ! -e "$G_S60_RUN/swapped" ]; then
+            t_fail "identity gate: the s60a loader never reached the head cache build phase, so the mid-phase swap was not attempted (rc=$G_S60_RC; error=$(cat "$G_S60_RUN/error" 2>/dev/null); see $TMP_DIR/gate-s60a.log)"
+        elif [ "$G_S60_RC" -ne 3 ] || ! grep -q "discovered immediately after a supervised phase completed" "$TMP_DIR/gate-s60a.log"; then
+            t_fail "identity gate: a mid-phase TMP_DIR swap did not produce the post-reap anchor refusal (rc=$G_S60_RC; see $TMP_DIR/gate-s60a.log)"
+        else
+            t_pass "identity gate: a detached descendant's mid-phase TMP_DIR swap is refused at the very next reap, not merely at the next phase boundary"
+
+            # CONTROL: strip the section 60 post-reap check and require the SAME
+            # fixture to lose the SPECIFIC refusal it just produced -- proving
+            # this test measures the new code, not `phase_budget`'s older,
+            # slower-firing boundary check (untouched, and would still
+            # eventually catch the same swap one phase later, with different
+            # text).
+            G_S60_MUT="$GATE_REPO/scripts/todo-graph/identity-gate-s60mut.sh"
+            python3 - "$GATE_IN_CLONE" "$G_S60_MUT" <<'S60MUTPY'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+marker = "discovered immediately after a supervised phase completed"
+mi = src.find(marker)
+if mi < 0:
+    raise SystemExit("s60 mutation: marker text not found")
+lo = src.rfind('\n    if [ -n "${TMP_FD:-}" ] && ! tmp_dir_anchor_ok; then\n', 0, mi)
+if lo < 0:
+    raise SystemExit("s60 mutation: enclosing if-line not found")
+lo += 1  # keep the newline that precedes it as the block's own leading break
+fi = src.find("\n    fi\n", mi)
+if fi < 0:
+    raise SystemExit("s60 mutation: enclosing fi-line not found")
+fi_end = fi + len("\n    fi\n")
+mutated = src[:lo] + src[fi_end:]
+if mutated == src:
+    raise SystemExit("s60 mutation: no bytes removed")
+open(sys.argv[2], "w", encoding="utf-8").write(mutated)
+S60MUTPY
+            if [ -s "$G_S60_MUT" ]; then
+                chmod +x "$G_S60_MUT"
+                g_s56_restore
+                rm -rf "$G_S60_RUN"; mkdir -p "$G_S60_RUN/tmp"
+                (cd "$GATE_REPO" || exit 1
+                 cat "$G_S60_LOADER" >> scripts/todo-graph/cache_schema.py
+                 git commit --quiet --no-verify -am "s60: rename TMP_DIR from inside the head cache build phase (control)" >/dev/null 2>&1)
+                (cd "$GATE_REPO" && TMPDIR="$G_S60_RUN/tmp" bash "$G_S60_MUT" \
+                    --base "$G_PROTO_BASE" --head HEAD >"$TMP_DIR/gate-s60a-mut.log" 2>&1)
+                if grep -q "discovered immediately after a supervised phase completed" "$TMP_DIR/gate-s60a-mut.log"; then
+                    t_fail "identity gate: s60a's refusal survived removing the section 60 post-reap check, so the case proves nothing about that code (see $TMP_DIR/gate-s60a-mut.log)"
+                else
+                    t_pass "identity gate: MUTATION -- without the post-reap anchor check the same swap loses this specific refusal (phase_budget's older boundary check may still catch it later; see $TMP_DIR/gate-s60a-mut.log)"
+                fi
+                # NOT COMMITTED, SO IT MUST BE REMOVED BY HAND -- unlike the
+                # loader injections above (which land through a commit
+                # `g_s56_restore` checks out away), this mutation copy is a
+                # plain file write inside $GATE_REPO with no commit at all, and
+                # every later fixture in this file assumes a clean working
+                # tree there (measured: left in place, it read as untracked
+                # dirt to 22ee's and 22ek's own cleanliness checks).
+                rm -f "$G_S60_MUT"
+            else
+                t_fail "identity gate: could not build the s60a mutation copy of the gate"
+            fi
+        fi
+        rm -rf "$G_S60_RUN"
+        g_s56_restore
+
+        # ------------------------------------------------------------------
+        # s60b: THE HELPERS THEMSELVES RESOLVE THROUGH THE DESCRIPTOR, NOT
+        # MERELY DETECT A RENAME AFTER IT (Codex test-coverage review,
+        # section 60). s60a proves the post-reap DETECTOR fires; it does not
+        # prove `tmp_path()`/`base_tree_path()`/`head_tree_path()` are what
+        # makes detection necessary in the first place -- reverting any of
+        # the three to their pre-section-60 name-based form would still pass
+        # s60a unchanged, because that case never inspects WHAT was read.
+        #
+        # DETERMINISTIC, NOT RACED. Racing a live phase against a detached
+        # descendant (what s60a and 22ev both do) is unavoidable for testing
+        # DETECTION, which only exists at a boundary a live run reaches; it
+        # is not needed here, because a helper's resolution rule is a pure
+        # function of its inputs. This extracts the three functions VERBATIM
+        # from the shipped gate, anchors a descriptor on a REAL directory,
+        # renames it away and puts a DECOY with different content at the old
+        # name, then calls the helper directly and reads back what it
+        # resolved to -- no phase, no timing window, no flake surface.
+        g_s60b_extract() {   # $1 = source gate file -> the four functions, verbatim
+            python3 - "$1" <<'S60BEXTPY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+out = []
+for name in ("die_infra", "tmp_path", "base_tree_path", "head_tree_path"):
+    m = re.search(r'^' + name + r'\(\) \{.*?\n\}\n', src, re.DOTALL | re.MULTILINE)
+    if not m:
+        raise SystemExit("s60b: could not extract " + name + "()")
+    out.append(m.group(0))
+sys.stdout.write("\n".join(out))
+S60BEXTPY
+        }
+        G_S60B_HELPERS="$(g_s60b_extract "$GATE_IN_CLONE")" \
+            || t_fail "identity gate: could not extract tmp_path()/base_tree_path()/head_tree_path() from the shipped gate for isolated testing"
+        if [ -n "$G_S60B_HELPERS" ]; then
+            g_s60b_reset() {   # $1 = probe dir -> a fresh anchor with REAL CONTENT
+                rm -rf "$1"; mkdir -p "$1/real"
+                printf 'REAL CONTENT\n' > "$1/real/probe.txt"
+            }
+            g_s60b_probe() {   # $1 = helper name, $2 = fd var name -> t_pass/t_fail
+                local _helper="$1" _fdvar="$2" _dir _out
+                _dir="$TMP_DIR/s60b-$_helper"
+
+                # SHIPPED SHAPE: the helper as this section actually wrote it.
+                g_s60b_reset "$_dir"
+                cat > "$TMP_DIR/s60b-$_helper-probe.sh" <<EOF
+set -u
+$G_S60B_HELPERS
+exec {$_fdvar}<"$_dir/real"
+mv "$_dir/real" "$_dir/real.bak"
+mkdir "$_dir/real"
+printf 'DECOY CONTENT\n' > "$_dir/real/probe.txt"
+cat "\$($_helper probe.txt)"
+EOF
+                _out="$(bash "$TMP_DIR/s60b-$_helper-probe.sh" 2>"$TMP_DIR/s60b-$_helper.err")"
+                if [ "$_out" != "REAL CONTENT" ]; then
+                    t_fail "identity gate: $_helper() read '$_out' after the rename, not the anchored REAL CONTENT -- it is resolving by name (see $TMP_DIR/s60b-$_helper.err)"
+                    return
+                fi
+
+                # CONTROL: the pre-section-60 shape of the SAME helper -- a
+                # plain name join, no descriptor -- must read the DECOY
+                # instead, or this case proves nothing about which shape is
+                # in the shipped file.
+                g_s60b_reset "$_dir"
+                cat > "$TMP_DIR/s60b-$_helper-mut.sh" <<EOF
+set -u
+die_infra() { printf '[identity-gate] INFRASTRUCTURE: %s\n' "\$1" >&2; exit 3; }
+$_helper() { printf '%s/%s' "$_dir/real" "\$1"; }
+exec {$_fdvar}<"$_dir/real"
+mv "$_dir/real" "$_dir/real.bak"
+mkdir "$_dir/real"
+printf 'DECOY CONTENT\n' > "$_dir/real/probe.txt"
+cat "\$($_helper probe.txt)"
+EOF
+                _out="$(bash "$TMP_DIR/s60b-$_helper-mut.sh" 2>"$TMP_DIR/s60b-$_helper-mut.err")"
+                if [ "$_out" != "DECOY CONTENT" ]; then
+                    t_fail "identity gate: the pre-section-60 (name-based) shape of $_helper() did not read the decoy ('$_out'), so this case is not sensitive to the descriptor at all (see $TMP_DIR/s60b-$_helper-mut.err)"
+                    return
+                fi
+                t_pass "identity gate: $_helper() resolves through its descriptor after a rename (reads REAL CONTENT); its pre-section-60 name-based shape reads the DECOY instead (mutation-proved)"
+                rm -rf "$_dir"
+            }
+            g_s60b_probe tmp_path TMP_FD
+            g_s60b_probe base_tree_path BASE_TREE_FD
+            g_s60b_probe head_tree_path HEAD_TREE_FD
+        fi
 
         # ------------------------------------------------------------------
         # 22ex: THE HELPER'S OWN BRANCHES, IN ISOLATION (section 56).
@@ -17733,10 +17952,10 @@ bad = unbounded_launches(pieces, exempt_lines(src), fixed_lines(src))
 _SEP = r"[\s\\]+"
 MUTATIONS = {
     "assembler": r'timeout -s KILL "\$BUDGET_LEFT"' + _SEP + r'(?=python3 - "\$_commit")',
-    "checker-output-cat": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=cat "\$TMP_DIR/bucket-contract\.out")',
+    "checker-output-cat": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=cat "\$\(tmp_path bucket-contract\.out\)")',
     "protocol-record-head": r'timeout --foreground -s KILL "\$PROBE_BUDGET"' + _SEP + r'(?=head -n 1 "\$_rec")',
     "relocation-interpreter": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=python3 - "\$BASE_PRE_B64")',
-    "walk-log-sed": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=sed \047s/\^/    /\047 "\$TMP_DIR/base-walk\.log")',
+    "walk-log-sed": r'timeout --foreground -s KILL "\$PHASE_BUDGET"' + _SEP + r'(?=sed \047s/\^/    /\047 "\$\(tmp_path base-walk\.log\)")',
     # The filesystem helper that replaced a false exemption. Removing its bound
     # must be caught, or the helper is only the exemption in a longer form.
     "bounded-fs": r'timeout --foreground -s KILL "\$BUDGET_LEFT"' + _SEP + r'(?="\$@" 2>/dev/null)',
