@@ -36,6 +36,7 @@
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
+#include "../../../include/boot/boot_implicit_payload.h"  /* implicit-payload reservation + claim */
 #include "../../../include/boot/ab_boot_metadata.h"        /* A/B dual-slot metadata wire ABI + validators (TODO-21) */
 #include "../../../include/kernel/mm/memmap_boot.h"          /* single-sourced HHDM constants (no drift vs memmap.h) */
 #include "../../../include/kernel/boot_version_constants.h"  /* BOOT_INFO_PHYS_ADDR + fault-class constants */
@@ -2778,13 +2779,104 @@ struct staged_payload {
     char   path[BOOT_PAYLOAD_PATH_MAX];   /* ASCII; converted to CHAR16 on load */
 };
 
-/* Reserve BOOT_PAYLOAD_MAX - 1 slots; the -1 leaves headroom for future
- * implicit payloads (TPM event log copy, random seed, USB handover
- * state) that do not come from boot.conf. Slot 31 stays open. */
-#define BOOT_PAYLOAD_STAGE_MAX (BOOT_PAYLOAD_MAX - 1)
+/* How many descriptor slots boot.conf staging may occupy. The remainder is
+ * reserved for the IMPLICIT publishers -- payloads the loader synthesizes
+ * itself, which have no boot.conf entry and so nobody notices when one goes
+ * missing. The reservation is COMPUTED from the publisher list in
+ * include/boot/boot_implicit_payload.h rather than written as a constant,
+ * because the constant is what went wrong: it read `- 1` against a comment
+ * naming three implicit payloads, so at the boundary the publishers competed
+ * for one slot and the loser was whichever ran later.
+ *
+ * Adding a publisher is now one entry in that list. The reservation grows with
+ * it and the assertions below re-check the arithmetic; no call site changes. */
+#define BOOT_PAYLOAD_STAGE_MAX BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX)
+
+/* The list spells its payload types as literals, because the kernel enum and
+ * this mirror spell the same constants differently and the header is included
+ * by both. These assertions are how a divergence becomes a build failure on the
+ * side that drifted instead of a silent mismatch. */
+_Static_assert(BOOT_PAYLOAD_RANDOM_SEED == 7u,
+               "implicit-payload list literal 7 must stay BOOT_PAYLOAD_RANDOM_SEED");
+_Static_assert(BOOT_PAYLOAD_HEADLESS_AUTHZ == 10u,
+               "implicit-payload list literal 10 must stay BOOT_PAYLOAD_HEADLESS_AUTHZ");
+_Static_assert(BOOT_PAYLOAD_STAGE_MAX > 0,
+               "implicit reservation must leave room for at least one boot.conf payload");
+_Static_assert(BOOT_PAYLOAD_STAGE_MAX + BOOT_IMPLICIT_PAYLOAD_COUNT == BOOT_PAYLOAD_MAX,
+               "staging bound plus implicit reservation must exactly fill the descriptor table");
 static struct staged_payload g_staged_payloads[BOOT_PAYLOAD_STAGE_MAX];
 static UINTN g_staged_payload_count = 0;
 static UINT32 g_staged_payload_overflow = 0;
+
+/* Which implicit publishers have already taken their reserved slot. One bit
+ * per entry in BOOT_IMPLICIT_PAYLOAD_LIST; zero for the whole boot until a
+ * publisher succeeds. */
+static UINT32 g_implicit_payload_claimed = 0;
+
+/* Publish one implicit payload, or refuse LOUDLY and change nothing.
+ *
+ * `desc` must be COMPLETE before this is called: the copy plus the two counter
+ * updates are the commit, and every fallible step (allocation, file read,
+ * length and checksum work) belongs before it. A publisher that claimed a slot
+ * and then failed its I/O would leave an empty descriptor inside the packed
+ * prefix, which the kernel validator rejects outright -- an unbootable machine,
+ * strictly worse than the dropped payload the reservation exists to prevent.
+ *
+ * Returns TRUE when the descriptor was published. On FALSE the table is
+ * untouched and the caller should release whatever it allocated.
+ *
+ * The refusal line names the payload AND what the machine loses. The lines this
+ * replaced ("payload table full -- seed dropped") named neither the consequence
+ * nor, in the authorization's case, which of the two publishers had won, so an
+ * operator reading a boot log could not tell a degraded machine from a healthy
+ * one. */
+static BOOLEAN publish_implicit_payload(const struct boot_payload_desc *desc)
+{
+    enum boot_implicit_claim_result r;
+
+    if (g_boot_info_ptr == (struct boot_info *)0 || desc == (const struct boot_payload_desc *)0) {
+        serial_early_print("[WARN] implicit payload: no boot_info or no descriptor -- not published\n");
+        return (BOOLEAN)0;
+    }
+
+    r = boot_implicit_payload_claim((unsigned int)desc->type,
+                                    (unsigned int)g_boot_info_ptr->payload_count,
+                                    (unsigned int)BOOT_PAYLOAD_MAX,
+                                    (unsigned int *)&g_implicit_payload_claimed);
+    if (r != BOOT_IMPLICIT_CLAIM_OK) {
+        serial_early_print("[WARN] implicit payload REFUSED: ");
+        serial_early_print(boot_implicit_payload_label((unsigned int)desc->type));
+        serial_early_print(" -- ");
+        switch (r) {
+        case BOOT_IMPLICIT_CLAIM_NOT_IMPLICIT:
+            serial_early_print("type is not a declared implicit publisher");
+            break;
+        case BOOT_IMPLICIT_CLAIM_DUPLICATE:
+            serial_early_print("this publisher already took its reserved slot");
+            break;
+        case BOOT_IMPLICIT_CLAIM_TABLE_FULL:
+            serial_early_print("descriptor table full");
+            break;
+        case BOOT_IMPLICIT_CLAIM_NULL_STATE:
+            serial_early_print("claim state unavailable");
+            break;
+        default:
+            serial_early_print("unknown refusal");
+            break;
+        }
+        serial_early_print("; machine is DEGRADED: ");
+        serial_early_print(boot_implicit_payload_degradation((unsigned int)desc->type));
+        serial_early_print("\n");
+        return (BOOLEAN)0;
+    }
+
+    /* Commit. The slot write and both counter updates happen together, with
+     * nothing between them that can fail. The macro lives in the shared header
+     * so the kernel-side tests execute these exact lines rather than a fixture
+     * that re-implements them. */
+    BOOT_IMPLICIT_PAYLOAD_COMMIT(g_boot_info_ptr, desc);
+    return (BOOLEAN)1;
+}
 
 /* Append one payload to the staging list. Type is already resolved to
  * BOOT_PAYLOAD_*. Path is ASCII (from boot.conf); empty paths are
@@ -10433,28 +10525,30 @@ static void collect_boot_entropy(void)
      * zeroes the page (descriptor validation owned by the boot protocol;
      * kernel-side consumption owned by the early-entropy seed handoff
      * section). */
-    UINT32 idx = g_boot_info_ptr->payload_count;
-    if (idx >= BOOT_PAYLOAD_MAX) {
+    /* Build the descriptor COMPLETE on the stack, then publish. The table is
+     * not touched until every fallible step above has already succeeded; see
+     * publish_implicit_payload for why claiming earlier would be worse than
+     * dropping the seed. */
+    struct boot_payload_desc seed_desc;
+    efi_memset(&seed_desc, 0, sizeof(seed_desc));
+    seed_desc.type        = BOOT_PAYLOAD_RANDOM_SEED;
+    seed_desc.flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED |
+                            BOOT_PAYLOAD_FLAG_CHECKSUMMED;
+    seed_desc.phys_start  = (UINT64)seed_addr;
+    seed_desc.length      = (UINT64)pos;
+    seed_desc.alignment   = 4096ull;
+    /* CRC-32C of the WHOLE payload (header included), low 32 bits;
+     * the kernel parser rejects on mismatch before reading a record. */
+    seed_desc.checksum    = (UINT64)bl_crc32c(seed, pos);
+    seed_desc.producer_id = BOOT_PRODUCER_UEFI;
+    seed_desc._reserved   = 0u;
+
+    if (!publish_implicit_payload(&seed_desc)) {
         efi_memset(seed, 0, EFI_PAGE_SIZE);
         gBS->FreePages(seed_addr, 1);
-        serial_early_print("[BOOT] RNG: payload table full -- seed dropped\n");
         post_code16(POST16_BL_ENTROPY_OK);
         return;
     }
-    struct boot_payload_desc *d = &g_boot_info_ptr->payload_descriptors[idx];
-    d->type        = BOOT_PAYLOAD_RANDOM_SEED;
-    d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED |
-                     BOOT_PAYLOAD_FLAG_CHECKSUMMED;
-    d->phys_start  = (UINT64)seed_addr;
-    d->length      = (UINT64)pos;
-    d->alignment   = 4096ull;
-    /* CRC-32C of the WHOLE payload (header included), low 32 bits;
-     * the kernel parser rejects on mismatch before reading a record. */
-    d->checksum    = (UINT64)bl_crc32c(seed, pos);
-    d->producer_id = BOOT_PRODUCER_UEFI;
-    d->_reserved   = 0u;
-    g_boot_info_ptr->payload_count = idx + 1u;
-    g_boot_info_ptr->payload_total_bytes += (UINT64)pos;
 
     serial_early_print("[BOOT] RNG: seed payload ");
     serial_early_print_uint((UINT32)pos);
@@ -10511,8 +10605,6 @@ static void publish_headless_authz_payload(void)
     UINT64 file_size = 0;
     EFI_PHYSICAL_ADDRESS blob_addr = 0;
     UINTN read_size;
-    UINT32 idx;
-    struct boot_payload_desc *d;
 
     /* NOTHING AT ALL ON A BOOT THAT NEVER ASKED TO ENROLL -- not the
      * filesystem work, and not the POST markers either.
@@ -10604,30 +10696,19 @@ static void publish_headless_authz_payload(void)
         goto done_file;
     }
 
-    /* YIELD THE LAST SLOT. The staging table reserves BOOT_PAYLOAD_MAX - 1 for
-     * boot.conf payloads, leaving ONE for implicit publishers -- and there is
-     * more than one of those: the entropy seed is published later in the boot,
-     * from collect_boot_entropy, and simply DROPS its payload when the table
-     * is full.
+    /* THE YIELD IS GONE, and its absence is the point. This function used to
+     * check `idx + 1 >= BOOT_PAYLOAD_MAX` rather than the ordinary bound,
+     * refusing the last slot by hand so the entropy seed -- published later in
+     * the boot, with no way to signal a reservation backwards -- would still
+     * get one. That worked only because there happened to be exactly two
+     * implicit publishers and this one happened to run first; a third would
+     * have re-opened the race silently.
      *
-     * At the 31-staged-payload boundary this function would therefore take the
-     * last slot and silently cost the machine its firmware entropy seed,
-     * leaving the CSPRNG and the stack canary on their degraded TSC-derived
-     * path. It would do so for ANY 152-byte file, valid or not, because the
-     * signature is not checked until the kernel runs.
-     *
-     * An authorization is OPTIONAL and degrades to "this machine cannot enroll
-     * without a console", which is the pre-existing state. Entropy is not
-     * optional in the same way, so the authorization is the one that yields.
-     * The general shortfall -- one reserved slot for three named implicit
-     * payload kinds -- is tracked with the boot payload descriptor array. */
-    idx = g_boot_info_ptr->payload_count;
-    if (idx + 1u >= BOOT_PAYLOAD_MAX) {
-        serial_early_print("[WARN] headless authz: payload table full "
-                           "(reserving the last slot for the entropy seed) "
-                           "-- not published\n");
-        goto done_file;
-    }
+     * The staging table now reserves one slot PER declared implicit publisher
+     * (BOOT_PAYLOAD_STAGE_MAX above), so this function has a slot by
+     * construction and does not need to know that entropy exists. The capacity
+     * decision moved to publish_implicit_payload, below, at the point where the
+     * descriptor is complete. */
 
     /* Below 4 GiB, exactly as the seed transport does and for the same reason:
      * the kernel consumer dereferences phys_start through the boot identity
@@ -10656,24 +10737,36 @@ static void publish_headless_authz_payload(void)
         goto done_file;
     }
 
-    d = &g_boot_info_ptr->payload_descriptors[idx];
-    d->type        = BOOT_PAYLOAD_HEADLESS_AUTHZ;
-    d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED |
-                     BOOT_PAYLOAD_FLAG_CHECKSUMMED;
-    d->phys_start  = (UINT64)blob_addr;
-    d->length      = (UINT64)BL_HEADLESS_AUTHZ_LEN;
-    d->alignment   = 4096ull;
-    /* CRC-32C detects a corrupt transfer, and that is ALL it is for: the
-     * authorization's integrity comes from its Ed25519 signature, which an
-     * attacker who can rewrite the file can also re-CRC. Naming that here
-     * stops a later reader from mistaking the checksum for a security
-     * property. */
-    d->checksum    = (UINT64)bl_crc32c((const UINT8 *)(UINTN)blob_addr,
-                                       (UINTN)BL_HEADLESS_AUTHZ_LEN);
-    d->producer_id = BOOT_PRODUCER_UEFI;
-    d->_reserved   = 0u;
-    g_boot_info_ptr->payload_count = idx + 1u;
-    g_boot_info_ptr->payload_total_bytes += (UINT64)BL_HEADLESS_AUTHZ_LEN;
+    /* Build the descriptor COMPLETE on the stack, then publish. Every step that
+     * could still fail -- AllocatePages, the file read, the length check -- is
+     * already behind us, so the commit inside publish_implicit_payload cannot
+     * leave a half-written slot in the packed prefix. */
+    {
+        struct boot_payload_desc authz_desc;
+        efi_memset(&authz_desc, 0, sizeof(authz_desc));
+        authz_desc.type        = BOOT_PAYLOAD_HEADLESS_AUTHZ;
+        authz_desc.flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED |
+                                 BOOT_PAYLOAD_FLAG_CHECKSUMMED;
+        authz_desc.phys_start  = (UINT64)blob_addr;
+        authz_desc.length      = (UINT64)BL_HEADLESS_AUTHZ_LEN;
+        authz_desc.alignment   = 4096ull;
+        /* CRC-32C detects a corrupt transfer, and that is ALL it is for: the
+         * authorization's integrity comes from its Ed25519 signature, which an
+         * attacker who can rewrite the file can also re-CRC. Naming that here
+         * stops a later reader from mistaking the checksum for a security
+         * property. */
+        authz_desc.checksum    = (UINT64)bl_crc32c((const UINT8 *)(UINTN)blob_addr,
+                                                   (UINTN)BL_HEADLESS_AUTHZ_LEN);
+        authz_desc.producer_id = BOOT_PRODUCER_UEFI;
+        authz_desc._reserved   = 0u;
+
+        if (!publish_implicit_payload(&authz_desc)) {
+            efi_memset((VOID *)(UINTN)blob_addr, 0, EFI_PAGE_SIZE);
+            gBS->FreePages(blob_addr, 1);
+            blob_addr = 0;
+            goto done_file;
+        }
+    }
 
     serial_early_print("[BOOT] headless authz payload published at 0x");
     serial_early_print_hex64((UINT64)blob_addr);
