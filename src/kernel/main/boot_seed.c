@@ -68,7 +68,7 @@ void boot_seed_record_sources(const struct entropy_seed_parse_result *r)
     }
 }
 
-boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
+boot_seed_desc_class_t boot_seed_desc_classify(uint64_t caps_present,
                                                uint32_t flags,
                                                uint64_t phys_start,
                                                uint64_t length)
@@ -80,7 +80,12 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
      * trusting it would let a producer with caps_present clear hand us
      * a range the reservation pass skipped and the allocator now owns.
      * Same order, and the same reason, as boot_headless_authz_classify. */
-    if ((caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) == 0u)
+    /* caps_present is taken at the field's own uint64_t width, per the
+     * convention boot_info.h states for the whole BOOT_CAP_ family
+     * ("consumers always widen to uint64_t at use time"). A uint32_t
+     * parameter would silently truncate the word and make any future
+     * bit >= 32 permanently unobservable. */
+    if ((caps_present & (uint64_t)BOOT_CAP_PAYLOAD_DESCRIPTORS) == 0u)
         return BOOT_SEED_DESC_NO_CAPABILITY;
     /* RESERVED gate next: a descriptor without FLAG_RESERVED was never
      * pinned by the PMM reservation pass, so by Phase 1 its frames may
@@ -94,28 +99,35 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
     if (phys_start >= BOOT_INFO_EARLY_MAP_END ||
         length > BOOT_INFO_EARLY_MAP_END - phys_start)
         return BOOT_SEED_DESC_OUT_OF_MAP;
-    if (length < sizeof(struct entropy_seed_header) ||
-        length > BOOT_SEED_PAYLOAD_CAP)
+    if (!boot_seed_length_reservable(length))
         return BOOT_SEED_DESC_BAD_LENGTH;
     return BOOT_SEED_DESC_CONSUMABLE;
+}
+
+int boot_seed_length_reservable(uint64_t length)
+{
+    /* The SAME predicate the Phase-0 reservation pass applies before it
+     * will pin a RANDOM_SEED descriptor (src/kernel/mm/boot_reserved.c).
+     * Keeping it in one function is the point: if the pass and the
+     * consumer ever disagreed, one of them would be touching memory the
+     * other never reserved. */
+    return length >= sizeof(struct entropy_seed_header) &&
+           length <= BOOT_SEED_PAYLOAD_CAP;
 }
 
 uint64_t boot_seed_desc_wipe_len(boot_seed_desc_class_t cls, uint64_t length)
 {
     /* CONSUMABLE has already passed the length contract, so its own
-     * length is the honest bound. BAD_LENGTH is the class that exists
-     * BECAUSE the field is wrong, so it is clamped to the contract cap
-     * -- the seed is one-time key material and must still be wiped when
-     * refused, but a descriptor claiming gigabytes must not wipe them.
-     * Every other class is retired untouched: an unreserved or
-     * un-negotiated range may already belong to another owner, and an
-     * out-of-map range is not addressable at all. */
+     * length is the honest bound, and it is the ONLY class the
+     * reservation pass actually pinned. Everything else is retired
+     * untouched: an unreserved, un-negotiated or bad-length range was
+     * never pinned and may already belong to another owner by Phase 1,
+     * and an out-of-map range is not addressable at all. Wiping any of
+     * them would corrupt the new owner to scrub bytes we never owned. */
     switch (cls) {
     case BOOT_SEED_DESC_CONSUMABLE:
         return length;
     case BOOT_SEED_DESC_BAD_LENGTH:
-        return (length < BOOT_SEED_PAYLOAD_CAP) ? length
-                                                : BOOT_SEED_PAYLOAD_CAP;
     case BOOT_SEED_DESC_NOT_RESERVED:
     case BOOT_SEED_DESC_OUT_OF_MAP:
     case BOOT_SEED_DESC_NO_CAPABILITY:
@@ -166,6 +178,7 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
     uint64_t total = 0;
     uint32_t consumed = 0;
     uint32_t rejected = 0;
+    int caps_refused = 0;
 
     POST16(POST16_BOOT_SEED);
 
@@ -235,10 +248,12 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
              * continuing would spin on this same descriptor. */
             klog(LOG_WARN, "entropy",
                  "seed payloads refused: BOOT_CAP_PAYLOAD_DESCRIPTORS "
-                 "not negotiated (caps=0x%lx); %u descriptor(s) left "
-                 "untouched, boot continues without seed entropy",
+                 "not negotiated (caps=0x%lx); every seed descriptor left "
+                 "untouched of %u total payload descriptor(s), boot "
+                 "continues without seed entropy",
                  (uint64_t)g_boot_info.caps_present,
                  (uint64_t)g_boot_info.payload_count);
+            caps_refused = 1;
             abandon_walk = 1;
             break;
         case BOOT_SEED_DESC_NOT_RESERVED:
@@ -258,9 +273,8 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
         case BOOT_SEED_DESC_BAD_LENGTH:
             klog(LOG_WARN, "entropy",
                  "seed payload #%u rejected: length %lu outside contract "
-                 "(wiped up to the contract cap, frames retained)",
+                 "(never PMM-pinned, so retired untouched)",
                  (uint64_t)idx, (uint64_t)d->length);
-            payload = (uint8_t *)(uintptr_t)d->phys_start;
             st = ENTROPY_SEED_BAD_LENGTH;
             break;
         case BOOT_SEED_DESC_CONSUMABLE:
@@ -351,7 +365,12 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
              (uint64_t)res.seed_file_ok, (uint64_t)res.seed_file_rejected);
     }
 
-    if (consumed == 0 && rejected == 0)
+    /* Only claim "none published" when the lookup genuinely found
+     * nothing. After a capability refusal descriptors WERE published and
+     * were deliberately left alone, so saying otherwise contradicts the
+     * refusal line emitted moments earlier -- on exactly the degraded
+     * boot that line exists to explain. */
+    if (consumed == 0 && rejected == 0 && !caps_refused)
         klog(LOG_INFO, "entropy",
              "seed payload: none published -- first seed uses local + "
              "staged sources only");

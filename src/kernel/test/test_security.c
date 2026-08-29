@@ -18,6 +18,7 @@
 #include "kernel/security/assign_security.h"
 #include "kernel/security/stack_canary.h"
 #include "kernel/boot_info.h"   /* BOOT_CAP_PAYLOAD_DESCRIPTORS -- canary payload-peek gate */
+#include "kernel/entropy.h"     /* BOOT_SEED_PAYLOAD_CAP -- the shared seed length contract */
 #include "kernel/ob/ob.h"
 #include "kernel/sched/task.h"   /* task/thread, task_current/thread_current for token assignment */
 #include "libc/string.h"
@@ -788,9 +789,9 @@ static void test_canary_guard_seeded(void)
  * 0x100000000 = BOOT_INFO_EARLY_MAP_END. */
 static void test_canary_seed_desc_bounds(void)
 {
-    const uint32_t RES = (1u << 3);   /* BOOT_PAYLOAD_FLAG_RESERVED */
+    const uint32_t RES = (uint32_t)BOOT_PAYLOAD_FLAG_RESERVED;
     const uint64_t END = 0x100000000ull;
-    const uint32_t CAPS = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    const uint64_t CAPS = (uint64_t)BOOT_CAP_PAYLOAD_DESCRIPTORS;
 
     TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 4096), 1u,
                    "reserved + low + length>=16 accepted");
@@ -801,7 +802,7 @@ static void test_canary_seed_desc_bounds(void)
     TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 8, 4096), 0u,
                    "range crossing the 4 GiB map end rejected");
     TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 8), 0u,
-                   "length < 16 rejected");
+                   "an 8-byte payload is rejected");
     TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0, 4096), 0u,
                    "phys_start 0 rejected");
 
@@ -820,14 +821,32 @@ static void test_canary_seed_desc_bounds(void)
                                                  RES, 0x200000, 4096), 1u,
                    "caps bit alongside others still accepted (mask, not equality)");
 
-    /* Exact boundaries. canary_init runs pre-IDT, so an off-by-one on the
-     * map bound is a hang rather than a wrong answer, and an off-by-one on
-     * the minimum silently drops seed personalization instead. */
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 16), 1u,
-                   "exactly the 16-byte minimum accepted");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 16, 16), 1u,
+    /* This peek must accept EXACTLY what the Phase-0 reservation pass
+     * pins, no more: boot_reserved.c leaves FLAG_RESERVED set on a
+     * descriptor it declined to pin, so a looser local rule here would
+     * dereference unreserved memory -- pre-IDT, after the boot-stack guard
+     * page is unmapped, where a fault is an unrecoverable hang. The old
+     * `length >= 16` rule did exactly that; the round-2 re-adversarial
+     * caught it. Deleting the boot_seed_length_reservable call fails the
+     * two under-minimum cases below. */
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 16), 0u,
+                   "16 bytes is below the seed contract, so never pinned");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 31), 0u,
+                   "one byte below the header size is rejected");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 32), 1u,
+                   "exactly the header size is accepted");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000,
+                                                 BOOT_SEED_PAYLOAD_CAP), 1u,
+                   "exactly the contract cap is accepted");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000,
+                                                 BOOT_SEED_PAYLOAD_CAP + 1ull),
+                   0u, "cap+1 is rejected: the pass would not have pinned it");
+
+    /* Exact map boundaries, now expressed at a contract-legal length so the
+     * map bound is what is actually under test. */
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 32, 32), 1u,
                    "range ending exactly at the 4 GiB map end accepted");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 15, 16), 0u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 31, 32), 0u,
                    "range overrunning the map end by one byte rejected");
     TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, ~0ull), 0u,
                    "a maximal length cannot wrap the map bound into an accept");

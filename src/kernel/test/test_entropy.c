@@ -818,7 +818,7 @@ static void test_random_seed_clone_degraded(void)
 static void test_boot_seed_desc_classify(void)
 {
     const uint32_t vr = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
-    const uint32_t CAPS = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    const uint64_t CAPS = (uint64_t)BOOT_CAP_PAYLOAD_DESCRIPTORS;
 
     /* VALID-only (never PMM-pinned): untouchable regardless of range --
      * the round-2 adversarial regression case. */
@@ -868,7 +868,7 @@ static void test_boot_seed_desc_classify(void)
     TEST_ASSERT_EQ(boot_seed_desc_classify(0u, vr, 0x5000ull, 256ull),
                    (uint32_t)BOOT_SEED_DESC_NO_CAPABILITY,
                    "caps clear refuses an otherwise-consumable descriptor");
-    TEST_ASSERT_EQ(boot_seed_desc_classify(~(uint32_t)BOOT_CAP_PAYLOAD_DESCRIPTORS,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(~(uint64_t)BOOT_CAP_PAYLOAD_DESCRIPTORS,
                                            vr, 0x5000ull, 256ull),
                    (uint32_t)BOOT_SEED_DESC_NO_CAPABILITY,
                    "every OTHER capability bit set is still a refusal");
@@ -911,17 +911,49 @@ static void test_boot_seed_desc_classify(void)
     TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_CONSUMABLE,
                                            4096ull), 4096ull,
                    "consumable payload wipes its full length");
+    /* BAD_LENGTH wipes NOTHING. The reservation pass refuses to pin a
+     * descriptor failing boot_seed_length_reservable, so by Phase 1 its
+     * frames may belong to the allocator -- wiping even a clamped prefix
+     * would corrupt the new owner. Clamping alone was the first draft and
+     * the post-commit adversarial round showed it merely traded a free of
+     * unwiped memory for a permanent pin of it. */
     TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_BAD_LENGTH, 31ull),
-                   31ull,
-                   "short bad-length payload wipes exactly its own bytes");
+                   0ull,
+                   "short bad-length payload is never pinned, so never wiped");
     TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_BAD_LENGTH,
                                            BOOT_SEED_PAYLOAD_CAP + 1ull),
-                   BOOT_SEED_PAYLOAD_CAP,
-                   "cap+1 bad-length payload wipes only the contract cap");
+                   0ull,
+                   "cap+1 bad-length payload is never pinned, so never wiped");
     TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_BAD_LENGTH,
                                            0xFFFFFFFFull),
-                   BOOT_SEED_PAYLOAD_CAP,
-                   "a 4 GiB claim still wipes only the contract cap");
+                   0ull,
+                   "a 4 GiB claim wipes nothing rather than a clamped prefix");
+
+    /* The shared length contract itself -- the ONE rule the Phase-0
+     * reservation pass and this Phase-1 consumer both apply. If these
+     * two ever disagreed, one of them would be touching memory the other
+     * never reserved. */
+    TEST_ASSERT_EQ((uint64_t)boot_seed_length_reservable(
+                       sizeof(struct entropy_seed_header)), 1u,
+                   "exactly the header size is reservable");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_length_reservable(
+                       sizeof(struct entropy_seed_header) - 1ull), 0u,
+                   "one byte below the header size is not reservable");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_length_reservable(BOOT_SEED_PAYLOAD_CAP),
+                   1u, "exactly the contract cap is reservable");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_length_reservable(
+                       BOOT_SEED_PAYLOAD_CAP + 1ull), 0u,
+                   "cap+1 is not reservable, so it can never pin a span");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_length_reservable(0xFFFFFFFFull), 0u,
+                   "a 4 GiB claim is not reservable");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_length_reservable(0ull), 0u,
+                   "a zero length is not reservable");
+    /* The contract and the classifier must agree, or the reservation pass
+     * and the consumer would disagree about who owns the frames. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull,
+                                           BOOT_SEED_PAYLOAD_CAP + 1ull),
+                   (uint32_t)BOOT_SEED_DESC_BAD_LENGTH,
+                   "classifier rejects exactly what the contract refuses to pin");
 
     /* The [high] design finding: a clamped WIPE must never license an
      * unclamped FREE. Only CONSUMABLE may reach the frame loop, whose

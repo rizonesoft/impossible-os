@@ -26,6 +26,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/boot_info.h"
+#include "kernel/entropy.h"   /* boot_seed_length_reservable -- seed type length contract */
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "libc/string.h"
@@ -319,6 +320,26 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                      "boot_reserved: skip warm-update payload[%u] "
                      "(BOOT_FLAG_WARM_UPDATE clear; cold init proceeds)",
                      (uint64_t)i);
+                continue;
+            }
+            /* Seed descriptors are bounded by their OWN type contract
+             * before they may pin anything. Same shape, and the same
+             * reason, as the warm-update gate above: a malformed
+             * RANDOM_SEED descriptor carrying FLAG_RESERVED and a
+             * gigabyte-scale length would otherwise reserve that whole
+             * span here, permanently, and starve the PMM -- the boot
+             * would then die in heap_init rather than degrade. The
+             * consumer applies the identical predicate and refuses to
+             * touch what this pass declined to pin, so the two cannot
+             * disagree about who owns the frames. (Codex 2026-08-29
+             * post-commit adversarial finding on the early-entropy seed
+             * payload capability gate.) */
+            if (d->type == (uint32_t)BOOT_PAYLOAD_RANDOM_SEED
+                && !boot_seed_length_reservable(d->length)) {
+                klog(LOG_WARN, "mm",
+                     "boot_reserved: skip seed payload[%u] (length %lu "
+                     "outside the type contract; not pinned)",
+                     (uint64_t)i, (uint64_t)d->length);
                 continue;
             }
             if (add_or_fatal(d->phys_start, d->length,

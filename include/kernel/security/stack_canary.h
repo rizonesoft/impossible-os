@@ -25,8 +25,11 @@ void canary_init(void);
 uintptr_t canary_massage(uint64_t raw);
 
 /* Pure predicate (unit-testable): is a RANDOM_SEED boot-payload descriptor safe
- * to peek for canary entropy? Requires FLAG_RESERVED, length >= 16, and
+ * to peek for canary entropy? Requires, IN THIS ORDER: the negotiated
+ * BOOT_CAP_PAYLOAD_DESCRIPTORS capability (without it the PMM reservation pass
+ * never ran, so FLAG_RESERVED certifies nothing and the range may already be
+ * allocator-owned), FLAG_RESERVED itself, length >= 16, and
  * [phys_start, phys_start+length) wholly inside the 4 GiB boot identity map
  * (canary_init runs pre-IDT, so an out-of-map read would #PF-hang). */
-int canary_seed_desc_ok(uint32_t caps_present, uint32_t flags,
+int canary_seed_desc_ok(uint64_t caps_present, uint32_t flags,
                         uint64_t phys_start, uint64_t length);

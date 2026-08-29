@@ -248,11 +248,19 @@ void early_entropy_init(void);
 
 /* PURE consumability classifier for one RANDOM_SEED descriptor (the
  * load-bearing gate inside boot_seed_consume, exported for tests).
- * NO_CAPABILITY, NOT_RESERVED and OUT_OF_MAP descriptors must be
- * retired UNTOUCHED: an unreserved range may already be allocator-
- * owned, an out-of-map range is not dereferenceable. BAD_LENGTH is
- * safe to wipe, but only up to the CONTRACT length -- see
- * boot_seed_desc_wipe_len(). */
+ * NOT_RESERVED, OUT_OF_MAP and BAD_LENGTH descriptors are RETIRED
+ * UNTOUCHED: none of them was pinned by the reservation pass, so the
+ * range may already be allocator-owned, and an out-of-map range is not
+ * dereferenceable at all.
+ *
+ * NO_CAPABILITY is different and the distinction is load-bearing for
+ * anyone writing a new consumer: it retires NOTHING and abandons the
+ * whole walk, leaving every descriptor FLAG_VALID-set for the rest of
+ * the boot. Clearing the flag would be mutating a handoff we just
+ * declined to trust. So do NOT assume boot_payload_find() can no longer
+ * rediscover a seed descriptor after boot_seed_consume() has run --
+ * on a capability-refused boot it still can, and your consumer needs
+ * its own capability gate exactly as this one does. */
 typedef enum {
     BOOT_SEED_DESC_CONSUMABLE = 0,
     BOOT_SEED_DESC_NOT_RESERVED,  /* FLAG_RESERVED missing -- PMM never pinned it */
@@ -273,7 +281,7 @@ typedef enum {
  * capability describes the HANDOFF, not one descriptor, so
  * NO_CAPABILITY means abandon the whole walk rather than reject one
  * entry the way the three classes above it do. */
-boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
+boot_seed_desc_class_t boot_seed_desc_classify(uint64_t caps_present,
                                                uint32_t flags,
                                                uint64_t phys_start,
                                                uint64_t length);
@@ -290,11 +298,29 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
  * authorization consumer left the whole security suite green. */
 
 /* Bytes that may be wiped at phys_start; 0 for every class whose range
- * must not be touched at all. BAD_LENGTH is clamped to the contract cap
- * BECAUSE that class is the classifier declaring `length` wrong: a
- * descriptor claiming gigabytes is rejected and must not then wipe
- * gigabytes. */
+ * must not be touched at all -- which now includes BAD_LENGTH, a
+ * deliberate reversal of this section's first draft. A bad-length
+ * descriptor is precisely the one the reservation pass refused to pin
+ * (see boot_seed_length_reservable below), so its frames may already be
+ * allocator-owned by Phase 1 and wiping even a clamped prefix would
+ * corrupt the new owner. Leaving a malformed producer's bytes in RAM is
+ * the lesser harm. Found by the post-commit adversarial round, which
+ * showed that merely refusing to FREE an over-cap descriptor pinned it
+ * forever instead. */
 uint64_t boot_seed_desc_wipe_len(boot_seed_desc_class_t cls, uint64_t length);
+
+/* The seed type's OWN length contract, in ONE place so the Phase-0
+ * reservation pass and the Phase-1 consumer cannot drift apart. Returns
+ * 1 when the declared length is inside [header size, BOOT_SEED_PAYLOAD_CAP].
+ *
+ * src/kernel/mm/boot_reserved.c refuses to PIN a RANDOM_SEED descriptor
+ * that fails this, so a malformed handoff declaring gigabytes cannot
+ * reserve an arbitrary span of RAM and starve the PMM. The consumer then
+ * refuses to TOUCH the same descriptor, for exactly the reason it refuses
+ * a NOT_RESERVED one. The resulting invariant is the one worth
+ * remembering: the consumer touches only what the reservation pass
+ * actually pinned. */
+int boot_seed_length_reservable(uint64_t length);
 
 /* Whether the descriptor's frames may be returned to the PMM at all.
  * ONLY a CONSUMABLE descriptor qualifies. BAD_LENGTH deliberately does

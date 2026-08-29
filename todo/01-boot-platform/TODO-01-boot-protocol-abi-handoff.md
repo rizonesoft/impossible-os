@@ -98,6 +98,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎  |  25   | Bounded retry for a transient rollback-floor write | §13, §16, §24                      |  [x]   |
 | 💎  |  26   | Enum-VALUE drift detection for the mirror          | §2, §3                             |  [/]   |
 | 💎  |  27   | Descriptor capacity for the implicit publishers    | §4, §26                            |  [x]   |
+| 💎  |  28   | Per-type payload length contract before reserving  | §4, §27                            |  [ ]   |
 
 ---
 
@@ -1046,6 +1047,27 @@ The ordering makes it worse than a simple cap: implicit publishers run at differ
 
 > **Verified:** 2026-08-28 | commit `5d7b8ebbc` + review fixes | 5/5 items | build OK | BSS end `0x7ff000` < user base `0x800000`; 32542 kernel + 17 user-mode; smoke matrix 4/4 legs + SMOKE TEST PASSED; WHPX boots to `C:\>`; lint rc 0
 > **Quality reviewed:** 2026-08-28 | Codex 7x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x2) | 4H+3M fixed, 0 open | scope: boot-code-quality (boot-quality-auditor walked all gates)
+
+---
+
+## 28. Per-Type Payload Length Contract Before Reserving
+
+> **Spawned-by:** root
+> **User impact:** a malformed or hostile handoff declares a gigabyte-scale `length` on any payload type other than RANDOM_SEED, and the Phase-0 reservation pass pins that whole span permanently. Nothing ever unreserves it, so the boot does not degrade -- it dies later in `heap_init` or the first large allocation, with a symptom that names the allocator rather than the descriptor that starved it.
+
+Surfaced by the `01-boot-platform/TODO-12` §11 review, which found and fixed exactly this for the seed type. `boot_reserved_populate_from_info()` (`src/kernel/mm/boot_reserved.c`) reserves `d->phys_start, d->length` for EVERY descriptor carrying `BOOT_PAYLOAD_FLAG_RESERVED` once `BOOT_CAP_PAYLOAD_DESCRIPTORS` is negotiated. Two types now escape that: warm-update is gated on `BOOT_FLAG_WARM_UPDATE`, and RANDOM_SEED is bounded by `boot_seed_length_reservable()`. The remaining eight are not bounded by anything -- `boot_payload_validate` checks only that the type is KNOWN (`src/kernel/main/boot_payload.c:120-138`), and the overlap/wrap checks constrain WHERE a range sits, never how big it may be.
+
+The seed fix is the template, including the part that is easy to get wrong: bounding the reservation alone is not enough. A descriptor the pass declines to pin keeps `FLAG_RESERVED` set, so every consumer that treats that flag as proof of pinning must apply the SAME predicate, or it dereferences memory nothing reserved. That is a `[high]` the seed work shipped and then had to fix in a follow-up round.
+
+- [ ] Give each payload type its own declared maximum, in ONE place both the reservation pass and that type's consumers read, so the two can never disagree about what was pinned.
+  - The eight unbounded types today: `BOOT_PAYLOAD_MODULE`, `INITRD`, `RECOVERY_IMAGE`, `HIBERNATION_META`, `TPM_EVENT_LOG`, `NETWORK_CONFIG`, `USB_HANDOVER`, `HEADLESS_AUTHZ`.
+  - Deciding the actual numbers is the work: an initrd bound is a policy call about the largest image the loader may hand over, not a constant to guess. Record each with the reason for its value.
+- [ ] Audit every consumer of a bounded type for the seed section's follow-on defect: a consumer trusting `FLAG_RESERVED` while the pass now skips some descriptors carrying it.
+  - `-> XREF: 01-boot-platform/TODO-12 §11 (item: "Bounded the rejected-payload wipe by the CONTRACT length" -- the shipped precedent, including the canary consumer that had to be routed through the same predicate)
+- [ ] Decide whether an over-contract descriptor should also be refused by `boot_payload_validate` at Phase 0 rather than merely skipped at reservation time, so the diagnostic names the producer instead of a silent skip line.
+- [ ] Commit: `"boot: per-type payload length contract before reserving"`
+
+**Test checkpoint:** for each bounded type, a descriptor one byte over its declared maximum is not pinned (assert via the reservation pass's own accounting) and its consumers refuse to dereference it; a descriptor exactly at the maximum is pinned and consumed normally. Scope: this section owns the LENGTH contract and its consumer alignment only; the capability negotiation itself is §4 and the descriptor capacity is §27. Platforms: kernel unit suites; no hardware.
 
 ---
 

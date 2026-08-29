@@ -23,6 +23,7 @@
 #include "kernel/cpuid.h"           /* cpu_has, CPU_FEATURE_RDRAND/RDSEED */
 #include "kernel/bugcheck.h"        /* KeBugCheckEx, BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE */
 #include "kernel/boot_info.h"       /* boot_payload_find -- peek the firmware RNG seed */
+#include "kernel/entropy.h"          /* boot_seed_length_reservable -- the shared pin contract */
 #include "kernel/klog.h"
 #include "kernel/nt/ntstatus.h"     /* STATUS_STACK_BUFFER_OVERRUN (canonical home) */
 
@@ -65,13 +66,25 @@ static inline int canary_rdseed(uint64_t *out)
  * personalization, so the caller still warns + treats the cookie as degraded
  * unless a verified hardware source (RDRAND/RDSEED) contributed. Returns 1 if
  * bytes were mixed. */
-int canary_seed_desc_ok(uint32_t caps_present, uint32_t flags,
+int canary_seed_desc_ok(uint64_t caps_present, uint32_t flags,
                         uint64_t phys_start, uint64_t length)
 {
-    if ((caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) == 0)
+    if ((caps_present & (uint64_t)BOOT_CAP_PAYLOAD_DESCRIPTORS) == 0)
         return 0;                       /* handoff never negotiated descriptors */
-    if (length < 16 || phys_start == 0)
-        return 0;                       /* absent / too short */
+    if (phys_start == 0)
+        return 0;                       /* absent */
+    /* The SAME length contract the Phase-0 reservation pass applies, not a
+     * local `length >= 16`. boot_reserved.c declines to PIN a seed
+     * descriptor outside this contract while leaving FLAG_RESERVED set, so
+     * a local rule that accepted more than the pass pins would dereference
+     * memory nothing reserved -- and this peek is the worst place for that:
+     * canary_init runs after pmm/vmm/heap init and after the boot-stack
+     * guard page is unmapped (boot_hw.c:509-564) but BEFORE the IDT exists,
+     * so a fault here hangs the boot with no handler. Found by the round-2
+     * re-adversarial: bounding the reservation without bounding this
+     * predicate created exactly that gap. */
+    if (!boot_seed_length_reservable(length))
+        return 0;                       /* outside the type contract -- never pinned */
     if ((flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0)
         return 0;                       /* may be allocator-owned -- untouchable */
     if (phys_start >= BOOT_INFO_EARLY_MAP_END ||
