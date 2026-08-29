@@ -131,4 +131,52 @@ esac
 # `codex-dispatch.sh` (this wrapper). exec replaces this process with
 # node so the dispatched output streams directly to the parent shell.
 export CODEX_REVIEWER_DISPATCH=1
-exec node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "$PROMPT"
+
+# Retain the transcript and register the leg (v17 close-out, 2026-08-29). Two
+# live failures had one cause -- this wrapper streamed to stdout and kept
+# NOTHING: (1) three post-ship legs piped through `tail -2` lost their entire
+# review bodies with no artifact to recover them from (~11 minutes re-dispatched);
+# (2) `review-envelope.py --section N` reads the BROKER's manifest, never saw
+# the legs dispatched through here, and served a STALE wave from an earlier
+# round as `all_clean: true`. So this path now tees to the same reviews
+# directory the broker uses and appends the same manifest shape, and the two
+# dispatch routes can no longer disagree about what happened.
+COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
+REVIEWS_DIR="${CODEX_REVIEWS_DIR:-.claude/overnight/reviews}"
+FIRST_LINE="$(printf '%s\n' "$PROMPT" | sed -n '/[^[:space:]]/{p;q;}')"
+KIND="direct"
+if [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\] ]]; then
+    KIND="${BASH_REMATCH[1],,}"
+fi
+TODO_PATH="$(printf '%s\n' "$FIRST_LINE" | grep -oE 'todo/[^[:space:]]+\.md' | head -1 || true)"
+_rest="${FIRST_LINE#*.md}"
+_m="$(printf '%s\n' "$_rest" | grep -oiE "^[[:space:]]*(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
+[[ -n "$_m" ]] || _m="$(printf '%s\n' "$_rest" | grep -oiE "(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
+SECTION="$(printf '%s' "$_m" | grep -oE '[0-9]+' | tail -1 || true)"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+if mkdir -p "$REVIEWS_DIR" 2>/dev/null; then
+    LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-${KIND}-direct.out"
+else
+    LOG_FILE=""
+fi
+if [ -n "$LOG_FILE" ]; then
+    echo "[codex-dispatch] transcript: $LOG_FILE" >&2
+    set -o pipefail
+    node "$COMPANION" adversarial-review "$PROMPT" 2>&1 | tee "$LOG_FILE"
+    rc=$?
+    echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
+    PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
+    TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
+    TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
+    if [ -n "$SECTION" ]; then
+        printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh"}\n' \
+            "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null || true
+    else
+        printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh"}\n' \
+            "$(date +%s)" "$KIND" "$TODO_PATH" "direct:$STAMP" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null || true
+    fi
+    exit "$rc"
+fi
+# No writable reviews directory: behave exactly as before (nothing retained).
+exec node "$COMPANION" adversarial-review "$PROMPT"

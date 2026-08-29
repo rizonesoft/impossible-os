@@ -30,6 +30,13 @@
 #   0  -- ALL logs show "Turn completed"; each verdict + the last tail printed.
 #   3  -- bounded wait elapsed, >=1 review still running AND producing output;
 #         re-invoke to keep going (nothing is lost, reviews run detached).
+#   5  -- bounded wait elapsed AND >=1 pending log path DOES NOT EXIST after
+#         --stale-secs, and no existing log is stale. That is NOT a hung
+#         review (v17 close-out, 2026-08-29: a path reconstructed from the
+#         jobId instead of the broker's logFile was reported as "0 bytes,
+#         likely hung; re-dispatch", and the re-dispatch cost a duplicate
+#         Codex run). Check the path against the broker's `logFile` /
+#         .claude/overnight/reviews/manifest.jsonl before doing anything.
 #   4  -- bounded wait elapsed AND >=1 pending log has not grown for --stale-secs;
 #         that review is likely hung -- consider re-dispatching THAT log only.
 #   2  -- usage error.
@@ -106,6 +113,7 @@ done
 mkdir -p "$ACT_DIR" 2>/dev/null || true
 now=$(date +%s)
 any_stale=0
+any_missing=0
 pending=()
 for f in "${LOGS[@]}"; do
     if { [ -f "$f" ] && grep -q "Turn completed" "$f" 2>/dev/null; }; then
@@ -128,7 +136,11 @@ for f in "${LOGS[@]}"; do
     fi
     printf '%s %s\n' "$size" "$growth_ts" > "$side" 2>/dev/null || true
     stalled=$(( now - growth_ts ))
-    if [ "$stalled" -ge "$STALE" ]; then
+    if [ "$stalled" -ge "$STALE" ] && [ ! -f "$f" ]; then
+        any_missing=1
+        printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
+               "$f" "$stalled"
+    elif [ "$stalled" -ge "$STALE" ]; then
         any_stale=1
         printf '  STALE: %s (%s bytes, no growth for %ss >= %ss -- likely hung; re-dispatch THIS log, keep waiting on the rest)\n' \
                "$f" "$size" "$stalled" "$STALE"
@@ -140,6 +152,10 @@ done
 if [ "$any_stale" -eq 1 ]; then
     echo "STALE after ${elapsed}s -- >=1 pending review produced no new output for >= ${STALE}s (see above)."
     exit 4
+fi
+if [ "$any_missing" -eq 1 ]; then
+    echo "MISSING after ${elapsed}s -- >=1 log path never appeared (see above). A missing file is a wrong path or a review that never started, never a hung one."
+    exit 5
 fi
 echo "STILL RUNNING after ${elapsed}s -- pending: ${pending[*]} -- re-invoke to" \
      "keep waiting (reviews run detached; nothing is lost)."

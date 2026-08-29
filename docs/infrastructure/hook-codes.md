@@ -86,6 +86,8 @@ receipt state so it can never satisfy or queue a review gate.
 
 **What to do:** nothing -- continue the pipeline in the primary worktree. If a change genuinely seems to need an isolated checkout, that is an operator decision: file it in the newest `todo/overnight-runner-improvements/` capture file and advance.
 
+**What it matches (since 2026-08-29):** the INVOCATION, not the text. Heredoc bodies are stripped, the command is split on control operators, env-prefix and wrappers (`env`, `timeout`, `xargs`, `exec`, ...) are walked, `bash -c '...'` is descended, and a segment headed by a data consumer (`echo`, `sed`, `grep`, `python3`, a quoted `git commit -m` message) is never a mutation. So writing SOURCE that quotes `git worktree add` (a heredoc patch, a commit message, a fixture) no longer trips it; running one through any wrapper or chain still does, and a scratch repo under `/tmp` is still blocked because the guard has no safe notion of where a path resolves. Controls: `scripts/overnight/tests/test_worktree_guard.py` (18 must-block, 12 must-allow shapes). Before 2026-08-29 it matched the substring anywhere and was routed around in under a minute (split the literal, `-F msgfile`), which is why it changed.
+
 
 ## CACHE-* (agent_result_cache.py)
 

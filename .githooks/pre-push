@@ -191,17 +191,38 @@ fi
 # paying process startup for it.
 IDENTITY_CLOSURE_RE='^scripts/todo-graph/(corpus_resolution_snapshot|ref_resolution|resolve_symbol|cache_schema|build|snapshot_protocol|producer_differential)\.py$|^scripts/todo-graph/identity-gate\.sh$|^scripts/todo-graph/snapshot_protocol\.json$|^scripts/lint/check_bucket_emission\.py$'
 IDENTITY_HITS="$(pushed_files | sort -u | grep -E "$IDENTITY_CLOSURE_RE" || true)"
-if [ -n "$IDENTITY_HITS" ] && [ -x "$REPO_ROOT/scripts/todo-graph/identity-gate.sh" ]; then
+if [ -n "$IDENTITY_HITS" ]; then
   echo ""
   echo "Pre-push: resolver-closure change in this push -- gating on identity-gate.sh:"
   printf '%s\n' "$IDENTITY_HITS" | sort -u | sed 's/^/  touched: /'
+  # v17 close-out (2026-08-29): this branch used to be conditioned on `-x`, so a
+  # push that flipped the gate to 100644 alongside a real closure change
+  # satisfied IDENTITY_HITS, failed -x, and SKIPPED THE WHOLE BLOCK SILENTLY --
+  # indistinguishable from "no closure change". The gate is always invoked
+  # through `bash` (the mode is irrelevant to what executes, exactly as CI
+  # does at todo-graph.yml), and a gate that cannot run REFUSES rather than
+  # declining quietly.
+  IDENTITY_GATE_SH="$REPO_ROOT/scripts/todo-graph/identity-gate.sh"
+  if [ ! -f "$IDENTITY_GATE_SH" ]; then
+    echo -e "\033[31m  identity-gate.sh is missing from this checkout -- refusing to push a closure change ungated\033[0m"
+    echo "  Opt-out (last resort): SKIP_IDENTITY_GATE=1 git push ..."
+    exit 1
+  fi
   # The FIRST non-deleting ref update's remote oid. A push updating several refs
   # is not a shape this repo makes (main-only, enforced above), and picking one
   # deterministically beats gating an ambiguous union.
+  # ... and that same update's LOCAL oid is the HEAD the gate must adjudicate.
+  # Without `--head` the gate defaults to the checkout's HEAD, which during an
+  # interrupted rebase is a detached replayed commit while `refs/heads/main`
+  # still names the tip being pushed (v17 close-out, 2026-08-29). The gate must
+  # NOT be "fixed" by refusing a detached HEAD: actions/checkout leaves CI
+  # detached by design. The caller simply tells it which commit.
   IDENTITY_BASE=""
+  IDENTITY_HEAD=""
   while read -r _l loid _r roid; do
     [ -n "${loid:-}" ] || continue
     case "$loid" in *[!0]*) : ;; *) continue ;; esac
+    IDENTITY_HEAD="${IDENTITY_HEAD:-$loid}"
     case "${roid:-}" in *[!0]*) IDENTITY_BASE="$roid"; break ;; esac
   done <<< "$STDIN_DATA"
   if [ "${SKIP_IDENTITY_GATE:-}" = "1" ]; then
@@ -214,7 +235,7 @@ if [ -n "$IDENTITY_HITS" ] && [ -x "$REPO_ROOT/scripts/todo-graph/identity-gate.
     # exact failure identity-gate.sh's own --base handling was hardened against.
     echo -e "\033[33m  no remote oid for this ref (first push?) -- no local range to gate; CI will adjudicate\033[0m"
   elif ! IDENTITY_GATE_LAST_GATED_SHA="$IDENTITY_BASE" \
-         bash "$REPO_ROOT/scripts/todo-graph/identity-gate.sh"; then
+         bash "$IDENTITY_GATE_SH" ${IDENTITY_HEAD:+--head "$IDENTITY_HEAD"}; then
     echo ""
     echo -e "\033[31mResolver identity gate failed -- push blocked\033[0m"
     echo "  A resolver/producer change did not pass scripts/todo-graph/identity-gate.sh,"

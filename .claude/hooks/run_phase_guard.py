@@ -213,9 +213,215 @@ def _is_self_teardown(cmd):
 
 _WORKTREE_READONLY = {"list"}
 
+# --- SEQ-WORKTREE classifier: COMMAND POSITION, not substring ---------------
+# v17 close-out (2026-08-29). The previous form shlex-split the whole command
+# and matched any `git` token anywhere, so it fired on a heredoc PAYLOAD that
+# quoted the identity gate's own `git worktree add` line, on a commit MESSAGE
+# describing that change, on a `sed` expression editing it, and on a doc
+# example -- five live blocks across TODO-06 sections 51-55, each routed around
+# in under a minute (split the literal; `-F msgfile`; write the patch to a
+# file first). Two trivial bypasses are the argument for adjudicating the
+# INVOCATION rather than the text. Shape mirrors codex_model_flag_block.py and
+# section_commit_gate.py: heredoc bodies stripped, segments split on control
+# operators, env-prefix and wrappers walked, `bash -c` descended.
+#
+# Refusal direction is preserved on purpose: an env prefix, a wrapper
+# (`timeout`, `env`, `xargs`), a `cd x && ...` chain, an inner `bash -c`, and
+# `git -C /elsewhere` are all still blocked, and a scratch repo under /tmp is
+# still blocked too -- the guard has no safe notion of WHERE a path resolves,
+# and a wrong guess there is a real worktree in the run's tree.
+_SEQ_SEPARATORS = {"&&", "||", ";", ";;", "|", "&"}
+_SEQ_WRAPPERS = {"env", "timeout", "nice", "ionice", "sudo", "doas", "nohup",
+                 "setsid", "command", "exec", "time", "stdbuf", "xargs", "chronic"}
+_SEQ_DATA_CONSUMERS = {"echo", "printf", "cat", "tee", "grep", "egrep", "fgrep",
+                       "rg", "ag", "ack", "sed", "awk", "python", "python3",
+                       "perl", "ruby", "node", "jq", "less", "more", "head",
+                       "tail", "sort", "uniq", "diff", "comm", "test", "[",
+                       "true", "false", "ls", "stat", "wc", "cut", "tr", "cp",
+                       "mv", "touch"}
+_SEQ_GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                       "--exec-path", "--config-env", "--super-prefix"}
+_SEQ_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_SEQ_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _seq_strip_heredoc_bodies(cmd):
+    """Drop every heredoc BODY (opener line kept, terminator consumed) so the
+    payload of `python3 - <<'PY' ... PY` is never tokenized as commands."""
+    lines = (cmd or "").split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        m = _SEQ_HEREDOC_RE.search(line)
+        i += 1
+        if m:
+            term = m.group(2)
+            while i < len(lines) and lines[i].strip() != term:
+                i += 1
+            i += 1  # the terminator line itself
+    return "\n".join(out)
+
+
+def _seq_pad_operators(cmd):
+    """Space-pad UNQUOTED control operators so `a&&git ...` tokenizes as three
+    tokens. Quoted text is left byte-exact."""
+    out, q, i, n = [], None, 0, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if q:
+            out.append(ch)
+            if ch == "\\" and q == '"' and i + 1 < n:
+                out.append(cmd[i + 1])
+                i += 2
+                continue
+            if ch == q:
+                q = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            q = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(cmd[i + 1])
+            i += 2
+            continue
+        two = cmd[i:i + 2]
+        if two in ("&&", "||", ";;"):
+            out.append(f" {two} ")
+            i += 2
+            continue
+        if ch in (";", "|", "&"):
+            out.append(f" {ch} ")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _seq_tokens(cmd):
+    src = _seq_pad_operators(_seq_strip_heredoc_bodies(cmd or ""))
+    try:
+        return shlex.split(src, posix=True, comments=False)
+    except ValueError:
+        return src.split()
+
+
+def _seq_segments(toks):
+    segs, cur = [], []
+    for tok in toks:
+        if tok in _SEQ_SEPARATORS:
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def _seq_trim_subcontent(seg):
+    """Cut a segment at the first token opening shell SUB-CONTENT (`$(`, a
+    backtick, `<(`/`>(`); what follows belongs to another execution context."""
+    for i, tok in enumerate(seg):
+        if tok.startswith(("$(", "`", "<(", ">(")):
+            return seg[:i]
+    return seg
+
+
+def _seq_is_env_assign(tok):
+    if "=" not in tok or tok.startswith("="):
+        return False
+    head = tok.split("=", 1)[0]
+    return bool(head) and (head[0].isalpha() or head[0] == "_") and all(
+        c.isalnum() or c == "_" for c in head)
+
+
+def _seq_strip_prefix(seg):
+    """Walk env assignments and wrapper commands (plus their flags / numeric
+    args) so seg[i] is the real argv[0]."""
+    i = 0
+    while i < len(seg) and _seq_is_env_assign(seg[i]):
+        i += 1
+    while i < len(seg) and os.path.basename(seg[i].rstrip("/")) in _SEQ_WRAPPERS:
+        i += 1
+        while i < len(seg):
+            tok = seg[i]
+            if tok.startswith("-") or _seq_is_env_assign(tok) or tok == "{}":
+                i += 1
+                continue
+            try:
+                float(tok.rstrip("smhd"))
+                i += 1
+                continue
+            except ValueError:
+                break
+    return seg[i:]
+
+
+def _seq_git_argv_is_worktree_mutation(argv):
+    """argv[0] is git: walk git's global options to the subcommand."""
+    j = 1
+    while j < len(argv):
+        tok = argv[j]
+        if tok in _SEQ_GIT_VALUE_OPTS:
+            j += 2
+            continue
+        if tok.startswith("-"):
+            j += 1
+            continue
+        break
+    if j < len(argv) and argv[j] == "worktree":
+        sub = argv[j + 1] if j + 1 < len(argv) else ""
+        return sub not in _WORKTREE_READONLY
+    return False
+
+
+def _seq_segment_is_worktree_mutation(seg):
+    argv = _seq_strip_prefix(_seq_trim_subcontent(seg))
+    if not argv:
+        return False
+    base = os.path.basename(argv[0].rstrip("/"))
+    if base in _SEQ_SHELLS:
+        # Descend into `bash -c '...'` / `sh -ec '...'`: the script is the
+        # first positional after a flag carrying `c`.
+        j, found = 1, False
+        while j < len(argv) and argv[j].startswith("-"):
+            flag = argv[j]
+            if flag == "-c" or (not flag.startswith("--") and "c" in flag[1:]):
+                found = True
+                j += 1
+                break
+            if flag in ("--rcfile", "--init-file", "-O") and "=" not in flag:
+                j += 2
+                continue
+            j += 1
+        if found and j < len(argv):
+            return _is_worktree_mutation(argv[j])
+        return False
+    if base == "git":
+        return _seq_git_argv_is_worktree_mutation(argv)
+    if base in _SEQ_DATA_CONSUMERS:
+        # The rest of this segment is DATA for a text consumer (an echo, a sed
+        # expression, a python argument list): never an invocation.
+        return False
+    # Anything else (an unknown wrapper, `find -exec`, a script name): keep
+    # the old anywhere-scan for this segment so the refusal direction cannot
+    # regress on a shape the prefix walk does not know.
+    for i, tok in enumerate(argv[1:], start=1):
+        if os.path.basename(tok.rstrip("/")) == "git" and \
+                _seq_git_argv_is_worktree_mutation(argv[i:]):
+            return True
+    return False
+
 
 def _is_worktree_mutation(cmd):
-    """True for any mutating `git worktree` subcommand.
+    """True when the command INVOKES a mutating `git worktree` subcommand.
 
     The run executes the PRIMARY worktree and has no legitimate reason to make
     another: the ONE sanctioned repair worktree is created by the operator, in
@@ -223,31 +429,14 @@ def _is_worktree_mutation(cmd):
     subcommand except read-only `list` is tighter than allowlisting a path --
     there is no path the run should be adding.
 
-    Tokenized, and walks git's global options first, so `git -C /elsewhere
-    worktree add` is seen rather than pattern-dodged.
+    Adjudicates the invocation, not the text: see the SEQ-WORKTREE classifier
+    notes above.
     """
-    try:
-        toks = shlex.split(cmd or "")
-    except ValueError:
-        toks = (cmd or "").split()
-    for i, tok in enumerate(toks):
-        if os.path.basename(tok) != "git":
-            continue
-        j = i + 1
-        while j < len(toks):
-            t = toks[j]
-            if t in ("-C", "-c", "--git-dir", "--work-tree", "--namespace",
-                     "--exec-path", "--config-env"):
-                j += 2
-                continue
-            if t.startswith("-"):
-                j += 1
-                continue
-            break
-        if j < len(toks) and toks[j] == "worktree":
-            sub = toks[j + 1] if j + 1 < len(toks) else ""
-            if sub not in _WORKTREE_READONLY:
-                return True
+    if not cmd or not cmd.strip():
+        return False
+    for seg in _seq_segments(_seq_tokens(cmd)):
+        if _seq_segment_is_worktree_mutation(seg):
+            return True
     return False
 
 

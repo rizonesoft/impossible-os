@@ -28,6 +28,32 @@ def test_packet_is_well_formed():
         assert "preflight" in d, d
 
 
+def _mod():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("advance_work", AW)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_cursor_disagreement_is_a_field_not_a_silent_choice():
+    """v17 close-out (2026-08-29): the guard's explicit cursor said 60 while
+    the oracle said 59 and nothing reconciled them. The packet now carries the
+    disagreement; the oracle stays the answer."""
+    m = _mod()
+    todo = "todo/00-infrastructure/TODO-06-x.md"
+    st = {"file": todo, "section_idx": 60, "section_source": "explicit"}
+    d = m._cursor_disagreement(st, todo, {"n": 59, "class": "NEEDS_WORK"})
+    assert d and d["cursor_section_idx"] == 60 and d["oracle_section"] == 59, d
+    # Agreement, a derived cursor, another file, or no next section -> nothing.
+    assert m._cursor_disagreement(st, todo, {"n": 60}) is None
+    assert m._cursor_disagreement({**st, "section_source": "derived"}, todo, {"n": 59}) is None
+    assert m._cursor_disagreement(st, "todo/other.md", {"n": 59}) is None
+    assert m._cursor_disagreement(st, todo, None) is None
+    assert m._cursor_disagreement({}, todo, {"n": 59}) is None
+
+
 if __name__ == "__main__":
     test_packet_is_well_formed()
+    test_cursor_disagreement_is_a_field_not_a_silent_choice()
     print("PASS: advance-work")

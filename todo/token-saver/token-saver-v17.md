@@ -1,5 +1,7 @@
 # Token Saver v17 -- Cost Findings (opened 2026-08-24)
 
+> **CLOSED 2026-08-29.** Superseded by [v18](token-saver-v18.md). The run filed nothing here (0 items). The six-cycle open question was DISCHARGED as assigned, once, by pointing `overnight-log-explorer` at `run-20260826-160133.log`: ungated waste measured at **12-14 of 602 tool calls (2.0-2.3%)**, so the class is real but sits AT the bar rather than above it, and two of its three contributors were fixed by this close-out. Result recorded under the assignment below; the question is RETIRED as a restatement and replaced by a standing close-out measurement in v18.
+
 Cost and token findings from the run armed after the 2026-08-24 close-out of [v16](token-saver-v16.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v18.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.
@@ -20,6 +22,15 @@ Two outcomes, both acceptable, neither of which is "carry it again":
 
 - It finds ungated waste above the 2% bar -> file it here with numbers, and the class is real.
 - It finds none -> record that result with the transcript id and the totals examined, and RETIRE this file's open question permanently.
+
+## Assignment result (2026-08-29 close-out)
+
+- [x] DISCHARGED on transcript `run-20260826-160133` (2026-08-26 16:01 to 2026-08-27 08:02, one section: TODO-06 section 55); every total below re-verified by the main session's own grep.
+  - Totals examined: 602 tool calls (499 Bash, 65 Write, 38 Skill, 0 Read/Grep/Edit/Agent), 23 tool errors, 41 `wait-for-codex-verdict.sh` calls over 29 broker dispatches, 36 full `test_build.sh` runs.
+  - UNGATED WASTE: 12-14 calls, 2.0-2.3%, in three incidents. (1) `( cmd ) & echo started` returns at fork, so an empty log was polled three times, the same shape was repeated once more and polled twice again before the run named it "the documented hazard" (lines 602-611, 6 calls). (2) A review log path built from the `jobId` instead of the broker's returned `logFile` was polled to a false hung verdict twice; round 8 paid a needless re-dispatch (~18 min), round 9 self-caught in ~9 min. (3) One `[SEQ-WORKTREE]` false positive on heredoc data (line 92, 1 call).
+  - NOT waste: 15 of the 23 tool errors were gates working as designed (receiving-review, bare-flag, post-ship block, build-offload reminder), one retry each. No file was re-read at an identical offset; the 131 mentions of `identity-gate.sh` are ~35 distinct slices of a 4,500-line script across 29 review rounds. Zero agent dispatches, so nothing to duplicate.
+  - CONSEQUENCE for the class: a gate-triggered observer cannot report this, but a close-out transcript digest can, cheaply (one Sonnet dispatch, ~138K tokens, 5.6 min). Incidents (2) and (3) are closed by the v17 close-out (`MISSING` waiter exit, command-position worktree guard); incident (1) is a re-learned idiom the sequencer skill already documents, now carried as a v18 measurement (does the subshell false-start recur once the skill is re-read at each relaunch).
+  - The largest cost in the transcript is not waste: 16 hours for one section, 29 Codex rounds and 36 suite reruns, is the mandated convergence loop. Whether that loop is right-sized is a doctrine question, filed nowhere by this digest because the digest was told not to judge it.
 
 ## Found live this cycle
 

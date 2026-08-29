@@ -13,6 +13,7 @@ Per design Q2: this hook reads the SubagentStop event payload first
 harness MAY pass) and falls back to walking transcript_path for the same
 metrics.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -84,6 +85,40 @@ def _walk_transcript_for_subagent(path: str, agent_id: str):
     except Exception:
         return (sub_type, count)
     return (sub_type, count)
+
+
+def _leaf_duration_ms(path: str):
+    """Wall-clock of a subagent from its OWN transcript: last `timestamp` minus
+    first. v17 close-out (2026-08-29), third cycle of the dead duration arm --
+    `duration_ms` was None in 0 of 1955 payloads, and the PreToolUse stamp the
+    v14 proposal assumed was never needed: the leaf transcript carries ISO-8601
+    timestamps on every entry. Returns an int in ms, or None when the leaf is
+    absent, unreadable, or carries fewer than two parseable timestamps."""
+    if not path or not os.path.exists(path):
+        return None
+    first = last = None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                ts = ev.get("timestamp") if isinstance(ev, dict) else None
+                if not isinstance(ts, str):
+                    continue
+                try:
+                    dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if first is None:
+                    first = dt
+                last = dt
+    except Exception:
+        return None
+    if first is None or last is None or last == first:
+        return None
+    return int((last - first).total_seconds() * 1000)
 
 
 def _count_leaf_tool_uses(path: str):
@@ -202,6 +237,10 @@ def main() -> int:
             d.get("transcript_path", ""), d.get("agent_id", ""))
         sub_type = st or "unknown"
         type_fallback_used = True
+    if duration_ms is None:
+        # The harness never sends duration_ms (0 of 1955 payloads); derive it
+        # from the leaf transcript's own timestamps (see _leaf_duration_ms).
+        duration_ms = _leaf_duration_ms(d.get("agent_transcript_path", ""))
     if tool_uses_total is None:
         # The harness did not pass a payload count. Count from the subagent's
         # OWN (leaf) transcript -- `agent_transcript_path` -- where every

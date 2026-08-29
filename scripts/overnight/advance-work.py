@@ -49,6 +49,41 @@ def _json_out(cmd, cwd, timeout=120):
         return None
 
 
+def _load_run_state(root) -> dict:
+    try:
+        return json.loads((root / ".claude/state/sequencer-run.json").read_text()) or {}
+    except Exception:
+        return {}
+
+
+def _cursor_disagreement(state: dict, todo, nxt_sec) -> dict | None:
+    """The guard's EXPLICIT cursor vs the oracle's answer (v17 close-out,
+    2026-08-29). Observed live: the cursor said section 60 (an explicit move
+    that outlived the decision behind it) while the oracle said 59, and the
+    worker was told to trust the packet with nothing reconciling the two. This
+    does not pick a winner -- the oracle stays the packet's answer -- it makes
+    the disagreement a FIELD so a fresh worker sees one fact instead of two
+    confident tools. Only an explicit cursor on the SAME file counts; a derived
+    or stale cursor is the oracle's own echo."""
+    if not isinstance(state, dict) or not nxt_sec or not todo:
+        return None
+    if state.get("section_source") != "explicit":
+        return None
+    if state.get("file") != todo:
+        return None
+    try:
+        cur = int(state.get("section_idx") or 0)
+        want = int(nxt_sec.get("n"))
+    except (TypeError, ValueError):
+        return None
+    if cur <= 0 or cur == want:
+        return None
+    return {"cursor_section_idx": cur, "oracle_section": want,
+            "note": (f"explicit cursor says section {cur}, oracle says {want}: "
+                     f"the oracle is the packet's answer; repoint the cursor "
+                     f"(run_phase_guard.py cursor ... {want}) before starting")}
+
+
 def main(argv) -> int:
     root = Path(argv[argv.index("--project") + 1]).resolve() \
         if "--project" in argv else Path(".").resolve()
@@ -95,6 +130,9 @@ def main(argv) -> int:
     }
     if nxt_sec:
         packet["next_section"] = nxt_sec
+    dis = _cursor_disagreement(_load_run_state(root), todo, nxt_sec)
+    if dis:
+        packet["cursor_disagreement"] = dis
 
     # 3. section pack for the next open section (the big orientation win)
     if do_pack and nxt_sec:

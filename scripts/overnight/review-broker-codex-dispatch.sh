@@ -20,6 +20,30 @@
 # logFile IN-SESSION for the "Turn completed" sentinel (blocking sleep loop).
 set -euo pipefail
 
+# Section attribution from the prompt's FIRST line. v17 close-out (2026-08-29):
+# the previous pattern spelled the section sign as a backslash-x byte escape
+# inside double quotes, which bash does not interpret and ERE has no escape for, so the `§`
+# branch NEVER matched and a sign-marked prompt took whatever `section NN`
+# appeared later in the line -- observed attributing one section's leg to another.
+# Now a real UTF-8 `§`, and the marker must be the first thing after the TODO
+# path; a mention later in the line is used only when nothing follows the path.
+# Exposed as `--section-of '<line>'` so the rule is testable without a dispatch.
+_broker_section_of() {
+    local line="$1" rest m
+    rest="${line#*.md}"
+    m="$(printf '%s\n' "$rest" | grep -oiE "^[[:space:]]*(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
+    if [[ -z "$m" ]]; then
+        m="$(printf '%s\n' "$rest" | grep -oiE "(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
+    fi
+    printf '%s' "$m" | grep -oE '[0-9]+' | tail -1 || true
+}
+if [[ "${1:-}" == "--section-of" ]]; then
+    [[ $# -eq 2 ]] || { echo "usage: $0 --section-of '<first prompt line>'" >&2; exit 2; }
+    _broker_section_of "$2"
+    echo
+    exit 0
+fi
+
 if [[ $# -ne 1 ]]; then
     echo "Usage: $0 '<[review-kind: X] todo-path body>'" >&2
     exit 2
@@ -68,7 +92,7 @@ TODO_PATH="$(printf '%s\n' "$FIRST_LINE" | grep -oE 'todo/[^[:space:]]+\.md' | h
 # from the same TODO. The prompt already names the section; record it so
 # review-envelope.py --section can filter. Separator set matches the
 # codex_review_completed.py recogniser (space, dash, underscore, colon).
-SECTION="$(printf '%s\n' "$FIRST_LINE" | grep -oE "(section[[:space:]_:-]*|\xc2\xa7[[:space:]]*)[0-9]+" | head -1 | grep -oE '[0-9]+' | tail -1 || true)"
+SECTION="$(_broker_section_of "$FIRST_LINE")"
 
 COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
 [[ -f "$COMPANION" ]] || { echo "ERROR: codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
@@ -112,12 +136,19 @@ else
 fi
 
 PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
+# Which TREE did this leg examine? (v16 carry, closed 2026-08-29.) Two legs once
+# disagreed because one read the index and the other the working tree, and
+# nothing in the artifacts could say so. Record HEAD, the index tree and a
+# working-tree digest at dispatch time; all three are advisory strings.
+TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
+TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
 if [[ -n "$SECTION" ]]; then
-  printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s"}\n' \
-    "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
+  printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s"}\n' \
+    "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$MANIFEST"
 else
-  printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s"}\n' \
-    "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
+  printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s"}\n' \
+    "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$MANIFEST"
 fi
 
 printf '{"kind": "%s", "jobId": "%s", "logFile": "%s", "manifest": "%s"}\n' \

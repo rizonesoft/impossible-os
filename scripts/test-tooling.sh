@@ -748,6 +748,33 @@ assert_grep "build.sh WRITES the sentinel (not just mentions it)" \
 # the generator against the live todo/ tree + a synthetic malformed
 # fixture. Shell out to it as a single combined check so failures bubble
 # into this aggregate runner without re-implementing each assertion.
+# Nested-suite failure DETAIL (v17 close-out, 2026-08-29). Every nested suite
+# below is captured into a variable and reported by its TALLY line only, so the
+# suite's own `[FAIL]` lines -- the one artifact that names the failing
+# assertion -- were discarded with the variable. Measured cost: four consecutive
+# pre-push refusals of `test_build.sh 827/828` against nine green standalone
+# runs (~4,500s) to prove they were not regressions, and two earlier pack-only
+# refusals (~2,280s) that were never attributed at all. Emitted ONLY on the
+# failing path, after t_fail has already fired: this adds the diagnostic and
+# never changes a verdict. The full nested output is kept under the artifact
+# directory (gitignored) and its path is printed so a hook refusal can be
+# triaged from the push log alone.
+_TT_NESTED_LOG_DIR="${TEST_TOOLING_NESTED_LOG_DIR:-$REPO_ROOT/.claude/overnight/artifacts}"
+_tt_nested_fail_detail() {
+    local name="$1" out="$2" stamp log
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    log="$_TT_NESTED_LOG_DIR/nested-${name}-${stamp}.log"
+    if mkdir -p "$_TT_NESTED_LOG_DIR" 2>/dev/null && printf '%s\n' "$out" > "$log" 2>/dev/null; then
+        echo "    full nested output: $log"
+    else
+        echo "    (could not write nested output under $_TT_NESTED_LOG_DIR)"
+    fi
+    # The lines that name the defect. Bounded so a cascade cannot flood the push
+    # log; the file above carries everything.
+    printf '%s\n' "$out" | grep -E '^\[FAIL\]|(^|[[:space:]])FAIL[: ]|rc=13[0-9]|Traceback|Error:' \
+        | grep -vE '^\[test_build\] ' | head -20 | sed 's/^/    | /'
+}
+
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
 TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
 if ! _tt_suite_needed "todo-graph (test_build.sh, ~252s)" "$_TT_TRIG_TODO_GRAPH"; then
@@ -764,6 +791,7 @@ elif [ -x "$TODO_GRAPH_TEST" ]; then
         t_pass "scripts/todo-graph/tests/test_build.sh PASS (${TG_SUMMARY:-summary unavailable})"
     else
         t_fail "scripts/todo-graph/tests/test_build.sh FAIL (${TG_SUMMARY:-run directly for details})"
+        _tt_nested_fail_detail "test_build" "$TG_OUT"
     fi
 else
     t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
@@ -782,6 +810,7 @@ if [ -f "$FMT_TABLE_TEST" ]; then
         t_pass "scripts/tests/test_format_md_tables.py PASS ($(printf '%s\n' "$FMT_OUT" | tail -1))"
     else
         t_fail "scripts/tests/test_format_md_tables.py FAIL ($(printf '%s\n' "$FMT_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_format_md_tables" "$FMT_OUT"
     fi
 else
     t_fail "scripts/tests/test_format_md_tables.py not found"
@@ -800,6 +829,7 @@ if [ -f "$FENCE_TEST" ]; then
         t_pass "scripts/tests/test_todo_fence.py PASS ($(printf '%s\n' "$FENCE_OUT" | tail -1))"
     else
         t_fail "scripts/tests/test_todo_fence.py FAIL ($(printf '%s\n' "$FENCE_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_todo_fence" "$FENCE_OUT"
     fi
 else
     t_fail "scripts/tests/test_todo_fence.py not found"
@@ -819,6 +849,7 @@ if [ -f "$ALIAS_TEST" ]; then
         t_pass "scripts/tests/test_alias_staleness.py PASS ($(printf '%s\n' "$ALIAS_OUT" | tail -1))"
     else
         t_fail "scripts/tests/test_alias_staleness.py FAIL ($(printf '%s\n' "$ALIAS_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_alias_staleness" "$ALIAS_OUT"
     fi
 else
     t_fail "scripts/tests/test_alias_staleness.py not found"
@@ -838,6 +869,7 @@ if [ -x "$QUERY_BOUNDS_TEST" ]; then
         t_pass "scripts/todo-graph/tests/test_query_bounds.sh PASS (${QB_SUMMARY:-summary unavailable})"
     else
         t_fail "scripts/todo-graph/tests/test_query_bounds.sh FAIL (${QB_SUMMARY:-run directly for details})"
+        _tt_nested_fail_detail "test_query_bounds" "$QB_OUT"
     fi
 else
     t_fail "scripts/todo-graph/tests/test_query_bounds.sh not found or not executable"

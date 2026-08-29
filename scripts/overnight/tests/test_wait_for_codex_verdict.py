@@ -137,6 +137,28 @@ def test_bare_number_arg_ignored_not_phantom_log():
         assert "ignoring bare number '300'" in r.stderr, r.stderr
 
 
+def test_missing_path_is_reported_as_missing_not_hung():
+    """v17 close-out (2026-08-29): a path reconstructed from the jobId instead of
+    the broker's logFile was reported as `0 bytes ... likely hung; re-dispatch`,
+    and the re-dispatch cost a duplicate Codex run. A nonexistent path is now
+    MISSING (exit 5), never STALE (exit 4); an existing stale log beside it
+    still wins as STALE (refusal direction unchanged)."""
+    with tempfile.TemporaryDirectory() as d:
+        missing = pathlib.Path(d) / "reconstructed-from-jobid.out"
+        _run(missing, maxw=1, stale=1)           # first sight starts the clock
+        time.sleep(2)
+        r = _run(missing, maxw=1, stale=1)
+        assert r.returncode == 5, (r.returncode, r.stdout, r.stderr)
+        assert "MISSING:" in r.stdout and "likely hung" not in r.stdout, r.stdout
+        real = pathlib.Path(d) / "real.out"
+        real.write_text("x")
+        _run(missing, real, maxw=1, stale=1)
+        time.sleep(2)
+        r = _run(missing, real, maxw=1, stale=1)
+        assert r.returncode == 4, (r.returncode, r.stdout)
+        assert "STALE:" in r.stdout and "MISSING:" in r.stdout, r.stdout
+
+
 if __name__ == "__main__":
     test_sentinel_present_returns_done()
     test_no_sentinel_returns_still_running()
@@ -148,4 +170,5 @@ if __name__ == "__main__":
     test_growth_resets_stall_clock()
     test_still_running_reports_activity()
     test_bare_number_arg_ignored_not_phantom_log()
+    test_missing_path_is_reported_as_missing_not_hung()
     print("PASS: wait-for-codex-verdict (B1 + B2 + J2a)")

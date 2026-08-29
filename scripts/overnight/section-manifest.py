@@ -288,6 +288,21 @@ def validate_split_waiver(waiver: object, tight: bool = False) -> tuple:
     return (not missing, missing)
 
 
+def _bss_headroom_advisory(root: Path):
+    """Load scripts/overnight/bss-headroom.py (dash in the name) and return its
+    headroom dict, or None on any failure -- advisory only."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "bss_headroom", Path(__file__).resolve().parent / "bss-headroom.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        h = mod.headroom(Path(root))
+        return h if isinstance(h, dict) else None
+    except Exception:
+        return None
+
+
 def main(argv) -> int:
     if len(argv) >= 1 and argv[0] == "waiver-check":
         # section-manifest.py waiver-check <waiver.json>  -- exit 0 iff structured.
@@ -414,6 +429,16 @@ def main(argv) -> int:
     if kernelish:
         gates.insert(0, "kernel-code-quality gates (auto)")
         gates.append("kernel-quality-auditor (review step 7)")
+    # BSS-to-USER_BASE headroom, ADVISORY (v16 carry, wired 2026-08-29). The
+    # sensor shipped at the v16 close-out and nothing called it, so a section
+    # about to add kernel .text/.rodata/.bss still discovered the ceiling late
+    # (at least five sections historically). Kernel-touching sections only; a
+    # roomy tree adds no gate line, and a missing map is not a finding.
+    bss = _bss_headroom_advisory(root) if kernelish else None
+    if bss and bss.get("tight"):
+        gates.append(f"BSS headroom is TIGHT: {bss.get('headroom_bytes')} bytes below "
+                     f"USER_BASE (scripts/overnight/bss-headroom.py) -- size any new "
+                     f"kernel static data BEFORE implementing")
     if bootish:
         gates.insert(0, "boot-code-quality gates (auto)")
         gates.append("smoke test (boot-path change)")
@@ -551,6 +576,7 @@ def main(argv) -> int:
         # current bytes, not index blobs.
         "blob_hashes": blobs,
         "complexity": complexity,
+        "bss_headroom": bss,
         "enrich_with": ("kernel-explorer" if (kernelish or bootish)
                         else "section-context-mapper"),
     }

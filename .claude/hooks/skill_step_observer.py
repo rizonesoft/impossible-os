@@ -165,6 +165,33 @@ def _signature_for_tool(tool_name: str, ti: Dict) -> str:
     return ""
 
 
+def _step19_commit_is_ours(ti: Dict) -> bool:
+    r"""Step 19 (the section commit) must be a `git commit` INTO THIS PROJECT.
+
+    v17 close-out (2026-08-29): the step-19 rule is `\bgit\s+commit\b` over the
+    whole Bash text, so a multi-line call that set up a THROWAWAY repo under
+    /tmp and committed into it was recorded as the section's terminal commit
+    (evidence_token = the call's first line, `cd /tmp && rm -rf s59seed ...`),
+    and the very next tool call was blocked for skipping steps 7/13/16 that
+    had simply not happened yet. skill_step_block already refuses to GATE on
+    such a commit (`_commit_is_in_project`); the observer must not RECORD it
+    either, or the two disagree about what the run has done. Fails CLOSED to
+    recording (True) on any import or classification error, matching the
+    block hook's own direction.
+    """
+    cmd = (ti.get("command") or "")
+    try:
+        import section_commit_gate as scg  # noqa: E402
+        import skill_step_block as ssb  # noqa: E402
+        scg._ensure_crc()
+        is_commit, _ = scg._bash_is_git_commit(cmd)
+        if not is_commit:
+            return False
+        return ssb._commit_is_in_project(cmd)
+    except Exception:
+        return True
+
+
 def _evidence_token(tool_name: str, ti: Dict) -> str:
     """Short token captured for traceability. For Bash, classify into a
     one-line `kind: head` shape (build / test / smoke / dispatch / lint
@@ -574,6 +601,8 @@ def main() -> int:
         seen = {x.get("n") for x in so if isinstance(x, dict)}
         for n in matched:
             if n in seen:
+                continue
+            if n == 19 and tn == "Bash" and not _step19_commit_is_ours(ti):
                 continue
             so.append({
                 "n": n,
