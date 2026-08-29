@@ -472,6 +472,14 @@ From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-
   - Assert this boot's crash REGION is still allocated afterwards. The two allocations are independent, and a regression conflating them would disable crash persistence for the NEXT boot while every existing test stayed green.
   - Cover the allocation-PRIORITY path specifically, under a constrained contiguous heap: the 41-frame recovered pool is taken before the 32-frame crash region, so a fragmentation test must prove recovery can never leave this boot with crash logging unarmed, and that the fallback which releases the pool actually re-arms it.
 
+From `01-boot-platform/TODO-24` sections 5 and 10 (BlackBox klog follow-ups, 2026-08-29) -- both sat as bare `- [ ]` inside Deferred sections of a file the oracle classes DONE, so nothing would ever revisit them:
+- [ ] **klog_disk_flush re-entrancy guard on the C: fallback path** <- XREF: 01-boot-platform/TODO-24 §5
+  - `klog()` calls `klog_disk_flush()`, which calls `vfs_open()`/`vfs_write()` against `klog_dir`. On the `C:\Impossible\System\Logs\` (IXFS) fallback, a `klog()` from inside an IXFS read/write path re-enters VFS/IXFS synchronously.
+  - Fix shape: a per-CPU `klog_in_disk_flush` flag in `src/kernel/klog_disk.c`, or a `klog_no_flush()` variant used from fs-layer emitters.
+  - Do not land it until the sole-C:\ (BlackBox-mount-failed) boot is reproduced under fault injection -- the hazard is latent while X:\ mounts, which is why the original 2026-04-18 review could not exercise it. Regression test builds on `00-infrastructure/TODO-03` §1 `test_add_fault` + §6.
+- [ ] **Durable low-space C: fallback for the critical-low redirect** (`klog_disk.c`) <- XREF: 01-boot-platform/TODO-24 §10
+  - Add a sticky `klog_blackbox_forced_off` flag honored by `klog_resolve_dir`, so a critical-low redirect to C:\ survives the later resolve that currently re-sets `klog_using_blackbox`.
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

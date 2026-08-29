@@ -184,12 +184,18 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 - [x] Fallback: if X:\ not mounted, falls back to C:\ with warning `"BlackBox not mounted, using C:\\ for logs"`
 - [x] `ensure_log_dirs()` skipped when using BlackBox (X:\Logs\ created by boot skeleton §4)
 - [x] `KLOG_SERIAL_DIR` built dynamically from `klog_dir + "Serial\\"`
-- [ ] **klog_disk_flush re-entrancy guard when C:\ fallback is active.** `klog()` calls `klog_disk_append()` + `klog_disk_flush()` after the serial emission; `klog_disk_flush()` in turn calls `vfs_open()` / `vfs_write()` against `klog_dir`. When `klog_using_blackbox=0` and `klog_dir` falls back to `C:\Impossible\System\Logs\` (IXFS), a `klog()` call from inside an IXFS read/write path (e.g. `ixfs_checksum_verify()`) re-enters VFS/IXFS synchronously. Work: add a per-CPU `klog_in_disk_flush` flag (or check existing vfs/ixfs-in-flight marker) in `src/kernel/klog_disk.c` `klog_disk_flush()`, or add a `klog_no_flush()` variant used from fs-layer emitters. Flagged by diagnose-serial-log Codex review 2026-04-18 (X:\ mounted in the captured log, so the path was not exercised, but the hazard is latent when BlackBox mount fails). Do not land a fix until the sole-C:\ boot scenario is reproduced and tested. The reentrancy regression test lands in this TODO's Unit Tests alongside the guard, built on the kmalloc/VFS fault-injection infrastructure from `00-infrastructure/TODO-03-kernel-test-harness.md` §1 (`test_add_fault`) + §6 (fault-injection hardening) to force the sole-C:\ (BlackBox-absent) path.
-- [ ] **Durable-write + write-success honesty retrofit for X:\ diagnostic writers.** Three writers ack success without a durability / exact-length boundary, so a failed or non-durable write is silently treated as done:
+- [/] `klog_disk_flush` re-entrancy guard when the C:\ fallback is active -> XREF: 02-kernel-core/TODO-04 §15 (item: "klog_disk_flush re-entrancy guard on the C: fallback path")
+  - `klog()` calls `klog_disk_append()` + `klog_disk_flush()` after the serial emission, and `klog_disk_flush()` calls `vfs_open()` / `vfs_write()` against `klog_dir`.
+  - With `klog_using_blackbox=0` and `klog_dir` fallen back to `C:\Impossible\System\Logs\` (IXFS), a `klog()` from inside an IXFS read/write path (e.g. `ixfs_checksum_verify()`) re-enters VFS/IXFS synchronously.
+  - Work: a per-CPU `klog_in_disk_flush` flag (or an existing vfs/ixfs-in-flight marker) in `src/kernel/klog_disk.c` `klog_disk_flush()`, or a `klog_no_flush()` variant used from fs-layer emitters.
+  - Blocker: do not land a fix until the sole-C:\ boot scenario is reproduced. Flagged by a diagnose-serial-log Codex review 2026-04-18; X:\ was mounted in the captured log so the path was never exercised, and the hazard stays latent until a BlackBox mount fails.
+  - The reentrancy regression test lands with the guard, built on `00-infrastructure/TODO-03` §1 (`test_add_fault`) + §6 fault-injection hardening to force the BlackBox-absent path.
+- [/] **Durable-write + write-success honesty retrofit for X:\ diagnostic writers.** Three writers ack success without a durability / exact-length boundary, so a failed or non-durable write is silently treated as done:
   - `append_health_record` return is discarded (`src/kernel/main/boot_health_check.c:629`), then `mark_entry_successful_from_ctr()` writes `ImpossibleOS-MarkGood` on PASS (`boot_health_check.c:640-645`); the helper does `vfs_write()` + `vfs_close()` with no `vfs_flush()`, so a non-durable health record can still let the next boot consume MarkGood and DELETE the boot counter (irreversible boot-state). Safety-relevant, not cosmetic.
   - `audit_write_sequence` / `audit_append_file` (`src/kernel/main/boot_audit.c`) ack NVRAM triggers after write+close alone (same gap; durable-write predicate prototyped in a held git-stash).
   - `wer_write_crash_report` (`src/kernel/wer.c:175-181`, the §13 WER producer -- XREF §13) ignores the `vfs_write`/`vfs_close` returns, has no `vfs_flush`, and logs `"Crash report: ..."` success whenever `vfs_open` succeeded, so a truncated/empty report reads as staged.
   - Work: add a shared `boot_durable_write_ok(wr, expected, flush, close)` predicate; gate each writer on exact-length `vfs_write` + `vfs_flush()` + clean `vfs_close` (boundary from `01-boot/TODO-12` §6) and log an explicit failure path instead of false success.
+  - Parked, and the MarkGood-gating half is `operator-gated`: whether a non-durable health record may still let the next boot consume MarkGood and delete the boot counter is an irreversible boot-state policy call, not an implementation choice. The retrofit itself is TODO-24-owned with no external blocker.
   - **DEFER (operator-reserved decision; NOT a run-stop):** whether MarkGood must be gated on the durable health-record write (is `X:\Boot\health.jsonl` authoritative for the mark-good decision?) is a deliberate design decision reserved for the operator. The unattended runner must DEFER this sub-item (`[/]` + Deferred stamp + XREF to this line) and ADVANCE -- it must NOT stop, disarm, or decide it autonomously (per `todo/TODO-Claude-Overnight-Runner.md` session-exit policy). The decoupled-choice WIP is held in a git stash pending operator confirm. The write-honesty fix for the audit + WER writers is NOT blocked by this and may proceed.
 - [x] Commit: `"kernel: migrate klog output from C:\\ to X:\\Logs\\"`
 
@@ -313,11 +319,13 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [x] MaxBootSessions = 10, MinFreeMiB = 16 (hardcoded defaults, TODO: wire to registry)
 - [x] Cleanup log: `"BlackBox: cleanup freed N KiB (N files removed)"`
 - [/] If critically low after cleanup: LOG_ERROR fires, but the C:\ redirect (`klog_using_blackbox=0`) is defeated by `klog_resolve_dir()` at `boot_storage.c:607` re-setting the flag -- durable-fallback fix deferred below
-- [ ] Durable low-space C:\ fallback: add a sticky `klog_blackbox_forced_off` flag honored by `klog_resolve_dir` so the §10 critical-low redirect survives the later resolve (fixes the `[/]` item above). (`klog_disk.c`)
-- [ ] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
-- [ ] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
-- [ ] Budget + batch the unbounded Logs\ delete loop (`boot_storage.c` ~414): bounded victim list, cap per-boot deletes/bytes/time, pet `boot_progress()` between batches -- a full volume can stall boot past the WDAT watchdog.
-- [ ] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
+- [/] Durable low-space C:\ fallback: sticky `klog_blackbox_forced_off` honored by `klog_resolve_dir` -> XREF: 02-kernel-core/TODO-04 §15 (item: "Durable low-space C: fallback for the critical-low redirect")
+  - Fixes the `[/]` item above: the critical-low redirect must survive the later `klog_resolve_dir` call that re-sets the flag. (`klog_disk.c`)
+- [/] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
+- [/] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
+- [/] Budget + batch the unbounded Logs\ delete loop (`boot_storage.c` ~414): bounded victim list, cap per-boot deletes/bytes/time, pet `boot_progress()` between batches -- a full volume can stall boot past the WDAT watchdog.
+- [/] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
+  - The four `boot_storage.c` items above are parked, not blocked: they are TODO-24-owned follow-ups with no external prerequisite. Re-opening this file is what they wait on, so they carry no cross-TODO owner and the stranded-deferral sweep will not surface them.
 - [x] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
@@ -364,10 +372,14 @@ FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed
 - [x] `fat32_mark_dirty()` sets dirty on mount (new `fat32_set_dirty_marker()`)
 - [x] `fat32_mark_clean()` clears dirty in `acpi_shutdown()` before power-off
 - [x] Public API: `fat32_is_dirty/mark_dirty/mark_clean/run_fsck` in `fat32.h`
-- [ ] FAT[1] high-nibble preservation: dirty/clean markers (`fat32_core.c:224`) read FAT[1] 28-bit-masked then write it, zeroing reserved bits 28-31 -- read+write raw 32-bit, toggle only bit 27. [§12]
-- [ ] FAT marker write error propagation: `mark_dirty`/`mark_clean` are void + bail mid-mirror; a torn clean-marker reads false-clean next mount + skips fsck -- return status, fail not-clean. [§12]
-- [ ] fsck cycle guard (`fat32_fsck.c:154`): `walk_directory` recurses into a dir's first cluster with no visited-check -- a cycle drives unbounded recursion (stack exhaustion). [§12]
-- [ ] fsck BPB geometry validation (`fat32_fsck.c:227`): repair never checks `fat_size_sectors` covers the cluster range -- a forged tiny-FAT BPB writes data sectors as FAT. [§12]
+- [/] FAT[1] high-nibble preservation in the dirty/clean markers -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "FAT[1] high-nibble preservation")
+  - `fat32_core.c:224` reads FAT[1] 28-bit-masked and writes it back, zeroing reserved bits 28-31. Read and write the raw 32-bit value and toggle only bit 27.
+- [/] FAT marker write error propagation -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "FAT marker write error propagation")
+  - `mark_dirty`/`mark_clean` are void and bail mid-mirror, so a torn clean-marker reads false-clean on the next mount and skips fsck. Return status and fail not-clean.
+- [/] fsck cycle guard for `walk_directory` -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "fsck cycle guard")
+  - `fat32_fsck.c:154` recurses into a directory's first cluster with no visited-check, so a cycle drives unbounded recursion and exhausts the stack.
+- [/] fsck BPB geometry validation before repair -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "fsck BPB geometry validation")
+  - `fat32_fsck.c:227` never checks that `fat_size_sectors` covers the cluster range, so a forged tiny-FAT BPB makes repair write data sectors as FAT.
 - [x] Commit: `"kernel: BlackBox FAT32 dirty-bit check and optional fsck on mount"`
 
 **Test checkpoint:** Force unclean shutdown (kill QEMU mid-write). Next boot: serial shows "partition dirty" warning. After clean shutdown: no warning. Verify on QEMU WHPX, TCG.
@@ -398,8 +410,9 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 - [x] Wired into the user-fault exception terminal (`except.c`, before `panic_screen`); the idt.c unhandled-vector fallback is `panic_screen`-only (TODO-23 §12)
 - [x] Filename: `PID_YYYYMMDDHHMMSS.json` (timestamp from wall clock)
 - [x] Falls back to C:\ when BlackBox not mounted
-- [ ] WER in exception path: `wer_write_crash_report` (`except.c` user-fault terminal) does vfs I/O in the fault handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
-- [ ] WER open-failure observability: on `vfs_open` NULL the writer returns silently -- emit a panic-safe serial-only diagnostic (normal `klog` may re-enter VFS here). [§13]
+- [/] WER in exception path: `wer_write_crash_report` (`except.c` user-fault terminal) does vfs I/O in the fault handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
+- [/] WER open-failure observability: on `vfs_open` NULL the writer returns silently -- emit a panic-safe serial-only diagnostic (normal `klog` may re-enter VFS here). [§13]
+  - Both WER items are parked without a cross-TODO owner ON PURPOSE: the code lives in `except.c` / `wer.c`, which `02-kernel-core/TODO-23` owns, but none of its three open sections (18 unwind fixtures, 19 telemetry flavor, 20 kernel-SEH arming) covers WER persistence, and filing into a stamped one is a black hole. Naming an owner would need a new section there.
 - [x] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
 **Test checkpoint:** Trigger a user-mode general fault that routes through `except.c` (e.g. `#UD` from an illegal instruction). `X:\Crash\WER\` contains a JSON report with PID, exception code, and the crash frames. Note: a NULL dereference is a `#PF` handled by `vmm.c`, whose terminal emits only the serial WER line (`WerpReportFault`), not a JSON report -- a safe JSON path for #PF is deferred with the exception-path VFS-safety work (TODO-23 §12 design decision). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -449,7 +462,8 @@ Update cross-references across affected TODOs.
 - [/] `TODO-04-release-qa.md` (domain 15): crash dump collection PARTLY updated -- line 356 still references `CrashDumps\` (deferred below)
 - [x] `TODO-24` current state block: updated from 2-partition to 3-partition
 - [x] CLAUDE.md: no stale references (does not mention partition layout)
-- [ ] Finish cross-domain crash-dump sync: `CrashDumps\` -> `X:\Crash\` in TODO-04-restore-recovery + TODO-04-release-qa; add reciprocal TODO-24 owner XREFs to TODO-27-crash-dump-generation (§7) + TODO-27-uefi-advanced (§8). [§15]
+- [/] Finish cross-domain crash-dump sync: `CrashDumps\` -> `X:\Crash\` in TODO-04-restore-recovery + TODO-04-release-qa; add reciprocal TODO-24 owner XREFs to TODO-27-crash-dump-generation (§7) + TODO-27-uefi-advanced (§8). [§15]
+  - Parked: TODO-24-owned bookkeeping spanning four other TODO files, no external blocker. Left for a pass that re-opens this file rather than done piecemeal from a drain.
 - [x] Commit: `"docs: update XREFs for BlackBox partition migration"`
 
 **Test checkpoint:** All referenced TODO files have correct XREFs. No stale `C:\Impossible\System\Logs\` references remain in active TODO files.
