@@ -818,45 +818,126 @@ static void test_random_seed_clone_degraded(void)
 static void test_boot_seed_desc_classify(void)
 {
     const uint32_t vr = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+    const uint32_t CAPS = BOOT_CAP_PAYLOAD_DESCRIPTORS;
 
     /* VALID-only (never PMM-pinned): untouchable regardless of range --
      * the round-2 adversarial regression case. */
-    TEST_ASSERT_EQ(boot_seed_desc_classify(BOOT_PAYLOAD_FLAG_VALID,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, BOOT_PAYLOAD_FLAG_VALID,
                                            0x5000ull, 256ull),
                    (uint32_t)BOOT_SEED_DESC_NOT_RESERVED,
                    "VALID-only descriptor is not consumable");
 
     /* Out of the 4 GiB identity map: start above, and length crossing. */
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, BOOT_INFO_EARLY_MAP_END,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, BOOT_INFO_EARLY_MAP_END,
                                            256ull),
                    (uint32_t)BOOT_SEED_DESC_OUT_OF_MAP,
                    "start at map end is out of map");
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr,
                                            BOOT_INFO_EARLY_MAP_END - 64ull,
                                            65ull),
                    (uint32_t)BOOT_SEED_DESC_OUT_OF_MAP,
                    "range crossing map end is out of map");
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr,
                                            BOOT_INFO_EARLY_MAP_END - 64ull,
                                            64ull),
                    (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
                    "range ending exactly at map end passes the map gate");
 
     /* Length contract: below header, above cap, and both boundaries. */
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull, 31ull),
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull, 31ull),
                    (uint32_t)BOOT_SEED_DESC_BAD_LENGTH,
                    "31 bytes below header size");
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull,
                                            BOOT_SEED_PAYLOAD_CAP + 1ull),
                    (uint32_t)BOOT_SEED_DESC_BAD_LENGTH,
                    "cap+1 above contract");
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull, 32ull),
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull, 32ull),
                    (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
                    "header-sized payload consumable");
-    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull,
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull,
                                            BOOT_SEED_PAYLOAD_CAP),
                    (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
                    "cap-sized payload consumable");
+
+    /* CAPABILITY gate -- checked BEFORE FLAG_RESERVED, so a descriptor
+     * that would otherwise be perfectly CONSUMABLE is still refused.
+     * These are the OBSERVABLE-SEAM assertions: delete the capability
+     * branch in boot_seed_desc_classify and this block fails, which is
+     * exactly what the equivalent TPM headless-authorization branch did
+     * NOT have when deleting it left the whole suite green. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(0u, vr, 0x5000ull, 256ull),
+                   (uint32_t)BOOT_SEED_DESC_NO_CAPABILITY,
+                   "caps clear refuses an otherwise-consumable descriptor");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(~(uint32_t)BOOT_CAP_PAYLOAD_DESCRIPTORS,
+                                           vr, 0x5000ull, 256ull),
+                   (uint32_t)BOOT_SEED_DESC_NO_CAPABILITY,
+                   "every OTHER capability bit set is still a refusal");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull, 256ull),
+                   (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
+                   "control: same descriptor consumable once caps negotiated");
+    /* A REAL handoff carries several negotiated capabilities at once, so
+     * pin that the gate is a MASK TEST and not an equality check -- an
+     * equality regression would pass every assertion above and then
+     * reject every normal boot. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS | BOOT_CAP_RUNTIME_SERVICES,
+                                           vr, 0x5000ull, 256ull),
+                   (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
+                   "caps bit alongside others is still consumable");
+    /* Maximal length: the map bound is written as a subtraction against
+     * BOOT_INFO_EARLY_MAP_END precisely so it cannot wrap. Pin it, or an
+     * overflow-shaped rewrite could classify a wrapping descriptor as
+     * BAD_LENGTH and wipe low memory through that class. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(CAPS, vr, 0x5000ull, ~0ull),
+                   (uint32_t)BOOT_SEED_DESC_OUT_OF_MAP,
+                   "a maximal length is out-of-map, never bad-length");
+
+    /* Precedence: caps outranks the other three refusals, so the reason
+     * reported is the one a reader can act on. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(0u, BOOT_PAYLOAD_FLAG_VALID,
+                                           BOOT_INFO_EARLY_MAP_END, 1ull),
+                   (uint32_t)BOOT_SEED_DESC_NO_CAPABILITY,
+                   "caps refusal outranks NOT_RESERVED and OUT_OF_MAP");
+
+    /* Disposition seam: what each class permits, as DATA. */
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_NO_CAPABILITY,
+                                           4096ull), 0ull,
+                   "no-capability descriptor is not even wiped");
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_NOT_RESERVED,
+                                           4096ull), 0ull,
+                   "unreserved descriptor is not wiped");
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_OUT_OF_MAP,
+                                           4096ull), 0ull,
+                   "out-of-map descriptor is not wiped");
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_CONSUMABLE,
+                                           4096ull), 4096ull,
+                   "consumable payload wipes its full length");
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_BAD_LENGTH, 31ull),
+                   31ull,
+                   "short bad-length payload wipes exactly its own bytes");
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_BAD_LENGTH,
+                                           BOOT_SEED_PAYLOAD_CAP + 1ull),
+                   BOOT_SEED_PAYLOAD_CAP,
+                   "cap+1 bad-length payload wipes only the contract cap");
+    TEST_ASSERT_EQ(boot_seed_desc_wipe_len(BOOT_SEED_DESC_BAD_LENGTH,
+                                           0xFFFFFFFFull),
+                   BOOT_SEED_PAYLOAD_CAP,
+                   "a 4 GiB claim still wipes only the contract cap");
+
+    /* The [high] design finding: a clamped WIPE must never license an
+     * unclamped FREE. Only CONSUMABLE may reach the frame loop, whose
+     * end address is derived from the descriptor's own length. */
+    TEST_ASSERT_EQ((uint64_t)boot_seed_desc_may_free(BOOT_SEED_DESC_CONSUMABLE),
+                   1u, "consumable payload may return its frames");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_desc_may_free(BOOT_SEED_DESC_BAD_LENGTH),
+                   0u,
+                   "bad-length payload never frees: the page count would "
+                   "come from the field just rejected");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_desc_may_free(BOOT_SEED_DESC_NO_CAPABILITY),
+                   0u, "no-capability payload never frees");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_desc_may_free(BOOT_SEED_DESC_NOT_RESERVED),
+                   0u, "unreserved payload never frees");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_desc_may_free(BOOT_SEED_DESC_OUT_OF_MAP),
+                   0u, "out-of-map payload never frees");
 }
 
 static void test_entropy_seed_zeroized(void)

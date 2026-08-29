@@ -1,6 +1,6 @@
 {
   "total_suites": 3192,
-  "total_assertions": 14108,
+  "total_assertions": 14133,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
@@ -36,7 +36,7 @@
     {"file": "test_crashdump.c", "suites": 35, "assertions": 112},
     {"file": "test_desktop.c", "suites": 48, "assertions": 211},
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
-    {"file": "test_entropy.c", "suites": 15, "assertions": 172},
+    {"file": "test_entropy.c", "suites": 15, "assertions": 190},
     {"file": "test_env.c", "suites": 171, "assertions": 738},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
     {"file": "test_except.c", "suites": 63, "assertions": 269},
@@ -83,7 +83,7 @@
     {"file": "test_quota_syscall.c", "suites": 16, "assertions": 106},
     {"file": "test_registry.c", "suites": 41, "assertions": 133},
     {"file": "test_sched.c", "suites": 65, "assertions": 211},
-    {"file": "test_security.c", "suites": 29, "assertions": 190},
+    {"file": "test_security.c", "suites": 29, "assertions": 197},
     {"file": "test_serial_emergency.c", "suites": 69, "assertions": 370},
     {"file": "test_sha1.c", "suites": 3, "assertions": 7},
     {"file": "test_sha256.c", "suites": 3, "assertions": 7},

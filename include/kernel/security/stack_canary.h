@@ -28,4 +28,5 @@ uintptr_t canary_massage(uint64_t raw);
  * to peek for canary entropy? Requires FLAG_RESERVED, length >= 16, and
  * [phys_start, phys_start+length) wholly inside the 4 GiB boot identity map
  * (canary_init runs pre-IDT, so an out-of-map read would #PF-hang). */
-int canary_seed_desc_ok(uint32_t flags, uint64_t phys_start, uint64_t length);
+int canary_seed_desc_ok(uint32_t caps_present, uint32_t flags,
+                        uint64_t phys_start, uint64_t length);

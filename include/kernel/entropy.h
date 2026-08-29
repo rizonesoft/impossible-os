@@ -248,23 +248,63 @@ void early_entropy_init(void);
 
 /* PURE consumability classifier for one RANDOM_SEED descriptor (the
  * load-bearing gate inside boot_seed_consume, exported for tests).
- * NOT_RESERVED and OUT_OF_MAP descriptors must be retired UNTOUCHED:
- * an unreserved range may already be allocator-owned, an out-of-map
- * range is not dereferenceable. BAD_LENGTH is safe to wipe. */
+ * NO_CAPABILITY, NOT_RESERVED and OUT_OF_MAP descriptors must be
+ * retired UNTOUCHED: an unreserved range may already be allocator-
+ * owned, an out-of-map range is not dereferenceable. BAD_LENGTH is
+ * safe to wipe, but only up to the CONTRACT length -- see
+ * boot_seed_desc_wipe_len(). */
 typedef enum {
     BOOT_SEED_DESC_CONSUMABLE = 0,
     BOOT_SEED_DESC_NOT_RESERVED,  /* FLAG_RESERVED missing -- PMM never pinned it */
     BOOT_SEED_DESC_OUT_OF_MAP,    /* outside the 4 GiB boot identity map */
-    BOOT_SEED_DESC_BAD_LENGTH     /* below header size or above the payload cap */
+    BOOT_SEED_DESC_BAD_LENGTH,    /* below header size or above the payload cap */
+    BOOT_SEED_DESC_NO_CAPABILITY  /* BOOT_CAP_PAYLOAD_DESCRIPTORS not negotiated */
 } boot_seed_desc_class_t;
 
 /* Payload sanity cap shared by the classifier and its tests: one
  * descriptor larger than this is malformed for the seed type. */
 #define BOOT_SEED_PAYLOAD_CAP  16384ull
 
-boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
+/* caps_present is FIRST and is checked FIRST, mirroring
+ * boot_headless_authz_classify(). src/kernel/mm/boot_reserved.c gates
+ * the ENTIRE payload reservation pass on BOOT_CAP_PAYLOAD_DESCRIPTORS,
+ * so without that bit BOOT_PAYLOAD_FLAG_RESERVED is a claim nobody
+ * acted on and the frames may already belong to the allocator. The
+ * capability describes the HANDOFF, not one descriptor, so
+ * NO_CAPABILITY means abandon the whole walk rather than reject one
+ * entry the way the three classes above it do. */
+boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
+                                               uint32_t flags,
                                                uint64_t phys_start,
                                                uint64_t length);
+
+/* PURE disposition helpers -- the OBSERVABLE SEAM for these guards.
+ * A test that only drove the consume loop could not tell a guard that
+ * fired from one that failed open: the loop dereferences phys_start
+ * through the Phase-1 boot identity map, which is dead by the time the
+ * suite runs, so a fail-open read lands somewhere that is simply not
+ * the fixture's buffer and every assertion still passes. Expressing the
+ * decision as DATA removes the ambiguity -- delete the capability
+ * branch and these return different values, so the tests fail. Measured
+ * precedent: deleting the equivalent branch in the TPM headless-
+ * authorization consumer left the whole security suite green. */
+
+/* Bytes that may be wiped at phys_start; 0 for every class whose range
+ * must not be touched at all. BAD_LENGTH is clamped to the contract cap
+ * BECAUSE that class is the classifier declaring `length` wrong: a
+ * descriptor claiming gigabytes is rejected and must not then wipe
+ * gigabytes. */
+uint64_t boot_seed_desc_wipe_len(boot_seed_desc_class_t cls, uint64_t length);
+
+/* Whether the descriptor's frames may be returned to the PMM at all.
+ * ONLY a CONSUMABLE descriptor qualifies. BAD_LENGTH deliberately does
+ * NOT: the page count could only come from the same `length` field the
+ * classifier just rejected, so an overlong descriptor would free a long
+ * UNWIPED suffix (and could issue ~1M pmm_free_frame calls below the
+ * 4 GiB ceiling). Wiping a clamped prefix never licenses freeing an
+ * unclamped range. The ownership contract in boot_seed_release_payload
+ * still applies on top of this. */
+int boot_seed_desc_may_free(boot_seed_desc_class_t cls);
 
 /* PURE release helper for one consumed payload (unit-testable half of
  * the consume path): wipe 'length' bytes at 'payload' and return 1 ONLY

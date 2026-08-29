@@ -54,7 +54,9 @@ static inline int canary_rdseed(uint64_t *out)
 /* Mix entropy bytes from the bootloader's firmware-RNG seed payload WITHOUT
  * consuming/retiring it (the CSPRNG still consumes it later in Phase 1). The
  * descriptor is gated with the SAME safety contract the canonical consumer
- * (boot_seed_desc_classify) applies before dereferencing: FLAG_RESERVED (an
+ * (boot_seed_desc_classify) applies before dereferencing: the negotiated
+ * BOOT_CAP_PAYLOAD_DESCRIPTORS capability (without it the PMM reservation pass
+ * never ran, so FLAG_RESERVED certifies nothing), FLAG_RESERVED itself (an
  * unreserved range may be allocator-owned) and the [phys_start, phys_start+
  * length) range fully inside the 4 GiB boot identity map -- canary_init runs
  * pre-IDT, so an out-of-map read would #PF into the UEFI IDT and hang. The
@@ -63,8 +65,11 @@ static inline int canary_rdseed(uint64_t *out)
  * personalization, so the caller still warns + treats the cookie as degraded
  * unless a verified hardware source (RDRAND/RDSEED) contributed. Returns 1 if
  * bytes were mixed. */
-int canary_seed_desc_ok(uint32_t flags, uint64_t phys_start, uint64_t length)
+int canary_seed_desc_ok(uint32_t caps_present, uint32_t flags,
+                        uint64_t phys_start, uint64_t length)
 {
+    if ((caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) == 0)
+        return 0;                       /* handoff never negotiated descriptors */
     if (length < 16 || phys_start == 0)
         return 0;                       /* absent / too short */
     if ((flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0)
@@ -79,7 +84,8 @@ static int canary_mix_boot_seed(uint64_t *acc)
 {
     const struct boot_payload_desc *d =
         boot_payload_find(&g_boot_info, (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
-    if (!d || !canary_seed_desc_ok(d->flags, d->phys_start, d->length))
+    if (!d || !canary_seed_desc_ok(g_boot_info.caps_present, d->flags,
+                                   d->phys_start, d->length))
         return 0;
 
     /* Read the 8 tail bytes (past any seed header) -- raw firmware RNG bytes. */

@@ -17,6 +17,7 @@
 #include "kernel/security/privileges.h"
 #include "kernel/security/assign_security.h"
 #include "kernel/security/stack_canary.h"
+#include "kernel/boot_info.h"   /* BOOT_CAP_PAYLOAD_DESCRIPTORS -- canary payload-peek gate */
 #include "kernel/ob/ob.h"
 #include "kernel/sched/task.h"   /* task/thread, task_current/thread_current for token assignment */
 #include "libc/string.h"
@@ -789,19 +790,47 @@ static void test_canary_seed_desc_bounds(void)
 {
     const uint32_t RES = (1u << 3);   /* BOOT_PAYLOAD_FLAG_RESERVED */
     const uint64_t END = 0x100000000ull;
+    const uint32_t CAPS = BOOT_CAP_PAYLOAD_DESCRIPTORS;
 
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, 0x200000, 4096), 1u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 4096), 1u,
                    "reserved + low + length>=16 accepted");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(0, 0x200000, 4096), 0u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, 0, 0x200000, 4096), 0u,
                    "unreserved descriptor rejected");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, END, 4096), 0u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END, 4096), 0u,
                    "phys_start at/above 4 GiB rejected");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, END - 8, 4096), 0u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 8, 4096), 0u,
                    "range crossing the 4 GiB map end rejected");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, 0x200000, 8), 0u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 8), 0u,
                    "length < 16 rejected");
-    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, 0, 4096), 0u,
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0, 4096), 0u,
                    "phys_start 0 rejected");
+
+    /* CAPABILITY gate, checked before every bound above. canary_init
+     * runs pre-IDT, so this peek is the earliest dereference of a
+     * payload descriptor in the whole boot; without the negotiated
+     * capability the PMM reservation pass never ran and FLAG_RESERVED
+     * certifies nothing. Delete that branch and the two refusals below
+     * fail while the accept above still passes -- which is what makes
+     * the guard observable rather than merely present. */
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(0u, RES, 0x200000, 4096), 0u,
+                   "caps clear refuses an otherwise-acceptable descriptor");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(~CAPS, RES, 0x200000, 4096), 0u,
+                   "every OTHER capability bit set is still a refusal");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS | BOOT_CAP_RUNTIME_SERVICES,
+                                                 RES, 0x200000, 4096), 1u,
+                   "caps bit alongside others still accepted (mask, not equality)");
+
+    /* Exact boundaries. canary_init runs pre-IDT, so an off-by-one on the
+     * map bound is a hang rather than a wrong answer, and an off-by-one on
+     * the minimum silently drops seed personalization instead. */
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, 16), 1u,
+                   "exactly the 16-byte minimum accepted");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 16, 16), 1u,
+                   "range ending exactly at the 4 GiB map end accepted");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, END - 15, 16), 0u,
+                   "range overrunning the map end by one byte rejected");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(CAPS, RES, 0x200000, ~0ull), 0u,
+                   "a maximal length cannot wrap the map bound into an accept");
 }
 
 /* ---- Mandatory Integrity Control ---- */

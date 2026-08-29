@@ -68,11 +68,21 @@ void boot_seed_record_sources(const struct entropy_seed_parse_result *r)
     }
 }
 
-boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
+boot_seed_desc_class_t boot_seed_desc_classify(uint32_t caps_present,
+                                               uint32_t flags,
                                                uint64_t phys_start,
                                                uint64_t length)
 {
-    /* RESERVED gate first: a descriptor without FLAG_RESERVED was never
+    /* CAPABILITY gate before everything, including FLAG_RESERVED. The
+     * PMM reservation pass in boot_reserved.c is itself gated on
+     * BOOT_CAP_PAYLOAD_DESCRIPTORS, so when that bit is clear nothing
+     * ever acted on FLAG_RESERVED and the flag certifies nothing --
+     * trusting it would let a producer with caps_present clear hand us
+     * a range the reservation pass skipped and the allocator now owns.
+     * Same order, and the same reason, as boot_headless_authz_classify. */
+    if ((caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) == 0u)
+        return BOOT_SEED_DESC_NO_CAPABILITY;
+    /* RESERVED gate next: a descriptor without FLAG_RESERVED was never
      * pinned by the PMM reservation pass, so by Phase 1 its frames may
      * already be allocator-owned. Touching them (even to wipe) would
      * corrupt the new owner -- retire untouched. */
@@ -88,6 +98,40 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
         length > BOOT_SEED_PAYLOAD_CAP)
         return BOOT_SEED_DESC_BAD_LENGTH;
     return BOOT_SEED_DESC_CONSUMABLE;
+}
+
+uint64_t boot_seed_desc_wipe_len(boot_seed_desc_class_t cls, uint64_t length)
+{
+    /* CONSUMABLE has already passed the length contract, so its own
+     * length is the honest bound. BAD_LENGTH is the class that exists
+     * BECAUSE the field is wrong, so it is clamped to the contract cap
+     * -- the seed is one-time key material and must still be wiped when
+     * refused, but a descriptor claiming gigabytes must not wipe them.
+     * Every other class is retired untouched: an unreserved or
+     * un-negotiated range may already belong to another owner, and an
+     * out-of-map range is not addressable at all. */
+    switch (cls) {
+    case BOOT_SEED_DESC_CONSUMABLE:
+        return length;
+    case BOOT_SEED_DESC_BAD_LENGTH:
+        return (length < BOOT_SEED_PAYLOAD_CAP) ? length
+                                                : BOOT_SEED_PAYLOAD_CAP;
+    case BOOT_SEED_DESC_NOT_RESERVED:
+    case BOOT_SEED_DESC_OUT_OF_MAP:
+    case BOOT_SEED_DESC_NO_CAPABILITY:
+    default:
+        return 0ull;
+    }
+}
+
+int boot_seed_desc_may_free(boot_seed_desc_class_t cls)
+{
+    /* CONSUMABLE only. BAD_LENGTH must never reach the frame loop: that
+     * loop derives its end from the descriptor's own length, which this
+     * class has just declared wrong, so an overlong descriptor would
+     * return a long unwiped suffix to the allocator. Wiping a clamped
+     * prefix does not license freeing an unclamped range. */
+    return cls == BOOT_SEED_DESC_CONSUMABLE;
 }
 
 int boot_seed_release_payload(uint8_t *payload, uint64_t length,
@@ -147,7 +191,8 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
             boot_payload_find(&g_boot_info,
                               (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
         struct entropy_seed_parse_result res;
-        entropy_seed_status_t st;
+        entropy_seed_status_t st = ENTROPY_SEED_BAD_ARGS;
+        int abandon_walk = 0;
         uint8_t *payload = (uint8_t *)0;
         uint32_t out_len = 0;
         int owns_pages = 0;
@@ -163,28 +208,62 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
          * already be allocator-owned -- untouchable), the boot identity
          * map bound (an out-of-map range cannot even be wiped), and the
          * type-specific length contract. */
-        cls = boot_seed_desc_classify(d->flags, d->phys_start, d->length);
+        cls = boot_seed_desc_classify(g_boot_info.caps_present, d->flags,
+                                      d->phys_start, d->length);
 
-        if (cls == BOOT_SEED_DESC_NOT_RESERVED) {
+        /* EXHAUSTIVE switch with NO `default`, deliberately. Under the
+         * kernel's -Wall -Wextra -Werror set (Makefile:21) -Wswitch turns
+         * a missing enumerator into a BUILD FAILURE, so the capability
+         * refusal cannot be deleted or a new class silently added and
+         * still compile. That matters more than a runtime test here: the
+         * previous if/else-if chain ended in a permissive `else` that ran
+         * the parse path, so removing the capability arm would have made
+         * an un-negotiated payload parse, wipe and free -- while every
+         * classifier assertion stayed green. A test cannot catch that,
+         * because a test may not drive this function at all: it calls
+         * pmm_free_frame() on live frames and mutates g_boot_info
+         * (docs/infrastructure/test-policy.md). */
+        switch (cls) {
+        case BOOT_SEED_DESC_NO_CAPABILITY:
+            /* Global refusal, so abandon the WALK rather than this entry.
+             * Nothing is read, wiped, freed, or retired: without the
+             * negotiated capability we have no basis to believe any of
+             * these ranges is ours, and clearing FLAG_VALID would be
+             * mutating a handoff we just declined to trust. Abandoning is
+             * also required for termination -- the loop re-queries
+             * occurrence 0 every pass and only retiring advances it, so
+             * continuing would spin on this same descriptor. */
+            klog(LOG_WARN, "entropy",
+                 "seed payloads refused: BOOT_CAP_PAYLOAD_DESCRIPTORS "
+                 "not negotiated (caps=0x%lx); %u descriptor(s) left "
+                 "untouched, boot continues without seed entropy",
+                 (uint64_t)g_boot_info.caps_present,
+                 (uint64_t)g_boot_info.payload_count);
+            abandon_walk = 1;
+            break;
+        case BOOT_SEED_DESC_NOT_RESERVED:
             klog(LOG_WARN, "entropy",
                  "seed payload #%u rejected: not PMM-reserved "
                  "(retired untouched)", (uint64_t)idx);
             st = ENTROPY_SEED_BAD_ARGS;
-        } else if (cls == BOOT_SEED_DESC_OUT_OF_MAP) {
+            break;
+        case BOOT_SEED_DESC_OUT_OF_MAP:
             klog(LOG_WARN, "entropy",
                  "seed payload #%u rejected: 0x%lx for %lu bytes is "
                  "outside the boot identity map (retired untouched)",
                  (uint64_t)idx, (uint64_t)d->phys_start,
                  (uint64_t)d->length);
             st = ENTROPY_SEED_BAD_ARGS;
-        } else if (cls == BOOT_SEED_DESC_BAD_LENGTH) {
+            break;
+        case BOOT_SEED_DESC_BAD_LENGTH:
             klog(LOG_WARN, "entropy",
                  "seed payload #%u rejected: length %lu outside contract "
-                 "(wiped)",
+                 "(wiped up to the contract cap, frames retained)",
                  (uint64_t)idx, (uint64_t)d->length);
             payload = (uint8_t *)(uintptr_t)d->phys_start;
             st = ENTROPY_SEED_BAD_LENGTH;
-        } else {
+            break;
+        case BOOT_SEED_DESC_CONSUMABLE:
             /* Identity-mapped low memory -- the same access contract
              * every other payload consumer (boot.conf modules,
              * warm-update state) relies on. */
@@ -198,7 +277,11 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
                                     s_payload_tx,
                                     (uint32_t)sizeof(s_payload_tx),
                                     &out_len, &res);
+            break;
         }
+
+        if (abandon_walk)
+            break;
 
         /* Single retire path for EVERY discovered descriptor: wipe +
          * ownership decision (accepted, parse-rejected, and bad-length
@@ -208,10 +291,16 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
          * rediscovers the zeroed/recycled range. The bootloader's
          * original at 0x10000 is untouched. */
         if (payload) {
-            owns_pages = boot_seed_release_payload(payload, d->length,
-                                                   d->phys_start,
-                                                   d->alignment,
-                                                   d->producer_id);
+            /* Both bounds come from the pure disposition helpers, never
+             * from d->length directly: BAD_LENGTH wipes a clamped
+             * prefix and is refused the frame loop entirely, because
+             * that loop's end address would otherwise be derived from
+             * the very field the classifier rejected. */
+            owns_pages = boot_seed_release_payload(
+                             payload,
+                             boot_seed_desc_wipe_len(cls, d->length),
+                             d->phys_start, d->alignment, d->producer_id)
+                         && boot_seed_desc_may_free(cls);
             if (owns_pages) {
                 uint64_t page;
                 uint64_t end = (d->phys_start + d->length + 0xFFFull) &

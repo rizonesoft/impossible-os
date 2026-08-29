@@ -48,7 +48,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   8   | Kernel early CSPRNG seeding                  | §7, D02T03 §5 |  [x]   |
 | ⭐  |   9   | Entropy diagnostics and policy gates         | §1-§8         |  [/]   |
 | 💎  |  10   | Entropy tests                                | §1-§9         |  [x]   |
-| 💎  |  11   | Capability gate on the seed payload consumer | §3, §10       |  [ ]   |
+| 💎  |  11   | Capability gate on the seed payload consumer | §3, §10       |  [x]   |
 
 ## 1. Entropy Source Inventory and Quality Model
 
@@ -329,24 +329,44 @@ The warm-update consumer already carries the matching gate and says why: `src/ke
 
 VERIFIED 2026-08-19 while adding the same gate to the TPM headless-authorization consumer: `grep -n "caps_present\|BOOT_CAP_" src/kernel/main/boot_seed.c src/kernel/security/stack_canary.c` returns nothing. `boot_seed_desc_classify` checks `FLAG_RESERVED`, the identity-map bound and the length contract, and never the capability. The seed path is the WORSE of the two cases, because `boot_seed_release_payload` does not merely read the range: it wipes it and, on an ownership match, calls `pmm_free_frame` on every page.
 
-- [ ] Gate `boot_seed_take_payloads` on `BOOT_CAP_PAYLOAD_DESCRIPTORS` before any descriptor of this type is read, wiped or released, with its own class in `boot_seed_desc_class_t` so the refusal is named rather than folded into NOT_RESERVED.
-  - The gate belongs in the classifier, not at the call site, so the whole refusal matrix stays in one pure function the suite already drives.
-- [ ] Give `stack_canary.c`'s peek at the seed payload the same gate: it calls `boot_payload_find` directly and dereferences the result.
-- [ ] Audit every other `boot_payload_find` consumer for the same omission and either gate it or record why it does not need one.
-  - The two known-good precedents are the warm-update consumer and the TPM headless-authorization consumer; both refuse before touching memory.
-- [ ] Give payload-consumer guards an OBSERVABLE seam, because the natural test for them passes whether or not the guard fires.
+- [x] Gated the seed consumer on `BOOT_CAP_PAYLOAD_DESCRIPTORS` before any descriptor is read, wiped or released, via a new `BOOT_SEED_DESC_NO_CAPABILITY` class.
+  - The function is `boot_seed_consume` (`src/kernel/main/boot_seed.c`), not `boot_seed_take_payloads` as this item said until 2026-08-29 -- no such symbol exists, and the section pack flagged it unresolved.
+  - The gate is in the classifier as planned: `boot_seed_desc_classify` takes `caps_present` FIRST and checks it FIRST, mirroring `boot_headless_authz_classify` (`src/kernel/main/boot_headless_authz.c:58`).
+  - The capability describes the HANDOFF, not one descriptor, so the walk is ABANDONED on NO_CAPABILITY: nothing is read, wiped, freed, or retired. Abandoning is also required for termination, since the loop re-queries occurrence 0 and only retiring advances it.
+  - The dispatch is an EXHAUSTIVE `switch` with no `default` (review: adversarial [medium]). The prior if/else-if chain ended in a permissive `else` that ran the parse path, so deleting the capability arm would have made an un-negotiated payload parse, wipe and free with every classifier assertion still green. Under `-Wall -Wextra -Werror` (`Makefile:21`) that deletion is now a BUILD FAILURE: verified by removing the case, which produced `error: enumeration value 'BOOT_SEED_DESC_NO_CAPABILITY' not handled in switch [-Werror,-Wswitch]`.
+- [x] Gave `stack_canary.c`'s peek the same gate: `canary_seed_desc_ok` takes `caps_present` first and refuses before every existing bound check.
+  - This is the EARLIEST payload dereference in the boot (`canary_init` runs pre-IDT), so it is the one where an unreserved range is least survivable.
+- [x] Audited every `boot_payload_find` consumer. Four exist outside the definition and its tests; the two above were the only ungated ones.
+  - `src/kernel/main/boot_headless_authz.c:131` gates via `boot_headless_authz_classify(info->caps_present, ...)` -- already correct.
+  - `src/kernel/main/boot_hw.c:274` (warm update) walks `payload_descriptors` directly behind an explicit `caps_ok` AND `flag_set` pair -- already correct.
+  - `src/kernel/main/boot_payload.c:538` is the definition of `boot_payload_find` itself, not a consumer.
+- [x] Gave the guards an observable seam by expressing the decision as DATA: pure `boot_seed_desc_wipe_len(cls, length)` and `boot_seed_desc_may_free(cls)`, asserted directly.
   - A payload consumer dereferences `phys_start` raw, which is the Phase-1 boot identity map contract. A unit test runs at Phase 3, where that alias is no longer live -> so a test that writes a canary into its own buffer, hands the buffer's physical address to the consumer, and then checks the canary survives will see it survive EITHER WAY: if the guard fails open, the read and wipe land at an address that is not the test's buffer.
   - MEASURED 2026-08-19 on the TPM headless-authorization consumer, which has the same shape: deleting its capability branch outright left the whole security suite green, and the case now SKIPs rather than reporting a pass it did not earn -> XREF: 01-boot-platform/TODO-13 §30 (item: "Carry the signed authorization from the ESP to the kernel as `BOOT_PAYLOAD_HEADLESS_AUTHZ`").
-  - The shape is a seam the consumer reads its payload THROUGH, so a test can substitute a mapping it owns; a classifier-only test proves the decision but never that the consumer acts on it.
-- [ ] Bound the rejected-payload wipe by the CONTRACT length, not by the descriptor's own `length` field.
+  - The originally-sketched shape (a seam the consumer reads its payload THROUGH) was REJECTED twice, on the design review and again on the adversarial round, both of which proposed driving `boot_seed_consume` from a test. It calls `pmm_free_frame` on live frames and mutates `g_boot_info`, which `docs/infrastructure/test-policy.md` bans -- the test-coverage leg of the same wave independently said "Do not call boot_seed_consume() from these tests". `01-boot-platform/TODO-10 §32` deleted `boot_stack_reset_for_test()` the same day for being a hook with no safe caller.
+  - Decision-as-data is stronger than an address override for this purpose: an override can fail open and still look green, whereas a value assertion cannot. The consumer half that a pure helper genuinely cannot reach is covered by the compile-time `-Wswitch` exhaustiveness above instead of a runtime test.
+  - CONTROLS RUN 2026-08-29, all reverted clean: deleting the capability branch in `boot_seed_desc_classify` failed 3 assertions; deleting it in `canary_seed_desc_ok` failed 2; deleting the `switch` case failed the BUILD. A probe control (a deliberately false assertion) was run FIRST to prove the suite was reached at all -- the first control attempt had been silently blocked by a PreToolUse hook, so an unmodified tree was briefly mistaken for a guard that did not fire.
+- [x] Bounded the rejected-payload wipe by the CONTRACT length, and -- per the design review's `[high]` -- stopped BAD_LENGTH from freeing frames at all.
   - `boot_seed_release_payload` is called with `d->length` for the BAD_LENGTH class too (`src/kernel/main/boot_seed.c`), and BAD_LENGTH means the classifier has just declared that field wrong. It is bounded only by the identity-map check, so a descriptor claiming gigabytes is rejected and then wipes gigabytes.
   - Found 2026-08-19 by the round-4 adversarial review of the TPM headless-authorization transport, which had copied this shape and now wipes a fixed `TPM_HEADLESS_BLOB_LEN` after an exact-length acceptance -> XREF: 01-boot-platform/TODO-13 §30 (item: "Carry the signed authorization from the ESP to the kernel as `BOOT_PAYLOAD_HEADLESS_AUTHZ`").
   - The seed payload IS secret one-time key material, so unlike the authorization it must still be wiped when refused -- the fix is to bound the length, not to stop wiping.
-- [ ] Unit-test a degraded-capability handoff: the descriptor is neither read nor wiped, the frames are not freed, and the boot continues degraded rather than halting, beside a negotiated-capability control that consumes normally.
-  - Depends on the observable seam above; without it this assertion is one of the ones that passes for the wrong reason.
-- [ ] Commit: `"boot: capability gate on the seed payload consumer"`
+  - CLAMPING THE WIPE ALONE WOULD NOT HAVE FIXED IT (design review `[high]`, verified at `src/kernel/main/boot_seed.c:215-219` before the change): the frame loop derived its end from `d->length` independently of the length passed to `boot_seed_release_payload`, so a clamped wipe would still have returned a long UNWIPED suffix to the allocator, and an overlong descriptor could have issued ~1M `pmm_free_frame` calls below the 4 GiB ceiling. `boot_seed_desc_may_free` now admits CONSUMABLE only.
+  - REJECTED the reviewer's alternative of making an overlong descriptor a fatal handoff error: this section exists so a degraded handoff DEGRADES, and halting the boot over a malformed seed descriptor inverts that.
+- [x] Unit-tested the degraded-capability handoff against the seam: not read, not wiped, not freed, boot continues, with a negotiated-capability control beside it.
+  - `test_boot_seed_desc_classify` (`src/kernel/test/test_entropy.c`) asserts the refusal, that every OTHER capability bit set is still a refusal, that the bit ALONGSIDE others is still consumable (a mask test, not equality), that caps outranks NOT_RESERVED and OUT_OF_MAP, that a maximal length is OUT_OF_MAP rather than BAD_LENGTH, and that `wipe_len`/`may_free` are 0 for every refused class.
+  - `test_canary_seed_desc_bounds` (`src/kernel/test/test_security.c`) carries the matching pair for the pre-IDT peek plus the exact boundaries: the 16-byte minimum, a range ending exactly at the 4 GiB map end, a one-byte overrun, and a maximal length that must not wrap into an accept.
+- [x] Commit: `"boot: capability gate on the seed payload consumer"`
 
-**Test checkpoint:** with `caps_present` clear and a RESERVED-flagged seed descriptor present, the classifier reports the capability refusal, `boot_seed_release_payload` is never reached, and a canary byte written into the payload range by the fixture is still intact afterwards -- which is the assertion that separates "refused" from "refused after wiping". The same fixture with the capability set consumes the payload as today. Scope: this section owns the capability gate on the seed consumers only; the reservation pass itself is correct and unchanged, and the descriptor ABI is `01-boot-platform/TODO-01`. Platforms: kernel unit suites; no hardware.
+**Test checkpoint:** with `caps_present` clear and a RESERVED-flagged seed descriptor present, the classifier reports the capability refusal and both disposition helpers return "touch nothing", so `boot_seed_release_payload` is never reached; with the capability set the same descriptor classifies CONSUMABLE. The originally-planned canary-byte fixture was NOT used: it would have required driving `boot_seed_consume`, which the test policy forbids, and at Phase 3 the boot identity alias is dead so the canary would have survived either way -- the assertion would have passed whether or not the guard fired. Scope: this section owns the capability gate on the seed consumers only; the reservation pass itself is correct and unchanged, and the descriptor ABI is `01-boot-platform/TODO-01`. Platforms: kernel unit suites; no hardware.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) -- 24 new assertions across `test_entropy.c` (capability refusal, other-bits-set refusal, mask-not-equality accept, precedence over the other classes, maximal-length OUT_OF_MAP, and the wipe-length / may-free matrix per class) and `test_security.c` (canary caps refusal + accept, 16-byte minimum, exact 4 GiB end, one-byte overrun, maximal length). SUITE=security 3611 kernel + 17 user-mode PASS.
+
+> **Notes:**
+> - Shipped: `BOOT_SEED_DESC_NO_CAPABILITY` + a caps-first `boot_seed_desc_classify`, the pure `boot_seed_desc_wipe_len` / `boot_seed_desc_may_free` disposition helpers (`include/kernel/entropy.h`), the exhaustive `switch` dispatch in `boot_seed_consume`, and the matching gate in `canary_seed_desc_ok`.
+> - Integrates at the two previously ungated `boot_payload_find` consumers; the warm-update and TPM headless-authorization consumers already carried the gate and are unchanged.
+> - Downstream: a boot without `BOOT_CAP_PAYLOAD_DESCRIPTORS` now yields no seed entropy and says so on serial, instead of wiping and freeing frames the PMM never reserved.
+> - Guard observability is enforced at COMPILE time, not by a test: the dispatch has no `default`, so deleting the capability arm fails the build under `-Werror,-Wswitch`. A test cannot cover it because `boot_seed_consume` may not be called from one.
+> - Scope boundary: the reservation pass in `boot_reserved.c` is correct and untouched; the descriptor ABI belongs to `01-boot-platform/TODO-01`.
 
 ---
 
@@ -363,6 +383,7 @@ VERIFIED 2026-08-19 while adding the same gate to the TPM headless-authorization
 | 💎  | Bootloader-kernel seed handoff | ✅ winload loader block    | ✅ EFI config-table seed | ✅ §7 typed+CRC, first-seed  |
 | 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early     | ✅ §8 named init + gate      |
 | ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only            | ✅ §9 registry+JSON+splash   |
+| 💎  | Seed handoff capability gate   | ✅ loader block validated  | ✅ setup_data type check | ✅ §11 caps-first + -Wswitch |
 
 > **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§8 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file -- the §7 checksummed typed handoff folding verified carryover into the FIRST kernel seed, and the §8 named init point with a credited-class release crypto gate -- stronger than Linux, which has no boot-time crypto-readiness gate), and the §9 visible quality surfaces. The ⭐ §9 quality report (HKLM registry mirror + X:\Diag\entropy.json + splash degraded warning) goes beyond both; the §9 admin ExternalEntropy one-shot awaits the D02 TODO-14 hive-load wiring for cross-reboot use.
 
