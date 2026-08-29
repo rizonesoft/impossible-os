@@ -68,16 +68,17 @@ synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `TODO
 
 ## Implementation Order
 
-| Step | Section                                          | 💎/⭐ | Dependency                                                                            |
-| ---- | ------------------------------------------------ | ----- | ------------------------------------------------------------------------------------- |
-| 1    | Win32 subsystem architecture + message queue     | 💎    | `struct task` queue field; `SYS_WAIT_MESSAGE=75`                                      |
-| 2    | Window class registry + built-in classes         | 💎    | §1; `CTRL_*` (TODO-04); `wm_create_window`                                            |
-| 3    | WndProc dispatch + DefWindowProc                 | 💎    | §1 §2; `TranslateMessage` key tables                                                  |
-| 4    | Win32 painting model (HDC + dirty rect)          | 💎    | §1 §2; HDC table (see `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`); compositor |
-| 5    | Message filters + accelerator tables             | 💎    | §1 §3; `TranslateMessage` complete; `SYS_POSTMESSAGE=73`                              |
-| 6    | Window subclassing + property store              | 💎    | §2 §3                                                                                 |
-| 7    | Inter-process window messaging                   | 💎    | §1; `pipe.h`; `SYS_SHMEM_CREATE/MAP`; §2 `FindWindow`                                 |
-| 8    | Common dialog boxes (`ChooseColor`/`ChooseFont`) | 💎    | §1 msg loop; `TODO-05 §8` dialog system                                               |
+| Step | Section                                                      | 💎/⭐ | Dependency                                                                                 |
+| ---- | ------------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------ |
+| 1    | Win32 subsystem architecture + message queue                 | 💎    | `struct task` queue field; `SYS_WAIT_MESSAGE=75`                                           |
+| 2    | Window class registry + built-in classes                     | 💎    | §1; `CTRL_*` (TODO-04); `wm_create_window`                                                 |
+| 3    | WndProc dispatch + DefWindowProc                             | 💎    | §1 §2; `TranslateMessage` key tables                                                       |
+| 4    | Win32 painting model (HDC + dirty rect)                      | 💎    | §1 §2; HDC table (see `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`); compositor      |
+| 5    | Message filters + accelerator tables                         | 💎    | §1 §3; `TranslateMessage` complete; `SYS_POSTMESSAGE=73`                                   |
+| 6    | Window subclassing + property store                          | 💎    | §2 §3                                                                                      |
+| 7    | Inter-process window messaging                               | 💎    | §1; `pipe.h`; `SYS_SHMEM_CREATE/MAP`; §2 `FindWindow`                                      |
+| 8    | Common dialog boxes (`ChooseColor`/`ChooseFont`)             | 💎    | §1 msg loop; `TODO-05 §8` dialog system                                                    |
+| 9    | Win11 visual opt-in surface (`dwmapi`, `uxtheme`, broadcast) | 💎    | §2 §3 §4 §7; `08-graphics-ui/TODO-03 §9` tokens + keys; `08-graphics-ui/TODO-08` Mica/snap |
 
 ---
 
@@ -177,6 +178,8 @@ process in future iteration)
   - Increment class `refcount`; post `WM_CREATE` to thread queue (`lpCreateParams` in lParam as `CREATESTRUCT *`)
   - Return HWND; `INVALID_HANDLE_VALUE` on failure
 - [ ] **`DestroyWindow(hwnd)`**: post `WM_DESTROY`; then `WM_NCDESTROY`; call `wm_destroy_window(handle)`; decrement class refcount; free HWND table entry
+
+- [ ] Built-in classes are the ONLY public control ABI: the SDK (`10-platform-services/TODO-09 §1` → XREF) exposes `user32` / `comctl32` classes, never a parallel native widget API; `CTRL_*` stays shell-internal behind this class table
 
 ---
 
@@ -351,19 +354,51 @@ process in future iteration)
 
 ---
 
+## 9. Win11 Visual Opt-In Surface: `dwmapi`, `uxtheme`, Personalization Broadcast `[Opus]`
+
+> **Spawned-by:** root
+
+**Source:** `src/user/csrss/dwmapi.c`, `src/user/csrss/uxtheme.c`; headers `include/win32/dwmapi.h`, `include/win32/uxtheme.h`
+
+> Windows 11 apps opt into the modern look through a small, well-known API set; matching those calls exactly is what makes a Win32 app look native here with no Impossible-specific code. Everything renders through the same `CTRL_*` widgets and `gfx_*` primitives as the shell (built-in classes, §2), so there is one control implementation, one theme (`08-graphics-ui/TODO-03 §9` → XREF supplies the tokens and the Registry keys) and no visual-style engine to emulate. No export master table exists for `dwmapi.dll` / `uxtheme.dll` yet; the rows below are the inventory until `10-platform-services/TODO-A`-style tables are added for them.
+
+- [ ] **`DwmSetWindowAttribute(hwnd, attr, pv, cb)`** / **`DwmGetWindowAttribute`**: per-window attribute store on the WM window; wrong `cb` or unknown attribute → `E_INVALIDARG`, never silently accepted
+  - `DWMWA_USE_IMMERSIVE_DARK_MODE (20)`: titlebar + frame use dark tokens regardless of system mode
+  - `DWMWA_WINDOW_CORNER_PREFERENCE (33)`: `DWMWCP_DEFAULT / DONOTROUND / ROUND / ROUNDSMALL` → compositor corner radius 8 / 0 / 8 / 4 px
+  - `DWMWA_SYSTEMBACKDROP_TYPE (38)`: `DWMSBT_MAINWINDOW` (Mica) / `DWMSBT_TRANSIENTWINDOW` (Acrylic) / `DWMSBT_TABBEDWINDOW` (Mica Alt) → `gfx_mica` / `gfx_acrylic` per window (`08-graphics-ui/TODO-08` Mica titlebar)
+  - `DWMWA_CAPTION_COLOR (35)`, `DWMWA_TEXT_COLOR (36)`, `DWMWA_BORDER_COLOR (34)`: `COLORREF` overrides with the `DWMWA_COLOR_DEFAULT` / `DWMWA_COLOR_NONE` sentinels
+  - Get side: `DWMWA_EXTENDED_FRAME_BOUNDS (9)`, `DWMWA_CLOAKED (14)`
+- [ ] **`DwmExtendFrameIntoClientArea(hwnd, MARGINS*)`**, **`DwmIsCompositionEnabled`** (always `TRUE`), **`DwmGetColorizationColor`** (from `HKCU\Software\Microsoft\Windows\DWM\ColorizationColor`)
+  - Custom-titlebar apps draw into the frame region; `MARGINS{-1,-1,-1,-1}` is sheet-of-glass
+- [ ] **Custom-frame protocol** exactly as Win11 documents it, because custom-frame apps depend on the byte-level behavior
+  - `WM_NCCALCSIZE` with `wParam=TRUE` returning 0 removes the standard frame and keeps the client rect equal to the window rect
+  - `WM_NCHITTEST` returning `HTMAXBUTTON` from an app-drawn caption shows the snap-layouts flyout on hover (`08-graphics-ui/TODO-08` snap); `HTCAPTION` drives drag; `WM_NCMOUSEMOVE` / `WM_NCLBUTTONDOWN` routed to the app
+- [ ] **`uxtheme.dll`**: `IsThemeActive` / `IsAppThemed` (`TRUE`), `SetWindowTheme(hwnd, L"DarkMode_Explorer" | L"Explorer" | L"", NULL)` flips a window's built-in controls between the dark and light token sets
+  - `OpenThemeData(hwnd, L"BUTTON")` / `CloseThemeData` / `DrawThemeBackground(part, state)` / `GetThemeColor` / `DrawThemeText` / `GetThemePartSize` mapped onto the `CTRL_*` renderer for `BUTTON`, `EDIT`, `COMBOBOX`, `LISTBOX`, `SCROLLBAR`, `TAB`, `HEADER`, `PROGRESS`, `TRACKBAR`, `TOOLTIP`, `MENU`, `WINDOW`
+  - Undocumented-but-universal dark-mode ordinals real apps import (`SetPreferredAppMode` #135, `AllowDarkModeForWindow` #133, `RefreshImmersiveColorPolicyState` #104, `ShouldAppsUseDarkMode` #132): exported by ordinal and honored
+- [ ] **Personalization broadcast**: any key change in the `08-graphics-ui/TODO-03 §9` contract → `WM_SETTINGCHANGE("ImmersiveColorSet")` + `WM_THEMECHANGED` to every top-level window, exactly once each
+  - Delivered through §7 cross-process messaging; the broadcast is the only path, so no app polls the Registry
+  - `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION / SPI_GETHIGHCONTRAST)` and `GetSysColor` read the same store, so an app that ignores `dwmapi` still gets the right palette
+- [ ] Commit: `"win32: dwmapi + uxtheme Win11 opt-in surface, custom-frame protocol, ImmersiveColorSet broadcast"`
+
+**Test checkpoint:** a Tier 7-style test app calling `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` + `SetWindowTheme(L"DarkMode_Explorer")` renders a dark titlebar and dark `BUTTON` / `EDIT` controls while the system is in light mode; `DWMWCP_DONOTROUND` produces square corners; toggling `AppsUseLightTheme` delivers exactly one `WM_SETTINGCHANGE("ImmersiveColorSet")` per top-level window. This section is the gate for `12-user-platform-sdk/TODO-07 §13` (→ XREF).
+
+---
+
 ## OS Comparison
 
 
-| ⭐  | Feature                                       | 🪟 Win11                                                       | 🐧 Linux                                        | 🚀 Impossible OS                                                                |
-| --- | --------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| 💎  | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 -- `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                  |
-| 💎  | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 -- 256 global + 64 per-process                                            |
-| 💎  | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                      | ❌ Not applicable                               | ⬜ §3 `WM_CLOSE`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
-| 💎  | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                       | ✅ X11 expose events; Wayland damage            | ⬜ §4 -- HDC → `gfx_surface_t *`; `InvalidateRect`                              |
-| 💎  | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 -- PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`        |
-| 💎  | Window subclassing                            | ✅ Full subclassing + property store                           | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc`      |
-| 💎  | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped           | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 -- IPC pipe + shmem; 5s                                                   |
-| 💎  | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                              | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 -- thin Win32 struct adapter over                                         |
+| ⭐  | Feature                                       | 🪟 Win11                                                          | 🐧 Linux                                        | 🚀 Impossible OS                                                                |
+| --- | --------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| 💎  | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking       | ❌ No equivalent (event loops are               | ⬜ §1 -- `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                  |
+| 💎  | Window class registry                         | ✅ Win32k system + app classes;                                   | ❌ No concept (toolkit-specific)                | ⬜ §2 -- 256 global + 64 per-process                                            |
+| 💎  | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                         | ❌ Not applicable                               | ⬜ §3 `WM_CLOSE`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
+| 💎  | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                          | ✅ X11 expose events; Wayland damage            | ⬜ §4 -- HDC → `gfx_surface_t *`; `InvalidateRect`                              |
+| 💎  | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource    | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 -- PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`        |
+| 💎  | Window subclassing                            | ✅ Full subclassing + property store                              | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc`      |
+| 💎  | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped              | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 -- IPC pipe + shmem; 5s                                                   |
+| 💎  | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                                 | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 -- thin Win32 struct adapter over                                         |
+| 💎  | Win11 visual opt-in (`dwmapi` / `uxtheme`)    | ✅ `DwmSetWindowAttribute`, `SetWindowTheme`, `ImmersiveColorSet` | ❌ No equivalent (toolkit CSS)                  | ⬜ §9 -- same `CTRL_*` renderer; Microsoft Registry keys; ordinal exports       |
 
 Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** -- not a
 user-space emulation layer. The MSG ring buffer is allocated and managed in kernel memory;

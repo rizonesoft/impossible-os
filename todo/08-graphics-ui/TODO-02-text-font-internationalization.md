@@ -17,6 +17,8 @@ title: "TODO-02 -- Text, Font, and Internationalization Foundation"
 > **Evaluate HarfBuzz before implementing complex-script shaping.** HarfBuzz is "Old MIT" licensed (verified 2026-08-17) and therefore GPL-3.0-compatible. Complex-script shaping (Arabic joining, Indic reordering, ligature and kerning resolution via OpenType GSUB/GPOS) is a domain where a fresh implementation is wrong for years in ways only native readers notice, which makes it a poor from-scratch candidate. Simple Latin layout over the existing `stb_truetype` rasteriser does not need it; anything past that does.
 >
 > Record the verdict here before implementing the shaping sections, per CLAUDE.md "Vendor-First Evaluation".
+>
+> **Verdict (2026-08-29): vendor.** HarfBuzz for shaping and FreeType for rasterization, as §7; §2 and §3 are written on top of them, and the existing `ttf_*` renderer is the bring-up fallback only.
 
 ## Inputs
 
@@ -40,14 +42,15 @@ title: "TODO-02 -- Text, Font, and Internationalization Foundation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                | Depends On | Status |
-| --- | :---: | -------------------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | §1 Font catalog, enumeration, install/remove, and default stacks           | --         |  [ ]   |
-| 💎  |   2   | §2 Fallback chains, emoji, and color-font support                          | §1         |  [ ]   |
-| 💎  |   3   | §3 Shaping, bidi, line-break, and paragraph layout engine                  | §1, §2     |  [ ]   |
-| 💎  |   4   | §4 Caret, hit-test, selection, and composition-aware text editing services | §3         |  [ ]   |
-| 💎  |   5   | §5 Desktop and Win32 wiring: `DrawText`, `ChooseFont`, `WM_FONTCHANGE`     | §1-§4      |  [ ]   |
-| ⭐  |   6   | §6 Persistent text-run cache and no-FPU steady-state draw path             | §2-§5      |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                            | Depends On                     | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------------------ | ------------------------------ | :----: |
+| 💎  |   1   | §1 Font catalog, enumeration, install/remove, and default stacks                                       | --                             |  [ ]   |
+| 💎  |   2   | §2 Fallback chains, emoji, and color-font support                                                      | §1                             |  [ ]   |
+| 💎  |   3   | §3 Shaping, bidi, line-break, and paragraph layout engine                                              | §1, §2                         |  [ ]   |
+| 💎  |   4   | §4 Caret, hit-test, selection, and composition-aware text editing services                             | §3                             |  [ ]   |
+| 💎  |   5   | §5 Desktop and Win32 wiring: `DrawText`, `ChooseFont`, `WM_FONTCHANGE`                                 | §1-§4                          |  [ ]   |
+| ⭐  |   6   | §6 Persistent text-run cache and no-FPU steady-state draw path                                         | §2-§5                          |  [ ]   |
+| 💎  |   7   | §7 Vendor FreeType + HarfBuzz -- freestanding rasterizer and shaper under §1-§3 (PROVENANCE + CREDITS) | §1 catalog; consumed by §2, §3 |  [ ]   |
 
 > 💎 = parity work -- matches the text stacks used by Windows 11 and Linux desktops.
 > ⭐ = exclusive work -- Impossible OS gets a cleaner and more predictable text engine.
@@ -141,6 +144,32 @@ Make text rendering more predictable than both old GDI and many Linux toolkit ho
 
 ---
 
+## 7. Vendor FreeType and HarfBuzz as the Rasterizer and Shaper
+
+> **Spawned-by:** root
+
+Verdict on the vendor-first evaluation above: vendor. Windows 11 text quality comes from DirectWrite's hinting, subpixel positioning and OpenType shaping; a from-scratch shaper is wrong for years in ways only native readers notice. FreeType is the rasterizer, HarfBuzz the shaper, and the existing `ttf_*` renderer becomes the bring-up fallback that is retired once §1-§3 run on the vendored engine.
+
+**Licenses (LICENSE files read 2026-08-29):** FreeType is dual FTL / GPL-2.0-or-later; take the GPL-2.0-or-later arm, because the FTL advertising clause is GPL-incompatible. HarfBuzz is "Old MIT" (verified 2026-08-17). Both go in `src/libs/PROVENANCE.md` and `CREDITS.md` in the vendoring commit.
+
+**Files:** `src/libs/freetype/`, `src/libs/harfbuzz/`, `src/kernel/gfx/ft_osl.c` (allocator, FPU and file hooks), `Makefile` (first C++ translation units in the tree)
+
+- [ ] Vendor FreeType under `src/libs/freetype/` with a freestanding `ftoption.h`
+  - No stdlib: `kmalloc` / `pmm_alloc_contiguous` allocator hooks, VFS stream hooks, no PNG / BZip2 / HarfBuzz-in-FreeType modules
+  - CR0.TS cleared and FPU state owned before any FreeType call (CLAUDE.md FPU/SIMD gotchas); the §6 no-FPU steady-state path caches rasterized runs so the FPU is touched only on a cache miss
+  - PROVENANCE + CREDITS rows: upstream tag, license arm chosen (GPL-2.0-or-later), vendoring commit
+- [ ] Vendor HarfBuzz under `src/libs/harfbuzz/` built freestanding (`HB_TINY` / `HB_NO_*` profile)
+  - HarfBuzz is C++: compiled with clang-19 `-fno-exceptions -fno-rtti -nostdlib++ -ffreestanding` inside the kernel build, so the Makefile C++ rule and the freestanding `new` / `delete` / `__cxa_*` shims land here, gated so no other kernel code may use C++ without a recorded decision
+  - PROVENANCE + CREDITS rows (Old MIT)
+- [ ] Rewire §2 fallback and §3 shaping onto `hb_shape()` + `FT_Load_Glyph`; `text_run_t` carries HarfBuzz glyph infos and positions
+  - Old `ttf_draw_string()` path stays behind a `TEXT_LEGACY_TTF` build flag until the vendored path passes the §3 checkpoint on bare metal, then is deleted
+- [ ] Register the Fluent replacement faces from `08-graphics-ui/TODO-03 §9` (→ XREF) in the §1 catalog with `Segoe UI` / `Segoe UI Variable` / `Segoe Fluent Icons` alias rows
+- [ ] Commit: `"text: vendor FreeType + HarfBuzz -- freestanding build, allocator/FPU hooks, PROVENANCE + CREDITS"`
+
+**Test checkpoint:** Arabic and Devanagari sample strings shape with correct joining and reordering (glyph indices compared against a host `hb-shape` run of the same font file); `Segoe UI` alias resolves to Selawik; serial shows `"TEXT: shaper=harfbuzz rasterizer=freetype"`. Test on: QEMU WHPX + TCG; bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                           | 🪟 Win11                | 🐧 Linux                 | 🚀 Impossible OS |
@@ -151,6 +180,7 @@ Make text rendering more predictable than both old GDI and many Linux toolkit ho
 | 💎  | Caret + hit-test editing services | ✅ RichEdit/TextSvc     | ✅ GTK/Qt text widgets   | ⬜ Planned - §4  |
 | 💎  | Font picker + Win32 integration   | ✅ `ChooseFont` + GDI   | ✅ toolkit dialogs       | ⬜ Planned - §5  |
 | ⭐  | Persistent shaped-run cache       | ⚠️ Framework-specific   | ⚠️ Toolkit-specific      | ⬜ Planned - §6  |
+| 💎  | Vendored shaper + rasterizer      | ✅ DirectWrite (closed) | ✅ HarfBuzz + FreeType   | ⬜ Planned - §7  |
 
 After §1-§5, Impossible OS reaches parity with the text and font capabilities expected from modern Windows and Linux desktop stacks. After §6, it adds a more explicit and deterministic text-cache contract that should keep shell and Win32 redraw paths cleaner and cheaper.
 

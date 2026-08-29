@@ -93,6 +93,9 @@ Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impo
 - [ ] `sdk/include/impossible/string.h` -- `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strcat`, `strchr`, `strstr`, `memcpy`, `memmove`, `memset`, `memcmp`; `sprintf`, `snprintf`, `vsprintf`, `vsnprintf`; `atoi`, `atol`, `strtol`, `strtoul`
 - [ ] `sdk/include/impossible/io.h` -- `printf`, `fprintf`, `puts`, `fputs`, `fopen`, `fclose`, `fread`, `fwrite`, `fseek`, `ftell`, `feof`; `stdin`/`stdout`/`stderr` as `HANDLE` aliases; `SEEK_SET`, `SEEK_CUR`, `SEEK_END`
 - [ ] `sdk/include/impossible/time.h` -- `GetSystemTime(lpst)` fills `SYSTEMTIME` struct; `GetLocalTime(lpst)`; `GetTickCount()` → milliseconds since boot; `QueryPerformanceCounter(lpFrequency)` / `QueryPerformanceFrequency(lpFrequency)`; `SYSTEMTIME` struct (`wYear`, `wMonth`, `wDay`, `wHour`, `wMinute`, `wSecond`, `wMilliseconds`)
+- [ ] Public UI ABI is Win32, full stop: the SDK exposes `user32` / `gdi32` / `comctl32` / `uxtheme` / `dwmapi` declarations only, never a parallel native widget API
+  - The `Ix*` shorthands in §2 `controls.h` are macros over `CreateWindowExA` built-in classes (`12-user-platform-sdk/TODO-05 §2` → XREF); the kernel `CTRL_*` API stays shell-internal and is not installed under `sdk/include/`
+  - Consequence, and the reason: a program built against this SDK is a Windows 11 program and vice versa, so the Win11 look (`08-graphics-ui/TODO-03 §9`) and Win11 app compatibility (`12-user-platform-sdk/TODO-07`) are one implementation, not two
 - [ ] Update `sdk/include/impossible/windows.h` → include all subsystem headers above so `#include <windows.h>` is a full Win32-compat header
 - [ ] Commit: `"sdk: C header set (types, process, thread, file, sync, io, time)"`
 

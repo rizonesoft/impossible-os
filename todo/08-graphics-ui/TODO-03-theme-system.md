@@ -42,6 +42,7 @@ title: "TODO-03 -- Theme System"
 | 💎  |   6   | §6 Migration pass -- replace all hardcoded hex colors in five desktop source files            | §2 `theme_get()` must be callable before any file is migrated           |  [ ]   |
 | 💎  |   7   | §7 Shadow rendering -- wire `gfx_drop_shadow` + `gfx_acrylic` calls to `theme_get()` tokens  | §6 (migration establishes the pattern; shadow is the last holdout)      |  [ ]   |
 | ⭐  |   8   | §8 Hot-reload -- `theme_reload()` + `WM_THEME_CHANGED` broadcast + per-window redraw         | §6 (redraw only correct after migration; §7 for shadow redraw to work)  |  [ ]   |
+| 💎  |   9   | §9 Fluent token corpus + Win11 personalization contract -- generated tokens, Microsoft Registry keys, Selawik + Fluent icons | §1 struct; §4 load path (keys move); §8 reload broadcast |  [ ]   |
 
 ---
 
@@ -112,6 +113,7 @@ Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`. Both use `#0078D4
   - [ ] Read `TitlebarInactiveColor` DWORD → if present: `g_theme.titlebar_inactive = value`
   - [ ] On any `RegOpenKeyEx` failure: `g_theme = THEME_DARK`; log and return
   - [ ] `RegCloseKey()` after all reads
+- [ ] Registry paths above are superseded by the Win11 personalization contract in §9: read the Microsoft keys first, `HKCU\Software\Impossible\Theme\*` only for Impossible-specific overrides
 - [ ] Log: `[theme] loaded mode=%s accent=#%06X`
 - [ ] Commit: `"desktop/theme: theme_load() -- Registry HKCU read, preset selection, field overrides"`
 
@@ -196,18 +198,49 @@ Update all `gfx_drop_shadow()` and `gfx_acrylic()` call sites to pass `theme_get
 
 ---
 
+## 9. Fluent Token Corpus and Win11 Personalization Contract `[Opus]`
+
+> **Spawned-by:** root
+
+Two things make the desktop read as Windows 11 rather than merely Fluent-shaped: the numbers come from Microsoft's own Fluent resource dictionaries instead of being hand-picked, and the theme state lives where Win32 apps already look for it. The WinUI 3 source (`microsoft/microsoft-ui-xaml`, MIT, LICENSE file verified 2026-08-29) ships the light/dark/high-contrast brush tables, type ramp, corner radii, control heights and easing curves as XAML resource dictionaries. Per CLAUDE.md "Vendor-First Evaluation" that is authoritative DATA to generate from, never code to port: WinUI 3 itself sits on WinRT, `Microsoft.UI.Composition` and DirectX, none of which exist here, and running WinUI 3 apps is a compatibility tier (`12-user-platform-sdk/TODO-07 §13` → XREF), not this section.
+
+**Files:** `tools/fluent-tokens/` (new host tool), `include/desktop/theme_fluent.h` (generated, checked in), `src/desktop/theme.c` (extend), `resources/fonts/`, `resources/icons/`
+
+- [ ] `tools/fluent-tokens/gen-tokens.py` -- host tool over a pinned checkout of the WinUI 3 theme resource dictionaries; emits `include/desktop/theme_fluent.h`
+  - Emits `const theme_t THEME_FLUENT_DARK / THEME_FLUENT_LIGHT / THEME_FLUENT_HIGH_CONTRAST`, plus corner radius (4/8 px), control height (32 px), 4 px spacing grid, and the standard easing/duration tables consumed by `08-graphics-ui/TODO-04`
+  - Upstream commit pinned in `tools/fluent-tokens/CORPUS-VERSION`; regenerate only via `make fluent-tokens`; the generated header is checked in so the kernel build never touches the corpus
+  - `THEME_DARK` / `THEME_LIGHT` (§3) become aliases of the generated presets and every hand-authored hex value leaves `theme.c`
+  - Rows in `src/libs/PROVENANCE.md` + `CREDITS.md` naming the corpus (MIT) and the pinned commit, same commit as the generator
+- [ ] Win11 personalization Registry contract -- `theme_load()` (§4) reads the Microsoft paths as the source of truth, because Win32 apps read them directly to pick dark mode and accent
+  - `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`: `AppsUseLightTheme`, `SystemUsesLightTheme`, `EnableTransparency`
+  - `HKCU\Software\Microsoft\Windows\DWM`: `AccentColor`, `ColorizationColor`, `ColorPrevalence`
+  - `HKCU\Control Panel\Desktop`: `WallPaper`; `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent`: `AccentPalette`
+  - `HKCU\Software\Impossible\Theme\*` keeps only Impossible-specific overrides (titlebar colors); `Mode` / `AccentColor` there are dropped and the §4 items updated to match
+  - `theme_reload()` (§8) fires on a change to any of these keys so the `WM_SETTINGCHANGE("ImmersiveColorSet")` consumers in `12-user-platform-sdk/TODO-05 §9` (→ XREF) see exactly one broadcast
+- [ ] Fonts and icons -- ship the permissive equivalents of the Segoe family; no Microsoft font file is ever redistributed
+  - `Selawik` (SIL OFL 1.1, LICENSE verified 2026-08-29) as the UI face, registered under the `Segoe UI` / `Segoe UI Variable` aliases in the font catalog (`08-graphics-ui/TODO-02 §1` → XREF; vendored engine in `TODO-02 §7`)
+  - `fluentui-system-icons` (MIT, LICENSE verified 2026-08-29) rasterized into the icon atlas as the `Segoe Fluent Icons` / `Segoe MDL2 Assets` glyph set, same codepoints
+  - Alias table: a Win32 `CreateFont("Segoe UI")` resolves to the shipped face; PROVENANCE + CREDITS rows for both with the pinned upstream tag
+- [ ] Log: `[theme] fluent corpus <sha> mode=%s accent=#%06X source=win11-keys`
+- [ ] Commit: `"desktop/theme: Fluent token corpus generator, Win11 personalization Registry contract, Selawik + Fluent icon assets"`
+
+**Test checkpoint:** `THEME_DARK.background` equals the generated `SolidBackgroundFillColorBase` dark value byte for byte; writing `AppsUseLightTheme=1` under the Microsoft key and running `theme reload` switches the desktop to light with no Impossible-specific key present; `CreateFont("Segoe UI")` measures text identically to `CreateFont("Selawik")`. Test on: QEMU TCG + KVM; bare metal.
+
+---
+
 ## OS Comparison
 
 
-| ⭐  | Feature                                             | 🪟 Win11                                                               | 🐧 Linux                                          | 🚀 Impossible OS                                                          |
-| --- | --------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
-| 💎  | Semantic color token struct                         | ✅ `COLORREF` + `GetSysColor()` + WinUI3                               | ✅ GTK `GtkStyleContext`; CSS custom properties   | ⬜ §1 -- `theme_t` 21-field POD; inline `theme_get()`                     |
-| 💎  | Dark + Light built-in presets                       | ✅ Dark/Light system theme; auto-switches at                           | ✅ GTK prefers-color-scheme; GNOME night mode     | ⬜ §3 -- `THEME_DARK` + `THEME_LIGHT` `const theme_t`                     |
-| 💎  | Registry-backed persistence                         | ✅ `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize` | ✅ `dconf`/`gsettings` key-value store; INI files | ⬜ §4 -- `HKCU\Software\Impossible\Theme\Mode` + `AccentColor` + titlebar |
-| 💎  | Custom accent color                                 | ✅ Settings → Personalization → Accent                                 | ✅ KDE/GNOME accent color pickers; GTK            | ⬜ §5 -- `accent_hover = accent +0x101010` (clamped)                      |
-| 💎  | Migration -- zero hardcoded hex colors in UI source | ✅ WinUI3 resource brush system; no                                    | ✅ GTK CSS variables; theme engine                | ⬜ §6 -- `rg "0x[0-9A-Fa-f]{6}" src/desktop/` → zero                      |
-| 💎  | Theme-aware shadow + acrylic                        | ✅ Shadow elevation system in WinUI3;                                  | ✅ GNOME uses elevation system; KDE               | ⬜ §7 -- `gfx_drop_shadow(…, theme_get()->shadow)` -- `0xB4000000` dark   |
-| ⭐  | Hot-reload with zero app restart                    | ✅ Windows redraws all windows live                                    | ⚠️ GTK/Qt apps reload themes live;                | ⬜ §8 -- `⭐` kernel-level broadcast: `wm_post_message_all()` dirty-marks |
+| ⭐  | Feature                                                         | 🪟 Win11                                                               | 🐧 Linux                                          | 🚀 Impossible OS                                                          |
+| --- | --------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| 💎  | Semantic color token struct                                     | ✅ `COLORREF` + `GetSysColor()` + WinUI3                               | ✅ GTK `GtkStyleContext`; CSS custom properties   | ⬜ §1 -- `theme_t` 21-field POD; inline `theme_get()`                     |
+| 💎  | Dark + Light built-in presets                                   | ✅ Dark/Light system theme; auto-switches at                           | ✅ GTK prefers-color-scheme; GNOME night mode     | ⬜ §3 -- `THEME_DARK` + `THEME_LIGHT` `const theme_t`                     |
+| 💎  | Registry-backed persistence                                     | ✅ `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize` | ✅ `dconf`/`gsettings` key-value store; INI files | ⬜ §4 -- `HKCU\Software\Impossible\Theme\Mode` + `AccentColor` + titlebar |
+| 💎  | Custom accent color                                             | ✅ Settings → Personalization → Accent                                 | ✅ KDE/GNOME accent color pickers; GTK            | ⬜ §5 -- `accent_hover = accent +0x101010` (clamped)                      |
+| 💎  | Migration -- zero hardcoded hex colors in UI source             | ✅ WinUI3 resource brush system; no                                    | ✅ GTK CSS variables; theme engine                | ⬜ §6 -- `rg "0x[0-9A-Fa-f]{6}" src/desktop/` → zero                      |
+| 💎  | Theme-aware shadow + acrylic                                    | ✅ Shadow elevation system in WinUI3;                                  | ✅ GNOME uses elevation system; KDE               | ⬜ §7 -- `gfx_drop_shadow(…, theme_get()->shadow)` -- `0xB4000000` dark   |
+| ⭐  | Hot-reload with zero app restart                                | ✅ Windows redraws all windows live                                    | ⚠️ GTK/Qt apps reload themes live;                | ⬜ §8 -- `⭐` kernel-level broadcast: `wm_post_message_all()` dirty-marks |
+| 💎  | Fluent tokens from Microsoft's corpus + Win11 Registry contract | ✅ WinUI3 resource dictionaries; `Themes\Personalize` + `DWM` keys     | ⚠️ libadwaita named colors; no cross-toolkit key  | ⬜ §9 -- generated `theme_fluent.h`; Microsoft keys; Selawik + icons      |
 
 > **After §1–§8:** Impossible OS has a fully kernel-native theme system with zero external dependencies. The `⭐` hot-reload advantage over Linux is that `wm_post_message_all()` operates at the kernel compositor level -- every window is dirty-marked in a single pass before the next frame, so the entire desktop repaints atomically in one compositor tick regardless of how many windows are open. GTK and Qt apps on Linux each maintain their own theming subscriptions and redraw at different times.
 
