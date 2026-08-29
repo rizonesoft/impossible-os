@@ -202,6 +202,10 @@ Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On
 - [ ] `usb_device_detach(slot)`: cancel all pending TRBs on all endpoints (Stop Endpoint command); Disable Slot command; free slot context
 - [ ] Boot log: `[xHCI] Port %u: device connected` / `Port %u: device disconnected`
 - [ ] Publish connect/disconnect via `knf_publish` on the `Device/*` catalog states (in addition to the desktop toast), so system subscribers observe USB hot-plug through the kernel notification facility (-> XREF: D02 T16 §5).
+- [ ] Once this section lands, tell `01-boot-platform/TODO-19 §16` its concurrency window now exists so its parked xHCI command-ring + BOT serialization becomes reachable
+  - Filed 2026-08-30 by the TODO-19 ADVANCE drain. TODO-19 §16 parked four SMP-serialization items on the finding that `xhci.c` enables MSI only after boot enumeration, so boot media I/O is never concurrent today and the defended window does not yet exist.
+  - Deferring enumeration to a serialized worker (the first item of this section) is exactly what creates it: a hot-plug enumeration running concurrently with SMP USB block I/O.
+  - -> XREF: `01-boot-platform/TODO-19 §16` (item: "Serialize command ring + correlate events")
 - [ ] Commit: `"drivers: xHCI hot-plug -- Port Status Change TRB, attach/detach, MSC unmount, HID disconnect"`
 
 ## 9. USB Hub Class Driver `[Opus]`

@@ -478,6 +478,13 @@ From `01-boot-platform/TODO-24` sections 5 and 10 (BlackBox klog follow-ups, 202
   - Fix shape: a per-CPU `klog_in_disk_flush` flag in `src/kernel/klog_disk.c`, or a `klog_no_flush()` variant used from fs-layer emitters.
   - Do not land it until the sole-C:\ (BlackBox-mount-failed) boot is reproduced under fault injection -- the hazard is latent while X:\ mounts, which is why the original 2026-04-18 review could not exercise it. Regression test builds on `00-infrastructure/TODO-03` §1 `test_add_fault` + §6.
 - [ ] **Durable low-space C: fallback for the critical-low redirect** (`klog_disk.c`) <- XREF: 01-boot-platform/TODO-24 §10
+- [ ] klog all-or-nothing kernel.log retry: truncate-to-pre-flush-size rollback so a failed `vfs_write` can be retried cleanly instead of re-appending
+  - Filed 2026-08-30 by the `01-boot-platform/TODO-19` ADVANCE drain. `klog_disk_flush_locked` stops the loop and retains the cursor on a failed chunk write (no further-chunk corruption), but the retry re-appends what already landed.
+  - The prerequisite TODO-19 named is SHIPPED: `vfs_truncate(path, new_size)` at `include/kernel/fs/vfs.h:196` / `src/kernel/fs/vfs.c:885`, with `fat32_vfs_truncate()` wired. What remains is klog-side: record the pre-flush size and roll back to it before re-appending.
+  - -> XREF: `01-boot-platform/TODO-19 §8` (item: "All-or-nothing kernel.log retry")
+- [ ] klog durable per-subsystem-file cursor so `boot.log` / `fs.log` and friends survive a subsystem-only write failure
+  - Filed 2026-08-30 by the `01-boot-platform/TODO-19` ADVANCE drain. Subsystem routing is best-effort today and `kernel.log` is the only durable copy, so a per-subsystem write failure silently loses that subsystem's tail.
+  - -> XREF: `01-boot-platform/TODO-19 §8` (item: "Durable per-subsystem-file cursor")
   - Add a sticky `klog_blackbox_forced_off` flag honored by `klog_resolve_dir`, so a critical-low redirect to C:\ survives the later resolve that currently re-sets `klog_using_blackbox`.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.

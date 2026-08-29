@@ -83,8 +83,8 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 - [x] Parse sense: key (`sense[2]&0x0F`), ASC (`sense[12]`), ASCQ (`sense[13]`); SCSI sense keys moved to a shared `include/kernel/drivers/scsi.h` (was duplicated in `ahci.h`)
 - [x] `msc_sense_classify()` (pure) -> `msc_err_class_t` {OK, RETRY_NOW (UNIT ATTENTION), WAIT_RETRY (NOT READY), UNRECOVERABLE}; wired into `usb_msc_init`'s TUR loop so the sense class drives the retry
 - [x] Log `Sense: key=%u ASC=0x%02x ASCQ=0x%02x (%s)` with `msc_sense_key_name()` (all 10 named keys)
-- [ ] Boot-LUN selection for composite media (card readers; BOT now reads `info->current_lun`, default 0): probe GET_MAX_LUN + per-LUN TUR -- BLOCKED on `04-drivers-hardware/TODO-10 §7` (item: "`usb_msc_get_max_lun(dev)`" at line 177)
-- [ ] Commit: `"drivers: SCSI REQUEST SENSE command with error classification"`
+- [/] Boot-LUN selection for composite media (card readers; BOT reads `info->current_lun`, default 0): probe GET_MAX_LUN + per-LUN TUR -- BLOCKED on `04-drivers-hardware/TODO-10 §7` (item: "`usb_msc_get_max_lun(dev)`" at line 181)
+- [x] Commit: `"drivers: SCSI REQUEST SENSE command with error classification"` -- landed as `ef94633b0`, reviewed by `5b8180a3f`
 
 **Test checkpoint:** Plug USB drive, boot. If drive returns UNIT ATTENTION on first command, serial shows sense data. Verify on bare metal i5-4210U.
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` SCSI sense classification + key-name (every key class + retry policy + high-bit mask + NULL/unknown); live REQUEST SENSE validated via QEMU run-usb + bare metal.
@@ -201,7 +201,10 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 - [x] `usb_msc_read_sectors`/`usb_msc_write_sectors` see the timeout as a `-1` transient I/O failure via the §3 retry wrapper
 - [x] `xhci_bulk_transfer_cc` stops on the FIRST host SHORT_PKT + reports host-transferred via `xfer_out`; `msc_scsi_command` fails exact-length on `msc_host_short` (host count authoritative over CSW residue) and reports `actual_out` from it
 - [x] `USB_BULK_TIMEOUT_MS`(5000) constant in `xhci_dev.h`
-- [ ] DEFERRED: EP0 / control-transfer timeout recovery -- distinct abort design (Stop Endpoint DCI 1, Set TR Dequeue on `ep0_ring`, slot-reset fallback) since §4 recovery rejects EP0; control xfer keeps its 500ms bound for now
+- [/] EP0 / control-transfer timeout recovery -- blocked on the EP0-abort design, which is TODO-19 §5-owned with no external prerequisite
+  - §4 recovery rejects EP0, so this needs its own abort path: Stop Endpoint DCI 1, Set TR Dequeue on `ep0_ring`, slot-reset fallback.
+  - No other TODO owns it, so nothing external will unblock it; the blocker is the design decision itself.
+  - Control transfers keep their 500ms bound meanwhile, which is bounded and safe, just not recoverable.
 - [x] Commit: `"drivers: USB bulk transfer timeouts -- TSC deadline, Stop Endpoint, retry integration"`
 
 **Test checkpoint:** Disconnect USB device during a bulk transfer (QEMU `device_del` mid-I/O) -- kernel logs timeout within 5 seconds instead of hanging. Boot continues if the device was not the boot drive. If boot drive times out, fall back to the no-USB boot path with a clear error message.
@@ -252,7 +255,9 @@ On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via t
 - [x] Shared `xhci_route_intel_usb2_ports` helper (`xhci.c`) dedups the two previously-divergent routing paths (handover + full-init); both now do EHCI-detect + routing-write + bounded settle + connected-count log
 - [x] EHCI-presence gate on BOTH paths: XUSB2PR(0xD0)/USB3_PSSEN(0xD8) written only when an EHCI controller (prog-if 0x20) shares the bus; modern Intel (100-series+, no EHCI) skips routing AND the settle wait (the old handover path always paid it)
 - [x] On routing-eligible hardware wait the bounded `XHCI_XUSB2PR_ROUTE_MAX_US` (500ms); log `"XUSB2PR port routing settled (%u ms, %u port(s) connected)"` with the before/after connected-port delta
-- [ ] DEFERRED: spec-backed event-driven early-exit to shorten the 500ms -- needs USB2 port-identity tracking (Supported Protocol caps); a timed early-exit is unsafe (no spec bound on XUSB2PR-to-CCS latency + synchronous boot enumeration)
+- [/] Spec-backed event-driven early-exit to shorten the 500ms -- blocked on USB2 port-identity tracking, TODO-19 §7-owned with no external prerequisite
+  - The identity comes from the xHCI Supported Protocol extended capability. No TODO owns that capability walk today, so nothing external will unblock this.
+  - A timed early-exit is not an acceptable substitute: the spec places no bound on XUSB2PR-to-CCS latency, and boot enumeration is synchronous, so a wrong guess loses the device.
 - [x] Commit: `"drivers: XUSB2PR routing -- unify both paths, EHCI-gate, bounded settle (early-exit deferred)"`
 
 **Test checkpoint:** i5-4210U bare metal with USB 2.0 drive boots; the routing settle logs the connected-port delta. Modern Intel (i5-11600K, no EHCI) logs the EHCI-skip and pays no routing wait. Non-Intel skips entirely.
@@ -277,8 +282,13 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 - [x] Preserve cursor-advance-on-success: `ixfs_flush_seq`/`jsonl_flush_seq` advance to `cur_seq` only on `flush_ok`; entries logged during flush wait for the next call -- correct across the 1000-entry ring wrap (`klog_disk.c`)
 - [x] Progress logging: serial `"[KLOG] Flushing %u entries..."` at entry + `"flush done (%u entries, %u ms)"` at `done:`, for flushes >= 64 (`KLOG_FLUSH_PROGRESS_MIN`); timed via `uptime_ns()`, emitted on serial not klog (reentrancy guard)
 - [x] Slow-media detect (flush > `KLOG_SLOW_MEDIA_MS`=5s): serial WARN + set `s_klog_slow_media`, exposed via `klog_slow_media_detected()` -- the trigger the deferred-flush mode (next section) consumes
-- [ ] DEFERRED: all-or-nothing kernel.log retry -- a failed `vfs_write` now stops the loop + retains the cursor (no further-chunk corruption), but the retry re-appends; needs truncate-to-pre-flush-size rollback (a VFS truncate op) for a clean retry
-- [ ] DEFERRED: durable per-subsystem-file cursor -- subsystem routing is best-effort (kernel.log is the durable copy); a per-file cursor would make `boot.log`/`fs.log`/etc. survive a subsystem-only write failure
+- [/] All-or-nothing kernel.log retry -> XREF: `02-kernel-core/TODO-04 §15` (item: "klog all-or-nothing kernel.log retry: truncate-to-pre-flush-size rollback")
+  - A failed `vfs_write` stops the loop and retains the cursor, so no further chunk is corrupted, but the retry re-appends what already landed.
+  - BLOCKER CORRECTED 2026-08-30: the prerequisite this item named ("needs a VFS truncate op") has SHIPPED. `vfs_truncate(path, new_size)` is declared at `include/kernel/fs/vfs.h:196`, defined at `src/kernel/fs/vfs.c:885`, and FAT32 wires `fat32_vfs_truncate()`.
+  - What remains is klog-side and now has an owner: capture the pre-flush size and roll back to it before re-appending.
+- [/] Durable per-subsystem-file cursor -> XREF: `02-kernel-core/TODO-04 §15` (item: "klog durable per-subsystem-file cursor")
+  - Subsystem routing is best-effort today and `kernel.log` is the only durable copy, so a subsystem-only write failure silently loses that subsystem's tail.
+  - A per-file cursor would make `boot.log`, `fs.log` and the rest survive it.
 - [x] Commit: `"kernel: bounded klog_disk_flush -- seq-cursor snapshot, no unbounded loop"`
 
 **Test checkpoint:** USB 2.0 boot on bare metal -- flush completes in seconds, not minutes. Serial shows `"[KLOG] Flushing N entries..."` / `"flush done (N entries, M ms)"`; a >5s flush emits the slow-media WARN. Unit test asserts the bounded flush window caps to `KLOG_RING_SIZE`.
@@ -329,7 +339,7 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 - [x] Stored in a KERNEL global `s_boot_media_speed` + `boot_media_speed()` getter -- NOT a `boot_info` ABI field (it is a kernel-runtime measurement; avoids a BOOT_INFO_VERSION bump) -> design adoption
 - [x] Consumers: SLOW calls `klog_set_deferred(1)` (§9) before the klog disk/live-log enable; the kernel test sweep skips on SLOW media in debug mode -- gated on probe-class OR §8 `klog_slow_media_detected()`, honoring `test=1`
 - [x] Log: `"Boot media speed: %s (%u us/4KiB)"` with the classification + measured time
-- [ ] DEFERRED: "adjust timeouts" on slow media -- the bulk/control timeouts are already bounded (§5); a media-class-scaled timeout knob is a future refinement with no concrete consumer today
+- [/] Media-class-scaled timeout knob on slow media -- the bulk/control timeouts are already bounded (§5). TODO-19 §10-owned and NOT blocked on anything: the honest reason it is parked is that no caller wants it, so it stays parked until one does.
 - [x] Commit: `"kernel: boot media speed detection -- adjust behavior for slow USB"`
 
 **Test checkpoint:** SATA SSD / NVMe → "fast" (QEMU emulated disk classifies fast); USB 3.0 stick → "medium"; USB 2.0 stick → "slow" (proactively enables deferred klog). Unit test asserts the `boot_media_classify` thresholds.
@@ -354,12 +364,12 @@ For hardware without xHCI, detect legacy USB controllers (EHCI/UHCI/OHCI) and de
 > EHCI ownership split: the full EHCI HCD (vtable + class-driver reuse) is owned by `04-drivers-hardware/TODO-10-usb-stack.md §10`, which itself depends on that TODO's §1 usb_core HCD abstraction. `usb_msc.c` is hardwired to `struct xhci_device`/`struct xhci_ring`, so a CREDIBLE shared-BOT EHCI fallback cannot land until §1's `usb_hcd_ops_t` vtable exists; a standalone EHCI-MSC copy is the `if(xhci)...else if(ehci)` anti-pattern §1 exists to prevent. This section therefore owns boot-integration detection + the OHCI-only graceful skip + the multi-controller MSC fix; the HCD driver, shared BOT, and HCD-agnostic recovery are deferred to TODO-10 §1/§10. Routed from `01-boot-platform/TODO-17 §6` (non-Intel/legacy de-scope).
 
 - [x] Detect EHCI/UHCI/OHCI via PCI (class 0x0C/0x03, prog-if 0x20/0x00/0x10): pure `usb_legacy_classify` + `usb_legacy_scan` count each class (`usb_legacy.{c,h}`)
-- [ ] Minimal EHCI driver (port reset, bulk, BOT SCSI) -> XREF: 04-drivers-hardware/TODO-10 §10 (item: "Async schedule: control/bulk via QH->QTD chain; `ehci_submit_control`/`ehci_submit_bulk`"); needs §1 usb_core HCD vtable
+- [/] Minimal EHCI driver (port reset, bulk, BOT SCSI) -> XREF: 04-drivers-hardware/TODO-10 §10 (item: "Async schedule: control/bulk via QH->QTD chain; `ehci_submit_control`/`ehci_submit_bulk`"); needs §1 usb_core HCD vtable
 - [x] No-xHCI fallback decision: `usb_legacy_announce` logs which legacy controller exists + that boot storage via it is pending the HCD, then skips gracefully (no hang); active EHCI->UHCI drive deferred with the HCD
 - [x] OHCI-only hardware (0x0C/0x03/0x10): `usb_legacy_announce` logs "OHCI-only controller -- USB storage not supported on this hardware" and skips (no hang); no OHCI driver planned
-- [ ] Share `usb_msc.c` BOT layer across HCDs (needs the usb_core abstraction) -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "Refactor `xhci_bulk_transfer()`/`xhci_control_transfer()` to `usb_hcd_ops_t`; `usb_msc.c` migrates to `usb_submit_bulk()`")
+- [/] Share `usb_msc.c` BOT layer across HCDs (needs the usb_core abstraction) -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "Refactor `xhci_bulk_transfer()`/`xhci_control_transfer()` to `usb_hcd_ops_t`; `usb_msc.c` migrates to `usb_submit_bulk()`")
 - [x] Key MSC state by global device index not per-controller `slot_id`: `msc_state(dev)` keys `msc_info[]` by `xhci_device_index(dev)`; `blkdev_adapters` routes I/O to `dev->owner` via `xhci_controller_index`, not hardcoded ctrl 0
-- [ ] EHCI/UHCI transport recovery + timeouts at §4/§5 parity via an HCD-agnostic USB error contract -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "`usb_submit_*` return `USB_ERR_STALL`/`USB_ERR_TIMEOUT`/`USB_ERR_TRANSPORT`") + §10 (EHCI HCD)
+- [/] EHCI/UHCI transport recovery + timeouts at §4/§5 parity via an HCD-agnostic USB error contract -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "`usb_submit_*` return `USB_ERR_STALL`/`USB_ERR_TIMEOUT`/`USB_ERR_TRANSPORT`") + §10 (EHCI HCD)
 - [x] No-xHCI legacy diagnostic log shipped (`usb_legacy_announce`); the active "[USB] Using %s controller" log lands when the HCD drives storage -> XREF: 04-drivers-hardware/TODO-10 §10
 - [x] Commit: `"drivers: USB legacy-controller detection + graceful no-xHCI skip; MSC multi-controller keying fix"`
 
@@ -476,8 +486,13 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 - [x] Callback API in `klog.h`: `klog_flush_progress_fn` typedef + `klog_disk_set_flush_progress_cb()` (registered static, atomic store/load; not a `klog_disk_flush()` signature change)
 - [x] `klog_disk.c`: pure gate `klog_flush_progress_due(total)` + persisted-progress reporting in `klog_disk_flush_locked` -- cb fires after each successful chunk write, never overstating what reached disk
 - [/] `boot_desktop.c` registers `boot_flush_splash_progress` -> `boot_splash_diag` around the boot-end `klog_disk_flush_all()`; plumbed but on screen DEFERRED (flush_all is post-splash-fade, compositor-locked, so `boot_splash_diag` no-ops)
-- [ ] Render the deferred-mode drain on screen: reorder `boot_splash_finish()` fade-out to after `klog_disk_flush_all()`, OR add a post-splash boot-drain framebuffer surface keyed to the compositor-lock hand-off window
-- [ ] Fire the whole-drain 100% tick at the true `klog_disk_flush_locked` end (after subsystem-routing + events.jsonl + serial writes), not after `kernel.log` -- shipped accounting reports only kernel.log per-chunk liveness (no premature 100%)
+- [/] Render the deferred-mode drain on screen -- blocked on a boot_phase3 ordering choice, TODO-19 §15-owned with no external prerequisite
+  - Two candidate shapes: reorder the `boot_splash_finish()` fade-out to after `klog_disk_flush_all()`, or add a post-splash boot-drain framebuffer surface keyed to the compositor-lock hand-off window.
+  - Either changes when the splash releases the framebuffer, which is why it is a decision rather than plumbing. `flush_all` runs after the fade today, so the registered callback has nothing to draw on.
+- [/] Fire the whole-drain 100% tick at the true `klog_disk_flush_locked` end, not after `kernel.log` -- TODO-19 §15-owned, parked with the render item above
+  - "True end" means after subsystem routing, `events.jsonl` and the serial writes, not after the `kernel.log` chunk loop.
+  - Parked rather than blocked: a 100% tick that nothing draws is not observable, so it is worth doing only alongside the render item.
+  - Not a correctness gap meanwhile. The shipped accounting reports only `kernel.log` per-chunk liveness, so it under-reports and never claims a premature 100%.
 - [x] Commit: `"boot: klog flush progress on splash diagnostic line"`
 
 **Test checkpoint:** Pure `klog_flush_progress_due` gate + persisted-progress accounting are unit-tested. On-screen validation (USB 2.0 deferred drain shows `"Writing boot log... N/M entries"`) is pending the deferred render-surface item -- the callback fires correctly; the splash is faded by the time `flush_all` runs. Test on: bare metal USB once the render surface lands.
@@ -503,12 +518,28 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 
 The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT transport (`msc_bot_command`) are unserialized: command enqueue mutates `hc->cmd_ring` with no lock and `xhci_wait_command` accepts the first completion event rather than matching the submitted command TRB, and two CPUs can enter the same MSC device concurrently. Single-threaded boot enumeration is safe today, but post-boot SMP block-layer I/O plus §4 stall recovery (which issues Reset Endpoint / Set TR Dequeue and re-arms the ring) makes a concurrent race destructive. Surfaced by the §4 adversarial review.
 
-- [ ] Serialize command ring + correlate events: lock `xhci_cmd_submit`/`xhci_wait_command`; match each Command Completion AND Transfer Event to its submitted TRB pointer, not the first by type/CC (`xhci_wait_transfer`/abort drain)
-- [ ] Defer hot-plug enumeration out of the shared event-ring drain so it cannot steal a synchronous command/transfer completion while a command is in flight
-- [ ] Per-MSC-device BOT serialization: a sleepable mutex around `msc_bot_command` (CBW/data/CSW + recovery, `usb_msc.c`) so two CPUs can't interleave one device; Set TR Dequeue must not run while another caller has a queued TRB
+- [/] Serialize the command ring and correlate each event to its own submitted TRB -> XREF: `04-drivers-hardware/TODO-10 §8` (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
+  - Lock `xhci_cmd_submit` / `xhci_wait_command`, and match each Command Completion AND Transfer Event to its submitted TRB pointer rather than the first by type or completion code (`xhci_wait_transfer`, abort drain).
+  - Gated on that section because it is what CREATES the window this defends: `xhci.c` enables MSI only after boot enumeration, so boot media I/O is never concurrent today, and the exposure is post-boot hot-plug running against SMP USB block I/O.
+  - Also needs the refactor-scope decision recorded in this section's Deferred stamp (coarse per-controller `io_mutex` first, fine-grained per-TRB correlation as the follow-on).
+, which is what creates the post-boot concurrency window this serialization defends; see this section's Deferred stamp for the refactor-scope decision it also needs.
+- [/] Defer hot-plug enumeration out of the shared event-ring drain -> XREF: `04-drivers-hardware/TODO-10 §8` (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
+  - So it cannot steal a synchronous command or transfer completion while a command is in flight.
+  - Gated on that section because it is what CREATES the window this defends: `xhci.c` enables MSI only after boot enumeration, so boot media I/O is never concurrent today, and the exposure is post-boot hot-plug running against SMP USB block I/O.
+  - Also needs the refactor-scope decision recorded in this section's Deferred stamp (coarse per-controller `io_mutex` first, fine-grained per-TRB correlation as the follow-on).
+, which is what creates the post-boot concurrency window this serialization defends; see this section's Deferred stamp for the refactor-scope decision it also needs.
+- [/] Per-MSC-device BOT serialization -> XREF: `04-drivers-hardware/TODO-10 §8` (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
+  - A sleepable mutex around `msc_bot_command` (CBW, data, CSW and recovery, `usb_msc.c`) so two CPUs cannot interleave one device. Set TR Dequeue must not run while another caller has a queued TRB.
+  - Gated on that section because it is what CREATES the window this defends: `xhci.c` enables MSI only after boot enumeration, so boot media I/O is never concurrent today, and the exposure is post-boot hot-plug running against SMP USB block I/O.
+  - Also needs the refactor-scope decision recorded in this section's Deferred stamp (coarse per-controller `io_mutex` first, fine-grained per-TRB correlation as the follow-on).
+, which is what creates the post-boot concurrency window this serialization defends; see this section's Deferred stamp for the refactor-scope decision it also needs.
 - [x] Made `cbw_tag` atomic -- `__atomic_fetch_add(&cbw_tag, 1, __ATOMIC_RELAXED)` in `usb_msc.c` `msc_bot_command`, so two CPUs cannot reuse/reorder a CSW tag (holds even before the deferred BOT serialization)
-- [ ] Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned -- force a re-abort or slot-level reset (Reset Device / Disable+Enable Slot) before any retry enqueues behind it on that ring
-- [ ] Commit: `"drivers: serialize xHCI command ring + per-device BOT transport (SMP)"`
+- [/] Timeout-tainted endpoint recovery for a failed abort -> XREF: `04-drivers-hardware/TODO-10 §8` (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
+  - When `xhci_abort_endpoint` fails, the stale TRB stays owned; force a re-abort or a slot-level reset (Reset Device, or Disable plus Enable Slot) before any retry enqueues behind it on that ring.
+  - Gated on that section because it is what CREATES the window this defends: `xhci.c` enables MSI only after boot enumeration, so boot media I/O is never concurrent today, and the exposure is post-boot hot-plug running against SMP USB block I/O.
+  - Also needs the refactor-scope decision recorded in this section's Deferred stamp (coarse per-controller `io_mutex` first, fine-grained per-TRB correlation as the follow-on).
+, which is what creates the post-boot concurrency window this serialization defends; see this section's Deferred stamp for the refactor-scope decision it also needs.
+- [/] Commit: `"drivers: serialize xHCI command ring + per-device BOT transport (SMP)"` -- parked with the four items above; nothing to commit until they are reachable.
 
 **Test checkpoint:** SMP stress (concurrent USB MSC reads from 2 CPUs) shows no command-ring corruption, no CSW tag reuse, and a stall recovery during concurrent I/O never advances the endpoint past another caller's TRB. Verify on bare metal i5-4210U (USB 2.0) and a multi-core target.
 
