@@ -14,8 +14,11 @@ The kernel currently links and loads **low**: `src/boot/linker.ld` sets `. = 1M`
 the user-mode ELF range pinned at `0x800000` by `include/kernel/mm/user_range.h`. Kernel `.bss` and `USER_BASE` are
 therefore on a collision course, and `scripts/build.sh` carries a hard `BSS COLLISION` guard to catch it.
 
-As of 2026-07-15 that guard is **live, not theoretical**: `__kernel_end` page-aligns to `0x7ff000`, the last page
-before `USER_BASE`. [Live-environment adoption](../../todo/02-kernel-core/TODO-22-environment-variables.md#23-live-environment-adoption-setcurrentenvironment-setenvironmentstrings-createenvironmentex)
+As of 2026-08-29 that guard is **live, not theoretical**: `__kernel_end` is `0x7f9000`, leaving 28 KiB under the
+`0x800000` firmware floor (`build/kernel.map`, and `scripts/build.sh` prints the headroom on every build). Read the
+current figure from that build output rather than this line: it moves with every change to `.text`/`.bss`, and
+`01-boot-platform/TODO-10` sections 31-32 moved it twice (down when the 16 KiB BSS stack array was removed, up again
+as the boot-stack code landed). [Live-environment adoption](../../todo/02-kernel-core/TODO-22-environment-variables.md#23-live-environment-adoption-setcurrentenvironment-setenvironmentstrings-createenvironmentex)
 tripped it on its first build by adding roughly 4 KiB of `.text`, and is now deferred on this work. Every kernel
 section behind it is in the same position. Moving the kernel into the upper canonical half removes the ceiling
 permanently and is the structural prerequisite for KASLR, a clean SMEP/SMAP split, KPTI, and PCID.
