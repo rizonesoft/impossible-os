@@ -4,7 +4,8 @@
  *
  * Scope: boot_info-driven regions only (struct boot_info itself, USB
  * DMA pages + scratchpad, TPM event log, framebuffer, UEFI runtime
- * memory map, typed payloads with BOOT_PAYLOAD_FLAG_RESERVED).
+ * memory map, typed payloads with BOOT_PAYLOAD_FLAG_RESERVED, the
+ * loader-owned kernel boot stack).
  *
  * OUT of scope (handled directly by pmm_init's existing calls): first
  * 1 MiB legacy area, kernel image, bitmap itself, user-mode ELF
@@ -44,6 +45,7 @@ enum boot_reserved_kind {
     BOOT_RESERVED_FRAMEBUFFER      = 5,  /* linear GOP framebuffer */
     BOOT_RESERVED_RT_MMAP          = 6,  /* UEFI runtime services region */
     BOOT_RESERVED_PAYLOAD = 7, /* typed payload with FLAG_RESERVED */
+    BOOT_RESERVED_BOOT_STACK       = 8,  /* loader-owned kernel boot stack */
 };
 
 struct boot_reserved_region {

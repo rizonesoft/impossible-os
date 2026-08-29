@@ -166,12 +166,64 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-/* v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
+/* v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
+ *     loader-owned kernel boot stack (TODO-10 sec32). The bootloader
+ *     AllocatePages a dedicated below-4-GiB run, poisons it, and switches RSP
+ *     to its top before calling the kernel entry, so Phase 0 and Phase 1 no
+ *     longer execute on the firmware's own EfiLoaderData stack. New fields
+ *     (not a reserved-region carve), so the version bumps.
+ * v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
  *     enumeration (TODO-27 sec4). New fields (not a reserved-region carve), so
  *     the version bumps. Single-GPU + headless boots leave gop_handle_count 0;
  *     boot_info.fb stays the authoritative primary framebuffer. */
-#define BOOT_INFO_VERSION  23
+#define BOOT_INFO_VERSION  24
 #endif
+
+/* Fill pattern the bootloader writes across the whole kernel boot stack run
+ * before switching RSP to it (TODO-10 sec32). The kernel scans upward from
+ * the first usable byte for the lowest qword that is NOT this value; that
+ * address is the deepest point early boot reached, which is the only way to
+ * turn "the stack is probably deep enough" into a number. Chosen to be a
+ * non-canonical, non-zero, obviously-synthetic pattern so a leaked copy in a
+ * dump is recognizable as untouched stack rather than plausible data. Both
+ * the producer and the consumer must use the identical value; the bootloader
+ * mirror pins the same constant. */
+#define BOOT_KSTACK_POISON  0x5354414B504F4953ULL
+
+/* Consumer-side bounds on the published run. The kernel refuses a handoff
+ * outside these: too small to hold the deepest path MEASURED on this kernel,
+ * or larger than anything a sane producer allocates (a wild value would
+ * reserve a huge span out of the allocator).
+ *
+ * The floor is 128 KiB because that is what the measurement says, not because
+ * it is a round number. Poison scans on QEMU, 2026-08-28: 9,528 bytes at the
+ * end of Phase 1, 38,368 in compositor steady state on a production boot, and
+ * 99,472 cumulative on a `test=1` boot, where the in-kernel test runner is
+ * the deepest path. An earlier 16 KiB floor would have accepted a conforming
+ * producer that overflows on an ALREADY OBSERVED path, which is a contract
+ * that validates nothing.
+ *
+ * The floor deliberately does NOT pin the producer's current 256 KiB
+ * allocation. Pinning it would make any future producer resize an ABI break
+ * for no safety gain; what matters is that anything accepted clears the
+ * deepest path this kernel is known to take.
+ *
+ * The floor is on USABLE bytes, not on the total run, and that distinction is
+ * load-bearing: a floor on the total accepts a 128 KiB run carrying a 32 KiB
+ * guard, which leaves 96 KiB usable and overflows on the already-measured
+ * path. Guard bytes are not stack.
+ *
+ * The guard is pinned to EXACTLY one page. A multi-page guard would move the
+ * boundary the stack actually grows through to the page below
+ * base + guard_size, while the installer unmaps base -- so the real boundary
+ * would stay mapped and an overflow would not fault. Pinning it keeps those
+ * two pages the same page by construction. If a wider guard band is ever
+ * wanted, widen it here AND teach boot_stack_install_guard() which page to
+ * unmap; never relax one without the other. */
+#define BOOT_KSTACK_GUARD_BYTES  4096u
+#define BOOT_KSTACK_MIN_USABLE   (128u * 1024u)
+#define BOOT_KSTACK_MIN_SIZE     (BOOT_KSTACK_MIN_USABLE + BOOT_KSTACK_GUARD_BYTES)
+#define BOOT_KSTACK_MAX_SIZE     (1024u * 1024u)
 
 /* Producer-valid marker for the sec6 A/B slot-status snapshot (boot_info
  * .ab_status_valid). Set by a bootloader that publishes the snapshot; the
@@ -1942,6 +1994,52 @@ struct boot_info {
     struct boot_gop_handle gop_handles[BOOT_GOP_HANDLE_MAX];
     uint32_t gop_handle_count;
     uint32_t _gop_handle_pad;       /* reserved; zero (align to 8) */
+
+    /* v24: loader-owned kernel boot stack (TODO-10 sec32). The bootloader
+     * allocates a dedicated below-4-GiB page run pre-ExitBootServices, fills
+     * it with BOOT_KSTACK_POISON, and switches RSP to its TOP in
+     * jump_to_kernel before calling the kernel entry. The kernel therefore
+     * runs on THIS memory, not on the firmware's EfiLoaderData stack, which
+     * pmm_init frees into the allocator while it is being used.
+     *
+     * NOT a boot-only run despite the name. task_init keeps it as PID 0's
+     * PERMANENT kernel stack (src/kernel/sched/task.c, the PID 0 block:
+     * stack_base = 0, "boot stack, don't free"), and PID 0 goes on to run the
+     * compositor loop, which never returns. "boot" names where the run comes
+     * from, not how long it lives; anything sizing it or quoting a peak from
+     * it must mean that lifetime.
+     *
+     * kstack_base is page-aligned and non-zero on any bootloader that
+     * performs the switch; 0 means the producer did not publish a stack and
+     * the kernel is still executing on firmware memory. The kernel treats 0
+     * as a FATAL handoff error rather than a silent fallback -- a boot that
+     * keeps running on reclaimable memory is the exact defect this field
+     * exists to remove, and it is invisible under an emulator that happens to
+     * place the loader stack away from the first free frames.
+     *
+     * kstack_size is the TOTAL run in bytes (4 KiB multiple, including the
+     * guard); the kernel's floor applies to size - guard_size, since guard
+     * bytes are not stack. kstack_guard_size is EXACTLY one page at the BASE,
+     * which the kernel unmaps via vmm_install_guard_page once paging is live,
+     * so an overflow faults with a label instead of walking into whatever sits
+     * below; a wider guard is refused, because the installer unmaps the base
+     * page and a multi-page guard would leave the page the stack really grows
+     * through still mapped. Usable stack is
+     * [kstack_base + kstack_guard_size, kstack_base + kstack_size).
+     *
+     * The run must also lie OUTSIDE the user page-table window
+     * (USER_PT_WINDOW_BASE..END): the kernel re-points that PD entry per
+     * process, so a stack there would stop being mapped at the first user
+     * CR3. The producer avoids it and the kernel refuses it.
+     *
+     * The whole run is reserved through boot_reserved (kind
+     * BOOT_RESERVED_BOOT_STACK), which is what keeps the PMM from handing out
+     * the frames the kernel is standing on -- the pages are allocated as
+     * EfiLoaderData and the published memory map may still describe them as
+     * conventional, so the reservation, not the map type, is the guarantee. */
+    uint64_t kstack_base;
+    uint32_t kstack_size;
+    uint32_t kstack_guard_size;
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -2113,6 +2211,22 @@ _Static_assert(__builtin_offsetof(struct boot_info, ab_slot_tries) ==
 _Static_assert(__builtin_offsetof(struct boot_info, ab_slot_flags) ==
                __builtin_offsetof(struct boot_info, ab_slot_tries) + 2,
     "boot_info.ab_slot_flags must follow the 2-byte ab_slot_tries array");
+/* v24 kernel boot stack: pinned RELATIVE to the v23 tail so an unrelated
+ * future tail addition cannot silently reorder it past the mirror. The three
+ * fields are contiguous and 8-aligned; the bootloader mirror pins the
+ * identical relationship, so a one-sided edit fails whichever side drifted. */
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_base) ==
+               __builtin_offsetof(struct boot_info, _gop_handle_pad) + 4,
+    "boot_info.kstack_base must immediately follow _gop_handle_pad -- "
+    "update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_base) % 8 == 0,
+    "boot_info.kstack_base must be 8-byte aligned");
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_size) ==
+               __builtin_offsetof(struct boot_info, kstack_base) + 8,
+    "boot_info.kstack_size must immediately follow kstack_base");
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_guard_size) ==
+               __builtin_offsetof(struct boot_info, kstack_size) + 4,
+    "boot_info.kstack_guard_size must immediately follow kstack_size");
 _Static_assert(__builtin_offsetof(struct boot_info, ab_status_valid) ==
                __builtin_offsetof(struct boot_info, ab_slot_flags) + 1,
     "boot_info.ab_status_valid must immediately follow ab_slot_flags -- "

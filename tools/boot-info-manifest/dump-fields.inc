@@ -449,3 +449,8 @@ F(gop_handles[0].fb_valid);
 F(gop_handles[0].pad);
 F(gop_handle_count);
 F(_gop_handle_pad);
+
+/* v24 loader-owned kernel boot stack (TODO-10 sec32). */
+F(kstack_base);
+F(kstack_size);
+F(kstack_guard_size);

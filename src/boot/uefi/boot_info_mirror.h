@@ -293,9 +293,13 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
+/* v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
+ *     loader-owned kernel boot stack (TODO-10 sec32). This bootloader
+ *     allocates the run, poisons it, and switches RSP to its top in
+ *     jump_to_kernel. Mirrors include/kernel/boot_info.h.
+ * v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
  *     enumeration (TODO-27 sec4). Mirrors include/kernel/boot_info.h. */
-#define BOOT_INFO_VERSION  23
+#define BOOT_INFO_VERSION  24
 #endif
 
 /* Mirror of include/kernel/boot_info.h -- producer-valid marker for the sec6
@@ -808,7 +812,59 @@ struct boot_info {
     struct boot_gop_handle gop_handles[BOOT_GOP_HANDLE_MAX];
     UINT32   gop_handle_count;
     UINT32   _gop_handle_pad;       /* reserved; zero (align to 8) */
+
+    /* v24: loader-owned kernel boot stack (TODO-10 sec32). Allocated
+     * pre-ExitBootServices below 4 GiB, filled with BOOT_KSTACK_POISON, and
+     * made the active stack by jump_to_kernel before the kernel entry call --
+     * so Phase 0 and Phase 1 do not run on the firmware's EfiLoaderData
+     * stack, which pmm_init frees into the allocator while it is live.
+     *
+     * NOT a boot-only run despite the name: the kernel keeps it as PID 0's
+     * PERMANENT kernel stack (task.c, the task_init PID 0 block), and PID 0
+     * goes on to run the compositor loop, which never returns. Size it for
+     * that lifetime.
+     *
+     * kstack_base is page-aligned and must not intersect the user page-table
+     * window; kstack_size is the total run including the guard;
+     * kstack_guard_size is EXACTLY one page at the base, which the kernel
+     * unmaps once paging is up. Mirrors include/kernel/boot_info.h
+     * field-for-field. */
+    UINT64   kstack_base;
+    UINT32   kstack_size;
+    UINT32   kstack_guard_size;
 };
+
+/* Fill pattern written across the whole kernel boot stack run before RSP is
+ * switched to it (TODO-10 sec32). The kernel scans upward for the lowest
+ * qword that is NOT this value to recover the deepest point early boot
+ * reached. MUST match include/kernel/boot_info.h. */
+#define BOOT_KSTACK_POISON  0x5354414B504F4953ULL
+
+/* Producer-side geometry for that run. 256 KiB total with the lowest page
+ * held back as the guard leaves 252 KiB usable.
+ *
+ * The size is MEASURED, not guessed, and the first guess was wrong. Phase 0
+ * and Phase 1 peak at 9,528 bytes (poison scan, QEMU 2026-08-28), which made
+ * 64 KiB look generous -- but every phase up to the scheduler handing threads
+ * their own stacks runs here too, and a `test=1` boot took roughly 97 KiB and
+ * panicked on the guard page. Sizing from the Phase 0/1 number alone is the
+ * exact mistake the cumulative second reading now exists to catch. 256 KiB
+ * clears the deepest observed path by ~2.5x; the memory is permanently
+ * reserved, and a quarter of a mebibyte is not a trade worth a boot that
+ * faults only on the deepest path. */
+#define BL_KSTACK_SIZE        (256u * 1024u)
+#define BL_KSTACK_GUARD_SIZE  4096u
+
+/* The user page-table window, which the stack must NOT land in. The kernel
+ * replaces this PD entry per process (vmm_create_user_pml4), so a kernel
+ * object here stops being mapped at the first user CR3 -- and this run is PID
+ * 0's permanent stack. MUST match USER_PT_WINDOW_BASE / USER_PT_WINDOW_END in
+ * include/kernel/mm/user_range.h, where a _Static_assert pins both values;
+ * the kernel independently REFUSES an overlapping run at
+ * boot_stack_validate(), so a drift here degrades to a refused boot with a
+ * named cause rather than to silent corruption. */
+#define BL_USER_PT_WINDOW_BASE  0x800000ull
+#define BL_USER_PT_WINDOW_END   0xA00000ull
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
 _Static_assert(__builtin_offsetof(struct boot_info, header) == 0,
@@ -825,6 +881,20 @@ _Static_assert(sizeof(struct boot_info) <= 65535,
  * sync with the kernel header; update BOTH sides atomically when adding or
  * moving fields. Per-field offset manifest (build/boot-info-abi.mirror.json)
  * catches any reorder, not just the six pinned count-field offsets. */
+/* v24 kernel boot stack: pinned RELATIVE to the v23 tail, identically to the
+ * kernel header, so a one-sided tail edit fails on whichever side drifted. */
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_base) ==
+               __builtin_offsetof(struct boot_info, _gop_handle_pad) + 4,
+    "boot_info.kstack_base must immediately follow _gop_handle_pad -- "
+    "kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_base) % 8 == 0,
+    "boot_info.kstack_base must be 8-byte aligned");
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_size) ==
+               __builtin_offsetof(struct boot_info, kstack_base) + 8,
+    "boot_info.kstack_size must immediately follow kstack_base");
+_Static_assert(__builtin_offsetof(struct boot_info, kstack_guard_size) ==
+               __builtin_offsetof(struct boot_info, kstack_size) + 4,
+    "boot_info.kstack_guard_size must immediately follow kstack_size");
 _Static_assert(__builtin_offsetof(struct boot_info, mmap_count) == 16392,
     "boot_info.mmap_count offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, gop_mode_count) == 16948,

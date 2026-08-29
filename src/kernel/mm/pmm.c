@@ -18,6 +18,7 @@
 #include "kernel/mm/memmap.h"           /* HHDM extent check + phys->virt alias */
 #include "kernel/mm/user_range.h"
 #include "kernel/mm/boot_reserved.h"
+#include "kernel/mm/boot_stack.h"        /* boot_stack_get/overlaps: stack vs image + bitmap */
 #include "kernel/boot_info.h"
 #include "kernel/boot_halt.h"
 #include "kernel/klog.h"
@@ -178,6 +179,40 @@ boot_result_t pmm_init(void)
     /* Page-align bitmap_end for cleanliness */
     bitmap_end = (bitmap_end + PMM_FRAME_SIZE - 1) & ~((uintptr_t)PMM_FRAME_SIZE - 1);
 
+    /* BEFORE THE FIRST BITMAP WRITE: the loader-owned kernel boot stack
+     * (TODO-10 sec32) must be disjoint from the kernel image and from the
+     * bitmap extent computed just above. This CPU is standing on that run;
+     * the Step 3 fill below writes 0xFF over [kernel_end_phys, bitmap_end), so
+     * a run placed there would have its saved return state overwritten before
+     * any later check could report it (an earlier form of this check sat
+     * after the fill, which is exactly that failure). The reserved-table
+     * payload predicate skips every kind but PAYLOAD, so nothing else compares
+     * the run against these two ranges; boot_stack_validate already refuses
+     * the low 1 MiB and the user PT window. boot_stack_init ran at
+     * boot_hw.c:156, so the run is validated by now. */
+    {
+        const struct boot_stack_info *ks = boot_stack_get();
+        if (ks != (const struct boot_stack_info *)0 && ks->valid) {
+            if (boot_stack_overlaps(ks, 0x100000ull,
+                                    (uint64_t)(kernel_end_phys - 0x100000ull))) {
+                klog(LOG_FATAL, "mm",
+                     "PMM: kernel boot stack 0x%lx+0x%lx intersects the "
+                     "kernel image [0x100000, 0x%lx)",
+                     ks->base, ks->size, (uint64_t)kernel_end_phys);
+                return BOOT_FATAL;
+            }
+            if (boot_stack_overlaps(ks, (uint64_t)kernel_end_phys,
+                                    (uint64_t)(bitmap_end - kernel_end_phys))) {
+                klog(LOG_FATAL, "mm",
+                     "PMM: kernel boot stack 0x%lx+0x%lx intersects the "
+                     "PMM bitmap [0x%lx, 0x%lx)",
+                     ks->base, ks->size, (uint64_t)kernel_end_phys,
+                     (uint64_t)bitmap_end);
+                return BOOT_FATAL;
+            }
+        }
+    }
+
     /* Step 3: Mark ALL frames as used (safe default) */
     for (i = 0; i < bitmap_size; i++)
         bitmap[i] = 0xFF;
@@ -293,6 +328,35 @@ boot_result_t pmm_init(void)
         }
         boot_reserved_apply();
         boot_reserved_log();
+    }
+
+    /* ACCEPTANCE CHECK for the loader-owned kernel boot stack (TODO-10
+     * sec32). Everything above is the mechanism; this is the PROOF, and it is
+     * the point of the section: a boot that happens to survive is not
+     * evidence that the allocator avoided the running stack, because the
+     * placement that makes it survive is luck no emulator disturbs.
+     *
+     * Ask the bitmap directly whether the frame holding OUR OWN current RSP
+     * is marked used. It cannot pass by accident: step 4 above freed every
+     * LoaderCode/Data region a moment ago, so the only thing that can have
+     * re-marked this frame is the boot_reserved entry naming it. Two frames
+     * are checked because a stack near a page boundary can straddle one. */
+    {
+        uint64_t rsp_now;
+        __asm__ volatile ("movq %%rsp, %0" : "=r"(rsp_now));
+        uint64_t f_lo = (rsp_now - 8u) / PMM_FRAME_SIZE;
+        uint64_t f_hi = rsp_now / PMM_FRAME_SIZE;
+        if (f_hi >= total_frames || !bitmap_test(f_lo) || !bitmap_test(f_hi)) {
+            klog(LOG_FATAL, "mm",
+                 "PMM: live kernel stack at 0x%lx is ALLOCATABLE (frames "
+                 "%lu/%lu of %lu) -- vmm_init and heap_init would allocate "
+                 "the memory this CPU is standing on",
+                 rsp_now, f_lo, f_hi, (uint64_t)total_frames);
+            return BOOT_FATAL;
+        }
+        klog(LOG_INFO, "mm",
+             "PMM: live kernel stack at 0x%lx is reserved (frame %lu)",
+             rsp_now, f_hi);
     }
 
     /* Log UEFI memory map summary */
@@ -547,6 +611,15 @@ void pmm_free_frame(uintptr_t addr)
         bitmap_clear(frame);
         used_frames--;
     }
+}
+
+
+int pmm_frame_is_free(uintptr_t addr)
+{
+    uint64_t frame = (uint64_t)addr / PMM_FRAME_SIZE;
+    if (frame >= total_frames)
+        return 0;
+    return bitmap_test(frame) ? 0 : 1;
 }
 
 uint64_t pmm_get_total_frames(void)

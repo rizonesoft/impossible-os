@@ -23,6 +23,8 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/idt.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/boot_stack.h"
+#include "kernel/mm/user_range.h"
 #include "kernel/drivers/lapic.h"
 
 /* strcmp lives in the kernel libc, not the freestanding headers (see snprintf
@@ -656,6 +658,433 @@ static void test_bm_df_classifier_uses_the_guard_registry(void)
 
 /* ---- Registration ---- */
 
+
+/* ---- Loader-owned kernel boot stack (section 32) ---------------------------
+ *
+ * boot_stack_validate() is the fail-closed gate on the one handoff field that,
+ * if wrong, lets the PMM hand out the memory the kernel is standing on. It is
+ * a PURE function over the three published values precisely so every refusal
+ * branch is reachable from a test -- the live path halts the boot, which a
+ * test may not do.
+ *
+ * The accepted geometry below deliberately does NOT hardcode what the
+ * bootloader currently allocates; it drives the CONTRACT (page grain, size
+ * band, guard strictly inside, identity-map ceiling). A test that echoed
+ * BL_KSTACK_SIZE would only assert that the constant was typed correctly.
+ */
+
+#define BM_KS_BASE   0x00200000ull
+#define BM_KS_SIZE   0x00040000ull   /* 256 KiB -- above BOOT_KSTACK_MIN_SIZE */
+#define BM_KS_GUARD  0x00001000ull   /* 4 KiB  */
+
+static void test_bm_kstack_accepts_a_well_formed_handoff(void)
+{
+    struct boot_stack_info si;
+    enum boot_stack_error err = BOOT_STACK_ERR_WRAP;  /* poisoned, must be overwritten */
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) != 0,
+                "a page-aligned in-band run must be accepted");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_OK,
+                   "accept must report BOOT_STACK_ERR_OK");
+    TEST_ASSERT_EQ(si.base, BM_KS_BASE, "base must round-trip unchanged");
+    TEST_ASSERT_EQ(si.size, BM_KS_SIZE, "size must round-trip unchanged");
+    TEST_ASSERT_EQ(si.guard_size, BM_KS_GUARD, "guard must round-trip unchanged");
+    TEST_ASSERT(si.valid != 0, "accepted handoff must be marked valid");
+}
+
+static void test_bm_kstack_refuses_each_malformed_shape(void)
+{
+    struct boot_stack_info si;
+    enum boot_stack_error err;
+
+    /* Absent beats every other verdict: a zero base must NOT be reported as a
+     * misalignment of address 0, or a bootloader that published nothing looks
+     * like one that published something broken. */
+    TEST_ASSERT(boot_stack_validate(0, BM_KS_SIZE, BM_KS_GUARD, &si, &err) == 0,
+                "a zero base must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_ABSENT,
+                   "a zero base must be reported as ABSENT, not as misaligned");
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE + 8, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) == 0,
+                "a non-page-aligned base must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_UNALIGNED,
+                   "misaligned base must report UNALIGNED");
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, 0, BM_KS_GUARD, &si, &err) == 0,
+                "a zero-size run must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_SIZE_RANGE,
+                   "zero-size run must report SIZE_RANGE");
+
+    /* A run smaller than its own guard would underflow size - guard_size and
+     * wrap to a huge usable span that clears the floor. */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_GUARD, BM_KS_GUARD,
+                                    &si, &err) == 0,
+                "a run no larger than its guard must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_USABLE_SHORT,
+                   "a guard-sized run must report USABLE_SHORT, not wrap into "
+                   "a passing usable span");
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE,
+                                    (uint64_t)BOOT_KSTACK_MAX_SIZE + 4096u,
+                                    BM_KS_GUARD, &si, &err) == 0,
+                "a run above the size ceiling must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_SIZE_RANGE,
+                   "oversized run must report SIZE_RANGE");
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE + 8, BM_KS_GUARD,
+                                    &si, &err) == 0,
+                "a size that is not a page multiple must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_SIZE_GRAIN,
+                   "non-page-multiple size must report SIZE_GRAIN");
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, BM_KS_GUARD + 8,
+                                    &si, &err) == 0,
+                "a guard that is not a page multiple must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_GUARD_GRAIN,
+                   "non-page-multiple guard must report GUARD_GRAIN");
+
+    /* A zero guard passes grain and range, then ships a run with no overflow
+     * detection at all. Accepting it would make the guard guarantee
+     * unfalsifiable, so it is refused with its own verdict rather than folded
+     * into GUARD_RANGE. */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, 0, &si, &err) == 0,
+                "a zero guard must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_GUARD_ABSENT,
+                   "zero guard must report GUARD_ABSENT, not GUARD_GRAIN");
+
+    /* A structurally PERFECT run that happens to sit in the user page-table
+     * window must still be refused. vmm_create_user_pml4() re-points that PD
+     * entry per process, so a stack here stops being mapped at the first user
+     * exec -- and this run is PID 0's permanent stack. The loader avoids the
+     * window, but AllocateMaxAddress bounds only the top of the allocation
+     * and firmware need not allocate top-down, so this consumer-side refusal
+     * is the actual guarantee. */
+    TEST_ASSERT(boot_stack_validate((uint64_t)USER_PT_WINDOW_BASE, BM_KS_SIZE,
+                                    BM_KS_GUARD, &si, &err) == 0,
+                "a run based inside the user PT window must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_USER_WINDOW,
+                   "a run in the user PT window must report USER_WINDOW");
+    /* Partial overlap from below counts too -- the window is not entered only
+     * by starting in it. */
+    TEST_ASSERT(boot_stack_validate((uint64_t)USER_PT_WINDOW_BASE - 0x1000ull,
+                                    BM_KS_SIZE, BM_KS_GUARD, &si, &err) == 0,
+                "a run overlapping the window's low edge must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_USER_WINDOW,
+                   "a low-edge overlap must report USER_WINDOW");
+    /* Below 1 MiB the loader writes the boot page tables (0x70000-0x75fff),
+     * boot_info (0x10000) and the AP trampoline at fixed addresses with no
+     * firmware claim, so a run there can contain the live PML4: 0x60000
+     * passed every check above and setup_page_tables() then wrote inside the
+     * poisoned run. */
+    TEST_ASSERT(boot_stack_validate(0x60000ull, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) == 0,
+                "a run starting below 1 MiB must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_LOW_MEM,
+                   "a run below 1 MiB must report LOW_MEM");
+    /* Refusal direction control: the first legal base is exactly 1 MiB. */
+    TEST_ASSERT(boot_stack_validate(0x100000ull, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) == 1,
+                "a run based at exactly 1 MiB is not low memory");
+    /* Consumer-side disjointness against the kernel image and the PMM bitmap
+     * extent, which boot_stack_validate cannot know: pmm_init asks this over
+     * the VALIDATED run (the reserved-table payload predicate skips every
+     * kind but PAYLOAD, so nothing else compares the run against them). */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) == 1, "reference run validates");
+    TEST_ASSERT(boot_stack_overlaps(&si, BM_KS_BASE + 0x1000ull, 0x1000ull) == 1,
+                "a range inside the run overlaps it");
+    TEST_ASSERT(boot_stack_overlaps(&si, BM_KS_BASE - 0x1000ull, 0x2000ull) == 1,
+                "a range straddling the run's base overlaps it");
+    TEST_ASSERT(boot_stack_overlaps(&si, BM_KS_BASE + BM_KS_SIZE - 8ull, 0x10ull) == 1,
+                "a range straddling the run's top overlaps it");
+    TEST_ASSERT(boot_stack_overlaps(&si, BM_KS_BASE + BM_KS_SIZE, 0x1000ull) == 0,
+                "a range starting at the run's end is disjoint");
+    TEST_ASSERT(boot_stack_overlaps(&si, BM_KS_BASE - 0x1000ull, 0x1000ull) == 0,
+                "a range ending at the run's base is disjoint");
+    TEST_ASSERT(boot_stack_overlaps(&si, BM_KS_BASE, 0ull) == 0,
+                "a zero-length range never overlaps");
+    TEST_ASSERT(boot_stack_overlaps(&si, ~0ull - 0x100ull, 0x1000ull) == 0,
+                "a wrapping range never overlaps");
+    TEST_ASSERT(boot_stack_overlaps((const struct boot_stack_info *)0,
+                                    BM_KS_BASE, 0x1000ull) == 0,
+                "a NULL info never overlaps");
+    /* And a run ending exactly at the window base is disjoint, so it must NOT
+     * be refused -- an off-by-one here would reject legitimate placements. */
+    TEST_ASSERT(boot_stack_validate((uint64_t)USER_PT_WINDOW_BASE - BM_KS_SIZE,
+                                    BM_KS_SIZE, BM_KS_GUARD, &si, &err) != 0,
+                "a run ending exactly at the window base must be accepted");
+
+    /* base + size overflowing UINT64_MAX would otherwise compute an end BELOW
+     * the base and satisfy the identity-map ceiling test by wrapping under
+     * it. WRAP is checked before ABOVE_MAP precisely so this reports the
+     * cause rather than the symptom. */
+    TEST_ASSERT(boot_stack_validate(0xFFFFFFFFFFFC0000ull, BM_KS_SIZE,
+                                    BM_KS_GUARD, &si, &err) == 0,
+                "a base + size that wraps must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_WRAP,
+                   "wrapping run must report WRAP, not ABOVE_MAP");
+
+    /* A page-MULTIPLE guard larger than one page is refused. It would move
+     * the boundary the stack grows through to the page below
+     * base + guard_size while the installer unmaps base, leaving the real
+     * boundary mapped -- an overflow that does not fault. */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, 0x8000ull,
+                                    &si, &err) == 0,
+                "a multi-page guard must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_GUARD_GRAIN,
+                   "a multi-page guard must report GUARD_GRAIN");
+
+    /* THE geometry the round-2 review named: usable span one page short of
+     * the floor. A total of exactly BOOT_KSTACK_MIN_USABLE leaves
+     * MIN_USABLE - 4096 usable once the guard is taken out. Under a
+     * total-size floor this whole class was accepted. */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE,
+                                    (uint64_t)BOOT_KSTACK_MIN_USABLE,
+                                    BM_KS_GUARD, &si, &err) == 0,
+                "a run whose USABLE span is below the floor must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_USABLE_SHORT,
+                   "a short usable span must report USABLE_SHORT");
+
+    /* The kernel reads this run through the boot identity map, which stops at
+     * 4 GiB. A run ending above it is unreadable here whatever the producer
+     * meant, so it is refused rather than faulted on later. */
+    TEST_ASSERT(boot_stack_validate(BOOT_INFO_EARLY_MAP_END - 4096ull,
+                                    BM_KS_SIZE, BM_KS_GUARD, &si, &err) == 0,
+                "a run ending above the identity map must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_ABOVE_MAP,
+                   "above-map run must report ABOVE_MAP");
+}
+
+static void test_bm_kstack_refusal_leaves_the_output_untouched(void)
+{
+    struct boot_stack_info si;
+    enum boot_stack_error err;
+
+    si.base = 0xDEADBEEFull;
+    si.size = 0xDEADBEEFull;
+    si.guard_size = 0xDEADBEEFull;
+    si.valid = 0;
+
+    TEST_ASSERT(boot_stack_validate(0, BM_KS_SIZE, BM_KS_GUARD, &si, &err) == 0,
+                "sanity: the refusal under test must actually refuse");
+    /* A refusal that half-populated `si` would let a caller that checked the
+     * struct instead of the return value proceed on garbage bounds. ALL FOUR
+     * fields are checked: asserting only base and valid would miss a partial
+     * write that left a plausible size behind. */
+    TEST_ASSERT_EQ(si.base, 0xDEADBEEFull,
+                   "a refused handoff must not write out->base");
+    TEST_ASSERT_EQ(si.size, 0xDEADBEEFull,
+                   "a refused handoff must not write out->size");
+    TEST_ASSERT_EQ(si.guard_size, 0xDEADBEEFull,
+                   "a refused handoff must not write out->guard_size");
+    TEST_ASSERT(si.valid == 0,
+                "a refused handoff must never set out->valid");
+}
+
+static void test_bm_kstack_accepts_at_the_exact_contract_bounds(void)
+{
+    struct boot_stack_info si;
+    enum boot_stack_error err;
+
+    /* The floor and ceiling are INCLUSIVE. An off-by-one that made either
+     * exclusive would reject a producer publishing exactly the documented
+     * geometry, and no other test in this file would notice. */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, (uint64_t)BOOT_KSTACK_MIN_SIZE,
+                                    BM_KS_GUARD, &si, &err) != 0,
+                "a run at exactly BOOT_KSTACK_MIN_SIZE must be accepted");
+    /* One page below it must NOT be, or the floor is off by a page and the
+     * smallest accepted run is short of the measured peak. */
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE,
+                                    (uint64_t)BOOT_KSTACK_MIN_SIZE - 4096ull,
+                                    BM_KS_GUARD, &si, &err) == 0,
+                "one page below BOOT_KSTACK_MIN_SIZE must be refused");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_USABLE_SHORT,
+                   "and refused for the USABLE reason -- BOOT_KSTACK_MIN_SIZE "
+                   "is a derived total, not a second gate");
+    TEST_ASSERT_EQ((uint64_t)(BOOT_KSTACK_MIN_SIZE - BOOT_KSTACK_GUARD_BYTES),
+                   (uint64_t)BOOT_KSTACK_MIN_USABLE,
+                   "the total floor must be exactly the usable floor plus one "
+                   "guard page -- a drift here silently shortens every "
+                   "accepted run");
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, (uint64_t)BOOT_KSTACK_MAX_SIZE,
+                                    BM_KS_GUARD, &si, &err) != 0,
+                "a run at exactly BOOT_KSTACK_MAX_SIZE must be accepted");
+
+    /* base + size == BOOT_INFO_EARLY_MAP_END is the last address the boot
+     * identity map covers, so it is inside the map, not above it. The
+     * ceiling check is `>`, and this is what pins that. */
+    TEST_ASSERT(boot_stack_validate(BOOT_INFO_EARLY_MAP_END - BM_KS_SIZE,
+                                    BM_KS_SIZE, BM_KS_GUARD, &si, &err) != 0,
+                "a run ending exactly at the identity-map end must be accepted");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_STACK_ERR_OK,
+                   "the exact-ceiling run must report OK");
+}
+
+static void test_bm_kstack_scan_finds_the_lowest_touched_qword(void)
+{
+    static uint64_t buf[16];
+    uint32_t i;
+
+    for (i = 0u; i < 16u; i++)
+        buf[i] = BOOT_KSTACK_POISON;
+
+    /* All poison: the scan reports the full length, which is what makes
+     * "nothing ran on this stack" distinguishable from "peak 0". */
+    TEST_ASSERT_EQ(boot_stack_scan_first_touched(buf, sizeof(buf)),
+                   (uint64_t)sizeof(buf),
+                   "an untouched span must report its own length");
+
+    /* Two writes with poison BETWEEN them. Scanning down from the top would
+     * stop at index 12 and report a peak less than half the truth; the rule
+     * is the LOWEST touched qword, not the first one found. */
+    buf[12] = 0x1111111111111111ull;
+    buf[4]  = 0x2222222222222222ull;
+    TEST_ASSERT_EQ(boot_stack_scan_first_touched(buf, sizeof(buf)),
+                   (uint64_t)(4u * sizeof(uint64_t)),
+                   "the scan must report the LOWEST touched qword");
+
+    buf[0] = 0x3333333333333333ull;
+    TEST_ASSERT_EQ(boot_stack_scan_first_touched(buf, sizeof(buf)), 0ull,
+                   "a write to the first qword must report offset 0");
+
+    /* Caller bugs report "nothing touched" rather than dereferencing or
+     * reading a partial qword past the end. */
+    TEST_ASSERT_EQ(boot_stack_scan_first_touched((const void *)0, sizeof(buf)),
+                   (uint64_t)sizeof(buf), "NULL must not be dereferenced");
+    TEST_ASSERT_EQ(boot_stack_scan_first_touched(buf, 12ull), 12ull,
+                   "a non-qword-multiple length must be refused, not rounded");
+}
+
+static void test_bm_kstack_contains_bounds_the_usable_span(void)
+{
+    struct boot_stack_info si;
+    enum boot_stack_error err;
+    uint64_t lo;
+    uint64_t hi;
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) != 0,
+                "fixture handoff must validate");
+    lo = BM_KS_BASE + BM_KS_GUARD;
+    hi = BM_KS_BASE + BM_KS_SIZE;
+
+    TEST_ASSERT(boot_stack_contains(&si, lo, 8) != 0,
+                "the first usable qword must be inside the span");
+    TEST_ASSERT(boot_stack_contains(&si, hi - 8, 8) != 0,
+                "the last usable qword must be inside the span");
+
+    /* The guard is deliberately OUTSIDE the usable span: this predicate is
+     * what the live RSP check uses, and an RSP inside the guard means the
+     * stack has already overflowed, not that it is healthy. */
+    TEST_ASSERT(boot_stack_contains(&si, BM_KS_BASE, 8) == 0,
+                "the guard page must not count as usable stack");
+    TEST_ASSERT(boot_stack_contains(&si, lo - 8, 8) == 0,
+                "the qword below the usable floor must be outside");
+    TEST_ASSERT(boot_stack_contains(&si, hi, 8) == 0,
+                "the qword at the top must be outside (exclusive end)");
+    TEST_ASSERT(boot_stack_contains(&si, hi - 4, 8) == 0,
+                "a range straddling the top must be outside");
+    TEST_ASSERT(boot_stack_contains(&si, lo, 0) == 0,
+                "a zero-length range must never be reported as contained");
+}
+
+static void test_bm_kstack_contains_rejects_wrap_and_invalid(void)
+{
+    struct boot_stack_info si;
+    struct boot_stack_info invalid;
+    enum boot_stack_error err;
+
+    invalid.base = BM_KS_BASE;
+    invalid.size = BM_KS_SIZE;
+    invalid.guard_size = BM_KS_GUARD;
+    invalid.valid = 0;
+    TEST_ASSERT(boot_stack_contains(&invalid, BM_KS_BASE + BM_KS_GUARD, 8) == 0,
+                "an unvalidated struct must never report containment");
+    TEST_ASSERT(boot_stack_contains((const struct boot_stack_info *)0,
+                                    BM_KS_BASE, 8) == 0,
+                "NULL must not be dereferenced");
+
+    TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, BM_KS_GUARD,
+                                    &si, &err) != 0,
+                "fixture handoff must validate");
+    /* addr + len wrapping past UINT64_MAX would otherwise compute a hi bound
+     * BELOW lo and satisfy the range test for an address nowhere near the
+     * stack. */
+    TEST_ASSERT(boot_stack_contains(&si, 0xFFFFFFFFFFFFFFF8ull, 16) == 0,
+                "a wrapping range must be refused, not wrapped into the span");
+}
+
+static void test_bm_kstack_live_run_is_reserved_and_measured(void)
+{
+    const struct boot_stack_info *si = boot_stack_get();
+    uint64_t lo;
+    uint64_t hi;
+    uint64_t frame;
+
+    TEST_ASSERT(si != (const struct boot_stack_info *)0,
+                "boot_stack_get must never return NULL");
+    TEST_ASSERT(si->valid != 0,
+                "the live boot ran without a validated kernel stack");
+    TEST_ASSERT((si->base & 0xFFFu) == 0, "live stack base must be page-aligned");
+    TEST_ASSERT(si->guard_size < si->size,
+                "live guard must leave usable stack");
+
+    /* THE acceptance property of section 32, asserted against the live boot
+     * rather than a fixture: every frame of the run the kernel executes on
+     * must be unavailable to the allocator. pmm_init frees all LoaderCode/Data
+     * moments before reserving this run, so a pass here cannot be an accident
+     * of the free walk having skipped it. */
+    lo = si->base;
+    hi = si->base + si->size;
+    for (frame = lo; frame < hi; frame += 4096ull) {
+        if (pmm_frame_is_free((uintptr_t)frame)) {
+            TEST_ASSERT(0,
+                        "a frame of the live kernel boot stack is ALLOCATABLE");
+            return;
+        }
+    }
+
+    TEST_ASSERT(boot_stack_guarded() != 0,
+                "the live boot stack shipped UNGUARDED -- guard table full "
+                "or huge-page split failed");
+}
+
+static void test_bm_pmm_frame_is_free_is_calibrated(void)
+{
+    uintptr_t f;
+
+    /* CONTROL for the assertion above. Without this, an implementation of
+     * pmm_frame_is_free() that returned 0 unconditionally would make the
+     * whole-run sweep pass while proving nothing at all -- the sweep only
+     * ever asks about frames it expects to be reserved, so it can never
+     * observe the oracle saying "free". Both answers must be reachable
+     * before either is evidence. */
+    f = pmm_alloc_frame();
+    TEST_ASSERT(f != 0, "fixture: a frame must be allocatable");
+    TEST_ASSERT(pmm_frame_is_free(f) == 0,
+                "an ALLOCATED frame must not be reported free");
+
+    pmm_free_frame(f);
+    TEST_ASSERT(pmm_frame_is_free(f) != 0,
+                "a FREED frame must be reported free -- the oracle is stuck "
+                "at 'used' and every reservation claim built on it is void");
+
+    /* Re-take it so the suite leaves the allocator as it found it, and so the
+     * transition is observed in both directions. */
+    TEST_ASSERT_EQ((uint64_t)pmm_alloc_frame(), (uint64_t)f,
+                   "the just-freed frame must be handed back next");
+    TEST_ASSERT(pmm_frame_is_free(f) == 0,
+                "the re-allocated frame must not be reported free");
+    pmm_free_frame(f);
+
+    /* Out of range is conservatively NOT free: a frame the allocator does not
+     * know about is one it will never hand out. */
+    TEST_ASSERT(pmm_frame_is_free((uintptr_t)(pmm_get_total_frames() * 4096ull)) == 0,
+                "an out-of-range address must never be reported free");
+}
+
 void test_register_bare_metal(void)
 {
     test_suite_register_cat("BM: UC MMIO maps the LAPIC page",
@@ -705,6 +1134,33 @@ void test_register_bare_metal(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("BM: #DF classifier uses the registry",
                             test_bm_df_classifier_uses_the_guard_registry,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack accepts a well-formed handoff",
+                            test_bm_kstack_accepts_a_well_formed_handoff,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack refuses each malformed shape",
+                            test_bm_kstack_refuses_each_malformed_shape,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack refusal leaves output untouched",
+                            test_bm_kstack_refusal_leaves_the_output_untouched,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack contains bounds the usable span",
+                            test_bm_kstack_contains_bounds_the_usable_span,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack contains rejects wrap and invalid",
+                            test_bm_kstack_contains_rejects_wrap_and_invalid,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: live kernel stack run is reserved",
+                            test_bm_kstack_live_run_is_reserved_and_measured,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack accepts at exact contract bounds",
+                            test_bm_kstack_accepts_at_the_exact_contract_bounds,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: kstack scan finds lowest touched qword",
+                            test_bm_kstack_scan_finds_the_lowest_touched_qword,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("BM: pmm_frame_is_free oracle is calibrated",
+                            test_bm_pmm_frame_is_free_is_calibrated,
                             TEST_CAT_BOOT);
 }
 

@@ -48,6 +48,7 @@ static const char *kind_name(uint32_t kind)
     case BOOT_RESERVED_FRAMEBUFFER:    return "framebuffer";
     case BOOT_RESERVED_RT_MMAP:        return "rt_mmap";
     case BOOT_RESERVED_PAYLOAD:        return "payload";
+    case BOOT_RESERVED_BOOT_STACK:     return "boot_stack";
     default:                           return "unknown";
     }
 }
@@ -324,6 +325,31 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                              BOOT_RESERVED_PAYLOAD, i, out_err) != BOOT_OK)
                 return BOOT_FATAL;
         }
+    }
+
+    /* Kernel boot stack (TODO-10 sec32). The run the kernel is executing on
+     * RIGHT NOW: the bootloader allocated it as EfiLoaderData, so the memory
+     * map may still describe those frames as reclaimable and pmm_init's map
+     * walk frees them. This entry, not the map type, is what keeps the
+     * allocator off them.
+     *
+     * It belongs in this table rather than in a direct pmm_mark_region_used()
+     * call beside the kernel-image and bitmap reservations, because unlike
+     * those its address comes from a bootloader handoff field -- so it must
+     * take part in the same overlap detection, log line and BlackBox record
+     * as every other retained region. A stack that collided with the
+     * framebuffer or a reserved payload would otherwise become two successful
+     * bitmap reservations and no complaint.
+     *
+     * Validation lives in boot_stack_init(), which ran in Phase 0 and halted
+     * on a bad handoff; the fields are re-checked here only for the shapes
+     * that would corrupt this table itself (zero base, zero length), because
+     * this function is also reachable from tests with a synthetic boot_info
+     * that never went through Phase 0. */
+    if (info->kstack_base != 0u && info->kstack_size != 0u) {
+        if (add_or_fatal(info->kstack_base, (uint64_t)info->kstack_size,
+                         BOOT_RESERVED_BOOT_STACK, 0u, out_err) != BOOT_OK)
+            return BOOT_FATAL;
     }
 
     return BOOT_OK;

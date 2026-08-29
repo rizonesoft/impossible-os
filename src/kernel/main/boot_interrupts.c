@@ -34,6 +34,7 @@
  * Provides: boot_phase1() and the legacy boot_interrupts_init() wrapper.
  * ============================================================================ */
 
+#include "kernel/mm/boot_stack.h"
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
@@ -984,6 +985,13 @@ void boot_phase1(void)
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE1] complete -- interrupts, timer, display ready");
+
+    /* How deep did Phase 0 and Phase 1 actually go on this stack? Until
+     * TODO-10 sec32 no number for that existed at all -- the depth was
+     * argued from struct arithmetic. The measurement runs HERE, at the Phase
+     * 1 boundary, because that is the span the section owns; the poison below
+     * this mark stays intact for anything later that wants to re-read it. */
+    (void)boot_stack_measure("phase 0/1");
 
     /* NVRAM write: Phase 1 complete */
     boot_post_nvram_write16(POST16_TIMER_OK);

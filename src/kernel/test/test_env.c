@@ -182,14 +182,34 @@ static void test_env_invalid_name(void)
 
 static void test_env_value_too_long(void)
 {
-    static char big[ENV_VALUE_MAX + 8];
+    /* Needs a value LONGER than env_test_bigval can hold (its length is a
+     * legal value for the other cases), so it is a runtime page allocation
+     * rather than a second 32 KiB static: the kernel BSS ends within a page of
+     * USER_BASE and the build's BSS-collision gate refuses the image when one
+     * more static of this size lands (measured 2026-08-29 at the TODO-10
+     * section-32 ship: real BSS end 0x7ffa54 against the 0x800000 floor). */
+    const uint64_t big_len = (uint64_t)ENV_VALUE_MAX + 8u;
+    const uint64_t big_frames = (big_len + 4095u) / 4096u;
+    uintptr_t big_phys = pmm_alloc_contiguous(big_frames);
+    char *big;
     uint32_t i;
+    if (big_phys == 0) {
+        /* TEST_ASSERT records and CONTINUES; without this return the fill
+         * loop below would write through address 0. */
+        TEST_ASSERT(0, "overlong-value fixture pages allocated");
+        return;
+    }
+    big = (char *)big_phys;
     env_fixture_reset();
-    for (i = 0; i < sizeof(big) - 1; i++)
+    for (i = 0; i < big_len - 1u; i++)
         big[i] = 'v';
-    big[sizeof(big) - 1] = '\0';
-    TEST_ASSERT_EQ(env_set(&s_env_fixture, "HUGE", big), ENV_ERR_TOOLONG,
-                   "value exceeding ENV_VALUE_MAX is rejected");
+    big[big_len - 1u] = '\0';
+    {
+        int rc = env_set(&s_env_fixture, "HUGE", big);
+        pmm_free_contiguous(big_phys, big_frames);   /* before any early return */
+        TEST_ASSERT_EQ(rc, ENV_ERR_TOOLONG,
+                       "value exceeding ENV_VALUE_MAX is rejected");
+    }
 }
 
 /* Name-length boundary: exactly ENV_NAME_MAX is storable; one over is TOOLONG

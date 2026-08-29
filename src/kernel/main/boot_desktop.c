@@ -15,6 +15,7 @@
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
 #include "kernel/cpuid_platform.h"
+#include "kernel/mm/boot_stack.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_version.h"
@@ -389,6 +390,15 @@ void boot_phase3(void)
 
     /* --- Boot tests (debug=1 only) --- */
     boot_tests_run();
+
+    /* Cumulative boot-stack peak, taken AFTER the deepest thing that ever
+     * runs on this stack. The Phase 1 reading covers only the cheap half:
+     * everything up to the scheduler handing threads their own stacks
+     * executes here, and the in-kernel test runner is by far the deepest of
+     * it. Sizing the run from the Phase 1 number alone is exactly the mistake
+     * this second reading exists to prevent -- it was caught by a real
+     * guard-page panic, not by inspection (TODO-10 sec32). */
+    (void)boot_stack_measure("cumulative to desktop");
 
     /* --- Fonts, icons, cursors --- */
     klog(LOG_DEBUG, "", "");

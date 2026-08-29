@@ -11582,6 +11582,139 @@ static void bl_hhdm_install_leaves(void)
     }
 }
 
+/* ============================================================================
+ * Kernel boot stack (TODO-10 sec32)
+ *
+ * Until this existed, jump_to_kernel loaded CR3 and CALLED the kernel entry
+ * without ever writing RSP, so Phase 0 and Phase 1 ran on the firmware's own
+ * EfiLoaderData stack. pmm_init frees every LoaderCode/Data and
+ * BootServicesCode/Data region into the free pool, and nothing reserved that
+ * stack -- vmm_init and heap_init then allocated from a pool containing the
+ * run the kernel was standing on. That it booted was placement luck, not a
+ * property anything enforced, and it is invisible under an emulator that
+ * happens to place the loader stack away from the first free frames.
+ *
+ * A memory-map descriptor is NOT usable as the stack's boundary: mmap_emit_
+ * segment coalesces adjacent segments with the same UEFI type and attributes,
+ * so the EfiLoaderData descriptor holding RSP can span several unrelated
+ * firmware allocations. Only an allocation the loader makes itself has bounds
+ * it can honestly publish, which is why this is an explicit page run rather
+ * than an inferred window around the firmware's RSP.
+ *
+ * Below 4 GiB for the same reason as every other kernel-consumed allocation
+ * here: the kernel dereferences it through the boot identity map, which
+ * covers the first 4 GiB only.
+ * ============================================================================ */
+
+/* Placement retries before giving up (see bl_kstack_reserve). Small on
+ * purpose: each rejected run stays allocated for the duration, and a firmware
+ * that hands back the user PT window several times running is not going to
+ * stop. */
+#define BL_KSTACK_PLACEMENT_TRIES 8
+
+static UINT64 g_kstack_base;   /* 0 until reserved; page-aligned when set */
+
+/* Where the kernel boot stack may NOT be. AllocateMaxAddress bounds only the
+ * TOP of a run and firmware need not allocate top-down, so every fixed boot
+ * structure the loader writes WITHOUT an AllocatePages claim is a candidate
+ * collision, not just the user page-table window: a base such as 0x60000
+ * passed the window-only check, and setup_page_tables() then zeroed and
+ * wrote the live
+ * PML4..PD3 at 0x70000-0x75fff INSIDE the poisoned run the kernel was about
+ * to grow its stack through.
+ *   - the low 1 MiB: IVT/BDA, PT_PML4..PT_PD3 at 0x70000, boot_info at
+ *     0x10000, the AP trampoline envelope (same exclusion the HHDM arena uses);
+ *   - the kernel image plus the PMM bitmap pmm_init() writes right above it
+ *     (same envelope arithmetic as bl_hhdm_reserve: image + 128 KiB max
+ *     bitmap + one page of linker padding), which load_kernel() loads into
+ *     unclaimed EfiConventionalMemory and never claims;
+ *   - the user page-table window, re-pointed per process by the kernel.
+ * The kernel mirrors the low-memory refusal in boot_stack_validate() and
+ * boot_reserved's overlap boot_fatal covers the rest consumer-side. */
+static int bl_kstack_placement_ok(UINT64 addr)
+{
+    UINT64 lo = addr;
+    UINT64 hi = addr + BL_KSTACK_SIZE;
+    UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+    UINT64 kguard_hi = ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1))
+                       + (BL_PMM_BITMAP_PHYS_CAP / 32768ULL) + BL_PAGE_4K;
+
+    if (lo < 0x100000ULL)
+        return 0;
+    if (g_kernel_img_hi > g_kernel_img_lo &&
+        lo < kguard_hi && hi > kguard_lo)
+        return 0;
+    if (lo < BL_USER_PT_WINDOW_END && hi > BL_USER_PT_WINDOW_BASE)
+        return 0;
+    return 1;
+}
+
+static void bl_kstack_reserve(void)
+{
+    EFI_PHYSICAL_ADDRESS addr = 0xFFFFFFFFull;
+    UINTN pages = BL_KSTACK_SIZE / EFI_PAGE_SIZE;
+    EFI_STATUS status;
+    UINT64 *p;
+    UINT64 *end;
+    EFI_PHYSICAL_ADDRESS rejected[BL_KSTACK_PLACEMENT_TRIES];
+    UINTN rejected_count = 0;
+    UINTN attempt;
+
+    /* Placement matters as much as size. AllocateMaxAddress bounds only the
+     * TOP of the run, and the UEFI spec does not require firmware to allocate
+     * top-down, so a conforming firmware may hand back memory inside the
+     * kernel's user page-table window (re-pointed per process, so a stack
+     * there would vanish under the first user CR3), the low 1 MiB where the
+     * fixed page tables and boot_info live, or the kernel image envelope --
+     * see bl_kstack_placement_ok for the full exclusion set.
+     *
+     * Retry rather than fail: hold each rejected run ALLOCATED so firmware
+     * cannot return the same pages again, then free them all once a good
+     * placement is found. Freeing before retrying would let the allocator
+     * hand back the identical range forever. */
+    for (attempt = 0; attempt < BL_KSTACK_PLACEMENT_TRIES; attempt++) {
+        addr = 0xFFFFFFFFull;
+        status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData, pages, &addr);
+        if (EFI_ERROR(status))
+            break;
+        if (bl_kstack_placement_ok((UINT64)addr))
+            break;  /* disjoint from every fixed boot structure -- accept */
+        rejected[rejected_count++] = addr;
+        status = EFI_NOT_FOUND;  /* so a loop that runs out reports failure */
+    }
+    while (rejected_count > 0)
+        gBS->FreePages(rejected[--rejected_count], pages);
+
+    if (EFI_ERROR(status)) {
+        /* Fail HERE, pre-EBS, where boot_fatal can still reach the console,
+         * NVRAM history and ResetSystem. The alternative -- carrying on and
+         * letting jump_to_kernel skip the switch -- would silently restore the
+         * exact defect this run removes, on the machines least able to report
+         * it. */
+        boot_fatal(BOOT_ERR_ALLOC_FAIL, "kernel stack AllocatePages failed",
+                   "could not allocate a kernel boot stack below 4 GiB and "
+                   "outside the low 1 MiB, the kernel image envelope and the "
+                   "user page-table window.");
+    }
+
+    /* Poison the WHOLE run, guard page included. The kernel scans upward from
+     * the first usable byte for the lowest non-poison qword to recover how
+     * deep Phase 0/1 actually went; poisoning the guard too means a scan that
+     * reports a hit inside the guard is unambiguous evidence of an overflow
+     * that predates the guard-page install. */
+    p = (UINT64 *)(UINTN)addr;
+    end = (UINT64 *)(UINTN)(addr + BL_KSTACK_SIZE);
+    while (p < end)
+        *p++ = BOOT_KSTACK_POISON;
+
+    g_kstack_base = (UINT64)addr;
+    g_boot_info_ptr->kstack_base       = (UINT64)addr;
+    g_boot_info_ptr->kstack_size       = BL_KSTACK_SIZE;
+    g_boot_info_ptr->kstack_guard_size = BL_KSTACK_GUARD_SIZE;
+
+    serial_early_print("[BOOT] kernel stack: reserved and poisoned\n");
+}
+
 static void setup_page_tables(void)
 {
     boot_set_section(BOOT_SECTION_BL_PAGETABLES);
@@ -11678,12 +11811,51 @@ static void jump_to_kernel(UINT64 entry_point)
         serial_early_print("[BOOT] HHDM: direct map verified (identity == alias)\n");
     }
 
-    /* Call kernel -- pass Multiboot2 magic + boot_info address.
-     * We pass the UEFI-specific magic 0x55454649 ("UEFI") so the kernel
-     * can detect which bootloader was used. */
-    entry(0x55454649ULL, (UINT64)(UINTN)g_boot_info_ptr);
+    /* Kernel boot stack handoff (TODO-10 sec32). bl_kstack_reserve() ran
+     * pre-EBS and boot_fatal'd on failure, so a zero base here means the
+     * publication itself was corrupted after the fact. Refuse rather than
+     * fall back to the firmware stack: the fallback is the defect. Same bare
+     * serial + cli;hlt shape as the HHDM check above and for the same reason
+     * -- we are past EBS and running under PT_PML4, where boot_fatal's gST /
+     * RuntimeServices / framebuffer dereferences may be unmapped. */
+    if (g_kstack_base == 0 || (g_kstack_base & (EFI_PAGE_SIZE - 1)) != 0) {
+        serial_early_print("[FAIL] kernel stack: unpublished or misaligned "
+                           "-- halting\n");
+        for (;;) __asm__ volatile ("cli; hlt");
+    }
 
-    /* Should never return */
+    /* Switch RSP to the TOP of that run and call the kernel entry from it.
+     * This deliberately abandons every loader frame below us: the kernel
+     * never returns (entry is followed by an unreachable halt on both sides),
+     * so nothing above the new stack is live, and the firmware's stack
+     * becomes ordinary reclaimable memory the moment we leave it.
+     *
+     * One asm block, because no C statement may execute between the RSP write
+     * and the call -- the compiler's frame for this function lives on the OLD
+     * stack, so any spill or reload after the switch would read memory the new
+     * RSP does not describe. RBP is zeroed so a frame-pointer unwinder walking
+     * out of kernel_main terminates instead of chasing loader frames.
+     *
+     * The top is 16-byte aligned by construction (page-aligned base plus a
+     * 4 KiB-multiple size), so the CALL's pushed return address leaves
+     * RSP % 16 == 8 at the callee's first instruction, which is what the
+     * SysV AMD64 ABI requires. The bootloader is built --target=x86_64-elf,
+     * so this indirect call is SysV: magic in RDI, boot_info in RSI. */
+    __asm__ volatile (
+        "movq %0, %%rsp\n\t"
+        "xorl %%ebp, %%ebp\n\t"
+        "callq *%1\n\t"
+        "1: hlt\n\t"
+        "jmp 1b\n\t"
+        :
+        : "r"(g_kstack_base + BL_KSTACK_SIZE),
+          "r"((UINT64)(UINTN)entry),
+          "D"(0x55454649ULL),
+          "S"((UINT64)(UINTN)g_boot_info_ptr)
+        : "memory"
+    );
+
+    /* Unreachable -- the asm above never falls through. */
     for (;;) __asm__ volatile("hlt");
 }
 
@@ -17244,6 +17416,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * with no usable RAM to map. Sizes PDPT/PD from the UNCAPPED raw firmware
      * descriptor array (mmap), not the capped boot_info map. */
     bl_hhdm_reserve_arena(mmap, map_size, desc_size);
+
+    /* Kernel boot stack (TODO-10 sec32): allocate the run Phase 0 and Phase 1
+     * will execute on. Same pre-EBS window and the same map_key-staling
+     * consequence as the HHDM arena above, which the ExitBootServices retry
+     * loop below already handles. */
+    bl_kstack_reserve();
 
     /* Step 5b: Preserve Runtime Services pointer + descriptor metadata */
     g_boot_info_ptr->uefi_runtime_services = (UINTN)gST->RuntimeServices;

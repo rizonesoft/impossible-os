@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 23`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 24`.
 
 ## Top-level `struct boot_info` fields
 
@@ -730,6 +730,18 @@ FPDT-sourced fields come from the firmware performance record (nanoseconds since
 | `exit_bs`                 | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= splash_end`. |
 | `kernel_jump`             | bootx64 (`rdtsc`) | P0 | same | runtime | kernel-init-sequencing | `>= exit_bs`. |
 | `tsc_freq`                | bootx64 | P0 | perf dashboard (convert ticks to seconds) | runtime | kernel-init-sequencing | Hz; `0` means unknown (gates TSC-based fields). |
+
+## Kernel boot stack (v24)
+
+The run the kernel executes on from the handoff onward. The bootloader `AllocatePages` it below 4 GiB pre-`ExitBootServices`, fills the whole run with `BOOT_KSTACK_POISON`, and switches `RSP` to its top in `jump_to_kernel` before calling the kernel entry. Before this existed the kernel ran on the firmware's own `EfiLoaderData` stack, which `pmm_init` frees into the allocator while it is in use. The kernel validates the bounds in `boot_stack_init()` (Phase 0, before `pmm_init`), confirms its own `RSP` lies inside them, reserves the run through `boot_reserved` (`BOOT_RESERVED_BOOT_STACK`), guards the lowest page once `vmm_init` is up, and recovers the high-water mark from the poison.
+
+**It is not a boot-only run.** `task.c:592-608` keeps it as PID 0's permanent kernel stack (`stack_base = 0`, "boot stack, don't free"), and PID 0 goes on to run the compositor loop, which never returns. Size it for that lifetime, not for early boot. Measured peaks (QEMU, 2026-08-28): 9,528 bytes at the end of Phase 1; 38,368 bytes in compositor steady state on a production boot; 99,472 bytes cumulative on a `test=1` boot, where the in-kernel test runner is the deepest path.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `kstack_base`       | bootx64 | P0 | `boot_stack_init` / `boot_reserved` | handoff | bare-metal-hardening | Non-zero, 4 KiB aligned; `base + size <= 4 GiB`; live `RSP` must fall inside. Zero halts the boot. |
+| `kstack_size`       | bootx64 | P0 | same | handoff | bare-metal-hardening | 4 KiB multiple, non-zero, `<= BOOT_KSTACK_MAX_SIZE`, and `kstack_size - kstack_guard_size >= BOOT_KSTACK_MIN_USABLE` (128 KiB). The floor is on the USABLE span, not the total: guard bytes are not stack. |
+| `kstack_guard_size` | bootx64 | P0 | `boot_stack_install_guard` | handoff | bare-metal-hardening | EXACTLY one 4 KiB page (`BOOT_KSTACK_GUARD_BYTES`). A wider guard is rejected: the installer unmaps `kstack_base`, so a multi-page guard would leave the page the stack actually grows through still mapped. |
 
 ## Update protocol
 

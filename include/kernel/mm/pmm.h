@@ -72,6 +72,18 @@ void *pmm_alloc_pages_hhdm(uint64_t bytes, uintptr_t *out_phys,
 void pmm_mark_region_used(uintptr_t base, uint64_t length);
 
 /* Get memory statistics */
+/* Is the frame containing `addr` currently ALLOCATABLE? Read-only; touches no
+ * bitmap state. Returns 0 for an out-of-range address, which is the
+ * conservative answer for every caller (a frame the allocator does not know
+ * about is one it will never hand out).
+ *
+ * Exists so a reservation can be PROVEN rather than assumed: the acceptance
+ * check for the loader-owned kernel boot stack (TODO-10 sec32) asks the
+ * bitmap directly whether the frames the kernel is executing on are still
+ * available, which is the only evidence that distinguishes a correct
+ * reservation from a boot that survived on placement luck. */
+int pmm_frame_is_free(uintptr_t addr);
+
 uint64_t pmm_get_total_frames(void);
 uint64_t pmm_get_used_frames(void);
 uint64_t pmm_get_free_frames(void);

@@ -140,6 +140,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Policy audit surface (v20)",
     "OS-visible Loader UEFI variables (v21)",
     "Multi-GPU GOP handles (v23)",
+    "Kernel boot stack (v24)",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

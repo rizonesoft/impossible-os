@@ -18,6 +18,7 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
 #include "kernel/boot_timing.h"
+#include "kernel/mm/boot_stack.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/heap.h"
@@ -144,6 +145,15 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         boot_halt("Unknown bootloader magic (UEFI is the only supported boot path)");
     }
     boot_progress(0, "BOOT_INFO", 0x0026);
+
+    /* Kernel boot stack (TODO-10 sec32) -- FIRST consumer of the handoff, and
+     * deliberately ahead of every allocator. The bootloader switched RSP to a
+     * run it owns before calling us; this validates those bounds, confirms our
+     * own RSP really lies inside them, and halts if either fails. It must run
+     * before pmm_init, because pmm_init frees LoaderCode/Data into the pool
+     * and the reservation that keeps it off this run is derived from the
+     * fields validated here. */
+    boot_stack_init((const struct boot_info *)&g_boot_info);
 
     /* SERIAL POLICY LANDS HERE, NOT AT serial_init -- the handoff only exists
      * from this point on (TODO-10 S30). serial_init ran sixty lines up on the
@@ -509,6 +519,15 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_VMM_OK);
     kernel_subsystem_set_ready(SUBSYS_VMM, true);
     boot_progress(0, "VMM", POST16_VMM_OK);
+
+    /* Arm the boot stack's guard page now that page tables are live. This is
+     * the earliest possible moment -- there is no way to guard a stack before
+     * paging exists -- so the window from the bootloader's RSP switch to here
+     * is unguarded by construction. It is stated rather than assumed away:
+     * boot_stack_install_guard() scans the guard region for poison damage
+     * before unmapping it, which is the only report that window can ever
+     * produce. */
+    (void)boot_stack_install_guard();
 
     /* Validate vmm_map_mmio_uc: map LAPIC base as UC, compare with identity-mapped
      * read. Development smoke test for the MMIO mapping path, not required init --

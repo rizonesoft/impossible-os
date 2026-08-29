@@ -456,6 +456,91 @@ static void test_boot_reserved_tpm_log_degraded_skipped(void)
                    "degraded TPM caps -> no reservation");
 }
 
+
+/* ---- Loader-owned kernel boot stack entry (TODO-10 sec32) ------------------
+ *
+ * Every other fixture in this file leaves kstack_base/kstack_size zero, so the
+ * new populate block was skipped by all of them -- the entry that keeps the
+ * PMM off the running kernel stack was covered only by a live boot. These
+ * fixtures drive it directly.
+ */
+
+#define BR_KS_BASE  0x40000000ull
+#define BR_KS_SIZE  0x00040000ull   /* 256 KiB */
+
+static void test_boot_reserved_boot_stack_entry(void)
+{
+    uint32_t i;
+    uint32_t found = 0u;
+
+    br_zero_fixture();
+
+    s_br_buf.kstack_base       = BR_KS_BASE;
+    s_br_buf.kstack_size       = (uint32_t)BR_KS_SIZE;
+    s_br_buf.kstack_guard_size = 0x1000u;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "a lone boot-stack run must populate");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK, "err=OK");
+
+    for (i = 0u; i < boot_reserved_count(); i++) {
+        const struct boot_reserved_region *e = boot_reserved_get(i);
+        if (e->kind != (uint32_t)BOOT_RESERVED_BOOT_STACK)
+            continue;
+        found++;
+        /* The WHOLE run is reserved, guard included: the guard page is inside
+         * the allocation, and handing it to the allocator would give the next
+         * owner a page the fault handler reports as a stack overflow. */
+        TEST_ASSERT_EQ(e->phys_start, BR_KS_BASE, "entry base must be kstack_base");
+        TEST_ASSERT_EQ(e->length, BR_KS_SIZE,
+                       "entry length must be the FULL run, guard included");
+        TEST_ASSERT_EQ((unsigned long)e->source_index, 0ul,
+                       "the boot stack is a singleton, so source_index is 0");
+    }
+    TEST_ASSERT_EQ((unsigned long)found, 1ul,
+                   "exactly one BOOT_RESERVED_BOOT_STACK entry must exist");
+}
+
+static void test_boot_reserved_boot_stack_absent_when_unpublished(void)
+{
+    uint32_t i;
+
+    br_zero_fixture();
+
+    /* A producer that publishes nothing must add no entry at all -- not a
+     * zero-length one, which add_or_fatal would reject and which would turn
+     * an older bootloader into a boot failure inside the PMM instead of the
+     * explicit refusal boot_stack_init already gives. */
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "an unpublished stack must not fail populate");
+    for (i = 0u; i < boot_reserved_count(); i++)
+        TEST_ASSERT(boot_reserved_get(i)->kind != (uint32_t)BOOT_RESERVED_BOOT_STACK,
+                    "no boot-stack entry may exist when kstack_base is 0");
+}
+
+static void test_boot_reserved_boot_stack_overlap_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+
+    /* Point the stack at the struct boot_info copy. Two retained regions
+     * claiming the same frames is a producer bug, and the whole reason the
+     * stack goes through this table instead of a private
+     * pmm_mark_region_used() call: a direct mark would have made this
+     * collision two successful bitmap writes and no complaint. */
+    s_br_buf.kstack_base       = BOOT_INFO_PHYS_ADDR;
+    s_br_buf.kstack_size       = (uint32_t)BR_KS_SIZE;
+    s_br_buf.kstack_guard_size = 0x1000u;
+
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL,
+                   "a boot stack overlapping boot_info must be rejected");
+    TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OVERLAP, "err=OVERLAP");
+}
+
 void test_register_boot_reserved(void)
 {
     test_suite_register_cat("boot_reserved: populate happy path",
@@ -494,6 +579,15 @@ void test_register_boot_reserved(void)
                             test_boot_reserved_tpm_log_degraded_skipped, TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: payload count OOR still rejected with degraded caps",
                             test_boot_reserved_payload_count_oor_still_rejected_with_degraded_caps,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: boot stack entry",
+                            test_boot_reserved_boot_stack_entry,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: boot stack absent when unpublished",
+                            test_boot_reserved_boot_stack_absent_when_unpublished,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: boot stack overlap rejected",
+                            test_boot_reserved_boot_stack_overlap_rejected,
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: payload vs PMM-internal",
                             test_boot_reserved_payload_vs_pmm_internal,

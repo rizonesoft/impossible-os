@@ -6,6 +6,7 @@
  * framebuffer, and manages cursor drawing.
  * ============================================================================ */
 
+#include "kernel/mm/boot_stack.h"
 #include "kernel/types.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/mouse.h"
@@ -116,6 +117,35 @@ uint32_t compositor_step_frames(uint32_t n)
     return i;
 }
 
+/* Steady-state stack-sample probe state (TODO-10 sec32). File scope on
+ * purpose: as locals these enlarged compositor_run's stack frame, which is
+ * part of the very watermark the sample reports. Single-writer -- only PID 0
+ * runs this loop -- so no synchronization is needed or implied.
+ *
+ * Sample on the FIRST presentation, then re-check every
+ * COMPOSITOR_STACK_SAMPLE_PERIOD presentations and log only when the peak has
+ * GROWN. Both halves are there for a measured reason:
+ *
+ *   - First presentation, because depth here is set by the deepest per-frame
+ *     call chain (input merge, damage accumulation, blit, present) and any
+ *     full composite exercises it. Measured: the reading after ONE
+ *     presentation is 38,368 bytes, byte-identical to the reading taken after
+ *     120. Extra frames add repetition, not depth.
+ *   - A fixed larger count does not work at all. Presentations happen on
+ *     damage, so an idle desktop can sit at a handful indefinitely; 120 and
+ *     then 16 were both measured NEVER to be reached in a full boot-to-shell
+ *     run, so the sample never fired. A missing number reads as no problem,
+ *     which is worse than a modest one.
+ *   - Periodic re-checks, because one composite is not proof that nothing
+ *     deeper ever runs. This is PID 0's permanent stack, so the honest
+ *     instrument keeps watching rather than declaring a final answer at
+ *     second three.
+ *
+ * Cost is one poison scan per period, and a log line only on growth. */
+#define COMPOSITOR_STACK_SAMPLE_PERIOD 512u
+static uint64_t s_stack_sample_presents;
+static uint64_t s_stack_peak_reported;
+
 void compositor_run(void)
 {
     if (s_compositor_headless) {
@@ -148,6 +178,9 @@ void compositor_run(void)
          * blesses the boot (A/B mark-good + per-entry MarkGood + durable record);
          * otherwise a healthy headless boot would leave rollback state pending. */
         (void)boot_status_accept_advance(BOOT_ACCEPT_UI_READY);
+        /* Steady state for headless: PID 0 does no further work after this, so
+         * this IS the terminal peak for this mode (TODO-10 sec32). */
+        (void)boot_stack_measure("steady state (headless)");
         for (;;)
             __asm__ volatile ("sti; hlt");
     }
@@ -365,6 +398,34 @@ void compositor_run(void)
             wm_frame_stats_on_present(vsync_ns, mono_ns());
 
             scheduler_enable();
+
+            /* One-shot steady-state stack sample (TODO-10 sec32). PID 0 never
+             * leaves this loop and, per task.c:596, keeps the loader-owned run
+             * as its PERMANENT kernel stack -- so a peak taken at the end of
+             * Phase 1, or even after boot_tests_run(), describes a prefix of
+             * this stack's life rather than its workload.
+             *
+             * Counted in PRESENTATIONS, not loop iterations. An idle desktop
+             * spins this loop without compositing, so an iteration counter
+             * would fire after one real frame plus N no-ops and prove nothing
+             * about the deep per-frame paths (input merge, damage, blit) the
+             * number is supposed to cover. This site is past the present, so
+             * a sample always follows a completed frame.
+             *
+             * State is file-scope, not a local, and the call sits AFTER
+             * scheduler_enable() rather than inside the timed region: a probe
+             * that enlarges compositor_run's own frame moves the watermark it
+             * is measuring. Measured: as two locals at the loop head it grew
+             * that frame from 88 to 104 bytes. */
+            s_stack_sample_presents++;
+            if (s_stack_sample_presents == 1u ||
+                (s_stack_sample_presents % COMPOSITOR_STACK_SAMPLE_PERIOD) == 0u) {
+                uint64_t peak = boot_stack_peak();
+                if (peak > s_stack_peak_reported) {
+                    s_stack_peak_reported = peak;
+                    (void)boot_stack_measure("steady state (compositor)");
+                }
+            }
 
             prev_mx = mx;
             prev_my = my;
