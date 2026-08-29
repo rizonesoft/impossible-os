@@ -274,8 +274,8 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 > **Verified:** 2026-07-04 | commit `196cc251` | 2/8 items ([/] partial) | build OK | tests 335/335 PASS
 > **Accepted:** [H] `ProbeFor*IfUser` skips validation on KernelMode but `ssdt_previous_mode()` resolves via a global (not per-CPU) cursor -- systemic SSDT trust-boundary gap on every user-copying handler -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
-> **Deferred:** [H] `NtGetMUIRegistryInfo` real contract is a Flags-driven null-delimited preferred-UI-language multi-string, not the shipped fixed blob -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Full `NtGetMUIRegistryInfo`" at line 248)
-> **Deferred:** [M] `nt_locale`/`nls_locale` UI-language stores diverge after a runtime SET -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Unify the UI-language store" at line 249)
+> **Deferred:** [H] `NtGetMUIRegistryInfo` real contract is a Flags-driven null-delimited preferred-UI-language multi-string, not the shipped fixed blob -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Full `NtGetMUIRegistryInfo`" at line 250)
+> **Deferred:** [M] `nt_locale`/`nls_locale` UI-language stores diverge after a runtime SET -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Unify the UI-language store" at line 252)
 > **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -312,9 +312,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 > **Verified:** 2026-07-04 | commit `ab27e7c2` | 5/10 items ([/] partial) | build OK | nls 345 + ob 429 PASS
 > **Accepted:** [H] file-name handlers cast a1 to OBJECT_ATTRIBUTES* without ProbeForRead (systemic ssdt previous_mode probe-gating gap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
-> **Deferred:** [H] `NtCreateFile`/`NtOpenFile` `oa_extract_path` casts UTF-16 to char* with no decode -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "`NtCreateFile`/`NtOpenFile` name decode" at line 285)
-> **Deferred:** [H] OB lookup unconditionally case-insensitive; OBJ_CASE_INSENSITIVE unread -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Thread `OBJ_CASE_INSENSITIVE`" at line 286)
-> **Deferred:** [M] OB/registry full-BMP case-insensitivity foreclosed on the compiled fold -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "OB/registry full-BMP" at line 287)
+> **Deferred:** [H] `NtCreateFile`/`NtOpenFile` `oa_extract_path` casts UTF-16 to char* with no decode -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "`NtCreateFile`/`NtOpenFile` name decode" at line 292)
+> **Deferred:** [H] OB lookup unconditionally case-insensitive; OBJ_CASE_INSENSITIVE unread -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Thread `OBJ_CASE_INSENSITIVE`" at line 294)
+> **Deferred:** [M] OB/registry full-BMP case-insensitivity foreclosed on the compiled fold -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "OB/registry full-BMP" at line 296)
 > **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M+1L fixed, 2H+1M deferred, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -349,7 +349,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Scope boundary:** the full-BMP `invariant.nls` corpus (host tool + build wiring) and the minimal real-table boot fixture are deferred `[ ]` items; they also own the deferred §7 full-FoldStringW + §9 full-BMP.
 
 > **Verified:** 2026-07-04 | commit `e877efe5` | 6/8 items ([/] partial) | build OK | 96 nls suites PASS
-> **Deferred:** [H] boot still only exercises the fallback NLS table; the real disk-load path is unproven -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §10 (item: "Minimal real-table boot fixture" at line 322)
+> **Deferred:** [H] boot still only exercises the fallback NLS table; the real disk-load path is unproven -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §10 (item: "Minimal real-table boot fixture" at line 334)
 > **Quality reviewed:** 2026-07-04 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 4M+1L fixed | scope: kernel-code-quality (test-only)
 
 ---
