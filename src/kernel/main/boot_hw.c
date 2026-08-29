@@ -153,7 +153,9 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      * before pmm_init, because pmm_init frees LoaderCode/Data into the pool
      * and the reservation that keeps it off this run is derived from the
      * fields validated here. */
+    POST16(POST16_KSTACK);
     boot_stack_init((const struct boot_info *)&g_boot_info);
+    POST16(POST16_KSTACK_OK);
 
     /* SERIAL POLICY LANDS HERE, NOT AT serial_init -- the handoff only exists
      * from this point on (TODO-10 S30). serial_init ran sixty lines up on the

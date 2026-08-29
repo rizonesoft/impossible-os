@@ -11840,7 +11840,21 @@ static void jump_to_kernel(UINT64 entry_point)
      * 4 KiB-multiple size), so the CALL's pushed return address leaves
      * RSP % 16 == 8 at the callee's first instruction, which is what the
      * SysV AMD64 ABI requires. The bootloader is built --target=x86_64-elf,
-     * so this indirect call is SysV: magic in RDI, boot_info in RSI. */
+     * so this indirect call is SysV: magic in RDI, boot_info in RSI.
+     *
+     * EVERY operand is pinned to a NAMED register, and that is a correctness
+     * requirement rather than a style choice. With generic "r" operands the
+     * compiler is free to place the entry pointer or the stack top in RBP,
+     * and the `xorl %ebp, %ebp` above executes BETWEEN the operand being
+     * materialised and being used -- so a `callq *%rbp` would jump to address
+     * 0. This loader is compiled without -fno-omit-frame-pointer
+     * (src/boot/uefi/Makefile), so RBP is genuinely allocatable and only the
+     * compiler's current choice was keeping this correct: the shipped clang-19
+     * artifact happens to pick RAX and RBX, which is exactly what is pinned
+     * here, so the emitted code is unchanged and a version, flag or LTO change
+     * can no longer silently move it. RBP is named in the clobber list for the
+     * same reason: the compiler is now told the register is destroyed instead
+     * of it being an undeclared write. */
     __asm__ volatile (
         "movq %0, %%rsp\n\t"
         "xorl %%ebp, %%ebp\n\t"
@@ -11848,11 +11862,11 @@ static void jump_to_kernel(UINT64 entry_point)
         "1: hlt\n\t"
         "jmp 1b\n\t"
         :
-        : "r"(g_kstack_base + BL_KSTACK_SIZE),
-          "r"((UINT64)(UINTN)entry),
+        : "a"(g_kstack_base + BL_KSTACK_SIZE),
+          "b"((UINT64)(UINTN)entry),
           "D"(0x55454649ULL),
           "S"((UINT64)(UINTN)g_boot_info_ptr)
-        : "memory"
+        : "memory", "rbp"
     );
 
     /* Unreachable -- the asm above never falls through. */

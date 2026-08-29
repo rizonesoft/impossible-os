@@ -17,7 +17,7 @@ Physical address 0x10000  ────┐
                               │
         struct boot_info {    │  <-- bootloader writes here before jumping
           struct boot_info_header header;   (offset 0, 8 bytes)
-          ... all ABI fields ...            (v23: see boot_info.h sizeof for total)
+          ... all ABI fields ...            (v24: see boot_info.h sizeof for total)
         }                     │
 ```
 

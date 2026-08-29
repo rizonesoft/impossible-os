@@ -743,6 +743,17 @@ The run the kernel executes on from the handoff onward. The bootloader `Allocate
 | `kstack_size`       | bootx64 | P0 | same | handoff | bare-metal-hardening | 4 KiB multiple, non-zero, `<= BOOT_KSTACK_MAX_SIZE`, and `kstack_size - kstack_guard_size >= BOOT_KSTACK_MIN_USABLE` (128 KiB). The floor is on the USABLE span, not the total: guard bytes are not stack. |
 | `kstack_guard_size` | bootx64 | P0 | `boot_stack_install_guard` | handoff | bare-metal-hardening | EXACTLY one 4 KiB page (`BOOT_KSTACK_GUARD_BYTES`). A wider guard is rejected: the installer unmaps `kstack_base`, so a multi-page guard would leave the page the stack actually grows through still mapped. |
 
+**WHERE the run may not be placed, and which phase refuses it.** The geometry rules above are necessary and not sufficient: a correctly-shaped run in the wrong place is still fatal, and a third-party v24 producer that reads only the size and alignment columns can publish one. Every forbidden interval below is half-open `[lo, hi)`, and each is refused by BOTH halves so a producer that skips one is still caught.
+
+| Forbidden interval | Why | Producer refusal | Consumer refusal |
+| --- | --- | --- | --- |
+| `[0, 0x100000)` -- the low 1 MiB | Holds structures the loader writes at FIXED addresses without an `AllocatePages` claim: the boot page tables at `0x70000-0x75fff`, `boot_info` at `0x10000`, the AP trampoline. A run here can contain the live PML4 the kernel is walking. | `bl_kstack_placement_ok` | `boot_stack_validate` -> `BOOT_STACK_ERR_LOW_MEM` |
+| `[0x100000, image_end_page + bitmap_max + 4 KiB)` -- the kernel image and the largest PMM bitmap it could need | `src/boot/linker.ld` loads the kernel at exactly 1 MiB and `pmm_init` builds its bitmap immediately above the image. `bitmap_max` is `PMM_PHYS_ADDR_CAP / 32768` (128 KiB at the 4 GiB cap); the envelope is the conservative maximum because the real bitmap size is not known until the memory map is walked. | `bl_kstack_placement_ok` | `boot_stack_init` -> `BOOT_STACK_ERR_KERNEL_IMAGE` (Phase 0, before the stack is deeply used) and again in `pmm_init` |
+| `[USER_PT_WINDOW_BASE, USER_PT_WINDOW_END)` -- `0x800000-0xA00000` | `vmm_create_user_pml4()` REPLACES that PD entry per process, so a kernel object here stops being mapped at the first user CR3. This run is PID 0's PERMANENT stack. | `bl_kstack_placement_ok` | `boot_stack_validate` -> `BOOT_STACK_ERR_USER_WINDOW` |
+| Above the 4 GiB identity map | The kernel dereferences the run through the boot identity map, which covers the first 4 GiB only. | `AllocateMaxAddress` below 4 GiB | `boot_stack_validate` -> `BOOT_STACK_ERR_ABOVE_MAP` |
+
+Two further contract terms a producer owes: the whole run (guard page INCLUDED) must be filled with `BOOT_KSTACK_POISON` before RSP is switched to it, and RSP must already be inside the published usable span when the kernel entry is called. The kernel proves both -- an unpoisoned or differently-poisoned run halts at `boot_stack_install_guard` with a named pattern-mismatch message, and an unswitched RSP halts at `boot_stack_init`.
+
 ## Update protocol
 
 When adding a field:

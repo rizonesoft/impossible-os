@@ -15,6 +15,12 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/mm/vmm.h"
 
+/* Written ONCE, by boot_stack_init() on the BSP in Phase 0, before smp_init()
+ * brings any AP up; read-only for the rest of the machine's life. That is the
+ * whole SMP discipline here -- no lock, no atomic, and none is implied. Every
+ * later reader (the guard install, the three measurement sites, PID 0's
+ * compositor probe) sees a value that stopped changing before a second CPU
+ * existed. */
 static struct boot_stack_info s_stack;
 /* Set once vmm_install_guard_page() has CLEARED the guard PTE. After that
  * the guard region is unreadable, so nothing may scan it. */
@@ -138,6 +144,40 @@ uint64_t boot_stack_scan_first_touched(const void *words, uint64_t bytes)
     return (uint64_t)((uintptr_t)p - (uintptr_t)words);
 }
 
+uint64_t boot_stack_scan_first_poison(const void *words, uint64_t bytes)
+{
+    const volatile uint64_t *p;
+    const volatile uint64_t *end;
+
+    if (words == (const void *)0)
+        return bytes;
+    if ((bytes & 7u) != 0u)
+        return bytes;
+
+    p   = (const volatile uint64_t *)words;
+    end = (const volatile uint64_t *)((uintptr_t)words + (uintptr_t)bytes);
+    while (p < end && *p != BOOT_KSTACK_POISON)
+        p++;
+
+    return (uint64_t)((uintptr_t)p - (uintptr_t)words);
+}
+
+uint64_t boot_stack_image_envelope_end(uint64_t kernel_end, uint64_t phys_cap)
+{
+    /* Deliberately the LARGEST bitmap the kernel could ever build, not the one
+     * this boot will actually build: the real size depends on the memory map,
+     * which pmm_init has not walked yet when this rule is applied. A run that
+     * clears the conservative envelope clears every real one.
+     *
+     * phys_cap / 32768 is the bitmap byte count for that cap: one bit per
+     * PMM_FRAME_SIZE frame, eight bits per byte (4096 * 8 == 32768). The extra
+     * page is linker padding between the image end and the bitmap base. This
+     * is the same arithmetic bl_kstack_placement_ok uses for kguard_hi. */
+    uint64_t end = (kernel_end + (uint64_t)PMM_FRAME_SIZE - 1u) &
+                   ~((uint64_t)PMM_FRAME_SIZE - 1u);
+    return end + (phys_cap / 32768u) + (uint64_t)PMM_FRAME_SIZE;
+}
+
 int boot_stack_overlaps(const struct boot_stack_info *si,
                         uint64_t start, uint64_t len)
 {
@@ -190,15 +230,23 @@ static const char *boot_stack_err_text(enum boot_stack_error err)
     case BOOT_STACK_ERR_GUARD_ABSENT: return "no guard published";
     case BOOT_STACK_ERR_USER_WINDOW: return "run intersects the user page-table window";
     case BOOT_STACK_ERR_LOW_MEM:     return "run starts below 1 MiB (fixed boot tables)";
+    case BOOT_STACK_ERR_KERNEL_IMAGE: return "run intersects the kernel image or the PMM bitmap envelope";
     }
     return "unknown";
 }
+
+/* Provided by the linker script (src/boot/linker.ld). The image is loaded at
+ * exactly 1 MiB, so [0x100000, __kernel_end) is the image extent and the PMM
+ * bitmap is built immediately above it. */
+extern char __kernel_end[];
 
 void boot_stack_init(const struct boot_info *info)
 {
     enum boot_stack_error err = BOOT_STACK_ERR_OK;
     struct boot_stack_info si;
     uint64_t rsp;
+    uint64_t img_lo;
+    uint64_t img_hi;
 
     s_stack.base = 0;
     s_stack.size = 0;
@@ -225,6 +273,32 @@ void boot_stack_init(const struct boot_info *info)
          * corruption that follows would surface far from here as a heap or
          * page-table fault with no trace back to the handoff. */
         boot_halt("boot_stack_init: invalid kernel stack handoff");
+    }
+
+    /* THE KERNEL IMAGE AND ITS BITMAP, which boot_stack_validate cannot check
+     * because it is pure and knows no linker symbols. The loader already
+     * refuses this envelope in bl_kstack_placement_ok(), and until now the
+     * kernel's only net for it was in pmm_init -- which runs AFTER Phase 0 has
+     * been pushing frames onto the run. On a producer that got the placement
+     * wrong, those pushes land in the kernel's own .text/.data, so by the time
+     * pmm_init could report it the evidence has already been overwritten by
+     * the thing it would report. Refusing here is the earliest point at which
+     * the kernel both knows the extents and is still standing on a stack it
+     * has barely touched.
+     *
+     * Conservative on purpose: the envelope covers the largest bitmap this
+     * kernel could ever build, matching the loader's arithmetic exactly, so
+     * the two halves of the rule cannot disagree about a given run. */
+    img_lo = 0x100000ull;
+    img_hi = boot_stack_image_envelope_end((uint64_t)(uintptr_t)__kernel_end,
+                                           PMM_PHYS_ADDR_CAP);
+    if (boot_stack_overlaps(&si, img_lo, img_hi - img_lo)) {
+        klog(LOG_FATAL, "mm",
+             "boot stack: refused handoff (%s) base=0x%lx size=0x%lx "
+             "intersects [0x%lx, 0x%lx)",
+             boot_stack_err_text(BOOT_STACK_ERR_KERNEL_IMAGE),
+             si.base, si.size, img_lo, img_hi);
+        boot_halt("boot_stack_init: kernel stack overlaps the kernel image");
     }
 
     /* Prove the producer's claim rather than trusting it: we are executing on
@@ -280,6 +354,58 @@ int boot_stack_install_guard(void)
         uint64_t hit = boot_stack_scan_first_touched(
             (const void *)(uintptr_t)s_stack.base, s_stack.guard_size);
         if (hit < s_stack.guard_size) {
+            /* Two very different faults reach this branch and they were
+             * previously reported with the same sentence.
+             *
+             * The discriminator is NOT "is the guard fully written" -- both
+             * faults look identical from below, because a producer whose fill
+             * pattern differs from this kernel's makes EVERY qword read as
+             * touched, exactly as a full-guard overflow does. The question
+             * that separates them is whether any poison SURVIVES anywhere in
+             * the run: a real stack writes sparsely, leaving this kernel's
+             * pattern in the untouched slots between live frames, while a
+             * pattern mismatch leaves none of it anywhere by construction.
+             *
+             * Scanning the usable span rather than the guard, because the
+             * guard is what is already known to be written. One extra scan on
+             * a path that is about to halt anyway, against a wrong message
+             * that sends the reader hunting an overflow that never
+             * happened. */
+            uint64_t poison_at = boot_stack_scan_first_poison(
+                (const void *)(uintptr_t)(s_stack.base + s_stack.guard_size),
+                s_stack.size - s_stack.guard_size);
+            if (poison_at >= s_stack.size - s_stack.guard_size) {
+                /* AMBIGUOUS, and reported as ambiguous rather than guessed.
+                 * No poison surviving anywhere has two causes this kernel
+                 * cannot separate from the memory alone:
+                 *   - a producer whose fill pattern is not this kernel's, or
+                 *     that never poisoned the run at all; and
+                 *   - an overflow dense enough to have written EVERY usable
+                 *     qword, which a large local buffer or deep recursion
+                 *     does. Sparse writes leave poison in the slots between
+                 *     live frames, which is what the branch below detects --
+                 *     but density is a property of the code that overflowed,
+                 *     not something the guard page gets to assume.
+                 * An earlier draft of this branch named the first cause
+                 * definitively and would have sent the reader to the wrong
+                 * component whenever the second one was true.
+                 *
+                 * The halt is identical either way, so only the message is at
+                 * stake: naming both costs nothing, and naming one wrongly
+                 * costs a debugging session against the only diagnostic the
+                 * pre-guard window will ever produce. The value is printed so
+                 * the reader can settle it against the loader in one step. */
+                klog(LOG_FATAL, "mm",
+                     "boot stack: no poison survives anywhere in 0x%lx..0x%lx "
+                     "-- EITHER the producer's fill pattern is not this "
+                     "kernel's BOOT_KSTACK_POISON (0x%lx), OR early boot "
+                     "overwrote the entire run. Compare the loader's fill "
+                     "value against this one to tell them apart.",
+                     s_stack.base, s_stack.base + s_stack.size,
+                     (uint64_t)BOOT_KSTACK_POISON);
+                boot_halt("boot_stack_install_guard: no poison survives -- "
+                          "pattern mismatch or total overflow");
+            }
             klog(LOG_FATAL, "mm",
                  "boot stack: guard region written at 0x%lx -- early boot "
                  "already overflowed the usable stack",
@@ -311,19 +437,30 @@ int boot_stack_install_guard(void)
     }
     if (rc != VMM_GUARD_OK) {
         /* VMM_GUARD_UNAVAILABLE only: the guard TABLE is full or the huge-page
-         * split failed. The mapping is intact and the run is reserved, so the
-         * stack itself is correct -- and refusing a boot that worked yesterday
-         * over a missing diagnostic is the wrong trade (the same call section
-         * 31 made at gdt.c:159).
+         * split failed. The page stays PRESENT, so what is lost is not a
+         * label but CONTAINMENT -- an overflow does not fault at all.
          *
-         * State the loss accurately. The page stays PRESENT, so an overflow
-         * does NOT fault at all: what is missing is CONTAINMENT, not merely
-         * the label. */
-        klog(LOG_ERROR, "mm",
+         * FATAL, and deliberately NOT the degrade section 31 chose at
+         * gdt.c:159. That call was right for the stack it governs: TSS.rsp0's
+         * ring-3 entry stack is TRANSIENT, replaced the moment the scheduler
+         * gives each thread its own. This run is not. task.c keeps it as PID
+         * 0's PERMANENT kernel stack and PID 0 then enters compositor_run()
+         * and never returns, so an uncontained overflow here is unbounded for
+         * the life of the machine rather than for the length of early boot.
+         *
+         * The usual objection -- refusing a boot that worked yesterday -- does
+         * not apply at this call site. It runs immediately after vmm_init,
+         * when the guard table (VMM_MAX_GUARD_PAGES, sized against TASK_MAX)
+         * holds a handful of entries, so exhaustion cannot be what fails here;
+         * a failure at this point means the split itself failed, which is a
+         * broken VMM and not a machine to keep booting. */
+        klog(LOG_FATAL, "mm",
              "boot stack: guard page at 0x%lx NOT installed (rc=%d) -- the "
-             "page stays mapped, so an overflow will NOT fault and will not "
-             "be contained",
+             "page stays mapped, so an overflow of PID 0's permanent stack "
+             "would not fault and would not be contained",
              s_stack.base, (uint64_t)rc);
+        boot_halt("boot_stack_install_guard: cannot guard the permanent "
+                  "kernel stack");
     } else {
         s_guard_installed = 1;
         klog(LOG_INFO, "mm", "boot stack: guard page installed at 0x%lx",
@@ -357,6 +494,33 @@ uint64_t boot_stack_peak(void)
     if (touched >= top - usable_lo)
         return 0;                      /* whole run still poison */
     return (top - usable_lo) - touched;
+}
+
+void boot_stack_log_peak(const char *span, uint64_t peak)
+{
+    uint64_t usable;
+
+    if (!s_stack.valid)
+        return;
+    if (span == (const char *)0)
+        span = "boot";
+
+    usable = s_stack.size - s_stack.guard_size;
+    if (peak == 0u || peak > usable) {
+        klog(LOG_WARN, "mm",
+             "boot stack: %s -- no usable measurement (peak %lu of %lu)",
+             (uint64_t)(uintptr_t)span, peak, usable);
+        return;
+    }
+
+    klog(LOG_INFO, "mm",
+         "boot stack: %s peak %lu bytes of %lu usable (%lu bytes headroom, "
+         "deepest 0x%lx)",
+         (uint64_t)(uintptr_t)span,
+         peak,
+         usable,
+         usable - peak,
+         s_stack.base + s_stack.size - peak);
 }
 
 uint64_t boot_stack_measure(const char *span)
@@ -401,26 +565,7 @@ uint64_t boot_stack_measure(const char *span)
     }
 
     peak = top - (uint64_t)(uintptr_t)p;
-
-    klog(LOG_INFO, "mm",
-         "boot stack: %s peak %lu bytes of %lu usable (%lu bytes headroom, "
-         "deepest 0x%lx)",
-         (uint64_t)(uintptr_t)span,
-         peak,
-         s_stack.size - s_stack.guard_size,
-         (s_stack.size - s_stack.guard_size) - peak,
-         (uint64_t)(uintptr_t)p);
-
+    boot_stack_log_peak(span, peak);
     return peak;
 }
 
-#ifdef KERNEL_TESTS
-void boot_stack_reset_for_test(void)
-{
-    s_stack.base = 0;
-    s_stack.size = 0;
-    s_stack.guard_size = 0;
-    s_stack.valid = 0;
-    s_guard_installed = 0;
-}
-#endif

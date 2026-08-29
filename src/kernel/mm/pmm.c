@@ -164,8 +164,8 @@ boot_result_t pmm_init(void)
     }
 
     /* Cap at 4 GiB for now (our identity map covers this range) */
-    if (highest_addr > 0x100000000ULL)
-        highest_addr = 0x100000000ULL;
+    if (highest_addr > PMM_PHYS_ADDR_CAP)
+        highest_addr = PMM_PHYS_ADDR_CAP;
 
     /* Step 2: Calculate bitmap dimensions */
     total_frames = highest_addr / PMM_FRAME_SIZE;
@@ -336,27 +336,58 @@ boot_result_t pmm_init(void)
      * evidence that the allocator avoided the running stack, because the
      * placement that makes it survive is luck no emulator disturbs.
      *
-     * Ask the bitmap directly whether the frame holding OUR OWN current RSP
-     * is marked used. It cannot pass by accident: step 4 above freed every
-     * LoaderCode/Data region a moment ago, so the only thing that can have
-     * re-marked this frame is the boot_reserved entry naming it. Two frames
-     * are checked because a stack near a page boundary can straddle one. */
+     * Ask the bitmap directly whether the frames of the run are marked used.
+     * It cannot pass by accident: step 4 above freed every LoaderCode/Data
+     * region a moment ago, so the only thing that can have re-marked them is
+     * the boot_reserved entry naming the run.
+     *
+     * EVERY frame of the published run is swept, not just the one holding the
+     * current RSP. A single-frame probe proves the allocator is off the byte
+     * this CPU happens to be standing on and says nothing about the other 63
+     * frames of a 256 KiB run -- and the frames that matter most are the ones
+     * further DOWN, which the stack has not reached yet and which vmm_init and
+     * heap_init are about to allocate from. The RSP frame is checked
+     * separately afterwards because it is the one claim that stays true even
+     * if the published bounds are wrong: it is measured, not published. */
     {
         uint64_t rsp_now;
+        const struct boot_stack_info *ks = boot_stack_get();
         __asm__ volatile ("movq %%rsp, %0" : "=r"(rsp_now));
-        uint64_t f_lo = (rsp_now - 8u) / PMM_FRAME_SIZE;
-        uint64_t f_hi = rsp_now / PMM_FRAME_SIZE;
-        if (f_hi >= total_frames || !bitmap_test(f_lo) || !bitmap_test(f_hi)) {
-            klog(LOG_FATAL, "mm",
-                 "PMM: live kernel stack at 0x%lx is ALLOCATABLE (frames "
-                 "%lu/%lu of %lu) -- vmm_init and heap_init would allocate "
-                 "the memory this CPU is standing on",
-                 rsp_now, f_lo, f_hi, (uint64_t)total_frames);
-            return BOOT_FATAL;
+
+        if (ks != (const struct boot_stack_info *)0 && ks->valid) {
+            uint64_t f = ks->base / PMM_FRAME_SIZE;
+            uint64_t f_end = (ks->base + ks->size) / PMM_FRAME_SIZE;
+            for (; f < f_end; f++) {
+                if (f >= total_frames || !bitmap_test(f)) {
+                    klog(LOG_FATAL, "mm",
+                         "PMM: kernel boot stack frame %lu (0x%lx) of run "
+                         "0x%lx+0x%lx is ALLOCATABLE -- vmm_init and heap_init "
+                         "would allocate the run this CPU is standing on",
+                         f, f * (uint64_t)PMM_FRAME_SIZE, ks->base, ks->size);
+                    return BOOT_FATAL;
+                }
+            }
+            klog(LOG_INFO, "mm",
+                 "PMM: kernel boot stack run 0x%lx+0x%lx is reserved "
+                 "(%lu frames)",
+                 ks->base, ks->size, f_end - (ks->base / PMM_FRAME_SIZE));
         }
-        klog(LOG_INFO, "mm",
-             "PMM: live kernel stack at 0x%lx is reserved (frame %lu)",
-             rsp_now, f_hi);
+
+        {
+            uint64_t f_lo = (rsp_now - 8u) / PMM_FRAME_SIZE;
+            uint64_t f_hi = rsp_now / PMM_FRAME_SIZE;
+            if (f_hi >= total_frames || !bitmap_test(f_lo) || !bitmap_test(f_hi)) {
+                klog(LOG_FATAL, "mm",
+                     "PMM: live kernel stack at 0x%lx is ALLOCATABLE (frames "
+                     "%lu/%lu of %lu) -- vmm_init and heap_init would allocate "
+                     "the memory this CPU is standing on",
+                     rsp_now, f_lo, f_hi, (uint64_t)total_frames);
+                return BOOT_FATAL;
+            }
+            klog(LOG_INFO, "mm",
+                 "PMM: live kernel stack at 0x%lx is reserved (frame %lu)",
+                 rsp_now, f_hi);
+        }
     }
 
     /* Log UEFI memory map summary */

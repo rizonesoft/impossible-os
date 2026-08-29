@@ -33,7 +33,16 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v23 (current) -- Multi-GPU GOP handle enumeration
+### v24 (current) -- Loader-owned kernel boot stack
+
+- **Commit**: `018dc2d1b` ([Guarded Kernel Stack for Phase 0/1 Execution](../../todo/01-boot-platform/TODO-10-bare-metal-hardening.md#32-guarded-kernel-stack-for-phase-01-execution))
+- **Fields added**: `kstack_base` (`uint64_t`), `kstack_size` (`uint32_t`), `kstack_guard_size` (`uint32_t`), appended at the v23 tail immediately after `_gop_handle_pad`. Mirror updated atomically; `dump-fields.inc` + `check-doc-coverage.py` allow-list + `boot-info-fields.md` updated together.
+- **Why**: before v24 the loader called the kernel entry without ever writing RSP, so Phase 0 and Phase 1 executed on the firmware's own `EfiLoaderData` stack -- which `pmm_init` frees into the allocator, and which nothing reserved. `vmm_init` and `heap_init` then allocated from a pool containing the run the kernel was standing on. It booted on placement luck, not on any enforced property, and no emulator disturbs that luck. The loader now allocates, poisons and publishes a 256 KiB below-4-GiB run and switches RSP to it at the handoff.
+- **Producers / consumers**: the bootloader's `bl_kstack_reserve()` allocates pre-EBS and `jump_to_kernel` switches RSP; the kernel's `boot_stack_init()` validates in Phase 0, `boot_reserved_populate_from_info()` retains the run as `BOOT_RESERVED_BOOT_STACK`, `boot_stack_install_guard()` arms the guard page after `vmm_init`, and `pmm_init` refuses to continue unless every frame of the run is marked used.
+- **Placement contract**: publishing well-formed geometry is not sufficient. The run must avoid the low 1 MiB, the kernel-image + max-PMM-bitmap envelope, and the user page-table window, and must be fully poisoned with `BOOT_KSTACK_POISON`. See the placement table in [`boot-info-fields.md`](boot-info-fields.md) for each interval, its reason, and the phase that refuses it.
+- **Back-compat**: NONE -- requires rebuilding and reflashing BOTH `BOOTX64.EFI` and `kernel.exe` together (`boot_info_validate_header()` enforces an exact version + `header.size` match). A v23 loader publishes `kstack_base == 0`, which `boot_stack_init()` halts on by design rather than falling back to the firmware stack: the fallback IS the defect this version removes.
+
+### v23 -- Multi-GPU GOP handle enumeration
 
 - **Commit**: pending ([Multi-GPU GOP Handle Enumeration](../../todo/01-boot-platform/TODO-27-uefi-advanced.md#4-multi-gpu-gop-handle-enumeration))
 - **Fields added**: `gop_handles[4]` (each a 32-byte `boot_gop_handle`: `fb_addr`/`fb_size`/`width`/`height`/`pitch`/`pixel_format`/`is_primary`/`fb_valid`), `gop_handle_count` (`uint32_t`), `_gop_handle_pad` (`uint32_t`), appended at the v22 tail. Struct size 28664. Mirror updated atomically; `dump-fields.inc` + `check-doc-coverage.py` allow-list + `boot-info-fields.md` updated together.

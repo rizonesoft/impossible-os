@@ -420,10 +420,16 @@ void compositor_run(void)
             s_stack_sample_presents++;
             if (s_stack_sample_presents == 1u ||
                 (s_stack_sample_presents % COMPOSITOR_STACK_SAMPLE_PERIOD) == 0u) {
+                /* ONE scan per sample, never two. This used to call
+                 * boot_stack_measure() on the growth path, which rescans the
+                 * whole usable span to print the number boot_stack_peak() has
+                 * just computed -- roughly 27k extra volatile qword loads
+                 * inline with a completed presentation, on exactly the samples
+                 * that also emit a serial line. Report the value in hand. */
                 uint64_t peak = boot_stack_peak();
                 if (peak > s_stack_peak_reported) {
                     s_stack_peak_reported = peak;
-                    (void)boot_stack_measure("steady state (compositor)");
+                    boot_stack_log_peak("steady state (compositor)", peak);
                 }
             }
 

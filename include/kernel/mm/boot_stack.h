@@ -56,6 +56,7 @@ enum boot_stack_error {
     BOOT_STACK_ERR_GUARD_ABSENT = 9, /* guard_size 0: the run would ship unguarded */
     BOOT_STACK_ERR_USER_WINDOW = 10, /* run intersects the user PT window */
     BOOT_STACK_ERR_LOW_MEM     = 11, /* run starts below 1 MiB (fixed boot tables live there) */
+    BOOT_STACK_ERR_KERNEL_IMAGE = 12 /* run intersects the kernel image + max PMM bitmap envelope */
 };
 
 /* PURE validator over the three published fields. Takes them explicitly (not
@@ -75,6 +76,16 @@ int boot_stack_validate(uint64_t base, uint64_t size, uint64_t guard_size,
  * be exercised by booting. Returns `bytes` for a NULL pointer or a
  * non-qword-multiple length, both of which are caller bugs, not measurements. */
 uint64_t boot_stack_scan_first_touched(const void *words, uint64_t bytes);
+
+/* The MIRROR of the scan above: offset of the first qword that IS poison, or
+ * `bytes` when none is. Not the complement of a "first touched" answer, and
+ * that is the whole point -- a used stack is a MIX, with poison still sitting
+ * in the untouched slots between live frames, so "is anything touched" and
+ * "is anything still poison" are independent questions. Only the second one
+ * can tell a producer whose fill pattern does not match this kernel's (no
+ * poison anywhere) from a stack that overflowed its guard (poison remains
+ * further up). */
+uint64_t boot_stack_scan_first_poison(const void *words, uint64_t bytes);
 
 /* PURE: does [addr, addr + len) lie inside the usable span of `si`?
  * Used by the pmm_init acceptance check and by the tests. Returns 0 when
@@ -152,8 +163,29 @@ uint64_t boot_stack_measure(const char *span);
  * would bury the one reading that matters in identical lines. */
 uint64_t boot_stack_peak(void);
 
-#ifdef KERNEL_TESTS
-void boot_stack_reset_for_test(void);
-#endif
+/* Log an ALREADY-COMPUTED peak in the same format boot_stack_measure uses,
+ * without rescanning. boot_stack_measure is scan-then-report; a caller that
+ * has already scanned -- the compositor probe compares against its previous
+ * high-water mark before deciding whether to report -- would otherwise walk
+ * the whole usable span a second time just to print the number it holds. */
+void boot_stack_log_peak(const char *span, uint64_t peak);
+
+/* Exclusive end of the envelope covering the kernel image plus the LARGEST
+ * PMM bitmap it could ever need, given the image end and the physical-address
+ * cap pmm_init clamps to. Pure and parameterised so it can be tested with
+ * synthetic extents; it mirrors bl_kstack_placement_ok's kguard_hi arithmetic
+ * in src/boot/uefi/bootx64.c, which is the producer-side half of one rule. */
+uint64_t boot_stack_image_envelope_end(uint64_t kernel_end, uint64_t phys_cap);
+
+/* There is deliberately NO test hook that clears the module state. An earlier
+ * boot_stack_reset_for_test() existed with zero callers, and it could not have
+ * acquired a safe one: this module holds ONE singleton describing the stack
+ * the kernel is running on, and the in-kernel suite runs from boot_tests_run()
+ * -- BEFORE the post-suite measurement and before PID 0 enters the compositor
+ * probe. A test that cleared it would silently disarm both, and pmm's
+ * boot_stack_get() consumer with them, while every assertion still passed.
+ * The state is exercised READ-ONLY against the live run instead
+ * (test_bm_kstack_live_run_is_reserved_and_measured); the pure predicates
+ * above take their inputs as parameters precisely so they need no such hook. */
 
 #endif /* KERNEL_MM_BOOT_STACK_H */

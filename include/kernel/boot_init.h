@@ -161,6 +161,8 @@ _Static_assert(SUBSYS_COUNT <= 32,
  * its own bracket rather than sharing SERIAL's (TODO-10 S30). */
 #define POST16_SERIAL_ADOPT     0x001A
 #define POST16_SERIAL_ADOPT_OK  0x001B
+#define POST16_KSTACK           0x001C  /* loader-owned kernel boot stack handoff */
+#define POST16_KSTACK_OK        0x001D
 #define POST16_UEFI_RT          0x0012  /* UEFI runtime services init */
 #define POST16_UEFI_RT_OK       0x0013
 #define POST16_UEFI_VARS        0x0014  /* UEFI variable enumeration */
