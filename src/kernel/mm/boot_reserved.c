@@ -174,6 +174,30 @@ int boot_reserved_payload_is_pinned(uint32_t payload_index,
     return 0;
 }
 
+/* Is a sealed warm-update extent one PMM will actually act on?
+ *
+ * pmm_mark_region_used() clamps only the END of a range against total_frames
+ * (src/kernel/mm/pmm.c), so a range that STARTS past the last tracked frame
+ * marks nothing and reports nothing. The reservation table would still hold
+ * the entry, and the commit flag would certify an extent no consumer can map
+ * -- a positive claim about memory that does not exist. Phase 0 cannot check
+ * this for itself: the memory map has not been walked when the selection is
+ * sealed, which is exactly why the commit is a separate step.
+ * (Round-3 adversarial finding.)
+ *
+ * The caller has already established length != 0 and that start + length does
+ * not wrap, so the last-frame arithmetic below cannot underflow or overflow. */
+static int warm_range_is_applicable(uint64_t phys_start, uint64_t length)
+{
+    uint64_t total = pmm_get_total_frames();
+    uint64_t last_frame;
+
+    if (total == 0u)
+        return 0;
+    last_frame = (phys_start + length - 1u) / (uint64_t)PMM_FRAME_SIZE;
+    return last_frame < total;
+}
+
 boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                                                enum boot_reserved_error *out_err)
 {
@@ -349,9 +373,23 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
              (uint64_t)info->payload_count, (uint64_t)BOOT_PAYLOAD_MAX);
         return BOOT_FATAL;
     }
+    /* The cross-phase warm-update selection, read ONCE and OUTSIDE the
+     * capability gate below.
+     *
+     * Phase 0 sealed this from the same boot_info; asking again returns that
+     * same record rather than recomputing an opinion, so "the consumer
+     * accepted it" and "the pass pinned it" are one decision about one
+     * descriptor. The read must sit ABOVE the caps gate: BOOT_CAP_PAYLOAD
+     * _DESCRIPTORS is one of the conditions the SELECTION already evaluated,
+     * so re-testing it here would let a bit cleared after Phase 0 skip the
+     * reservation of a region Phase 0 was authorized to reattach -- the exact
+     * cross-phase split this section removes, reintroduced by the gate that
+     * was supposed to be safe. (Codex test-coverage finding on this
+     * section.) */
+    const struct boot_warm_update_sel *warm =
+        boot_warm_update_selection_get(info);
+
     if ((info->caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u) {
-        int warm_update_flag = (int)((info->flags
-                                      & BOOT_FLAG_WARM_UPDATE) != 0u);
         uint64_t reserved_total = 0u;
         uint32_t type_seen[BOOT_PAYLOAD_MAX];
         uint32_t seen_count = 0u;
@@ -385,26 +423,26 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                 if (d->length == 0u)
                     continue;
 
-                /* Warm-update descriptor reservation is gated on the global
-                 * BOOT_FLAG_WARM_UPDATE handoff signal in addition to the
-                 * caps_present bit. Without the flag, a stale or malformed
-                 * type-9 descriptor with FLAG_RESERVED would otherwise pin
-                 * arbitrary payload pages here -- exactly the failure mode
-                 * the warm-update consume cold-fallback path tries to
-                 * prevent. (Codex 2026-04-30 re-adversarial finding.)
-                 *
-                 * This gate is a DIFFERENT axis from the length contract
-                 * below and both apply: this one asks whether the handoff
-                 * signalled a warm update at all, that one asks whether the
-                 * declared size is inside the type's contract. */
-                if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE
-                    && (!warm_update_flag
-                        || !boot_warm_update_desc_admissible(d))) {
-                    klog(LOG_WARN, "mm",
-                         "boot_reserved: skip warm-update payload[%u] "
-                         "(flag clear or descriptor not admissible; cold "
-                         "init proceeds)",
-                         (uint64_t)i);
+                /* Warm-update takes NOTHING from this loop -- not the
+                 * FLAG_RESERVED test, not the length contract, not the
+                 * singleton rule, not the budget. Every one of those is
+                 * either already inside the sealed selection or is a
+                 * table-order rule Phase 0 cannot reproduce, and the sealed
+                 * range is pinned by its own step after this block. Skipping
+                 * here is what makes "one descriptor, chosen once" true
+                 * rather than nearly true. */
+                if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) {
+                    if (warm->verdict
+                            != (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE
+                        || i != warm->index) {
+                        klog(LOG_WARN, "mm",
+                             "boot_reserved: skip warm-update payload[%u] "
+                             "(selection verdict=%u candidates=%u err=%u "
+                             "mismatch=%u; cold init proceeds)",
+                             (uint64_t)i, (uint64_t)warm->verdict,
+                             (uint64_t)warm->candidate_count,
+                             (uint64_t)warm->error, (uint64_t)warm->mismatch);
+                    }
                     continue;
                 }
 
@@ -430,52 +468,30 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                     continue;
                 }
 
-                /* WARM-UPDATE IS EXEMPT FROM THE TWO TABLE-WIDE RULES
-                 * BELOW, and the reason is ORDERING, not privilege.
-                 *
-                 * boot_hw.c consumes the warm-update descriptor at Phase 0
-                 * BEFORE pmm_init() runs this pass, so its consumer cannot
-                 * ask what was pinned -- the table does not exist yet. If the
-                 * budget or the singleton rule could decline a type-9
-                 * descriptor, the consumer's ACCEPT and this pass's DECLINE
-                 * would disagree with no way to reconcile them, which is the
-                 * exact hazard this section exists to remove. Exempting it
-                 * makes the decision here fully determined by the two things
-                 * the consumer already checks for itself: the
-                 * BOOT_FLAG_WARM_UPDATE gate above and the type's own length
-                 * contract. The exposure stays bounded, because that contract
-                 * caps the type at 64 MiB and the flag gates it.
-                 * (Round-3 re-adversarial: the first attempt gated the
-                 * CONSUMER on the query instead, which made every
-                 * warm-update descriptor fall back cold.) */
-                /* WARM-UPDATE TAKES NO TABLE-WIDE RULE FROM THIS PASS --
-                 * not cardinality and not the budget -- and the reason is
-                 * ORDERING, which three review rounds kept rediscovering.
+                /* WARM-UPDATE TAKES NO TABLE-WIDE RULE FROM THIS PASS, and
+                 * the reason is ORDERING, not privilege.
                  *
                  * boot_hw.c consumes the type-9 descriptor at Phase 0 BEFORE
-                 * pmm_init() runs this pass. So ANY rule applied here that
-                 * the consumer cannot itself evaluate splits the decision
-                 * across two phases: the consumer ACCEPTS a descriptor and
-                 * reattaches its preserved state, and this pass then declines
-                 * to pin the range PMM will reclaim. Waiving the budget alone
-                 * was not enough -- the singleton rule reproduced it, because
-                 * with an optional descriptor first and a REQUIRED duplicate
-                 * second the consumer takes both while required-first pinning
-                 * takes only the second.
+                 * pmm_init() runs this pass. Any rule applied HERE that the
+                 * consumer cannot itself evaluate splits the decision across
+                 * two phases: the consumer accepts a descriptor and reattaches
+                 * its preserved state, and this pass then declines to pin the
+                 * range PMM will reclaim. That is why the singleton rule below
+                 * cannot be the answer -- with an optional descriptor first
+                 * and a REQUIRED duplicate second, required-first pinning
+                 * takes the second while a table-order consumer takes the
+                 * first.
                  *
-                 * With the flag gate plus the length contract as the ONLY
-                 * conditions, both phases evaluate the identical predicate
-                 * over the identical descriptor and cannot disagree. Both are
-                 * checked above and in boot_warm_update_consume().
-                 *
-                 * WHAT THIS LEAVES OPEN, stated rather than hidden: duplicate
-                 * type-9 descriptors are each still pinned, bounded only by
-                 * the 64 MiB type contract and the BOOT_FLAG_WARM_UPDATE
-                 * gate. That is unchanged from before this section, and it is
-                 * a warm-update cardinality question rather than a payload
-                 * length one, so it is filed with its own owner instead of
-                 * being bolted on here. */
-                if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) {
+                 * Cardinality is answered instead by the SEALED SELECTION
+                 * above, which both phases read rather than recompute, so
+                 * "exactly one" is enforced without either phase deciding it
+                 * alone. The aggregate budget stays here and warm-update stays
+                 * outside it: the budget is consumed in table order, which
+                 * Phase 0 cannot reproduce. The exposure is bounded by
+                 * construction -- at most ONE descriptor, capped by the type's
+                 * own 64 MiB length contract, gated on BOOT_FLAG_WARM_UPDATE.
+                 * A type-9 descriptor has already `continue`d above, so the
+                 * rules from here down apply to normal payloads only. */
                 /* Cardinality. Every type except MODULE is a singleton by
                  * meaning, so a second occurrence is a malformed or hostile
                  * handoff -- and pinning it multiplies the memory one type
@@ -512,22 +528,14 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                  * starvation this section exists to close. Compared before
                  * adding, and written so the addition itself cannot
                  * overflow. */
-                /* WARM-UPDATE IS EXEMPT FROM THE BUDGET ONLY, and the
-                 * reason is ORDERING. boot_hw.c consumes the type-9
-                 * descriptor at Phase 0 BEFORE pmm_init() runs this pass, so
-                 * its consumer cannot ask what was pinned -- the table does
-                 * not exist yet. A budget that could decline it would let the
-                 * consumer's ACCEPT and this pass's DECLINE disagree with
-                 * nothing able to reconcile them.
-                 *
-                 * It stays subject to the CARDINALITY rule above and to its
-                 * own 64 MiB length contract, which together bound it. An
-                 * earlier round exempted it from BOTH, and 32 descriptors at
-                 * 64 MiB is 2 GiB -- worse than the starvation the budget was
-                 * added to prevent. Its bytes are also NOT charged to
-                 * reserved_total below: charging a payload the budget did not
-                 * gate makes normal admission depend on warm-descriptor
-                 * ordering. */
+                /* Warm-update never reaches this check, and its bytes are
+                 * never charged to reserved_total: charging a payload the
+                 * budget did not gate would make normal payload admission
+                 * depend on where the warm descriptor sits in the table. The
+                 * 2 GiB worst case an earlier round left open (32 descriptors
+                 * at 64 MiB each) is closed by the sealed selection rather
+                 * than by this budget -- at most one type-9 descriptor is
+                 * ever pinned, and not from this loop. */
                 if (!boot_payload_budget_admits(reserved_total, d->length)) {
                     klog(LOG_WARN, "mm",
                          "boot_reserved: skip %s payload[%u] (length %lu "
@@ -540,20 +548,10 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                     continue;
                 }
 
-                }
                 if (add_or_fatal(d->phys_start, d->length,
                                  BOOT_RESERVED_PAYLOAD, i, out_err) != BOOT_OK)
                     return BOOT_FATAL;
-                /* CHARGED ONLY IF THE BUDGET GATED IT. Warm-update
-                 * bypasses the budget check above, so charging its bytes
-                 * here would make normal payload admission depend on
-                 * descriptor ORDER: a maxed warm descriptor placed first
-                 * silently removes 64 MiB from every later payload's budget,
-                 * while the same descriptor placed last is admitted on top
-                 * of the full cap. A gate and its meter have to agree about
-                 * who they apply to. */
-                if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE)
-                    reserved_total += d->length;
+                reserved_total += d->length;
                 /* Seen only now, when an occurrence of this type has really
                  * been pinned -- see the cardinality block above. */
                 if (!BOOT_PAYLOAD_TYPE_IS_REPEATABLE(d->type)
@@ -561,6 +559,38 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                     type_seen[seen_count++] = d->type;
             }
         }
+    }
+
+    /* Warm-update reservation, driven by the SEAL and by nothing else.
+     *
+     * It sits outside the capability-gated loop above on purpose. Every
+     * condition that decides whether this range may be pinned was evaluated
+     * once, by whichever phase read the selection first, and sealed: the
+     * capability bit, the BOOT_FLAG_WARM_UPDATE signal, descriptor
+     * admissibility, and cardinality. Re-testing any of them here is what
+     * would let a bit cleared after Phase 0 leave preserved state reattached
+     * and unpinned.
+     *
+     * The range comes from the SEALED RECORD rather than from
+     * info->payload_descriptors[warm->index], so a handoff that moved after
+     * Phase 0 read it cannot redirect the pin either. */
+    if (warm->verdict == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE
+        && warm_range_is_applicable(warm->phys_start, warm->length)) {
+        if (warm->mismatch != 0u) {
+            /* Pin it anyway. The pages may already be reattached, so handing
+             * them back to PMM is the one outcome that cannot be undone; a
+             * reattach consumer reads `mismatch` and refuses. */
+            klog(LOG_ERROR, "mm",
+                 "boot_reserved: warm-update payload[%u] pinned from the "
+                 "SEALED range 0x%lx+%lu -- the handoff changed after Phase 0 "
+                 "read it, so reattach must be refused",
+                 (uint64_t)warm->index, (uint64_t)warm->phys_start,
+                 (uint64_t)warm->length);
+        }
+        if (add_or_fatal(warm->phys_start, warm->length,
+                         BOOT_RESERVED_PAYLOAD, warm->index,
+                         out_err) != BOOT_OK)
+            return BOOT_FATAL;
     }
 
     /* Kernel boot stack (TODO-10 sec32). The run the kernel is executing on
@@ -586,6 +616,41 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
         if (add_or_fatal(info->kstack_base, (uint64_t)info->kstack_size,
                          BOOT_RESERVED_BOOT_STACK, 0u, out_err) != BOOT_OK)
             return BOOT_FATAL;
+    }
+
+    /* COMMIT, and only here -- after the WHOLE table was admitted.
+     *
+     * SELECT_ONE says the handoff is well-formed and unambiguous. It does not
+     * say the range survived reservation, and reservation can refuse it for a
+     * reason that has nothing to do with warm update: overlapping the kernel
+     * boot stack or another retained region is a fatal handoff error. Marking
+     * the commit beside the warm add was not enough for exactly that case --
+     * the stack entry is added AFTER it, so an overlapping warm range read as
+     * committed for the instant before the boot died. A restore consumer that
+     * acted on the verdict alone would reattach over memory PMM was never
+     * told to keep. (Round-2 adversarial finding, and its own regression
+     * test.)
+     *
+     * Everything that can still fail after this point -- the PMM-internal
+     * disjointness checks in pmm_init(), which run before
+     * boot_reserved_apply() -- halts the boot, so no consumer ever observes a
+     * commit the machine did not honor. */
+    if (warm->verdict == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE) {
+        if (warm_range_is_applicable(warm->phys_start, warm->length)) {
+            boot_warm_update_selection_mark_pinned();
+        } else {
+            /* Deliberately NOT fatal, and deliberately not pinned. The rest of
+             * the handoff may be perfectly good; what this says is that the
+             * preserved region is not memory this machine has, so no consumer
+             * may reattach it. `pinned` staying clear is the whole mechanism
+             * -- the restore path is gated on it -- so cold init proceeds. */
+            klog(LOG_ERROR, "mm",
+                 "boot_reserved: warm-update payload[%u] range 0x%lx+%lu lies "
+                 "outside the %lu frames PMM tracks; not pinned, not "
+                 "committed, cold init proceeds",
+                 (uint64_t)warm->index, (uint64_t)warm->phys_start,
+                 (uint64_t)warm->length, (uint64_t)pmm_get_total_frames());
+        }
     }
 
     return BOOT_OK;

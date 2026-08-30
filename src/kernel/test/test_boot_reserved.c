@@ -22,6 +22,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/mm/boot_reserved.h"
+#include "kernel/mm/pmm.h"   /* pmm_get_total_frames -- the commit needs a backed range */
 #include "kernel/boot_info.h"
 #include "kernel/entropy.h"   /* boot_seed_length_reservable -- must agree with the table */
 /* libc/string.h not needed; fixture is zeroed by scalar loop. */
@@ -39,6 +40,11 @@ static void br_zero_fixture(void)
     /* Header magic + size must be valid so populate doesn't misread,
      * but boot_reserved doesn't consult them directly; zero is fine. */
     boot_reserved_reset_for_test();
+    /* The warm-update selection is SEALED by whichever phase reads it first
+     * and is deliberately immutable after that, so a fixture that did not
+     * drop it would be adjudicated against the PREVIOUS fixture's handoff
+     * and refused as a mismatch. */
+    boot_warm_update_selection_reset_for_test();
 }
 
 static void test_boot_reserved_populate_happy_path(void)
@@ -896,35 +902,562 @@ static void test_boot_reserved_warm_update_matches_consumer(void)
 
     TEST_KLOG_SUPPRESS("mm");
     TEST_KLOG_SUPPRESS("boot");
+    /* ONE candidate per fixture. Duplicates are refused wholesale now (see
+     * the cardinality tests below), so predicate parity has to be asserted
+     * one descriptor at a time -- which is also the only shape that isolates
+     * WHICH rule refused. */
     base = br_baseline_count();
     s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
     s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 3;
+    s_br_buf.payload_count = 1;
     /* Admissible: page-multiple start and length, no unknown continuation
      * bits. This is the control -- without it the refusals below would pass
      * against a rule that pins nothing. */
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
-    /* Not page-aligned: the consumer refuses it, so the pass must not pin it. */
-    br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000100ull, 0x1000ull, 0u);
-    /* An unknown continuation bit: likewise refused by the consumer. */
-    br_stage_payload(2, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x30000000ull, 0x1000ull,
-                     0x80000000u);
-
     (void)boot_reserved_populate_from_info(&s_br_buf, &err);
-
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 1ul,
-                   "an admissible warm-update descriptor IS pinned");
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
-                       1u, 0x20000100ull, 0x1000ull), 0ul,
-                   "an unaligned one is not pinned -- the consumer refuses it");
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
-                       2u, 0x30000000ull, 0x1000ull), 0ul,
-                   "nor is one carrying an unknown continuation bit");
+                   "admissible warm desc is pinned");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                    (unsigned long)(base + 1u),
-                   "exactly the admissible descriptor was pinned");
+                   "and is the only entry added");
+
+    /* Not page-aligned: the consumer refuses it, so the pass must not pin it. */
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000100ull, 0x1000ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x20000100ull, 0x1000ull), 0ul,
+                   "unaligned: not pinned");
+
+    /* An unknown continuation bit: likewise refused by the consumer. */
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x30000000ull, 0x1000ull,
+                     0x80000000u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x30000000ull, 0x1000ull), 0ul,
+                   "unknown cont bit: not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
+                   "refused warm adds no entry");
 }
+
+/* Two admissible warm-update descriptors is a MALFORMED handoff, not a choice
+ * to arbitrate: the incoming kernel cannot know which preserved region is
+ * authoritative. Both phases refuse both, and cold init is the safe outcome.
+ * The optional-first / REQUIRED-second arrangement is the specific shape that
+ * defeated a first-admissible-wins rule -- required-first pinning would take
+ * slot 1 while a table-order consumer takes slot 0. */
+static void test_boot_reserved_warm_update_duplicates_refused(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    const struct boot_warm_update_sel *sel;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 2;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000000ull, 0x1000ull,
+                     BOOT_PAYLOAD_FLAG_REQUIRED);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_AMBIGUOUS,
+                   "two candidates is AMBIGUOUS");
+    TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 2ul,
+                   "count is recorded");
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 0ul,
+                   "optional duplicate not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       1u, 0x20000000ull, 0x1000ull), 0ul,
+                   "REQUIRED one not pinned either");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
+                   "ambiguous pins nothing");
+
+
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 2;
+    /* Perfectly admissible on its own -- proven by the parity test above. */
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    /* Unknown continuation bit: refused by the per-descriptor validator. */
+    br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000000ull, 0x1000ull,
+                     0x80000000u);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_AMBIGUOUS,
+                   "admissible + malformed = two");
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 0ul,
+                   "fail closed: neither pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
+                   "ambiguous pins nothing");
+
+
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = 0u;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
+                   "no BOOT_FLAG_WARM_UPDATE means no selection");
+    TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 0ul,
+                   "and the scan stops before counting candidates");
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
+                   "so nothing of that type is pinned");
+
+}
+
+/* Cardinality is counted BEFORE admissibility. A malformed second type-9
+ * descriptor still means the producer published two preserved-state regions,
+ * and boot_payload_validate() lets an OPTIONAL one through with unknown flag
+ * bits by design (src/kernel/main/boot_payload.c), so this input really does
+ * reach the selection. */
+
+/* The integration assertion the section exists for: both phases agree on the
+ * descriptor's IDENTITY, not merely on a count. The selection names an index
+ * and a range; the reservation table must hold that exact index and range and
+ * no other warm-update entry. */
+static void test_boot_reserved_warm_update_identity_agrees(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    const struct boot_warm_update_sel *sel;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 3;
+    /* A normal payload before and after, so the selected index is not 0 and a
+     * test that merely counted entries could not tell the difference. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x40000000ull, 0x1000ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x50000000ull, 0x2000ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x60000000ull, 0x1000ull, 0u);
+
+    /* Phase 0's view, sealed. */
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "one admissible candidate");
+    TEST_ASSERT_EQ((unsigned long)sel->index, 1ul,
+                   "selection names the index");
+    TEST_ASSERT_EQ((unsigned long)sel->phys_start, 0x50000000ul,
+                   "and its base");
+    TEST_ASSERT_EQ((unsigned long)sel->length, 0x2000ul,
+                   "and its extent");
+
+    /* The reservation pass's view, later, over the same handoff. */
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       sel->index, sel->phys_start, sel->length), 1ul,
+                   "pass pinned the selected one");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 3u),
+                   "2 modules + 1 warm pinned");
+
+
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "sealed as SELECT_ONE");
+
+    /* Someone moves the preserved region after the seal. */
+    s_br_buf.payload_descriptors[0].phys_start = 0x70000000ull;
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
+                   "mutation is detected");
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "verdict is not revoked");
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 1ul,
+                   "sealed range is pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x70000000ull, 0x1000ull), 0ul,
+                   "mutated range is not");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 1u),
+                   "one entry, from the seal");
+
+
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "sealed while caps present");
+
+    /* The capability bit disappears between the two phases. */
+    s_br_buf.caps_present = 0u;
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 1ul,
+                   "caps loss cannot drop the pin");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 1u),
+                   "and nothing else was pinned");
+
+}
+
+/* A handoff that MOVES after Phase 0 read it is detected -- but the
+ * authorization is NOT withdrawn. By the time the reservation pass looks,
+ * Phase 0 has already acted on SELECT_ONE, so revoking the verdict would leave
+ * preserved state reattached and its pages returned to PMM. The pass pins the
+ * SEALED range (memory is the only thing that costs) and `mismatch` is what
+ * tells a reattach consumer to refuse. */
+
+/* BOOT_CAP_PAYLOAD_DESCRIPTORS is one of the conditions the SELECTION already
+ * evaluated, so the reservation of a sealed warm region must not sit behind a
+ * second, live test of it: clearing the bit after Phase 0 would otherwise skip
+ * the pin for a region Phase 0 was authorized to reattach. That is the
+ * cross-phase split this section removes, reintroduced by a gate that looked
+ * safe. (Codex test-coverage finding on this section.) */
+
+/* SELECT_ONE is a decision; `pinned` is the commit. The reservation can refuse
+ * the sealed range for a reason that has nothing to do with warm update -- an
+ * overlap with the kernel boot stack is a fatal handoff error -- and a restore
+ * consumer acting on the verdict alone would reattach over memory PMM was
+ * never told to keep. (Round-2 adversarial finding.) */
+static void test_boot_reserved_warm_update_pinned_is_the_commit(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    const struct boot_warm_update_sel *sel;
+    boot_result_t r;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+
+    /* Happy path: selected, then admitted. */
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul,
+                   "selection is not a commit");
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 1ul,
+                   "the pass commits it");
+
+    /* The range collides with the kernel boot stack: the pass fatals and the
+     * selection must never read as committed. */
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    s_br_buf.kstack_base   = 0x10000000ull;
+    s_br_buf.kstack_size   = 0x4000u;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10001000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "well-formed and unambiguous");
+    r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)r, (unsigned long)BOOT_FATAL,
+                   "kstack overlap is fatal");
+    TEST_ASSERT_EQ((unsigned long)err, (unsigned long)BOOT_RESERVED_ERR_OVERLAP,
+                   "err names the overlap");
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul,
+                   "unadmitted is not committed");
+    br_zero_fixture();
+    {
+        uint64_t past_end;
+
+
+    past_end = (pmm_get_total_frames() + 16ull) * (uint64_t)PMM_FRAME_SIZE;
+
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, past_end, 0x1000ull, 0u);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "well-formed at Phase 0");
+
+    r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)r, (unsigned long)BOOT_OK,
+                   "unbacked range is not fatal");
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul,
+                   "but is never committed");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, past_end, 0x1000ull), 0ul,
+                   "nor in the reservation table");
+    br_zero_fixture();
+    }
+
+}
+
+/* The continuation bits pick which subsystem restores run, so swapping one
+ * recognized bit for another changes what a consumer would do while leaving
+ * the range identical. The seal covers them, and the mutation check compares
+ * them. (Round-2 adversarial finding.) */
+static void test_boot_reserved_warm_update_seals_continuation_bits(void)
+{
+    const struct boot_warm_update_sel *sel;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull,
+                     BOOT_WARM_UPDATE_CONT_FD_TABLE);
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)(sel->flags
+                                   & (uint32_t)BOOT_WARM_UPDATE_CONT_MASK_KNOWN),
+                   (unsigned long)BOOT_WARM_UPDATE_CONT_FD_TABLE,
+                   "cont bits are sealed");
+
+    /* Same range, same index, different recognized continuation bit. */
+    s_br_buf.payload_descriptors[0].flags =
+        (s_br_buf.payload_descriptors[0].flags
+         & ~(uint32_t)BOOT_WARM_UPDATE_CONT_FD_TABLE)
+        | (uint32_t)BOOT_WARM_UPDATE_CONT_HW_QUEUES;
+
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
+                   "cont-bit swap is a mutation");
+    TEST_ASSERT_EQ((unsigned long)(sel->flags
+                                   & (uint32_t)BOOT_WARM_UPDATE_CONT_MASK_KNOWN),
+                   (unsigned long)BOOT_WARM_UPDATE_CONT_FD_TABLE,
+                   "sealed bits are unchanged");
+    br_zero_fixture();
+
+
+
+    /* Value-only mutation: same range, same flags, different CRC. */
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull,
+                     BOOT_PAYLOAD_FLAG_CHECKSUMMED);
+    s_br_buf.payload_descriptors[0].checksum = 0xC0FFEEull;
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->checksum, 0xC0FFEEul,
+                   "CRC is sealed");
+    s_br_buf.payload_descriptors[0].checksum = 0xDEADBEEFull;
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
+                   "CRC-only swap is a mutation");
+    TEST_ASSERT_EQ((unsigned long)sel->checksum, 0xC0FFEEul,
+                   "sealed CRC is unchanged");
+
+    /* Flag-only mutation: clearing CHECKSUMMED would skip verification. */
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull,
+                     BOOT_PAYLOAD_FLAG_CHECKSUMMED);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)(sel->flags
+                                   & (uint32_t)BOOT_PAYLOAD_FLAG_CHECKSUMMED),
+                   (unsigned long)BOOT_PAYLOAD_FLAG_CHECKSUMMED,
+                   "CHECKSUMMED bit is sealed");
+    s_br_buf.payload_descriptors[0].flags &=
+        ~(uint32_t)BOOT_PAYLOAD_FLAG_CHECKSUMMED;
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
+                   "clearing it is a mutation");
+    br_zero_fixture();
+
+}
+
+/* The checksum decides whether preserved bytes are verified at all, so leaving
+ * it in the live descriptor let a mutation change what a consumer DOES while
+ * every compared field stayed identical. Both the CHECKSUMMED bit and the
+ * value itself are sealed and compared. (Round-3 adversarial finding.) */
+
+/* `pinned` is a positive claim about memory, so it must not certify a range
+ * PMM never touches. pmm_mark_region_used() clamps only the END of a range,
+ * so one starting past the last tracked frame marks nothing and reports
+ * nothing. The out-of-range address is DERIVED from the live frame count
+ * rather than hardcoded, so the assertion means the same thing on any host.
+ * (Round-3 adversarial finding.) */
+
+/* Every sole-candidate refusal class, asserted at the SELECTION rather than
+ * at the reservation pass. The pass has its own prefilters for several of
+ * these (FLAG_RESERVED, zero length, the length contract), so a selector that
+ * wrongly returned ONE would authorize Phase 0 while the pass still skipped
+ * the range -- and every "not pinned" assertion elsewhere would stay green.
+ * (Codex test-coverage finding on this section.) */
+static void test_boot_warm_update_selection_refusal_classes(void)
+{
+    struct wu_case {
+        uint64_t phys;
+        uint64_t len;
+        uint32_t extra_flags;
+        uint32_t clear_flags;
+        uint32_t expect_err;
+        const char *what;
+    };
+    static const struct wu_case cases[] = {
+        { 0x10000000ull, 0ull,     0u,          0u,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_EMPTY,             "zero length" },
+        { 0x10000000ull, 0x1000ull, 0u,
+          (uint32_t)BOOT_PAYLOAD_FLAG_RESERVED,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_MISSING_FLAGS,     "no RESERVED flag" },
+        { 0x10000000ull, 0x1000ull, 0u,
+          (uint32_t)BOOT_PAYLOAD_FLAG_VALID,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_MISSING_FLAGS,     "no VALID flag" },
+        { 0x10000100ull, 0x1000ull, 0u,          0u,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_UNALIGNED,         "unaligned base" },
+        { 0x10000000ull, 0x1800ull, 0u,          0u,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_UNALIGNED,         "bad length granularity" },
+        { 0x10000000ull, 0x8000000ull, 0u,       0u,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_LENGTH_CONTRACT,   "past the contract" },
+        { 0x10000000ull, 0x1000ull, 0x80000000u, 0u,
+          (uint32_t)BOOT_WARM_UPDATE_ERR_UNKNOWN_CONT_FLAG, "unknown cont bit" },
+    };
+    uint32_t c;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+    for (c = 0u; c < (uint32_t)(sizeof(cases) / sizeof(cases[0])); c++) {
+        enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+        const struct boot_warm_update_sel *sel;
+        uint32_t base = br_baseline_count();
+
+        s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+        s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+        s_br_buf.payload_count = 1;
+        br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, cases[c].phys,
+                         cases[c].len, cases[c].extra_flags);
+        s_br_buf.payload_descriptors[0].flags &= ~cases[c].clear_flags;
+
+        sel = boot_warm_update_selection_get(&s_br_buf);
+        TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                       (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
+                       cases[c].what);
+        TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 1ul,
+                       "counted before refused");
+        TEST_ASSERT_EQ((unsigned long)sel->error,
+                       (unsigned long)cases[c].expect_err,
+                       "err names the refusing rule");
+
+        (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+        TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                       (unsigned long)base,
+                       "refused selection pins nothing");
+    }
+}
+
+/* The selection's own input boundaries: NULL, absent capability, an empty
+ * table, a count past the array bound, and a candidate in the LAST slot. */
+static void test_boot_warm_update_selection_input_bounds(void)
+{
+    const struct boot_warm_update_sel *sel;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+
+    br_zero_fixture();
+    sel = boot_warm_update_selection_get((const struct boot_info *)0);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
+                   "NULL info selects nothing");
+
+    br_zero_fixture();
+    s_br_buf.caps_present  = 0u;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
+                   "no caps: not consumed");
+
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 0;
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
+                   "empty table: no candidate");
+    TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 0ul,
+                   "and says so");
+
+    /* A count past the array bound is a malformed handoff. The scan must
+     * refuse rather than read off the end of payload_descriptors[]. */
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = (uint32_t)BOOT_PAYLOAD_MAX + 1u;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
+                   "count past MAX refuses");
+    TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 0ul,
+                   "without walking any slot");
+
+    /* The last legal slot is reachable: an off-by-one in the scan bound would
+     * report zero candidates here and nothing else would notice. */
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = (uint32_t)BOOT_PAYLOAD_MAX;
+    br_stage_payload((uint32_t)BOOT_PAYLOAD_MAX - 1u,
+                     BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)sel->verdict,
+                   (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
+                   "last slot is reachable");
+    TEST_ASSERT_EQ((unsigned long)sel->index,
+                   (unsigned long)((uint32_t)BOOT_PAYLOAD_MAX - 1u),
+                   "at its real index");
+    br_zero_fixture();
+}
+
+/* With the flag clear there is no warm update to select, however well-formed
+ * the descriptor is -- the gate lives inside the shared selection now, so this
+ * also proves the pass did not keep a second copy of it. */
 
 /* Warm-update bypasses the aggregate budget, so it must not be CHARGED to it
  * either -- otherwise normal payload admission depends on where the warm
@@ -1056,6 +1589,24 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: warm-update pinning matches the consumer",
                             test_boot_reserved_warm_update_matches_consumer,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("wu: cardinality refusals",
+                            test_boot_reserved_warm_update_duplicates_refused,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("wu: identity + seal integrity",
+                            test_boot_reserved_warm_update_identity_agrees,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("wu: commit is not the verdict",
+                            test_boot_reserved_warm_update_pinned_is_the_commit,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("wu: consumer fields are sealed",
+                            test_boot_reserved_warm_update_seals_continuation_bits,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("wu: refusal classes",
+                            test_boot_warm_update_selection_refusal_classes,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("wu: selection input bounds",
+                            test_boot_warm_update_selection_input_bounds,
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: RANDOM_SEED is repeatable",
                             test_boot_reserved_seed_is_repeatable, TEST_CAT_BOOT);

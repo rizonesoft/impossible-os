@@ -1,6 +1,6 @@
 {
-  "total_suites": 3206,
-  "total_assertions": 14195,
+  "total_suites": 3212,
+  "total_assertions": 14252,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
@@ -22,7 +22,7 @@
     {"file": "test_boot_init.c", "suites": 24, "assertions": 88},
     {"file": "test_boot_perf_budget.c", "suites": 15, "assertions": 22},
     {"file": "test_boot_policy.c", "suites": 50, "assertions": 196},
-    {"file": "test_boot_reserved.c", "suites": 31, "assertions": 106},
+    {"file": "test_boot_reserved.c", "suites": 37, "assertions": 163},
     {"file": "test_boot_rollback.c", "suites": 28, "assertions": 85},
     {"file": "test_boot_seed.c", "suites": 1, "assertions": 5},
     {"file": "test_boot_timing.c", "suites": 10, "assertions": 13},

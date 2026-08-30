@@ -689,16 +689,99 @@ enum boot_warm_update_decision
 boot_warm_update_consume(const struct boot_payload_desc *desc,
                          enum boot_warm_update_error *out_error);
 
-/* Whether the Phase-0 reservation pass should PIN this warm-update
- * descriptor: 1 exactly when boot_warm_update_consume() would accept it.
+/* Forward declare boot_info for the selection API below; the full struct is
+ * defined further down in this header. */
+struct boot_info;
+
+/* Verdict of the cross-phase warm-update SELECTION. */
+enum boot_warm_update_selection {
+    BOOT_WARM_UPDATE_SELECT_NONE      = 0,  /* nothing to reattach; cold init */
+    BOOT_WARM_UPDATE_SELECT_ONE       = 1,  /* exactly one candidate, admissible */
+    BOOT_WARM_UPDATE_SELECT_AMBIGUOUS = 2,  /* two or more candidates; refuse all */
+};
+
+/* The sealed answer to "which warm-update descriptor, if any, may this boot
+ * act on". Immutable once sealed; see boot_warm_update_selection_get(). */
+struct boot_warm_update_sel {
+    uint32_t verdict;          /* enum boot_warm_update_selection */
+    uint32_t index;            /* payload index; meaningful iff verdict == ONE */
+    uint32_t candidate_count;  /* type-9 descriptors in the active prefix */
+    uint32_t error;            /* enum boot_warm_update_error: why the sole
+                                * candidate was refused (verdict NONE with
+                                * candidate_count == 1) */
+    uint32_t mismatch;         /* 1 when a later phase presented a boot_info
+                                * that no longer agrees with the seal. The
+                                * verdict does NOT change: a reattach consumer
+                                * must refuse, the sealed range stays pinned. */
+    uint32_t pinned;           /* 1 once the reservation pass ADMITTED the
+                                * sealed range. Until then the selection is a
+                                * decision, not a commit. */
+    uint32_t flags;            /* the selected descriptor's FULL flags, sealed.
+                                * Continuation bits are
+                                * `flags & BOOT_WARM_UPDATE_CONT_MASK_KNOWN`
+                                * and BOOT_PAYLOAD_FLAG_CHECKSUMMED lives here
+                                * too. Consumers read THIS, never the live
+                                * descriptor: both decide what gets restored
+                                * and whether the CRC is checked at all. */
+    uint64_t checksum;         /* sealed CRC-32C (low 32 bits) when the sealed
+                                * flags carry BOOT_PAYLOAD_FLAG_CHECKSUMMED */
+    uint64_t phys_start;       /* identity of the selected descriptor */
+    uint64_t length;           /* ... and its extent, both 0 unless ONE */
+};
+
+/* THE authorization for a warm update, and the only one.
  *
- * Exists so the pass and the consumer cannot state different conditions. The
- * pass once applied a strict subset -- no page-alignment check, no
- * continuation-bit check -- so a descriptor Phase 0 cold-fell-back was
- * pinned anyway. Every condition is descriptor-local by design; a rule
- * depending on the OTHER descriptors could not be evaluated by the consumer,
- * which runs before the reservation table exists. */
-int boot_warm_update_desc_admissible(const struct boot_payload_desc *desc);
+ * boot_warm_update_consume() above VALIDATES one descriptor; it does not say
+ * whether this boot may act on it. Two phases read the same descriptor table
+ * at different times -- boot_hw.c at Phase 0, boot_reserved.c later inside
+ * pmm_init() -- and neither can see what the other decided: the Phase-0
+ * consumer runs before the reservation table exists, and the pass runs after
+ * the consumer already accepted or refused. Any rule only one of them can
+ * evaluate splits the decision, so the incoming kernel reattaches state whose
+ * pages the pass declined to pin, or the reverse.
+ *
+ * The FIRST caller seals the verdict computed from `info`; every later caller
+ * gets that same record back and acts on the SEALED range rather than on the
+ * live descriptor. A later caller whose `info` no longer agrees does not get a
+ * second opinion and the verdict is never withdrawn -- by then the first
+ * caller may already have acted on it -- so the record only raises `mismatch`,
+ * which says "pin it, do not reattach it".
+ *
+ * The rule itself is deliberately blunt. Exactly one type-9 descriptor in the
+ * active prefix, and that one admissible, is a warm update. Two or more is a
+ * malformed handoff -- the incoming kernel cannot know which preserved region
+ * is authoritative, and cold init is always safe -- so nothing is consumed and
+ * nothing is pinned. Cardinality is counted BEFORE admissibility on purpose: a
+ * malformed second descriptor still means the producer published two
+ * preserved-state regions, and boot_payload_validate() lets an OPTIONAL one
+ * through with unknown flag bits by design.
+ *
+ * SELECT_ONE IS A DECISION, NOT A COMMIT. The reservation pass can still fail
+ * to admit the sealed range -- it may overlap the kernel boot stack or another
+ * retained region, or lie outside the physical memory PMM tracks at all, and
+ * neither is knowable at Phase 0 because the memory map has not been walked
+ * yet. That is WHY the commit is a second step rather than a stricter rule
+ * inside the selection: no rule the seal could carry would answer it. A
+ * consumer that RESTORES state must therefore require `pinned` as well as
+ * SELECT_ONE, and must refuse on `mismatch`; the restore itself is ordered
+ * after the reservation by the warm-kernel-update runtime, which owns it.
+ *
+ * Returns the sealed record; never NULL. Boot-path only: the seal is written
+ * on the BSP before APs start and is read-only afterwards. */
+const struct boot_warm_update_sel *
+boot_warm_update_selection_get(const struct boot_info *info);
+
+/* Record that the reservation pass ADMITTED the sealed range. Called once, by
+ * boot_reserved_populate_from_info(), after the range is in the table -- this
+ * is the commit half of the two-phase decision above. No effect unless the
+ * sealed verdict is SELECT_ONE. */
+void boot_warm_update_selection_mark_pinned(void);
+
+#ifdef KERNEL_TESTS
+/* Drop the seal so the next boot_warm_update_selection_get() re-seals. Tests
+ * drive many synthetic boot_info fixtures through one kernel. */
+void boot_warm_update_selection_reset_for_test(void);
+#endif
 
 /* Human-readable name for a continuation flag (single set bit).
  * Returns "reserved" for bits outside MASK_KNOWN. */

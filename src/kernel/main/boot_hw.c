@@ -274,46 +274,60 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                              & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u);
         int flag_set = (int)((g_boot_info.flags
                               & BOOT_FLAG_WARM_UPDATE) != 0u);
-        uint32_t j;
-        uint32_t accepted_count = 0u;
-        for (j = 0u; j < g_boot_info.payload_count; j++) {
-            const struct boot_payload_desc *d = &g_boot_info.payload_descriptors[j];
-            if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE)
-                continue;
-            if (!caps_ok || !flag_set) {
-                /* Missing precondition: cold-fallback the descriptor
-                 * without invoking the warm-update validator. The
-                 * descriptor may be stale state from an earlier image;
-                 * treating it as ACCEPTED would leave PMM-reservation
-                 * skew (H1) or accept handoff data with no global
-                 * signal (H3). */
-                klog(LOG_WARN, "boot",
-                     "boot_warm_update: descriptor[%u] COLD_FALLBACK "
-                     "(caps_payload=%u flag_warm_update=%u; both required)",
-                     (uint64_t)j, (uint64_t)caps_ok, (uint64_t)flag_set);
-                continue;
-            }
-            enum boot_warm_update_error werr = BOOT_WARM_UPDATE_ERR_OK;
-            enum boot_warm_update_decision wd =
-                boot_warm_update_consume(d, &werr);
-            if (wd == BOOT_WARM_UPDATE_ACCEPTED) {
-                klog(LOG_INFO, "boot",
-                     "boot_warm_update: descriptor[%u] ACCEPTED; reattach owned by runtime TODO",
-                     (uint64_t)j);
-                accepted_count++;
-            } else {
-                klog(LOG_INFO, "boot",
-                     "boot_warm_update: descriptor[%u] COLD_FALLBACK (err=%u); proceeding with cold init",
-                     (uint64_t)j, (uint64_t)werr);
-            }
-        }
-        /* Inverse invariant: BOOT_FLAG_WARM_UPDATE set but no descriptor
-         * accepted. Stale flag from a producer that never published the
-         * descriptor (or all descriptors fell back). Log for audit. */
-        if (flag_set && accepted_count == 0u) {
+        /* SEAL THE SELECTION HERE, and act only on what it says.
+         *
+         * This is the first of the two phases to read the descriptor table,
+         * so this call is the one that decides. The reservation pass inside
+         * pmm_init() reads the same sealed record later, which is what makes
+         * "accepted" and "pinned" the same decision about the same descriptor
+         * instead of two independent walks that agreed by construction until
+         * a producer published a duplicate. */
+        const struct boot_warm_update_sel *sel =
+            boot_warm_update_selection_get(&g_boot_info);
+
+        switch ((enum boot_warm_update_selection)sel->verdict) {
+        case BOOT_WARM_UPDATE_SELECT_ONE:
+            /* SELECTED, not yet committed. pmm_init() further down this
+             * function still has to admit the range into the reservation
+             * table, and it can refuse -- an overlap with the kernel boot
+             * stack is a fatal handoff error, not a warm-update one. The
+             * restore path therefore waits on the record's `pinned` flag; a
+             * log line here that said ACCEPTED would read as permission to
+             * reattach before anything guaranteed PMM would keep the pages. */
+            klog(LOG_INFO, "boot",
+                 "boot_warm_update: descriptor[%u] SELECTED "
+                 "(phys=0x%lx length=%lu cont=0x%x); reattach is gated on the "
+                 "reservation pinning it, and is owned by the runtime TODO",
+                 (uint64_t)sel->index, (uint64_t)sel->phys_start,
+                 (uint64_t)sel->length,
+                 (uint64_t)(sel->flags
+                            & (uint32_t)BOOT_WARM_UPDATE_CONT_MASK_KNOWN));
+            break;
+        case BOOT_WARM_UPDATE_SELECT_AMBIGUOUS:
+            /* Two or more preserved-state regions. Nothing here can tell
+             * which one the outgoing kernel meant, and reattaching the wrong
+             * one is worse than not reattaching at all -- so neither this
+             * phase nor the reservation pass touches any of them. */
             klog(LOG_WARN, "boot",
-                 "boot_warm_update: BOOT_FLAG_WARM_UPDATE set but no "
-                 "descriptor accepted; cold init proceeds");
+                 "boot_warm_update: %u warm-update descriptors published; "
+                 "a warm handoff carries exactly one, so all are refused "
+                 "and cold init proceeds",
+                 (uint64_t)sel->candidate_count);
+            break;
+        case BOOT_WARM_UPDATE_SELECT_NONE:
+        default:
+            /* Report WHY, not merely that nothing was accepted: with the
+             * flag set, an operator needs to see whether the handoff was
+             * absent, gated off, or refused by a specific rule. */
+            if (flag_set || sel->candidate_count != 0u) {
+                klog(LOG_WARN, "boot",
+                     "boot_warm_update: no descriptor accepted "
+                     "(candidates=%u err=%u caps_payload=%u "
+                     "flag_warm_update=%u); cold init proceeds",
+                     (uint64_t)sel->candidate_count, (uint64_t)sel->error,
+                     (uint64_t)caps_ok, (uint64_t)flag_set);
+            }
+            break;
         }
     }
 
