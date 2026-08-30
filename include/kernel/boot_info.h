@@ -668,6 +668,11 @@ enum boot_warm_update_error {
      * Distinct from _EMPTY, which is the length==0 case: this one is a
      * length the producer declared and the kernel refuses to pin. */
     BOOT_WARM_UPDATE_ERR_LENGTH_CONTRACT   = 7,
+    /* phys_start + length wraps the 64-bit address space. Every other rule
+     * here is a property of ONE field; this is the only one about the range
+     * as a whole, and boot_payload_validate() -- which also checks it -- is
+     * bypassed on the synthetic-boot_info path. */
+    BOOT_WARM_UPDATE_ERR_RANGE_WRAP        = 8,
 };
 
 /* Forward declare boot_payload_desc so the prototype resolves --
@@ -766,8 +771,18 @@ struct boot_warm_update_sel {
  * SELECT_ONE, and must refuse on `mismatch`; the restore itself is ordered
  * after the reservation by the warm-kernel-update runtime, which owns it.
  *
- * Returns the sealed record; never NULL. Boot-path only: the seal is written
- * on the BSP before APs start and is read-only afterwards. */
+ * Returns the sealed record; never NULL. Boot-path only. In production the
+ * seal is written on the BSP inside boot_phase0(), before smp_init() runs in
+ * boot_phase2(), and is read-only afterwards. In a KERNEL_TESTS build the boot
+ * suite re-seals it from boot_phase3() with APs already online -- still only
+ * from the BSP, and no AP-side code calls these functions, but a consumer must
+ * not treat "no AP exists" as the reason this is safe. The flag is published
+ * with a release store and read with an acquire load either way.
+ *
+ * One constraint a warm-update PRODUCER has to know: the commit below requires
+ * the range to be inside the frames PMM tracks, and pmm_init() clamps that at
+ * PMM_PHYS_ADDR_CAP (4 GiB). Preserved state staged above 4 GiB can never be
+ * committed, so it can never be reattached. */
 const struct boot_warm_update_sel *
 boot_warm_update_selection_get(const struct boot_info *info);
 

@@ -295,9 +295,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
              * log line here that said ACCEPTED would read as permission to
              * reattach before anything guaranteed PMM would keep the pages. */
             klog(LOG_INFO, "boot",
-                 "boot_warm_update: descriptor[%u] SELECTED "
-                 "(phys=0x%lx length=%lu cont=0x%x); reattach is gated on the "
-                 "reservation pinning it, and is owned by the runtime TODO",
+                 "boot_warm_update: descriptor[%u] SELECTED (phys=0x%lx "
+                 "length=%lu cont=0x%x); reattach gated on the pin",
                  (uint64_t)sel->index, (uint64_t)sel->phys_start,
                  (uint64_t)sel->length,
                  (uint64_t)(sel->flags
@@ -309,9 +308,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
              * one is worse than not reattaching at all -- so neither this
              * phase nor the reservation pass touches any of them. */
             klog(LOG_WARN, "boot",
-                 "boot_warm_update: %u warm-update descriptors published; "
-                 "a warm handoff carries exactly one, so all are refused "
-                 "and cold init proceeds",
+                 "boot_warm_update: %u descriptors published; a warm "
+                 "handoff carries exactly one, so all are refused",
                  (uint64_t)sel->candidate_count);
             break;
         case BOOT_WARM_UPDATE_SELECT_NONE:
@@ -321,9 +319,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
              * absent, gated off, or refused by a specific rule. */
             if (flag_set || sel->candidate_count != 0u) {
                 klog(LOG_WARN, "boot",
-                     "boot_warm_update: no descriptor accepted "
-                     "(candidates=%u err=%u caps_payload=%u "
-                     "flag_warm_update=%u); cold init proceeds",
+                     "boot_warm_update: none accepted (cand=%u err=%u "
+                     "caps=%u flag=%u); cold init proceeds",
                      (uint64_t)sel->candidate_count, (uint64_t)sel->error,
                      (uint64_t)caps_ok, (uint64_t)flag_set);
             }

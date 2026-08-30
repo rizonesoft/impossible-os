@@ -41,9 +41,10 @@ const char *boot_warm_update_cont_name(uint32_t flag_bit)
  * validates a descriptor; it does not authorize a warm update.
  *
  * `out_error` may be NULL for a caller that wants only the verdict. */
-enum boot_warm_update_decision
-boot_warm_update_consume(const struct boot_payload_desc *desc,
-                         enum boot_warm_update_error *out_error)
+static enum boot_warm_update_decision
+warm_update_evaluate(const struct boot_payload_desc *desc,
+                     enum boot_warm_update_error *out_error,
+                     int verbose)
 {
     if (out_error != (enum boot_warm_update_error *)0)
         *out_error = BOOT_WARM_UPDATE_ERR_OK;
@@ -57,7 +58,8 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
     /* Rule 1: descriptor type must be WARM_UPDATE_STATE. A consumer
      * accidentally given the wrong descriptor is producer bug. */
     if (desc->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) {
-        klog(LOG_WARN, "boot",
+        if (verbose)
+            klog(LOG_WARN, "boot",
              "boot_warm_update: wrong descriptor type %u (expected %u); cold fallback",
              (uint64_t)desc->type,
              (uint64_t)BOOT_PAYLOAD_WARM_UPDATE_STATE);
@@ -69,7 +71,8 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
     /* Rule 2: length must be nonzero. An empty descriptor carries no
      * preserved state; treat as absent. */
     if (desc->length == 0u) {
-        klog(LOG_WARN, "boot",
+        if (verbose)
+            klog(LOG_WARN, "boot",
              "boot_warm_update: descriptor length is 0; cold fallback");
         if (out_error != (enum boot_warm_update_error *)0)
             *out_error = BOOT_WARM_UPDATE_ERR_EMPTY;
@@ -91,7 +94,8 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
      * disagree about what was pinned. (Design-review finding, TODO-01
      * the per-type payload length contract.) */
     if (!boot_payload_length_reservable(desc->type, desc->length)) {
-        klog(LOG_WARN, "boot",
+        if (verbose)
+            klog(LOG_WARN, "boot",
              "boot_warm_update: length %lu outside the type contract; cold fallback",
              (uint64_t)desc->length);
         if (out_error != (enum boot_warm_update_error *)0)
@@ -108,12 +112,35 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
     const uint32_t REQUIRED_PAYLOAD_FLAGS =
         BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
     if ((desc->flags & REQUIRED_PAYLOAD_FLAGS) != REQUIRED_PAYLOAD_FLAGS) {
-        klog(LOG_WARN, "boot",
+        if (verbose)
+            klog(LOG_WARN, "boot",
              "boot_warm_update: missing required payload flags (have 0x%x, need 0x%x); cold fallback",
              (uint64_t)(desc->flags & REQUIRED_PAYLOAD_FLAGS),
              (uint64_t)REQUIRED_PAYLOAD_FLAGS);
         if (out_error != (enum boot_warm_update_error *)0)
             *out_error = BOOT_WARM_UPDATE_ERR_MISSING_FLAGS;
+        return BOOT_WARM_UPDATE_COLD_FALLBACK;
+    }
+
+    /* Rule 3b: phys_start + length must not wrap.
+     *
+     * Every other rule here is a property of ONE field, so the range as a
+     * whole was never checked, and boot_payload_validate() -- which does check
+     * it -- is bypassed on exactly the synthetic-boot_info path the reservation
+     * pass defends against. A wrapping descriptor then seals as SELECT_ONE, and
+     * the pass's own applicability test computes (phys + len - 1) on wrapped
+     * arithmetic and admits it, leaving add_region() to catch it and HALT the
+     * boot -- where this type's stated policy for an unusable range is to
+     * decline it and let cold init proceed. Rejecting it here degrades instead,
+     * and does so for both phases at once because they share this predicate.
+     * (Kernel-quality audit on this section.) */
+    if (desc->length > (uint64_t)-1 - desc->phys_start) {
+        if (verbose)
+            klog(LOG_WARN, "boot",
+                 "boot_warm_update: 0x%lx + %lu wraps; cold fallback",
+                 (uint64_t)desc->phys_start, (uint64_t)desc->length);
+        if (out_error != (enum boot_warm_update_error *)0)
+            *out_error = BOOT_WARM_UPDATE_ERR_RANGE_WRAP;
         return BOOT_WARM_UPDATE_COLD_FALLBACK;
     }
 
@@ -124,7 +151,8 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
      * silent leak/corruption at the boundary. */
     if ((desc->phys_start & 0xFFFull) != 0u ||
         (desc->length     & 0xFFFull) != 0u) {
-        klog(LOG_WARN, "boot",
+        if (verbose)
+            klog(LOG_WARN, "boot",
              "boot_warm_update: phys_start 0x%lx / length %lu not page-multiple; cold fallback",
              (uint64_t)desc->phys_start, (uint64_t)desc->length);
         if (out_error != (enum boot_warm_update_error *)0)
@@ -141,7 +169,8 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
     uint32_t cont_range = desc->flags & 0xFFFFFF00u;  /* bits 8..31 */
     uint32_t unknown_cont = cont_range & ~BOOT_WARM_UPDATE_CONT_MASK_KNOWN;
     if (unknown_cont != 0u) {
-        klog(LOG_WARN, "boot",
+        if (verbose)
+            klog(LOG_WARN, "boot",
              "boot_warm_update: unknown continuation bits 0x%x (known mask 0x%x); cold fallback",
              (uint64_t)unknown_cont,
              (uint64_t)BOOT_WARM_UPDATE_CONT_MASK_KNOWN);
@@ -154,29 +183,61 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
      * reattach-into-PMM + subsystem-state-restore work happens in
      * the runtime live-update TODO; this ABI-surface section only
      * decides whether it is safe to proceed. */
-    klog(LOG_INFO, "boot",
-         "boot_warm_update: descriptor accepted (phys=0x%lx length=%lu cont_flags=0x%x)",
-         (uint64_t)desc->phys_start,
-         (uint64_t)desc->length,
-         (uint64_t)(desc->flags & BOOT_WARM_UPDATE_CONT_MASK_KNOWN));
+    if (verbose)
+        klog(LOG_INFO, "boot",
+             "boot_warm_update: descriptor accepted (phys=0x%lx length=%lu cont_flags=0x%x)",
+             (uint64_t)desc->phys_start,
+             (uint64_t)desc->length,
+             (uint64_t)(desc->flags & BOOT_WARM_UPDATE_CONT_MASK_KNOWN));
     return BOOT_WARM_UPDATE_ACCEPTED;
+}
+
+/* The PUBLIC validator: same rules, and it narrates. Every caller that is
+ * MAKING the decision wants the narration; the sealed selection's mutation
+ * DETECTOR does not, which is why the core above takes a flag. Re-running a
+ * verbose validation from inside pmm_init() printed a second "descriptor
+ * accepted" line for one descriptor on every warm boot -- on the exact log a
+ * warm-update failure is triaged from, in a section whose whole thesis is
+ * "one descriptor, chosen once" -- and each line is ~120 bytes of synchronous
+ * UART polling. (Codex perf review + kernel-quality audit on this section.) */
+enum boot_warm_update_decision
+boot_warm_update_consume(const struct boot_payload_desc *desc,
+                         enum boot_warm_update_error *out_error)
+{
+    return warm_update_evaluate(desc, out_error, 1);
 }
 
 /* The sealed cross-phase selection.
  *
- * SMP: written exactly once, on the BSP, from Phase 0 (boot_hw.c) long before
- * any AP is started, and read-only from then on. No lock: there is no writer
- * to race with by the time a second CPU exists, and the seal is what removes
- * the only ordering that mattered -- Phase 0 versus pmm_init on the same CPU.
- * s_sel_sealed is set LAST so a reader can never observe a half-filled
- * record. */
+ * SMP, stated for the two call graphs separately, because they differ and the
+ * earlier single-sentence version was true of only one of them.
+ *
+ * PRODUCTION: written exactly once, on the BSP, from boot_phase0() -- the seal
+ * at boot_hw.c and the read inside pmm_init(), which boot_phase0() calls
+ * itself. smp_init() runs later, from boot_phase2(), so no AP exists while
+ * this is written. No lock, and none is owed.
+ *
+ * KERNEL_TESTS: the boot suite runs from boot_phase3(), AFTER smp_init(), and
+ * re-seals this record ~20 times through boot_warm_update_selection_reset_for
+ * _test(). Those writes happen with APs online. They are still single-threaded
+ * -- the test runner executes on the BSP and no AP-side code calls any of these
+ * functions -- so there is no race today, but "before any AP is started" is
+ * NOT what makes it safe there, and writing that down as the invariant would
+ * have handed a future reader a guarantee this build does not provide.
+ * (Kernel-quality audit + concurrency inventory on this section.)
+ *
+ * s_sel_sealed is published with a RELEASE store and read with an ACQUIRE
+ * load, so the flag cannot be hoisted above the field writes it guards. */
 static struct boot_warm_update_sel s_sel;
 static int s_sel_sealed;
 
-/* Compute the verdict from `info` alone. Pure apart from the klog line the
- * single candidate's verbose validation emits. */
+/* Compute the verdict from `info` alone. `verbose` is 1 when this call is
+ * MAKING the decision (the seal) and 0 when it is only re-deriving it to detect
+ * a changed handoff -- the detector must be side-effect-free or every warm boot
+ * narrates its descriptor twice. */
 static void warm_update_compute(const struct boot_info *info,
-                                struct boot_warm_update_sel *out)
+                                struct boot_warm_update_sel *out,
+                                int verbose)
 {
     uint32_t i;
     uint32_t count = 0u;
@@ -231,7 +292,8 @@ static void warm_update_compute(const struct boot_info *info,
     {
         enum boot_warm_update_error werr = BOOT_WARM_UPDATE_ERR_OK;
         enum boot_warm_update_decision wd =
-            boot_warm_update_consume(&info->payload_descriptors[chosen], &werr);
+            warm_update_evaluate(&info->payload_descriptors[chosen], &werr,
+                                 verbose);
         out->error = (uint32_t)werr;
         if (wd != BOOT_WARM_UPDATE_ACCEPTED)
             return;
@@ -257,9 +319,15 @@ boot_warm_update_selection_get(const struct boot_info *info)
 {
     struct boot_warm_update_sel now;
 
-    if (!s_sel_sealed) {
-        warm_update_compute(info, &s_sel);
-        s_sel_sealed = 1;
+    if (!__atomic_load_n(&s_sel_sealed, __ATOMIC_ACQUIRE)) {
+        warm_update_compute(info, &s_sel, 1);
+        /* RELEASE. The comment above promises that a reader never sees a
+         * half-filled record, and two plain stores to distinct objects do not
+         * deliver that: warm_update_compute is static and inlinable, so nothing
+         * stops the compiler hoisting the flag above the field writes. x86 TSO
+         * would preserve whatever order is emitted, which is exactly why the
+         * exposure is invisible in testing. (Kernel-quality audit.) */
+        __atomic_store_n(&s_sel_sealed, 1, __ATOMIC_RELEASE);
         return &s_sel;
     }
 
@@ -279,23 +347,31 @@ boot_warm_update_selection_get(const struct boot_info *info)
      * moves after Phase 0 read it is corruption, not a policy choice. */
     if (s_sel.mismatch != 0u)
         return &s_sel;
-    warm_update_compute(info, &now);
+    warm_update_compute(info, &now, 0);
+    /* `error` is compared too, and it is not redundant: for a REJECTED sole
+     * candidate the record is verdict NONE, index 0, candidate_count 1 and
+     * phys/length/flags/checksum all zero, so `error` is the only field that
+     * can move. Without it, a descriptor mutating from one rejected form to
+     * another (empty -> over-contract, say) matched on every compared field
+     * and the detector said nothing -- silently, once the re-validation went
+     * quiet. (Re-adversarial on the review fixes.) */
     if (now.verdict         != s_sel.verdict
         || now.index        != s_sel.index
         || now.candidate_count != s_sel.candidate_count
+        || now.error        != s_sel.error
         || now.flags        != s_sel.flags
         || now.checksum     != s_sel.checksum
         || now.phys_start   != s_sel.phys_start
         || now.length       != s_sel.length) {
         klog(LOG_ERROR, "boot",
-             "boot_warm_update: handoff changed after the selection was "
-             "sealed (verdict %u->%u index %u->%u phys 0x%lx->0x%lx "
-             "flags 0x%x->0x%x); the sealed range stays pinned and reattach "
-             "must be refused",
+             "boot_warm_update: handoff changed post-seal (verdict %u->%u "
+             "idx %u->%u phys 0x%lx->0x%lx flags 0x%x->0x%x err %u->%u); "
+             "sealed range stays pinned, refuse reattach",
              (uint64_t)s_sel.verdict, (uint64_t)now.verdict,
              (uint64_t)s_sel.index, (uint64_t)now.index,
              (uint64_t)s_sel.phys_start, (uint64_t)now.phys_start,
-             (uint64_t)s_sel.flags, (uint64_t)now.flags);
+             (uint64_t)s_sel.flags, (uint64_t)now.flags,
+             (uint64_t)s_sel.error, (uint64_t)now.error);
         s_sel.mismatch = 1u;
     }
     return &s_sel;
@@ -309,7 +385,7 @@ void boot_warm_update_selection_mark_pinned(void)
      * with warm update, such as overlapping the kernel boot stack. A consumer
      * that restores state requires this flag as well, so it cannot reattach
      * over memory PMM was never told to keep. */
-    if (s_sel_sealed
+    if (__atomic_load_n(&s_sel_sealed, __ATOMIC_ACQUIRE)
         && s_sel.verdict == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE)
         s_sel.pinned = 1u;
 }

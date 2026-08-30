@@ -185,8 +185,16 @@ int boot_reserved_payload_is_pinned(uint32_t payload_index,
  * sealed, which is exactly why the commit is a separate step.
  * (Round-3 adversarial finding.)
  *
- * The caller has already established length != 0 and that start + length does
- * not wrap, so the last-frame arithmetic below cannot underflow or overflow. */
+ * length != 0 and the no-wrap property are BOTH established by the shared
+ * predicate (boot_warm_update_consume rules 2 and 3b), so the last-frame
+ * arithmetic below cannot underflow or wrap. The wrap half used to be asserted
+ * here without a guarantor -- boot_payload_validate() checks it but is bypassed
+ * on the synthetic-boot_info path -- so it was added to the predicate rather
+ * than restated here. (Kernel-quality audit.)
+ *
+ * Note for a warm-update PRODUCER: pmm_init() clamps its tracked ceiling at
+ * PMM_PHYS_ADDR_CAP (4 GiB), so preserved state staged above 4 GiB is refused
+ * here by construction on any machine, however much RAM it has. */
 static int warm_range_is_applicable(uint64_t phys_start, uint64_t length)
 {
     uint64_t total = pmm_get_total_frames();
@@ -431,14 +439,25 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                  * range is pinned by its own step after this block. Skipping
                  * here is what makes "one descriptor, chosen once" true
                  * rather than nearly true. */
-                if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) {
+                if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE
+                    || (warm->verdict
+                            == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE
+                        && i == warm->index)) {
+                    /* The SEALED index is skipped whatever its live type says.
+                     * Deciding this from `d->type` alone let a post-seal type
+                     * mutation put the same slot through both paths -- the loop
+                     * pinning its live range as an ordinary payload and the
+                     * warm block pinning the sealed one at the same source
+                     * index -- which add_region() then reports as an overlap
+                     * and HALTS the boot, where the documented outcome for a
+                     * changed handoff is that the sealed range stays pinned and
+                     * reattach is refused. (Kernel-quality audit.) */
                     if (warm->verdict
                             != (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE
                         || i != warm->index) {
                         klog(LOG_WARN, "mm",
-                             "boot_reserved: skip warm-update payload[%u] "
-                             "(selection verdict=%u candidates=%u err=%u "
-                             "mismatch=%u; cold init proceeds)",
+                             "boot_reserved: skip warm payload[%u] "
+                             "(verdict=%u cand=%u err=%u mismatch=%u)",
                              (uint64_t)i, (uint64_t)warm->verdict,
                              (uint64_t)warm->candidate_count,
                              (uint64_t)warm->error, (uint64_t)warm->mismatch);
@@ -581,9 +600,8 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
              * them back to PMM is the one outcome that cannot be undone; a
              * reattach consumer reads `mismatch` and refuses. */
             klog(LOG_ERROR, "mm",
-                 "boot_reserved: warm-update payload[%u] pinned from the "
-                 "SEALED range 0x%lx+%lu -- the handoff changed after Phase 0 "
-                 "read it, so reattach must be refused",
+                 "boot_reserved: warm payload[%u] reserving SEALED "
+                 "0x%lx+%lu; handoff changed post-seal, refuse reattach",
                  (uint64_t)warm->index, (uint64_t)warm->phys_start,
                  (uint64_t)warm->length);
         }
@@ -645,9 +663,8 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
              * may reattach it. `pinned` staying clear is the whole mechanism
              * -- the restore path is gated on it -- so cold init proceeds. */
             klog(LOG_ERROR, "mm",
-                 "boot_reserved: warm-update payload[%u] range 0x%lx+%lu lies "
-                 "outside the %lu frames PMM tracks; not pinned, not "
-                 "committed, cold init proceeds",
+                 "boot_reserved: warm payload[%u] 0x%lx+%lu outside the "
+                 "%lu frames PMM tracks; not pinned, not committed",
                  (uint64_t)warm->index, (uint64_t)warm->phys_start,
                  (uint64_t)warm->length, (uint64_t)pmm_get_total_frames());
         }
