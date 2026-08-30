@@ -514,6 +514,9 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
 ## 16. Boot Timeline Export Formats (SVG and Chrome Trace)
 
 > **Spawned-by:** §12 (split)
+> **Verified:** 2026-08-30 | commit `e919cafc3` | 3/4 items | build OK | 32845 kernel + 17 user tests | lint 0 errors | renderer 30 self-check + 71 test assertions
+> **Deferred:** [M] The renderer's parity gate binds the emitter's record SCHEMA, not the values it computes, and nothing else covers those either -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md §2` (item: "`boot_timeline_dump_json()`: writes unified FPDT + TSC step timeline as JSON to `boot-timeline.json`" at line 119)
+> **Quality reviewed:** 2026-08-30 | Codex 19x (design + 9 adversarial + 9 consistency + perf) | 0H+13M+0L fixed, 1M rejected on scope with the premise stated | scope: host tool, no kernel surface
 
 Section 9 ships `boot_timeline_dump_json()` and the `boot-timeline.json` artifact under BlackBox `X:\Perf\`, but neither consumer-facing rendering that makes the artifact readable by a human shipped with it. Both items were moved verbatim from the stamped section 9. The data already exists, so neither item changes the boot path.
 
