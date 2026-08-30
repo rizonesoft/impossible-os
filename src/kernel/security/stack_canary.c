@@ -96,24 +96,41 @@ int canary_seed_desc_ok(uint64_t caps_present, uint32_t flags,
 
 static int canary_mix_boot_seed(uint64_t *acc)
 {
-    const struct boot_payload_desc *d =
-        boot_payload_find(&g_boot_info, (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
-    if (!d || !canary_seed_desc_ok(g_boot_info.caps_present, d->flags,
-                                   d->phys_start, d->length))
-        return 0;
-    /* ASK THE PASS WHAT IT ACTUALLY PINNED, do not re-derive it.
+    /* WALK EVERY SEED OCCURRENCE, not just the first.
      *
-     * canary_seed_desc_ok() re-checks every condition a consumer CAN
-     * reconstruct from the handoff. The aggregate reservation budget and the
-     * singleton rule are not among them: both depend on the other
-     * descriptors in the table and on the order the pass walked it, so a
-     * seed can be perfectly in contract, carry FLAG_RESERVED, and still
-     * never have been pinned. This peek runs pre-IDT, where reading a frame
-     * the allocator already owns has no handler at all. */
-    if (!boot_reserved_payload_is_pinned(
-            (uint32_t)(d - &g_boot_info.payload_descriptors[0]),
-            d->phys_start, d->length))
+     * RANDOM_SEED is multi-descriptor by contract: the loader appends its own
+     * beside an earlier chain stage's. Taking occurrence 0 and giving up if it
+     * is unusable means a declined first seed costs this peek ALL of its
+     * entropy while a perfectly good second one sits beside it -- and the
+     * cookie silently drops to its degraded TSC-derived path with nothing in
+     * the log naming the reason. The first USABLE occurrence wins. */
+    const struct boot_payload_desc *d = (const struct boot_payload_desc *)0;
+    uint32_t occ;
+
+    for (occ = 0u; occ < (uint32_t)BOOT_PAYLOAD_MAX; occ++) {
+        const struct boot_payload_desc *c =
+            boot_payload_find(&g_boot_info, (uint32_t)BOOT_PAYLOAD_RANDOM_SEED,
+                              occ);
+        if (!c)
+            break;
+        if (!canary_seed_desc_ok(g_boot_info.caps_present, c->flags,
+                                 c->phys_start, c->length))
+            continue;
+        if (!boot_reserved_payload_is_pinned(
+                (uint32_t)(c - &g_boot_info.payload_descriptors[0]),
+                c->phys_start, c->length))
+            continue;
+        d = c;
+        break;
+    }
+    if (!d)
         return 0;
+    /* The walk above asked the pass what it ACTUALLY pinned rather than
+     * re-deriving it. canary_seed_desc_ok() covers every condition a consumer
+     * CAN reconstruct from the handoff; the aggregate budget and the
+     * cardinality rule are not among them, because both depend on the other
+     * descriptors and on walk order. This peek runs pre-IDT, where reading a
+     * frame the allocator already owns has no handler at all. */
 
     /* Read the 8 tail bytes (past any seed header) -- raw firmware RNG bytes. */
     const volatile uint8_t *p = (const volatile uint8_t *)(uintptr_t)d->phys_start;

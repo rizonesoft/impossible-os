@@ -10639,18 +10639,21 @@ static void collect_boot_entropy(void)
  * compare the others against, and asserting a number against itself is the
  * mistake above wearing a third hat. */
 #define BOOT_PAYLOAD_LIMIT_LOADER_ASSERT(type_value, label, min_b, max_b, why) \
-    _Static_assert((type_value) != 1u  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
+    _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_MODULE  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
                                            && (min_b) == 1ull),                \
                    "MODULE row must stay the loader's file cap, min 1");       \
-    _Static_assert((type_value) != 2u  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
+    _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_INITRD  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
                                            && (min_b) == 1ull),                \
                    "INITRD row must stay the loader's file cap, min 1");       \
-    _Static_assert((type_value) != 3u  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
+    _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_RECOVERY_IMAGE \
+                       || ((max_b) == BOOT_PAYLOAD_FILE_MAX                     \
                                            && (min_b) == 1ull),                \
                    "RECOVERY_IMAGE row must stay the loader's file cap, min 1"); \
-    _Static_assert((type_value) != 7u  || (min_b) == sizeof(struct bl_seed_header), \
+    _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_RANDOM_SEED \
+                       || (min_b) == sizeof(struct bl_seed_header),            \
                    "RANDOM_SEED minimum must stay the seed header this loader writes"); \
-    _Static_assert((type_value) != 10u || ((min_b) == (max_b)                  \
+    _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_HEADLESS_AUTHZ                 \
+                       || ((min_b) == (max_b)                                                  \
                                            && (max_b) == BL_HEADLESS_AUTHZ_LEN), \
                    "HEADLESS_AUTHZ row must stay the EXACT blob length this loader publishes");
 BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LIMIT_LOADER_ASSERT)
