@@ -71,7 +71,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)      | §11; D02 T33 §7 (image ceiling)    |  [/]   |
 | 💎  |  13   | klog format-width contract (`-Wformat` on every call site)  | D02 T33 §7 (image ceiling)         |  [/]   |
 | 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)  | §5                                 |  [x]   |
-| ⭐  |  15   | Anti-rollback terminal give-up durable record               | TODO-01 §25                        |  [ ]   |
+| ⭐  |  15   | Anti-rollback terminal give-up durable record               | TODO-01 §25; D02 T33 §7 (ceiling)  |  [/]   |
 | ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)           | §9                                 |  [ ]   |
 | 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it      | §14; §5                            |  [ ]   |
 | 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port | §14                                |  [ ]   |
@@ -484,6 +484,7 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
 ## 15. Anti-Rollback Terminal Give-Up: Durable Record
 
 > **Spawned-by:** §12 (split)
+> **Deferred:** 2026-08-30 | kernel-image ceiling, MEASURED. The implementation is written and design-reviewed; it is parked on size alone -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard").
 
 `boot_rollback_report_terminal()` ([`src/kernel/main/boot_rollback.c:433`](../../src/kernel/main/boot_rollback.c)) emits one `klog_unrated(LOG_ERROR, ...)` naming the final firmware status when the anti-rollback floor write exhausts its bounded retries, and that line lives solely in the serial log of the boot that produced it. -> XREF: `01-boot-platform/TODO-01-boot-protocol-abi-handoff.md §25` (item: "Report exhaustion once, at `LOG_ERROR`, naming the last firmware status" at line 949)
 
@@ -491,10 +492,20 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
 
 **Files:** [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c), the boot-decision Registry record, the BlackBox transcript writer
 
-- [ ] Write the terminal give-up (attempt count plus final firmware status) into the boot-decision Registry record
-- [ ] Mirror the same record into the BlackBox transcript, so a headless box keeps it without a mounted registry
-- [ ] Reuse the record shape TODO-01 already ships for stale-loader mismatch and boot provenance rather than inventing a third one
-- [ ] Commit: `"boot: durable record for the anti-rollback terminal give-up"`
+**Measured blocker (2026-08-30).** The image has **1,323 bytes** of growth left: baseline `.bss` runs to `0x7FEAD5` (`llvm-readelf -S build/kernel.exe`) and `scripts/build.sh` refuses once the page-aligned end reaches the user base at `0x800000`. The trimmed implementation costs **4,208 bytes** (+4,144 text, +64 bss), so it overruns by 2,885. Two smaller shapes were considered and rejected: registry-only fits but is RAM-only (hive persistence has no production caller, so `registry_flush()` early-returns), which does not survive the boot and therefore does not answer the user impact at all; BlackBox-only is still ~2 KiB and would spend the remaining headroom on half the section.
+
+- [/] Write the terminal give-up (attempt count plus final firmware status) into the boot-decision Registry record -- code written, blocked on the kernel-image ceiling
+  - Values under the existing `HKLM\SYSTEM\Boot\Decision` key: `AntiRollbackAttempts`, `AntiRollbackTargetVersion`, `AntiRollbackShippedVersion`, `AntiRollbackRequiredVersion`, `AntiRollbackGiveUpUptimeMs`, `AntiRollbackStatus` (QWORD), `AntiRollbackReason`, and `AntiRollbackGiveUp` written LAST as the completion marker.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Mirror the same record into the BlackBox transcript, so a headless box keeps it without a mounted registry -- same blocker
+  - `X:\Diag\boot-antirollback.txt`, single create+trunc, checked full-length write, stamped with the RTC wall clock and the loader build label so a file found on a LATER boot is attributable to the boot that wrote it.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Reuse the record shape TODO-01 already ships for stale-loader mismatch and boot provenance rather than inventing a third one -- same blocker
+  - Shapes reused: the boot-decision Registry key (`boot_decision_populate_registry`, `src/kernel/main/boot_hw.c:1039`) and the single create+trunc transcript (`boot_loader_identity_dump_to_blackbox`, `src/kernel/main/boot_version.c:732`).
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Commit: `"boot: durable record for the anti-rollback terminal give-up"` -- lands with the two sinks in ONE commit, once the ceiling is gone
+
+**Design settled 2026-08-30 (Codex design review received; do not re-derive).** The give-up path only LATCHES; it performs no I/O. `boot_rollback_report_terminal()` can run on the sys_wq worker, the kworker retry tick, or the compositor loop in the sys_wq-unavailable fallback, and `registry.c` is lock-free pending the registry-wide SMP synchronization owned by `02-kernel-core/TODO-14-registry-completion.md §14`, so a mutation from any of those could race the compositor's own `registry_flush()`. Publishing therefore runs from the compositor loop's periodic-maintenance block (`src/kernel/main/compositor.c:517`), next to `registry_flush()` and `ahci_flush_error_counters()` -- the same thread, so no self-race, and a failed sink is retried for free on the next iteration under a bounded cap. Each sink carries its OWN completion flag set only after a checked success. Under `KERNEL_TESTS`, `boot_rollback_reset_for_test()` turns publishing OFF so the six existing terminal tests cannot stamp a false anti-rollback failure into the registry and `X:\Diag` of every real test boot; the one test that proves the record re-enables it and cleans up. The working implementation is preserved at `.claude/state/deferred-todo14-s15.diff`.
 
 **Test checkpoint:** a forced-exhaustion unit test leaves a Registry record and a BlackBox line naming the final firmware status; a successful floor write leaves neither.
 

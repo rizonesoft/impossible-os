@@ -257,6 +257,10 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 - [ ] Re-run `02-kernel-core/TODO-22` §24 once the guard is gone (item: "Commit: `\"ntdll: measured expansion budget + lookup cache for Rtl env\"`"); it also carries a latent non-atomic `env_buf_free` SMP fix
 - [ ] Re-run `02-kernel-core/TODO-22` §25 once the guard is gone (item: "Commit: `\"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core\"`")
 - [ ] Re-run `02-kernel-core/TODO-23` §1 once the guard is gone (item: "Commit: `\"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types\"`"); code COMPLETE, parked in `git stash` `todo23-s1-wip` -- apply, do not rewrite
+- [ ] Re-run `01-boot-platform/TODO-14` §15 once the guard is gone (item: "Commit: `\"boot: durable record for the anti-rollback terminal give-up\"`")
+  - Code COMPLETE and design-reviewed, preserved at `.claude/state/deferred-todo14-s15.diff` -- apply, do not rewrite. Measured 2026-08-30: needs 4,208 bytes against 1,323 available.
+- [ ] Re-run `01-boot-platform/TODO-14` §12 once the guard is gone (item: "Granular per-driver `boot_load_record`"); parked purely on size, its three sibling items share the same blocker
+- [ ] Re-run `01-boot-platform/TODO-14` §13 once the guard is gone (item: "Move `%d`/`%u`/`%x` to standard C width semantics in `vformat_buf`"); the `-Wformat` attribute and the hand-written width warning retire in the same commit
 - [ ] Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone -- the whole exception/SEH file is ceiling-parked (each section adds kernel `.text`); un-defer and implement in Implementation-Order once §1's types link
 - [ ] Re-run `01-boot-platform/TODO-13` §28 once the guard is gone (item: "Commit: `\"tpm: crash-consistent record pairing and verified-read boot budget\"`"); design review is DONE and the diff is preserved, so the re-attempt is apply-then-re-verify
   - Reverted 2026-08-18 with the tree left green. The code built clean on its own; the section's mandatory unit tests pushed `.rodata` over a 4 KiB page, which cascaded `.data` and `.bss` each up one page and landed `__kernel_end` exactly on `0x800000`.
