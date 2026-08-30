@@ -70,9 +70,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  30   | Headless authorization transport + full-record binding        | §23, §6, §27                                              |  [x]   |
 | 💎  |  31   | Loader digest correlation with the firmware PCR 4 measurement | §1, §20, §25                                              |  [/]   |
 | 💎  |  32   | Authorized-record coverage residue on existing fixtures       | §29, §27, §28                                             |  [/]   |
-| 💎  |  33   | PCR-layer contention loses its retry                          | §29, §25                                                  |  [ ]   |
-| 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [ ]   |
-| 💎  |  35   | Shared fake-TIS fixture extension and the coverage it unlocks | §32, §28, §29, §30                                        |  [ ]   |
+| 💎  |  33   | PCR-layer contention loses its retry                          | §29, §25                                                  |  [/]   |
+| 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [/]   |
+| 💎  |  35   | Shared fake-TIS fixture extension and the coverage it unlocks | §32, §28, §29, §30                                        |  [/]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -1427,21 +1427,31 @@ Design review outcome, recorded here so the re-attempt is mechanical rather than
 
 Found by §29's post-commit adversarial round, which caught a comment claiming contention no longer reaches NO_TPM at all. §29 corrected the COMMENT to state the wart honestly, because changing which status the verify path returns is a behavior change on the boot integrity verdict and belongs in a section that can review it properly -> XREF: 01-boot-platform/TODO-13 §29 (item: "Separate \"no authority provisioned\" from \"authority provisioned but this baseline is unbound\"").
 
-- [ ] Distinguish a CONTENDED PCR read from an absent or inactive one inside `tpm_baseline_snapshot`, so the two stop sharing `TPM_BASELINE_NO_TPM`.
+- [/] Distinguish a CONTENDED PCR read from an absent or inactive one inside `tpm_baseline_snapshot`, so the two stop sharing `TPM_BASELINE_NO_TPM`.
   - The distinction has to survive the per-PCR loop: today the loop records only `present` 0 or 1 and the caller sees a count, so the reason the digest is missing is discarded before the return. Preserving it must not weaken the FULL-measured-set rule, which is what stops a partial snapshot forming a verifiable baseline.
-- [ ] Return `TPM_BASELINE_BUSY` when the ONLY reason the set is incomplete is contention, so the existing bounded retry loop covers it.
+- [/] Return `TPM_BASELINE_BUSY` when the ONLY reason the set is incomplete is contention, so the existing bounded retry loop covers it.
   - `TPM_BASELINE_BUSY` promises nothing was submitted and a blind retry is safe. That promise must hold for this path too, or the split is worse than the collapse: a PCR read abandoned in flight is BUDGET, not BUSY, and must keep reporting the non-retryable status.
-- [ ] Stop the PCR CACHE from making a transient contention permanent, without which the status change above buys nothing.
+- [/] Stop the PCR CACHE from making a transient contention permanent, without which the status change above buys nothing.
   - `tpm_pcr_cache_init` stores every result as a valid entry including `TPM_PCR_BUSY` (`src/kernel/tpm.c:736-739`, `e->status = st; e->valid = 1`), and `tpm_pcr_get` then returns that cached status with no new transaction (`src/kernel/tpm.c:806`). A retry loop would receive the same cached BUSY on every attempt long after the contention cleared.
   - Either do not cache a transient status, or mark it refreshable so a re-read is issued. Whichever, the entry must not be silently treated as a measurement.
   - Found by §29's final consistency round, which caught that the section as first filed would have produced a test passing through the KERNEL_TESTS cache bypass while production still published no verdict.
-- [ ] Assert the split both ways THROUGH THE PRODUCTION CACHE PATH, never the `KERNEL_TESTS` bypass.
+- [/] Assert the split both ways THROUGH THE PRODUCTION CACHE PATH, never the `KERNEL_TESTS` bypass.
   - A contended PCR read reports BUSY and is retried; an inactive-bank or absent PCR still reports NO_TPM and is NOT retried; a mixture of the two reports the non-retryable one, because a boot that genuinely cannot measure part of its set must not be told to ask again.
   - One case is the whole point: first read BUSY, second read OK, and the boot's retry demonstrably issues a SECOND transaction rather than re-reading a cached refusal.
-- [ ] Correct the `TPM_BASELINE_NO_TPM` enum contract once the code changes, since §29 left it describing this wart as current behavior.
-- [ ] Commit: `"tpm: report PCR-layer contention as retryable"`
+- [/] Correct the `TPM_BASELINE_NO_TPM` enum contract once the code changes, since §29 left it describing this wart as current behavior.
+- [/] BLOCKED on the kernel-image ceiling -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone"). Commit: `"tpm: report PCR-layer contention as retryable"`
+
+Design review outcome, recorded so the re-attempt is apply-then-re-verify rather than a re-design. The implementation is written and preserved at `.claude/state/deferred-todo13-s33.patch`; it builds clean and fails only the image-ceiling guard.
+
+- The per-PCR reason is carried out of the loop by a single local tri-state aggregate that REPLACES the `present` counter rather than sitting beside it, so the fix costs no persistent space: `present != npcr` was already exactly "some PCR failed", which a non-OK aggregate says directly. BUSY is the weakest arm (any other failure in the same attempt dominates it) and a short or wrong-length digest lands in the dominant arm even though its status was OK.
+- The cache fix is to leave a `TPM_PCR_BUSY` entry INVALID rather than making it refreshable. `tpm_pcr_get` then falls through to a live read for that one PCR for the rest of the boot, which is the cost; a refreshable entry would need mutable synchronization and would break the cache's lock-free read-only-after-init contract.
+- `TPM_BASELINE_BUSY`'s contract had to be NARROWED, not just extended. It claimed "nothing was submitted", and `tpm_baseline_verify_detail` completes its NV read (`src/kernel/tpm_baseline.c:1126`) before it ever takes a snapshot (`:1206`), so that claim goes false the moment snapshot can return BUSY. The honest promise is that the command that returned BUSY was refused before submission and everything the caller completed before it was a finished READ; retrying is safe because re-reading is idempotent, not because nothing happened.
+- The mixture rule is "the SOLE observed failure on THIS attempt": a genuinely inactive bank can hide behind contention on one attempt, and the retry reports NO_TPM once the contention clears.
+- The production-cache test needs a small `KERNEL_TESTS` cache-CLEAR seam, not a save/restore buffer. `bv_open` sets `tpm_pcr_test_cache_bypass(1)` (`src/kernel/test/test_tpm_baseline.c:1460-1464`) because the Phase-1 cache holds real-platform digests, and there is no reset seam; snapshotting 24 x banks x 67 bytes onto the stack is the wrong shape for a file with one page of image headroom. Clearing to invalid is safe on any host because `tpm_pcr_get` then falls through to the live transport.
 
 **Test checkpoint:** a fixture that makes one PCR read return `TPM_PCR_BUSY` while the rest succeed produces `TPM_BASELINE_BUSY` and is retried by the boot's existing loop; the same fixture with an INACTIVE bank instead produces `TPM_BASELINE_NO_TPM` and is not retried; a fixture mixing both reports NO_TPM, because a boot that genuinely cannot measure part of its set must not be told to ask again. Scope: this section owns the snapshot path's status only. The NV-layer BUSY split shipped with the bounded-sequence work, the retry loop itself is already in `boot_interrupts.c`, and the authorized-record statuses are §29. Platforms: kernel unit suites; no TPM required.
+
+> **Deferred:** [H] The implementation is COMPLETE and builds clean; it fails only the image-ceiling guard. Measured 2026-08-30: the production change alone is +96 bytes of `.text` (`llvm-size` 4737085 -> 4737181) and that was enough to push `__kernel_end` from 0x7ff000 to exactly 0x800000, because the image sections are page-aligned and chain. The tree has effectively NO headroom, not one page of it. Diff preserved at `.claude/state/deferred-todo13-s33.patch` -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone")
 
 ---
 
@@ -1453,35 +1463,37 @@ Split out of §30 on 2026-08-19 on a SPLIT-RECOMMENDED complexity verdict (ten w
 
 All three items were raised by §23's review rounds and filed into §30 when §23 split; they are moved here rather than re-created, and §23's `Accepted:` stamps are retargeted to this section in the same edit.
 
-- [ ] OPERATOR DECISION: settle whether a console TIMEOUT reaches the signed-token fallback, because today the escape hatch is unreachable on most machines it exists for.
+- [/] OPERATOR DECISION: settle whether a console TIMEOUT reaches the signed-token fallback, because today the escape hatch is unreachable on most machines it exists for.
   - `confirm_console_present()` calls a console PRESENT whenever port 0x64 reads anything but 0xFF (`src/kernel/main/boot_confirm.c`), which is true of nearly every server chipset and most emulated ones. A headless server with an 8042 and no operator therefore waits out the prompt and reports `TPM_CONFIRM_TIMEOUT`, not `TPM_CONFIRM_UNAVAILABLE` (`boot_confirm.c`, the prompt returns TIMEOUT when no key arrives).
   - The gate consults the token ONLY on UNAVAILABLE, so such a machine's perfectly valid, correctly transported authorization is never even taken. §30 carried the blob to the kernel and it still cannot be used there.
   - NOT changed by §30, deliberately: §23 made this decision and TESTED it (`test_tpm_headless_authz.c`, "a token cannot override a console timeout"), so reversing it is a change to the enrollment trust model and an operator call rather than a review-round fix. The two cases differ in whether console HARDWARE answered, which says nothing about whether a human is present -- but an operator may reasonably want a present console to mean a present operator.
   - Whichever way it goes, an explicit DECLINE must stay final: a keypress is an operator who was there and said no.
   - Found by §30's round-5 adversarial review -> XREF: 01-boot-platform/TODO-13 §30 (item: "Wire the production caller, with the console path proven untouched").
-- [ ] Give the installed authority a revocation path: a compromised private key today has no recovery short of re-imaging every machine that carries its public half, because `tpm_headless_authz_set_authority` is a permanent one-way install.
+- [/] Give the installed authority a revocation path: a compromised private key today has no recovery short of re-imaging every machine that carries its public half, because `tpm_headless_authz_set_authority` is a permanent one-way install.
   - The nearest precedent in this tree is Secure Boot's dbx/KEK revocation, which exists for exactly this class of problem. A generation counter or explicit revocation record, communicated over the same ESP transport this section already builds, is the natural shape.
   - Raised by §23's parity research round.
-- [ ] Give a headless authorization attempt a durable record distinct from `klog`, that an operator can read without physical console access.
+- [/] Give a headless authorization attempt a durable record distinct from `klog`, that an operator can read without physical console access.
   - The whole point of the escape hatch is that no operator is present to watch the serial line, so `klog(LOG_WARN, "TPM", "Headless enrollment authorization: %s", ...)` is not evidence anyone will ever see. A record surviving in NVRAM or on the ESP, naming the verdict and the counter value, belongs with this section's production wiring.
   - Raised by §23's parity research round.
-- [ ] Admit the whole headless authorization attempt against the AGGREGATE boot budget, and settle its observed duration.
+- [/] Admit the whole headless authorization attempt against the AGGREGATE boot budget, and settle its observed duration.
   - `tpm_boot_budget_admit_one` has exactly ONE caller today (`src/kernel/tpm_authz.c:1002`), so the EK `CreatePrimary`, the PCR snapshot, the verified counter read and the increment each spend their own per-operation budget while the aggregate ledger sees none of it and cannot report expiry.
   - Not a live exposure while §23's preflight stands: only a blob genuinely signed by the installed authority reaches the TPM at all, and the path is unreachable until this section carries a payload. It becomes real the moment the transport lands, which is why it is filed here rather than left with the authorization. -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
   - Raised by §23's performance round.
 
-- [ ] Stop a destroyed baseline anchor from reviving an already-stale first-enrollment token -> XREF: 01-boot-platform/TODO-13 §30 (item: "Bind the authorization to a canonical digest over the whole record").
+- [/] Stop a destroyed baseline anchor from reviving an already-stale first-enrollment token -> XREF: 01-boot-platform/TODO-13 §30 (item: "Bind the authorization to a canonical digest over the whole record").
   - §30's transition digest binds the PREDECESSOR, which refuses a stale ENROLL token while a baseline exists. It cannot see the case where the index is later DELETED or recreated uninitialized: absence collapses back to a genuine first enrollment, the transition digest and the operation both match what the old token was signed for, and if the headless counter never moved that token installs its state as generation 1.
   - Reachable only with owner auth to destroy the index AND no record-update authority provisioned -- but that second condition is precisely the deployment state this escape hatch exists for, so it is not a corner.
   - The shape is a durable ever-enrolled marker consulted before absence is classed as a first enrollment, or an invalidation of outstanding authorizations whenever the baseline lifecycle changes. The second is this section's own revocation machinery, which is why it is filed here rather than with the transport.
   - Found by §30's round-2 adversarial review.
-- [ ] Unit-test the lifecycle surface, each case beside a passing control.
+- [/] Unit-test the lifecycle surface, each case beside a passing control.
   - A revoked authority is REFUSED while an unrevoked one on the same machine still admits, so revocation is the discriminator rather than a second failure path.
   - A refused and an admitted attempt each leave a record readable without a serial console, naming the verdict and the counter value.
   - An attempt that exhausts the AGGREGATE budget reports expiry even though no single operation exceeded its own.
-- [ ] Commit: `"tpm: headless authority revocation, durable verdict record and aggregate budget"`
+- [/] BLOCKED on the kernel-image ceiling -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone"). Commit: `"tpm: headless authority revocation, durable verdict record and aggregate budget"`
 
 **Test checkpoint:** an authority whose revocation record names it is REFUSED by `tpm_headless_authz_authorize` while an unrevoked authority on the same machine still admits, so revocation is proven to be the discriminator rather than a second failure path. Both verdicts survive into a record readable without a serial console, and the record names the counter value so an operator can tell one attempt from a replay of it. The aggregate ledger sees ONE admission covering the EK `CreatePrimary`, the PCR snapshot, the verified counter read and the increment, and reports expiry when that aggregate is exhausted even though no single operation exceeded its own budget. Scope: this section owns the authority's lifecycle only. The ESP transport, the full-record binding and the production caller are §30, the authorization construction and one-shot counter stay §23, and the NV record authorization stays §27. Platforms: fake-TIS unit suites; a live revocation against real firmware is operator-gated (no `swtpm` on the dev host).
+
+> **Deferred:** [H] Not attempted, and the reason is a measurement rather than a guess: §33's production change alone (+96 bytes of `.text`) tripped `BSS COLLISION` on 2026-08-30, so the tree admits essentially no new code at all. This section adds a revocation record, a durable operator-readable verdict, an aggregate budget and their unit tests, which is far more than 96 bytes by construction. It is parked unstarted so no design work is wasted on a section that cannot link -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone")
 
 ---
 
@@ -1493,25 +1505,27 @@ Split out of §32 on 2026-08-30, when its manifest returned SPLIT-RECOMMENDED at
 
 The fixture item is listed FIRST and deliberately carries no coverage claim of its own: a fixture capability nothing asserts is dead weight, so each addition lands with the item that consumes it rather than as a speculative seam.
 
-- [ ] Extend the shared fake-TIS fixture with the capabilities the four items below need, each addition landing beside a test that fails without it.
+- [/] Extend the shared fake-TIS fixture with the capabilities the four items below need, each addition landing beside a test that fails without it.
   - Per-NV-index storage, so a valid baseline blob is served separately from its bind record and its counter. The fixture holds exactly one index today (`ft_nv_index` / `ft_nv_len` in `src/kernel/test/tpm_fake_tis.c`), which is why every item below is unwritable rather than merely awkward.
   - A provisioned authority, and a PER-INDEX failure rc so one index can fail while another succeeds. `tpm_fake_tis_fail_cc` fails a COMMAND CODE, so it cannot express "the blob read succeeds and only the bind read fails", which is exactly the fixture shape the `*out_overall` item needs.
   - `TPM2_CC_CREATE_PRIMARY`, with the object handle and the outPublic the EK device digest is taken over, plus a second NV index so the headless counter at `TPM_NV_INDEX_HEADLESS_SEQ` can coexist with the baseline.
-- [ ] Drive `tpm_baseline_enroll_bound` through the fake-TIS seam: it has no executable coverage, so the authority guard, the stored-byte readback and the bind ordering can all regress green.
+- [/] Drive `tpm_baseline_enroll_bound` through the fake-TIS seam: it has no executable coverage, so the authority guard, the stored-byte readback and the bind ordering can all regress green.
   - Needs a deterministic core that takes a prepared snapshot, or a `KERNEL_TESTS` snapshot-provider seam, because the real path calls `tpm_baseline_snapshot` and a test may not stand up PCR state.
   - Assert blob-before-bind ordering, that the bind covers the EXACT stored bytes and generation, and that a readback or bind failure propagates rather than reporting success.
-- [ ] Drive the pairing DIRECTION through `tpm_baseline_verify_detail`'s `out_pairing` end to end, so UNCOMMITTED, TORN and IMPOSSIBLE are each observed at the boot's own call site rather than only at the pure map.
+- [/] Drive the pairing DIRECTION through `tpm_baseline_verify_detail`'s `out_pairing` end to end, so UNCOMMITTED, TORN and IMPOSSIBLE are each observed at the boot's own call site rather than only at the pure map.
   - §29 shipped the out-param and pinned its FAIL-CLOSED half (a path that consults no bind record reports `TPM_PAIRING_BADARG`, poisoned with TORN rather than zero so a deleted sentinel-write cannot pass). What has no coverage is the PUBLICATION: deleting the assignment on the MISMATCH arm leaves every suite green -> XREF: 01-boot-platform/TODO-13 §29 (item: "Pass the pairing DIRECTION out of `tpm_baseline_verify`").
   - Needs the same per-NV-index fixture storage the item below wants, plus enough response capacity to serve a valid baseline blob separately from its bind record and counter. No PCR state and no live boot infrastructure, because a broken bind pairing returns before the snapshot.
-- [ ] Cover the bind-failure branch's `*out_overall` gate end to end: a NON-VERDICT bind failure (BUDGET / BUSY / TRANSPORT / TPMERR) must leave the caller's integrity verdict untouched rather than fabricating MISMATCH.
+- [/] Cover the bind-failure branch's `*out_overall` gate end to end: a NON-VERDICT bind failure (BUDGET / BUSY / TRANSPORT / TPMERR) must leave the caller's integrity verdict untouched rather than fabricating MISMATCH.
   - The gate SHIPPED with §28 (`tpm_baseline.c`, the write is now conditional on `tpm_baseline_status_is_failure`), and the predicate itself is unit-tested, but the branch has no regression pin. Reaching it needs a fixture where the BLOB read succeeds and only the BIND read fails non-verdict, which the `test_tpm_authz.c` fake cannot serve: it has no valid stored baseline, so verification fails at the blob and never reaches the bind check. Needs the `test_tpm_baseline.c` fixture extended with an authority plus a per-index failure rc -> XREF: 01-boot-platform/TODO-13 §28 (item: "Publish the kernel-side floor and generation APIs").
-- [ ] Drive `tpm_headless_authz_authorize` end to end, so the verify-then-consume ORDERING is proven rather than simulated -> XREF: 01-boot-platform/TODO-13 §30 (item: "Drive `tpm_headless_authz_authorize` end to end through a fake-TIS fixture").
+- [/] Drive `tpm_headless_authz_authorize` end to end, so the verify-then-consume ORDERING is proven rather than simulated -> XREF: 01-boot-platform/TODO-13 §30 (item: "Drive `tpm_headless_authz_authorize` end to end through a fake-TIS fixture").
   - §30 shipped the local half's coverage (absent, no-authority, malformed and forged inputs each refused with an EMPTY fake transcript, so the no-TPM preflight guarantee is pinned) and it proved the caller-side ordering helper. What is unreachable is everything AFTER the signature check: the EK device digest, the verified counter read, and the increment that spends the token.
   - Needs the same fixture work the items above want, plus two additions this section does not otherwise need: `TPM2_CC_CREATE_PRIMARY` (with the object handle and outPublic the EK digest is taken over) and a SECOND NV index, because the counter lives at `TPM_NV_INDEX_HEADLESS_SEQ` while the baseline occupies the fake's single slot.
   - Assert that a verified token increments the counter exactly once, that a failed increment reports `CONSUME_FAILED` rather than admitting, and that a second presentation of the same bytes is `STALE_OR_SPENT`.
-- [ ] Commit: `"tpm: shared fake-TIS fixture extension and authorized-record end-to-end coverage"`
+- [/] BLOCKED on the kernel-image ceiling -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone"). Commit: `"tpm: shared fake-TIS fixture extension and authorized-record end-to-end coverage"`
 
 **Test checkpoint:** `tpm_baseline_enroll_bound` is driven end to end through the fake-TIS seam and proven to bind the EXACT stored bytes and generation, with a control that an unbound blob and a bound one report differently, and with a readback or bind failure propagating rather than reporting success. The pairing DIRECTION is observed at `tpm_baseline_verify_detail`'s own call site for UNCOMMITTED, TORN and IMPOSSIBLE, so deleting the MISMATCH-arm assignment turns a suite red rather than leaving it green. A NON-VERDICT bind failure leaves `*out_overall` untouched, asserted on a fixture where the blob read succeeds and only the bind read fails. A verified headless token increments the counter exactly once, a failed increment reports `CONSUME_FAILED` rather than admitting, and a replay of the same bytes is `STALE_OR_SPENT`. Scope: this section owns the shared fixture and the four items gated on it; the coverage writable on today's fixtures is §32, the production hardening is §29, and the headless authority lifecycle is §34. Platforms: fake-TIS unit suites are the whole automatable surface; live swtpm is operator-gated (no `swtpm` on the dev host).
+
+> **Deferred:** [H] Not attempted, for the same measured reason as §33 and §34: a +96-byte `.text` change tripped the guard on 2026-08-30. This section is a shared-fixture extension plus four end-to-end tests, and its sibling §32 measured 5,216 bytes for three test functions alone, so it is blocked by size and not by any missing capability -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone")
 
 ---
 
