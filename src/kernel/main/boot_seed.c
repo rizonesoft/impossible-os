@@ -33,6 +33,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/csprng.h"
 #include "kernel/entropy.h"
+#include "kernel/mm/boot_reserved.h" /* boot_reserved_payload_is_pinned */
 #include "kernel/seed_file.h"
 #include "kernel/klog.h"
 #include "kernel/mm/pmm.h"
@@ -106,13 +107,23 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint64_t caps_present,
 
 int boot_seed_length_reservable(uint64_t length)
 {
-    /* The SAME predicate the Phase-0 reservation pass applies before it
-     * will pin a RANDOM_SEED descriptor (src/kernel/mm/boot_reserved.c).
-     * Keeping it in one function is the point: if the pass and the
-     * consumer ever disagreed, one of them would be touching memory the
-     * other never reserved. */
-    return length >= sizeof(struct entropy_seed_header) &&
-           length <= BOOT_SEED_PAYLOAD_CAP;
+    /* DELEGATES to the table that every payload type now reads
+     * (include/boot/boot_payload_limits.h, via boot_payload.c). The seed
+     * was the first type to get a length contract; the per-type payload
+     * length contract
+     * generalized it, and this function stays because its callers -- the
+     * classifier here and canary_seed_desc_ok() in stack_canary.c -- read
+     * better naming the seed than repeating the type constant.
+     *
+     * It is a delegate rather than a copy for the original reason: if the
+     * Phase-0 reservation pass and the Phase-1 consumer ever disagreed,
+     * one of them would be touching memory the other never reserved. Two
+     * functions computing the same bound is exactly how that drift starts.
+     * The seed's own numbers (32-byte minimum, BOOT_SEED_PAYLOAD_CAP
+     * maximum) are static-asserted against these definitions in
+     * boot_payload.c, so a change here or there fails the build. */
+    return boot_payload_length_reservable((uint32_t)BOOT_PAYLOAD_RANDOM_SEED,
+                                          length);
 }
 
 uint64_t boot_seed_desc_wipe_len(boot_seed_desc_class_t cls, uint64_t length)
@@ -223,6 +234,16 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
          * type-specific length contract. */
         cls = boot_seed_desc_classify(g_boot_info.caps_present, d->flags,
                                       d->phys_start, d->length);
+        /* The classifier answers what the HANDOFF says; this answers what
+         * the reservation pass actually did. They differ for the budget and
+         * singleton rules, which depend on the rest of the table and cannot
+         * be re-derived from one descriptor. Treated exactly as
+         * NOT_RESERVED: never read, never wiped, never freed. */
+        if (cls == BOOT_SEED_DESC_CONSUMABLE
+            && !boot_reserved_payload_is_pinned(
+                   (uint32_t)(d - &g_boot_info.payload_descriptors[0]),
+                   d->phys_start, d->length))
+            cls = BOOT_SEED_DESC_NOT_RESERVED;
 
         /* EXHAUSTIVE switch with NO `default`, deliberately. Under the
          * kernel's -Wall -Wextra -Werror set (Makefile:21) -Wswitch turns

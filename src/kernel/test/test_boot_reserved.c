@@ -23,6 +23,7 @@
 #include "kernel/test/klog_suppress.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
+#include "kernel/entropy.h"   /* boot_seed_length_reservable -- must agree with the table */
 /* libc/string.h not needed; fixture is zeroed by scalar loop. */
 
 /* BSS-resident fixture: struct boot_info is ~23 KiB. Allocating on the
@@ -541,8 +542,553 @@ static void test_boot_reserved_boot_stack_overlap_rejected(void)
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OVERLAP, "err=OVERLAP");
 }
 
+/* ---------------------------------------------------------------------------
+ * Per-type length contract, cardinality and aggregate budget
+ * (the per-type payload length contract, boot-protocol ABI handoff).
+ *
+ * These assert the reservation pass's OWN ACCOUNTING -- what landed in the
+ * table -- rather than a predicate's return value, because the defect being
+ * guarded is memory getting PINNED, and a predicate can be right while the
+ * pass that calls it is wrong. The pure helpers are asserted separately
+ * below; both layers matter and neither implies the other.
+ * ------------------------------------------------------------------------- */
+
+/* How many regions a zeroed fixture pins before any payload is staged.
+ *
+ * MEASURED rather than hardcoded: the pass always reserves the struct
+ * boot_info handoff region itself (phys 0x10000), and a future baseline
+ * entry would silently shift every index below. A test that hardcoded the
+ * count would then fail for a reason unrelated to what it asserts.
+ * Leaves the table reset for the caller. */
+static uint32_t br_baseline_count(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t n;
+
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 0;
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    n = (uint32_t)boot_reserved_count();
+    br_zero_fixture();
+    return n;
+}
+
+/* Stage one RESERVED payload descriptor at slot `i`. */
+static void br_stage_payload(uint32_t i, uint32_t type, uint64_t phys,
+                             uint64_t len, uint32_t extra_flags)
+{
+    s_br_buf.payload_descriptors[i].type       = type;
+    s_br_buf.payload_descriptors[i].flags      = BOOT_PAYLOAD_FLAG_VALID |
+                                                 BOOT_PAYLOAD_FLAG_RESERVED |
+                                                 extra_flags;
+    s_br_buf.payload_descriptors[i].phys_start = phys;
+    s_br_buf.payload_descriptors[i].length     = len;
+}
+
+static void test_boot_reserved_payload_length_contract(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    boot_result_t r;
+    uint32_t base;
+
+    /* Every refusal this section adds logs a LOG_WARN under "mm", and these
+     * tests exist to prove those refusals FIRE -- suppress the expected
+     * warnings so the boot log does not read as failing. */
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 4;
+
+    /* A module EXACTLY at its 256 MiB maximum is pinned; one byte over is
+     * not. The boundary is the assertion that matters: an off-by-one would
+     * leave the contract nominally present and actually one byte wrong. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435457ull, 0u);
+    /* A type with NO declared bound refuses ANY length, including a
+     * plausible one. Both of these are "not reservable" in the table. */
+    br_stage_payload(2, BOOT_PAYLOAD_TPM_EVENT_LOG,  0x50000000ull, 0x1000ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_NETWORK_CONFIG, 0x51000000ull, 0x1000ull, 0u);
+
+    r = boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)r, (unsigned long)BOOT_OK,
+                   "an over-contract descriptor DEGRADES the boot, never halts it");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 1u),
+                   "only the exactly-at-maximum module is pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_get((int)base)->phys_start,
+                   (unsigned long)0x10000000ull,
+                   "the pinned region is the at-maximum module, not a later one");
+}
+
+static void test_boot_reserved_payload_singleton(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 2;
+    /* Two initrds. INITRD is a singleton by meaning, so the second is a
+     * malformed handoff; pinning it would let one type claim twice its
+     * declared maximum, which no per-descriptor bound can see. */
+    br_stage_payload(0, BOOT_PAYLOAD_INITRD, 0x10000000ull, 0x1000ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_INITRD, 0x20000000ull, 0x1000ull, 0u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 1u),
+                   "a duplicate singleton payload is not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_get((int)base)->phys_start,
+                   (unsigned long)0x10000000ull,
+                   "the FIRST occurrence is the one kept");
+
+    /* MODULE is the one repeatable type: a boot loading three drivers is
+     * the normal case, so the same shape must NOT be rejected there. This
+     * is the control -- without it the assertions above pass just as
+     * happily against a rule that refuses every repeat. */
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 2;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 0x1000ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x20000000ull, 0x1000ull, 0u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 2u),
+                   "repeated MODULE payloads are both pinned");
+}
+
+static void test_boot_reserved_payload_budget(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 4;
+    /* Four modules, each exactly at its 256 MiB per-type maximum, so every
+     * one passes the per-descriptor contract. Three fit the 768 MiB
+     * aggregate budget exactly and the fourth must not be pinned: bounding
+     * each term does not bound the sum, and this is the case that proves
+     * the sum is bounded too. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_MODULE, 0x70000000ull, 268435456ull, 0u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 3u),
+                   "the aggregate budget admits exactly three at-maximum modules");
+}
+
+static void test_boot_reserved_payload_required_first(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 4;
+    /* Three optional at-maximum modules sit BEFORE a REQUIRED one and would
+     * consume the whole budget in table order. The pass claims required
+     * payloads first, so the boot outcome is decided by policy rather than
+     * by where the producer happened to write the descriptor. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_INITRD, 0x70000000ull, 0x1000ull,
+                     BOOT_PAYLOAD_FLAG_REQUIRED);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_get((int)base)->phys_start,
+                   (unsigned long)0x70000000ull,
+                   "the REQUIRED payload is claimed first, whatever its slot");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 3u),
+                   "it is the trailing OPTIONAL payload that the budget drops");
+}
+
+static void test_boot_reserved_payload_is_pinned_query(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+
+    TEST_KLOG_SUPPRESS("mm");
+    (void)br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 4;
+    /* Three at-maximum modules exhaust the 768 MiB budget; the fourth is in
+     * contract, carries FLAG_RESERVED, and is NOT pinned. Re-deriving its
+     * status from the descriptor alone says "fine": the length passes, the
+     * flag is set, the capability is negotiated. Only the pass knows. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_MODULE, 0x70000000ull, 0x1000ull, 0u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(0u, 0x10000000ull, 268435456ull), 1ul,
+                   "an admitted descriptor reads as pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(3u, 0x70000000ull, 0x1000ull), 0ul,
+                   "a budget-skipped descriptor reads as NOT pinned, though "
+                   "its length, flag and capability all look fine");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_MODULE, 0x1000ull), 1ul,
+                   "and the length predicate alone would have admitted it -- "
+                   "which is exactly why consumers must ask the pass");
+}
+
+/* The admission answer must be bound to the descriptor's IDENTITY, not to its
+ * slot number.
+ *
+ * This is the case the [high] was about and the one the other tests do NOT
+ * reach: within a single populate, each index carries at most one reservation,
+ * so an index-only match still answers correctly. The aliasing appears when a
+ * reservation from an EARLIER handoff is still in the table -- which is exactly
+ * how a live caller reaches it, since boot_headless_authz_take_from() accepts a
+ * caller-supplied boot_info, and exactly how one test came to pass on another
+ * test's leftovers. Reverting the match to source_index alone must fail here. */
+static void test_boot_reserved_pinned_is_identity_bound(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+
+    TEST_KLOG_SUPPRESS("mm");
+    (void)br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 0x1000ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 1ul,
+                   "the range that was actually pinned reads as pinned");
+    /* Same slot, DIFFERENT range: a descriptor from another handoff. Nothing
+     * pinned this, and answering by slot number alone would say otherwise. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x40000000ull, 0x1000ull), 0ul,
+                   "a different range at the same slot is NOT pinned");
+    /* Same slot and start, different length -- a truncated or extended claim
+     * over memory whose real extent was pinned at something else. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x2000ull), 0ul,
+                   "a different length at the same slot and start is NOT pinned");
+}
+
+/* A singleton rejected by the BUDGET must not block a later occurrence that
+ * would fit: the type is "seen" only once one is really pinned.
+ *
+ * THE LATER OCCURRENCE IS THE WHOLE TEST. An earlier version of this staged
+ * only the rejected one, so reverting the exact defect it names -- recording
+ * type_seen before the budget check instead of after -- would have left
+ * every assertion green. A regression test that cannot fail on the
+ * regression is not one. (Re-adversarial finding.) */
+static void test_boot_reserved_singleton_after_budget_reject(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 5;
+    /* Two at-maximum modules plus one at 256 MiB minus 8 KiB leaves exactly
+     * 8 KiB of the 768 MiB budget. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull,
+                     268435456ull - 8192ull, 0u);
+    /* A 16 KiB initrd does not fit the 8 KiB remainder -- budget-rejected. */
+    br_stage_payload(3, BOOT_PAYLOAD_INITRD, 0x70000000ull, 16384ull, 0u);
+    /* ...but this 4 KiB one does, and must be pinned. If the rejected
+     * occurrence above had marked INITRD as seen, this would be refused as a
+     * duplicate instead. */
+    br_stage_payload(4, BOOT_PAYLOAD_INITRD, 0x71000000ull, 4096ull, 0u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       3u, 0x70000000ull, 16384ull), 0ul,
+                   "the budget-rejected initrd is not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       4u, 0x71000000ull, 4096ull), 1ul,
+                   "a LATER initrd that fits IS pinned -- a budget reject must "
+                   "not mark the singleton type as seen");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 4u),
+                   "three modules plus the admissible initrd");
+}
+
+/* The same rule across the REQUIRED/optional pass boundary: a required
+ * occurrence pinned in pass 0 must block an optional duplicate in pass 1. */
+static void test_boot_reserved_singleton_across_passes(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 2;
+    br_stage_payload(0, BOOT_PAYLOAD_INITRD, 0x10000000ull, 0x1000ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_INITRD, 0x20000000ull, 0x1000ull,
+                     BOOT_PAYLOAD_FLAG_REQUIRED);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 1u),
+                   "only one occurrence of the singleton is pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       1u, 0x20000000ull, 0x1000ull), 1ul,
+                   "and it is the REQUIRED one, claimed in pass 0");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 0ul,
+                   "the optional duplicate seen later in pass 1 is refused");
+}
+
+/* RANDOM_SEED is multi-descriptor by DOCUMENTED CONTRACT, so the singleton
+ * rule must not touch it. bootx64.c appends its own seed beside an
+ * earlier-stage one and boot_seed.c digest-chains every occurrence; pinning
+ * only the first would have silently dropped the loader's fresh firmware and
+ * CPU entropy and degraded the CSPRNG with nothing in the log to explain it.
+ * (Round-4 re-adversarial, on a rule this section added.) */
+static void test_boot_reserved_seed_is_repeatable(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 2;
+    br_stage_payload(0, BOOT_PAYLOAD_RANDOM_SEED, 0x10000000ull, 4096ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_RANDOM_SEED, 0x20000000ull, 4096ull, 0u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 2u),
+                   "BOTH seed descriptors are pinned -- the seed is not a singleton");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       1u, 0x20000000ull, 4096ull), 1ul,
+                   "including the appended one, which carries the fresh entropy");
+}
+
+/* The reservation pass must pin a warm-update descriptor on EXACTLY the terms
+ * the Phase-0 consumer accepts it. The pass once applied a strict subset --
+ * no page-alignment check, no continuation-bit check -- so a descriptor that
+ * cold-fell-back at Phase 0 was pinned for the life of the machine anyway.
+ * (Round-6 re-adversarial.) */
+static void test_boot_reserved_warm_update_matches_consumer(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 3;
+    /* Admissible: page-multiple start and length, no unknown continuation
+     * bits. This is the control -- without it the refusals below would pass
+     * against a rule that pins nothing. */
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
+    /* Not page-aligned: the consumer refuses it, so the pass must not pin it. */
+    br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000100ull, 0x1000ull, 0u);
+    /* An unknown continuation bit: likewise refused by the consumer. */
+    br_stage_payload(2, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x30000000ull, 0x1000ull,
+                     0x80000000u);
+
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x10000000ull, 0x1000ull), 1ul,
+                   "an admissible warm-update descriptor IS pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       1u, 0x20000100ull, 0x1000ull), 0ul,
+                   "an unaligned one is not pinned -- the consumer refuses it");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       2u, 0x30000000ull, 0x1000ull), 0ul,
+                   "nor is one carrying an unknown continuation bit");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
+                   (unsigned long)(base + 1u),
+                   "exactly the admissible descriptor was pinned");
+}
+
+/* Warm-update bypasses the aggregate budget, so it must not be CHARGED to it
+ * either -- otherwise normal payload admission depends on where the warm
+ * descriptor happens to sit in the table. The two arrangements below hold the
+ * identical set of descriptors and must admit the identical normal payloads.
+ * (Round-7 re-adversarial.) */
+static void test_boot_reserved_warm_update_order_independent(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base, warm_first, warm_last;
+
+    TEST_KLOG_SUPPRESS("mm");
+    TEST_KLOG_SUPPRESS("boot");
+
+    /* Warm descriptor FIRST, then exactly the full 768 MiB of modules. */
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 4;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x08000000ull, 67108864ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    warm_first = (uint32_t)boot_reserved_count() - base;
+
+    /* The same four descriptors, warm LAST. */
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 4;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x08000000ull, 67108864ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    warm_last = (uint32_t)boot_reserved_count() - base;
+
+    TEST_ASSERT_EQ((unsigned long)warm_first, (unsigned long)warm_last,
+                   "descriptor ORDER does not change what is admitted");
+    TEST_ASSERT_EQ((unsigned long)warm_first, (unsigned long)4u,
+                   "and all four are admitted -- warm bytes never consumed the "
+                   "normal payload budget");
+}
+
+static void test_boot_payload_length_contract_matrix(void)
+{
+    /* The pure predicate, at every boundary that carries a decision. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_MODULE, 268435456ull), 1ul,
+                   "a module exactly at its maximum is reservable");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_MODULE, 268435457ull), 0ul,
+                   "one byte over the maximum is not");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_MODULE, 0ull), 0ul,
+                   "a zero length is never reservable");
+
+    /* The seed keeps a MINIMUM as well, and it is the header size. A
+     * shorter payload cannot even carry the header the consumer parses. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 32ull), 1ul,
+                   "a seed exactly at the header size is reservable");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 31ull), 0ul,
+                   "one byte under the seed minimum is not");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 16384ull), 1ul,
+                   "a seed at BOOT_SEED_PAYLOAD_CAP is reservable");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 16385ull), 0ul,
+                   "one byte over the seed cap is not");
+
+    /* The seed's own named predicate must agree with the table exactly --
+     * it delegates, and this is what would catch it being forked back into
+     * a second copy of the bound. */
+    TEST_ASSERT_EQ((unsigned long)boot_seed_length_reservable(16384ull), 1ul,
+                   "boot_seed_length_reservable agrees with the table at the cap");
+    TEST_ASSERT_EQ((unsigned long)boot_seed_length_reservable(16385ull), 0ul,
+                   "and agrees one byte past it");
+
+    /* An EXACT-length type accepts only that length. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_HEADLESS_AUTHZ, 152ull), 1ul,
+                   "the authorization blob is reservable at its exact length");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_HEADLESS_AUTHZ, 151ull), 0ul,
+                   "a short authorization is not a weaker one, it is malformed");
+
+    /* NOT-RESERVABLE types refuse every length, including plausible ones --
+     * asserting only a huge length here would pass against a rule that
+     * merely capped them. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_TPM_EVENT_LOG, 4096ull), 0ul,
+                   "the TPM event log is not reservable as a descriptor at all");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_USB_HANDOVER, 1ull), 0ul,
+                   "nor is USB handover state, at any length");
+
+    /* Wire values outside the enum are refused rather than cast. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_NONE, 4096ull), 0ul,
+                   "the empty-slot sentinel is never a reservable payload");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       0xFFFFFFFFu, 4096ull), 0ul,
+                   "an unknown wire type is refused, not cast to an enum");
+}
+
+static void test_boot_payload_budget_admits_bounds(void)
+{
+    TEST_ASSERT_EQ((unsigned long)boot_payload_budget_admits(0ull, 805306368ull),
+                   1ul, "an empty budget admits exactly the whole ceiling");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_budget_admits(0ull, 805306369ull),
+                   0ul, "but not one byte more");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_budget_admits(805306368ull, 1ull),
+                   0ul, "a full budget admits nothing further");
+    /* Overflow safety: the rule is a subtraction against the remaining
+     * budget precisely so a hostile length near UINT64_MAX cannot wrap the
+     * addition and read as an accept. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_budget_admits(
+                       1ull, 0xFFFFFFFFFFFFFFFFull), 0ul,
+                   "a near-UINT64_MAX length cannot wrap into an accept");
+}
+
 void test_register_boot_reserved(void)
 {
+    test_suite_register_cat("boot_reserved: warm-update budget is order-independent",
+                            test_boot_reserved_warm_update_order_independent,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: warm-update pinning matches the consumer",
+                            test_boot_reserved_warm_update_matches_consumer,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: RANDOM_SEED is repeatable",
+                            test_boot_reserved_seed_is_repeatable, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: pinned admission is identity-bound",
+                            test_boot_reserved_pinned_is_identity_bound,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: payload pinned-admission query",
+                            test_boot_reserved_payload_is_pinned_query,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: singleton across the REQUIRED pass boundary",
+                            test_boot_reserved_singleton_across_passes,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: singleton after a budget reject",
+                            test_boot_reserved_singleton_after_budget_reject,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: per-type payload length contract",
+                            test_boot_reserved_payload_length_contract,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: singleton payload cardinality",
+                            test_boot_reserved_payload_singleton,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: aggregate payload budget",
+                            test_boot_reserved_payload_budget,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: REQUIRED payloads claim budget first",
+                            test_boot_reserved_payload_required_first,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: per-type length contract matrix",
+                            test_boot_payload_length_contract_matrix,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: aggregate budget bounds",
+                            test_boot_payload_budget_admits_bounds,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: populate happy path",
                             test_boot_reserved_populate_happy_path,
                             TEST_CAT_BOOT);

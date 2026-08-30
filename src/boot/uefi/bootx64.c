@@ -2774,6 +2774,17 @@ static UINT32 ascii_atoi(const char *s)
  * enough for any legitimate payload but much smaller than host RAM. */
 #define BOOT_PAYLOAD_FILE_MAX (256ull * 1024ull * 1024ull)  /* 256 MiB */
 
+/* The kernel refuses to PIN a MODULE, INITRD or RECOVERY_IMAGE payload past
+ * its own declared maximum, and that maximum is written to match the cap
+ * above. Include the shared contract and assert the two agree HERE, on the
+ * producer side, because a divergence is otherwise invisible: this loader
+ * would allocate and publish a payload as VALID|RESERVED that the kernel
+ * then silently declines to pin, and the descriptor would look retained.
+ * The header is designed for exactly this (plain types, literals, no UEFI
+ * or libc dependencies), so the assertion belongs here rather than only on
+ * the kernel side. */
+#include "../../../include/boot/boot_payload_limits.h"
+
 struct staged_payload {
     UINT32 type;                          /* BOOT_PAYLOAD_MODULE / _INITRD / _RECOVERY_IMAGE */
     char   path[BOOT_PAYLOAD_PATH_MAX];   /* ASCII; converted to CHAR16 on load */
@@ -10611,6 +10622,39 @@ static void collect_boot_entropy(void)
  * kernel-side consumer re-checks the length against its own definition, so a
  * drift here refuses the payload instead of handing over short bytes. */
 #define BL_HEADLESS_AUTHZ_LEN     152u
+
+/* PRODUCER/KERNEL DRIFT GATE, expanded from the shared table.
+ *
+ * Two earlier versions of this block were wrong in instructive ways and both
+ * were caught in review. The first restated the table's numbers as literals,
+ * so editing a row still compiled and the include bought nothing. The second
+ * expanded the table but compared against mirror constants invented HERE --
+ * a third copy -- so changing the real producer constant left the assertions
+ * green. This one compares each expanded row against the constant or struct
+ * the producer actually uses, which is why it sits down here rather than
+ * beside the include: BL_HEADLESS_AUTHZ_LEN and struct bl_seed_header are
+ * defined further up the file than that include.
+ *
+ * Only the types this loader PUBLISHES are asserted. It owns no constant to
+ * compare the others against, and asserting a number against itself is the
+ * mistake above wearing a third hat. */
+#define BOOT_PAYLOAD_LIMIT_LOADER_ASSERT(type_value, label, min_b, max_b, why) \
+    _Static_assert((type_value) != 1u  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
+                                           && (min_b) == 1ull),                \
+                   "MODULE row must stay the loader's file cap, min 1");       \
+    _Static_assert((type_value) != 2u  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
+                                           && (min_b) == 1ull),                \
+                   "INITRD row must stay the loader's file cap, min 1");       \
+    _Static_assert((type_value) != 3u  || ((max_b) == BOOT_PAYLOAD_FILE_MAX    \
+                                           && (min_b) == 1ull),                \
+                   "RECOVERY_IMAGE row must stay the loader's file cap, min 1"); \
+    _Static_assert((type_value) != 7u  || (min_b) == sizeof(struct bl_seed_header), \
+                   "RANDOM_SEED minimum must stay the seed header this loader writes"); \
+    _Static_assert((type_value) != 10u || ((min_b) == (max_b)                  \
+                                           && (max_b) == BL_HEADLESS_AUTHZ_LEN), \
+                   "HEADLESS_AUTHZ row must stay the EXACT blob length this loader publishes");
+BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LIMIT_LOADER_ASSERT)
+#undef BOOT_PAYLOAD_LIMIT_LOADER_ASSERT
 
 static void publish_headless_authz_payload(void)
 {

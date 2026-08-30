@@ -26,7 +26,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/boot_info.h"
-#include "kernel/entropy.h"   /* boot_seed_length_reservable -- seed type length contract */
+#include "boot/boot_payload_limits.h" /* per-type contract + aggregate budget + repeatability */
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "libc/string.h"
@@ -120,6 +120,58 @@ static boot_result_t add_or_fatal(uint64_t phys_start, uint64_t length,
         return BOOT_FATAL;
     }
     return BOOT_OK;
+}
+
+/* Did the Phase-0 reservation pass actually PIN the payload descriptor at
+ * `payload_index`?
+ *
+ * THIS IS THE ONLY HONEST ANSWER, and a consumer re-deriving it from the
+ * descriptor is the bug this function exists to remove. Until the per-type
+ * length contract landed, every reason the pass could decline was
+ * re-derivable by a consumer from the handoff alone (capability absent,
+ * warm-update flag clear, seed length out of contract), so checking
+ * FLAG_RESERVED plus those conditions happened to be equivalent to asking
+ * what was pinned. The aggregate budget and the singleton rule broke that
+ * equivalence: BOTH depend on the OTHER descriptors in the table and on the
+ * order the pass walked them, which no consumer can reconstruct. A
+ * budget-skipped seed would otherwise be read pre-IDT by
+ * canary_seed_desc_ok() with FLAG_RESERVED still set and its length
+ * perfectly in contract.
+ *
+ * The handoff bytes are deliberately NOT rewritten to encode this. Clearing
+ * FLAG_RESERVED on a declined descriptor would be a smaller change and was
+ * considered; it was rejected because `boot_info` is a measured, dumped and
+ * attested record, and silently editing a producer's assertion inside it
+ * makes the record disagree with what the producer actually sent.
+ *
+ * Answers from the reservation TABLE, which stores the source index of every
+ * payload entry it admitted, so it cannot drift from what was pinned: the
+ * table IS the record of the decision. */
+int boot_reserved_payload_is_pinned(uint32_t payload_index,
+                                    uint64_t phys_start, uint64_t length)
+{
+    uint32_t n = boot_reserved_count();
+    uint32_t k;
+
+    for (k = 0u; k < n; k++) {
+        const struct boot_reserved_region *r = boot_reserved_get(k);
+        /* IDENTITY, not slot number. Matching source_index alone made the
+         * answer depend only on WHICH SLOT was asked about, so any payload
+         * reservation at that slot -- from a different handoff entirely --
+         * read as "pinned". boot_headless_authz_take_from() accepts a
+         * caller-supplied boot_info, so that is reachable rather than
+         * theoretical, and it also let a test pass for the wrong reason
+         * against a reservation an earlier test had left behind. The range
+         * is what was actually pinned, so the range is what has to match.
+         * (Re-adversarial finding on the fix for the previous round.) */
+        if (r != (const struct boot_reserved_region *)0
+            && r->kind == BOOT_RESERVED_PAYLOAD
+            && r->source_index == payload_index
+            && r->phys_start == phys_start
+            && r->length == length)
+            return 1;
+    }
+    return 0;
 }
 
 boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
@@ -300,51 +352,214 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
     if ((info->caps_present & BOOT_CAP_PAYLOAD_DESCRIPTORS) != 0u) {
         int warm_update_flag = (int)((info->flags
                                       & BOOT_FLAG_WARM_UPDATE) != 0u);
+        uint64_t reserved_total = 0u;
+        uint32_t type_seen[BOOT_PAYLOAD_MAX];
+        uint32_t seen_count = 0u;
+        uint32_t pass;
         uint32_t i;
-        for (i = 0u; i < info->payload_count; i++) {
-            const struct boot_payload_desc *d = &info->payload_descriptors[i];
-            if ((d->flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0u)
-                continue;
-            if (d->length == 0u)
-                continue;
-            /* Warm-update descriptor reservation is gated on the global
-             * BOOT_FLAG_WARM_UPDATE handoff signal in addition to the
-             * caps_present bit. Without the flag, a stale or malformed
-             * type-9 descriptor with FLAG_RESERVED would otherwise pin
-             * arbitrary payload pages here -- exactly the failure mode
-             * the warm-update consume cold-fallback path tries to
-             * prevent. (Codex 2026-04-30 re-adversarial finding.) */
-            if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE
-                && !warm_update_flag) {
-                klog(LOG_WARN, "mm",
-                     "boot_reserved: skip warm-update payload[%u] "
-                     "(BOOT_FLAG_WARM_UPDATE clear; cold init proceeds)",
-                     (uint64_t)i);
-                continue;
+
+        /* TWO PASSES, REQUIRED FIRST, and the ORDER is the point.
+         *
+         * The aggregate budget below is consumed in table order, so with a
+         * single pass a run of optional payloads sitting earlier in the
+         * table could exhaust it and starve a REQUIRED payload that happens
+         * to sit later -- a boot outcome decided by descriptor ordering
+         * rather than by policy. Claiming the required ones first makes the
+         * budget deterministic: an optional payload is what gets dropped
+         * when the handoff asks for too much, which is what "optional"
+         * means. (Design-review finding on the per-type payload length
+         * contract.) */
+        for (pass = 0u; pass < 2u; pass++) {
+            for (i = 0u; i < info->payload_count; i++) {
+                const struct boot_payload_desc *d =
+                    &info->payload_descriptors[i];
+                int is_required =
+                    (int)((d->flags & BOOT_PAYLOAD_FLAG_REQUIRED) != 0u);
+                uint32_t j;
+                int repeated = 0;
+
+                if ((pass == 0u) != (is_required != 0))
+                    continue;
+                if ((d->flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0u)
+                    continue;
+                if (d->length == 0u)
+                    continue;
+
+                /* Warm-update descriptor reservation is gated on the global
+                 * BOOT_FLAG_WARM_UPDATE handoff signal in addition to the
+                 * caps_present bit. Without the flag, a stale or malformed
+                 * type-9 descriptor with FLAG_RESERVED would otherwise pin
+                 * arbitrary payload pages here -- exactly the failure mode
+                 * the warm-update consume cold-fallback path tries to
+                 * prevent. (Codex 2026-04-30 re-adversarial finding.)
+                 *
+                 * This gate is a DIFFERENT axis from the length contract
+                 * below and both apply: this one asks whether the handoff
+                 * signalled a warm update at all, that one asks whether the
+                 * declared size is inside the type's contract. */
+                if (d->type == (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE
+                    && (!warm_update_flag
+                        || !boot_warm_update_desc_admissible(d))) {
+                    klog(LOG_WARN, "mm",
+                         "boot_reserved: skip warm-update payload[%u] "
+                         "(flag clear or descriptor not admissible; cold "
+                         "init proceeds)",
+                         (uint64_t)i);
+                    continue;
+                }
+
+                /* Every type is bounded by its OWN contract before it may
+                 * pin anything. A malformed descriptor carrying
+                 * FLAG_RESERVED and a gigabyte-scale length would otherwise
+                 * reserve that whole span here, permanently, and starve the
+                 * PMM -- the boot would die in heap_init rather than
+                 * degrade. Consumers apply the identical predicate and
+                 * refuse to touch what this pass declined to pin, so the
+                 * two cannot disagree about who owns the frames.
+                 *
+                 * This generalizes the RANDOM_SEED-only check that shipped
+                 * with the early-entropy seed payload capability gate; the
+                 * other types
+                 * were pinning whatever they declared. */
+                if (!boot_payload_length_reservable(d->type, d->length)) {
+                    klog(LOG_WARN, "mm",
+                         "boot_reserved: skip %s payload[%u] (length %lu "
+                         "outside the type contract; not pinned)",
+                         boot_payload_type_label(d->type),
+                         (uint64_t)i, (uint64_t)d->length);
+                    continue;
+                }
+
+                /* WARM-UPDATE IS EXEMPT FROM THE TWO TABLE-WIDE RULES
+                 * BELOW, and the reason is ORDERING, not privilege.
+                 *
+                 * boot_hw.c consumes the warm-update descriptor at Phase 0
+                 * BEFORE pmm_init() runs this pass, so its consumer cannot
+                 * ask what was pinned -- the table does not exist yet. If the
+                 * budget or the singleton rule could decline a type-9
+                 * descriptor, the consumer's ACCEPT and this pass's DECLINE
+                 * would disagree with no way to reconcile them, which is the
+                 * exact hazard this section exists to remove. Exempting it
+                 * makes the decision here fully determined by the two things
+                 * the consumer already checks for itself: the
+                 * BOOT_FLAG_WARM_UPDATE gate above and the type's own length
+                 * contract. The exposure stays bounded, because that contract
+                 * caps the type at 64 MiB and the flag gates it.
+                 * (Round-3 re-adversarial: the first attempt gated the
+                 * CONSUMER on the query instead, which made every
+                 * warm-update descriptor fall back cold.) */
+                /* WARM-UPDATE TAKES NO TABLE-WIDE RULE FROM THIS PASS --
+                 * not cardinality and not the budget -- and the reason is
+                 * ORDERING, which three review rounds kept rediscovering.
+                 *
+                 * boot_hw.c consumes the type-9 descriptor at Phase 0 BEFORE
+                 * pmm_init() runs this pass. So ANY rule applied here that
+                 * the consumer cannot itself evaluate splits the decision
+                 * across two phases: the consumer ACCEPTS a descriptor and
+                 * reattaches its preserved state, and this pass then declines
+                 * to pin the range PMM will reclaim. Waiving the budget alone
+                 * was not enough -- the singleton rule reproduced it, because
+                 * with an optional descriptor first and a REQUIRED duplicate
+                 * second the consumer takes both while required-first pinning
+                 * takes only the second.
+                 *
+                 * With the flag gate plus the length contract as the ONLY
+                 * conditions, both phases evaluate the identical predicate
+                 * over the identical descriptor and cannot disagree. Both are
+                 * checked above and in boot_warm_update_consume().
+                 *
+                 * WHAT THIS LEAVES OPEN, stated rather than hidden: duplicate
+                 * type-9 descriptors are each still pinned, bounded only by
+                 * the 64 MiB type contract and the BOOT_FLAG_WARM_UPDATE
+                 * gate. That is unchanged from before this section, and it is
+                 * a warm-update cardinality question rather than a payload
+                 * length one, so it is filed with its own owner instead of
+                 * being bolted on here. */
+                if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE) {
+                /* Cardinality. Every type except MODULE is a singleton by
+                 * meaning, so a second occurrence is a malformed or hostile
+                 * handoff -- and pinning it multiplies the memory one type
+                 * may claim, which per-descriptor bounds cannot see. The
+                 * FIRST occurrence wins, matching how the payload consumers
+                 * already resolve duplicates. */
+                if (!BOOT_PAYLOAD_TYPE_IS_REPEATABLE(d->type)) {
+                    for (j = 0u; j < seen_count; j++) {
+                        if (type_seen[j] == d->type) {
+                            repeated = 1;
+                            break;
+                        }
+                    }
+                    if (repeated) {
+                        klog(LOG_WARN, "mm",
+                             "boot_reserved: skip duplicate %s payload[%u] "
+                             "(type is a singleton; an earlier occurrence "
+                             "was pinned)",
+                             boot_payload_type_label(d->type), (uint64_t)i);
+                        continue;
+                    }
+                    /* NOT recorded as seen here. A type is "seen" only once
+                     * an occurrence is actually PINNED, below. Recording it
+                     * at this point would let a first occurrence that the
+                     * BUDGET then rejects block a later, smaller occurrence
+                     * that would have fit -- and the refusal line would
+                     * claim an earlier one was kept when nothing was.
+                     * (Adversarial finding on this section.) */
+                }
+
+                /* Aggregate budget. Bounding each term does not bound the
+                 * sum: 32 individually-legal 256 MiB descriptors would pin
+                 * 8 GiB while passing every per-type rule, which is the
+                 * starvation this section exists to close. Compared before
+                 * adding, and written so the addition itself cannot
+                 * overflow. */
+                /* WARM-UPDATE IS EXEMPT FROM THE BUDGET ONLY, and the
+                 * reason is ORDERING. boot_hw.c consumes the type-9
+                 * descriptor at Phase 0 BEFORE pmm_init() runs this pass, so
+                 * its consumer cannot ask what was pinned -- the table does
+                 * not exist yet. A budget that could decline it would let the
+                 * consumer's ACCEPT and this pass's DECLINE disagree with
+                 * nothing able to reconcile them.
+                 *
+                 * It stays subject to the CARDINALITY rule above and to its
+                 * own 64 MiB length contract, which together bound it. An
+                 * earlier round exempted it from BOTH, and 32 descriptors at
+                 * 64 MiB is 2 GiB -- worse than the starvation the budget was
+                 * added to prevent. Its bytes are also NOT charged to
+                 * reserved_total below: charging a payload the budget did not
+                 * gate makes normal admission depend on warm-descriptor
+                 * ordering. */
+                if (!boot_payload_budget_admits(reserved_total, d->length)) {
+                    klog(LOG_WARN, "mm",
+                         "boot_reserved: skip %s payload[%u] (length %lu "
+                         "exceeds the remaining %lu-byte payload reservation "
+                         "budget; not pinned)",
+                         boot_payload_type_label(d->type), (uint64_t)i,
+                         (uint64_t)d->length,
+                         (uint64_t)(BOOT_PAYLOAD_RESERVE_TOTAL_MAX
+                                    - reserved_total));
+                    continue;
+                }
+
+                }
+                if (add_or_fatal(d->phys_start, d->length,
+                                 BOOT_RESERVED_PAYLOAD, i, out_err) != BOOT_OK)
+                    return BOOT_FATAL;
+                /* CHARGED ONLY IF THE BUDGET GATED IT. Warm-update
+                 * bypasses the budget check above, so charging its bytes
+                 * here would make normal payload admission depend on
+                 * descriptor ORDER: a maxed warm descriptor placed first
+                 * silently removes 64 MiB from every later payload's budget,
+                 * while the same descriptor placed last is admitted on top
+                 * of the full cap. A gate and its meter have to agree about
+                 * who they apply to. */
+                if (d->type != (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE)
+                    reserved_total += d->length;
+                /* Seen only now, when an occurrence of this type has really
+                 * been pinned -- see the cardinality block above. */
+                if (!BOOT_PAYLOAD_TYPE_IS_REPEATABLE(d->type)
+                    && seen_count < (uint32_t)BOOT_PAYLOAD_MAX)
+                    type_seen[seen_count++] = d->type;
             }
-            /* Seed descriptors are bounded by their OWN type contract
-             * before they may pin anything. Same shape, and the same
-             * reason, as the warm-update gate above: a malformed
-             * RANDOM_SEED descriptor carrying FLAG_RESERVED and a
-             * gigabyte-scale length would otherwise reserve that whole
-             * span here, permanently, and starve the PMM -- the boot
-             * would then die in heap_init rather than degrade. The
-             * consumer applies the identical predicate and refuses to
-             * touch what this pass declined to pin, so the two cannot
-             * disagree about who owns the frames. (Codex 2026-08-29
-             * post-commit adversarial finding on the early-entropy seed
-             * payload capability gate.) */
-            if (d->type == (uint32_t)BOOT_PAYLOAD_RANDOM_SEED
-                && !boot_seed_length_reservable(d->length)) {
-                klog(LOG_WARN, "mm",
-                     "boot_reserved: skip seed payload[%u] (length %lu "
-                     "outside the type contract; not pinned)",
-                     (uint64_t)i, (uint64_t)d->length);
-                continue;
-            }
-            if (add_or_fatal(d->phys_start, d->length,
-                             BOOT_RESERVED_PAYLOAD, i, out_err) != BOOT_OK)
-                return BOOT_FATAL;
         }
     }
 

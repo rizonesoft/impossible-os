@@ -32,6 +32,15 @@ const char *boot_warm_update_cont_name(uint32_t flag_bit)
     }
 }
 
+/* Every condition below is DESCRIPTOR-LOCAL -- type, length, required flags,
+ * page alignment, continuation bits -- so both boot phases can evaluate it
+ * over the same bytes and reach the same answer. That is deliberate, and it
+ * is why no table-wide rule (cardinality, aggregate budget) belongs here: the
+ * Phase-0 consumer runs before the reservation table exists, so a rule
+ * depending on the OTHER descriptors could not be evaluated by both.
+ *
+ * `out_error` may be NULL for a caller that wants only the verdict.
+ * boot_warm_update_desc_admissible() below is that caller. */
 enum boot_warm_update_decision
 boot_warm_update_consume(const struct boot_payload_desc *desc,
                          enum boot_warm_update_error *out_error)
@@ -64,6 +73,29 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
              "boot_warm_update: descriptor length is 0; cold fallback");
         if (out_error != (enum boot_warm_update_error *)0)
             *out_error = BOOT_WARM_UPDATE_ERR_EMPTY;
+        return BOOT_WARM_UPDATE_COLD_FALLBACK;
+    }
+
+    /* Rule 2b: length must be inside the type's own contract.
+     *
+     * Rules 2 and 4 together accepted ANY nonzero page-multiple length,
+     * with no maximum anywhere -- so once BOOT_FLAG_WARM_UPDATE was set,
+     * an outgoing kernel (or anything able to forge its handoff) could
+     * declare an arbitrary span and the Phase-0 reservation pass would pin
+     * it permanently. Preserved subsystem state is metadata, not bulk
+     * data; the bound and the reasoning behind its value live in
+     * include/boot/boot_payload_limits.h.
+     *
+     * This is the SAME predicate the reservation pass applies, called
+     * rather than reimplemented, so the pass and this consumer cannot
+     * disagree about what was pinned. (Design-review finding, TODO-01
+     * the per-type payload length contract.) */
+    if (!boot_payload_length_reservable(desc->type, desc->length)) {
+        klog(LOG_WARN, "boot",
+             "boot_warm_update: length %lu outside the type contract; cold fallback",
+             (uint64_t)desc->length);
+        if (out_error != (enum boot_warm_update_error *)0)
+            *out_error = BOOT_WARM_UPDATE_ERR_LENGTH_CONTRACT;
         return BOOT_WARM_UPDATE_COLD_FALLBACK;
     }
 
@@ -128,4 +160,19 @@ boot_warm_update_consume(const struct boot_payload_desc *desc,
          (uint64_t)desc->length,
          (uint64_t)(desc->flags & BOOT_WARM_UPDATE_CONT_MASK_KNOWN));
     return BOOT_WARM_UPDATE_ACCEPTED;
+}
+
+int boot_warm_update_desc_admissible(const struct boot_payload_desc *desc)
+{
+    /* The reservation pass's view of these rules, obtained by CALLING them
+     * rather than restating them.
+     *
+     * The pass used to state its own subset and it was a strict subset: it
+     * omitted rule 4 (page alignment) and rule 5 (continuation bits), so a
+     * descriptor Phase 0 cold-fell-back was still pinned for the life of the
+     * machine, up to the type's 64 MiB. Nothing but a shared implementation
+     * prevents that -- a second list of the same rules is exactly how it
+     * happened. */
+    return boot_warm_update_consume(desc, (enum boot_warm_update_error *)0)
+           == BOOT_WARM_UPDATE_ACCEPTED;
 }

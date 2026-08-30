@@ -322,6 +322,7 @@ uint64_t boot_seed_desc_wipe_len(boot_seed_desc_class_t cls, uint64_t length);
  * actually pinned. */
 int boot_seed_length_reservable(uint64_t length);
 
+
 /* Whether the descriptor's frames may be returned to the PMM at all.
  * ONLY a CONSUMABLE descriptor qualifies. BAD_LENGTH deliberately does
  * NOT: the page count could only come from the same `length` field the

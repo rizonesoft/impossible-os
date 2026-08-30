@@ -24,6 +24,7 @@
 #include "kernel/bugcheck.h"        /* KeBugCheckEx, BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE */
 #include "kernel/boot_info.h"       /* boot_payload_find -- peek the firmware RNG seed */
 #include "kernel/entropy.h"          /* boot_seed_length_reservable -- the shared pin contract */
+#include "kernel/mm/boot_reserved.h" /* boot_reserved_payload_is_pinned -- what the pass really pinned */
 #include "kernel/klog.h"
 #include "kernel/nt/ntstatus.h"     /* STATUS_STACK_BUFFER_OVERRUN (canonical home) */
 
@@ -99,6 +100,19 @@ static int canary_mix_boot_seed(uint64_t *acc)
         boot_payload_find(&g_boot_info, (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
     if (!d || !canary_seed_desc_ok(g_boot_info.caps_present, d->flags,
                                    d->phys_start, d->length))
+        return 0;
+    /* ASK THE PASS WHAT IT ACTUALLY PINNED, do not re-derive it.
+     *
+     * canary_seed_desc_ok() re-checks every condition a consumer CAN
+     * reconstruct from the handoff. The aggregate reservation budget and the
+     * singleton rule are not among them: both depend on the other
+     * descriptors in the table and on the order the pass walked it, so a
+     * seed can be perfectly in contract, carry FLAG_RESERVED, and still
+     * never have been pinned. This peek runs pre-IDT, where reading a frame
+     * the allocator already owns has no handler at all. */
+    if (!boot_reserved_payload_is_pinned(
+            (uint32_t)(d - &g_boot_info.payload_descriptors[0]),
+            d->phys_start, d->length))
         return 0;
 
     /* Read the 8 tail bytes (past any seed header) -- raw firmware RNG bytes. */

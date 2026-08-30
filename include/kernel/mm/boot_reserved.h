@@ -95,6 +95,18 @@ void boot_reserved_log(void);
 void boot_reserved_blackbox_dump(void);
 
 /* Accessors for tests / future consumers. */
+/* Did the Phase-0 pass actually PIN the payload descriptor at this index?
+ *
+ * ASK THIS BEFORE DEREFERENCING ANY PAYLOAD. BOOT_PAYLOAD_FLAG_RESERVED is
+ * the PRODUCER's request and the kernel does not rewrite it, so the bit
+ * being set is not proof the range was pinned. The pass can decline for
+ * reasons a consumer cannot reconstruct from the handoff -- the aggregate
+ * reservation budget and the singleton rule both depend on the OTHER
+ * descriptors and on walk order. This answers from the reservation table
+ * itself, so it cannot disagree with what was pinned. */
+int boot_reserved_payload_is_pinned(uint32_t payload_index,
+                                    uint64_t phys_start, uint64_t length);
+
 uint32_t boot_reserved_count(void);
 const struct boot_reserved_region *boot_reserved_get(uint32_t index);
 

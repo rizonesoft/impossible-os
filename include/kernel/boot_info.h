@@ -364,6 +364,34 @@ struct boot_info;
 boot_result_t boot_payload_validate(const struct boot_info *info,
                                     enum boot_payload_error *out_error);
 
+/* The per-type length contract: 1 when the Phase-0 reservation pass may PIN
+ * this descriptor's range, 0 otherwise. Pure and callable from Phase 0.
+ *
+ * READ THIS BEFORE DEREFERENCING A PAYLOAD. The pass DECLINES to pin a
+ * descriptor that fails this predicate, and it does NOT clear the
+ * descriptor's BOOT_PAYLOAD_FLAG_RESERVED bit -- that bit is the producer's
+ * request and the kernel does not rewrite the handoff. So FLAG_RESERVED is
+ * NOT proof the range is pinned. Any consumer treating it as proof must
+ * call this predicate too, or it reads memory nothing reserved. The bounds
+ * and the reasoning behind each one live in
+ * include/boot/boot_payload_limits.h, which the bootloader also compiles.
+ *
+ * `type` is uint32_t to match the wire field; values outside
+ * enum boot_payload_type are refused rather than being cast. */
+int boot_payload_length_reservable(uint32_t type, uint64_t length);
+
+/* Human label for a payload type ("initrd / initramfs"), for refusal
+ * diagnostics. Returns "unknown" for a type outside the enum. Never NULL. */
+const char *boot_payload_type_label(uint32_t type);
+
+/* Whether the aggregate payload reservation budget still admits `length`
+ * bytes on top of `reserved_total`. Pure, overflow-safe, and the rule the
+ * Phase-0 pass actually applies -- bounding each descriptor does not bound
+ * the sum, and this is the half that does.
+ * Contract and the arithmetic behind the constant:
+ * include/boot/boot_payload_limits.h. */
+int boot_payload_budget_admits(uint64_t reserved_total, uint64_t length);
+
 /* Enumerate typed payload descriptors. Returns a pointer to the `index`-th
  * descriptor in the packed prefix whose `type` matches, or NULL when:
  *   - info is NULL
@@ -636,6 +664,10 @@ enum boot_warm_update_error {
     BOOT_WARM_UPDATE_ERR_UNALIGNED         = 4,  /* phys_start not page-aligned (4K) */
     BOOT_WARM_UPDATE_ERR_EMPTY             = 5,  /* length == 0 */
     BOOT_WARM_UPDATE_ERR_MISSING_FLAGS     = 6,  /* desc.flags missing required BOOT_PAYLOAD_FLAG_VALID|RESERVED */
+    /* length outside the warm-update type contract (boot_payload_limits.h).
+     * Distinct from _EMPTY, which is the length==0 case: this one is a
+     * length the producer declared and the kernel refuses to pin. */
+    BOOT_WARM_UPDATE_ERR_LENGTH_CONTRACT   = 7,
 };
 
 /* Forward declare boot_payload_desc so the prototype resolves --
@@ -656,6 +688,17 @@ struct boot_payload_desc;
 enum boot_warm_update_decision
 boot_warm_update_consume(const struct boot_payload_desc *desc,
                          enum boot_warm_update_error *out_error);
+
+/* Whether the Phase-0 reservation pass should PIN this warm-update
+ * descriptor: 1 exactly when boot_warm_update_consume() would accept it.
+ *
+ * Exists so the pass and the consumer cannot state different conditions. The
+ * pass once applied a strict subset -- no page-alignment check, no
+ * continuation-bit check -- so a descriptor Phase 0 cold-fell-back was
+ * pinned anyway. Every condition is descriptor-local by design; a rule
+ * depending on the OTHER descriptors could not be evaluated by the consumer,
+ * which runs before the reservation table exists. */
+int boot_warm_update_desc_admissible(const struct boot_payload_desc *desc);
 
 /* Human-readable name for a continuation flag (single set bit).
  * Returns "reserved" for bits outside MASK_KNOWN. */

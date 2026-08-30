@@ -72,6 +72,36 @@ static void test_boot_wu_empty_length(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_EMPTY,     "err=EMPTY");
 }
 
+static void test_boot_wu_length_contract(void)
+{
+    enum boot_warm_update_error err = BOOT_WARM_UPDATE_ERR_OK;
+    enum boot_warm_update_decision d;
+
+    TEST_KLOG_SUPPRESS("boot");
+
+    /* One page past the type's 64 MiB maximum, still page-multiple and still
+     * nonzero -- so it satisfies every OTHER rule this consumer applies and
+     * would have been accepted, and pinned, before the length contract
+     * landed. Preserved subsystem state is metadata; an outgoing kernel
+     * declaring more than the contract is malformed, not generous. */
+    wu_make_valid();
+    s_wu_desc.length = 67108864ull + 4096ull;
+    d = boot_warm_update_consume(&s_wu_desc, &err);
+    TEST_ASSERT_EQ((uint64_t)d, (uint64_t)BOOT_WARM_UPDATE_COLD_FALLBACK,
+                   "over-contract length -> COLD_FALLBACK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_LENGTH_CONTRACT,
+                   "err=LENGTH_CONTRACT, distinct from EMPTY");
+
+    /* EXACTLY at the maximum must still be accepted. Without this the test
+     * above passes just as happily against a rule that refuses everything. */
+    err = BOOT_WARM_UPDATE_ERR_OK;
+    wu_make_valid();
+    s_wu_desc.length = 67108864ull;
+    d = boot_warm_update_consume(&s_wu_desc, &err);
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_WARM_UPDATE_ERR_OK,
+                   "a descriptor exactly at the maximum is not a length refusal");
+}
+
 static void test_boot_wu_unaligned_phys(void)
 {
     TEST_KLOG_SUPPRESS("boot");
@@ -204,6 +234,8 @@ static void test_boot_wu_cont_name(void)
 
 void test_register_boot_warm_update(void)
 {
+    test_suite_register_cat("boot_warm_update: length contract bounds",
+                            test_boot_wu_length_contract, TEST_CAT_BOOT);
     test_suite_register_cat("boot_warm_update: NULL desc",
                             test_boot_wu_null_desc, TEST_CAT_BOOT);
     test_suite_register_cat("boot_warm_update: wrong type",

@@ -41,6 +41,9 @@
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
+#include "kernel/entropy.h"         /* struct entropy_seed_header, BOOT_SEED_PAYLOAD_CAP */
+#include "kernel/tpm_headless_authz.h" /* TPM_HEADLESS_BLOB_LEN */
+#include "boot/boot_payload_limits.h"  /* the per-type length contract, shared with the loader */
 
 /* BOOT_INFO_PHYS_ADDR is the physical base of the BOOTLOADER's original
  * struct boot_info -- not the kernel's copy. The kernel copies it into
@@ -58,6 +61,46 @@
  * src/boot/linker.ld. */
 extern uint8_t __kernel_start;
 extern uint8_t __kernel_end;
+
+/* The shared limits header spells type NUMBERS and a few sizes as literals
+ * so it can be compiled by the bootloader too (no kernel enum, no
+ * <stdint.h>). These assertions are how a divergence becomes a build
+ * failure on the side that drifted, exactly as boot_implicit_payload.h
+ * does it -- without them the literals are a second, silent copy of the
+ * ABI. */
+_Static_assert(BOOT_PAYLOAD_MODULE            == 1u,  "limits list literal 1 must stay BOOT_PAYLOAD_MODULE");
+_Static_assert(BOOT_PAYLOAD_INITRD            == 2u,  "limits list literal 2 must stay BOOT_PAYLOAD_INITRD");
+_Static_assert(BOOT_PAYLOAD_RECOVERY_IMAGE    == 3u,  "limits list literal 3 must stay BOOT_PAYLOAD_RECOVERY_IMAGE");
+_Static_assert(BOOT_PAYLOAD_HIBERNATION_META  == 4u,  "limits list literal 4 must stay BOOT_PAYLOAD_HIBERNATION_META");
+_Static_assert(BOOT_PAYLOAD_TPM_EVENT_LOG     == 5u,  "limits list literal 5 must stay BOOT_PAYLOAD_TPM_EVENT_LOG");
+_Static_assert(BOOT_PAYLOAD_NETWORK_CONFIG    == 6u,  "limits list literal 6 must stay BOOT_PAYLOAD_NETWORK_CONFIG");
+_Static_assert(BOOT_PAYLOAD_RANDOM_SEED       == 7u,  "limits list literal 7 must stay BOOT_PAYLOAD_RANDOM_SEED");
+_Static_assert(BOOT_PAYLOAD_USB_HANDOVER      == 8u,  "limits list literal 8 must stay BOOT_PAYLOAD_USB_HANDOVER");
+_Static_assert(BOOT_PAYLOAD_WARM_UPDATE_STATE == 9u,  "limits list literal 9 must stay BOOT_PAYLOAD_WARM_UPDATE_STATE");
+_Static_assert(BOOT_PAYLOAD_HEADLESS_AUTHZ    == 10u, "limits list literal 10 must stay BOOT_PAYLOAD_HEADLESS_AUTHZ");
+
+/* The bounds the list could not spell symbolically, bound to the definitions
+ * that own them by EXPANDING the table rather than restating its numbers.
+ *
+ * The restating version shipped first on both sides of the ABI and was wrong
+ * on both: comparing BOOT_SEED_PAYLOAD_CAP against a literal 16384 still
+ * compiles after someone edits the table row, so the assertion protected the
+ * constant from the table and not the table from the constant. Expanding the
+ * row makes a table edit change the compiled expression, which is the only
+ * shape that actually catches drift. */
+#define BOOT_PAYLOAD_LIMIT_KERNEL_ASSERT(type_value, label, min_b, max_b, why) \
+    _Static_assert((type_value) != 7u                                          \
+                       || ((min_b) == sizeof(struct entropy_seed_header)       \
+                           && (max_b) == BOOT_SEED_PAYLOAD_CAP),               \
+                   "RANDOM_SEED row must stay the seed header size and "       \
+                   "BOOT_SEED_PAYLOAD_CAP");                                   \
+    _Static_assert((type_value) != 10u                                         \
+                       || ((min_b) == (max_b)                                  \
+                           && (max_b) == TPM_HEADLESS_BLOB_LEN),               \
+                   "HEADLESS_AUTHZ row must stay the EXACT "                   \
+                   "TPM_HEADLESS_BLOB_LEN");
+BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LIMIT_KERNEL_ASSERT)
+#undef BOOT_PAYLOAD_LIMIT_KERNEL_ASSERT
 
 static int is_power_of_two_u64(uint64_t x)
 {
@@ -135,6 +178,95 @@ static int type_is_known(uint32_t type)
         return 1;
     default:
         return 0;
+    }
+}
+
+/* The per-type length contract. Returns 1 when the reservation pass may
+ * PIN this descriptor's range and every consumer may therefore dereference
+ * it; 0 otherwise. Pure: no allocation, no logging, no global reads, so it
+ * is callable from Phase 0 before pmm_init has finished, which is where the
+ * reservation pass runs.
+ *
+ * THE ENUM CAST IS THE POINT, not incidental. Taking `uint32_t` at the API
+ * boundary matches the rest of the payload surface (the wire type is
+ * uint32_t for ABI stability), but a `switch` over a uint32_t is NOT an
+ * enum switch and -Wswitch will not diagnose a newly added
+ * `enum boot_payload_type` value. So the unknown-type guard runs FIRST --
+ * which also makes the cast well-defined, since every value reaching it is
+ * a real enumerator -- and the switch below is enum-typed with no
+ * `default`. A new payload type without an arm here is a BUILD FAILURE
+ * under -Wall -Wextra -Werror (Makefile), which is the whole guarantee:
+ * a type added without a declared bound would otherwise inherit "pin
+ * whatever you declare", the exact default this contract exists to remove.
+ *
+ * A maximum of 0 means NOT RESERVABLE and is returned as a refusal for any
+ * length, including a plausible-looking one. See boot_payload_limits.h for
+ * which types those are and why. */
+int boot_payload_length_reservable(uint32_t type, uint64_t length)
+{
+    enum boot_payload_type t;
+
+    if (!type_is_known(type))
+        return 0;
+    /* NONE is "known" to type_is_known (it is the empty-slot sentinel) but
+     * is never a reservable payload; the validator already rejects a NONE
+     * slot carrying any nonzero field. */
+    if (type == (uint32_t)BOOT_PAYLOAD_NONE)
+        return 0;
+    if (length == 0u)
+        return 0;
+
+    t = (enum boot_payload_type)type;
+    switch (t) {
+#define BOOT_PAYLOAD_LIMIT_ARM(type_value, label, min_bytes, max_bytes, reason) \
+    case (enum boot_payload_type)(type_value):                                  \
+        (void)(label); (void)(reason);                                          \
+        return (max_bytes) != 0ull &&                                           \
+               (length) >= (min_bytes) && (length) <= (max_bytes);
+    BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LIMIT_ARM)
+#undef BOOT_PAYLOAD_LIMIT_ARM
+    case BOOT_PAYLOAD_NONE:
+        return 0;
+    }
+    /* Unreachable for a known type; present so the function has a defined
+     * value if a future compiler stops proving the switch total. Kept
+     * AFTER the switch rather than as a `default`, because a `default`
+     * would silence the -Wswitch guarantee above. */
+    return 0;
+}
+
+/* Does the aggregate reservation budget still admit `length` bytes, given
+ * `reserved_total` already claimed?
+ *
+ * A one-line rule extracted into a pure function ON PURPOSE, for the reason
+ * the early-entropy seed payload capability gate settled: a guard with no
+ * observable seam is a guard no
+ * test can prove fired. The reservation pass itself cannot be driven from a
+ * unit test -- it calls pmm_mark_region_used() on live frames -- so the
+ * DECISION is expressed as data here and asserted directly, and the pass
+ * calls this rather than repeating the comparison.
+ *
+ * Written as a subtraction against the remaining budget rather than
+ * `reserved_total + length > MAX`, so the addition cannot overflow on a
+ * hostile length near UINT64_MAX and wrap into an accept. */
+int boot_payload_budget_admits(uint64_t reserved_total, uint64_t length)
+{
+    if (reserved_total > BOOT_PAYLOAD_RESERVE_TOTAL_MAX)
+        return 0;
+    return length <= BOOT_PAYLOAD_RESERVE_TOTAL_MAX - reserved_total;
+}
+
+/* The human label for a type, for refusal diagnostics. A refusal line that
+ * prints only a number makes the reader open the enum; naming the payload
+ * is what lets an operator recognize their own boot.conf entry. */
+const char *boot_payload_type_label(uint32_t type)
+{
+    switch (type) {
+#define BOOT_PAYLOAD_LABEL_ARM(type_value, label, min_bytes, max_bytes, reason) \
+    case (type_value): return (label);
+    BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LABEL_ARM)
+#undef BOOT_PAYLOAD_LABEL_ARM
+    default: return "unknown";
     }
 }
 

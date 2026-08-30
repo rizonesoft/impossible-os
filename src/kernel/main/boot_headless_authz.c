@@ -23,6 +23,7 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
+#include "kernel/mm/boot_reserved.h" /* boot_reserved_payload_is_pinned */
 #include "kernel/kchecksum.h"
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"   /* POST16_BOOT_HL_AUTHZ -- Phase-1 boot path */
@@ -71,8 +72,18 @@ boot_hl_authz_class_t boot_headless_authz_classify(uint32_t caps_present,
         return BOOT_HL_AUTHZ_OUT_OF_MAP;
     /* EXACT length. The blob is a fixed-layout record whose signature covers a
      * fixed byte range, so a short file is not a weaker authorization and a
-     * long one is not this format. */
-    if (length != (uint64_t)TPM_HEADLESS_BLOB_LEN)
+     * long one is not this format.
+     *
+     * Asked through the SHARED contract rather than compared here, even
+     * though this type's minimum and maximum are both TPM_HEADLESS_BLOB_LEN
+     * and the two are numerically identical today. The reservation pass
+     * decides what it PINS from that table; a second copy of the bound
+     * living in the consumer is precisely the drift that let
+     * canary_seed_desc_ok() keep its own length rule after the pass stopped
+     * honouring it. One source, both sides. (The per-type payload length
+     * contract.) */
+    if (!boot_payload_length_reservable((uint32_t)BOOT_PAYLOAD_HEADLESS_AUTHZ,
+                                        length))
         return BOOT_HL_AUTHZ_BAD_LENGTH;
     /* The loader always checksums this type. An unchecksummed descriptor did
      * not come from a producer that understands the contract, so there is
@@ -139,6 +150,15 @@ uint32_t boot_headless_authz_take_from(struct boot_info *info,
 
         cls = boot_headless_authz_classify(info->caps_present, d->flags,
                                            d->phys_start, d->length);
+        /* Same correction as the seed consumer: the classifier reads the
+         * handoff, this reads what the pass pinned. A budget- or
+         * duplicate-skipped authorization is in contract and RESERVED-flagged
+         * and was never pinned, so it is refused rather than dereferenced. */
+        if (cls == BOOT_HL_AUTHZ_USABLE
+            && !boot_reserved_payload_is_pinned(
+                   (uint32_t)(d - &info->payload_descriptors[0]),
+                   d->phys_start, d->length))
+            cls = BOOT_HL_AUTHZ_NOT_RESERVED;
 
         /* A REJECTED DESCRIPTOR'S MEMORY IS NEVER TOUCHED, whatever the
          * reason. `payload` is assigned for the USABLE class alone, so every
