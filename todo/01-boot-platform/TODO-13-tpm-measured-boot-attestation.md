@@ -69,7 +69,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  29   | Authorized-record hardening                                   | §27                                                       |  [x]   |
 | 💎  |  30   | Headless authorization transport + full-record binding        | §23, §6, §27                                              |  [x]   |
 | 💎  |  31   | Loader digest correlation with the firmware PCR 4 measurement | §1, §20, §25                                              |  [/]   |
-| 💎  |  32   | Authorized-record coverage residue on existing fixtures       | §29, §27, §28                                             |  [ ]   |
+| 💎  |  32   | Authorized-record coverage residue on existing fixtures       | §29, §27, §28                                             |  [/]   |
 | 💎  |  33   | PCR-layer contention loses its retry                          | §29, §25                                                  |  [ ]   |
 | 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [ ]   |
 | 💎  |  35   | Shared fake-TIS fixture extension and the coverage it unlocks | §32, §28, §29, §30                                        |  [ ]   |
@@ -1395,20 +1395,28 @@ Split out of §29 on 2026-08-19, when its manifest returned SPLIT-RECOMMENDED at
 
 Every item here has the same failure shape: a promise the code makes that no test would notice being deleted. That is why they are coverage rather than hardening, and why they are worth a section rather than a park.
 
-- [ ] Cover the write path's recreated-anchor gate directly: the current test returns `TPM_NV_RECREATED` from the READ path before `tpm_authz_write_record` is ever reached, so the separate write-side check has no coverage.
+- [/] Cover the write path's recreated-anchor gate directly: the current test returns `TPM_NV_RECREATED` from the READ path before `tpm_authz_write_record` is ever reached, so the separate write-side check has no coverage.
   - Call `tpm_authz_write_record` with the fixture reporting WRITTEN clear, and assert the refusal lands BEFORE LoadExternal, NV_Write or NV_Increment, beside a written-index success control.
-- [ ] Give the fake a corrupted-readback mode: the transaction promises not to commit until the record reads back byte for byte, but the fixture always returns exactly what was written, so deleting that comparison would leave every suite green.
+- [/] Give the fake a corrupted-readback mode: the transaction promises not to commit until the record reads back byte for byte, but the fixture always returns exactly what was written, so deleting that comparison would leave every suite green.
   - Assert `TPM_NV_MISMATCH`, one write, zero increments and no surviving handles for both an altered and a short readback.
-- [ ] Cover the missing and uninitialized anchor refusals at the public writers, so an absent or never-written index cannot be papered over by a fresh write.
-- [ ] Drive `tpm_headless_enroll_prepare` past its local half: today only the three pre-authentication exits (absent, no-authority, forged) are asserted, so the transition logic itself has no coverage.
+- [/] Cover the missing and uninitialized anchor refusals at the public writers, so an absent or never-written index cannot be papered over by a fresh write.
+- [/] Drive `tpm_headless_enroll_prepare` past its local half: today only the three pre-authentication exits (absent, no-authority, forged) are asserted, so the transition logic itself has no coverage.
   - Assertable on the EXISTING one-index fake, with no CreatePrimary and no second index: a valid blob with the baseline index absent must return OK with operation ENROLL and `transition_id(NULL, 0, cand)`; a valid generation-9 predecessor must return OK with ROTATE and `transition_id(prev, 9, cand)`; a corrupt predecessor or an injected NV_READ failure must return UNKNOWN_STATE with no define and no write; an injected first PCR_READ failure must return UNKNOWN_STATE without even reading the predecessor.
   - Found by §30's second test-coverage round -> XREF: 01-boot-platform/TODO-13 §30 (item: "Wire the production caller, with the console path proven untouched").
-- [ ] Cover the baseline write path's UNINIT and mutating-NV failure boundaries, which the predecessor and headless suites both stop short of.
+- [/] Cover the baseline write path's UNINIT and mutating-NV failure boundaries, which the predecessor and headless suites both stop short of.
   - A defined-but-unwritten 412-byte index must read as NO_BASELINE and enroll at generation 1; an unwritten WRONG-SIZED index must return `TPM_BASELINE_TPMERR` and issue no write; an injected `NV_DEFINE_SPACE` failure must return TPMERR with no write; an injected `NV_WRITE` failure must return TPMERR and leave the stored content byte-for-byte unchanged.
   - Found by §30's second test-coverage round.
-- [ ] Commit: `"tpm: authorized-record coverage residue on existing fixtures"`
+- [/] BLOCKED on the kernel-image ceiling -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone"). Commit: `"tpm: authorized-record coverage residue on existing fixtures"`
+
+Design review outcome, recorded here so the re-attempt is mechanical rather than a re-design. Three decisions were settled and are already reflected in the item text and in the preserved diff.
+
+- The two wrapper refusals (`tpm_ab_floor_advance` on an absent anchor, `tpm_baseline_bind_write` on an uninitialized counter) are NOT pinned by asserting the status and a zero write count: deleting either early return (`tpm_authz.c:1475-1477`, `:1594-1596`) falls through to `tpm_authz_write_record`, whose `authz_write_seq` re-reads the same anchor (`tpm_authz.c:782-783`) and returns the SAME status with no write. What separates them is the transcript, so each case asserts the anchor is read EXACTLY ONCE.
+- The readback check's two arms need two different producers. The content arm is a device that acknowledged the write and PERSISTED different bytes, which the fake models by altering what it stored; the length arm is a device that RETURNED fewer bytes than asked for, because a defined index has a fixed dataSize and cannot shrink. Doctoring the reply for both would misattribute the persisted case.
+- No new write-before-commit ordering test is warranted: `test_authz_e2e_write_then_increment_order` (`src/kernel/test/test_tpm_authz.c:2298-2315`) already pins NV_Write before the readback before NV_Increment.
 
 **Test checkpoint:** each of the five paths is exercised by a test that FAILS when the guard it pins is deleted, which is the bar the corrupted-readback item exists to state: a fixture that always returns what was written cannot prove a readback comparison. The write-side recreated-anchor refusal is observed BEFORE LoadExternal, NV_Write or NV_Increment, beside a written-index success control, so a read-path refusal cannot stand in for it. Scope: this section owns executable coverage only and changes no production contract; the shared fake-TIS extension and the four items gated on it are §35, the production hardening is §29, the record authorization is §27, and the crash-consistent pairing is §28. Platforms: fake-TIS unit suites are the whole automatable surface; live swtpm is operator-gated (no `swtpm` on the dev host).
+
+> **Deferred:** [H] The section is entirely new test `.text` and the kernel image has ONE page of headroom (`__kernel_end` 0x7ff000 against `USER_BASE` 0x800000). Three of the five items measured +5,216 bytes of `.text` and tripped `BSS COLLISION` on their first build; the tree was restored green and the authored tests are preserved at `.claude/state/deferred-todo13-s32.patch` -> XREF: 02-kernel-core/TODO-33 §7 (item: "Re-run `01-boot-platform/TODO-13` §32 once the guard is gone")
 
 ## 33. PCR-Layer Contention Loses Its Retry
 
