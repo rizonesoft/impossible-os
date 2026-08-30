@@ -69,7 +69,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | ⭐  |  10   | Bootloader build identity dump in BlackBox                 | TODO-01 §20                        |  [x]   |
 | 💎  |  11   | Boot load status log (ntbtlog parity)                      | §2                                 |  [/]   |
 | 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)     | §11; D02 T33 §7 (image ceiling)    |  [/]   |
-| 💎  |  13   | klog format-width contract (`-Wformat` on every call site) | --                                 |  [ ]   |
+| 💎  |  13   | klog format-width contract (`-Wformat` on every call site) | D02 T33 §7 (image ceiling)         |  [/]   |
 | 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`) | §5                                 |  [ ]   |
 | ⭐  |  15   | Anti-rollback terminal give-up durable record              | TODO-01 §25                        |  [ ]   |
 | ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)          | §9                                 |  [ ]   |
@@ -408,15 +408,28 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 
 > **Spawned-by:** root
 
+> **Deferred:** 2026-08-30 | kernel-image ceiling, MEASURED, plus a sequencing correction recorded below -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard").
+>
+> The engine change alone does not fit. A minimal probe of `vformat_buf` -- track whether `l` was seen, and read a bare `%d`/`%u`/`%x` as 32-bit -- measured **+112 bytes of `.text`** against **79 bytes** of headroom (`.text` ends at `0x427FB1`, page boundary `0x428000`), landing `__kernel_end` on `0x800000`. The probe was reverted and the tree left green. That is the whole section's first line of work, so nothing after it is reachable either.
+>
+> Surface, measured the same day so the redo does not re-count it: **2,731 `%u`, 709 `%x`, 291 `%d`, 249 `%X`** conversions and **7,119 `(uint64_t)` casts** across `src/kernel`. That is an order of magnitude past the "73 `%d` call sites" this section was written against.
+>
+> **Sequencing correction, and it is the useful part of this deferral.** The section requires every call site to convert in the SAME commit as the engine change, on the grounds that the intermediate state is silently wrong. That is right, and it makes the change a ~3,700-site big bang -- but it also names its own tool: `-Wformat` is the only thing that can pair a conversion with its argument, and the attribute that enables it can only be added once the semantics are standard. So the order is not "audit every site, then flip"; it is flip the engine, add the attribute, and then let the compiler ENUMERATE every mismatch, fixing until the build is clean. The migration is mechanical that way and a hand audit of 3,700 sites is not.
+>
+> A two-phase split was considered and REJECTED for the same reason. Phase A (teach the engine `l`, leave bare conversions 64-bit, convert sites `%u` -> `%lu` in batches) is behaviorally a no-op at every step and costs no `.text`, which is exactly why it is attractive under this ceiling. But `-Wformat` is still off during all of it, so each batch is an unverifiable hand pairing, and a wrong one stays invisible until the phase-B flip -- which is the same silent-wrongness the atomic requirement exists to prevent, just spread over more commits. Do it in one commit, with the compiler checking.
+
 `vformat_buf` reads EVERY numeric conversion as a full 64-bit vararg (`src/kernel/klog.c:177`, `:193`, `:204`), so a caller passing a 32-bit value is relying on luck: the compiler usually zero-extends into a register slot and it prints correctly, but a value that lands in a STACK slot (roughly the 4th vararg onward) leaves the upper 4 bytes uninitialized. Found live, not projected -- the test runner's failing-assertion line passed `int line` as its 7th argument and rendered `test_harness.c:-194693637781585198`. That ONE site is fixed at its source (the record is now composed without varargs); this section closes the CLASS -> XREF: `00-infrastructure/TODO-03 §10` (item: "A failing `TEST_ASSERT` whose composed klog line exceeds the 256-byte message buffer wedges the boot").
 
-- [ ] Move `%d`/`%u`/`%x` to standard C width semantics (32-bit by default, 64-bit only under `l`/`ll`) in `vformat_buf` (`src/kernel/klog.c:99`), which today SKIPS length modifiers outright at `klog.c:171`.
+- [/] Move `%d`/`%u`/`%x` to standard C width semantics in `vformat_buf`, blocked by the kernel-image ceiling
+  - 32-bit by default, 64-bit only under `l`/`ll`. `vformat_buf` (`src/kernel/klog.c:99`) today SKIPS length modifiers outright at `klog.c:171`.
+  - Measured 2026-08-30: +112 bytes of `.text` against 79 available.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
   - The migration is the work, not the parse change: every call site passing a deliberate `(uint64_t)` cast against a bare `%u` starts truncating silently, and addresses printed with `%x` are the common case.
   - Sites must be converted in the SAME commit as the engine change, never after it, because the intermediate state is silently wrong rather than broken.
   - Measured surface as of 2026-08-14: 73 `klog(...)` call sites use `%d`; the `%u`/`%x` population is not yet counted. Three VERIFIED-corrupting sites were cast at source when found (`src/kernel/image.c`, `src/kernel/symtab.c` x2) -- each passed a negative `int` error code, which the 64-bit read renders as a huge positive; they are evidence the class is live, not a substitute for the sweep.
-- [ ] Add `__attribute__((format(printf, 3, 4)))` to `klog`/`klog_unrated`/`klog_receipted` once the semantics are standard, so `-Wformat` checks every call site and the class cannot come back. This is the Linux `printk` model.
-- [ ] Delete the hand-written width warning from `include/kernel/klog.h` once the compiler enforces it -- a documented contract the compiler could check instead is a contract that drifts.
-- [ ] Commit: `"klog: standard printf width semantics with -Wformat on every call site"`
+- [/] Add `__attribute__((format(printf, 3, 4)))` to `klog`/`klog_unrated`/`klog_receipted` once the semantics are standard, so `-Wformat` checks every call site and the class cannot come back. This is the Linux `printk` model.
+- [/] Delete the hand-written width warning from `include/kernel/klog.h` once the compiler enforces it -- a documented contract the compiler could check instead is a contract that drifts.
+- [/] Commit: `"klog: standard printf width semantics with -Wformat on every call site"` -- lands with the engine flip and the attribute in ONE commit, once the ceiling is gone
 
 **Test checkpoint:** a `klog` call with eight 32-bit arguments renders all eight correctly (the stack-slot case that fails today); a build with a deliberately mismatched conversion FAILS with `-Wformat`; the full suite stays green and no existing log line changes shape.
 
