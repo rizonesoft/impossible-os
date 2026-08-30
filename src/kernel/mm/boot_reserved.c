@@ -653,6 +653,30 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
      * disjointness checks in pmm_init(), which run before
      * boot_reserved_apply() -- halts the boot, so no consumer ever observes a
      * commit the machine did not honor. */
+    /* WHO OWNS A WARM EXTENT THIS BOOT REFUSED. The answer is: nobody, and
+     * that is a decision rather than an oversight.
+     *
+     * Refusing to pin reclaims nothing. pmm_init marks every tracked frame
+     * used and frees only UEFI types 1, 2, 3, 4 and 7 (src/kernel/mm/pmm.c),
+     * so a staged extent carried as BOOT_MMAP_WARM_UPDATE stays unavailable
+     * whatever this table says, and two refused duplicates are two regions
+     * nobody owns and nobody can allocate. The choice was reclaim-or-hold:
+     *
+     *   RECLAIM hands a dead outgoing kernel's staging area to the allocator
+     *   on the strength of a map type that is numerically
+     *   EfiUnacceptedMemoryType, so the same path would hand a confidential-
+     *   computing platform's unaccepted pages to kmalloc. That is a fault on
+     *   real hardware, not merely lost RAM.
+     *
+     *   HOLD costs the extent until the machine is power-cycled, which is
+     *   bounded, non-destructive, and diagnosable.
+     *
+     * HOLD wins, and the refusal line below is what keeps it diagnosable
+     * rather than silent. Reclaiming safely needs producer-side provenance
+     * distinguishing staged state from native unaccepted memory, which the
+     * handoff does not carry -- owned by the outgoing-kernel staging area
+     * (the warm-kernel-update runtime's outgoing-kernel staging area,
+     * todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md). */
     if (warm->verdict == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE) {
         if (warm_range_is_applicable(warm->phys_start, warm->length)) {
             boot_warm_update_selection_mark_pinned();

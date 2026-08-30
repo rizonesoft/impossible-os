@@ -147,6 +147,27 @@ boot_result_t pmm_init(void)
      * addresses well above physical RAM (e.g. 0xFED40000) -- including
      * them would make the bitmap cover the MMIO hole and pmm_alloc would
      * hand out non-existent pages.
+     *
+     * A WARM-UPDATE EXTENT DELIBERATELY DOES NOT RAISE THIS CEILING. The
+     * decision is recorded here because the alternative looks free: adding
+     * BOOT_MMAP_WARM_UPDATE to the scan would put a staged carveout above the
+     * highest conventional region inside the bitmap, which is the only reason
+     * such a region is not representable today.
+     *
+     * It is refused on two grounds. BOOT_MMAP_WARM_UPDATE is numerically 15
+     * and so is EfiUnacceptedMemoryType (UEFI 2.9 onward, sect. 7.2.1), and
+     * the loader stores the firmware type verbatim, so a scan keyed on 15
+     * would also stretch the bitmap over memory a confidential-computing
+     * platform requires the OS to ACCEPT before use -- native unaccepted RAM
+     * silently reclassified as staged kernel state. And it is not needed:
+     * every pmm_alloc_* path is bounded by total_frames, so a frame ABOVE the
+     * ceiling can never be handed out either. Being outside the bitmap costs
+     * such a region nothing but a reservation entry that marks nothing; what
+     * it genuinely needs is to be ADDRESSABLE, which the 4 GiB identity map
+     * decides. Reclassifying safely needs producer-side provenance the handoff
+     * does not carry yet -- the warm-kernel-update runtime's outgoing-kernel
+     * staging area owns it
+     * (todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md).
      */
     for (i = 0; i < g_boot_info.mmap_count; i++) {
         uint32_t utype = g_boot_info.mmap[i].uefi_memory_type;

@@ -56,10 +56,23 @@
 #define UEFI_MMAP_PAL_CODE             13   /* EfiPalCode */
 #define UEFI_MMAP_PERSISTENT           14   /* EfiPersistentMemory */
 /* Warm-kernel-update preserved memory (section 14). Used when
- * firmware does not expose EfiUnacceptedMemoryType (UEFI 2.10+) for
+ * firmware does not expose EfiUnacceptedMemoryType (UEFI 2.9+) for
  * the staged region. Treated like UEFI_MMAP_RESERVED by the
  * free-memory handoff: never reclaimed, matched to a
- * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor by the consumer. */
+ * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor by the consumer.
+ *
+ * THIS VALUE IS NOT A DISCRIMINATOR ON ITS OWN. EfiUnacceptedMemoryType is
+ * numerically 15 in EFI_MEMORY_TYPE (UEFI 2.9 sect. 7.2.1 onward; the enum
+ * mirror is src/boot/uefi/efi.h) and the loader stores the firmware type
+ * verbatim, so a type-15 map entry may equally be memory a confidential-
+ * computing platform requires the OS to ACCEPT before any use. Kernel code
+ * must therefore establish warm-update provenance from the handoff -- the
+ * BOOT_FLAG_WARM_UPDATE signal plus an admissible
+ * BOOT_PAYLOAD_WARM_UPDATE_STATE descriptor, adjudicated once by the sealed
+ * selection -- and never from this value alone. Giving staged extents their
+ * own out-of-band tag is producer-side work owned by the outgoing-kernel
+ * staging area
+ * (todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md). */
 #define BOOT_MMAP_WARM_UPDATE          15
 
 /* ---- boot_info ABI header (S15) ----

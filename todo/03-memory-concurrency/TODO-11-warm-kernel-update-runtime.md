@@ -47,6 +47,10 @@ Ship the runtime machinery that uses the warm-kernel-update handoff ABI from [01
 
 Carve a preserved-memory region from the PMM, mark its pages as non-reclaimable in the boot_info `boot_mmap[]` under `BOOT_MMAP_WARM_UPDATE` or `EfiUnacceptedMemoryType`, populate a `BOOT_PAYLOAD_WARM_UPDATE_STATE` descriptor pointing at the region, and tell PMM that the folios belonging to user processes are to be preserved (not freed) at shutdown.
 
+- [ ] Give a staged extent PROVENANCE the incoming kernel can read, rather than relying on the `BOOT_MMAP_WARM_UPDATE` map type alone.
+  - `BOOT_MMAP_WARM_UPDATE` is numerically 15 and so is `EfiUnacceptedMemoryType` (UEFI 2.9 sect. 7.2.1 onward), and `src/boot/uefi/bootx64.c` stores the firmware type verbatim, so a type-15 entry may equally be memory a confidential-computing platform requires the OS to ACCEPT before use. The incoming kernel therefore cannot tell staged preserved state from native unaccepted RAM by map type.
+  - Two consequences are already load-bearing and both are recorded in code: `src/kernel/mm/pmm.c` refuses to let a type-15 extent raise the PMM tracking ceiling, and `src/kernel/mm/boot_reserved.c` HOLDS rather than reclaims an extent whose selection was refused. Reclaiming, or trusting the map type, becomes safe only once this item ships.
+  - -> XREF: `01-boot-platform/TODO-01 §30` (item: "Decide who owns a warm-update map extent that the §29 selection REFUSED, and make the decision explicit.")
 - [ ] Stub: to be filled when §1 lands.
 - [ ] Commit: `"mm: warm-update outgoing-kernel folio preservation"`
 
