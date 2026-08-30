@@ -79,6 +79,38 @@ _Static_assert(BOOT_INFO_PHYS_ADDR % 0x1000ULL == 0ULL,
 _Static_assert(BOOT_INFO_PHYS_ADDR >= BOOT_INFO_MIN_ADDR,
     "BOOT_INFO_PHYS_ADDR must clear the NULL page (validate_addr floor)");
 
+/* Physical page holding struct panic_evidence (include/kernel/panic.h)
+ * across a reset. The bootloader pins it with AllocatePages(AllocateAddress)
+ * before any other allocation it makes, so neither firmware nor BOOTX64 can
+ * hand the page out and overwrite the previous boot's crash record between
+ * the reset and the kernel's restore (TODO-14 sec14).
+ *
+ * Lives HERE for the same reason the handoff base does: the bootloader cannot
+ * include panic.h (kernel-only types), so a loader-side literal would be a
+ * second uncoordinated copy of an address the kernel already pins. panic.h
+ * asserts its own PANIC_EVIDENCE_ADDR against this value, so a change on
+ * either side fails the build instead of producing a loader that reserves a
+ * page the kernel never reads. */
+#define PANIC_EVIDENCE_PHYS_ADDR          0x80000ULL
+
+/* Page-aligned: AllocateAddress allocates whole frames, and a base partway
+ * into a page would pin a frame that does not start where the record does. */
+_Static_assert(PANIC_EVIDENCE_PHYS_ADDR % 0x1000ULL == 0ULL,
+    "PANIC_EVIDENCE_PHYS_ADDR must be 4 KiB page-aligned");
+/* Clear of the NULL page / real-mode IVT / BDA, same floor the handoff base
+ * clears -- a record below it could never be a legitimate allocation. */
+_Static_assert(PANIC_EVIDENCE_PHYS_ADDR >= BOOT_INFO_MIN_ADDR,
+    "PANIC_EVIDENCE_PHYS_ADDR must clear the NULL page");
+/* Distinct from the handoff base: the two are pinned independently and a
+ * collision would have the loader reserve one page for both purposes. */
+_Static_assert(PANIC_EVIDENCE_PHYS_ADDR != BOOT_INFO_PHYS_ADDR,
+    "PANIC_EVIDENCE_PHYS_ADDR must not collide with BOOT_INFO_PHYS_ADDR");
+/* Inside the legacy first MiB, which the kernel PMM reserves wholesale
+ * (src/kernel/mm/pmm.c). That blanket reservation is what protects the page
+ * from kernel entry onward; the loader-side pin covers the window before it. */
+_Static_assert(PANIC_EVIDENCE_PHYS_ADDR < 0x100000ULL,
+    "PANIC_EVIDENCE_PHYS_ADDR must sit inside the PMM-reserved first MiB");
+
 /* BVPF = "Boot Version Protocol Fault". */
 #define BOOT_VERSION_FAULT_MAGIC          0x42565046u
 

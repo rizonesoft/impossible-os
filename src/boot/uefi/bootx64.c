@@ -225,6 +225,20 @@ static UINT16 g_boot_section = BOOT_SECTION_UNKNOWN;
 #define G_POLICY_KIND_UNSET 0xFFFFFFFFu
 static UINT32 g_policy_selected_kind = G_POLICY_KIND_UNSET;
 
+/* Outcome of pinning the panic-evidence page at PANIC_EVIDENCE_PHYS_ADDR
+ * (TODO-14 sec14). The pin runs at the very top of efi_main -- before
+ * ClearScreen, before serial_early_init, before boot_log_init -- because it
+ * must precede every allocation and every firmware protocol call this loader
+ * makes. Serial is not up yet at that point, so the status is parked here and
+ * reported once boot_log_init has run and the line can be captured.
+ *
+ * EFI_SUCCESS means this loader owns the page for the rest of the boot; any
+ * error means firmware already owns it or will not hand it over. Neither is
+ * a statement about the page's CONTENTS: a refusal does not prove a crash
+ * record was destroyed, and a success does not prove one survived. */
+static EFI_STATUS g_panic_page_status = EFI_SUCCESS;
+static BOOLEAN    g_panic_page_attempted = 0;
+
 /* Per-kind decoded payload from the policy-selected envelope. Populated
  * by boot_policy_invoke() AFTER menu override + SAFE materialization
  * but BEFORE counter decrement -- so the validation runs on the FINAL
@@ -12590,6 +12604,7 @@ static inline void post_code16(UINT16 code)
 
 /* 16-bit POST codes for UEFI bootloader (0xB000 range) */
 #define POST16_BL_ENTRY         0xB001
+#define POST16_BL_PANIC_PAGE    0xB002  /* panic-evidence page pin attempted */
 #define POST16_BL_GOP           0xB010
 #define POST16_BL_KERNEL_OPEN   0xB020
 #define POST16_BL_KERNEL_LOAD   0xB021
@@ -16209,6 +16224,53 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * fatal during the very first phase records BL_INIT (not UNKNOWN). */
     boot_set_section(BOOT_SECTION_BL_INIT);
 
+    /* TODO-14 sec14: pin the panic-evidence page BEFORE anything else this
+     * image does. The kernel's PMM keeps the page out of the allocator from
+     * kernel entry onward (the blanket first-MiB reservation), but nothing
+     * protects it across the window between the reset and that reservation:
+     * firmware is free to satisfy any allocation from it, and so is every
+     * AllocateAnyPages call this loader makes later. Losing that race
+     * overwrites the previous boot's crash record with no diagnostic at all.
+     *
+     * This must precede ClearScreen too, not merely the first allocation: a
+     * firmware protocol implementation may allocate internally, so the only
+     * safe position is ahead of every firmware call the image issues.
+     *
+     * EfiLoaderData, matching the boot_info pin below. UEFI reserves
+     * EfiReservedMemoryType for firmware and forbids a loader from allocating
+     * it, and EfiACPIMemoryNVS would misdescribe loader-owned evidence as ACPI
+     * state. LoaderData being kernel-reclaimable costs nothing here: the page
+     * is inside the first MiB the PMM reserves wholesale regardless of type.
+     *
+     * The pin claims the page; it does NOT preserve what is in it. UEFI
+     * guarantees allocation and memory-map reclassification, not that the
+     * prior bytes survive, so a conforming allocator could scrub the page and
+     * still return EFI_SUCCESS. That is the same non-contractual platform
+     * behaviour the whole cross-boot record already rests on (RAM contents
+     * surviving a reset and firmware init), and it fails SAFE either way: the
+     * record is magic- and CRC-validated on restore (src/kernel/panic.c), so a
+     * scrubbed page reads as "no record", never as a false one.
+     *
+     * NOT fatal on failure, unlike the boot_info pin: a machine that boots
+     * without crash forensics is strictly better than one that refuses to
+     * boot.
+     *
+     * POST16 first because serial is not up yet: this is the image's FIRST
+     * firmware call, so without a breadcrumb here a fault inside the firmware
+     * allocator is indistinguishable from never reaching our code at all.
+     * post_code16 reaches I/O port 0x80 unconditionally, but its serial half
+     * is a no-op until serial_early_init runs, so THIS emission is visible
+     * only to a POST card. The same code is re-emitted in the report block
+     * below, where it can be recorded and asserted. */
+    post_code16(POST16_BL_PANIC_PAGE);
+    {
+        EFI_PHYSICAL_ADDRESS pe_addr =
+            (EFI_PHYSICAL_ADDRESS)PANIC_EVIDENCE_PHYS_ADDR;
+        g_panic_page_status = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                                                 1, &pe_addr);
+        g_panic_page_attempted = 1;
+    }
+
     /* Clear the UEFI text console immediately -- firmware (BdsDxe, QEMU MMIO
      * warnings) may have left text on screen before our image was launched. */
     if (SystemTable->ConOut)
@@ -16237,6 +16299,47 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     post_code16(POST16_BL_ENTRY);
     serial_early_print("[BOOT] efi_main entered\n");
+
+    /* TODO-14 sec14: report the panic-evidence pin attempted at the very top
+     * of efi_main. Deferred to here because serial was not initialised and
+     * boot_log_init had not run when the pin happened, so a line printed then
+     * would have gone nowhere and been absent from the ESP boot log.
+     *
+     * Both outcomes are logged explicitly. A silent success would leave no
+     * evidence that the protection is in force on a given machine, and an
+     * unlogged failure is exactly the silent-corruption path this pin exists
+     * to close -- the reader must be able to tell "protected" from
+     * "unprotected" without guessing. Deliberately not "firmware owns it":
+     * a refusal narrows the page's status, it does not name an owner. */
+    if (g_panic_page_attempted) {
+        /* Re-emit the pin's POST code now that serial is live. The emission at
+         * the pin itself reached port 0x80 only (serial was not initialised
+         * yet), so this is the one a serial capture -- and therefore the smoke
+         * test's required-code assertion -- can actually observe. Same code by
+         * design: it marks the same milestone, once for a POST card at the
+         * moment it happens and once for the log that outlives the boot. */
+        post_code16(POST16_BL_PANIC_PAGE);
+        if (!EFI_ERROR(g_panic_page_status)) {
+            serial_early_print("[BOOT] Panic evidence: page 0x");
+            serial_early_print_hex16(
+                (UINT16)(PANIC_EVIDENCE_PHYS_ADDR >> 16));
+            serial_early_print_hex16((UINT16)PANIC_EVIDENCE_PHYS_ADDR);
+            serial_early_print(" pinned before other allocations\n");
+        } else {
+            serial_early_print("[WARN] Panic evidence: page 0x");
+            serial_early_print_hex16(
+                (UINT16)(PANIC_EVIDENCE_PHYS_ADDR >> 16));
+            serial_early_print_hex16((UINT16)PANIC_EVIDENCE_PHYS_ADDR);
+            serial_early_print(" not pinned, status=0x");
+            serial_early_print_hex16((UINT16)g_panic_page_status);
+            /* Deliberately NOT "firmware owns it": AllocatePages can refuse
+             * with OUT_OF_RESOURCES or INVALID_PARAMETER, neither of which
+             * establishes an owner. All this boot knows is that the page is
+             * unprotected. */
+            serial_early_print(" -- unprotected this boot; a prior crash"
+                               " record may be overwritten\n");
+        }
+    }
 
     /* UKI globals reset BEFORE any path that consults them. Must run
      * unconditionally because detect_uki_sections() is gated on
