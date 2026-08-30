@@ -86,15 +86,18 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
 
 #define PANIC_EVIDENCE_MAGIC    0xDEADBEEFu
 #define PANIC_EVIDENCE_VERSION  3u   /* v3: publication word carries an epoch */
-#define PANIC_EVIDENCE_ADDR     0x80000u   /* fixed physical page; reserved by PMM */
-/* The bootloader cannot include this header (kernel-only types), so the same
- * address is also defined in the UEFI-safe constants header it CAN include,
- * and pinned here. Without this the loader could reserve one page while the
- * kernel restored from another, with both halves building green. */
-_Static_assert(PANIC_EVIDENCE_ADDR == PANIC_EVIDENCE_PHYS_ADDR,
-    "PANIC_EVIDENCE_ADDR must match PANIC_EVIDENCE_PHYS_ADDR in "
-    "include/kernel/boot_version_constants.h -- the bootloader reserves the "
-    "page by that constant");
+/* Fixed physical page; kept out of the allocator by the PMM's first-MiB
+ * reservation, and pinned pre-EBS by the bootloader (TODO-14 sec14).
+ *
+ * DERIVED, not restated. The bootloader cannot include this header (kernel-only
+ * types), so the address lives in the UEFI-safe constants header it CAN include
+ * and this is the kernel's spelling of that one definition. An equality
+ * _Static_assert between two literals was the first shape tried and is strictly
+ * weaker: it still permits two values to exist and merely notices when they
+ * diverge, whereas deriving makes divergence unrepresentable. The cast keeps the
+ * pre-existing uint32 type, so every `(uintptr_t)PANIC_EVIDENCE_ADDR` cast in
+ * src/kernel/panic.c is unchanged. */
+#define PANIC_EVIDENCE_ADDR     ((uint32_t)PANIC_EVIDENCE_PHYS_ADDR)
 #define PANIC_EVIDENCE_STAGES   16u        /* last N boot-stage entries captured */
 #define PANIC_EVIDENCE_KLOGS    8u         /* last N klog ring entries captured */
 

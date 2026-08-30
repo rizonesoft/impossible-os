@@ -12601,6 +12601,14 @@ static inline void post_code16(UINT16 code)
 #define POST_EXIT_BOOT_SERVICES 0x07
 #define POST_PAGE_TABLES        0x08
 #define POST_KERNEL_JUMP        0x09
+/* Pre-serial breadcrumb for the panic-evidence pin. 8-bit on purpose: it runs
+ * before serial_early_init, and post_code16 would drag serial_early_print in
+ * with it. This loader does NOT zero .bss (see the note near the top of the
+ * file -- firmware pool-poisons it with 0xAF), so s_serial_port can hold
+ * 0xAFAF there, which is NON-ZERO and sails past serial_early_putchar's
+ * `if (!s_serial_port) return;` guard straight into inb/outb on an arbitrary
+ * I/O port. post_code is a bare `outb $0x80` and touches no static state. */
+#define POST_PANIC_PAGE         0x0A
 
 /* 16-bit POST codes for UEFI bootloader (0xB000 range) */
 #define POST16_BL_ENTRY         0xB001
@@ -16255,14 +16263,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * without crash forensics is strictly better than one that refuses to
      * boot.
      *
-     * POST16 first because serial is not up yet: this is the image's FIRST
-     * firmware call, so without a breadcrumb here a fault inside the firmware
-     * allocator is indistinguishable from never reaching our code at all.
-     * post_code16 reaches I/O port 0x80 unconditionally, but its serial half
-     * is a no-op until serial_early_init runs, so THIS emission is visible
-     * only to a POST card. The same code is re-emitted in the report block
-     * below, where it can be recorded and asserted. */
-    post_code16(POST16_BL_PANIC_PAGE);
+     * A breadcrumb first because this is the image's FIRST firmware call, so
+     * without one a fault inside the firmware allocator is indistinguishable
+     * from never reaching our code at all. It MUST be the 8-bit post_code,
+     * not post_code16: post_code16 also prints through serial_early_print,
+     * and at this point s_serial_port is uninitialised .bss that firmware has
+     * poisoned to 0xAF -- non-zero, so it passes serial_early_putchar's
+     * `if (!s_serial_port) return;` guard and drives inb/outb on an arbitrary
+     * I/O port. post_code is a bare `outb $0x80` with no static state.
+     * POST16_BL_PANIC_PAGE is emitted later, from the report block, once
+     * serial is genuinely up. */
+    post_code(POST_PANIC_PAGE);
     {
         EFI_PHYSICAL_ADDRESS pe_addr =
             (EFI_PHYSICAL_ADDRESS)PANIC_EVIDENCE_PHYS_ADDR;
@@ -16310,21 +16321,23 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * unlogged failure is exactly the silent-corruption path this pin exists
      * to close -- the reader must be able to tell "protected" from
      * "unprotected" without guessing. Deliberately not "firmware owns it":
-     * a refusal narrows the page's status, it does not name an owner. */
+     * a refusal narrows the page's status, it does not name an owner.
+     *
+     * The success path also carries POST16_BL_PANIC_PAGE, which is this
+     * section's smoke-test oracle. The pin itself left only the 8-bit
+     * POST_PANIC_PAGE on port 0x80, which no serial capture can see. */
     if (g_panic_page_attempted) {
-        /* Re-emit the pin's POST code now that serial is live. The emission at
-         * the pin itself reached port 0x80 only (serial was not initialised
-         * yet), so this is the one a serial capture -- and therefore the smoke
-         * test's required-code assertion -- can actually observe. Same code by
-         * design: it marks the same milestone, once for a POST card at the
-         * moment it happens and once for the log that outlives the boot. */
-        post_code16(POST16_BL_PANIC_PAGE);
         if (!EFI_ERROR(g_panic_page_status)) {
-            serial_early_print("[BOOT] Panic evidence: page 0x");
+            /* POST16 on the SUCCESS path only, which is what makes it a
+             * meaningful required-code assertion: emitted unconditionally it
+             * would prove the code RAN, not that the page was PINNED, and the
+             * smoke gate would stay green on a boot that lost the race. */
+            post_code16(POST16_BL_PANIC_PAGE);
+            serial_early_print("[BOOT] Panic evidence: 0x");
             serial_early_print_hex16(
                 (UINT16)(PANIC_EVIDENCE_PHYS_ADDR >> 16));
             serial_early_print_hex16((UINT16)PANIC_EVIDENCE_PHYS_ADDR);
-            serial_early_print(" pinned before other allocations\n");
+            serial_early_print(" pinned\n");
         } else {
             serial_early_print("[WARN] Panic evidence: page 0x");
             serial_early_print_hex16(

@@ -55,25 +55,27 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                | Depends On                         | Status |
-| --- | :---: | ---------------------------------------------------------- | ---------------------------------- | :----: |
-| 💎  |   1   | UEFI pre-kernel POST codes                                 | --                                 |  [/]   |
-| 💎  |   2   | Boot progress named-stage API                              | §1                                 |  [/]   |
-| 💎  |   3   | POST-style hex code display                                | §2                                 |  [x]   |
-| 💎  |   4   | Alive blink / visual heartbeat                             | permanently deferred; hang=TODO-23 |  [/]   |
-| 💎  |   5   | Panic forensic evidence                                    | §2                                 |  [/]   |
-| ⭐  |   6   | Panic QR code                                              | §5; T03 §14 (QR seed)              |  [/]   |
-| 💎  |   7   | System-wide multi-instance spinner                         | D08 T08 §8 (compositor)            |  [/]   |
-| ⭐  |   8   | Runtime vital signs strip                                  | D02 T25 §7 (CPU accounting)        |  [/]   |
-| 💎  |   9   | Boot timeline visualization/import                         | §2                                 |  [/]   |
-| ⭐  |  10   | Bootloader build identity dump in BlackBox                 | TODO-01 §20                        |  [x]   |
-| 💎  |  11   | Boot load status log (ntbtlog parity)                      | §2                                 |  [/]   |
-| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)     | §11; D02 T33 §7 (image ceiling)    |  [/]   |
-| 💎  |  13   | klog format-width contract (`-Wformat` on every call site) | D02 T33 §7 (image ceiling)         |  [/]   |
-| 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`) | §5                                 |  [/]   |
-| ⭐  |  15   | Anti-rollback terminal give-up durable record              | TODO-01 §25                        |  [ ]   |
-| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)          | §9                                 |  [ ]   |
-| 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it     | §14; §5                            |  [ ]   |
+| ⭐  | Order | Deliverable                                                 | Depends On                         | Status |
+| --- | :---: | ----------------------------------------------------------- | ---------------------------------- | :----: |
+| 💎  |   1   | UEFI pre-kernel POST codes                                  | --                                 |  [/]   |
+| 💎  |   2   | Boot progress named-stage API                               | §1                                 |  [/]   |
+| 💎  |   3   | POST-style hex code display                                 | §2                                 |  [x]   |
+| 💎  |   4   | Alive blink / visual heartbeat                              | permanently deferred; hang=TODO-23 |  [/]   |
+| 💎  |   5   | Panic forensic evidence                                     | §2                                 |  [/]   |
+| ⭐  |   6   | Panic QR code                                               | §5; T03 §14 (QR seed)              |  [/]   |
+| 💎  |   7   | System-wide multi-instance spinner                          | D08 T08 §8 (compositor)            |  [/]   |
+| ⭐  |   8   | Runtime vital signs strip                                   | D02 T25 §7 (CPU accounting)        |  [/]   |
+| 💎  |   9   | Boot timeline visualization/import                          | §2                                 |  [/]   |
+| ⭐  |  10   | Bootloader build identity dump in BlackBox                  | TODO-01 §20                        |  [x]   |
+| 💎  |  11   | Boot load status log (ntbtlog parity)                       | §2                                 |  [/]   |
+| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)      | §11; D02 T33 §7 (image ceiling)    |  [/]   |
+| 💎  |  13   | klog format-width contract (`-Wformat` on every call site)  | D02 T33 §7 (image ceiling)         |  [/]   |
+| 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)  | §5                                 |  [x]   |
+| ⭐  |  15   | Anti-rollback terminal give-up durable record               | TODO-01 §25                        |  [ ]   |
+| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)           | §9                                 |  [ ]   |
+| 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it      | §14; §5                            |  [ ]   |
+| 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port | §14                                |  [ ]   |
+| 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff  | §14                                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -449,29 +451,33 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
   - `EfiLoaderData`, matching the `boot_info` pin beside it. UEFI reserves `EfiReservedMemoryType` for firmware and forbids a loader from allocating it; `EfiACPIMemoryNVS` would misdescribe loader-owned evidence as ACPI state. Reclaimability costs nothing: the page is inside the first MiB the PMM reserves wholesale regardless of type.
   - The pin claims the page; it does NOT preserve what is in it. UEFI guarantees allocation and memory-map reclassification, not that the prior bytes survive, so a conforming allocator could scrub the page and still return `EFI_SUCCESS`. That is the same non-contractual platform behaviour the whole cross-boot record already rests on, and it fails safe: the record is magic- and CRC-validated on restore ([`src/kernel/panic.c:2293`](../../src/kernel/panic.c)), so a scrubbed page reads as "no record", never as a false one.
   - NOT fatal on failure, unlike the `boot_info` pin: reported on serial and the boot continues.
-- [x] Give the address ONE definition both halves share, pinned by a `_Static_assert`
-  - `PANIC_EVIDENCE_PHYS_ADDR` lives in [`include/kernel/boot_version_constants.h`](../../include/kernel/boot_version_constants.h), the UEFI-safe header the bootloader can include; [`include/kernel/panic.h`](../../include/kernel/panic.h) asserts its own `PANIC_EVIDENCE_ADDR` against it.
+- [x] Give the address exactly ONE definition, `PANIC_EVIDENCE_PHYS_ADDR`, and derive the kernel's spelling from it
+  - It lives in [`include/kernel/boot_version_constants.h`](../../include/kernel/boot_version_constants.h), the UEFI-safe header the bootloader can include; [`include/kernel/panic.h`](../../include/kernel/panic.h) now defines `PANIC_EVIDENCE_ADDR` as a cast of it rather than a second literal.
+  - An equality `_Static_assert` between two literals was the first shape tried and the consistency review was right that it is weaker: it lets two values exist and only notices divergence. Deriving makes divergence unrepresentable, and the cast preserves the pre-existing `uint32` type so every cast site in `src/kernel/panic.c` is unchanged.
   - The bootloader cannot include `panic.h` (kernel-only types), so a loader-side literal would have been a second uncoordinated copy: the loader could pin one page while the kernel restored from another, both halves building green.
-- [x] `POST16_BL_PANIC_PAGE` (`0xB002`) classified REQUIRED in [`tools/post16-manifest/generate.sh`](../../tools/post16-manifest/generate.sh), so the smoke test asserts the pin ran
-  - Emitted twice by design: once at the pin for a POST card, once in the report block. `post_code16` writes port 0x80 then prints through `serial_early_print`, which is a no-op before serial init, so only the second emission is observable to a serial capture.
-- [/] operator-gated: record the reservation outcome in the handoff so the kernel can report protection strength alongside a failed restore
-  - Blocked on a one-line `F(panic_page_reservation);` row in [`tools/boot-info-manifest/dump-fields.inc`](../../tools/boot-info-manifest/dump-fields.inc) plus an ownership-matrix row in [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md). `tools/boot-info-manifest/*` is receipt machinery that the unattended run may not edit (`receipt_surface_guard.py`), and `check-doc-coverage.py` refuses any `boot_info` field lacking both rows, so the field cannot land unattended. Every reserved pad in `struct boot_info` was consumed by the v21/v22 carves, so this is a tail field plus a `BOOT_INFO_VERSION` 24 -> 25 bump in both headers.
-  - It reports PROTECTION, never DESTRUCTION. `EFI_NOT_FOUND` proves only that the page was unavailable to this loader, and a success proves only that nothing took it after firmware init; neither establishes that a crash record existed and was overwritten. The states are protected / unprotected / unreported / malformed -- never "clobbered".
-  - The recorded outcome must GATE the kernel's access to the page, not merely be reported beside it. `panic_evidence_take` and the publish path dereference `PANIC_EVIDENCE_ADDR` unconditionally ([`src/kernel/panic.c:1605`](../../src/kernel/panic.c), [`src/kernel/panic.c:2103`](../../src/kernel/panic.c)), and the PMM's first-MiB reservation stops allocator REUSE, not direct writes -- so on a machine where the pin failed the kernel can still write a page firmware may own. That exposure predates this section (before the pin there was none at all, on every boot), and the handoff field is what finally lets the kernel decline. Raised by the section 14 adversarial review, verified at both refs.
+- [x] `POST16_BL_PANIC_PAGE` (`0xB002`) classified REQUIRED in [`tools/post16-manifest/generate.sh`](../../tools/post16-manifest/generate.sh), emitted on the SUCCESS path only so the smoke gate asserts the page was pinned
+  - Emitted unconditionally it would prove only that the code RAN, and the gate would stay green on a boot that lost the page. Raised by the section 14 consistency review.
+  - The pin itself leaves the 8-bit `POST_PANIC_PAGE` (`0x0A`) on port 0x80 instead. `post_code16` also prints through `serial_early_print`, and this loader does not zero `.bss`, so `s_serial_port` there holds firmware poison (`0xAF...`) which is NON-ZERO and passes `serial_early_putchar`'s guard straight into `inb`/`outb` on an arbitrary I/O port. Raised by the section 14 performance review, confirmed at [`src/boot/uefi/bootx64.c:138`](../../src/boot/uefi/bootx64.c) and [`:789`](../../src/boot/uefi/bootx64.c).
 - [x] Commit: `"boot: reserve the panic-evidence page at 0x80000 before other allocations"`
 
-**Test checkpoint:** the 4-leg smoke matrix boots green with the pin in place and the serial log carries `[BOOT] Panic evidence: page 0x00080000 pinned before other allocations`; the smoke test's required-code layer fails if `POST16_BL_PANIC_PAGE` is absent, so a pin that stops running breaks the gate.
+**Test checkpoint:** the 4-leg smoke matrix boots green and the serial log carries `[BOOT] Panic evidence: 0x00080000 pinned`; the smoke test's required-code layer fails if `POST16_BL_PANIC_PAGE` is absent, and because that code is emitted only on the success path the gate fails on a boot where the page was NOT pinned, not merely on one where the code stopped running.
 
 **Note:** No kernel test surface -- the pin is pure UEFI code running before the kernel exists, and the one kernel-side artifact is a `_Static_assert`, which is its own gate. A unit test asserting `PANIC_EVIDENCE_ADDR == 0x80000` would be the tautological-constant test the test policy forbids. Validation is the required POST16 code plus the serial line, both asserted by the 4-leg smoke matrix.
 
 > **Test runner:** `bash scripts/test-smoke-matrix.sh` -- 4/4 legs (kvm/tcg x 1/2 cpu) must pass; the POST16 required-code layer covers this section.
 
 > **Notes:**
-> - Shipped: `efi_main` pins `PANIC_EVIDENCE_PHYS_ADDR` with `AllocateAddress` before any other firmware call, reports the outcome on serial once `serial_early_init` has run, and emits `POST16_BL_PANIC_PAGE` for both a POST card and the serial capture.
+> - Shipped: `efi_main` pins `PANIC_EVIDENCE_PHYS_ADDR` with `AllocateAddress` before any other firmware call, leaves `POST_PANIC_PAGE` on port 0x80 there, and reports the outcome on serial once `serial_early_init` has run, emitting `POST16_BL_PANIC_PAGE` on success.
 > - Integrates by closing the window the PMM cannot cover: the blanket first-MiB reservation protects the page from kernel entry onward, and this pin protects it from the reset to that point.
 > - Downstream: `PANIC_EVIDENCE_PHYS_ADDR` is now the single definition of the address, so a change on either side fails the build instead of silently splitting loader and kernel.
 > - Canonical doc: the pin's placement rationale lives with the code at `src/boot/uefi/bootx64.c`; the shared constant's rationale lives in `include/kernel/boot_version_constants.h`.
-> - Scope boundary: this section pins the page. It does NOT record the outcome in the handoff (parked above, operator-gated) and does NOT stop the kernel's own Phase-0 panic writer from overwriting the record before the restore reads it -- that is section 17.
+> - Scope boundary: this section pins the page. Recording the outcome in the handoff is section 19, stopping the kernel's own Phase-0 writer from overwriting the record is section 17, and the pre-serial UART hazard the review surfaced is section 18.
+
+> **Verified:** 2026-08-30 | commit `41753ca67` | 4/4 items | build OK | smoke-matrix 4/4 (kvm+tcg x 1+2 cpu) | 32845 kernel + 17 user tests | WHPX boots to shell
+> **Deferred:** [H] A Phase-0 panic overwrites the prior record before `panic_evidence_restore_early()` runs -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §17 (item: "Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates" at line 525)
+> **Deferred:** [H] `boot_set_section()` reaches `serial_early_print` before `serial_early_init`, driving a poisoned `.bss` UART port -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §18 (item: "Gate the early-serial path on an explicit \"serial is configured\" flag rather than on `s_serial_port` being non-zero" at line 551)
+> **Deferred:** [H] The kernel writes the evidence page even when the pin failed, because the outcome never reaches it (reason: needs a boot_info field the run may not land) -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §19 (item: "Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own" at line 579)
+> **Quality reviewed:** 2026-08-30 | Codex 7x (design, adversarial, re-adversarial, consistency, perf) | 3H+6M+0L fixed, 0 open | scope: boot-code-quality
 
 ---
 
@@ -532,6 +538,55 @@ Found by the section 14 design review, verified at both file:line refs above.
 **Test checkpoint:** a fixture page seeded with a valid prior-boot record survives a simulated Phase-0 panic and is still restorable; the 4-leg smoke matrix stays green.
 
 > **Blocked:** kernel `.text` headroom is 79 bytes at `__kernel_end == 0x7ff000` (measured 2026-08-30, section 12's deferral note), so the reordering plus its test may not fit until the image ceiling moves -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard").
+
+---
+
+## 18. Pre-Serial `serial_early_print` Drives a Poisoned UART Port
+
+> **Spawned-by:** §14 (review)
+> **User impact:** on real hardware whose firmware pool-poisons `.bss`, every boot does `inb`/`outb` against I/O port `0xAFAF` before the UART is configured -- writing bytes into whatever device answers at that address. Emulators hide it completely, so the first symptom would be a machine that hangs or misbehaves at boot on one vendor's firmware and nowhere else.
+
+This loader does NOT zero `.bss`; firmware pool-poisons it with `0xAF` ([`src/boot/uefi/bootx64.c:138`](../../src/boot/uefi/bootx64.c)). `s_serial_port` is an uninitialised `.bss` static ([`:412`](../../src/boot/uefi/bootx64.c)), and `serial_early_putchar` guards only on `if (!s_serial_port) return;` ([`:789`](../../src/boot/uefi/bootx64.c)). Poison is non-zero, so the guard passes and the polling loop reads `inb(0xAFAF + 5)` and writes `outb(0xAFAF, c)`.
+
+`boot_set_section()` reaches that path before `serial_early_init()` runs: it is called from `efi_main` as soon as `gST`/`gBS` are wired and calls `serial_early_print` on every section transition ([`:266`](../../src/boot/uefi/bootx64.c)). Section 14 removed its own instance of this by using the 8-bit `post_code` for its pre-serial breadcrumb; the `boot_set_section` instance predates section 14 and remains.
+
+Found by the section 14 performance review, which was right where the boot-quality auditor was wrong: the auditor called the same call site harmless on the assumption that `s_serial_port` is still zero, which is exactly the `.bss` guarantee this loader documents it does not provide.
+
+**Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
+
+- [ ] Gate the early-serial path on an explicit "serial is configured" flag rather than on `s_serial_port` being non-zero, so poisoned `.bss` cannot be mistaken for a configured UART
+  - A flag set only by `serial_early_init()` is the smallest correct fix. Zeroing `.bss` in the entry stub is the alternative, but it would silently change every existing poison workaround in this file (`:3330`, `:8561` and others deliberately rely on the poison being observable), so it is the riskier of the two.
+- [ ] Audit every `serial_early_print` call site reachable before `serial_early_init()` and confirm each is either gated or moved after it
+- [ ] Commit: `"boot: gate early serial on a configured flag, not a poisoned .bss port"`
+
+**Test checkpoint:** a boot with `s_serial_port` pre-poisoned in a fixture emits nothing to any I/O port before `serial_early_init()`; the 4-leg smoke matrix stays green and serial output after init is unchanged.
+
+---
+
+## 19. Record the Panic-Page Pin Outcome in the `boot_info` Handoff
+
+> **Spawned-by:** §14 (review)
+> **User impact:** on a machine where firmware refuses the pin, the kernel still writes the evidence page -- a page firmware may own -- because nothing tells it the pin failed. The user sees no warning, and a crash report that reads "no prior crash" is indistinguishable from one whose record was never protected in the first place.
+
+Section 14 pins the page and reports the outcome on serial, but the outcome never reaches the kernel. `panic_evidence_take` and the publish path dereference `PANIC_EVIDENCE_ADDR` unconditionally ([`src/kernel/panic.c:1605`](../../src/kernel/panic.c), [`src/kernel/panic.c:2103`](../../src/kernel/panic.c)), and the PMM's first-MiB reservation stops allocator REUSE, not direct writes. That exposure predates section 14 -- before the pin there was none at all, on every boot -- and a recorded outcome is what finally lets the kernel decline.
+
+Raised by the section 14 adversarial review, verified at both refs.
+
+**Files:** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h), [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h), [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), [`src/kernel/panic.c`](../../src/kernel/panic.c)
+
+> **Blocked (operator-gated):** the field needs a one-line `F(panic_page_reservation);` row in [`tools/boot-info-manifest/dump-fields.inc`](../../tools/boot-info-manifest/dump-fields.inc). `receipt_surface_guard.py` classifies `tools/boot-info-manifest/*` as receipt machinery the unattended run may not edit, and `check-doc-coverage.py` refuses any `boot_info` field lacking that row plus an ownership-matrix row, so the field cannot land from an unattended session. Measured 2026-08-30 by adding the field and running the checker. Filed as a runner finding in `todo/overnight-runner-improvements/overnight-runner-improvements-v18.md`.
+
+- [ ] Add `uint32_t panic_page_reservation` at the tail of `struct boot_info` with the matching mirror field, offset `_Static_assert`s, and a `BOOT_INFO_VERSION` 24 -> 25 bump in BOTH headers
+  - A tail field, not a pad carve: every reserved pad in the struct was consumed by the v21/v22 carves and there is no trailing pad.
+  - Lands with the `dump-fields.inc` row, a `docs/boot/boot-info-fields.md` ownership-matrix row, and a `docs/boot/boot-protocol-changelog.md` entry in the same commit.
+- [ ] Encode it as one self-describing word so "the producer never wrote this" stays distinct from every outcome it can report, and decode it with a pure helper
+  - Whole-word zero is what a pre-v25 loader leaves behind, so it must decode as UNREPORTED and route through today's restore behaviour unchanged. A nonzero word that is not a known encoding decodes as MALFORMED rather than being read as UNREPORTED.
+  - States are protected / unprotected / unreported / malformed. It reports PROTECTION, never DESTRUCTION: `EFI_NOT_FOUND` proves only that the page was unavailable, and a success proves only that nothing took it after firmware init. Never render "clobbered" from it.
+- [ ] Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own
+- [ ] Unit-test the decode helper in [`src/kernel/test/test_boot_diag.c`](../../src/kernel/test/test_boot_diag.c) (`TEST_CAT_BOOT`) against a fixture word, not the live page
+- [ ] Commit: `"boot: carry the panic-page pin outcome in the boot_info handoff"`
+
+**Test checkpoint:** the decode helper returns each of the four states for its corresponding fixture word and MALFORMED for an unknown nonzero encoding; a boot whose pin failed leaves the evidence page untouched; the 4-leg smoke matrix stays green and `compare.sh` reports no kernel-vs-mirror drift.
 
 ---
 
