@@ -214,8 +214,10 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 - [x] Performance measurement: uptime_ns() delta logged in microseconds
 - [x] Registered as "EIF" format in `exec_init()` with magic `{'E','I','F','!'}`
 - [x] Enforce §4 rules 2/6-8: count caps, O(n) non-overlap walk, canonical section+segment-data ordering, metadata bounds, entry-in-exec-segment, registered-import availability, validate-then-mutate; 11 reject tests
-- [ ] Enforce §4 rule 4 (`api_version` gating): reject an EIF whose `api_version` exceeds the running OS API version, once an OS-wide API-version authority/constant is defined (none exists yet)
-- [ ] Reject non-zero reserved header/segment fields and reserved flag bits (spec "must be zero") for strict forward-compat detection
+- [/] Enforce §4 rule 4 (`api_version` gating): reject an EIF whose `api_version` exceeds the running OS API version, once an OS-wide API-version authority/constant is defined (none exists yet)
+  - Parked: there is no OS-wide API-version authority or constant to gate against yet, so the rule has nothing to compare an `api_version` to. Not operator-gated -- it needs that constant defined somewhere, and no TODO owns it today.
+- [/] Reject non-zero reserved header/segment fields and reserved flag bits (spec "must be zero") for strict forward-compat detection
+  - Parked with §5 rather than technically blocked: the fail-open is deliberate while v1.1 may still repurpose those fields under a version bump, so tightening it is a decision about the spec's own forward-compat story rather than missing code.
 - [x] Commit: `"kernel: eif -- EIF loader"`
 
 **Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG; bare metal.
@@ -258,8 +260,10 @@ Every loaded executable and shared library must be registered in the per-process
   - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`; reject i386 Machine with `ENOEXEC`
 - [x] `pe_load()` registered in exec dispatcher -- validates and returns 0 until section loader (§8) is implemented
 - [x] 7 unit tests in `test_exec.c`: struct sizes, constants, valid PE32+, 32-bit rejection, truncated, bad magic, NULL
-- [ ] Support reduced-directory PE32+ (SizeOfOptionalHeader < 240): floor at the 112-byte fixed portion, validate NumberOfRvaAndSizes, bound each DataDirectory access (current >= 240 rejects spec-valid < 16-dir images)
-- [ ] Add odd-e_lfanew / odd-alignment PE test fixtures: parameterize build_minimal_pe32plus by e_lfanew to exercise the unaligned zero-copy read_u64 ImageBase path
+- [/] Support reduced-directory PE32+ (SizeOfOptionalHeader < 240): floor at the 112-byte fixed portion, validate NumberOfRvaAndSizes, bound each DataDirectory access (current >= 240 rejects spec-valid < 16-dir images)
+  - Parked with §7 rather than technically blocked. The current `SizeOfOptionalHeader >= 240` floor is FAIL-CLOSED and no real Windows image is affected, so this is spec completeness rather than a live defect.
+- [/] Add odd-e_lfanew / odd-alignment PE test fixtures: parameterize build_minimal_pe32plus by e_lfanew to exercise the unaligned zero-copy read_u64 ImageBase path
+  - Parked with §7 rather than technically blocked: it needs `build_minimal_pe32plus` parameterized by `e_lfanew`, and the `read_u64` fix it would cover is byte-safe by construction today.
 - [x] Commit: `"kernel: pe -- PE32+ header parser"`
 
 **Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -285,9 +289,12 @@ Every loaded executable and shared library must be registered in the per-process
 - [x] Register loaded module via `exec_register_module()` (§6) with base, size, entry, and `.pdata` info -- PE loader calls this directly (task_exec detects via module list, no duplicate registration)
 - [x] task_exec made format-agnostic: uses `exec_find_module_by_pc(entry)` to determine user page range instead of hardcoding ELF range. Works for PE, ELF, and EIF.
 - [x] 3 unit tests: pe_load returns correct entry VA, module registered with correct base/format, rejects low ImageBase
-- [ ] Make the 3 pe_load section-loader tests side-effect-free: they transitively call POST16 + pmm_alloc_frame/vmm_map_page/exec_register_module via pe_load (Gate 8 live-boot violation the textual scanner misses)
-- [ ] Ownership-journal rollback in pe_load: track every mapped VA and unmap exactly those in reverse (replace the dense-prefix-from-ImageBase assumption); reject map-over-present-PTE
-- [ ] Mapped-aware loader reads: parsers (imports §9, relocs §10) must never dereference an unmapped section-gap RVA -- add per-span mapped-check helpers or map the full image reservation
+- [/] Make the 3 pe_load section-loader tests side-effect-free: they transitively call POST16 + pmm_alloc_frame/vmm_map_page/exec_register_module via pe_load (Gate 8 live-boot violation the textual scanner misses)
+  - Parked: the three tests transitively reach POST16, `pmm_alloc_frame`, `vmm_map_page` and `exec_register_module` through `pe_load`, which the Gate 8 live-boot ban forbids. Making them side-effect-free needs a PURE parser helper split out of `pe_load` first -- the same surface item 313 waits on.
+- [/] Ownership-journal rollback in pe_load: track every mapped VA and unmap exactly those in reverse (replace the dense-prefix-from-ImageBase assumption); reject map-over-present-PTE
+  - Parked with §8: the rollback must journal every mapped VA and unmap exactly those in reverse, replacing the dense-prefix-from-`ImageBase` assumption. §10's deferral names this as one of the two HIGHs its own failure path would exercise.
+- [/] Mapped-aware loader reads: parsers (imports §9, relocs §10) must never dereference an unmapped section-gap RVA -- add per-span mapped-check helpers or map the full image reservation
+  - Parked with §8, and it is the KEYSTONE of this file: §9's import RVA validation, §10's relocation reads, §11's TLS block, §12's Load Config parse and §19's directory parses all XREF this item as their blocker. Nothing downstream of it can close first.
 - [x] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
 - [/] `NtQuerySection(SectionImageInformation)`: persist PE optional-header fields (ImageBase, entry, stack sizes) on the `SECTION_OBJECT` so class 1 returns real values -> XREF: `TODO-12-native-api-ssdt.md` §18 Accepted
 - [/] Map PE images into a per-process PML4 instead of the shared `kernel_pml4` -- blocked on per-process cr3 build-out; `get_or_create_table()` leaves User-bit upper-table promotions on rollback (TODO-04 §15)
@@ -308,9 +315,12 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 - [x] Unknown DLL names: imports stubbed with NULL thunk (faults on call); unknown functions within known DLLs also stubbed. No crash on unrecognized DLL.
 - [x] Export table lookup: sorted `pe_export_entry_t` array + binary search (`pe_lookup_export`). Case-insensitive DLL name matching (`pe_stricmp`).
 - [x] Import structures in pe.h: `pe_import_descriptor_t` (20 bytes), `pe_import_by_name_t`, `PE_ORDINAL_FLAG64`, `pe_export_entry_t`, `pe_dll_exports_t`
-- [ ] Make resolved imports CALLABLE: the IAT holds the raw SSDT number so a PE call [IAT] faults; write user-mode kernel32/ntdll SYSCALL trampolines + a callable STATUS_NOT_IMPLEMENTED stub; add an end-to-end PE-calls-import test
-- [ ] Validate import RVAs against actually-mapped regions, not just SizeOfImage: a crafted RVA in a section gap passes the numeric check then faults in kernel mode; per-span mapped check, or map the full image reservation in §8
-- [ ] Add resolver-walk unit tests (name resolution, ordinal stubbing, bounds/NUL-term rejection, near-UINT32_MAX RVA, cross-page/unaligned FirstThunk) once a pure-helper surface exists or §8 pe_load Gate-8 issue is resolved
+- [/] Make resolved imports CALLABLE: the IAT holds the raw SSDT number so a PE call [IAT] faults; write user-mode kernel32/ntdll SYSCALL trampolines + a callable STATUS_NOT_IMPLEMENTED stub; add an end-to-end PE-calls-import test
+  - Parked: the IAT holds the raw SSDT service number, so making it callable needs user-mode kernel32/ntdll SYSCALL trampolines plus a callable `STATUS_NOT_IMPLEMENTED` stub, none of which exist. §11, §12 and §19 all wait behind this.
+- [/] Validate import RVAs against actually-mapped regions, not just SizeOfImage: a crafted RVA in a section gap passes the numeric check then faults in kernel mode; per-span mapped check, or map the full image reservation in §8
+  - Parked on §8's per-span mapped-check helper, which the stamp XREFs: the numeric `SizeOfImage` check passes a crafted section-gap RVA that then faults in kernel mode.
+- [/] Add resolver-walk unit tests (name resolution, ordinal stubbing, bounds/NUL-term rejection, near-UINT32_MAX RVA, cross-page/unaligned FirstThunk) once a pure-helper surface exists or §8 pe_load Gate-8 issue is resolved
+  - Parked on the same pure-helper surface as item 288 -- the resolver walk is file-static and reachable only through the Gate-8-blocked `pe_load`, so there is nothing a test may legally call today.
 - [x] Commit: `"kernel: pe -- PE32+ import table resolver"`
 
 **Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. Test on: QEMU WHPX + TCG; bare metal.
@@ -332,8 +342,10 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 
 - [/] Parse `.reloc` (DataDirectory 5): walk IMAGE_BASE_RELOCATION blocks, DIR64 (10) adds delta, ABSOLUTE (0) is padding -- BLOCKED: safe parse needs the mapped-aware reads + global block/entry caps below
 - [/] Apply delta to all type-10 entries after section loading -- BLOCKED: needs ownership-journal rollback (a reloc-failure rollback today would free unrelated sparse mappings) and mapped-aware fixup writes
-- [ ] Global relocation caps (reject, not truncate): max blocks, max total entries, `BlockSize >= 8` and `<= directory_remaining`, forward-progress checks -- a per-block cap alone leaves ~134M-entry walks unbounded
-- [ ] Commit: `"kernel: pe -- PE32+ base relocation"`
+- [/] Global relocation caps (reject, not truncate): max blocks, max total entries, `BlockSize >= 8` and `<= directory_remaining`, forward-progress checks -- a per-block cap alone leaves ~134M-entry walks unbounded
+  - Parked with §10, which is blocked on §8's mapped-aware reads and full-image reservation: a naive parser page-faults on a section-gap relocation RVA and its failure path runs the ownership-unsafe `pe_load` rollback that item 289 owns.
+- [/] Commit: `"kernel: pe -- PE32+ base relocation"`
+  - Parked: gated on this section's own deferred item above; there is nothing to commit until §8's infrastructure lands.
 
 **Test checkpoint:** Serial log shows `"pe: relocated <N> entries, delta=0x<delta>"`. A PE loaded at non-preferred base calls a function pointer without crash. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -349,7 +361,8 @@ PE binaries using `__declspec(thread)` or C11 `_Thread_local` store TLS template
 - [/] Write assigned TLS index to `AddressOfIndex` in the mapped image -- BLOCKED: mapped-aware fixup write (§8)
 - [/] Invoke TLS callbacks in ring 3 before `main()` (`DLL_PROCESS_ATTACH`) -- BLOCKED: PE binaries do not execute in user mode yet (§9 callable-IAT gap)
 - [/] On thread creation: fresh TLS block + `DLL_THREAD_ATTACH` callbacks -- BLOCKED: needs the above + scheduler thread-create hook
-- [ ] Commit: `"kernel: pe -- TLS directory processing and callbacks"`
+- [/] Commit: `"kernel: pe -- TLS directory processing and callbacks"`
+  - Parked: TLS callbacks must run in ring 3 before `main()`, and PE binaries do not execute at all while imports are non-callable (item 311). The directory read/write also needs §8's mapped-aware reads and TEB TlsSlots.
 
 **Test checkpoint:** Serial log shows `"pe: TLS index=<N>, raw data <size> bytes, <M> callbacks"`. TLS callback log: `"pe: TLS callback DLL_PROCESS_ATTACH at 0x<addr>"`. Thread-local variable read returns initialized value. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -368,7 +381,8 @@ Modern PE binaries carry an `IMAGE_LOAD_CONFIG_DIRECTORY64` (DataDirectory entry
 - [/] Extract `SecurityCookie` address + initialise with `RDRAND` (overwrite linker default) -- BLOCKED: mapped-aware image write (§8) and dead until PE runs
 - [/] Parse CET fields (`GuardAddressTakenIatEntryTable`, `GuardEHContinuationTable`) for TODO-23 CET activation -- BLOCKED: same reads
 - [/] Legacy fallback (Load Config absent/zero-size -> no CFG/CET, warn) -- BLOCKED with the parse above
-- [ ] Commit: `"kernel: pe -- Load Config directory, CFG bitmap, CET metadata"`
+- [/] Commit: `"kernel: pe -- Load Config directory, CFG bitmap, CET metadata"`
+  - Parked: the parse writes into a sparsely-mapped image so it needs §8's mapped-aware reads, and its output (CFG bitmap, CET flags, security cookie) is dead until a PE binary can actually run (item 311).
 
 > **Deferred:** [H] §12 Load Config/CFG/CET metadata not implemented -- parses/writes the sparsely-mapped image (needs §8 mapped-aware reads) and its output (CFG bitmap, CET flags, cookie) is dead until PE binaries execute and TODO-23 enforces CFG/CET -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 290)
 > **Deferred:** [M] CFG/CET enforcement + security-cookie use require runnable PE + the CET engine -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 311)
@@ -388,7 +402,8 @@ Standard developer workflow: `clang-19 → ld.lld → elf2eif` -- no custom comp
 - [/] Generate import table -> the required-import CALL ABI (thunks or EIF runtime import lib) -- BLOCKED: not deferrable but depends on the EIF import call ABI
 - [/] Write canonical-layout EIF (overflow-safe ELF bounds, caps, filesz<=memsz, executable-entry) with metadata/`api_version` (unblocked), via temp-file + atomic rename
 - [/] CLI `--api-version`/`--pic`/metadata (lz4 `EIF_FLAG_COMPRESSED` + `eifsign` signature deferred)
-- [ ] Commit: `"tools: elf2eif converter"`
+- [/] Commit: `"tools: elf2eif converter"`
+  - Parked: the required-import CALL binding that makes `NtXxx` callsites actually SYSCALL, and PIC base normalization, both depend on the EIF import call ABI and runtime base, which are unsettled. The lz4 and `eifsign` halves are separately deferred in the stamp beside it.
 
 **Test checkpoint:** `make elf2eif` builds successfully. `tools/elf2eif hello.elf hello.eif` produces output with `EIF!` magic at offset 0. Kernel loads the resulting EIF and reaches entry point. No runtime POST codes -- host-side tool.
 
@@ -440,7 +455,8 @@ Auto-detect `#!` (shebang) lines in text files and dispatch to the named interpr
 - [/] Validate interpreter via VFS; reject circular shebangs (interpreter itself has `#!`)
 - [/] Re-invoke `exec_load()` with the interpreter and the original script path as argv[1] -- BLOCKED: exec/task has no caller argv passing (§1 item above), so the interpreter cannot receive the script path
 - [/] Edge cases: missing interpreter -> `ENOENT`; empty shebang -> `ENOEXEC`; over-256-byte shebang -> truncate + warn
-- [ ] Commit: `"kernel: exec -- shebang (#!) interpreter support"`
+- [/] Commit: `"kernel: exec -- shebang (#!) interpreter support"`
+  - Parked: the core of shebang is re-invoking exec with the interpreter and the SCRIPT as an argument, and `exec`/`task_exec` has no caller argv passing at all today -- it hard-sets `argc=1` and `argv[0]=name`.
 
 **Test checkpoint:** Script with `#!/C:\Impossible\System\shell.exe` dispatches to shell -- serial log shows `"exec: shebang -> /C:\Impossible\System\shell.exe"`. Circular shebang rejected with error. Missing interpreter → error. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -492,7 +508,8 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 - [/] Parse Bound Import metadata (DataDirectory 11): timestamp validate + fall back to normal resolution -- BLOCKED: mapped-aware reads (§8)
 - [/] Resolve PE export forwarder chains (`DLL.Function` recursion, bounded depth, reject cycles) -- BLOCKED: reads the sparsely-mapped image (§8)
 - [/] Unit tests (API-set resolution, delay-load first-call, bound-import fallback) -- BLOCKED with the §8 pe_load Gate-8 test issue
-- [ ] Commit: `"kernel: pe -- API-set contract resolution and delay-load/bound imports"`
+- [/] Commit: `"kernel: pe -- API-set contract resolution and delay-load/bound imports"`
+  - Parked: it extends §9's import resolver, whose imports are non-callable (item 311), and every directory parse it adds needs §8's mapped-aware reads (item 290).
 
 **Test checkpoint:** A PE importing `api-ms-win-core-processthreads-l1-1-0.dll!ExitProcess` resolves through the API-set map to a concrete export and executes. A sample delay-load import resolves on first call and logs `"pe: delay import resolved <dll>!<name>"`. Bound-import timestamp mismatch logs fallback and continues. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -510,7 +527,8 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 
 - [/] GNU IFUNC resolution: after RELATIVE/GLOB_DAT relocations, walk `R_X86_64_IRELATIVE` entries, call each resolver, write the result into the slot (IRELATIVE strictly last -- resolvers read already-relocated data)
 - [/] Constructor/destructor: call `DT_PREINIT_ARRAY` (main exe only) then `DT_INIT`/`DT_INIT_ARRAY` in dependency order after relocations; register `DT_FINI`/`DT_FINI_ARRAY` for teardown (-> XREF `TODO-21 §14`)
-- [ ] `exec_unregister_module()` + per-process `loaded_module_t` registry sweep at process exit (paired with the fini-array teardown above) (-> XREF `02-kernel-core/TODO-21-process-model-extensions.md §14`)
+- [/] `exec_unregister_module()` + per-process `loaded_module_t` registry sweep at process exit (paired with the fini-array teardown above) (-> XREF `02-kernel-core/TODO-21-process-model-extensions.md §14`)
+  - Parked on §14's core ELF dynamic linker (PT_DYNAMIC, DT_NEEDED, hash lookup, PLT/GOT relocations, RELRO), which is itself deferred pending process-private page tables; the process-exit sweep half is XREF'd to its TODO-21 owner in the lead.
 - [/] ELF symbol versioning: parse `DT_VERSYM`/`DT_VERNEED`/`DT_VERDEF` and bind each undefined symbol to the requested version so glibc-versioned symbols resolve to the correct ABI rather than the first match
 - [/] Library search order: honour `DT_RUNPATH`/`DT_RPATH`, an `LD_LIBRARY_PATH`-equivalent, then the default system lib dir; filter environment paths in secure mode so untrusted paths cannot inject libraries
 - [/] `DT_FLAGS`/`DT_FLAGS_1` policy: honour `DF_BIND_NOW`/`DF_1_NOW` (eager binding, disable lazy PLT), `DF_1_NODELETE` (pin module across unload), and `DF_1_PIE`
