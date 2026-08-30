@@ -79,6 +79,7 @@ Eight independent verification passes -- one per subsystem. Fix known header doc
 - [ ] **Flush must reach the DEVICE**: ixfs flush writes fs caches without `blkdev_sync` and drops lower errors, so `vfs_flush() == 0` is not proof of durability -> XREF: `01-boot-platform/TODO-10` §28 (item: "PARKED: consume is left non-durable").
   - Callers already treat a zero return as a durability predicate and act irreversibly on it. The cross-boot crash path is the sharp case: it wants to retire the evidence page once `last-panic.txt` is written, and cannot, because a reset after a cache-only flush would lose the file AND the record. That retirement is parked on this item.
   - The fix is `blkdev_sync` on the underlying device plus error propagation, so a caller that needs stable storage can distinguish "cached" from "on the platter". Compare `src/kernel/fs/partition.c:103`, which already does the device-level call.
+  - Second parked caller, same predicate: -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md §12` (item: "last-panic.txt durability is parked on the IXFS owner: flush never reaches the device"). Its `last-panic.txt` write retires the `0x80000` evidence page on `vfs_flush() == 0`, so a reset after a cache-only flush loses both the file and the record.
 - [ ] **Reject over-length names**: `ixfs_ops.c` rename/create silently truncate names > IXFS_MAX_NAME (252), so a 252-259 char op resolves to a different entry. Fail with a name-too-long error instead of truncating. XREF: TODO-12 §13.
 
 ## 2. Extended Inode v3 `[Opus]`

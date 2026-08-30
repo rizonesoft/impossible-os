@@ -68,8 +68,11 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   9   | Boot timeline visualization/import                         | §2                                 |  [/]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox                 | TODO-01 §20                        |  [x]   |
 | 💎  |  11   | Boot load status log (ntbtlog parity)                      | §2                                 |  [/]   |
-| 💎  |  12   | Post-ship follow-up backfill (2026-07-31 cohort)           | --                                 |  [ ]   |
+| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)     | §11                                |  [ ]   |
 | 💎  |  13   | klog format-width contract (`-Wformat` on every call site) | --                                 |  [ ]   |
+| 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`) | §5                                 |  [ ]   |
+| ⭐  |  15   | Anti-rollback terminal give-up durable record              | TODO-01 §25                        |  [ ]   |
+| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)          | §9                                 |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -360,28 +363,23 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 
 ---
 
-## 12. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+## 12. Boot Load Status Granularity (per-driver records, probe aggregation, NVMe partial init)
 
-Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+> **Spawned-by:** root
 
-From the stamped section 5:
-- [ ] Bare-metal reboot-reservation of `0x80000`: reserve it in the bootloader (AllocateAddress) before other allocations -- PMM only protects it post-kernel-entry, so firmware/BOOTX64 could clobber it pre-restore. Owner: `TODO-02` UEFI.
-- [ ] last-panic.txt true durability: IXFS `vfs_flush` (C:\ fallback) flushes FS cache but not the device (`blkdev_sync`), so the consume-after-flush could lose the retry copy on reset; IXFS flush must sync the device. Owner: IXFS/storage.
-From the stamped section 9:
-- [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
-- [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
-From 01-boot-platform/TODO-01 §25 (anti-rollback bounded retry, 2026-08-16):
-- [ ] Give the anti-rollback give-up a durable record; it reports only to the boot log. -> XREF: 01-boot-platform/TODO-01 §25 (item: "Report exhaustion once, at `LOG_ERROR`, naming the last firmware status" at line 930)
-  - `boot_rollback_report_terminal()` in [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c) emits one `klog_unrated(LOG_ERROR, ...)` naming the final firmware status, and that line lives solely in the serial log of the boot that produced it. Mirror it into the boot-decision Registry record or the BlackBox transcript.
-  - User impact: an operator enables `anti_rollback_raise` to retire a vulnerable image on an unattended or headless box, the write exhausts its retries, and nothing survives the boot to say the policy never took effect. Windows records the equivalent SVN-update outcome durably as Event ID 1042.
-  - Precedent already in the tree: TODO-01 §7 and §12 ship exactly this pattern (Registry record + BlackBox transcript) for stale-loader mismatch and boot provenance; §25's terminal give-up is the anti-rollback failure mode that did not get one.
+`boot_load_record` records ONE aggregate `storage` entry and cannot tell an absent device from a failed one, so the `ntbtlog` parity shipped by section 11 is shape-only: a machine that booted with a dead AHCI controller and a live NVMe logs the same line as a machine with neither. This section makes each probe self-report. The items below were moved VERBATIM from the stamped section 11, where the triage oracle could never reach them (cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3).
 
-From the stamped section 11:
-- [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports vs the single aggregate `storage` entry. Owner: this section.
-- [ ] Probe-result aggregation (storage + network): split driver return codes so absent-vs-failed is distinguishable (rtl8139/ahci/virtio-blk return -1 for both; sequential storage always LOADED) for accurate SKIPPED/FAILED. Owner: this section.
-- [ ] NVMe per-controller status: expose attempted-vs-initialized count from `nvme_init` (today returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK. Owner: this section / NVMe driver.
+**Files:** `src/kernel/boot_load_status.c`, `include/kernel/boot_load_status.h`, the storage/input/ACPI/GFX probe call sites
 
-**Test checkpoint:** per moved item; each carries its original acceptance text.
+- [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports instead of the single aggregate `storage` entry
+- [ ] Probe-result aggregation (storage + network): split driver return codes so absent-vs-failed is distinguishable, for an accurate SKIPPED vs FAILED
+  - `rtl8139`, `ahci` and `virtio-blk` each return `-1` for both "no such device" and "device present but init failed", and the sequential storage path always records LOADED.
+- [ ] NVMe per-controller status: expose attempted-vs-initialized counts from `nvme_init` (today it returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK
+- [/] last-panic.txt durability is parked on the IXFS owner: flush never reaches the device -> XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` (item: "**Flush must reach the DEVICE**")
+  - Confirmed at source 2026-08-30: `ixfs_cache_flush` ([`src/kernel/fs/ixfs/ixfs_core.c:97`](../../src/kernel/fs/ixfs/ixfs_core.c)) writes dirty blocks with `blkdev_write` and returns without `blkdev_sync`, so the `flushed == 0` gate in `panic.c` retires the `0x80000` evidence page on an FS-cache write rather than a durable one.
+  - The owner item already exists and already carries the reciprocal park; nothing in this file can fix it without changing IXFS flush semantics for every caller.
+
+**Test checkpoint:** a boot with one failing and one working storage controller records the failing one FAILED and the working one LOADED, not one aggregate LOADED; an absent controller records SKIPPED, never FAILED.
 
 ---
 
@@ -400,6 +398,60 @@ From the stamped section 11:
 - [ ] Commit: `"klog: standard printf width semantics with -Wformat on every call site"`
 
 **Test checkpoint:** a `klog` call with eight 32-bit arguments renders all eight correctly (the stack-slot case that fails today); a build with a deliberately mismatched conversion FAILS with `-Wformat`; the full suite stays green and no existing log line changes shape.
+
+---
+
+## 14. Bootloader Reservation of the Panic-Evidence Page (`0x80000`)
+
+> **Spawned-by:** §12 (split)
+
+Section 5 captures `struct panic_evidence` at physical `0x80000` and the next boot restores it, but nothing reserves that page before the kernel runs: the PMM only protects it from kernel entry onward, so UEFI firmware or BOOTX64's own allocations can legally hand the page out and overwrite the record between the reset and the restore. Moved verbatim from the stamped section 5, where it was unreachable.
+
+**Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
+
+- [ ] Reserve `0x80000` in the bootloader with `AllocateAddress` before any other allocation, so firmware cannot hand the page to something else
+  - `AllocateAddress` is the only UEFI allocation mode that pins a specific address ([`src/boot/uefi/efi.h:155`](../../src/boot/uefi/efi.h)); the reservation must run before the ELF load and the page-table build, both of which allocate.
+  - A failed reservation is NOT fatal: report it on serial and continue, because a machine that boots without a crash record beats a machine that refuses to boot.
+- [ ] Record the reservation outcome in the handoff so a next-boot restore that finds a corrupt record can tell "the page was clobbered" from "no crash happened"
+- [ ] Commit: `"boot: reserve the panic-evidence page at 0x80000 before other allocations"`
+
+**Test checkpoint:** the 4-leg smoke matrix boots green with the reservation in place; a deliberate conflicting allocation makes the reservation fail and the bootloader still boots, reporting the failure on serial.
+
+---
+
+## 15. Anti-Rollback Terminal Give-Up: Durable Record
+
+> **Spawned-by:** §12 (split)
+
+`boot_rollback_report_terminal()` ([`src/kernel/main/boot_rollback.c:433`](../../src/kernel/main/boot_rollback.c)) emits one `klog_unrated(LOG_ERROR, ...)` naming the final firmware status when the anti-rollback floor write exhausts its bounded retries, and that line lives solely in the serial log of the boot that produced it. -> XREF: `01-boot-platform/TODO-01-boot-protocol-abi-handoff.md §25` (item: "Report exhaustion once, at `LOG_ERROR`, naming the last firmware status" at line 949)
+
+**User impact:** an operator enables `anti_rollback_raise` to retire a vulnerable image on an unattended or headless box, the write exhausts its retries, and nothing survives the boot to say the policy never took effect. Windows records the equivalent SVN-update outcome durably as Event ID 1042.
+
+**Files:** [`src/kernel/main/boot_rollback.c`](../../src/kernel/main/boot_rollback.c), the boot-decision Registry record, the BlackBox transcript writer
+
+- [ ] Write the terminal give-up (attempt count plus final firmware status) into the boot-decision Registry record
+- [ ] Mirror the same record into the BlackBox transcript, so a headless box keeps it without a mounted registry
+- [ ] Reuse the record shape TODO-01 already ships for stale-loader mismatch and boot provenance rather than inventing a third one
+- [ ] Commit: `"boot: durable record for the anti-rollback terminal give-up"`
+
+**Test checkpoint:** a forced-exhaustion unit test leaves a Registry record and a BlackBox line naming the final firmware status; a successful floor write leaves neither.
+
+---
+
+## 16. Boot Timeline Export Formats (SVG and Chrome Trace)
+
+> **Spawned-by:** §12 (split)
+
+Section 9 ships `boot_timeline_dump_json()` and the `boot-timeline.json` artifact under BlackBox `X:\Perf\`, but neither consumer-facing rendering that makes the artifact readable by a human shipped with it. Both items were moved verbatim from the stamped section 9. The data already exists, so neither item changes the boot path.
+
+**Files:** [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c), or a host-side converter under `tools/`
+
+- [ ] Offline converter or in-kernel `boot_timeline_to_svg()` producing a Gantt-style SVG comparable to `systemd-analyze plot` output
+  - Prefer the host-side converter: an SVG writer in the kernel buys nothing a boot needs and costs kernel `.text`, which TODO-01 section 30 already had to defend against a BSS/text ceiling.
+- [ ] Chrome trace-event JSON export for `chrome://tracing` import, which neither Windows nor `systemd-analyze` offers
+- [ ] Commit: `"boot: boot-timeline SVG and Chrome trace-event export"`
+
+**Test checkpoint:** the converter turns a captured `boot-timeline.json` into an SVG that opens in a browser and a trace file `chrome://tracing` imports without error; if the converter is host-side, the kernel image size is unchanged.
 
 ---
 
