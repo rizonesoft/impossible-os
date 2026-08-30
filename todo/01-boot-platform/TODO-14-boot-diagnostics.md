@@ -72,7 +72,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |  13   | klog format-width contract (`-Wformat` on every call site)  | D02 T33 §7 (image ceiling)         |  [/]   |
 | 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)  | §5                                 |  [x]   |
 | ⭐  |  15   | Anti-rollback terminal give-up durable record               | TODO-01 §25; D02 T33 §7 (ceiling)  |  [/]   |
-| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)           | §9                                 |  [ ]   |
+| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)           | §9                                 |  [/]   |
 | 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it      | §14; §5                            |  [ ]   |
 | 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port | §14                                |  [ ]   |
 | 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff  | §14                                |  [ ]   |
@@ -517,14 +517,23 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
 
 Section 9 ships `boot_timeline_dump_json()` and the `boot-timeline.json` artifact under BlackBox `X:\Perf\`, but neither consumer-facing rendering that makes the artifact readable by a human shipped with it. Both items were moved verbatim from the stamped section 9. The data already exists, so neither item changes the boot path.
 
-**Files:** [`src/kernel/boot_timing.c`](../../src/kernel/boot_timing.c), or a host-side converter under `tools/`
+**Files:** [`tools/boot-timeline/boot_timeline.py`](../../tools/boot-timeline/boot_timeline.py), [`tools/boot-timeline/test_boot_timeline.py`](../../tools/boot-timeline/test_boot_timeline.py), wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh)
 
-- [ ] Offline converter or in-kernel `boot_timeline_to_svg()` producing a Gantt-style SVG comparable to `systemd-analyze plot` output
-  - Prefer the host-side converter: an SVG writer in the kernel buys nothing a boot needs and costs kernel `.text`, which TODO-01 section 30 already had to defend against a BSS/text ceiling.
-- [ ] Chrome trace-event JSON export for `chrome://tracing` import, which neither Windows nor `systemd-analyze` offers
-- [ ] Commit: `"boot: boot-timeline SVG and Chrome trace-event export"`
+- [x] Offline converter producing a Gantt-style SVG comparable to `systemd-analyze plot` output
+  - Host-side, as the item preferred. That is decisive here rather than merely tidy: measured 2026-08-30, the image has 1,323 bytes of headroom before the `0x800000` user base, and §15 was deferred the same day for wanting 4,208.
+  - Axis policy, pinned because the wrong version of it shipped once in review: ONLY the `0xFFFFFFFF` saturation sentinel in `start_ms` or `duration_ms` leaves the axis. Every other record contributes, `unreliable` included -- that flag is advisory per the schema, and the emitter makes `tsc_unreliable` sticky and sets it for whole timelines under fallback anchoring, so excluding it collapsed a reliable-FPDT-plus-unreliable-TSC boot to a 1,000 ms axis with both kernel stages pinned at the edge.
+  - The sentinel exclusion earns its place separately: one saturated record was measured to make the axis 49 days wide and squash every honest bar to a single pixel. Off-scale is decided on a record's END, so a saturated duration with an in-range start is still caught, and such records keep a row, a marker, and their true numbers in the tooltip and in the trace `args`.
+- [x] Chrome trace-event JSON export for `chrome://tracing` import, which neither Windows nor `systemd-analyze` offers
+  - Complete (`X`) events on per-phase lanes with firmware FPDT records on their own lane, timestamps scaled to microseconds as the format defines. The scale is asserted directly because getting it wrong renders a 20-second boot as 20 milliseconds and looks entirely plausible.
+- [/] Bind the emitter's COMPUTED values to expected outputs -- the renderer's parity gate deliberately does not cover this, and nothing else does either
+  - `tools/boot-timeline/test_boot_timeline.py` proves WHICH value reaches which field. It cannot prove the kernel computes `start_ms`, `dur_ms` or `tsc_unreliable` correctly, and a Codex round-5 finding recommending an AST/dataflow check was rejected because it would turn a host renderer's test into a C dataflow analyzer.
+  - Measured gap: `src/kernel/test/test_boot_timing.c` covers `boot_timing_fpdt_unreliable_eval` only. The TSC anchor and the `tsc_unreliable` ladder inside `boot_timeline_dump_json()` have no test, so a regression assigning the wrong value there is undetected on both sides.
+  - Owner: §2, which ships the emitter -- NOT §9, which ships only the wire-format doc. -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md §2` (item: "`boot_timeline_dump_json()`: writes unified FPDT + TSC step timeline as JSON to `boot-timeline.json`"). Cheapest shape is to extract the anchor plus reliability ladder as a pure helper the way `boot_timing_fpdt_unreliable_eval` already is, then assert it from `test_boot_timing.c`.
+- [x] Commit: `"boot: boot-timeline SVG and Chrome trace-event export"`
 
 **Test checkpoint:** the converter turns a captured `boot-timeline.json` into an SVG that opens in a browser and a trace file `chrome://tracing` imports without error; if the converter is host-side, the kernel image size is unchanged.
+
+**Verification (2026-08-30).** "Opens in a browser" and "imports into `chrome://tracing`" cannot be driven from here, so each is asserted at its mechanical precondition rather than claimed: the SVG is parsed with `ElementTree` and its root checked for the SVG namespace, and every trace event is checked for the fields the format requires with no negative timestamp or duration. `--self-check` runs 30 assertions and `test_boot_timeline.py` 71, the loader's rejection cases and both writers' saturation handling included. Kernel image unchanged: the section touches no file under `src/`, `include/`, `user/` or `resources/`.
 
 ---
 
@@ -603,21 +612,21 @@ Raised by the section 14 adversarial review, verified at both refs.
 
 ## OS Comparison
 
-| ⭐  | Feature                   | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                   |
-| --- | ------------------------- | ------------------------- | ------------------------- | ---------------------------------- |
-| 💎  | Boot POST codes           | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex     |
-| 💎  | Named boot progress       | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines        |
-| 💎  | Boot load/status log      | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11 boot-load-status.txt        |
-| ⭐  | Bootloader build identity | ⚠️ bcdedit/msinfo32       | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt    |
-| 💎  | Boot timeline viewers     | ⚠️ Performance Toolkit    | ✅ systemd-analyze plot   | ⚠️ JSON+schema §9; viewers pending |
-| 💎  | Panic forensics           | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt  |
-| 💎  | Crash-page pre-OS pinning | ⚠️ Firmware-reserved only | ✅ pstore/ramoops in DT   | ✅ §14 loader pins 0x80000         |
-| 💎  | Multi UI spinner          | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool          |
-| ⭐  | Panic BSOD QR             | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR         |
-| ⭐  | Alive hang pixel          | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred        |
-| ⭐  | Live vital overlay        | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip         |
+| ⭐  | Feature                   | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                    |
+| --- | ------------------------- | ------------------------- | ------------------------- | ----------------------------------- |
+| 💎  | Boot POST codes           | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex      |
+| 💎  | Named boot progress       | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines         |
+| 💎  | Boot load/status log      | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11 boot-load-status.txt         |
+| ⭐  | Bootloader build identity | ⚠️ bcdedit/msinfo32       | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt     |
+| 💎  | Boot timeline viewers     | ⚠️ Performance Toolkit    | ✅ systemd-analyze plot   | ✅ §16 SVG + Chrome trace host tool |
+| 💎  | Panic forensics           | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt   |
+| 💎  | Crash-page pre-OS pinning | ⚠️ Firmware-reserved only | ✅ pstore/ramoops in DT   | ✅ §14 loader pins 0x80000          |
+| 💎  | Multi UI spinner          | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool           |
+| ⭐  | Panic BSOD QR             | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR          |
+| ⭐  | Alive hang pixel          | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred         |
+| ⭐  | Live vital overlay        | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip          |
 
-> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
+> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) and the **viewers** shipped in §16 as the host-side `tools/boot-timeline/` converter (Gantt SVG matching `systemd-analyze plot`, plus a Chrome trace-event export neither Windows nor `systemd-analyze` offers). §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 
 ---
 

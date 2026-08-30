@@ -8434,6 +8434,25 @@ assert_exit_zero "boot-reliability self-test (classify/aggregate/schema)" \
 
 
 # ============================================================================
+# Boot-timeline offline renderer (boot diagnostics: timeline export formats)
+# ============================================================================
+# tools/boot-timeline/ converts a captured boot-timeline.json into an SVG
+# Gantt chart and a Chrome trace-event file. It is HOST-SIDE so the kernel
+# image is unchanged. --self-check proves both writers plus the loader's
+# rejection cases; test_boot_timeline.py proves the CLI contract and, more
+# importantly, that the tool's record schema still matches the emitter in
+# src/kernel/main/boot_progress.c -- a renamed field would otherwise leave
+# the tool rejecting every real capture with nothing else noticing.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[boot timeline renderer]${NC}"
+BOOTTL_DIR="$REPO_ROOT/tools/boot-timeline"
+assert_exit_zero "boot-timeline self-check (svg + trace writers, rejections)" \
+    python3 "$BOOTTL_DIR/boot_timeline.py" --self-check
+assert_exit_zero "boot-timeline tests (CLI contract + emitter schema parity)" \
+    python3 "$BOOTTL_DIR/test_boot_timeline.py"
+
+
+# ============================================================================
 # KERNEL_TESTS release-flavor knob (kernel-security-hardening: release-build
 # test-surface exclusion)
 # ============================================================================
