@@ -4,7 +4,7 @@
 
 ## Forbidden in tests
 
-Tests under `src/kernel/test/test_*.c` MUST NOT call any function in this list. The pre-commit hook in `.claude/settings.json` enforces this.
+Tests under `src/kernel/test/test_*.c` MUST NOT call any function in this list. The PreToolUse hook `.claude/hooks/test_side_effect_ban.py` (wired in `.claude/settings.json`) enforces EXACTLY this table on every Edit/Write to a test file, and nothing beyond it: a side effect the table does not name (for example `pmm_free_frame()` on a frame the test did not allocate, which is fine on a test-owned frame and wrong on a live one) is a review judgment, not a hook, and a review that rejects such a test must say so on its own evidence rather than cite this page as the enforcer. The hook's `--selftest` pins the table's refusal direction and is run by `scripts/test-tooling.sh`.
 
 | Forbidden in tests | Why |
 |---|---|
@@ -14,6 +14,7 @@ Tests under `src/kernel/test/test_*.c` MUST NOT call any function in this list. 
 | `boot_halt(`, `panic(`, `KeBugCheckEx(` | Halts the running kernel |
 | `serial_init(`, `pmm_init(`, `vmm_init(`, `heap_init(`, `klog_early_init(`, `klog_disk_enable(` | Re-initializes a live subsystem |
 | `acpi_init(`, `lapic_init(`, `ioapic_init(`, `timer_hal_init(`, `gdt_init(`, `idt_init(` | Brings up real hardware -- crashes if called twice |
+| `boot_seed_consume(` | One-shot consumer of the boot entropy seed: frees its LIVE frames and wipes the payload, so every later consumer of that boot starves (added 2026-09-03 after the early-entropy seed-consumer capability-gate section rejected a test seam over it twice) |
 
 ## Allowed test patterns
 

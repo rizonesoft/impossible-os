@@ -1,0 +1,65 @@
+# Overnight Runner Improvements v19 -- Findings (opened 2026-09-03)
+
+Opened at the 2026-09-03 close-out of [v18](overnight-runner-improvements-v18.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT file the run appends to; the close-out that follows the next stop triages every item here, verifies each claim against the tree as it is then, and records a verdict for every one.
+
+**Scope:** flow, gates, wedges, and machinery correctness. Cost findings go to [`token-saver-v19.md`](../token-saver/token-saver-v19.md) -- but a MISFIRING GATE is both, and belongs here with its mechanism.
+
+**Why findings land here instead of being fixed.** The run may not edit its own control plane (`.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json`) or the receipt surface; a bad gate edit with nobody watching is unrecoverable. Record the finding in the same turn it is observed, then advance.
+
+**What to write.** What was observed live (run id, segment, the exact refusal text or behavior), the mechanism confirmed at source with file:line, and what it cost or would cost. Separate what you OBSERVED from what you INFER, and state the CONSEQUENCE as its own checkable sentence. Quote verbatim what a gate says it matched. **Verify a probe with a control whose effect you can predict, and check the control for SEMANTIC effect**: a mutation the compiler folds away, or a tool that writes nothing to the pipe you hash, both read as a clean pass (v18, paid twice in one turn).
+
+---
+
+## What shipped in the 2026-09-03 v18 close-out, and is therefore UNDER TEST
+
+Every change below carries a refusal-direction control (a case that must still be BLOCKED or still FAIL), because a canary exercises the happy path at scale and structurally cannot exercise the refusal path.
+
+- **`scripts/overnight/bss-headroom.py` reports the EXACT growth budget, per page-aligned section group.** It reads `llvm-readelf-19 -S -W build/kernel.exe` and reports `budget(group) = slack to the next page boundary + (free whole pages below USER_BASE - 1) * 4096`, headline `headroom_bytes` = the minimum, old figure kept as `page_rounded_headroom`, fallback to the map marked `precision: page-rounded`. Live tree at close-out: `.text 79, .rodata 1906, .data 980, .bss 1323` where the map said 4096. `section-manifest.py` emits `KERNEL IMAGE HEADROOM IS TIGHT: N bytes of growth in <group> ...` (or a COLLIDES line) in `required_gates` for any section whose `likely_files` touch `src/kernel/`, `include/kernel/` or `src/boot/`. Controls: canned live-tree headers must report 79/.text; a map collision can never be softened by section headers; the exact figure never exceeds the rounded one; `test_bss_advisory.py` pins the exact path. Watch: a kernel section that still reaches link time before learning it cannot fit means the gate line was not read, or the group model missed a section (record the readelf table and the manifest's `bss_headroom`).
+- **`receipt_surface_guard.py` gates `tools/boot-info-manifest/` by FILE TYPE** (`*.c`, `*.h`, `*.sh`, `*.py`); `dump-fields.inc` is ordinary work. Controls: six named code files must still classify as machinery. Two parks were annotated as reopenable: `TODO-14` s14 (line 600, `panic_page_reservation`) and `TODO-13` s20 (line 781, the loader self-measurement's kernel carriage). Watch: the first unattended `boot_info` field addition; it must land as ONE commit (both headers, the `F()` row, the ownership-matrix row, the `BOOT_INFO_VERSION` bump) and `check-doc-coverage.py` must stay green.
+- **`subagent_audit.py` `RUNAWAY_TOOL_USES` 30 -> 60**, on measurement (8 of 21 dispatches fired at 31-53 calls, all finishing in 98-377 s; duration arm 0). The decision is now `_is_runaway()` with a `--selftest` (60 trusted calls fires; 10 minutes fires regardless of count; an untrusted count never fires on count alone; an ordinary 31-53-call read is quiet), wired into `scripts/test-tooling.sh`. Watch: a dispatch that IS a runaway (same greps repeated, 50+ calls, under 10 minutes) would now be silent; record its `subagent-log.jsonl` row if one is seen.
+- **`test_side_effect_ban.py` bans `boot_seed_consume(`** and has a `--selftest` pinning `pmm_free_frame(` as NOT banned (ten test files free their own frames legitimately); `docs/infrastructure/test-policy.md` now says the hook enforces EXACTLY its table. Watch: a test that needs `boot_seed_consume` legitimately would take the `TEST-SIDE-EFFECT-ALLOWED` marker; record it if one appears.
+- **`scripts/overnight/run-status.py` prints `Live: LIVE|DEAD|UNKNOWN` beside `Armed:`** from `run-liveness.sh`, and names a marker that outlives its run as `STALE MARKER` with the recovery steps. Control: `test_run_status_liveness.py` (a live run is never called stale; a dead run with a marker always is; a missing liveness script is UNKNOWN, not a crash). The restart contract is now DOCUMENTED, not fixed: transient `systemd-run` units die with the user manager and the run does not come back; every status surface must say so. Watch: any status page that still says `Armed: True` without `STALE MARKER` while `run-liveness.sh` says DEAD.
+- **Sequencer skill doctrine:** four working-discipline lessons (semantic controls; POST16 REQUIRED is an observability claim; a skill step's `Agent(...)` dispatch IS user-requested; deferred work is preserved as `.claude/state/deferred-<todo>-s<N>.patch` built with `git add -N` so untracked files are included). Watch: an inline gate walk where step 7 named an auditor, and a deferred patch missing a new file.
+
+## Carried forward from v18 -- open
+
+Each carries its verdict and what would settle it. v18 closed with 9 resolved, 7 rejected, 7 not reproduced against 3 carried; keep the carried set this small.
+
+- [ ] `.githooks/pre-push` refuses `test_build.sh` on timing self-checks while the identical bytes pass out of band ([v18](overnight-runner-improvements-v18.md), four occurrences)
+  - Named sub-tests so far: the 22ed reap-mutation check twice, the s30 needle once, the 2-second build budget once.
+  - Hook-environment inheritance was tested and ELIMINATED at the v18 close-out (`git push` exports only `GIT_PREFIX`, `GIT_EXEC_PATH`, `GIT_EDITOR`, `GIT_ASKPASS`; `test_build.sh:38` unsets `GIT_DIR` anyway). Remaining discriminator: LOAD, because pre-push runs the CI-parity build+test immediately before the pack and every green out-of-band run was on an idle host.
+  - THE LOAD EXPERIMENT WAS RUN at the v18 close-out, 2026-09-03, and it CONFIRMS the hypothesis: the full pack on identical bytes went **1371/1371 idle (21 min, 00:39-01:01)** and **1/1371 FAILED under load** (`test_build.sh` 822/835, 13 sub-tests, 22 min, 00:16-00:39) with `build.sh` + `test.sh` + the 4-leg smoke matrix running concurrently. The 13 (`nested-test_build-20260903-002944.log`): `build exceeded 2s budget: 3397ms` (line 261, the budget check named in the first occurrence), EIGHT `consumer delegation` / `corpus snapshot` fixtures at rc=3 (lines 400-409, rc 3 is build.py's "corpus moved underneath this run" refusal), `lint Check 7 exclusion: the repo cache or baseline is absent` (248) and `cache schema: file_path containment probe` on a missing `build/todo-cache.json` (653). The last two are confounded by a concurrent attended `build-and-validate.sh --keep-cache` and the pack's own sub-test 11c (`test_build.sh:4741` deletes the REAL cache); the budget and the rc-3 class are load.
+  - Settled by, now narrowed: the budget check and the corpus-moved detector both decide on wall-clock, and pre-push runs the CI-parity build+test immediately before the pack. Either give those two checks a load-aware margin (measure the corpus-moved detector's window; a rebuild that takes 3.4 s under load is not a moving corpus) or run the pack BEFORE the CI-parity compile in `.githooks/pre-push`. Until then the receipt route is the answer (measured ~14-15 minutes per occurrence).
+- [ ] `Accepted:`/`Deferred:` XREF naming a REWORDED item goes stale silently ([v18](overnight-runner-improvements-v18.md), measured: 1,522 clauses, 2 true positives at TODO-12:211 and TODO-01:1066, 2 false-positive shapes that a rule must accept)
+  - Settled by: a REGRESSION mode in `scripts/todo-graph/validate.py` (a clause that resolved at the base commit and does not at HEAD), with the two true positives as fixtures and the arrow-glyph and deliberate-restatement shapes as must-pass controls. Not an absolute corpus rule: measured too noisy to ship even as WARN.
+- [ ] `review_convergence.py record` fingerprints the tree at CALL time instead of using the dispatch-time digests already in `manifest.jsonl` ([v16](overnight-runner-improvements-v16.md), half done in v17)
+  - Settled by: `record` preferring the newest manifest entry's `head`/`index_tree`/`worktree_sha256` for the slice, with a control that a post-dispatch edit still redispatches. No observed failure in two cycles; hardening.
+
+## Closed as NOT REPRODUCED in v18 (re-file only with NEW evidence, and name what changed)
+
+`SKIP_REVIEW_HOOK=1` blanket-prefix leak (0 leaks in 9 logs, every opt-out carried a reason); the rc-134 `reader buffer` flake member (0); content-binding turning 3 dispatches into 8 (77 legs over 11 sections were review rounds following fixes, 0 unchanged-leg re-dispatches); `four_dispatch_gate` allow-flake and D wall-clock (0 for two cycles); `section_review_required` mid-review Edit block (0; one push-poll Bash block observed, 2 calls, recorded in token-saver); two review legs co-SIGTERMed (0 for two cycles).
+
+## Standing measurement obligations
+
+Carry the baselines forward. A measurement without one is an anecdote.
+
+- **Opt-outs per segment, WITH reasons.** BASELINE at the v18 close-out, 9 logs: 3 `SKIP_REVIEW_HOOK=1` (all with a reason, all on commits), 0 `RECEIVING_REVIEW_OVERRIDE`, 0 `SKIP_TOOLING_SUITE=1`, 0 `SKIP_CI_PARITY=1`, 11 `SKIP_SKILL_STEP_BLOCK=1` (10 with a visible reason). Target: zero leaks (met); every opt-out carries a `_REASON`; the `SKIP_SKILL_STEP_BLOCK` reasons named `bookkeeping`, `deferral`, `sweep-only`, `advance` -- if one reason dominates, that gate has a shape it should allow.
+- **Pack-only refusal attribution.** BASELINE: 2 of 2 in the v18 cycle attributed from the nested detail (both `test_build.sh` 843/844). Target stays: every one names its assertion; record it on the carried pre-push item.
+- **Does the worktree guard ever block a text-only command again, and does any mutation slip past a shape the 18 controls do not cover?** v18 cycle: 0 and 0.
+- **Runaway-arm firing rate at the new threshold.** BASELINE: count arm 8 of 21 at 30; expected 0 of ~21 at 60 on the same distribution (max observed 53). Duration arm: 0 (max 377 s). Each firing must name a genuinely long or looping dispatch; record the `subagent-log.jsonl` row.
+- **`cursor_disagreement` firing rate.** v18 cycle: 0 in 9 segments.
+- **`MISSING` (exit 5) waiter results.** v18 cycle: 0.
+- **Restart survivability.** v18 cycle: the run stopped CLEANLY on 2026-08-30 13:04 (rollover checkpoint, `active: false`, marker cleared); the status page now reports liveness. Measure: does `run-status.md` ever say `Armed: True` without `STALE MARKER` while liveness says DEAD.
+- **Does the bare-`--flag` guard ever refuse a prompt that had no bare token?** v18 cycle: 0 refusals. Baseline stays 0 confirmed guard defects.
+- **Mid-token reflow guard refusals outstanding.** v18 cycle: 0.
+- **Filing discipline: does the run SPLIT an item spanning forbidden+fixable?** Still unmeasured under a genuinely mixed item.
+- **Control-plane suite flake set.** Members unchanged (six plus the rc-134 suspect, silent this cycle). `test_query_bounds.sh` fails on a staled `build/todo-cache.json` every time -- rebuild with `--keep-cache` before reading any of its failures as real.
+- **`completed_drought` firing rate.** v18 cycle: 3 CI packets, all `completed_drought: false`.
+- **Does the fixpoint rebuild ever return non-zero in practice?** rc 3 never observed live.
+- **The pre-push tooling suite receipt.** v18 cycle: 2 ship pushes took the receipt route after a pack-only refusal, ~14-15 minutes each; 0 `SKIP_TOOLING_SUITE=1`.
+- **J1 re-runs caused by attended commits.** v18 cycle: 1 refused rollover (`run-20260830-035742.log`, smoke receipt invalidated) forcing a full extra J1 chain.
+- **Kernel image headroom.** BASELINE at the v18 close-out (HEAD `7cd799909`): exact `.text 79, .rodata 1906, .data 980, .bss 1323` bytes, page-rounded 4096. A kernel section that reaches link time without having read the gate line is the regression to record; the number after the first armed build re-establishes the baseline.
+
+## Found live this cycle
+
+<!-- The run files here. Nothing yet: v19 opened at close-out, before the next arm. -->

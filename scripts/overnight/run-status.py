@@ -68,6 +68,25 @@ def _oracle_next(project_dir: Path) -> tuple[str, str]:
     return str(data.get("status", "unknown")), str(data.get("file") or "")
 
 
+def _liveness(project_dir: Path) -> str:
+    """LIVE / DEAD / UNKNOWN from `run-liveness.sh --quiet`, which reads the
+    systemd units, the launcher's flock and report freshness -- evidence a dead
+    run cannot leave behind. The `Armed:` marker is a file the run REMOVES on a
+    clean stop; a host restart mid-gate (observed 2026-08-28, v18 capture) left
+    it in place with `active: true` beside it, so a status page reading only
+    the marker said Armed about a run that no longer existed. Liveness is the
+    authority; the marker is reported beside it so a stale one is visible."""
+    script = project_dir / "scripts" / "overnight" / "run-liveness.sh"
+    if not script.is_file():
+        return "UNKNOWN"
+    try:
+        rc = subprocess.run(["bash", str(script), "--quiet"], cwd=str(project_dir),
+                            capture_output=True, text=True, timeout=30).returncode
+    except Exception:
+        return "UNKNOWN"
+    return {0: "LIVE", 1: "DEAD"}.get(rc, "UNKNOWN")
+
+
 def _blockers(project_dir: Path) -> str:
     """Compact one-line rendering of `sequencer_triage.py --blockers` JSON."""
     out = _run_oracle(project_dir, "--blockers").strip()
@@ -101,6 +120,7 @@ def render(project_dir: Path, stamp: str) -> str:
         counts[st] = counts.get(st, 0) + 1
     armed = (project_dir / ".claude" / "state" / "sequencer-armed").exists()
     fixpoint = (project_dir / ".claude" / "state" / "sequencer-fixpoint").exists()
+    live = _liveness(project_dir)
 
     next_note = ""
     if next_status == "DONE":
@@ -115,7 +135,10 @@ def render(project_dir: Path, stamp: str) -> str:
         "",
         f"Oracle next: {next_status}" + (f" ({next_file})" if next_file else "") + next_note,
         f"Recoverable blockers: {blockers}",
-        f"Armed: {armed}   Fixpoint sentinel: {fixpoint}",
+        f"Armed: {armed}   Live: {live}   Fixpoint sentinel: {fixpoint}"
+        + ("   (STALE MARKER -- the run died without clearing it; nothing is "
+           "running. Re-arm, and finish or discard any half-shipped section "
+           "first.)" if armed and live == "DEAD" else ""),
         "Counts: " + ("  ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "(none)"),
         "",
         "## Queue",

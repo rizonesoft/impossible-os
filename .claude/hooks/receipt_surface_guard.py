@@ -67,10 +67,22 @@ _MACHINERY = (
 # `abi_hash.h` / `abi_numbers.h` pin, so a wrong generator produces a consistent
 # but meaningless fingerprint on both sides of the handshake -- exactly the
 # "green receipt that no longer means what it says" failure.
+# `tools/boot-info-manifest/` is machinery BY FILE TYPE, not by directory (v18
+# close-out, 2026-09-03): the generator, comparator and checkers are code that
+# renders or judges the contract, but `dump-fields.inc` is a declarative list of
+# `F(name);` rows consumed by that generator. A wrong row there cannot make a
+# receipt lie -- it either fails the compile (`bi->name` does not exist) or makes
+# the manifest more complete -- while gating it meant an unattended section could
+# write two of the three files a `boot_info` field needs and was refused the
+# third (observed live on TODO-14 section 14 and TODO-13 section 20, both
+# parked on exactly this).
 _ABI_MACHINERY = (
     "scripts/gen-user-abi.py",
     "scripts/abi-stamp-check.sh",
-    "tools/boot-info-manifest/*",
+    "tools/boot-info-manifest/*.c",
+    "tools/boot-info-manifest/*.h",
+    "tools/boot-info-manifest/*.sh",
+    "tools/boot-info-manifest/*.py",
 )
 
 
@@ -213,6 +225,19 @@ def _selftest() -> int:
           not is_receipt_machinery("include/kernel/abi_hash.h", bi))
     check("abi_numbers.h is NOT machinery",
           not is_receipt_machinery("user/include/abi_numbers.h", bi))
+
+    # The boot_info manifest tooling: code is machinery (REFUSAL DIRECTION --
+    # every one of these must still be blocked), the declarative field list is
+    # ordinary work.
+    for rel in ("tools/boot-info-manifest/dump-kernel.c",
+                "tools/boot-info-manifest/dump-mirror.c",
+                "tools/boot-info-manifest/dump-common.h",
+                "tools/boot-info-manifest/compare.sh",
+                "tools/boot-info-manifest/gen-loader-identity.sh",
+                "tools/boot-info-manifest/check-doc-coverage.py"):
+        check(f"still machinery: {rel}", is_receipt_machinery(rel, bi))
+    check("dump-fields.inc is NOT machinery (declarative F() rows)",
+          not is_receipt_machinery("tools/boot-info-manifest/dump-fields.inc", bi))
 
     # Ordinary work must stay completely untouched -- this is the reason the
     # gate is not "widen the directory denylist".

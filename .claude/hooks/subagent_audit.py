@@ -29,7 +29,19 @@ _SKIP_LOG_REL = ".claude/state/acknowledged-but-skipped.log"
 # which is the unproven precondition of the dead duration arm in main().
 _PAYLOAD_KEYS_REL = ".claude/state/subagent-payload-keys.json"
 
-RUNAWAY_TOOL_USES = 30
+# RE-BASELINED 60 at the v18 close-out (2026-09-03), on measurement. The v17
+# close-out made the duration arm real (derived from the leaf transcript), and
+# the first cycle with both arms live recorded 21 dispatches: tool_uses 0..53,
+# durations 98..377 s. The count arm at 30 fired on 8 of them -- every one an
+# ordinary analyst read (kernel-explorer, doc-sync-auditor, kernel-quality-
+# auditor at 31-53 calls) that finished in 2-6 minutes -- and the duration arm
+# fired on none. 30 sat BELOW the normal operating range of the read-only
+# fleet; 60 sits above every dispatch measured while still below the shape the
+# arm exists to catch (a mapper looping on the same greps). The duration arm
+# covers the long-wall-clock case on its own now, which is what the earlier
+# objection to re-baselining ("would quiet the noise while leaving that gap
+# invisible") was about.
+RUNAWAY_TOOL_USES = 60
 RUNAWAY_DURATION_MS = 600 * 1000  # 10 minutes
 
 
@@ -199,7 +211,46 @@ def _record_payload_keys(root: str, payload: dict) -> None:
         pass
 
 
+def _is_runaway(tool_uses_total, duration_ms, count_untrusted: bool) -> bool:
+    """The two arms. Count fires only on a trusted count; duration fires on
+    any integer elapsed time. Kept as a pure function so the thresholds have
+    a refusal-direction control (see `_selftest`)."""
+    if not count_untrusted:
+        if isinstance(tool_uses_total, int) and tool_uses_total >= RUNAWAY_TOOL_USES:
+            return True
+    if isinstance(duration_ms, int) and duration_ms >= RUNAWAY_DURATION_MS:
+        return True
+    return False
+
+
+def _selftest() -> int:
+    fails = []
+
+    def check(name, cond):
+        print(("OK   " if cond else "FAIL ") + name)
+        if not cond:
+            fails.append(name)
+
+    # The measured v18-cycle envelope: an ordinary analyst read must be quiet.
+    for tu, dm in ((31, 120191), (47, 98217), (53, 214042), (33, 376736)):
+        check(f"quiet: {tu} calls / {dm // 1000}s is an ordinary analyst dispatch",
+              not _is_runaway(tu, dm, False))
+    # REFUSAL DIRECTION: the arms still fire where they must.
+    check("count arm: 60 trusted calls fires", _is_runaway(RUNAWAY_TOOL_USES, 5000, False))
+    check("count arm: an untrusted count never fires on count alone",
+          not _is_runaway(500, 5000, True))
+    check("duration arm: 10 minutes fires regardless of count",
+          _is_runaway(3, RUNAWAY_DURATION_MS, False))
+    check("duration arm: 10 minutes fires even with an untrusted count",
+          _is_runaway(None, RUNAWAY_DURATION_MS, True))
+    check("duration arm: None elapsed never fires", not _is_runaway(3, None, False))
+    print("subagent_audit selftest " + ("OK" if not fails else f"FAILED: {fails}"))
+    return 1 if fails else 0
+
+
 def main() -> int:
+    if "--selftest" in sys.argv[1:]:
+        return _selftest()
     try:
         d = json.load(sys.stdin)
     except Exception:
@@ -274,27 +325,15 @@ def main() -> int:
     _record_payload_keys(root, d)
 
     # Runaway detection. Count-based check fires only when the count
-    # is trustworthy (payload-provided, not fallback-derived).
+    # is trustworthy (payload-provided or leaf-derived, not fallback-derived).
     #
-    # WARNING (v14 close-out, 2026-08-16, measured): the duration arm below is
-    # DEAD. The harness does NOT send `duration_ms` -- it is None in 1893 of
-    # 1893 recorded SubagentStop payloads -- so `isinstance(duration_ms, int)`
-    # is never true and the arm has never fired. The earlier comment here
-    # ("duration_ms is always a payload field") was simply wrong. Making it
-    # real needs a dispatch-time stamp keyed by agent_id in a PreToolUse-on-
-    # Agent hook, then elapsed computed here; that is a separate design pass
-    # (filed, overnight-runner-improvements-v14). Until then the arm guards
-    # nothing, and the count arm cannot see the failure it was meant to catch
-    # (long wall-clock, few tool calls). Re-baselining RUNAWAY_TOOL_USES alone
-    # is explicitly NOT the fix -- it would quiet the noise while leaving that
-    # gap invisible.
-    runaway = False
-    if not count_untrusted:
-        if isinstance(tool_uses_total, int) and tool_uses_total >= RUNAWAY_TOOL_USES:
-            runaway = True
-    if isinstance(duration_ms, int) and duration_ms >= RUNAWAY_DURATION_MS:
-        runaway = True
-    if runaway:
+    # HISTORY. The v14 close-out (2026-08-16) found the duration arm DEAD: the
+    # harness never sends `duration_ms` (None in 1893 of 1893 payloads). The
+    # v17 close-out (2026-08-29) made it real by deriving elapsed time from
+    # the leaf transcript's own timestamps (`_leaf_duration_ms`), so BOTH arms
+    # now measure something, and the count threshold could be re-baselined on
+    # the first cycle's numbers (see RUNAWAY_TOOL_USES).
+    if _is_runaway(tool_uses_total, duration_ms, count_untrusted):
         skip_path = os.path.join(root, _SKIP_LOG_REL)
         line = ("{ts} SUBAGENT-RUNAWAY type={t!r} duration_ms={dm} "
                 "tool_uses={tu}").format(

@@ -4832,6 +4832,20 @@ if python3 "$REPO_ROOT/.claude/hooks/cd_prefix_reminder.py" --selftest >/dev/nul
 else
     t_fail "cd_prefix_reminder_selftest  embedded selftest failed"
 fi
+# v18 close-out (2026-09-03): both arms of the subagent runaway detector have a
+# refusal-direction control (60 trusted calls fires, 10 minutes fires, an
+# ordinary 31-53-call analyst read does not), and the test side-effect ban pins
+# boot_seed_consume( as banned and pmm_free_frame( as NOT banned.
+if python3 "$REPO_ROOT/.claude/hooks/subagent_audit.py" --selftest >/dev/null 2>&1; then
+    t_pass "subagent_audit_selftest  runaway arms: fire/quiet controls green"
+else
+    t_fail "subagent_audit_selftest  embedded selftest failed"
+fi
+if python3 "$REPO_ROOT/.claude/hooks/test_side_effect_ban.py" --selftest >/dev/null 2>&1; then
+    t_pass "test_side_effect_ban_selftest  banned/allowed call controls green"
+else
+    t_fail "test_side_effect_ban_selftest  embedded selftest failed"
+fi
 # The boot-validation matrix must stay wired and must keep covering BOTH engines
 # at BOTH cpu counts. The gate it replaces had silently run one CPU on one engine
 # for its whole life, which is how an SMP regression shipped green.

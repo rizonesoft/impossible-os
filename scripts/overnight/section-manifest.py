@@ -434,11 +434,23 @@ def main(argv) -> int:
     # about to add kernel .text/.rodata/.bss still discovered the ceiling late
     # (at least five sections historically). Kernel-touching sections only; a
     # roomy tree adds no gate line, and a missing map is not a finding.
+    # The v18 close-out (2026-09-03) made the number EXACT: the sensor now reads
+    # the section headers and reports the smallest per-section growth budget,
+    # because the page-rounded `__kernel_end` figure said "4096, not tight" on
+    # a tree where 79 bytes of .text growth failed the link, and three sections
+    # were deferred at link time against it in one day.
     bss = _bss_headroom_advisory(root) if kernelish else None
-    if bss and bss.get("tight"):
-        gates.append(f"BSS headroom is TIGHT: {bss.get('headroom_bytes')} bytes below "
-                     f"USER_BASE (scripts/overnight/bss-headroom.py) -- size any new "
-                     f"kernel static data BEFORE implementing")
+    if bss and bss.get("collided"):
+        gates.append("KERNEL IMAGE COLLIDES WITH USER_BASE: the build will refuse "
+                     "(scripts/overnight/bss-headroom.py) -- raise USER_BASE or cut "
+                     "static data BEFORE implementing anything that adds to the image")
+    elif bss and bss.get("tight"):
+        gates.append(f"KERNEL IMAGE HEADROOM IS TIGHT: {bss.get('headroom_bytes')} bytes "
+                     f"of growth in {bss.get('tightest', 'the image')} before it crosses "
+                     f"USER_BASE (per-section budgets in bss_headroom; "
+                     f"scripts/overnight/bss-headroom.py) -- ANY .text/.rodata/.bss "
+                     f"addition of that size fails the link; park the carriage BEFORE "
+                     f"implementing")
     if bootish:
         gates.insert(0, "boot-code-quality gates (auto)")
         gates.append("smoke test (boot-path change)")
