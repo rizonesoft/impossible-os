@@ -87,6 +87,31 @@ def _liveness(project_dir: Path) -> str:
     return {0: "LIVE", 1: "DEAD"}.get(rc, "UNKNOWN")
 
 
+def _timer_scheduled(project_dir: Path) -> bool:
+    """True when an overnight timer for THIS repo is loaded and waiting.
+
+    An ARMED run that has not launched yet is healthy, not stale: arming wrote
+    the marker and `run-liveness.sh` correctly answers DEAD because nothing is
+    EXECUTING. The discriminator between waiting and dead is the TIMER -- the
+    arm schedules a transient `--on-calendar` timer unit, which stays active
+    while it waits, and a host restart takes it away with the rest of the
+    transient units (this function only READS unit state; it starts nothing). So
+    marker + timer = armed and pending; marker + no timer = the run died
+    without clearing its marker. Measured 2026-09-03: the first version of the
+    liveness line called a freshly armed run STALE 90 seconds before its own
+    first launch."""
+    unit = "overnight-" + project_dir.resolve().name
+    for t in (unit + ".timer", unit + "-watchdog.timer"):
+        try:
+            r = subprocess.run(["systemctl", "--user", "is-active", t],
+                               capture_output=True, text=True, timeout=15)
+        except Exception:
+            return False
+        if r.returncode == 0:
+            return True
+    return False
+
+
 def _blockers(project_dir: Path) -> str:
     """Compact one-line rendering of `sequencer_triage.py --blockers` JSON."""
     out = _run_oracle(project_dir, "--blockers").strip()
@@ -121,6 +146,7 @@ def render(project_dir: Path, stamp: str) -> str:
     armed = (project_dir / ".claude" / "state" / "sequencer-armed").exists()
     fixpoint = (project_dir / ".claude" / "state" / "sequencer-fixpoint").exists()
     live = _liveness(project_dir)
+    pending = armed and live != "LIVE" and _timer_scheduled(project_dir)
 
     next_note = ""
     if next_status == "DONE":
@@ -136,9 +162,11 @@ def render(project_dir: Path, stamp: str) -> str:
         f"Oracle next: {next_status}" + (f" ({next_file})" if next_file else "") + next_note,
         f"Recoverable blockers: {blockers}",
         f"Armed: {armed}   Live: {live}   Fixpoint sentinel: {fixpoint}"
-        + ("   (STALE MARKER -- the run died without clearing it; nothing is "
-           "running. Re-arm, and finish or discard any half-shipped section "
-           "first.)" if armed and live == "DEAD" else ""),
+        + ("   (ARMED and WAITING -- a timer is scheduled; nothing is executing "
+           "yet. This is healthy.)" if pending else
+           "   (STALE MARKER -- the run died without clearing it, and no timer "
+           "is scheduled. Re-arm, and finish or discard any half-shipped "
+           "section first.)" if armed and live == "DEAD" else ""),
         "Counts: " + ("  ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "(none)"),
         "",
         "## Queue",
