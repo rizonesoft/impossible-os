@@ -229,10 +229,10 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 > - Per-boot diagnostic artifacts route to `X:\Perf\` when BlackBox is mounted, C:\ `klog_dir` fallback otherwise: `boot-profile.log` (`boot_timing.c`), `boot-timeline.json` (`boot_progress.c`).
 > - `klog_using_blackbox` (extern in `klog.h`, defined in `klog_disk.c`) is the single runtime selector boot subsystems use to pick `X:\Perf\` vs the C:\ fallback dir.
 > - `boot-timeline.json` now warns (not silently drops) when its target dir is missing, matching `boot-profile.log`'s open-failure behavior.
-> - Serial session logs stay at `X:\Logs\Serial\` (owned by §5); `boot-trend.json` C:\ fallback + O(N^2) linearization are deferred to TODO-29 §3 (Accepted below).
+> - Serial session logs stay at `X:\Logs\Serial\` (owned by §5). The two boot-trend follow-ups moved to TODO-29 §20 on 2026-09-03: the O(N^2) linearization SHIPPED, and the C:\ fallback is parked on the kernel image ceiling behind an explicit BlackBox-absent refusal.
 > **Verified:** 2026-06-17 | commit `994e9794` | 5/5 items | build OK | smoke PASS (TCG 2.66s)
-> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §3 (item: "C:\ fallback for `boot-trend.json`" at line 468)
-> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> XREF: 01-boot-platform/TODO-29 §3 (item: "Linearize `boot_trend_publish_json()` traversal" at line 467)
+> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §20 (item: "C:\ fallback for `boot-trend.json`" at line 511). Moved from §3 to §20 on 2026-09-03; the writer now REFUSES up front when BlackBox is absent instead of failing at `vfs_open`, and the runtime path construction stays parked on the kernel image ceiling.
+> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> RESOLVED 2026-09-03 in 01-boot-platform/TODO-29 §20 (item: "Linearize `boot_trend_publish_json()` traversal" at line 510, now `[x]`): the loop walks `json_array_first`/`json_array_next` and bounds the scan at `BOOT_TREND_MAX_SCAN`.
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- 9-line warn+comment fix) | 1M+1L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 ---
