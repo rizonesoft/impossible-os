@@ -985,6 +985,188 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
                                    * Pre-EBS disarm is still attempted
                                    * because g_wd_armed stays 1. */
 
+/* --- THE .bss RESET INVENTORY (classified by EMITTED SECTION) ------------
+ * The remedy in this image is an explicit runtime reset before the first
+ * READ, and its weakness is that it is applied where an author remembered.
+ * This block is the enumeration that makes the omissions visible, and it is
+ * the deliverable of the boot-diagnostics reset sweep -- not the resets.
+ *
+ * METHOD, and it matters. Classify by the EMITTED SECTION of the built
+ * object, never by reading the initialiser: a non-zero initialiser lands in
+ * .data, which the PE loader reloads from the image every boot and which is
+ * therefore safe, while a ZERO initialiser lands in .bss and is not. The two
+ * look identical in source. Measured 2026-09-03 with
+ * `llvm-readelf-19 -sW` over every object the loader links:
+ *
+ *   bootx64.o               66 objects in .bss
+ *   boot_entries_parser.o    2 objects in .bss (g_crc32_ready, g_crc32_table)
+ *   boot_history.o           .data only -- safe
+ *   boot_sticky.o            .data only -- safe
+ *   boot_policy.o, boot_entry_kind.o, elf_bootproto.o, reloc.o, sbat.o
+ *                            no statics at all
+ *
+ * Scoping the sweep to bootx64.c alone is how the parser's poisoned CRC table
+ * survived section 18; the unit of the invariant is the LINKED IMAGE.
+ *
+ * Both counts are of the CURRENT object, re-measured after this change rather
+ * than carried forward from the survey that motivated it. That is not
+ * pedantry: the survey measured 65, and resetting g_panic_page_attempted is
+ * itself what made the count 66, so a figure copied forward would describe an
+ * image that no longer exists.
+ *
+ * The emitted section is a lower bound on the source-level static list, not a
+ * complete one: clang may promote a static out of memory entirely when it can
+ * see every access, on the strength of the `= 0` initialiser it is entitled
+ * to assume. g_panic_page_attempted was exactly that case -- it had no .bss
+ * object before this change, which is why the survey counted 65. Such a
+ * static is correct only by codegen accident, so it is reset with the rest,
+ * and the cross-function store in boot_fatal_statics_reset() is what forces
+ * the object to be emitted. Read naively the count would suggest this change
+ * ADDED a hazard; what it did was move one out of the compiler's discretion.
+ *
+ * RESET (a read can reach them before any write on some path):
+ *   early_diag_reset()          s_serial_ready, s_serial_port, s_serial_source,
+ *                               s_serial_baud, s_spcr_skipped, s_spcr_skip_addr,
+ *                               s_boot_log_ready, boot_log_buf, boot_log_pos
+ *                               (+ g_boot_section, .data, for a uniform contract)
+ *   boot_fatal_statics_reset()  g_ebs_in_progress, gFramebuffer, gFbWidth,
+ *                               gFbHeight, gFbPitch, gFbPixelFormat,
+ *                               g_boot_info_ptr, g_panic_page_attempted
+ *   at their consumer's entry    g_policy_decoded, g_conf_res_width,
+ *                               g_conf_res_height, g_wd_refresh_disabled,
+ *                               g_boot_image_file_path (failure branch),
+ *                               g_crc32_ready (boot_entries_parser.c)
+ *
+ * DELIBERATELY NOT RESET, and why. These are write-before-read: an
+ * unconditional assignment dominates every read, so a reset would add a store
+ * and, worse, imply a hazard that is not there.
+ *   gST, gBS, gImageHandle      assigned from the firmware arguments
+ *                               immediately after boot_early_reset_all()
+ *   the fourteen g_uki_*        reset_uki_sections(), called unconditionally
+ *   g_staged_payloads and its   zeroed at parse_boot_conf() entry
+ *     count and overflow flag
+ *   g_net_dhcp, g_net_discovery zeroed at each capture function's entry
+ *   g_self_measure              zeroed at self_measure_run() entry
+ *   g_hhdm_arena_base/_pages,   reset by their own reserve/collect functions
+ *     s_hhdm_iv, s_hhdm_iv_n,
+ *     s_hhdm_arena_next
+ *   g_kernel_img_hi             reset in load_kernel()'s PT_LOAD setup
+ *   g_implicit_payload_claimed  reset_implicit_payload_claims()
+ *   g_panic_page_status         assigned before either read
+ *   g_wd_armed                  assigned at the arm site
+ *   g_boot_device_handle        assigned on all three LoadedImage branches
+ *   g_chainload_count           zeroed at chainload_detect() entry
+ *   g_menu_f10_disabled,        assigned before the sole boot_menu_run() call
+ *     g_menu_no_autoboot
+ *   g_kstack_base               assigned before its guard, which runs only
+ *                               after the reservation succeeded or fataled
+ *
+ * And these are count-bounded staging, never read as state: only indices
+ * below a separately-tracked counter are ever read, so their contents cannot
+ * carry poison into a decision.
+ *   g_chainload_targets (g_chainload_count), g_staged_payloads
+ *   (g_staged_payload_count), load_kernel.s_pt_load_mmap_buf (pt_mmap_size),
+ *   loader_set_entries.buf (its local p), s_mmap_active / s_mmap_events /
+ *   s_mmap_work (mmap_normalize()'s locals), g_crc32_table (rebuilt whenever
+ *   its cookie is unset), and boot_policy_invoke.s_loader_oneshot_entry,
+ *   whose every read is gated on the STACK local loader_have_entry_oneshot --
+ *   set only by loader_consume_one_shot_vars() after it writes the buffer, so
+ *   the gate itself cannot be poisoned and the buffer cannot be read unwritten
+ *
+ * s_loader_oneshot_entry is named explicitly because it is the 66th object and
+ * the only member of the set that is neither reset nor bounded by a counter.
+ * A sweep that silently omitted it would be precisely the unenumerated list
+ * this block exists to replace.
+ *
+ * NOTHING in this image deliberately relies on reading firmware poison. An
+ * earlier draft of section 20 asserted it did, in at least three places; all
+ * eighteen 0xAF comment sites were re-read on 2026-09-03 and every one is
+ * DEFENSIVE, explaining why a reset exists. The two things that genuinely
+ * depend on memory NOT being zeroed are neither of them .bss statics: the
+ * cross-boot panic-evidence page at 0x80000, which is a reserved page whose
+ * survival across a reset is the feature, and BOOT_KSTACK_POISON, which is a
+ * deliberate fill of an allocated stack run. Do not cite either as licence to
+ * leave a static unreset. */
+
+/* Deterministic reset of every static the FATAL path reads. Separate from
+ * early_diag_reset() because the two carry different ordering contracts, and
+ * both are load-bearing:
+ *
+ *   early_diag_reset()          must precede boot_set_section(), which emits
+ *                               a serial transition line before
+ *                               serial_early_init() ever runs.
+ *   boot_fatal_statics_reset()  must precede the first operation that can
+ *                               reach boot_fatal(), which is the boot_info
+ *                               range reservation in efi_main -- long before
+ *                               init_gop() publishes any framebuffer.
+ *
+ * They are invoked through boot_early_reset_all() rather than as two adjacent
+ * calls so a later edit cannot reorder them or slip work between them; the
+ * wrapper is the single first statement of efi_main.
+ *
+ * What each entry costs if it is left at firmware poison, all verified at the
+ * reading line rather than assumed:
+ *
+ *   g_ebs_in_progress   reads non-zero, so boot_fatal() skips the ConOut
+ *                       error screen entirely and boot_fatal_dwell() skips its
+ *                       Stall-and-keypress branch -- on a machine where Boot
+ *                       Services are in fact perfectly healthy.
+ *   gFramebuffer and    all four terms of bsod_can_render_graphical() pass
+ *   gFbWidth/Height/    under 0xAF fill (non-NULL pointer, 0xAFAFAFAF clears
+ *   gFbPixelFormat      the 800/600 minimums, format is not 2), so the fatal
+ *                       path writes through a framebuffer address nothing
+ *                       this boot selected. This is the most severe of the
+ *                       set. The QR fallback beside it reads the same statics
+ *                       and would do the same.
+ *   gFbPitch            not read by the gate predicate, but consumed by the
+ *                       renderer the gate admits; reset with its siblings so
+ *                       the geometry is consistent rather than partly reset.
+ *   g_boot_info_ptr     dereferenced behind only a NULL test, and poison is
+ *                       non-NULL. boot_fatal() is reachable BEFORE the
+ *                       assignment in efi_main, so this is a wild read on the
+ *                       one path where the loader has already failed.
+ *   g_panic_page_attempted
+ *                       the subtle one, and stated in the PAST tense because
+ *                       this reset is what changed it: before this reset
+ *                       existed the symbol had no emitted .bss object at all.
+ *                       clang had promoted it out of memory because its `= 0`
+ *                       initialiser let it assume the object starts zeroed --
+ *                       the single assumption this whole file documents as
+ *                       false. It was therefore correct only by codegen
+ *                       accident, and would have become a poisoned read the
+ *                       moment an edit took its address or added a second
+ *                       reader. The cross-function store below forces the
+ *                       object to be emitted, so it IS in .bss now (one byte,
+ *                       section 8) and its correctness belongs to the source
+ *                       rather than to the optimiser. See the inventory block
+ *                       above, which counts the current object.
+ *
+ * Note what is NOT here: gST, gBS and gImageHandle are assigned from the
+ * firmware arguments immediately after this returns and nothing can read them
+ * earlier, so they are write-before-read and adding them would imply a hazard
+ * that does not exist. */
+static void boot_fatal_statics_reset(void)
+{
+    g_ebs_in_progress      = 0;
+    gFramebuffer           = (UINT32 *)0;
+    gFbWidth               = 0;
+    gFbHeight              = 0;
+    gFbPitch               = 0;
+    gFbPixelFormat         = 0;
+    g_boot_info_ptr        = (struct boot_info *)0;
+    g_panic_page_attempted = 0;
+}
+
+/* The single first statement of efi_main. Keeping both resets behind one call
+ * is what stops a later edit from separating them or inserting a diagnostic
+ * between them -- either of which would silently reintroduce the window each
+ * one exists to close. */
+static void boot_early_reset_all(void)
+{
+    early_diag_reset();
+    boot_fatal_statics_reset();
+}
+
 /* --- NVRAM boot error persistence (S13) ---
  * Write/read a UINT32 error code to UEFI NVRAM so the next boot knows
  * what happened.  Uses RuntimeServices->GetVariable/SetVariable which
@@ -3434,6 +3616,16 @@ static void parse_conf_kv(struct boot_config *cfg,
  * filesystem. */
 static void parse_boot_conf(void)
 {
+    /* FIRST statement, ahead of every early return below. These are written
+     * only when boot.conf actually carries a Resolution key, so on the
+     * ordinary configuration that omits it they keep firmware poison, and the
+     * GOP mode selector then takes its "an explicit resolution was requested"
+     * branch and hunts for a mode matching a poison-derived geometry. The
+     * user-visible effect is automatic mode selection silently suppressed on a
+     * machine whose boot.conf never asked for anything. */
+    g_conf_res_width  = 0;
+    g_conf_res_height = 0;
+
     boot_set_section(BOOT_SECTION_BL_CONF);
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
@@ -6417,6 +6609,19 @@ static void loader_publish_impossible_ext(void)
  * next section. */
 static void boot_policy_invoke(void)
 {
+    /* FIRST statement, ahead of every early return below. g_policy_decoded is
+     * set .valid = 0 only on the reject branch; the fallback branch leaves it
+     * untouched while its declaration comment claims a default-zero state this
+     * loader does not provide. Left at poison, .valid reads non-zero and the
+     * consumers in load_kernel() go on to dereference .u.split.kernel as a C
+     * string -- an arbitrary pointer chosen by the poison pattern.
+     *
+     * The whole object is zeroed rather than just .valid so its determinism
+     * does not depend on every present and future consumer being .valid-gated.
+     * Measured 2026-09-03 with llvm-readelf: 2,840 bytes, a negligible
+     * one-time memset on a pre-EBS path that is about to do disk I/O. */
+    efi_memset(&g_policy_decoded, 0, sizeof(g_policy_decoded));
+
     boot_set_section(BOOT_SECTION_BL_POLICY);
     post_code16(POST16_BL_BOOT_POLICY);
     serial_early_print("[BOOT] boot_policy_invoke...\n");
@@ -16355,8 +16560,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Deterministic state before anything can emit a diagnostic. This is
      * FIRST -- ahead of the gST/gBS saves -- because it is the precondition
      * for boot_set_section() below, which prints through serial_early_print
-     * long before serial_early_init() runs. It makes no firmware call. */
-    early_diag_reset();
+     * long before serial_early_init() runs. It makes no firmware call.
+     *
+     * It now runs behind boot_early_reset_all(), which also resets the statics
+     * the FATAL path reads. The two have different later deadlines and both
+     * are met here; the wrapper is what keeps a later edit from separating
+     * them or inserting a diagnostic between them. */
+    boot_early_reset_all();
 
     /* Save globals */
     gST = SystemTable;
@@ -16519,6 +16729,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 #define WD_TIMEOUT  60
 #define WD_CODE     0x424F4F54  /* "BOOT" */
     g_wd_armed = 0;
+    /* The refresh latch is reset with the armed flag, not merely alongside
+     * it. Its only write is inside its own reader, so nothing else in this
+     * image ever clears it: left at firmware poison it reads as "refreshing
+     * has already failed", and watchdog_reset() returns silently for the
+     * whole boot while the firmware timer keeps counting down. The failure is
+     * a reset 60 seconds in with no diagnostic, on a machine where nothing
+     * actually went wrong. */
+    g_wd_refresh_disabled = 0;
     {
         EFI_STATUS wd_s = gBS->SetWatchdogTimer(WD_TIMEOUT, WD_CODE, 0, (CHAR16 *)0);
         if (!EFI_ERROR(wd_s)) {
@@ -16672,6 +16890,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             }
         } else {
             g_boot_device_handle = (EFI_HANDLE)0;
+            /* Clear the file path on this branch too. It is assigned ONLY in
+             * the success branch above, so without this it keeps firmware
+             * poison -- non-NULL, and therefore passes the
+             * `if (!g_boot_image_file_path)` guard in
+             * self_measure_resolve_path(), which then hands an unvalidated
+             * pointer to GetDevicePathSize(). network_boot_discover() consumes
+             * it on this same branch. The comment below this block already
+             * claimed both globals were cleared here; until now only one was. */
+            g_boot_image_file_path = (EFI_DEVICE_PATH_PROTOCOL *)0;
             serial_early_print("[WARN] Boot device: LoadedImage unavailable, "
                                "using LocateProtocol fallback\n");
             /* No POST16_BL_BOOT_DEV_OK -- last POST stays at 0xB090

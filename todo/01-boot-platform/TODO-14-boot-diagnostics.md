@@ -76,7 +76,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it        | §14; §5; D02 T33 §7 (ceiling)      |  [/]   |
 | 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port   | §14                                |  [x]   |
 | 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff    | §14; D02 T33 §7 (image ceiling)    |  [/]   |
-| 💎  |  20   | Complete the `.bss` poison reset discipline across the loader | §18                                |  [ ]   |
+| 💎  |  20   | Complete the `.bss` poison reset discipline across the loader | §18                                |  [x]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -668,41 +668,74 @@ The review disputed this paragraph twice, so it now states only per-predicate fa
 
 Two earlier drafts of this paragraph were wrong and both errors are recorded here because they bear on how the sweep should be done: the first attributed the Stall-and-keypress predicate to `boot_fatal` (a probe had matched `boot_fatal_dwell` instead), and the second asserted the machine still pauses. Both functions contain separate `g_ebs_in_progress` tests.
 
-**Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
+**Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), [`src/boot/uefi/boot_entries_parser.c`](../../src/boot/uefi/boot_entries_parser.c)
 
-- [ ] Reset the fatal-path and framebuffer statics before any fallible operation in `efi_main`, so a failure that occurs before GOP init reports through predicates this boot actually wrote
-  - `g_ebs_in_progress`, `gFramebuffer`, `gFbWidth`, `gFbHeight`, `gFbPixelFormat`, `gFbPitch`, `g_boot_info_ptr`. All confirmed `.bss` by emitted section; the three predicates above already read them today.
-  - Zeroing `gFramebuffer` alone fixes `bsod_can_render_graphical`, since that predicate leads with the NULL test. Do not stop there: `g_ebs_in_progress` independently controls the ConOut branch, and the two are read on the same path.
-- [ ] Clear `g_boot_image_file_path` alongside `g_boot_device_handle` on the LoadedImage lookup-failure path, which today clears only the handle while the adjacent comment claims it clears both
-  - `self_measure_resolve_path()` then hands the poisoned pointer to firmware.
-- [ ] Reset `g_wd_refresh_disabled` before the watchdog is armed, so poison or warm-reboot residue cannot disable every refresh for the whole boot
-- [ ] Reset `g_policy_decoded` at `boot_policy_invoke()` entry so the fallback and allocation-failure paths cannot inherit a previous boot's authoritative kernel selection
-- [ ] Reset `g_conf_res_width` / `g_conf_res_height` at `parse_boot_conf()` entry so an absent `Resolution=` leaves automatic GOP selection working rather than suppressed
-- [ ] Sweep the remaining file-scope statics and record the ones deliberately left alone, since this file relies on observable poison in at least three places by design
-  - The sweep is the deliverable: an unenumerated list is what let this class survive section 18. Classify by emitted section, never by reading the initialiser.
-- [ ] Commit: `"boot: complete the uninitialised-.bss reset discipline across the loader"`
+**Correction to this section's own premise, 2026-09-03.** The item list below was written on the belief that this file relies on observable poison in at least three places by design. It does not. All eighteen `0xAF` comment sites were re-read and every one is DEFENSIVE. The belief mattered because it would have told the sweep to leave unnamed statics alone; the sweep as shipped names every one.
+
+**Scope correction, same date.** The unit of this invariant is the LINKED IMAGE, not `bootx64.c`. `boot_entries_parser.c` links into `BOOTX64.EFI` and carried the identical defect shape section 18 fixed, which a file-scoped sweep would have missed for the second time.
+
+- [x] Reset the fatal-path and framebuffer statics before any fallible operation in `efi_main`, so a failure that occurs before GOP init reports through predicates this boot actually wrote
+  - Shipped as `boot_fatal_statics_reset()`, covering the seven the item named plus `g_panic_page_attempted`, reached through a new `boot_early_reset_all()` wrapper that calls `early_diag_reset()` then this and is now the single first statement of `efi_main`.
+  - The wrapper is the design review's correction and is load-bearing rather than tidiness: the two resets carry DIFFERENT deadlines (early-diag must precede `boot_set_section`, the fatal group must precede the first `boot_fatal`-reachable call), and as two adjacent bare calls a later edit could reorder them or slip a diagnostic between them. One call cannot be split that way.
+  - `g_panic_page_attempted` was not in the item and is the subtle one: it had NO emitted `.bss` object, because clang promoted it out of memory on the strength of its `= 0` initialiser, which is the single assumption this file documents as false. It was correct only by codegen accident. Resetting it forces the object to be emitted, which is what moved `bootx64.o` from 65 to 66 `.bss` objects.
+  - Zeroing `gFramebuffer` alone would fix `bsod_can_render_graphical` but not the QR fallback beside it, which reads the same statics behind its own test; and `g_ebs_in_progress` independently controls the ConOut branch. All are reset together.
+  - `gST`/`gBS`/`gImageHandle` were deliberately NOT added: they are assigned from the firmware arguments immediately after the wrapper returns, so including them would imply a hazard that does not exist.
+- [x] Clear `g_boot_image_file_path` alongside `g_boot_device_handle` on the LoadedImage lookup-failure path, which today clears only the handle while the adjacent comment claims it clears both
+  - Confirmed at source before fixing: the path is assigned ONLY in the success branch, so the failure branch kept firmware poison, which is non-NULL and therefore passes the `if (!g_boot_image_file_path)` guard in `self_measure_resolve_path()` before `GetDevicePathSize()` is handed the pointer. `network_boot_discover()` consumes it on the same branch.
+  - The pre-existing comment that claimed both globals were cleared is now true rather than deleted.
+- [x] Reset `g_wd_refresh_disabled` before the watchdog is armed, so poison or warm-reboot residue cannot disable every refresh for the whole boot
+  - Placed beside the existing `g_wd_armed = 0` at the arm site rather than in the entry group, so the two watchdog statics stay together where a reader looking at the watchdog will find them. Dominance verified: all three `watchdog_reset()` call sites are inside `boot_menu_run`/`boot_policy_invoke`, which run after the arm.
+  - The latch's only write is inside its own reader, so nothing else in the image ever cleared it. Left poisoned, the failure is a firmware reset 60 seconds in with no diagnostic, on a machine where nothing went wrong.
+- [x] Reset `g_policy_decoded` at `boot_policy_invoke()` entry so the fallback and allocation-failure paths cannot inherit a previous boot's authoritative kernel selection
+  - The whole object is zeroed, not just `.valid`, so determinism does not depend on every present and future consumer being `.valid`-gated. Consumers read `.valid` and then dereference `.u.split.kernel` as a C string, so a spuriously-true `.valid` is a wild pointer, not merely a wrong boolean.
+  - Measured 2,840 bytes, NOT the 10,304 an earlier draft of this section recorded. That first figure came from reading `llvm-readelf`'s decimal Size column as hex; the control in use at the time was a 4-byte object, which reads identically under both hypotheses and so could not discriminate them. The design review caught it.
+- [x] Reset `g_conf_res_width` / `g_conf_res_height` at `parse_boot_conf()` entry so an absent `Resolution=` leaves automatic GOP selection working rather than suppressed
+  - First statement, ahead of every early return in the function, per the design review's constraint. Dominance verified: `parse_boot_conf()` is called unconditionally at `efi_main` top level and precedes `init_gop()`, which contains the only reader.
+- [x] Sweep the remaining file-scope statics and record the ones deliberately left alone
+  - Shipped as the inventory comment block in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). It classifies every static in the LINKED IMAGE by emitted section into reset / deliberately-not-reset-because-write-before-read / count-bounded staging, and records the method so a later sweep is reproducible.
+  - The unit is the linked image, not the file. Scoping to `bootx64.c` alone is exactly what let the parser's poisoned CRC table survive section 18, so the sweep covers every object: `bootx64.o` 66 `.bss` objects, `boot_entries_parser.o` 2, `boot_history.o` and `boot_sticky.o` `.data` only, the other five no statics at all.
+  - The item's premise was WRONG and is corrected rather than satisfied: this file does not rely on observable poison anywhere. All eighteen `0xAF` comment sites were re-read and every one is DEFENSIVE, explaining why a reset exists. The two things that genuinely depend on memory not being zeroed are neither of them `.bss` statics -- the cross-boot panic-evidence page at `0x80000`, and `BOOT_KSTACK_POISON`, a deliberate fill of an allocated stack run. The design review independently reached the same conclusion.
+  - The emitted section is a LOWER BOUND on the source-level static list: clang may promote a static out of memory entirely on the strength of a `= 0` initialiser, which `g_panic_page_attempted` demonstrates. A sweep that trusts the symbol table alone will miss exactly the statics whose safety is least robust.
+- [x] Extend the reset discipline to `boot_entries_parser.c`, whose CRC readiness flag is the same defect shape as section 18's serial-port guard
+  - Not in the original item list; found by the design review and confirmed at source. `g_crc32_ready` was a plain `int` tested with `if (!g_crc32_ready)`, so poison skipped `crc32_init()` and every CRC was computed over a poisoned 1 KiB table. The effect is a VALID boot-entry store rejected as `CRC_MISMATCH`, sending the loader to its invalid-store fallback, which can select a different kernel than the store asked for.
+  - Fixed with the section-18 shape: a `volatile` wide exact-match cookie published LAST after the table is filled, plus a `crc32_reset()` as the first statement of `boot_entries_parse()`, ahead of its early returns. The reset is the load-bearing half; the cookie is defence in depth.
+  - The `volatile` is measured, not defensive style: the declared `int` was emitted at SIZE 1, clang having narrowed the flag to a byte exactly as it did to the section-18 cookies. It is size 4 now.
+- [/] Check the inventory mechanically instead of by hand, so a later object change cannot silently invalidate it -- blocked on where such a check can run
+  - Raised by the adversarial review after the hand-written count went stale within this same section (it said 65 while the shipped object had 66, because the reset itself materialised the 66th symbol). That is the failure mode a mechanical check exists to remove, and it is worth doing.
+  - The blocker is concrete: the inventory is a property of the EMITTED OBJECT, so a checker needs build artifacts. `scripts/lint.sh` runs pre-build on staged source, and classifying from source is the very method the inventory records as wrong. Wiring a post-build check means editing `scripts/build.sh`, which `receipt_surface_guard.py` classifies as receipt surface the unattended run may not edit.
+  - -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md` §20 (this item); owner is whoever next revisits the loader's post-build gates, since the placement decision is the work.
+- [x] Commit: `"boot: complete the uninitialised-.bss reset discipline across the loader"`
 
 **Test checkpoint:** each reset lands before the first read of the static it covers, demonstrated by the emitted-section classification above plus a walk of the enclosing call path; the 4-leg smoke matrix stays green and serial output is unchanged.
 
-> **Note:** No kernel test surface, for the same reason as section 18: these are file-scope statics in `BOOTX64.EFI`, not `kernel.exe`, so no `TEST_CAT_BOOT` case can reach them to seed the poison, and a kernel-side fixture is separately barred by the 79-byte `.text` headroom.
+> **Note:** No kernel test surface, for the same reason as section 18: these are file-scope statics in `BOOTX64.EFI`, not `kernel.exe`, so no `TEST_CAT_BOOT` case can reach them to seed the poison, and a kernel-side fixture is separately barred by the 79-byte `.text` headroom. Validation is therefore the 4-leg smoke matrix plus direct `llvm-readelf-19` classification of the emitted objects, which is what caught both the `g_crc32_ready` narrowing and the `g_panic_page_attempted` promotion.
+
+> **Notes:**
+> - Shipped `boot_fatal_statics_reset()` and the `boot_early_reset_all()` wrapper in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), four consumer-entry resets, and the poison-proof CRC cookie plus `crc32_reset()` in [`src/boot/uefi/boot_entries_parser.c`](../../src/boot/uefi/boot_entries_parser.c).
+> - Integrates as one first statement of `efi_main`: the wrapper is what stops a later edit separating two resets whose deadlines differ, which was the design review's correction.
+> - Downstream, a machine whose firmware poisons `.bss` stops rendering the fatal screen through an unvalidated framebuffer pointer, stops silently disabling every watchdog refresh, stops suppressing automatic GOP mode selection, and stops rejecting a valid boot-entry store as `CRC_MISMATCH`.
+> - Canonical rationale is the inventory comment block in `bootx64.c`, which records the classification method and every symbol's disposition.
+> - Scope boundary: bootloader image only. No kernel `.text` is added, so the 79-byte ceiling parking sections 17 and 19 does not apply here.
+> - Validation: build OK, 32845 kernel + 17 user-mode tests pass, smoke matrix 4/4, plus a WHPX boot reaching `Boot complete in 8.720s` and `C:\>`.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                   | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                    |
-| --- | ------------------------- | ------------------------- | ------------------------- | ----------------------------------- |
-| 💎  | Boot POST codes           | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex      |
-| 💎  | Named boot progress       | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines         |
-| 💎  | Boot load/status log      | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11 boot-load-status.txt         |
-| ⭐  | Bootloader build identity | ⚠️ bcdedit/msinfo32       | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt     |
-| 💎  | Boot timeline viewers     | ⚠️ Performance Toolkit    | ✅ systemd-analyze plot   | ✅ §16 SVG + Chrome trace host tool |
-| 💎  | Panic forensics           | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt   |
-| 💎  | Crash-page pre-OS pinning | ⚠️ Firmware-reserved only | ✅ pstore/ramoops in DT   | ✅ §14 loader pins 0x80000          |
-| 💎  | Multi UI spinner          | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool           |
-| ⭐  | Panic BSOD QR             | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR          |
-| ⭐  | Alive hang pixel          | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred         |
-| ⭐  | Live vital overlay        | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip          |
+| ⭐  | Feature                    | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                    |
+| --- | -------------------------- | ------------------------- | ------------------------- | ----------------------------------- |
+| 💎  | Boot POST codes            | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex      |
+| 💎  | Named boot progress        | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines         |
+| 💎  | Boot load/status log       | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11 boot-load-status.txt         |
+| ⭐  | Bootloader build identity  | ⚠️ bcdedit/msinfo32       | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt     |
+| 💎  | Boot timeline viewers      | ⚠️ Performance Toolkit    | ✅ systemd-analyze plot   | ✅ §16 SVG + Chrome trace host tool |
+| 💎  | Panic forensics            | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt   |
+| 💎  | Crash-page pre-OS pinning  | ⚠️ Firmware-reserved only | ✅ pstore/ramoops in DT   | ✅ §14 loader pins 0x80000          |
+| 💎  | Uninit-.bss boot hardening | ⚠️ Compiler/CRT zeroing   | ⚠️ Compiler/CRT zeroing   | ✅ §18 §20 enumerated reset sweep   |
+| 💎  | Multi UI spinner           | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool           |
+| ⭐  | Panic BSOD QR              | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR          |
+| ⭐  | Alive hang pixel           | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred         |
+| ⭐  | Live vital overlay         | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip          |
 
 > **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) and the **viewers** shipped in §16 as the host-side `tools/boot-timeline/` converter (Gantt SVG matching `systemd-analyze plot`, plus a Chrome trace-event export neither Windows nor `systemd-analyze` offers). §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 

@@ -25,8 +25,40 @@ typedef int            i32;
 
 /* ---- IEEE 802.3 CRC-32 (polynomial 0xEDB88320) ----------------------------- */
 
+/* --- Poison-proof lazy initialisation of the CRC table -------------------
+ * This object links into BOOTX64.EFI (Makefile), which does NOT zero .bss:
+ * firmware pool-poisons it with 0xAF, and a warm reboot can leave the
+ * previous boot's bytes at the same address because the image reloads at the
+ * same base. The `= 0` initialiser below is DOCUMENTATION, not
+ * initialisation, exactly as in bootx64.c.
+ *
+ * Readiness is therefore a wide exact-match cookie rather than a boolean, and
+ * it is `volatile`, both for the same measured reason as the early-diagnostics
+ * cookies in bootx64.c. A boolean buys nothing (0xAF is non-zero and so reads
+ * as "ready"), and without `volatile` the compiler narrows the wide compare
+ * straight back into one: measured 2026-09-03 on the real build object, the
+ * previous `static int g_crc32_ready` was emitted at SIZE 1, not 4, because
+ * clang may assume nothing outside the program writes an internal-linkage
+ * object whose address is never taken. That is the assumption firmware poison
+ * violates.
+ *
+ * What the defect cost: `if (!g_crc32_ready)` skipped the table build, every
+ * CRC was then computed over a poisoned table, and boot_entries_parse()
+ * rejected a VALID store as CRC_MISMATCH -- sending the loader to its
+ * invalid-store fallback, which can select a different kernel than the store
+ * asked for.
+ *
+ * crc32_reset() at the parser entry is the load-bearing half; the cookie is
+ * defence in depth, because a constant cookie discriminates poison from
+ * ready, never THIS boot from the last one. A stale-but-valid cookie left by
+ * a previous boot of the SAME image would in fact leave a correct table (it
+ * is a pure function of a compile-time polynomial), but a chainload from a
+ * different loader build can leave a table this image never wrote, and the
+ * entry reset is what covers that. */
+#define BOOT_ENTRIES_CRC32_READY 0x43524332u  /* 'CRC2' */
+
 static u32 g_crc32_table[256];
-static int g_crc32_ready = 0;
+static volatile u32 g_crc32_ready = 0;
 
 static void crc32_init(void)
 {
@@ -37,7 +69,17 @@ static void crc32_init(void)
             c = (c & 1u) ? ((c >> 1) ^ BOOT_ENTRIES_CRC32_POLY) : (c >> 1);
         g_crc32_table[i] = c;
     }
-    g_crc32_ready = 1;
+    /* Published LAST, after every table entry is written. */
+    g_crc32_ready = BOOT_ENTRIES_CRC32_READY;
+}
+
+/* Force the table to be rebuilt from this boot's own code. MUST run as the
+ * first statement of boot_entries_parse(), ahead of its early returns, so a
+ * store rejected for size or shape still leaves the flag deterministic for a
+ * later call. */
+static void crc32_reset(void)
+{
+    g_crc32_ready = 0;
 }
 
 /* Computes IEEE 802.3 CRC-32 (init 0xFFFFFFFF, final XOR 0xFFFFFFFF) over raw bytes,
@@ -47,7 +89,9 @@ static void crc32_init(void)
 static u32 crc32_zeroed(const u8 *raw, u32 len, u32 zero_off)
 {
     u32 i, crc = 0xFFFFFFFFu;
-    if (!g_crc32_ready) crc32_init();
+    /* Exact match, not `!g_crc32_ready`: poison is non-zero and would skip
+     * the build, leaving the table itself poisoned. */
+    if (g_crc32_ready != BOOT_ENTRIES_CRC32_READY) crc32_init();
     for (i = 0; i < len; i++) {
         u8 b = (i >= zero_off && i < zero_off + 8u) ? (u8)'0' : raw[i];
         crc = (crc >> 8) ^ g_crc32_table[(crc ^ b) & 0xFFu];
@@ -1000,6 +1044,11 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                        boot_entries_log_fn log,
                        boot_entries_parse_result_t *out)
 {
+    /* FIRST statement: the CRC readiness flag lives in unzeroed .bss (see the
+     * cookie comment above) and each early return below would otherwise leave
+     * it holding firmware poison for the next call. */
+    crc32_reset();
+
     /* Initialize */
     zero_buf(out, sizeof(*out));
     out->reject_code = BOOT_ENTRIES_OK;
