@@ -50,7 +50,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎  |   8   | Driver/module enforcement                        | T18, D04 T04 |  [/]   |
 | 💎  |   9   | User-mode image enforcement                      | T17, T20     |  [/]   |
 | ⭐  |  10   | CI audit, telemetry, and syscalls                | T12, T16     |  [/]   |
-| ⭐  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --           |  [ ]   |
+| ⭐  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --           |  [/]   |
 
 ## 1. Code Integrity Policy Object
 
@@ -247,6 +247,8 @@ From the stamped section 2:
 - [ ] Gate dynamic-code sites: `NtAllocateVirtualMemory` (PAGE_EXECUTE) + `NtProtectVirtualMemory` (non-exec->exec) in src/kernel/nt/nt_memory.c must call `ci_validate_dynamic_code` before changing PTEs. -> XREF: T19 §4.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [M] not started this pass -- `section-pack.py` returns `SPLIT-RECOMMENDED` (5 substantial, security-sensitive items: CI init wiring, Ed25519 policy-artifact signature auth, anti-rollback counter, ratchet-domain merge, dynamic-code-site gating) and the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). Shipping security-policy code unreviewed is worse than parking it untouched. No source changed.
 
 ---
 
