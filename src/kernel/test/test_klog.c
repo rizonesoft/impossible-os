@@ -47,6 +47,48 @@ _Static_assert(KLOG_DEC_DIGITS_MAX(8) == 20,
 _Static_assert(KLOG_TIMESTAMP_SEC_DIGITS_MAX == 10,
                "klog renders seconds from a uint32_t -- ten decimal digits");
 
+/* The two cross-boot magic values, pinned at compile time.
+ *
+ * These replace `test_klog_crash_magic` and `test_etw_session_magic`, which
+ * were registered with EMPTY BODIES: the runner counted two passes that
+ * verified nothing, which is worse than an absent test because the count
+ * claims the constants are covered. Deleting them drops the reported total
+ * by two, and that is the honest direction.
+ *
+ * A _Static_assert is the right tool here rather than a runtime assertion:
+ * the values are compile-time constants, so checking them at run time would
+ * spend .text proving what the compiler already knows -- and the kernel
+ * image had 15 bytes of .text to spare when this was written (see the
+ * higher-half relocation TODO's tactical reclamation work).
+ *
+ * The wording above deliberately says "runtime assertion" rather than naming
+ * the macro: scripts/test-coverage.sh counts reported assertions with a bare
+ * `grep -c` over the whole file, so the macro name in a COMMENT is counted
+ * as a real one. Writing it here would have replaced two false suite passes
+ * with a phantom assertion, which is the same defect in a different place.
+ *
+ * Both are load-bearing across a RESET, which is why they are pinned at all.
+ * KLOG_CRASH_MAGIC stamps the crash region the NEXT boot reads back, and a
+ * changed value silently retires crash-log recovery: the next boot finds a
+ * header it does not recognise and reports no prior crash, which is
+ * indistinguishable from a clean boot. Each is also asserted to spell its
+ * intended ASCII, because the value and the "KLOG"/"ETWS" comment beside it
+ * are two claims and only one of them is checkable by eye. */
+_Static_assert(KLOG_CRASH_MAGIC == 0x4B4C4F47,
+               "KLOG_CRASH_MAGIC is the cross-boot crash-region stamp");
+_Static_assert(((KLOG_CRASH_MAGIC >> 24) & 0xFFu) == 'K' &&
+                   ((KLOG_CRASH_MAGIC >> 16) & 0xFFu) == 'L' &&
+                   ((KLOG_CRASH_MAGIC >> 8) & 0xFFu) == 'O' &&
+                   (KLOG_CRASH_MAGIC & 0xFFu) == 'G',
+               "KLOG_CRASH_MAGIC must spell \"KLOG\"");
+_Static_assert(ETW_SESSION_MAGIC == 0x45545753,
+               "ETW_SESSION_MAGIC identifies an etw_session_t");
+_Static_assert(((ETW_SESSION_MAGIC >> 24) & 0xFFu) == 'E' &&
+                   ((ETW_SESSION_MAGIC >> 16) & 0xFFu) == 'T' &&
+                   ((ETW_SESSION_MAGIC >> 8) & 0xFFu) == 'W' &&
+                   (ETW_SESSION_MAGIC & 0xFFu) == 'S',
+               "ETW_SESSION_MAGIC must spell \"ETWS\"");
+
 /* Room for a full 255-character entry plus its NUL. */
 #define TEST_KLOG_PROBE_CAP  260u
 
@@ -776,10 +818,6 @@ static void test_klog_ring_wrap(void)
 
 /* ---- Crash persistence types ---- */
 
-static void test_klog_crash_magic(void)
-{
-}
-
 static void test_klog_crash_header_size(void)
 {
     /* Header must be stable for cross-boot physical memory layout */
@@ -848,12 +886,6 @@ static void test_klog_ctx_post_codes(void)
                 "KLOG_CTX != CRASHLOG (no overlap)");
     TEST_ASSERT(POST16_KLOG_CTX_JSON != POST16_KLOG_CTX_SERIAL,
                 "KLOG_CTX_JSON != KLOG_CTX_SERIAL");
-}
-
-/* ---- ETW: session magic value ---- */
-
-static void test_etw_session_magic(void)
-{
 }
 
 /* ---- ETW: event header size ---- */
@@ -1453,7 +1485,6 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: global level", test_klog_global_level, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: rate limit API", test_klog_rate_limit_api, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring wrap", test_klog_ring_wrap, TEST_CAT_BOOT);
-    test_suite_register_cat("Klog: crash magic", test_klog_crash_magic, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
 
@@ -1477,7 +1508,6 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: recovered set coherence", test_klog_recovered_set_ok, TEST_CAT_BOOT);
 
     /* ETW tracing tests */
-    test_suite_register_cat("ETW: session magic", test_etw_session_magic, TEST_CAT_ABI);
     test_suite_register_cat("ETW: event header size", test_etw_event_header_size, TEST_CAT_ABI);
     test_suite_register_cat("ETW: basic info size", test_etw_basic_info_size, TEST_CAT_ABI);
     test_suite_register_cat("ETW: SSDT registered", test_etw_ssdt_registered, TEST_CAT_ABI);
