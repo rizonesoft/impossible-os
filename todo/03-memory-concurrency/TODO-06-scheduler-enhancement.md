@@ -61,6 +61,7 @@ title: "TODO-06 -- Scheduler Enhancement"
 | 💎  |  13   | Dynamic task table + reusable PID slot allocation    | §12                                                            |  [ ]   |
 | ⭐  |  14   | §14 Process/job CPU bandwidth control (cap/reserve)  | D02 T25 §7 (rate record), §8 (tick calibration)                |  [ ]   |
 | 💎  |  15   | §15 Wait/wake transaction locking (lost-wakeup fix)  | §1 (run-queue lock granularity)                                |  [ ]   |
+| 💎  |  16   | §16 Move XSAVE/FPU ownership to `struct thread`      | (none)                                                         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -350,6 +351,29 @@ Every wait primitive publishes its waiter into the queue BEFORE setting `THREAD_
 **Test checkpoint:** a test that publishes a waiter and forces a wake before the yield observes the thread runnable rather than permanently blocked; `thread_join` racing `thread_exit` never leaves the joiner asleep; all existing sched/ipc suites stay green.
 
 ---
+
+## 16. Move XSAVE / FPU State Ownership from `struct task` to `struct thread`
+
+> **Spawned-by:** root
+
+FPU and extended state live on the PROCESS, not the thread: `xsave_area` and `fpu_used` are fields of `struct task` (`src/kernel/sched/task.c`), and the scheduler saves and restores them per task. Sibling threads of one process therefore SHARE one XSAVE buffer, so any extended state a thread owns privately is clobbered by its siblings.
+
+**What a user hits if this is not done:** two threads of one process doing floating-point or SIMD work corrupt each other's registers across a context switch. It is silent -- no fault, no log line, just wrong arithmetic in whichever thread was descheduled -- and it gets worse as state components grow, because every new component (AMX tiles, CET shadow-stack pointers) inherits the same sharing.
+
+Two shipped sections are already blocked on this and neither owns it, which is why it is filed here rather than in either of them:
+
+- `02-kernel-core/TODO-09-x86-64-architecture.md` §17 (AMX tile state + XFD): AMX tile data would leak between sibling threads, so the section is parked rather than shipped -> XREF: `02-kernel-core/TODO-09-x86-64-architecture.md` §17 (item: "PREREQUISITE (blocker) -- per-thread XSAVE")
+- `02-kernel-core/TODO-10-kernel-security-hardening.md` §9 (CET shadow stack): `IA32_XSS`-backed CET state would corrupt `PL0_SSP` across same-process thread switches, so the MVP saves `PL0_SSP` per thread by hand instead of using `XSAVES` -> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` §9 (item: "CET xstate reservation: set `IA32_XSS` bits 11/12")
+
+- [ ] Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`, and audit every reader of both fields rather than only the scheduler's
+- [ ] Allocate and free the per-thread area on the thread lifecycle, not the task lifecycle, keeping the existing `xsave_size_max` sizing and 64-byte alignment
+  - `pmm_alloc_contiguous()` is the existing allocator here, and it does not zero: the area needs FCW `0x037F` at offset 0 and MXCSR `0x1F80` at offset 24 before first use, exactly as the task-scoped path does today.
+- [ ] Save and restore the area in BOTH `schedule()` and `schedule_now()`; a cooperative yield that skips the save is the same corruption with a narrower window
+- [ ] Add a regression test that fails on the CURRENT shared-buffer model: two threads of one process write distinct SIMD register patterns, yield to each other, and each reads its own pattern back
+- [ ] Report what the move costs per thread and confirm the kernel image still links, because `xsave_size_max` on an AMX-capable CPU is several KiB and the thread table is sized in the hundreds
+- [ ] Commit: `"kernel/sched: move XSAVE/FPU state ownership from struct task to struct thread"`
+
+**Test checkpoint:** `bash scripts/build.sh` -> `=== BUILD OK ===`; full `bash scripts/test.sh` green with the new sibling-thread SIMD-isolation case passing and the existing `sched` suite unchanged; `bash scripts/test-smoke.sh` boots to `C:\>` (an FPU save/restore regression shows up as a hang or garbage output, not a failing assertion). Scope: the ownership move plus its test. It does NOT implement AMX (TODO-09 §17) or CET XSS (TODO-10 §9); it removes the blocker both of those name. Platforms: QEMU KVM + TCG; **bare metal**.
 
 ## OS Comparison
 

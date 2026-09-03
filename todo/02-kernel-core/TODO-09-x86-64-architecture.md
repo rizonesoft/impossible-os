@@ -57,8 +57,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - Intel PMU and AMD PMC expose per-core IPC and cache-miss counters.
 - `IA32_TSC_AUX` is programmed per-CPU for accurate `RDTSCP`-based timing.
 - A 2-second boot self-benchmark stores hardware capabilities in the Registry and auto-configures SIMD dispatch thresholds and scheduler quantum.
-- AMX tile state is context-switched lazily via XFD: a task that never uses AMX never allocates its 8 KiB tile buffer, and first use faults in through the `#NM` handler (§17).
-- Split-lock (#AC) and bus-lock (#DB) detection terminate or warn on a misbehaving thread instead of letting one core stall the whole coherency fabric (§18).
+- AMX tile state is to be context-switched via XFD, with the `#NM` handler clearing the faulting task's XFD bit rather than growing its area. NOT shipped: §17 is parked on the per-thread XSAVE redesign and on AMX hardware, and no `CPU_FEATURE_AMX_TILE`/`MSR_IA32_XFD` symbol exists in `src/kernel` today.
+- Split-lock (#AC) and bus-lock (#DB) detection is to warn or terminate a misbehaving thread instead of letting one core stall the whole coherency fabric. NOT shipped: a first implementation was written and rolled back, and §18 is parked (see its Deferred stamp).
 - WAITPKG dwell is bounded via `IA32_UMWAIT_CONTROL` (anti-DoS); SERIALIZE/RDPID are detected for future adoption (the instruction-helper swap is deferred) (§19).
 
 ---
@@ -215,7 +215,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [x] Add PKRU to XCR0 (bit 9) in `cpu_configure_xcr0()` (from §1); **fixed bug**: was gated on `CPU_FEATURE_UMIP` instead of `CPU_FEATURE_PKU`. PKRU XSAVE offset queried from CPUID leaf 0x0D subleaf 9 and stored in `g_cpu.pkru_xsave_offset`
 - [x] Kernel API in `src/kernel/security/pku.c` and `include/kernel/security/pku.h`: `pku_alloc_key()` (returns 1-15, -1 on exhaust, spinlock-protected bitmap), `pku_free_key()`, `pku_set_permissions()` (WRPKRU wrapper), `pku_read()` (RDPKRU), `pku_init()`. Constants: `PKU_ACCESS_DISABLE = 0x1`, `PKU_WRITE_DISABLE = 0x2`, `PKU_INITIAL_PKRU = 0x55555554`
 - [x] PTE key field: `VMM_PKU_KEY(k)` encodes key into bits 62:59, `VMM_PKU_KEY_GET(pte)` extracts key. Added to `include/kernel/mm/vmm.h`
-- [x] Win32 API surface: kernel-side `pku_set_permissions()` wraps WRPKRU (~1 ns). User-mode `SetThreadMemoryZone()` will execute WRPKRU directly from user libc (no syscall needed since WRPKRU is a ring-0/3 instruction). SSDT wiring for `pku_alloc_key`/`pku_free_key` deferred to SSDT domain (-> XREF: TODO-12)
+- [x] Win32 API surface: kernel-side `pku_set_permissions()` wraps WRPKRU (~1 ns). SSDT wiring for `pku_alloc_key`/`pku_free_key` deferred to SSDT domain (-> XREF: TODO-12)
+  - The user-mode `SetThreadMemoryZone()` wrapper is DESIGN, not shipped: the symbol appears nowhere under `src/`, `include/` or `user/`. It would execute WRPKRU directly from user libc (no syscall needed, WRPKRU is ring-0/3). The OS Comparison row "PKU Win32 wrapper" already scopes this section as kernel-only; the `Commit:` line below quotes the real commit message `d3ad09b5f` verbatim and is left as history.
 - [x] PKRU initial value: `0x55555554` set in `task_alloc_xsave()` at the PKRU XSAVE offset (from CPUID 0x0D:9). Key 0 = full access, keys 1-15 = access disabled by default. XSTATE_BV bit 9 set to mark PKRU state valid
 - [x] `cpu_verify_hardening()` updated: verifies CR4.UMIP (bit 11) and CR4.PKE (bit 22) with klog
 - [x] Commit: `"kernel/security: UMIP (CR4.UMIP), PKU protection keys, SetThreadMemoryZone"`
@@ -256,24 +257,28 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > [!WARNING]
 > **Blocked: no test platform.** FRED requires Intel Granite Rapids (2024 server) or later. No available platform (WHPX i5-11600K, TCG, VirtualBox, Haswell bare metal) supports FRED. QEMU does not emulate FRED. Implementing untested interrupt entry code risks total system failure on the first FRED-capable hardware. Implement when FRED hardware or a FRED-capable emulator becomes available.
 
-- [ ] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17)
-- [ ] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
-- [ ] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; program the full FRED MSR set (Intel SDM Vol. 3 FRED chapter), not just a single config word:
+- [/] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17) -- parked: operator-gated, no FRED platform
+- [/] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
+  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
+- [/] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; program the full FRED MSR set (Intel SDM Vol. 3 FRED chapter), not just a single config word:
+  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
   - `IA32_FRED_CONFIG`: unified entry RIP (`fred_entry_asm` in `src/kernel/fred.asm`) + current-stack-level field
   - `IA32_FRED_RSP0..3`: one ring-0 stack per level (RSP0 = normal kernel stack; higher levels are the NMI/#DF/#MC equivalents of today's IST stacks)
   - `IA32_FRED_STKLVLS`: per-vector stack-level assignment so NMI/#DF/#MC land on dedicated stacks (replaces the IDT IST mechanism)
   - `IA32_FRED_SSP0..3`: shadow-stack pointers per level when CET SS is active (-> XREF: `TODO-10` §9 CET shadow stack)
-- [ ] `fred_entry_asm` unified handler:
+- [/] `fred_entry_asm` unified handler:
+  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
   - Reads event type and vector from the FRED stack frame
   - Dispatches to the existing `isr_handler(frame)` or `kd_debug_exception_handler` (-> XREF: `TODO-29-kernel-debugger-kd-protocol.md` §4) via the same `handlers[]` table in `idt.c`
-- [ ] FRED event-frame + nesting: decode the pushed FRED frame (RIP/CS/RFLAGS/RSP/SS + error + event-data) per SDM; FRED un-blocks NMI natively on `ERETS`; #DF/#MC still escalate to assigned stack levels
-- [ ] Interaction audit before real-silicon enable: FRED entry keeps KPTI CR3 swap, SMAP AC, and auto kernel-GS correct -- reconcile with `TODO-10` §4-§6/§2 and §8 LKGS / §11 GS-base
-- [ ] Replace `IRET` with FRED return instructions where FRED is active:
+- [/] FRED event-frame + nesting: decode the pushed FRED frame (RIP/CS/RFLAGS/RSP/SS + error + event-data) per SDM; FRED un-blocks NMI natively on `ERETS`; #DF/#MC still escalate to assigned stack levels -- parked: operator-gated, no FRED platform
+- [/] Interaction audit before real-silicon enable: FRED entry keeps KPTI CR3 swap, SMAP AC, and auto kernel-GS correct -- reconcile with `TODO-10` §4-§6/§2 and §8 LKGS / §11 GS-base -- parked: operator-gated, no FRED platform
+- [/] Replace `IRET` with FRED return instructions where FRED is active:
+  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
   - `ERETS`: return to ring 0
   - `ERETU`: return to ring 3
-- [ ] `SYSCALL` via FRED: automatically uses FRED entry; `IA32_LSTAR` still needed for non-FRED fallback path
-- [ ] Fallback: if `CPU_FEATURE_FRED` not present, IDT path unchanged
-- [ ] Commit: `"kernel/cpu: FRED unified event delivery"`
+- [/] `SYSCALL` via FRED: automatically uses FRED entry; `IA32_LSTAR` still needed for non-FRED fallback path -- parked: operator-gated, no FRED platform
+- [/] Fallback: if `CPU_FEATURE_FRED` not present, IDT path unchanged -- parked: operator-gated, no FRED platform
+- [/] Commit: `"kernel/cpu: FRED unified event delivery"` -- parked: operator-gated, no FRED platform
 
 **Test checkpoint:** On a FRED-modeling CPU (a QEMU `-cpu` exposing the `fred` flag once a FRED-emulating QEMU is in the matrix, or Granite Rapids+ bare metal -- NOT Cooper Lake, which predates FRED), a timer IRQ reaches `isr_handler` via the FRED unified entry, NMI/#DF land on their assigned stack levels, and `ERETU`/`ERETS` return correctly; every non-FRED CPU boots unchanged on the IDT path. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -286,14 +291,15 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > [!WARNING]
 > **Blocked: no test platform.** LKGS requires Intel Granite Rapids or later (same silicon as FRED). No available platform supports LKGS. Replacing SWAPGS with untested LKGS in the syscall/ISR entry path risks corrupting per-CPU GS-base on the first LKGS-capable hardware. Implement when LKGS hardware becomes available.
 
-- [ ] Check `cpu_has(CPU_FEATURE_LKGS)` (CPUID leaf 7, ECX=1, EAX bit 18)
-- [ ] `LKGS reg` writes directly to `IA32_KERNEL_GS_BASE` without touching the active GS; eliminates `SWAPGS` and its speculative side-channel
-- [ ] In `src/kernel/sched/syscall_entry.asm`:
+- [/] Check `cpu_has(CPU_FEATURE_LKGS)` (CPUID leaf 7, ECX=1, EAX bit 18) -- parked: operator-gated, no LKGS platform
+- [/] `LKGS reg` writes directly to `IA32_KERNEL_GS_BASE` without touching the active GS; eliminates `SWAPGS` and its speculative side-channel -- parked: operator-gated, no LKGS platform
+- [/] In `src/kernel/sched/syscall_entry.asm`:
+  - Parked: operator-gated -- needs LKGS silicon in the test matrix.
   - On SYSCALL entry: `LKGS [saved_user_gs]` instead of `SWAPGS`
   - On SYSRET: `LKGS [user_gs_base]` before `SYSRETQ`
-- [ ] Same replacement in IDT common stubs that currently use `SWAPGS`
-- [ ] Fallback: if LKGS unavailable, keep existing `SWAPGS` (no regression)
-- [ ] Commit: `"kernel/cpu: LKGS replaces SWAPGS in syscall and ISR entry"`
+- [/] Same replacement in IDT common stubs that currently use `SWAPGS` -- parked: operator-gated, no LKGS platform
+- [/] Fallback: if LKGS unavailable, keep existing `SWAPGS` (no regression) -- parked: operator-gated, no LKGS platform
+- [/] Commit: `"kernel/cpu: LKGS replaces SWAPGS in syscall and ISR entry"` -- parked: operator-gated, no LKGS platform
 
 **Test checkpoint:** Syscall path uses LKGS when `CPU_FEATURE_LKGS`; per-CPU data still accessible via GS after LKGS; fallback CPU boots with SWAPGS unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -307,7 +313,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [x] `topology_init()` called from Phase 2 (`boot_storage.c`) after `smp_init()`. Populates per-CPU topology from BSP CPUID data. Per-AP CPUID core_type now published by `01-boot-platform/TODO-09 §6` (consume item below)
 - [x] Zen path (`cpu_has(CPU_FEATURE_TOPO_EXT)`): BSP values from `g_cpu.compute_unit_id`/`g_cpu.node_id`; APs derive from LAPIC ID. Logs CCD count, NUMA nodes, CPU count
 - [x] `g_numa_nodes` = max `node_id` + 1; NUMA allocator deferred to `03-memory-concurrency`
-- [x] Intel hybrid path (`CPUID.07H:EDX[15]`): leaf 0x1A for core type (EAX[31:24]), leaf 0x1F for SMT/core topology levels (shift-based core_id extraction). Populates `p_core_mask`/`e_core_mask`. BSP core type applied to all CPUs until per-AP CPUID available
+- [x] Intel hybrid path (`CPUID.07H:EDX[15]`): leaf 0x1A for core type (EAX[31:24]), leaf 0x1F for SMT/core topology levels (shift-based core_id extraction)
+  - CORRECTED 2026-09-03: the masks are NOT populated. `src/kernel/topology.c` deliberately leaves every slot `CORE_TYPE_GENERIC` with `p_core_mask`/`e_core_mask` zero rather than propagating the BSP's type to all CPUs, which would publish false P/E masks on real hybrid hardware. Per-slot classification is filed and parked -> XREF: this file §20 (item: "`topology_init()` derive `p_core_mask`/`e_core_mask`").
 - [x] Fallback: no topology extensions, all cores `CORE_TYPE_GENERIC`, 1 NUMA node
 - [x] Commit: `"kernel/topology: Zen CCD/NUMA parser, Intel hybrid P/E-core detection"`
 
@@ -368,22 +375,24 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > [!WARNING]
 > **Blocked: no test platform.** AMD IBS requires AMD Zen+ or later bare metal. No available platform (Intel WHPX, TCG, VirtualBox, Haswell bare metal) supports IBS. The NMI handler modifications and per-CPU ring buffer require real IBS hardware to validate. Implement when AMD bare metal with IBS is available.
 
-- [ ] Check `cpu_has(CPU_FEATURE_IBS)` (from §1)
-- [ ] **IBS Fetch Sampling:** samples random instruction fetch ops:
+- [/] Check `cpu_has(CPU_FEATURE_IBS)` (from §1) -- parked: operator-gated, no AMD Zen+ bare metal
+- [/] **IBS Fetch Sampling:** samples random instruction fetch ops:
+  - Parked: operator-gated -- needs AMD Zen+ bare metal in the test matrix.
   - Configure `MSR 0xC001_1030` (IBS_FETCH_CTL): set `IbsFetchEn (bit 17)`, `IbsFetchCnt (bits 15:0)` = sample rate (~100K ops)
   - On NMI: read `0xC001_1031` (linear fetch address) + `0xC001_1032` (physical + status: cache hit/miss, iTLB miss, L1/L2/L3 source)
-- [ ] **IBS Op Sampling:** samples random instruction completion ops:
+- [/] **IBS Op Sampling:** samples random instruction completion ops:
+  - Parked: operator-gated -- needs AMD Zen+ bare metal in the test matrix.
   - Configure `MSR 0xC001_1033` (IBS_OP_CTL): `IbsOpEn + IbsOpCnt`
   - On NMI: read `0xC001_1035` (RIP), `0xC001_1036` (op data: micro-op info, cache miss, DRAM latency), `0xC001_1037` (data address + NUMA source)
-- [ ] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI
-- [ ] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API
-- [ ] Future: wire to a profiler GUI in `11-apps`
-- [ ] Before enabling the returning IBS NMI, re-weigh the vector-2 NMI depth-marker cost this handler is the first to pay at rate, and close the return-tail residual it makes reachable.
+- [/] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI -- parked: operator-gated, no AMD Zen+ bare metal
+- [/] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API -- parked: operator-gated, no AMD Zen+ bare metal
+- [/] Future: wire to a profiler GUI in `11-apps` -- parked: operator-gated, no AMD Zen+ bare metal
+- [/] Before enabling the returning IBS NMI, re-weigh the vector-2 NMI depth-marker cost this handler is the first to pay at rate, and close the return-tail residual it makes reachable. -- parked: operator-gated, no AMD Zen+ bare metal
   - The cost: the entry stub executes a serializing CPUID and a `lock`-prefixed RMW on BOTH the raise and the lower, and `g_nmi_depth` packs 4-byte per-CPU slots so per-core sampling shares cache lines. Nil for a terminal NMI, not nil at ~100K-op sample rates. Benchmark before deciding.
   - An RDPID fast path is possible but is NOT a drop-in, and needs a gate proving every ONLINE-OR-COMMITTED-ONLINE CPU supports RDPID and has a recorded successful `IA32_TSC_AUX` write published BEFORE its `AP_BRINGUP_ONLINE` CAS. Online-only is insufficient: an AP commits to coming online before publishing its mask bit and the bounded BSP wait can finish while it is unpublished, so use `cpu_slot_committed_online()`.
   - Three existing signals are each insufficient alone: `g_tsc_aux_available` is set by the BSP probe only, `per_cpu_data.tsc_aux` is recorded as the cpu id even when the write was skipped, and RDPID is absent from `CPU_FEATURES_AP_PROBE_MASK` so `cpu_has(CPU_FEATURE_RDPID)` proves only the BSP. Without such a latch keep the CPUID-derived path.
   - And converge the identities first: `TSC_AUX` holds a LOGICAL CPU INDEX while the depth counter is keyed by APIC ID, and the C helper's derivation is pinned to the assembly's by static assert -> XREF: `01-boot-platform/TODO-10 §22` (item: "PARKED, blocked on a returning NMI handler existing: close the last return-tail residual so no instruction after the lower runs with the depth clear")
-- [ ] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"`
+- [/] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"` -- parked: operator-gated, no AMD Zen+ bare metal
 
 **Test checkpoint:** With `CPU_FEATURE_IBS`, NMI handler fills ring without nested NMI deadlock; `ibs_read_samples` returns monotonic sequence numbers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (AMD).
 
@@ -420,10 +429,10 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
   - **SIMD throughput**: `simd_blend_pixels_sse2`/`_avx2` alpha-blend (compute-bound, separates ISA tiers; memcpy is memory-bound and would not)
   - **Context switch**: `kthread_create` worker + 1000 cooperative `yield` rounds + `thread_join`; ns/round
 - [x] SIMD auto-tune: pure unit-tested `hw_profile_simd_decision()` clears `simd_avx512_ok`/`simd_avx2_ok` (`__ATOMIC_RELEASE`) when a tier lacks a >=10% gain over the next-lower tier; only ever disables, never re-enables a probed tier
-- [ ] DEFERRED -- AVX-512 throttle auto-tune: no AVX-512 alpha-blend primitive, so `simd_avx512_gpix_s` stays 0 and AVX-512 is left as probed (-> XREF: §3 AVX-512 opt-in)
-- [ ] DEFERRED -- scheduler-quantum auto-tune: `SCHED_QUANTUM` is compile-time and `timer_set_tick_hz()` is LAPIC-only; needs a runtime quantum var. `ctx_switch_ns` is measured/persisted now (-> XREF: `03-memory-concurrency/TODO-07` SMP scheduler)
-- [ ] DEFERRED -- compositor triple-buffer auto-tune: no runtime triple-buffer toggle exists yet (-> XREF: `06-desktop-foundation` compositor)
-- [ ] DEFERRED -- memops small-copy threshold auto-tune: dispatch has no byte-size cutoff knob (`src/kernel/mm/memops_sse.c`); needs a runtime threshold global first
+- [/] DEFERRED -- AVX-512 throttle auto-tune: no AVX-512 alpha-blend primitive, so `simd_avx512_gpix_s` stays 0 and AVX-512 is left as probed (-> XREF: §3 AVX-512 opt-in)
+- [/] DEFERRED -- scheduler-quantum auto-tune: `SCHED_QUANTUM` is compile-time and `timer_set_tick_hz()` is LAPIC-only; needs a runtime quantum var. `ctx_switch_ns` is measured/persisted now (-> XREF: `03-memory-concurrency/TODO-07` SMP scheduler)
+- [/] DEFERRED -- compositor triple-buffer auto-tune: no runtime triple-buffer toggle exists yet (-> XREF: `06-desktop-foundation` compositor)
+- [/] DEFERRED -- memops small-copy threshold auto-tune: dispatch has no byte-size cutoff knob (`src/kernel/mm/memops_sse.c`); needs a runtime threshold global first
 - [x] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, SIMD auto-tune"`
 
 > [!NOTE]
@@ -451,8 +460,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [x] CPUID detection in `cpuid.c`/`cpuid.h`: `CPU_FEATURE_LA57` (7.0:ECX[16]), `CPU_FEATURE_LAM` (7.1:EAX[26]), `CPU_FEATURE_LASS` (7.1:EAX[6] -- NOT EAX[27]; unit-test-pinned); UINTR already detected (7.0:EDX[5])
 - [x] Detection-stub klog (detect + log only, no enablement): UINTR/LA57/LAM/LASS each log one `[cpu]`/`[vmm]` line; UPID/UITT structs deferred until UINTR has a consumer
 - [x] Confidential-VM guest detection (kernel `cc_kind_t` + `g_cpu.cc_kind`): Intel TDX via CPUID leaf `0x21` `"IntelTDX    "`; AMD SEV via `0x8000001F` EAX[1] gate + `MSR_AMD64_SEV` active-state bits; attestation deferred
-- [ ] DEFERRED -- `boot_info.cc_kind` bootloader mirror: needs a BOOT_INFO_VERSION bump; the bootloader pre-detection mirror is owned elsewhere (-> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §3`)
-- [ ] DEFERRED -- Hyper-V SynIC + reference-TSC MSR producer: `HV_FLAG_TSC_ENLIGHTENMENT` is detected but the ref-TSC/SynIC producer has no consumer yet (dead infra without one) (-> XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §6`)
+- [/] DEFERRED -- `boot_info.cc_kind` bootloader mirror: needs a BOOT_INFO_VERSION bump; the bootloader pre-detection mirror is owned elsewhere (-> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §3`)
+- [/] DEFERRED -- Hyper-V SynIC + reference-TSC MSR producer: `HV_FLAG_TSC_ENLIGHTENMENT` is detected but the ref-TSC/SynIC producer has no consumer yet (dead infra without one) (-> XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §6`)
 - [x] Commit: `"kernel/cpu: future-silicon detection stubs (UINTR/LA57/LAM/LASS) + TDX/SEV guest detection"`
 
 **Test checkpoint:** On a CPU advertising LA57/LAM/LASS/UINTR, serial shows the matching one-line `[cpu]`/`[vmm]` stub log and the kernel continues without enabling the mode; on a TDX/SEV guest the `confidential VM` line fires and `g_cpu.cc_kind` is set; on a normal VM / bare metal no stub lines fire and `cc_kind == CC_NONE`. Smoke-validated on KVM (host lacks all four -> no stub lines, cc_kind=CC_NONE). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -477,13 +486,17 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 >
 > **Premise correction (2026-06-28):** there is NO `src/boot/entry.asm` -- the kernel is ELF and the initial identity-map page tables are built by the UEFI bootloader [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), then `vmm_promote_to_1g()` (`boot_hw.c:627`) upgrades them at runtime. The "1 GiB from boot" work belongs in `bootx64.c`'s PDPT construction (PDPT[1-3] PS=1, CPUID PAGE1GB-gated -- option (b) "always build 1G + runtime downgrade" is unsafe because the bootloader builds paging BEFORE any #PF handler exists, so a non-PAGE1GB CPU like some TCG models would triple-fault); the items below referencing `entry.asm` map to that file. The `vmm_promote_to_1g()` removal + `vmm_split_huge_page()` retention still apply.
 
-- [ ] Modify `src/boot/entry.asm`: for PDPT[1], PDPT[2], PDPT[3], set PS=1 (bit 7) directly in the PDPT entry instead of pointing to a PD table. Physical address = PDPT index * 1 GiB. Flags: Present + Writable + User + PS (0x87 with PS at PDPT level). Keep PDPT[0] pointing to a PD with 512 x 2 MiB entries (kernel text needs NX at fine granularity)
-- [ ] Gate on `CPU_FEATURE_PAGE1GB`: entry.asm runs before CPUID detection, so either (a) probe CPUID leaf 0x80000001 EDX bit 26 inline in assembly before building page tables, or (b) always build 1 GiB entries and let the kernel downgrade at runtime if PAGE1GB is absent (1 GiB PDPTEs with PS=1 on CPUs without PAGE1GB cause #PF; the page fault handler would need to handle this gracefully)
-- [ ] Remove `vmm_promote_to_1g()` from `boot_hw.c` and `vmm.c` (no longer needed; the page tables are already optimal from boot)
-- [ ] Keep `vmm_split_huge_page()` 1 GiB cascade (added in §6): still needed for on-demand splits when mapping individual pages inside GiB 1-3 (KUSD, guard pages, MMIO)
-- [ ] Verify `vmm_apply_nx_policy()` still skips 1 GiB pages at PDPT level (already does, line 893-895)
-- [ ] Remove the 4 statically allocated PD tables for GiB 1-3 from entry.asm BSS (saves 12 KiB of boot memory; PD for GiB 0 stays)
-- [ ] Commit: `"boot: build identity map with 1 GiB pages in entry.asm (PDPT[1-3])"`
+- [/] Build PDPT[1], PDPT[2], PDPT[3] as 1 GiB pages: set PS=1 (bit 7) in the PDPT entry itself instead of pointing at a PD table -- parked: operator-gated, bare-metal UEFI sign-off
+  - Physical address = PDPT index * 1 GiB. Flags: Present + Writable + User + PS, i.e. `0x87` with PS at PDPT level.
+  - PDPT[0] keeps pointing at a PD of 512 x 2 MiB entries: kernel text needs NX at fine granularity.
+- [/] Gate on `CPU_FEATURE_PAGE1GB`, which the boot page-table builder runs before CPUID detection can answer -- parked: operator-gated, bare-metal UEFI sign-off
+  - Option (a): probe CPUID leaf `0x80000001` EDX bit 26 inline in assembly before building the tables.
+  - Option (b): always build 1 GiB entries and downgrade at runtime when PAGE1GB is absent. A 1 GiB PDPTE with PS=1 on a CPU without PAGE1GB raises #PF, so the page-fault handler would have to degrade gracefully.
+- [/] Remove `vmm_promote_to_1g()` from `boot_hw.c` and `vmm.c` (no longer needed; the page tables are already optimal from boot) -- parked: operator-gated, bare-metal UEFI sign-off
+- [/] Keep `vmm_split_huge_page()` 1 GiB cascade (added in §6): still needed for on-demand splits when mapping individual pages inside GiB 1-3 (KUSD, guard pages, MMIO) -- parked: operator-gated, bare-metal UEFI sign-off
+- [/] Verify `vmm_apply_nx_policy()` still skips 1 GiB pages at PDPT level (already does, line 893-895) -- parked: operator-gated, bare-metal UEFI sign-off
+- [/] Remove the 4 statically allocated PD tables for GiB 1-3 from entry.asm BSS (saves 12 KiB of boot memory; PD for GiB 0 stays) -- parked: operator-gated, bare-metal UEFI sign-off
+- [/] Commit: `"boot: build identity map with 1 GiB pages in entry.asm (PDPT[1-3])"` -- parked: operator-gated, bare-metal UEFI sign-off
 
 **Test checkpoint:** Serial log shows NO `promoted N PDPT entries` line (promotion removed). `vmm_get_physical(0x80000000)` returns 0x80000000 (identity map via 1 GiB page). KUSD at 0x7FFE0000 triggers 1 GiB split on demand and maps correctly. Guard pages in GiB 1-3 split correctly. Test on: QEMU WHPX, QEMU TCG (may lack PAGE1GB), VirtualBox, bare metal.
 
@@ -500,17 +513,22 @@ Intel AMX adds 8 KiB of TMM tile state (XSAVE components 17/18). XFD (Extended F
 > [!WARNING]
 > Gate XCR0[17]/[18] on the XFD-supported bit AND the AMX feature bits as **separate** checks. **Design (Codex-vetted 2026-06-28): EAGER area, not lazy-grow** -- `task_alloc_xsave()` already sizes from `xsave_size_max` (the CPUID.0D.0:ECX aggregate that counts AMX 17/18), so every task area is AMX-big from boot and the #NM handler MUST NOT grow memory in exception context (it only disarms XFD for the faulting task). **BLOCKED** on the per-thread-XSAVE prerequisite below: shipping AMX on the per-`struct task` FPU model leaks tile state across sibling threads.
 
-- [ ] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]) in `cpuid_init()`
-- [ ] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component faultable `CPUID.(0x0D,n):ECX[2]`; AMX size/offset from `CPUID.(0x0D,17)`/`(0x0D,18)`
-- [ ] MSR constants in `msr.h`: `MSR_IA32_XFD = 0x000001C4`, `MSR_IA32_XFD_ERR = 0x000001C5`
-- [ ] `cpu_configure_xcr0()` (§1): add XCR0 bits 17/18 only when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD` (separate gates; never one without the other)
-- [ ] AP feature consistency: add AMX_TILE + XFD to the §6 AP-probe / global mask; clear global AMX if any online AP lacks the XCR0[17:18] components (no BSP-publishes-while-AP-lacks-it skew)
-- [ ] Default-arm `IA32_XFD = (1<<17)|(1<<18)`: BSP `wrmsr` AFTER XCR0[17:18] + BEFORE `cpu_record_bsp_profile()` (the profile snapshots the live BSP MSR; arming later replays 0); APs replay gated on live XCR0[17:18]
-- [ ] Eager XSAVE area (NOT lazy-grow): `task_alloc_xsave()` already sizes from `xsave_size_max` (counts AMX 17/18), so every task area is AMX-big; the #NM handler never reallocs in exception context
-- [ ] Per-task `xfd_mask` (uint64) in `struct task`; gated `wrmsr(IA32_XFD, next->xfd_mask)` at the XSAVE-restore point in BOTH `schedule()` AND `schedule_now()`
-- [ ] `#NM` handler (vector 7): read `IA32_XFD_ERR` FIRST (before `clts`); non-zero = XFD fault -> clear faulting task's `xfd_mask` bit + `wrmsr(IA32_XFD)` + clear `IA32_XFD_ERR` + return (NO grow); zero = existing CR0.TS path
-- [ ] PREREQUISITE (blocker) -- per-thread XSAVE: `xsave_area`/`fpu_used` are per `struct task` (shared across sibling threads), so AMX tile state leaks between threads; parity needs per-`struct thread` XSAVE + FPU re-save on thread switches (§1)
-- [ ] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (eager area, IA32_XFD ctx-switch)"`
+- [/] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]) in `cpuid_init()` -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component faultable `CPUID.(0x0D,n):ECX[2]`; AMX size/offset from `CPUID.(0x0D,17)`/`(0x0D,18)` -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] MSR constants in `msr.h`: `MSR_IA32_XFD = 0x000001C4`, `MSR_IA32_XFD_ERR = 0x000001C5` -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] `cpu_configure_xcr0()` (§1): add XCR0 bits 17/18 only when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD` (separate gates; never one without the other) -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] AP feature consistency: add AMX_TILE + XFD to the §6 AP-probe / global mask; clear global AMX if any online AP lacks the XCR0[17:18] components (no BSP-publishes-while-AP-lacks-it skew)
+  - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
+- [/] Default-arm `IA32_XFD = (1<<17)|(1<<18)`: BSP `wrmsr` AFTER XCR0[17:18] + BEFORE `cpu_record_bsp_profile()` (the profile snapshots the live BSP MSR; arming later replays 0); APs replay gated on live XCR0[17:18]
+  - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
+- [/] Eager XSAVE area (NOT lazy-grow): `task_alloc_xsave()` already sizes from `xsave_size_max` (counts AMX 17/18), so every task area is AMX-big; the #NM handler never reallocs in exception context
+  - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
+- [/] Per-task `xfd_mask` (uint64) in `struct task`; gated `wrmsr(IA32_XFD, next->xfd_mask)` at the XSAVE-restore point in BOTH `schedule()` AND `schedule_now()` -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] `#NM` handler (vector 7): read `IA32_XFD_ERR` FIRST (before `clts`); non-zero = XFD fault -> clear faulting task's `xfd_mask` bit + `wrmsr(IA32_XFD)` + clear `IA32_XFD_ERR` + return (NO grow); zero = existing CR0.TS path
+  - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
+- [/] PREREQUISITE (blocker) -- per-thread XSAVE: `xsave_area`/`fpu_used` are per `struct task` (shared across sibling threads), so AMX tile state leaks between threads; parity needs per-`struct thread` XSAVE + FPU re-save on thread switches (§1)
+  - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware. The redesign now has an owner -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §16 (item: "Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`").
+- [/] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (eager area, IA32_XFD ctx-switch)"` -- parked: per-thread XSAVE first, then operator-gated AMX HW
 
 **Test checkpoint:** On an AMX+XFD CPU (QEMU TCG `-cpu max` / Sapphire Rapids+), a task that never touches AMX keeps `IA32_XFD` armed; first `TILELOADD` raises #NM with `IA32_XFD_ERR != 0` and the handler disarms XFD for that task (no area grow -- the area is already AMX-sized); tile state survives a `schedule()` round-trip. On non-AMX/non-XFD CPUs (the `-cpu Haswell` harness) XCR0[17:18] stay clear and no XFD MSR is touched. Test on: QEMU TCG `-cpu max`, bare metal (Sapphire Rapids+).
 
@@ -527,14 +545,18 @@ A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bu
 > [!WARNING]
 > Capability-gate every MSR write (a blind `IA32_TEST_CTL` 0x33 / `IA32_DEBUGCTL` write #GPs without the feature). Two ordering/correctness traps the adversarial pass caught, baked into the plan below: (1) **register handlers + arm AFTER `idt_init`** -- `cpu_harden()` runs in Phase 0 BEFORE the kernel IDT, and `idt_init()` then zeroes `handlers[]`, so arming there leaves the MSRs hot with the default-panic handler. (2) the #AC loop-breaker must NOT permanently disable detection (one ring-3 split lock would blind the CPU forever) -- re-arm on the next context switch (warn mode) or terminate the thread (fatal mode). `DR6.BLD` (bit 11) is ACTIVE-LOW for a bus-lock #DB.
 
-- [ ] CPUID detection: `CPU_FEATURE_CORE_CAPS` (7.0:EDX[30]) + `CPU_FEATURE_BUS_LOCK_DETECT` (7.0:ECX[24]) in `cpuid.h` + `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` (AP-local gating)
-- [ ] MSR constants in `msr.h`: `MSR_IA32_CORE_CAPABILITIES = 0x000000CF`, `MSR_IA32_TEST_CTL = 0x00000033`, `MSR_IA32_DEBUGCTL = 0x000001D9`
-- [ ] Per-CPU LOCAL-CPUID-gated RMW arming: split-lock `IA32_TEST_CTL[29]` only when `IA32_CORE_CAPABILITIES[5]`; bus-lock `IA32_DEBUGCTL.BLD` when 7.0:ECX[24]
-- [ ] ORDERING (critical): register handlers + arm AFTER `idt_init` -- NOT in `cpu_harden()` (Phase 0, pre-IDT; `idt_init` zeroes `handlers[]`). BSP via a post-`idt_init` hook; APs after the AP `lidt` in `ap_cpu_harden`
-- [ ] Register BOTH `#AC`(17)/`#DB`(1) handlers unconditionally (an AP feature-skewed from the BSP must not arm an MSR whose handler was never registered)
-- [ ] `#AC` handler (vector 17): ring-0 -> panic; ring-3 -> warn (rate-limited) + break the re-fault loop WITHOUT permanently disabling detect -- re-arm `IA32_TEST_CTL[29]` on the next context switch, or terminate the thread (fatal mode)
-- [ ] `#DB` handler (vector 1): `DR6.BLD` (bit 11) is ACTIVE-LOW -> `(dr6 & BLD) == 0` classifies a bus-lock trap, warn + restore BLD to 1 + continue; non-bus-lock #DB -> panic (until the KD debugger lands, `TODO-29`)
-- [ ] Commit: `"kernel/cpu: split-lock (#AC) + bus-lock (#DB) detection, capability-gated"`
+- [/] CPUID detection: `CPU_FEATURE_CORE_CAPS` (7.0:EDX[30]) + `CPU_FEATURE_BUS_LOCK_DETECT` (7.0:ECX[24]) in `cpuid.h` + `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` (AP-local gating)
+  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
+- [/] MSR constants in `msr.h`: `MSR_IA32_CORE_CAPABILITIES = 0x000000CF`, `MSR_IA32_TEST_CTL = 0x00000033`, `MSR_IA32_DEBUGCTL = 0x000001D9` -- parked: operator-gated, bare-metal Rocket/Alder Lake
+- [/] Per-CPU LOCAL-CPUID-gated RMW arming: split-lock `IA32_TEST_CTL[29]` only when `IA32_CORE_CAPABILITIES[5]`; bus-lock `IA32_DEBUGCTL.BLD` when 7.0:ECX[24] -- parked: operator-gated, bare-metal Rocket/Alder Lake
+- [/] ORDERING (critical): register handlers + arm AFTER `idt_init` -- NOT in `cpu_harden()` (Phase 0, pre-IDT; `idt_init` zeroes `handlers[]`). BSP via a post-`idt_init` hook; APs after the AP `lidt` in `ap_cpu_harden`
+  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
+- [/] Register BOTH `#AC`(17)/`#DB`(1) handlers unconditionally (an AP feature-skewed from the BSP must not arm an MSR whose handler was never registered) -- parked: operator-gated, bare-metal Rocket/Alder Lake
+- [/] `#AC` handler (vector 17): ring-0 -> panic; ring-3 -> warn (rate-limited) + break the re-fault loop WITHOUT permanently disabling detect -- re-arm `IA32_TEST_CTL[29]` on the next context switch, or terminate the thread (fatal mode)
+  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
+- [/] `#DB` handler (vector 1): `DR6.BLD` (bit 11) is ACTIVE-LOW -> `(dr6 & BLD) == 0` classifies a bus-lock trap, warn + restore BLD to 1 + continue; non-bus-lock #DB -> panic (until the KD debugger lands, `TODO-29`)
+  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
+- [/] Commit: `"kernel/cpu: split-lock (#AC) + bus-lock (#DB) detection, capability-gated"` -- parked: operator-gated, bare-metal Rocket/Alder Lake
 
 **Test checkpoint:** On a split-lock CPU (`IA32_CORE_CAPABILITIES[5]`) `IA32_TEST_CTL[29]` reads back armed after boot; a ring-3 split lock warns + (warn mode) the offending thread keeps progressing while detection stays armed for others; `DR6.BLD` active-low classifies a bus-lock #DB. On non-supporting CPUs (the `-cpu Haswell` harness) nothing is armed (no #GP). Test on: QEMU WHPX (Rocket Lake+), TCG `-cpu max`, bare metal (Alder Lake+ for bus-lock).
 
@@ -607,7 +629,7 @@ From the stamped section 9:
 | 💎  | FRED events           | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids     | ⬜ §7              |
 | 💎  | LKGS fast GS          | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry | ⬜ §8              |
 | 💎  | Zen CCD NUMA          | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo   | ✅ §9 Done         |
-| 💎  | Intel P/E hybrid      | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler    | ✅ §9 BSP-only     |
+| 💎  | Intel P/E hybrid      | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler    | ⚠️ §9 detect only  |
 | 💎  | PMU / PMC             | ✅ ETW + WPA counters       | ✅ perf_event PMU driver   | ✅ §10 Done        |
 | 💎  | OSVW errata           | ✅ HAL workaround table     | ✅ amd.c osvw_id_length    | ✅ §11 Done        |
 | 💎  | RDTSCP TSC_AUX        | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP    | ✅ §11 Done        |
