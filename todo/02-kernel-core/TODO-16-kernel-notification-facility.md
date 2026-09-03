@@ -112,17 +112,17 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 3. Waitable User Subscriptions
 
-- [ ] Subscription handles become waitable objects.
-- [ ] `NtWaitForSingleObject` wakes when sequence advances past caller's last seen value.
-- [ ] Support timeout, alertable wait integration, and APC delivery for async subscriptions.
-- [ ] Multi-subscriber fanout must not allocate at DISPATCH_LEVEL.
-- [ ] Race-free wait: `NtWaitForSingleObject` infinite wait uses `event_wait`/`enqueue_and_block`, which has a documented lost-wakeup race (event.c state-read before enqueue; ex.h:149); a publish/close `event_set` in the gap hangs the waiter.
-- [ ] Two-phase wake: publish must not `event_set` up to the subscriber cap under `KNF_STATE.lock` (IRQ-off fanout); mark pending under lock, rundown-pin selected subscriptions, release, then `event_set` outside the lock (timer precedent).
-- [ ] Subscription teardown: remove the subscriber node on `NtClose` of the handle AND on owning process/thread exit (Ob close callback or reference-owned subscriber lifetime) so a killed process leaves no retained/leaked node.
-- [ ] Close-vs-publish race: a publish concurrent with a subscription close must not wake a freed node or wake after the owner is gone; the subscriber lifetime is reference-counted across the wake path.
-- [ ] Concurrent-teardown safety: `knf_subscription_poll`/`knf_unsubscribe` must take a live reference before the pre-lock `sub->state` read (§2 consume-and-null covers only sequential double-unsubscribe, not a cross-CPU alias race).
-- [ ] (Later, competitive edge) Lightweight non-handle sequence-wait path (`WaitOnAddress`/futex analog) for hot consumers that do not need full Ob-handle semantics -- v2, not blocking.
-- [ ] The user-mode `Rtl*` subscription table + delivery worker (per-process, one dispatch thread) that turns these kernel wakes into WNF callbacks is owned by `D12 T04 §10`, NOT this section; this section owns the kernel wait/wake primitive only.
+- [/] Subscription handles become waitable objects -- BLOCKED, §3 not started -> XREF: `02-kernel-core/TODO-07` §12 (item: "Alertable-wait integration")
+- [/] `NtWaitForSingleObject` wakes when sequence advances past caller's last seen value -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Support timeout, alertable wait integration, and APC delivery for async subscriptions -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Multi-subscriber fanout must not allocate at DISPATCH_LEVEL -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Race-free wait: infinite wait uses `event_wait`, which has a lost-wakeup race (event.c, ex.h:149) -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Two-phase wake: publish must not `event_set` up to the subscriber cap under `KNF_STATE.lock` (IRQ-off fanout) -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Subscription teardown: remove the subscriber node on `NtClose` AND on owning process/thread exit -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Close-vs-publish race: a publish concurrent with a subscription close must not wake a freed or gone node -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] Concurrent-teardown safety: `knf_subscription_poll`/`knf_unsubscribe` must take a live reference before the pre-lock `sub->state` read -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-07` §12
+- [/] (Later, competitive edge) Lightweight non-handle sequence-wait path (`WaitOnAddress`/futex analog) -- v2, not blocking, BLOCKED behind §3 same as the rest -> XREF: `02-kernel-core/TODO-07` §12
+- [/] The user-mode `Rtl*` subscription table + delivery worker is owned by `D12 T04 §10` -- BLOCKED behind §3 same as the rest -> XREF: `02-kernel-core/TODO-07` §12
 
 **Test checkpoint:** `test_knf` blocks a thread on a subscription handle via `NtWaitForSingleObject`, publishes from another thread, and asserts the waiter wakes exactly when the sequence passes its last-seen value; a timeout wait returns `STATUS_TIMEOUT` when no publish occurs; fanout to 3 subscribers allocates zero at DISPATCH_LEVEL (pre-allocated wait blocks). Serial: `"[KNF] subscriber woke seq=%llu"`. Test on: QEMU WHPX + TCG.
 
@@ -132,13 +132,13 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 4. Security and Namespace Policy
 
-- [ ] Apply SRM access masks: query, subscribe, publish, create, delete.
-- [ ] Default policy: kernel-only publish for security, code integrity, power source, and device states.
-- [ ] Permit user-mode publish only for explicit app/session-local states.
-- [ ] Audit denied publish attempts.
-- [ ] Test the create-privilege gate with a restricted-token fixture: a token WITHOUT `SeCreatePermanentPrivilege` is denied a user-mode Permanent/Persistent create; one WITH it is allowed (§1 covers the ambient-token deny + kernel-mode bypass).
-- [ ] Gate create-or-open opens by DACL so a user-mode Temporary create that collides with an existing privileged state is not a backdoor. Test: kernel creates Permanent `X`; user-mode Temporary create of `X` without rights is denied.
-- [ ] Design note (code header): reuse the SRM SID/token/`SECURITY_DESCRIPTOR` infrastructure for access checks, NOT a bespoke capability-metadata scheme -- Linux kdbus was rejected from mainline (2015) for exactly that NIH design.
+- [/] Apply SRM access masks: query, subscribe, publish, create, delete -- BLOCKED, §4 not started -> XREF: `02-kernel-core/TODO-15` §5 (item: "Implement `SeAccessCheck`")
+- [/] Default policy: kernel-only publish for security, code integrity, power source, and device states -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-15` §5
+- [/] Permit user-mode publish only for explicit app/session-local states -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-15` §5
+- [/] Audit denied publish attempts -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-15` §5
+- [/] Test the create-privilege gate with a restricted-token fixture -- BLOCKED, needs a restricted token -> XREF: `02-kernel-core/TODO-15` §9 (item: "`NtFilterToken`")
+- [/] Gate create-or-open opens by DACL so a Temporary create colliding with a privileged state is not a backdoor -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-15` §5
+- [/] Design note (code header): reuse the SRM SID/token/`SECURITY_DESCRIPTOR` infrastructure, NOT a bespoke capability-metadata scheme -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-15` §5
 
 **Test checkpoint:** `test_knf` builds a state with a DACL granting SUBSCRIBE but not PUBLISH to a user token, then asserts `knf_publish` under that token returns `STATUS_ACCESS_DENIED` while `knf_subscribe` succeeds; a kernel-only security state rejects a user-mode publish; the denied attempt increments the audit counter. Serial: `"[KNF] publish denied sid=%s"`. Test on: QEMU WHPX + TCG.
 
@@ -149,16 +149,16 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 5. Built-In State-Name Catalog
 
-- [ ] Power: AC/DC, battery percentage, thermal level, suspend/resume, lid state.
-- [ ] Device: storage arrival/removal, network up/down, display mode change.
-- [ ] Session: logon/logoff, shell ready, foreground session, lock/unlock.
-- [ ] Security: token elevation, CI allow/deny, audit policy update, credential change, policy-lock tamper/change (TODO-02 §9 `policy_lock.c` publishes `ETW_EVT_POLICY_TAMPER`/`POLICY_CHANGE` via `knf_publish`).
-- [ ] System: time changed, timezone changed, config changed, safe mode, degraded mode, crash recovered.
-- [ ] Registry: key policy changed, hive loaded/unloaded, transaction committed.
-- [ ] Device states publish through KNF, not a bespoke driver-side queue. KNF §5 owns the `Device/*` catalog state names + payload schema; PnP producers call `knf_publish` on hot-plug (-> XREF: D04 T01 §7, D04 T10 §8).
-- [ ] Fail-closed provisioning: `knf_init` must count expected catalog states, log the missing category/name on any create failure, set a KNF init-health flag, and fail KNF readiness rather than boot green with a partial well-known namespace.
-- [ ] Typed payload schemas: give each catalog state a `WNF_TYPE_ID` (not `type_id=NULL`) so `knf_publish` enforces the payload type; define the per-state payload schema for Device/Power/Security/System/Registry names.
-- [ ] Commit: `"kernel/knf: built-in state-name catalog (power/device/session/security/system/registry)"`
+- [/] Power: AC/DC, battery percentage, thermal level, suspend/resume, lid state -- BLOCKED, §5 not started -> XREF: `02-kernel-core/TODO-16` §4 (item: "Apply SRM access masks")
+- [/] Device: storage arrival/removal, network up/down, display mode change -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Session: logon/logoff, shell ready, foreground session, lock/unlock -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Security: token elevation, CI allow/deny, audit policy update, credential change, policy-lock tamper/change -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] System: time changed, timezone changed, config changed, safe mode, degraded mode, crash recovered -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Registry: key policy changed, hive loaded/unloaded, transaction committed -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Device states publish through KNF, not a bespoke driver-side queue -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Fail-closed provisioning: `knf_init` must count expected catalog states and fail KNF readiness on a partial namespace -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Typed payload schemas: give each catalog state a `WNF_TYPE_ID` so `knf_publish` enforces the payload type -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
+- [/] Commit: `"kernel/knf: built-in state-name catalog (power/device/session/security/system/registry)"` -- BLOCKED, same prerequisite -> XREF: `02-kernel-core/TODO-16` §4
 
 **Test checkpoint:** `test_knf` asserts every catalog state name resolves via `ob_ns_lookup` under its category directory; publishing `Security/PolicyTamper` from `policy_lock.c` (TODO-02 §9) delivers to a subscriber with the expected `ETW_EVT_POLICY_TAMPER` payload. Serial: `"[KNF] catalog: %u states across 6 categories"`. Test on: QEMU WHPX + TCG.
 
