@@ -35,34 +35,34 @@
 | **Shell scripts** (`.sh`)         |      96 |      99012 |
 | **Batch scripts** (`.bat`)        |      73 |       1048 |
 | **PowerShell** (`.ps1`)           |      11 |       3448 |
-| **Python** (`.py`)                |     284 |     111265 |
+| **Python** (`.py`)                |     284 |     111314 |
 | **JavaScript** (`.js`)            |       1 |        524 |
 | **Include fragments** (`.inc`)    |       7 |       3246 |
 | **Makefile**                      |       3 |       2200 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        199 |
-| **Subtotal**                      | **478** | **220942** |
+| **Subtotal**                      | **478** | **220991** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     473 |     137072 |
+| **Markdown** (`.md`)        |     473 |     137087 |
 | **JSON** (`.json`)          |      16 |       2453 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1855 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **521** | **143566** |
+| **Subtotal**                | **521** | **143581** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1331** |  **675526** |
-| **Supporting text + metadata**                       |  **521** |  **143566** |
-| **Written here**                                     | **1852** |  **819092** |
-| **Vendored ([third-party](src/libs/PROVENANCE.md))** |      517 |      468739 |
-| **All lines in tree**                                | **2369** | **1287831** |
+| **Core code + tooling**                              | **1331** |  **675575** |
+| **Supporting text + metadata**                       |  **521** |  **143581** |
+| **Written here**                                     | **1852** |  **819156** |
+| **Vendored ([third-party](src/libs/PROVENANCE.md))** |      517 |      468752 |
+| **All lines in tree**                                | **2369** | **1287908** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows | Impossible OS |
 | --------------------- | ------------: | ----------: | ------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |     1,287,831 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |     1,287,908 |
 | **Developers**        | ~1,000 active | ~5,000 peak |             1 |
 | **Time span**         |      33 years |    40 years |    6 month(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 675,526 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 675,575 lines
 > written here imply **136 developers** working for **6 month(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-09-03 11:02 · commit `37c7f9a0d`*
+*Last updated: 2026-09-03 11:44 · commit `5f07d34d5`*

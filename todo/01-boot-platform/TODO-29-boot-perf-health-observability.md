@@ -519,6 +519,10 @@ From the stamped section 3:
   - SHIPPED half: `boot_trend_publish_json()` now refuses up front when BlackBox is absent (`src/kernel/main/boot_trend.c:268`) instead of allocating two 16 KiB buffers, parsing and rebuilding the document, and only then failing at `vfs_open` with a warning that read like an I/O error. No artifact was produced on that path before or after, so this states the limitation rather than adding one.
   - PARKED half: the actual parity fix. `boot-profile` and `boot-timeline` DO fall back to `klog_dir` on C: (`src/kernel/main/boot_progress.c:387`); matching them means building three paths at runtime across five call sites, which does not fit. MEASURED 2026-09-03: 47 bytes of `.text` slack. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
 
+- [x] Bound the freestanding cJSON exponent (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT` 400). Review-round finding on a path this section's writer feeds untrusted disk bytes into.
+  - `1e2147483647` stalled the boot CPU for billions of iterations before userland, and `exp = exp * 10 + digit` was signed-overflow UB. One compare, measured at zero net `.text`.
+- [x] Pin the oversize WARN and the `kept = 1` initialiser in `tools/boot-trend-scan-tests/check_production_loop.py`.
+  - The gate inspected only the walk's header and body, so deleting the WARN or starting `kept` at 0 left every fixture green. Five properties now, each with its own mutation control.
 **Test checkpoint:** per moved item; each carries its original acceptance text from §3.
 
 > **Test runner:** `bash tools/boot-trend-scan-tests/run.sh` | 40 fixture checks + 4 source-gate checks, 0 failures (also via `scripts/test-tooling.sh`); kernel side `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot), unchanged
@@ -531,6 +535,13 @@ From the stamped section 3:
 > - A BlackBox-absent boot now returns before either 16 KiB `pmm_alloc_contiguous`, replacing a misleading `vfs_open` failure warning with an explicit statement that there is no C: fallback yet.
 > - MEASURED against a 47-byte `.text` ceiling: the linearization FREES 128 bytes, the BlackBox gate and bounded scan spend that, and the testable-seam extraction costs 32 more, leaving 15 bytes. The host-side test costs the image nothing.
 > - Scope boundary: two halves are parked and named above -- moving publication behind a real post-handoff mechanism (§7) and the runtime C: path construction (`02-kernel-core/TODO-33` §7).
+>
+> **Verified:** 2026-09-03 | commit `76eb18b24` | 3/6 items | build OK | 32845 kernel + 17 user-mode tests | smoke matrix 4/4 (kvm+tcg, 1+2 cpu) | WHPX boundary leg reached `C:\>` | host suite 48/48
+> **Accepted:** [H] `vfs_rename_ex` resolves by generated SFN only, so the advertised atomic publish degrades to `.tmp` litter on long names (reason: FAT32 driver surface, field-recorded on WHPX, not this section's code) -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §16 (item: "FIELD DEFECT 2026-07-30: `vfs_rename_ex` fails on a long two-dot filename" at line 456)
+> **Accepted:** [H] both 16 KiB allocations mutate the unlocked PMM bitmap, which a storage AP that outlived its 10s barrier can race (reason: `include/kernel/mm/pmm.h:67-73` states this is the unlocked-bitmap defect itself and not something a caller can code around) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §7 (item: "PMM bitmap SMP locking" at line 103)
+> **Accepted:** [H] the 64-entry scan cap bounds the WALK but not the PARSE: cJSON builds the whole tree from a 16 KiB file first (reason: parser-layer budget, already owned) -> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` §6 (item: "Bound parse heap for untrusted JSON" at line 294)
+> **Deferred:** [M] the rebuilt ring is reparsed for six regression samples while the old tree is still live, ~1461 extra kmalloc calls per boot (reason: pre-existing optimization, and the image ceiling admits no new code) -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone")
+> **Quality reviewed:** 2026-09-03 | Codex 8x (design, adversarial, re-adversarial x3, adversarial, consistency, perf) + kernel-quality-auditor | 1C+2M fixed, 3H+1M accepted, 2M deferred | scope: kernel-code-quality
 
 ---
 

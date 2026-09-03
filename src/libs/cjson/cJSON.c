@@ -68,6 +68,8 @@ static inline void *cjson_realloc(void *p, size_t sz) { return krealloc(p, (uint
 #define malloc   cjson_malloc
 #define free     cjson_free
 #define realloc  cjson_realloc
+#define CJSON_MAX_EXPONENT 400   /* > DBL_MAX's 308; a saturation point */
+
 static inline double strtod(const char *s, char **end)
 {
     /* Simple integer-only strtod for JSON number parsing.
@@ -90,7 +92,18 @@ static inline double strtod(const char *s, char **end)
         s++;
         if (*s == '-') { exp_sign = -1; s++; }
         else if (*s == '+') { s++; }
-        while (*s >= '0' && *s <= '9') { exp = exp * 10 + (*s - '0'); s++; }
+        /* The exponent is UNTRUSTED (every JSON document this kernel parses
+         * comes off disk) and without this bound two things go wrong: the
+         * accumulate is signed overflow (UB) on a long digit run, and the
+         * scaling loop below runs ONCE PER EXPONENT UNIT, so a 13-byte token
+         * such as 1e2147483647 stalls the boot CPU for billions of iterations
+         * before userland starts. One compare stops accumulating past the
+         * cap, which bounds both. Past DBL_MAX's decimal exponent the result
+         * is already infinity or zero, so no representable number changes. */
+        while (*s >= '0' && *s <= '9') {
+            if (exp < CJSON_MAX_EXPONENT) exp = exp * 10 + (*s - '0');
+            s++;
+        }
         double m = 1.0;
         int i;
         for (i = 0; i < exp; i++) m *= 10.0;
