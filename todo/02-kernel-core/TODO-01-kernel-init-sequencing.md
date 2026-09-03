@@ -232,7 +232,8 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] `acpi_power_init()` in Phase 2: parses S1/S3/S4 sleep objects from DSDT (implemented in [TODO-26 §1](./TODO-26-power-management.md))
 - [x] Remove `HV_BAR` macro from `boot_storage.c` if present -- already removed in prior commit
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
-- [ ] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
+- [/] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
+      - BLOCKED twice over: the typed propagation it enforces is §8's, which is distributed to other TODOs and unshipped; and the enforcement is kernel `.text` against a 47-byte ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
   - `vfs_init()` return-path ownership → [05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
   - `registry_init()` return-path: `void`→`boot_result_t` SHIPPED (TODO-14 §8, root-key alloc fatal); remaining hive-mount-failure semantics defer with `registry_load_hives()` boot wiring → [TODO-14-registry-completion.md §8](./TODO-14-registry-completion.md)
   - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
@@ -298,8 +299,10 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
   - `vfs_init` requires HEAP; `registry_init` requires VFS (Phase 2)
   - `sched_init` requires HEAP + TIMER (Phase 3)
 - [x] Call `kernel_subsystem_dump()` on every BOOT_FATAL before halting -- added to `boot_halt()` and `panic_screen()`
-- [ ] Enforce lapic<-acpi gate: `boot_phase1` ignores `acpi_init()` return, marks `SUBSYS_ACPI` ready unconditionally (`boot_interrupts.c:247`); capture via `apply_result`, gate `lapic_init` on `kernel_subsystem_ready(SUBSYS_ACPI)`. (Codex §6 2H)
-- [ ] `klog(LOG_FATAL)` must dump readiness before halting (`klog.c:1206`): `gdt_init` + `compositor_run`-return fatal paths skip `kernel_subsystem_dump()`; route through `boot_halt()` or dump first. (Codex §6 H/M)
+- [/] Enforce lapic<-acpi gate: `boot_phase1` ignores `acpi_init()` return, marks `SUBSYS_ACPI` ready unconditionally (`boot_interrupts.c:247`); capture via `apply_result`, gate `lapic_init` on `kernel_subsystem_ready(SUBSYS_ACPI)`. (Codex §6 2H)
+      - BLOCKED on the kernel image ceiling: the gate is new kernel `.text` and `bss-headroom.py` measures 47 bytes of slack -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] `klog(LOG_FATAL)` must dump readiness before halting (`klog.c:1206`): `gdt_init` + `compositor_run`-return fatal paths skip `kernel_subsystem_dump()`; route through `boot_halt()` or dump first. (Codex §6 H/M)
+      - BLOCKED on the kernel image ceiling: routing the fatal paths through a dump is new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 
 > **Notes:**
 > - Dependency-gate enforcement: inline `BOOT_REQUIRE`/readiness guards in phase orchestrators + `kernel_subsystem_dump()` on `boot_halt()`/`panic_screen()`. Most chains (pmm/vmm/heap, klog, timer/idt, vfs/registry, sched) enforced.
@@ -327,12 +330,18 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()` -- done in §6
 - [x] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy -- documented in boot_halt.c
 - [x] Align failure-policy matrix with implemented code paths -- Phase 1 `boot_halt()`, Phase 2/3 recovery screen + `boot_halt()`. Updated 2026-04-10.
-- [ ] Centralize fatal halts behind one panic-safe primitive (lockless serial, pre/post-FB modes); route `klog(LOG_FATAL)`, ISR-integrity, `gdt_init`, `compositor_run`-return through it with dump + POST16_BOOT_FAILED. (Codex §7 4H)
-- [ ] Pre-FB halt strictly serial-only: gate `boot_halt`/`panic_screen` fb+vpd writes on `SUBSYS_FB`; panic serial dump must be lockless + not re-enter klog lock (`panic.c:1126`,`:1212`). (Codex §7 2H+2M)
-- [ ] Phase-1 `cpu_pcid_enable` BOOT_FATAL must `boot_halt` (or reclassify DEGRADED in code+matrix) -- currently downgraded to continue (`boot_interrupts.c:176`). (Codex §7 H)
-- [ ] `boot.conf restart_on_halt`: implement (field + parser + ABI mirror + bounded restart) or remove the §7 claim -- no field exists today (`boot_halt.c:240`). (Codex §7 M)
-- [ ] Panic fatal path must not call blocking firmware `SetVariable` (`panic.c:1210` POST-NVRAM write after `cli` -> `uefi_set_variable` mutex, no deadline); use port/RAM POST shadow or bounded emergency trylock. (Codex §7 perf H)
-- [ ] Panic BSOD path must not do live VFS crash-dump writes after `cli` (`write_crash_dump` `vfs_*`, no deadline -> FS/storage/heap deadlock); persist to reserved RAM + write next boot, or nonblocking best-effort. (Codex §7 perf H)
+- [/] Centralize fatal halts behind one panic-safe primitive (lockless serial, pre/post-FB modes); route `klog(LOG_FATAL)`, ISR-integrity, `gdt_init`, `compositor_run`-return through it with dump + POST16_BOOT_FAILED. (Codex §7 4H)
+      - BLOCKED on the kernel image ceiling, and this is the largest of the six: a new panic-safe primitive plus four rerouted callers -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] Pre-FB halt strictly serial-only: gate `boot_halt`/`panic_screen` fb+vpd writes on `SUBSYS_FB`; panic serial dump must be lockless + not re-enter klog lock (`panic.c:1126`,`:1212`). (Codex §7 2H+2M)
+      - BLOCKED on the kernel image ceiling: the `SUBSYS_FB` gate and the lockless serial dump are both new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] Phase-1 `cpu_pcid_enable` BOOT_FATAL must `boot_halt` (or reclassify DEGRADED in code+matrix) -- currently downgraded to continue (`boot_interrupts.c:176`). (Codex §7 H)
+      - BLOCKED on the kernel image ceiling; the alternative disposition (reclassify DEGRADED in code and matrix) is equally a code change -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] `boot.conf restart_on_halt`: implement (field + parser + ABI mirror + bounded restart) or remove the §7 claim -- no field exists today (`boot_halt.c:240`). (Codex §7 M)
+      - BLOCKED on the kernel image ceiling for the implement arm. The remove-the-claim arm is free and remains the honest fallback if the ceiling outlives the roadmap -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] Panic fatal path must not call blocking firmware `SetVariable` (`panic.c:1210` POST-NVRAM write after `cli` -> `uefi_set_variable` mutex, no deadline); use port/RAM POST shadow or bounded emergency trylock. (Codex §7 perf H)
+      - BLOCKED on the kernel image ceiling: replacing the blocking `SetVariable` with a port or RAM POST shadow is new panic-path `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] Panic BSOD path must not do live VFS crash-dump writes after `cli` (`write_crash_dump` `vfs_*`, no deadline -> FS/storage/heap deadlock); persist to reserved RAM + write next boot, or nonblocking best-effort. (Codex §7 perf H)
+      - BLOCKED on the kernel image ceiling: persisting to reserved RAM and writing next boot is new kernel `.text` on both sides -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 
 > **Notes:**
 > - Failure-policy matrix + central halts (`boot_halt`/`panic`/`panic_screen` + recovery screen) shipped and matrix-aligned (2026-04-10); degraded paths klog-WARN + continue.
@@ -356,11 +365,14 @@ These are bugs and structural violations that must be fixed as part of this TODO
 - [x] Move SMBIOS, ESRT, UEFI conformance, capsule, crypto agility, GOP log out of `boot_hw.c` into `boot_interrupts.c`
 - [x] Simplify `main.c` to exactly: `boot_phase0()` → `boot_phase1()` → `boot_phase2()` → `boot_phase3()` → halt
 - [x] Gate `boot_tests_run()` behind `g_boot_info.config.debug == 1 || g_boot_info.config.test == 1`
-- [ ] Update init functions to return `boot_result_t` -- distributed to per-subsystem TODOs:
+- [/] Update init functions to return `boot_result_t` -- distributed to per-subsystem TODOs:
+      - BLOCKED on its two sub-items below, each owned by another TODO; this parent closes only when both do.
   - [x] `task_init()` -- done (returns `boot_result_t`)
   - [x] `pipe_init()` → [TODO-24 §1](./TODO-24-alpc-message-ports.md)
-  - [ ] `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
-  - [ ] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
+  - [/] `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
+        - BLOCKED on `03-memory-concurrency/TODO-01` §1, which owns the `pmm`/`vmm`/`heap_init` signature change.
+  - [/] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
+        - BLOCKED on `05-storage-filesystems/TODO-06` §2, which owns the `vfs_init` signature change.
   - [x] `registry_init()` → [TODO-14 §8](./TODO-14-registry-completion.md) -- returns `boot_result_t`, BOOT_FATAL on root-key alloc failure wired to boot recovery branch
 
 **Test checkpoint:** Grep confirms zero `HV_BAR` in `src/kernel/`, no `fs/vfs.h`/`fs/partition.h` in `boot_interrupts.c`, `kernel_main` = phase0->1->2->3; boot reaches `C:\>` (smoke). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -389,9 +401,11 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 - [x] Implement `boot_recovery_show(boot_recovery_info_t *info)` -- draws panel on framebuffer using inline 8x8 font; no heap alloc
 - [x] Implement three-option menu **[R] Retry** / **[C] Halt to serial log** / **[P] Power off**; bounded PS/2 poll + drain so a headless boot cannot hang; render to the FB back buffer so `fb_swap()` presents it
 - [x] Wire recovery actions via one `boot_recovery_act()` dispatcher: **[R]** -> `acpi_reset_now()`, **[P]** -> `acpi_poweroff_now()` (IF-off-safe, quiesce-free -- the screen runs under `cli`), **[C]** -> serial-banner halt
-- [ ] Implement the interactive **[C]** degraded-boot serial console (read-eval over serial); today `RECOVERY_CONSOLE` halts with a banner
+- [/] Implement the interactive **[C]** degraded-boot serial console (read-eval over serial); today `RECOVERY_CONSOLE` halts with a banner
+      - BLOCKED on the kernel image ceiling: a read-eval serial console is substantial new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [x] Hook into Phase 2 missing-prerequisite path: VFS and Registry prereq guards call `boot_recovery_show()` before `boot_halt()` (`boot_storage.c:305`, `:731`)
-- [ ] Observe actual Phase 2 init FAILURE, not just missing prereq: today `SUBSYS_VFS`/`SUBSYS_REGISTRY` are set ready unconditionally (void/ignored inits) so recovery never fires on a real mount/registry failure. Blocked on §4 typed propagation
+- [/] Observe actual Phase 2 init FAILURE, not just missing prereq: today `SUBSYS_VFS`/`SUBSYS_REGISTRY` are set ready unconditionally (void/ignored inits) so recovery never fires on a real mount/registry failure. Blocked on §4 typed propagation
+      - BLOCKED on this file's §4, which is where the typed Phase 2 failure this item wants to observe would come from.
 - [x] Hook into Phase 3 failure path: Scheduler guard calls `boot_recovery_show()` before `boot_halt()`
 - [x] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
 - [x] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
@@ -463,7 +477,8 @@ Move non-critical subsystem init out of the blocking boot path so the desktop ap
 - [x] If a deferred init fails, log `klog(WARN)` -- no halt, no BSOD
 - [x] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
 - [x] Add 3 unit tests: BOOT_DEFERRED value, boot_defer registration, deferred POST codes
-- [ ] Run `boot_run_deferred()` from a compositor one-shot after the first frame (not inline before `compositor_run`) so `mouse_init()`'s 300ms-2s PS/2 BAT no longer delays the first desktop frame (`boot_desktop.c:351`). (Codex §11 perf H)
+- [/] Run `boot_run_deferred()` from a compositor one-shot after the first frame (not inline before `compositor_run`) so `mouse_init()`'s 300ms-2s PS/2 BAT no longer delays the first desktop frame (`boot_desktop.c:351`). (Codex §11 perf H)
+      - BLOCKED on the kernel image ceiling: the compositor one-shot and the moved call are new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [x] Commit: `"kernel: deferred init -- non-critical subsystems after desktop"`
 
 **Test checkpoint:** Boot with default config → desktop appears → deferred inits run → `[DEFERRED]` lines appear in serial log after `[PHASE3] desktop_init`. Boot with `deferred=0` → no `[DEFERRED]` lines, all subsystems init in-phase. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -497,7 +512,8 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 - [x] `boot_perf_compare()` compares current vs previous: if >200% OR >500ms regression, logs `[PERF] WARNING: <step> init regressed: <prev>ms -> <cur>ms`
 - [x] `boot_perf_dump()` prints all step durations as a sorted-by-time table to serial
 - [/] Add `bootperf` shell command -- blocked on a user-mode boot-perf query path (`NtQuerySystemInformationEx` 0x0313 in `TODO-A-SSDT-Master-Table.md`, still `[ ]`); the data is already on serial + `boot_perf_dump()` today.
-- [ ] Wear-budget the unconditional `ImpossibleBootPerf` write (`boot_timing.c:630`): add a `boot.conf bootperf=0` opt-out (mirroring `postcode=0`) and/or skip-unchanged so reboot/test cycles do not burn the ~100K-cycle variable store. (Codex §12 M)
+- [/] Wear-budget the unconditional `ImpossibleBootPerf` write (`boot_timing.c:630`): add a `boot.conf bootperf=0` opt-out (mirroring `postcode=0`) and/or skip-unchanged so reboot/test cycles do not burn the ~100K-cycle variable store. (Codex §12 M)
+      - BLOCKED on the kernel image ceiling: the opt-out needs a `boot.conf` field, a parser arm, an ABI mirror entry and a skip-unchanged compare -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [x] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write
 - [x] Add 3 unit tests: perf record size (24 bytes), BOOT_PERF_MAGIC value, bootperf POST code uniqueness
 - [x] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
@@ -540,15 +556,18 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [x] Logs `[ASYNC] <step> started on CPU<n>` and `[ASYNC] <step> completed on CPU<n> in <N>ms`
 - [x] POST codes: `POST16(0xDD00)` dispatch, `POST16(0xDD01)` AP entry, `POST16(0xDD02)` barrier, `POST16(0xDD03)` done
 - [x] 2 unit tests: async POST code uniqueness, IPI vector value (0xFC) and no collision with 0xFD/0xFE
-- [ ] Quiesce the AP on async timeout before sequential fallback (`boot_init.c:365`): timeout marks AP done+FATAL without stopping it, so `boot_phase2` re-runs storage init concurrently (driver corruption). (Codex §1 H; `async_init=1` only)
+- [/] Quiesce the AP on async timeout before sequential fallback (`boot_init.c:365`): timeout marks AP done+FATAL without stopping it, so `boot_phase2` re-runs storage init concurrently (driver corruption). (Codex §1 H; `async_init=1` only)
+      - BLOCKED on the kernel image ceiling: quiescing the AP before fallback is new kernel `.text` on the async path -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [/] Contain a degraded storage driver at the HARDWARE, not just in bookkeeping. Blocked on the cooperative-cancellation call above (driver owners). XREF: `01-boot-platform/TODO-10 §27` (item: "Make the async timeout an ownership TRANSFER").
   - What §27 shipped: a timed-out or poisoned step is no longer re-entered on the BSP, and the drivers it names are excluded from `ahci_setup_interrupts()` and `blkdev_register_all()`.
   - What it does not do: exclusion is not containment. Each initializer enables PCI bus mastering and can program MSI-X before it finishes (`virtio/blk_init.c:160`), so a worker still inside its step -- or one cut down between arming MSI-X and registering its handler -- can leave a device able to DMA or raise an interrupt whatever the mask says.
   - Needs per-driver quarantine (clear bus master + MSI/MSI-X/INTx on the degraded controller) or the cancellation protocol.
   - Also unclosed: `storage_unsafe` is local to `boot_phase2`, so later consumers of the same partial globals are ungated -- `hw_dump.c:166` reads `ahci_drive_count()`, `boot_health.c:148` reads `nvme_controller_count()`. Read-only counts, not device programming.
 - [x] Explicit `boot_result_t` severity rank in `boot_async_group` worst-pick: added `boot_result_severity()` (FATAL>DEGRADED>DEFERRED>OK) used at all 3 worst-pick sites, so a `BOOT_DEFERRED` step no longer masks a `BOOT_FATAL` one (`boot_init.c`)
-- [ ] Run async AP storage init in an IF-enabled worker, not from `async_ipi_handler` (`boot_init.c:243`): the IPI gate clears IF so NVMe `sleep_ms`/`hlt` hangs the AP into the 10s timeout. Keep `async_init=1` experimental. (Codex §13 H)
-- [ ] Define async-group `BOOT_DEFERRED` aggregation: it ranks below DEGRADED and `boot_phase2` has no DEFERRED branch, so a not-ready async step records LOADED. Latent (no step returns DEFERRED yet); add aggregation tests. (Codex §13 M)
+- [/] Run async AP storage init in an IF-enabled worker, not from `async_ipi_handler` (`boot_init.c:243`): the IPI gate clears IF so NVMe `sleep_ms`/`hlt` hangs the AP into the 10s timeout. Keep `async_init=1` experimental. (Codex §13 H)
+      - BLOCKED on the kernel image ceiling: moving the work out of the IPI gate into an IF-enabled worker is new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+- [/] Define async-group `BOOT_DEFERRED` aggregation: it ranks below DEGRADED and `boot_phase2` has no DEFERRED branch, so a not-ready async step records LOADED. Latent (no step returns DEFERRED yet); add aggregation tests. (Codex §13 M)
+      - BLOCKED on the kernel image ceiling: a `BOOT_DEFERRED` branch plus its aggregation tests are new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [x] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
 
 **Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical -- per-AP fault isolation must work on real hardware.
