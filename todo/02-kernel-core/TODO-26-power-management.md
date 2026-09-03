@@ -9,6 +9,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 # TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)
 
 > **Validated:** 2026-09-03 | validate-todo-file clean; §1's missing Notes block added; 8 mistargeted compact/full XREFs corrected (each verified against the real target section heading -- D02T19§9->D02T09§9, D04T04§1/§4/§6/§7->D04T03§4/§6/§4/§8, D03T05§9->D03T06§9, D02T05§4->D02T12§4, TODO-08§1->§3, TODO-12§5->§4, TODO-11§2->§7) plus the self-contradicting legend example; todo-graph 10/10; no hard-wrap; no code-block bloat; bat runner present
+> **Gap-audited:** 2026-09-03 | gap-audit + codex-gap-audit; confirmatory parity pass (existing plan already comprehensive from its 2026-04-13 gap-analysis) found 1 new Win11 25H2 gap; codex-gap-audit red-teamed the diff and found 2 pre-existing High findings (S3 orchestration specified at DISPATCH_LEVEL where it blocks; charge-limit item wrote a vendor-guessed EC register with no capability check) plus corrected the new item's own policy model (was global C-state bias, should be per-process QoS per Microsoft's actual mechanism), a backwards ACPICA ownership boundary, and 2 more coverage gaps (composite/multi-battery, PCIe ASPM+L1SS); all fixed. 2 new sections added (§22 QoS throttling, §23 PCIe ASPM), 3 items added to §6, 21->23 sections total.
 
 > **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers S1 CPU-halt idle, S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
 
@@ -19,12 +20,12 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 > **Memory rule:** Hibernation image buffers can be multi-gigabyte: always use `pmm_alloc_contiguous()` for hibernation scratch pages. Never `kmalloc` anything > 4 KiB in the suspend/hibernate paths.
 
 > [!IMPORTANT]
-> **Scope boundary with `04-drivers-hardware/TODO-03-acpi-power-management.md`:** TODO-26 is the authoritative ACPI power management implementation (ACPICA-based AML interpreter). §1, §3, §4, §5, §6, and §7 of this TODO are the *pre-ACPICA* implementation path; they use hand-rolled AML parsing (same pattern as the existing `\_S5_` parser) and provide usable functionality before TODO-26 §1 (ACPICA) is complete. Once TODO-26 §1 lands, TODO-26 §2 (S3), §3 (battery), §5 (power button), and §8 (S4) supersede the equivalent sections here. **§2 (S1/idle thread), §8 (PCI D-states), §9 (driver callbacks), §10 (S0ix), and §18 (power plan UI / `powercfg`) are kernel-core responsibilities not covered by TODO-26 and remain authoritative.**
-> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §1` -- ACPICA integration; when complete, replaces hand-rolled AML parsing in §1 of this TODO
-> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §9` -- authoritative S3 suspend/resume (ACPICA path); §5 here is the pre-ACPICA fallback
-> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §5` -- authoritative battery `_BST`/`_BIF` (ACPICA path); §4 here is the pre-ACPICA fallback
-> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §3` -- authoritative power button SCI (ACPICA path); §8 here is the pre-ACPICA fallback
-> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §10` -- authoritative S4 hibernate (ACPICA path); §6 here is the pre-ACPICA fallback
+> **Scope boundary with `04-drivers-hardware/TODO-03-acpi-power-management.md` (corrected 2026-09-03, Codex gap-audit -- the ownership direction was backwards):** `04-drivers-hardware/TODO-03` owns the ACPICA-based AML interpreter integration and becomes authoritative for the ACPI-driven paths below once its sections land. Until then, THIS file's hand-rolled parsers (same pattern as the existing `\_S5_` parser) are the shipped implementation: §1 (sleep-object parsing) is superseded by D04T03§1 (ACPICA integration); §3 (S3 suspend) by D04T03§9; §4 (S4 hibernate) by D04T03§10; §6 (battery) by D04T03§5; §7 (power button) by D04T03§3. **§2 (S1/idle thread), §8 (PCI D-states), §9 (driver callbacks), §10 (S0ix), and §18 (power plan UI / `powercfg`) are kernel-core responsibilities NOT covered by TODO-03 and remain authoritative here regardless of ACPICA status.**
+> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §1` -- ACPICA integration; supersedes this file's hand-rolled §1 sleep-object parser
+> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §9` -- authoritative S3 suspend/resume (ACPICA path); §3 here is the pre-ACPICA fallback
+> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §5` -- authoritative battery `_BST`/`_BIF` (ACPICA path); §6 here is the pre-ACPICA fallback
+> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §3` -- authoritative power button SCI (ACPICA path); §7 here is the pre-ACPICA fallback
+> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §10` -- authoritative S4 hibernate (ACPICA path); §4 here is the pre-ACPICA fallback
 
 ---
 
@@ -101,6 +102,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T09§9         |  [ ]   |
 | 💎  |  20   | §20 Power syscalls wired to SSDT                    | §2, §6, D02T12§4           |  [ ]   |
 | 💎  |  21   | §21 Linux `/sys/power` suspend variant parity       | §1, §10                    |  [ ]   |
+| 💎  |  22   | §22 User-interaction-aware QoS throttling           | §15, §19, §20              |  [ ]   |
+| 💎  |  23   | §23 PCIe ASPM and L1 substates                      | §8, §9, §12                |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -167,15 +170,16 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 ---
 
 ## 3. S3: Suspend to RAM
-- [ ] `pm_enter_s3()` -- called by the power manager when the user requests sleep; runs at `DISPATCH_LEVEL` (→ XREF: `TODO-07-irql-model-dpcs.md §3`):
+- [ ] `pm_enter_s3()` -- runs on a dedicated `PASSIVE_LEVEL` worker, NOT `DISPATCH_LEVEL` (steps 1+3 block; DISPATCH_LEVEL forbids blocking/paging/mutex per the IRQL contract) -> XREF: `TODO-07-irql-model-dpcs.md` §7:
   1. Broadcast `PO_CB_SYSTEM_STATE_LOCK` to all registered power callbacks (§9): let drivers flush queues and reach D3hot/D3cold (§8)
   2. Freeze the scheduler (`sched_freeze_all()`) -- no new threads start; all CPUs except the one doing suspend park themselves at a spin barrier
   3. Flush VFS page cache and IXFS journal (→ XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1`)
-  4. Save APIC state (LVT registers, LAPIC base MSR) to a per-CPU save area
-  5. Save `IDTR`, `GDTR`, `CR0`, `CR3`, `CR4`, `EFER` per CPU
-  6. Save all CPU general-purpose and SSE registers for the BSP (`struct s3_cpu_state` allocated in pinned physical memory)
-  7. Write the physical address of `pm_s3_wakeup_entry` into the ACPI wakeup vector (`FACS->FirmwareWakingVector`)
-  8. Call `acpi_enter_sleep_state(3)` -- system loses power to RAM row refresh; wake on power button / RTC alarm resumes in §3
+  4. `cli` -- interrupts stay disabled from here through hardware transition; nothing below this line may block
+  5. Save APIC state (LVT registers, LAPIC base MSR) to a per-CPU save area
+  6. Save `IDTR`, `GDTR`, `CR0`, `CR3`, `CR4`, `EFER` per CPU
+  7. Save all CPU general-purpose and SSE registers for the BSP (`struct s3_cpu_state` allocated in pinned physical memory)
+  8. Write the physical address of `pm_s3_wakeup_entry` into the ACPI wakeup vector (`FACS->FirmwareWakingVector`)
+  9. Call `acpi_enter_sleep_state(3)` -- system loses power to RAM row refresh; wake on power button / RTC alarm resumes in §3
 - [ ] `pm_s3_wakeup_entry` (real-mode compatible entry stub in `src/kernel/acpi_wakeup.asm`):
   - BIOS/UEFI firmware jumps here in real mode; stub switches to protected and then long mode (re-using the bootloader's page tables at `0x70000`)
   - Calls `pm_s3_resume()` in C with the saved state pointer
@@ -288,11 +292,18 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [ ] System tray icon: `[CHG]` charging, `[BAT] n%` discharging, `[AC]` AC plugged in
 - [ ] Tooltip: `"Battery: 73% -- 2h 14m remaining"` or `"Plugged in, charging"`
 - [ ] Click -> flyout with charge bar, current rate (W), temperature if `_BTP` supported, last full charge capacity vs. design capacity (battery wear indicator)
-- [ ] `bat_set_charge_limit(uint8_t pct)` -- write charge threshold via EC: `ec_write(EC_REG_CHARGE_END, pct)` (register address is vendor-specific; common: 0xB1 ThinkPad, 0xE4 Dell, 0xBD ASUS); default 100% (no limit)
+- [ ] `bat_set_charge_limit(uint8_t pct)` -- refuses (`STATUS_NOT_SUPPORTED`) unless the platform is capability-matched; default 100% (no limit)
+  - Codex adversarial finding (2026-09-03): a raw `ec_write(EC_REG_CHARGE_END, pct)` at a vendor-guessed offset (0xB1 ThinkPad, 0xE4 Dell, 0xBD ASUS) is unsafe on an unmatched EC map -- the same offset can control unrelated firmware state on a different vendor's controller.
+  - Identify the platform (DMI/SMBIOS vendor+model string, or an ACPI `_DSM`/OEM method if the DSDT exposes one) and match against a per-model quirks table before any write; unmatched platforms stay refused, never a best-effort guess.
+  - Validate + read back after write (range-check `pct`, confirm the EC actually latched the value) before reporting success.
 - [ ] Registry `HKLM\SYSTEM\Battery\ChargeLimitPercent` (REG_DWORD, default 100); set to 80 for battery longevity
 - [ ] Smart Charging auto-mode: if laptop has been plugged in for > 4 hours continuously and battery > 80%, auto-hold at 80%; release limit when unplugged; Registry `SmartChargingEnabled` (default 1)
 - [ ] Tray tooltip addition: `"Charging limited to 80%"` when charge limit active
 - [ ] `powercfg /batteryreport` includes charge limit status and smart charging history
+- [ ] Enumerate every `_HID "PNP0C0A"` battery device in the namespace (not a fixed `\_SB.BAT0`) -- dual-battery and docked systems have separate ACPI objects per battery
+  - Codex gap-audit finding (2026-09-03): a single fixed-path read reports the wrong percentage and can trigger critical-power action from the wrong source on multi-battery hardware. -> XREF: ACPI 6.6 §10 Power Source and Power Meter Devices.
+- [ ] Track insertion/removal per battery device (ACPI device-check notify); a hot-removed battery drops out of the composite view rather than reporting stale data
+- [ ] `bat_composite_state()` -- aggregates all present batteries into one system-wide charge/time/critical state (Windows composite-battery model); tray/tooltip/flyout/warnings read the composite, not one battery
 - [ ] Commit: `"kernel/acpi: battery _BIF/_BST, AC adapter, smart charging, low-battery warnings, tray icon"`
 
 **Test checkpoint:** `bat_update()` computes `charge_pct` and `time_remaining_min`. `_BIX` parsed (or `_BIF` fallback). `_PSR` returns AC status. `bat_set_charge_limit(80)` writes EC register. Low-battery warning fires at `warn_pct`. Registry `Battery\Status` updated. Test on: QEMU TCG (skip battery tests if no `_BST`).
@@ -315,6 +326,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [ ] Lid open: if system is in S3/S4, trigger wakeup (the EC event itself causes the hardware to resume; software sees `WAKE_STS` in PM1a_STS -> §3 or §4 resume path)
 - [ ] Display-off on lid close before entering sleep: call `gfx_blank_display()` to cut video output immediately, reducing flicker during the sleep entry sequence
 - [ ] HPD sensor integration: detect compatible IR/ToF camera or Wi-Fi sensing via ACPI `_HID "INTC1070"` (Intel HPD) or `HID_DEVICE_SYSTEM_HUMAN_PRESENCE` (0x000D0011)
+  - Not the same signal as §22's user-interaction-aware QoS throttling: HPD needs presence-sensing hardware, QoS-based throttling is software-only and needs no sensor -> XREF: `02-kernel-core/TODO-26-power-management.md` §22
 - [ ] `hpd_register_sensor(dev, ops)` -- register HPD sensor driver with presence/absence callbacks
 - [ ] Wake on Approach: when display is off (idle timeout) and HPD reports `PRESENCE_DETECTED`, power on display and optionally unlock (biometric); Registry `HPDWakeOnApproach` (default 1)
 - [ ] Lock on Leave: when HPD reports `ABSENCE_DETECTED` for > `HPDAbsenceTimeout` seconds (default 30), trigger display-off + lock screen; Registry `HPDLockOnLeave` (default 1)
@@ -809,48 +821,92 @@ Linux exposes system suspend through `/sys/power/state` plus `/sys/power/mem_sle
 
 ---
 
+## 22. User-Interaction-Aware QoS Throttling
+
+> **Spawned-by:** §16 (review)
+> **User impact:** without this, background-idle machine time (compiles, benchmarks, servers) gets throttled by any HID-idle heuristic that is not scoped to the foreground app; with the wrong model, an unattended workload loses performance for no reason. Windows 11 25H2 ships this as a per-process QoS demotion, not a global cap, and Impossible OS needs the same scoping to be correct.
+
+Windows 11 25H2 lowers the FOREGROUND application's QoS to Medium after a period with no keyboard/mouse/touch input, on battery; QoS then feeds scheduler placement and per-thread frequency policy, with a documented opt-out (`DisableUserPresenceQos`). No Linux equivalent (`power-profiles-daemon` and TLP tune per-workload, not per-input-presence). This is a gap-audit correction: an earlier draft of this item (filed in §16, since removed) modeled it as biasing every CPU's C-state/P-state globally regardless of load, which would throttle an unattended compile or benchmark just because nobody touched a HID device.
+
+- [ ] `pm_user_presence_state_t`: tracks time since last keyboard/mouse/touch event system-wide (not per-window)
+- [ ] `PowerHidIdleThresholdMs` (Registry, default matches Win11's own broadcast interval): past this threshold AND on battery, mark user-presence ABSENT
+- [ ] On ABSENT: reclassify the FOREGROUND process's QoS to Medium via the existing power-QoS handle mechanism (§20 syscalls); background processes are UNAFFECTED
+- [ ] QoS Medium feeds §19's `select_cpu()` (prefer E-cores) and §15's per-thread frequency ceiling for that process's threads only -- never a global cap
+- [ ] On HID event or presence returning: revert the foreground process's QoS immediately
+- [ ] `DisableUserPresenceQos` (Registry, default 0): documented opt-out, matching Win11's own escape hatch
+- [ ] AC-only systems and non-foreground work are never throttled by this mechanism -- test explicitly proves a background high-load thread's frequency is unaffected while foreground QoS is demoted
+- [ ] Commit: `"kernel/pm: user-interaction-aware QoS throttling -- foreground-only, battery-only, DisableUserPresenceQos"`
+
+**Test checkpoint:** `pm_user_presence_state_t` transitions to ABSENT after `PowerHidIdleThresholdMs` on battery with no HID events. Foreground process QoS demotes to Medium; a background thread's measured frequency ceiling is UNCHANGED (proves no global cap). A HID event immediately reverts QoS. `DisableUserPresenceQos=1` disables the whole mechanism. Test on: QEMU TCG.
+
+---
+
+## 23. PCIe ASPM and L1 Substates
+
+> **Spawned-by:** §12 (review)
+> **User impact:** without link-level PCIe power management, every PCIe endpoint (NVMe, Wi-Fi, most modern devices) keeps its link at full power even when the device itself reaches D3/APST/ALPM -- the device-level work in §12 caps out well short of the idle power Win11 and Linux both reach, and NVMe's own APST guidance assumes L1 substates are available underneath it.
+
+Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe APST, and SATA ALPM, but has no owner for the PCIe LINK itself -- ASPM L0s/L1 and the L1.1/L1.2 substates that PCI-SIG describes as enabling dramatically lower idle link power, and that Microsoft's own NVMe power guidance depends on. Only the FADT `NO_ASPM` flag is referenced anywhere in the repo today.
+
+- [ ] `pci_aspm_cap_find(dev)` -- walk PCI Express Capability (cap ID `0x10`) for the Link Control/Link Capabilities registers; return offset or -1 if the device is not PCIe
+- [ ] Respect FADT `NO_ASPM` (platform firmware disables ASPM entirely) before touching any link
+- [ ] `pci_aspm_set_policy(dev, policy)` -- `ASPM_DISABLED`/`ASPM_L0S`/`ASPM_L1`/`ASPM_L1SS`; writes Link Control ASPM Control bits on BOTH the endpoint and its upstream root/switch port (ASPM is a link-level agreement, not per-device)
+- [ ] L1 PM Substates (L1.1/L1.2) via the L1 PM Substates Extended Capability, gated on `CLKREQ#` support advertised by both link partners
+- [ ] Latency-aware policy: read each function's `_DSM`/Latency Tolerance Reporting (LTR) where present; do not enable a substate whose exit latency exceeds the device's tolerated latency
+- [ ] Power plan mapping: `PowerSaver`=L1SS enabled, `Balanced`=L1 only, `Performance`=ASPM disabled (mirrors §12's SATA/USB policy mapping)
+- [ ] Resume ordering: restore each link's ASPM policy AFTER the device itself reaches D0 (§9), never before -- an armed link on a not-yet-ready device can stall config-space access
+- [ ] Safe refusal: if either link partner's capability register disagrees with what firmware advertised, leave ASPM at its firmware-configured default rather than guessing
+- [ ] Boot log: `[ASPM] %02x:%02x.%x: L0s=%s L1=%s L1SS=%s`
+- [ ] Commit: `"kernel/pci: ASPM L0s/L1 + L1 PM Substates, latency-aware policy, power-plan mapping"`
+
+**Test checkpoint:** `pci_aspm_cap_find(dev)` returns a valid offset for a PCIe device (or -1 for legacy PCI). `pci_aspm_set_policy(dev, ASPM_L1)` sets Link Control bits on both endpoint and upstream port. `NO_ASPM` firmware flag disables the whole mechanism. A device advertising no `CLKREQ#` is never offered L1SS. Test on: QEMU TCG + WHPX.
+
+---
+
 ## OS Comparison
 
-| ⭐  | Feature                     | 🪟 Win11       | 🐧 Linux       | 🚀 Impossible OS |
-| --- | --------------------------- | -------------- | -------------- | ---------------- |
-| 💎  | S5 ACPI shutdown            | ✅ Full        | ✅ Full        | ✅ Done §1       |
-| 💎  | S1 idle / HLT               | ✅ Full        | ✅ cpuidle     | ⬜ §2            |
-| 💎  | S3 suspend RAM              | ✅ Full        | ✅ sleep       | ⬜ §3            |
-| 💎  | S4 hibernate disk           | ✅ Full        | ✅ swsusp      | ⬜ §4            |
-| 💎  | Fast startup hiberboot      | ✅ Default     | ❌ None        | ⬜ §11           |
-| 💎  | ACPI EC driver              | ✅ Full        | ✅ acpi_ec     | ⬜ §5            |
-| 💎  | Battery `_BIX` / `_BST`     | ✅ Full        | ✅ upower      | ⬜ §6            |
-| 💎  | Power lid button events     | ✅ Full        | ✅ logind      | ⬜ §7            |
-| 💎  | PCI D-states D0--D3cold     | ✅ Full        | ✅ PCI PM      | ⬜ §8            |
-| 💎  | Driver sleep wake callbacks | ✅ WDM         | ✅ pm_ops      | ⬜ §9            |
-| 💎  | Driver query veto power     | ✅ QUERY_POWER | ✅ prepare     | ⬜ §17           |
-| 💎  | Runtime idle PoFx RPM       | ✅ PoFx        | ✅ runtime_pm  | ⬜ §12           |
-| 💎  | Power requests tracking     | ✅ powercfg    | ⚠️ wake_lock   | ⬜ §13           |
-| 💎  | Wake source lastwake        | ✅ powercfg    | ⚠️ dmesg       | ⬜ §13           |
-| 💎  | ACPI thermal zones          | ✅ ACPI.sys    | ✅ thermal     | ⬜ §14           |
-| 💎  | Passive active cooling      | ✅ Full        | ✅ step_wise   | ⬜ §14           |
-| 💎  | CPU DVFS cpufreq            | ✅ PPM HWP     | ✅ cpufreq     | ⬜ §15           |
-| 💎  | CPU idle C-states           | ✅ PPM         | ✅ menu teo    | ⬜ §16           |
-| 💎  | Connected standby S0ix      | ✅ Modern      | ⚠️ Partial     | ⬜ §10           |
-| 💎  | mem_sleep s2idle deep       | ✅ S0 idle     | ✅ sysfs       | ⬜ §21           |
-| 💎  | powercfg CLI surface        | ✅ 50 cmds     | ⚠️ systemctl   | ⬜ §18           |
-| 💎  | Power Options GUI           | ✅ powercpl    | ⚠️ GNOME basic | ⬜ §18           |
-| ⭐  | Energy aware scheduling     | ⚠️ HW ITD      | ✅ EAS ARM     | ⬜ §19           |
-| ⭐  | Battery wear tray hint      | ❌ Settings    | ❌ CLI only    | ⬜ §6            |
-| ⭐  | batteryreport plain text    | ✅ HTML        | ❌ None        | ⬜ §18           |
-| ⭐  | energy audit trace          | ✅ Full        | ❌ None        | ⬜ §13           |
-| ⭐  | sleepstudy DRIPS report     | ✅ Full        | ❌ None        | ⬜ §18           |
-| 💎  | PoFx F-states components    | ✅ Per Fx      | ❌ Device only | ⬜ §12           |
-| 💎  | Directed PoFx DRIPS         | ✅ PoFx v3     | ❌ None        | ⬜ §10           |
-| 💎  | USB suspend U1 U2 LPM       | ✅ Full        | ✅ autosuspend | ⬜ §12           |
-| 💎  | NVMe APST idle states       | ✅ On          | ✅ sysfs       | ⬜ §12           |
-| 💎  | SATA ALPM link power        | ✅ HIPM        | ✅ sysfs       | ⬜ §12           |
-| 💎  | NIC ARP NS offload S0ix     | ✅ NDIS        | ⚠️ Firmware    | ⬜ §10           |
-| 💎  | Smart charge 80 percent     | ✅ OEM         | ⚠️ TLP         | ⬜ §6            |
-| 💎  | RAPL power cap sysfs        | ✅ Internal    | ✅ powercap    | ⬜ §15           |
-| 💎  | AMD P-State EPP             | ✅ Driver      | ✅ amd_pstate  | ⬜ §15           |
-| 💎  | Energy Saver adaptive       | ✅ Win11       | ⚠️ profiles    | ⬜ §18           |
-| ⭐  | Human presence HPD wake     | ✅ Platform    | ❌ None        | ⬜ §7            |
+| ⭐  | Feature                         | 🪟 Win11       | 🐧 Linux       | 🚀 Impossible OS |
+| --- | ------------------------------- | -------------- | -------------- | ---------------- |
+| 💎  | S5 ACPI shutdown                | ✅ Full        | ✅ Full        | ✅ Done §1       |
+| 💎  | S1 idle / HLT                   | ✅ Full        | ✅ cpuidle     | ⬜ §2            |
+| 💎  | S3 suspend RAM                  | ✅ Full        | ✅ sleep       | ⬜ §3            |
+| 💎  | S4 hibernate disk               | ✅ Full        | ✅ swsusp      | ⬜ §4            |
+| 💎  | Fast startup hiberboot          | ✅ Default     | ❌ None        | ⬜ §11           |
+| 💎  | ACPI EC driver                  | ✅ Full        | ✅ acpi_ec     | ⬜ §5            |
+| 💎  | Battery `_BIX` / `_BST`         | ✅ Full        | ✅ upower      | ⬜ §6            |
+| 💎  | Power lid button events         | ✅ Full        | ✅ logind      | ⬜ §7            |
+| 💎  | PCI D-states D0--D3cold         | ✅ Full        | ✅ PCI PM      | ⬜ §8            |
+| 💎  | Driver sleep wake callbacks     | ✅ WDM         | ✅ pm_ops      | ⬜ §9            |
+| 💎  | Driver query veto power         | ✅ QUERY_POWER | ✅ prepare     | ⬜ §17           |
+| 💎  | Runtime idle PoFx RPM           | ✅ PoFx        | ✅ runtime_pm  | ⬜ §12           |
+| 💎  | Power requests tracking         | ✅ powercfg    | ⚠️ wake_lock   | ⬜ §13           |
+| 💎  | Wake source lastwake            | ✅ powercfg    | ⚠️ dmesg       | ⬜ §13           |
+| 💎  | ACPI thermal zones              | ✅ ACPI.sys    | ✅ thermal     | ⬜ §14           |
+| 💎  | Passive active cooling          | ✅ Full        | ✅ step_wise   | ⬜ §14           |
+| 💎  | CPU DVFS cpufreq                | ✅ PPM HWP     | ✅ cpufreq     | ⬜ §15           |
+| 💎  | CPU idle C-states               | ✅ PPM         | ✅ menu teo    | ⬜ §16           |
+| 💎  | Connected standby S0ix          | ✅ Modern      | ⚠️ Partial     | ⬜ §10           |
+| 💎  | mem_sleep s2idle deep           | ✅ S0 idle     | ✅ sysfs       | ⬜ §21           |
+| 💎  | powercfg CLI surface            | ✅ 50 cmds     | ⚠️ systemctl   | ⬜ §18           |
+| 💎  | Power Options GUI               | ✅ powercpl    | ⚠️ GNOME basic | ⬜ §18           |
+| ⭐  | Energy aware scheduling         | ⚠️ HW ITD      | ✅ EAS ARM     | ⬜ §19           |
+| ⭐  | Battery wear tray hint          | ❌ Settings    | ❌ CLI only    | ⬜ §6            |
+| ⭐  | batteryreport plain text        | ✅ HTML        | ❌ None        | ⬜ §18           |
+| ⭐  | energy audit trace              | ✅ Full        | ❌ None        | ⬜ §13           |
+| ⭐  | sleepstudy DRIPS report         | ✅ Full        | ❌ None        | ⬜ §18           |
+| 💎  | PoFx F-states components        | ✅ Per Fx      | ❌ Device only | ⬜ §12           |
+| 💎  | Directed PoFx DRIPS             | ✅ PoFx v3     | ❌ None        | ⬜ §10           |
+| 💎  | USB suspend U1 U2 LPM           | ✅ Full        | ✅ autosuspend | ⬜ §12           |
+| 💎  | NVMe APST idle states           | ✅ On          | ✅ sysfs       | ⬜ §12           |
+| 💎  | PCIe ASPM L1 substates          | ✅ Plans       | ✅ pcie_aspm   | ⬜ §23           |
+| 💎  | SATA ALPM link power            | ✅ HIPM        | ✅ sysfs       | ⬜ §12           |
+| 💎  | NIC ARP NS offload S0ix         | ✅ NDIS        | ⚠️ Firmware    | ⬜ §10           |
+| 💎  | Smart charge 80 percent         | ✅ OEM         | ⚠️ TLP         | ⬜ §6            |
+| 💎  | RAPL power cap sysfs            | ✅ Internal    | ✅ powercap    | ⬜ §15           |
+| 💎  | AMD P-State EPP                 | ✅ Driver      | ✅ amd_pstate  | ⬜ §15           |
+| 💎  | Energy Saver adaptive           | ✅ Win11       | ⚠️ profiles    | ⬜ §18           |
+| ⭐  | Human presence HPD wake         | ✅ Platform    | ❌ None        | ⬜ §7            |
+| 💎  | HID-idle QoS throttle (fg-only) | ✅ 25H2        | ❌ None        | ⬜ §22           |
 
 After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 
