@@ -74,7 +74,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | ⭐  |  15   | Anti-rollback terminal give-up durable record               | TODO-01 §25; D02 T33 §7 (ceiling)  |  [/]   |
 | ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)           | §9                                 |  [/]   |
 | 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it      | §14; §5                            |  [ ]   |
-| 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port | §14                                |  [ ]   |
+| 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port | §14                                |  [x]   |
 | 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff  | §14                                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
@@ -577,12 +577,28 @@ Found by the section 14 performance review, which was right where the boot-quali
 
 **Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
 
-- [ ] Gate the early-serial path on an explicit "serial is configured" flag rather than on `s_serial_port` being non-zero, so poisoned `.bss` cannot be mistaken for a configured UART
-  - A flag set only by `serial_early_init()` is the smallest correct fix. Zeroing `.bss` in the entry stub is the alternative, but it would silently change every existing poison workaround in this file (`:3330`, `:8561` and others deliberately rely on the poison being observable), so it is the riskier of the two.
-- [ ] Audit every `serial_early_print` call site reachable before `serial_early_init()` and confirm each is either gated or moved after it
-- [ ] Commit: `"boot: gate early serial on a configured flag, not a poisoned .bss port"`
+- [x] Gate the early-serial path on an explicit "serial is configured" flag rather than on `s_serial_port` being non-zero, so poisoned `.bss` cannot be mistaken for a configured UART
+  - Shipped as a wide exact-match cookie (`EARLY_DIAG_READY`, `s_serial_ready`), not the boolean the item proposed: a boolean occupies the same unzeroed `.bss`, and `0xAF` poison is non-zero, so it would read as "configured" exactly as the port did. `serial_early_putchar` tests the cookie; only `serial_early_init` publishes it, after the UART is configured, at both success exits.
+  - The design review upgraded the primary mechanism: a cookie is the sole barrier ahead of `boot_set_section`, and a warm reboot can leave the PREVIOUS boot's cookie at the same address, since the image reloads at the same base and nothing scrubs RAM across a reset. So `early_diag_reset()` runs as the FIRST statement of `efi_main` and is the load-bearing invariant; the cookie is defence in depth for anything running ahead of it. A constant cookie discriminates poison from configured, never this boot from the last.
+  - The cookies are `volatile` because the property is otherwise optimised away. Measured 2026-09-03 on the real build object: without it clang-19 at `-O2` narrowed both to 1-byte booleans with `cmpb $1` consumers and the 32-bit constant absent from the image. That narrowing is legal only under the assumption that nothing outside the program writes the object, which is the assumption firmware poison violates.
+  - Zeroing `.bss` wholesale was rejected as the item anticipated: this file's deliberate poison workarounds stay observable, and the reset is scoped to the ten statics the early-diagnostics path reads.
+- [x] Audit every `serial_early_print` call site reachable before `serial_early_init()` and confirm each is either gated or moved after it
+  - The window is `efi_main` entry to the `serial_early_init()` call in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). The only application calls in it are `early_diag_reset()` (now first), `boot_set_section()` and `post_code()`; the remainder are the firmware `AllocatePages` and `ClearScreen`. `post_code` is a bare `outb $0x80` with no static state, so `boot_set_section` was the sole reachable emitter, exactly as the section-14 comment predicted.
+  - No diagnostic is lost by gating it: that line reached a real UART on NO platform before this change. Where `.bss` came up zero the old `if (!s_serial_port)` guard already dropped it, and where `.bss` was poisoned it went to I/O port `0xAFAF`, which is the defect.
+  - Two further statics in the same path were poison-readable and are now reset: `s_spcr_skipped`, read as a boolean at the serial report block, made every machine without an SPCR table print a "non-standard port" line naming a poison address; and `g_boot_section`, which `boot_fatal` tests against `BOOT_SECTION_UNKNOWN` to warn about unattributed failures, a test poison silently defeats.
+  - `boot_log_append` carried the same defect in the same call path and is fixed with it: `boot_log_buf` is a poisoned non-NULL pointer that passes `if (!boot_log_buf)`, and `boot_log_pos` was never reset anywhere in the file, so on poisoning firmware the ESP boot log recorded nothing for the whole boot even after `AllocatePool` succeeded.
+- [x] Commit: `"boot: gate early serial on a configured flag, not a poisoned .bss port"`
 
 **Test checkpoint:** a boot with `s_serial_port` pre-poisoned in a fixture emits nothing to any I/O port before `serial_early_init()`; the 4-leg smoke matrix stays green and serial output after init is unchanged.
+
+> **Note:** No kernel test surface. These are file-scope statics in `bootx64.c`, which links into `BOOTX64.EFI` and not `kernel.exe`, so no `TEST_CAT_BOOT` case can reach them to seed the poison the checkpoint describes; a kernel-side fixture is separately barred by the 79-byte `.text` headroom. Validation is the 4-leg smoke matrix plus a direct object-level measurement of the cookie width.
+
+> **Notes:**
+> - Shipped `early_diag_reset()` in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) as `efi_main`'s first statement, clearing the ten early-diagnostics statics, plus a `volatile` `EARLY_DIAG_READY` cookie gating `serial_early_putchar` and `boot_log_append`.
+> - Integrates ahead of everything: the reset precedes the `gST`/`gBS` saves and makes no firmware call, which is what lets it precede `boot_set_section`, the sole pre-init emitter.
+> - Downstream, a machine whose firmware poisons `.bss` stops driving I/O port `0xAFAF`, stops printing a fabricated "non-standard SPCR port" line, and gets a populated ESP boot log for the first time.
+> - Canonical rationale is the comment block above the cookie declarations; the object-level measurement behind `volatile` is recorded there.
+> - Scope boundary: bootloader only. The kernel-side evidence-page work stays with sections 17 and 19, both of which need kernel `.text` this image has no room for.
 
 ---
 

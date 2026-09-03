@@ -381,6 +381,48 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
     return 1;
 }
 
+/* --- Poison-proof readiness for the early-diagnostics path ---------------
+ * This image does not zero .bss and firmware pool-poisons it with 0xAF (see
+ * the kernel-image envelope note above, and the payload staging reset in
+ * the boot.conf parser), so "uninitialised" here is neither zero nor
+ * predictable -- a warm reboot can additionally leave the PREVIOUS boot's
+ * values at the same addresses, because the image lands at the same load
+ * address and nothing scrubs RAM across a reset. That second case is not
+ * hypothetical: the cross-boot panic record this TODO implements rests on
+ * exactly that property.
+ *
+ * Two rules follow, and the early path needs BOTH:
+ *   1. early_diag_reset() runs as the FIRST statement of efi_main, before
+ *      any code that can emit a diagnostic. This is the guarantee.
+ *   2. Readiness is a wide exact-match cookie, never a boolean, so that a
+ *      path which somehow runs ahead of rule 1 degrades to SILENCE rather
+ *      than to port I/O on whatever address the poison happens to spell.
+ *      A boolean would provide nothing here: 0xAF is non-zero and so reads
+ *      as "configured".
+ *
+ * What rule 2 does NOT buy, and the reason rule 1 is the load-bearing one:
+ * a constant cookie cannot reject a VALID cookie left by the previous boot
+ * at the same address. It discriminates poison from configured, never this
+ * boot from the last one. Only the reset does that.
+ *
+ * `volatile` is load-bearing rather than decorative. These objects have
+ * internal linkage and never have their address taken, so the compiler can
+ * see every store and legally narrow the representation to the one bit it
+ * proves is needed -- and clang-19 at the -O2 this file is built with DOES:
+ * measured 2026-09-03, the non-volatile version emitted both cookies as
+ * 1-byte objects with `cmpb $1` consumers and the 32-bit constant nowhere
+ * in the image, which silently reduces rule 2 back to the boolean it exists
+ * to avoid. That narrowing is sound only under the assumption that nothing
+ * outside the program writes the object, which is the very assumption
+ * firmware poison violates. `volatile` states the truth -- these bytes
+ * change outside this program's control -- and keeps the wide compare.
+ *
+ * A plain `= 0` initialiser is NOT a third option: the initialisers in this
+ * file are documentation only, exactly as the envelope note above records. */
+#define EARLY_DIAG_READY 0x59444145u  /* 'EADY' -- early-diagnostics cookie */
+static volatile UINT32 s_serial_ready;    /* == EARLY_DIAG_READY once a UART is configured */
+static volatile UINT32 s_boot_log_ready;  /* == EARLY_DIAG_READY once boot_log_buf is valid */
+
 /* --- Boot debug log buffer (captures all serial output for ESP write) --- */
 #define BOOT_LOG_SIZE (32 * 1024)
 static char *boot_log_buf = 0;
@@ -389,13 +431,29 @@ static UINTN boot_log_pos = 0;
 static void boot_log_init(void)
 {
     EFI_STATUS status;
+    /* Reset BEFORE the allocation, not after: AllocatePool leaves the
+     * out-parameter untouched on failure, so without this a failed call
+     * would leave boot_log_buf holding poison. Position is also what makes
+     * boot_log_pos correct -- nothing else in this image ever resets it, so
+     * on poisoned .bss it starts far beyond BOOT_LOG_SIZE and every append
+     * silently no-ops for the whole boot, leaving an empty ESP boot log on
+     * precisely the machines whose diagnostics matter most. */
+    s_boot_log_ready = 0;
+    boot_log_buf = 0;
+    boot_log_pos = 0;
     status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&boot_log_buf);
-    if (EFI_ERROR(status))
+    if (EFI_ERROR(status)) {
         boot_log_buf = 0;
+        return;
+    }
+    s_boot_log_ready = EARLY_DIAG_READY;
 }
 
 static void boot_log_append(const char *s)
 {
+    /* Cookie, not `!boot_log_buf` alone: before boot_log_init the pointer
+     * holds poison, which is non-NULL and therefore passes a NULL test. */
+    if (s_boot_log_ready != EARLY_DIAG_READY) return;
     if (!boot_log_buf) return;
     while (*s && boot_log_pos < BOOT_LOG_SIZE - 1)
         boot_log_buf[boot_log_pos++] = *s++;
@@ -416,6 +474,33 @@ static UINT32 s_serial_baud;     /* detected baud rate */
 /* SPCR diagnostic info (for logging after serial is up) */
 static UINT8  s_spcr_skipped;   /* 1 if SPCR found but unusable (MMIO/non-standard) */
 static UINT64 s_spcr_skip_addr; /* the address that caused the skip */
+
+/* Deterministic reset of every static the early-diagnostics path reads.
+ * MUST be the first statement of efi_main: boot_set_section() emits a serial
+ * transition line before serial_early_init() runs, so on poisoned or
+ * warm-reboot .bss every guard downstream would otherwise be adjudicating
+ * bytes this boot never wrote. Touches only this image's own statics and
+ * makes no firmware call, so it is safe before gST/gBS are even wired.
+ *
+ * s_spcr_skipped is included because it is read as a boolean at the serial
+ * report block: left at poison it makes EVERY boot without an SPCR table
+ * print a "non-standard port" line naming a poison address, a diagnostic
+ * that actively misleads. g_boot_section is included because boot_fatal()
+ * tests it against BOOT_SECTION_UNKNOWN to warn about unattributed
+ * failures, and poison silently defeats that test. */
+static void early_diag_reset(void)
+{
+    s_serial_ready   = 0;
+    s_serial_port    = 0;
+    s_serial_source  = 0;
+    s_serial_baud    = 0;
+    s_spcr_skipped   = 0;
+    s_spcr_skip_addr = 0;
+    s_boot_log_ready = 0;
+    boot_log_buf     = 0;
+    boot_log_pos     = 0;
+    g_boot_section   = BOOT_SECTION_UNKNOWN;
+}
 
 static inline void outb_early(UINT16 port, UINT8 val)
 {
@@ -763,9 +848,23 @@ static int serial_spcr_probe(void)
  * Sets s_serial_port, s_serial_baud, s_serial_source. */
 static void serial_early_init(void)
 {
+    /* Re-reset the detection state so this function is the sole author of
+     * the outcome even if it is ever called twice. early_diag_reset() has
+     * already run at efi_main entry; this is the second half of the
+     * defence-in-depth pair, not a substitute for it -- a reset only here
+     * would land AFTER boot_set_section() has already tried to print. */
+    s_serial_ready  = 0;
+    s_serial_port   = 0;
+    s_serial_source = 0;
+    s_serial_baud   = 0;
+
     /* Try ACPI SPCR -- preferred detection method */
     if (serial_spcr_probe()) {
         serial_init_port_baud(s_serial_port, s_serial_baud);
+        /* Cookie published only after the UART is genuinely configured, so
+         * a failure inside serial_init_port_baud leaves the path silent
+         * rather than driving a half-programmed port. */
+        s_serial_ready = EARLY_DIAG_READY;
         return;
     }
 
@@ -781,12 +880,19 @@ static void serial_early_init(void)
     s_serial_source = 2;  /* I/O probe */
     s_serial_baud = 38400;
     serial_init_port(s_serial_port);
+    s_serial_ready = EARLY_DIAG_READY;
 }
 
 static void serial_early_putchar(char c)
 {
     UINT32 timeout = 100000;
-    if (!s_serial_port) return;  /* No UART available */
+    /* Cookie, not `!s_serial_port`: the port is a .bss static this image
+     * never zeroes, so the 0xAF poison reads as the perfectly plausible I/O
+     * address 0xAFAF and the NULL test passes. The loop below would then
+     * poll and write a live port belonging to some other device. Only
+     * serial_early_init() publishes the cookie, and only once the UART is
+     * actually configured. */
+    if (s_serial_ready != EARLY_DIAG_READY) return;  /* No UART configured */
     while (!(inb_early(s_serial_port + 5) & 0x20) && --timeout)
         ;
     outb_early(s_serial_port, (UINT8)c);
@@ -16222,6 +16328,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     EFI_MEMORY_DESCRIPTOR *mmap;
     UINTN map_size, desc_size;
     UINT32 desc_version;
+
+    /* Deterministic state before anything can emit a diagnostic. This is
+     * FIRST -- ahead of the gST/gBS saves -- because it is the precondition
+     * for boot_set_section() below, which prints through serial_early_print
+     * long before serial_early_init() runs. It makes no firmware call. */
+    early_diag_reset();
 
     /* Save globals */
     gST = SystemTable;
