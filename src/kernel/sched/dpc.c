@@ -373,7 +373,7 @@ void dpc_watchdog_tick(void)
     }
 
     /* Sustained-depth warning (consecutive ticks over the depth threshold). */
-    depth = cpu_queues[id].depth;
+    depth = __atomic_load_n(&cpu_queues[id].depth, __ATOMIC_RELAXED);
     if (depth > DPC_QUEUE_WARN_DEPTH) {
         s_wd[id].consec_over_depth++;
         if (s_wd[id].consec_over_depth == DPC_DEPTH_WARN_TICKS)
@@ -441,7 +441,7 @@ void dpc_init_queues(void)
     for (i = 0; i < MAX_CPUS; i++) {
         cpu_queues[i].head      = (KDPC *)0;
         cpu_queues[i].tail      = (KDPC *)0;
-        cpu_queues[i].depth     = 0;
+        __atomic_store_n(&cpu_queues[i].depth, 0u, __ATOMIC_RELAXED);
         cpu_queues[i].executed  = 0;
         cpu_queues[i].max_depth = 0;
         queue_lock_slots[i].lock.flag = 0;
@@ -639,14 +639,21 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
             }
         }
 
-        q->depth++;
-        if (q->depth > q->max_depth)
-            q->max_depth = q->depth;
+        /* RELAXED atomics, not a plain ++. These writers are already
+         * serialized by DPC_QLOCK, but pm_deep_idle_allowed() reads this field
+         * LOCK-FREE from the idle path (src/kernel/pm_idle.c), and a plain
+         * write racing an atomic read is undefined under the C memory model
+         * however benign the emitted code looks. One access discipline for
+         * this field, everywhere. */
+        uint32_t new_depth = __atomic_add_fetch(&q->depth, 1u,
+                                                __ATOMIC_RELAXED);
+        if (new_depth > q->max_depth)
+            q->max_depth = new_depth;
         /* Depth warning: arm a per-CPU pending flag UNDER this queue's lock --
          * the SAME lock dpc_watchdog_tick holds when it reads+clears the flag,
          * and KeRemoveQueueDpc holds on cancel-to-empty. NEVER klog here -- this
          * path is callable up to DIRQL where klog busy-waits the UART. */
-        if (q->depth == DPC_QUEUE_WARN_DEPTH) {
+        if (new_depth == DPC_QUEUE_WARN_DEPTH) {
             warn_depth = 1;
             __atomic_store_n(&s_wd[cpu_id].warn_pending, 1, __ATOMIC_RELEASE);
         }
@@ -748,7 +755,7 @@ int KeRemoveQueueDpc(KDPC *dpc)
             cur->next       = (KDPC *)0;
             cur->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
             cur->queued     = 0;
-            q->depth--;
+            __atomic_sub_fetch(&q->depth, 1u, __ATOMIC_RELAXED);
             /* If cancellation empties the queue, drop any pending depth-warn
              * flag under this lock: a deep queue that was cancelled (not drained)
              * is not a starvation event, and no later drain would service this
@@ -966,7 +973,7 @@ static uint32_t drain_queue(uint32_t cpu_id)
         q->head = dpc->next;
         if (!q->head)
             q->tail = (KDPC *)0;
-        q->depth--;
+        __atomic_sub_fetch(&q->depth, 1u, __ATOMIC_RELAXED);
 
         routine  = dpc->routine;
         ctx      = dpc->deferred_ctx;

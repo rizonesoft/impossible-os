@@ -56,6 +56,7 @@
 #include "kernel/knf/knf.h"
 #include "kernel/ex.h"
 #include "main/main_internal.h"
+#include "kernel/pm.h"
 
 /* ---- Deferred init wrappers --------------------------------------------- */
 
@@ -1081,6 +1082,12 @@ void boot_phase2(void)
     POST16(POST16_REGISTRY_OK);
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
+    /* Cache the PowerIdleEnable policy value now that the registry is up and
+     * populated. pm_idle_c1() must never read the registry itself: it runs at
+     * timer rate on an idle machine, and the registry has no SMP lock yet.
+     * Before this call the cached value reads as enabled, which is exactly the
+     * unconditional HLT every idle site did previously (todo/02-kernel-core/TODO-26-power-management.md section 2). */
+    pm_idle_init();
     /* Apply admin-configured per-subsystem log verbosity + rate limits now that the
      * registry is up (HKLM\SYSTEM\Logs\Levels\<tag> + \RateLimit\<tag>). No-op until
      * an admin sets the keys; without this call the registry log config never loads. */

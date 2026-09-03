@@ -11,16 +11,16 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 > **Validated:** 2026-09-03 | validate-todo-file clean; §1's missing Notes block added; 8 mistargeted compact/full XREFs corrected (each verified against the real target section heading -- D02T19§9->D02T09§9, D04T04§1/§4/§6/§7->D04T03§4/§6/§4/§8, D03T05§9->D03T06§9, D02T05§4->D02T12§4, TODO-08§1->§3, TODO-12§5->§4, TODO-11§2->§7) plus the self-contradicting legend example; todo-graph 10/10; no hard-wrap; no code-block bloat; bat runner present
 > **Gap-audited:** 2026-09-03 | gap-audit + codex-gap-audit; confirmatory parity pass (existing plan already comprehensive from its 2026-04-13 gap-analysis) found 1 new Win11 25H2 gap; codex-gap-audit red-teamed the diff and found 2 pre-existing High findings (S3 orchestration specified at DISPATCH_LEVEL where it blocks; charge-limit item wrote a vendor-guessed EC register with no capability check) plus corrected the new item's own policy model (was global C-state bias, should be per-process QoS per Microsoft's actual mechanism), a backwards ACPICA ownership boundary, and 2 more coverage gaps (composite/multi-battery, PCIe ASPM+L1SS); all fixed. 2 new sections added (§22 QoS throttling, §23 PCIe ASPM), 3 items added to §6, 21->23 sections total.
 
-> **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers S1 CPU-halt idle, S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
+> **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers C1 processor idle (`HLT`), S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
 
 > [!IMPORTANT]
-> **Current state:** `src/kernel/acpi.c` implements RSDP through XSDT walk, FADT (PM1a control, PM timer), MADT, `acpi_shutdown()` / `acpi_reboot()`, and **`acpi_power_init()`** which parses `\_S1_`, `\_S3_`, and `\_S4_` from the DSDT via **`parse_sleep_type()`**, plus **`acpi_sleep_supported()`** / **`acpi_get_slp_typa()`** and the `Sleep states: S1=...` klog line. **`acpi_enter_sleep_state()`** performs the ACPI PM1a/b SLP_TYP+SLP_EN sequence then `sti; hlt` (S1-style wake only today; S3/S4 still need §3/§4 state save, FACS vector, and firmware resume). **`acpi_enable_fixed_events()`** and **`acpi_register_sci()`** / **`acpi_sci_process()`** enable the PM1a+PM1b fixed-event SCI path; the ISR acknowledges the hardware and records event counts only (it must not log -- `klog()` reaches disk I/O), and §7 owns the deferred user-visible dispatch. Phase 2 **`boot_storage.c`** wires `acpi_power_init()`, `acpi_enable_fixed_events()`, and `acpi_register_sci()` after timer init. **`src/kernel/test/test_acpi_power.c`** covers §1 discovery and unsupported-state rejection. **Still greenfield:** EC (§5), battery (§6), S3/S4 (§3/§4), scheduler S1 idle (§2), PCI D-states (§8), governors and `powercfg` (§15+), power syscalls (§20), Linux sysfs parity doc (§21).
+> **Current state:** `src/kernel/acpi.c` implements RSDP through XSDT walk, FADT (PM1a control, PM timer), MADT, `acpi_shutdown()` / `acpi_reboot()`, and **`acpi_power_init()`** which parses `\_S1_`, `\_S3_`, and `\_S4_` from the DSDT via **`parse_sleep_type()`**, plus **`acpi_sleep_supported()`** / **`acpi_get_slp_typa()`** and the `Sleep states: S1=...` klog line. **`acpi_enter_sleep_state()`** performs the ACPI PM1a/b SLP_TYP+SLP_EN sequence then `sti; hlt` (S1-style wake only today; S3/S4 still need §3/§4 state save, FACS vector, and firmware resume). **`acpi_enable_fixed_events()`** and **`acpi_register_sci()`** / **`acpi_sci_process()`** enable the PM1a+PM1b fixed-event SCI path; the ISR acknowledges the hardware and records event counts only (it must not log -- `klog()` reaches disk I/O), and §7 owns the deferred user-visible dispatch. Phase 2 **`boot_storage.c`** wires `acpi_power_init()`, `acpi_enable_fixed_events()`, and `acpi_register_sci()` after timer init. **`src/kernel/test/test_acpi_power.c`** covers §1 discovery and unsupported-state rejection. **Still greenfield:** EC (§5), battery (§6), S3/S4 (§3/§4), C1 processor idle entry (§2), PCI D-states (§8), governors and `powercfg` (§15+), power syscalls (§20), Linux sysfs parity doc (§21).
 
 > [!CAUTION]
 > **Memory rule:** Hibernation image buffers can be multi-gigabyte: always use `pmm_alloc_contiguous()` for hibernation scratch pages. Never `kmalloc` anything > 4 KiB in the suspend/hibernate paths.
 
 > [!IMPORTANT]
-> **Scope boundary with `04-drivers-hardware/TODO-03-acpi-power-management.md` (corrected 2026-09-03, Codex gap-audit -- the ownership direction was backwards):** `04-drivers-hardware/TODO-03` owns the ACPICA-based AML interpreter integration and becomes authoritative for the ACPI-driven paths below once its sections land. Until then, THIS file's hand-rolled parsers (same pattern as the existing `\_S5_` parser) are the shipped implementation: §1 (sleep-object parsing) is superseded by D04T03§1 (ACPICA integration); §3 (S3 suspend) by D04T03§9; §4 (S4 hibernate) by D04T03§10; §6 (battery) by D04T03§5; §7 (power button) by D04T03§3. **§2 (S1/idle thread), §8 (PCI D-states), §9 (driver callbacks), §10 (S0ix), and §18 (power plan UI / `powercfg`) are kernel-core responsibilities NOT covered by TODO-03 and remain authoritative here regardless of ACPICA status.**
+> **Scope boundary with `04-drivers-hardware/TODO-03-acpi-power-management.md` (corrected 2026-09-03, Codex gap-audit -- the ownership direction was backwards):** `04-drivers-hardware/TODO-03` owns the ACPICA-based AML interpreter integration and becomes authoritative for the ACPI-driven paths below once its sections land. Until then, THIS file's hand-rolled parsers (same pattern as the existing `\_S5_` parser) are the shipped implementation: §1 (sleep-object parsing) is superseded by D04T03§1 (ACPICA integration); §3 (S3 suspend) by D04T03§9; §4 (S4 hibernate) by D04T03§10; §6 (battery) by D04T03§5; §7 (power button) by D04T03§3. **§2 (C1 idle entry/accounting), §8 (PCI D-states), §9 (driver callbacks), §10 (S0ix), and §18 (power plan UI / `powercfg`) are kernel-core responsibilities NOT covered by TODO-03 and remain authoritative here regardless of ACPICA status.**
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §1` -- ACPICA integration; supersedes this file's hand-rolled §1 sleep-object parser
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §9` -- authoritative S3 suspend/resume (ACPICA path); §3 here is the pre-ACPICA fallback
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §5` -- authoritative battery `_BST`/`_BIF` (ACPICA path); §6 here is the pre-ACPICA fallback
@@ -57,7 +57,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ## Outcome
 
-- S1 (CPU halt) reduces power during idle; no visible effect on software state.
+- C1 (`HLT`) reduces power during processor idle; no visible effect on software state. S1 is a system sleep state and is NOT the idle path -- see §2.
 - S3 (suspend to RAM) saves/restores CPU registers and device state within < 2 s on modern hardware; resumes to the desktop without reboot.
 - S4 (hibernate) writes a compressed RAM image to the swap/hibernate partition; resumes from power-off faster than a cold boot for typical working sets.
 - Fast startup (hybrid shutdown) hibernates only the kernel session for < 5 s boot times.
@@ -82,7 +82,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | ⭐  | Order | Deliverable                                         | Depends On                 | Status |
 | --- | :---: | --------------------------------------------------- | -------------------------- | :----: |
 | 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | (none)                     |  [x]   |
-| 💎  |   2   | §2 S1: CPU halt / idle thread integration           | §1                         |  [/]   |
+| 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting   | §1                         |  [x]   |
 | 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)   | §1, §2, D02T06§3           |  [ ]   |
 | 💎  |   4   | §4 S4: hibernate to disk (image write + resume)     | §3                         |  [ ]   |
 | 💎  |   5   | §5 ACPI Embedded Controller (EC) driver             | §1                         |  [ ]   |
@@ -105,6 +105,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  22   | §22 User-interaction-aware QoS throttling           | §15, §19, §20              |  [ ]   |
 | 💎  |  23   | §23 PCIe ASPM and L1 substates                      | §8, §9, §12                |  [ ]   |
 | 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks         | §1, §5, §7                 |  [ ]   |
+| 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo   | §2                         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -171,42 +172,62 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ---
 
-## 2. S1: CPU Halt / Idle Thread Integration
+## 2. C1 Idle Entry: Race-Safe HLT + Per-CPU Idle Accounting
 
-- [ ] S1 is a low-latency power-saving state: the CPU executes `HLT` but retains all register state and cache; system bus power is reduced
-- [ ] `acpi_enter_s1()`:
-  - Call `acpi_enter_sleep_state(1)`
-  - On resume (next interrupt wakes the CPU): re-enable interrupts and return immediately; no state restore needed for S1
-- [ ] S1 is entered only if `acpi_sleep_supported(1)`; otherwise fall back to a plain `HLT` loop
-- [ ] Replace the scheduler's idle busy-wait loop with a power-aware path:
-  ```c
-  void sched_idle_cpu(void) {
-      while (true) {
-          if (pm_deep_idle_allowed())
-              acpi_enter_s1();     /* halts until next interrupt */
-          else
-              __asm__ volatile ("hlt"); /* plain halt */
-      }
-  }
-  ```
-- [ ] `pm_deep_idle_allowed()` returns true if: no pending DPCs, no high-priority runnable tasks, S1 sleep type is available, and the `PowerIdleEnable` Registry value is non-zero
-- [ ] When `TODO-29-kernel-debugger-kd-protocol.md` ships `kd_present` / `kd_breakin_requested`, treat any pending breakin as not-deep-idle-safe: return false (or run `kd_poll()` once) before `acpi_enter_s1()` so WinDbg breakin bytes are not delayed behind a halted CPU (-> XREF `TODO-29-kernel-debugger-kd-protocol.md §4` `kd_poll`, §15)
-- [ ] Per-CPU idle tracking: accumulate `idle_tsc_cycles` counter per CPU; exposed via `NtQuerySystemInformation(SystemProcessorIdleInformation)` for power-usage telemetry
-- [ ] Commit: `"kernel/acpi: S1 CPU halt, idle thread power-saving integration"`
+> **Spawned-by:** root
 
-**Test checkpoint:** `acpi_enter_s1()` halts CPU; resumes on next interrupt. `sched_idle_cpu()` uses S1 when available, falls back to `HLT`. `pm_deep_idle_allowed()` returns false when DPCs pending. Per-CPU `idle_tsc_cycles` counter increments during idle. Test on: QEMU TCG + WHPX.
+> [!IMPORTANT]
+> **Redesigned 2026-09-03, from "S1: CPU Halt / Idle Thread Integration", by the pre-implementation Codex design review (5 findings, all verified at source and accepted).** The original spec called `acpi_enter_sleep_state(1)` from the scheduler idle loop. That is not implementable here, and would not be correct if it were: ACPI 6.5 section 8.1 defines C1-Cn as the per-processor idle states inside G0/S0 and gives them no meaning under S1-S4, so a PM1 `SLP_EN` write is a whole-machine firmware transition and not a deeper `HLT`. The shipped code says the same thing twice: `acpi_enter_sleep_state()` refuses every caller off the BSP (`src/kernel/acpi.c:1613`), so an AP could never take that path at all; and it confirms the wake through `WAK_STS` (`src/kernel/acpi.c:1667-1694`), which an ordinary timer tick does not set, so a real idle loop would take the `-1` "halt released without a wake event" branch and its `LOG_WARN` on essentially every idle episode, plus a `LOG_INFO` on each success -- timer-rate logging that `src/kernel/acpi.c` itself notes can reach VFS disk I/O. This section therefore ships the C1 primitive that §16 later governs, which is exactly what §16's own scope boundary already says §2 provides.
+
+- [x] `pm_idle_c1()` in `src/kernel/pm_idle.c` -- the one-shot C1 entry that every idle site calls instead of a bare `sti; hlt`:
+  - Save the caller's IF and `cli` FIRST, so the sample excludes LOCAL interrupt-side changes and the value reported is taken at the halt rather than stale from before it.
+  - That is the whole of what masking buys, and the section says so rather than overclaiming: `cli` affects only the calling CPU, and `dpc_insert_core()` can target ANY CPU and increment its queue depth under that queue's lock (`src/kernel/sched/dpc.c:586-598`, `:648`). A remote enqueue can therefore land immediately after the sample. The predicate is ADVISORY, which is harmless here only because it is reported and never gates the halt -- §16 carries the blocking precondition for the interlocked idle-entry protocol and wake IPI it would need before gating anything.
+  - Every access to that depth field uses ONE discipline (relaxed atomics on both the lock-held writers and this lock-free reader), because a plain write racing an atomic read is undefined however benign the emitted code looks.
+  - Making those reads well-defined did NOT make the pre-existing exact-delta assertions in `test_dpc_insert_remove()` interference-proof, and that residue is filed with its owner rather than fixed here -> XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md` §19 (item: "Give the depth assertions an observation that cannot be perturbed by unrelated queue traffic").
+  - Halt with the `sti; hlt` pair, whose STI interrupt shadow defers delivery until the HLT has begun. It is the only shape with no wake-lost window; a `sti` and a later `hlt` is not the same instruction sequence.
+  - ALWAYS halt when the caller has interrupts enabled, and RETURN the sampled predicate rather than acting on it. A false predicate must never refuse the halt, which is the single most important property in this section and was learned by getting it wrong: an idle AP has no DPC drain trigger at all (`src/kernel/sched/ktimer.c:248-251` -- its LAPIC timer is masked and there is no DPC IPI), so a stranded DPC holds the predicate false forever and a refusing `for(;;)` park loop burns a whole logical CPU. Returning to a scheduler that can RUN the work is what a refusal is for, and no such caller exists until per-CPU run queues do.
+  - Return 0 WITHOUT halting in exactly one case: the caller arrived with interrupts already masked, where halting would need `sti` and would run an ISR inside a region the caller believes is interrupt-free.
+  - Read the TSC either side of the halt and accumulate the delta into this CPU's own `idle_tsc_cycles`, guarded by `t1 > t0` so a backwards sample cannot add ~2^64, then restore the caller's IF.
+  - Allocation-free and log-free by contract: this runs at timer rate on an otherwise idle machine.
+- [x] `pm_deep_idle_allowed()` -- the readiness predicate, exported for §16's governor and for the unit tests
+  - False when this CPU's DPC queue is non-empty (`dpc_this_cpu_queue()->depth`, `include/kernel/sched/dpc.h:223`) or when the cached `PowerIdleEnable` flag is zero.
+  - It REPORTS; it does not gate the halt. §16 inherits one contract, not two: the predicate says whether this CPU was idle by policy and had no queued DPC, and the governor decides what to do about it once there is a run queue to return to.
+- [x] Registry knob `HKLM\System\CurrentControlSet\Control\Power\PowerIdleEnable` (`REG_DWORD`, Windows-parity path), defaulting to 1 when the value is absent:
+  - Read ONCE into a cached flag at init, NEVER from the idle path. `src/kernel/registry.c` acquires no lock today (its own comments at lines 1043 and 1238 flag this as unfinished), so a per-idle read would race a concurrent writer at timer rate.
+  - Publish and read that cached flag with release/acquire atomics. `smp_init()` runs at `src/kernel/main/boot_storage.c:271` and `pm_idle_init()` at `:1090`, both inside `boot_phase2()`, so every AP is already parked in `pm_idle_c1()` reading the word while the BSP writes it, and local interrupt masking orders nothing across CPUs.
+- [x] `uint64_t idle_tsc_cycles` appended at the TAIL of `struct per_cpu_data` (`include/kernel/smp.h`), written only by its owning CPU:
+  - The tail is required, not stylistic: `include/kernel/smp.h` pins several field offsets with `_Static_assert`, so a field inserted ahead of those shifts every one of them.
+- [x] Wire the two sites where a CPU actually stops today, since the scheduler has no idle context of its own:
+  - `src/kernel/main/compositor.c` -- BOTH of the BSP's terminal idle points, reached from `compositor_run()` where PID 0 comes to rest: the normal loop's end-of-frame halt, and the headless steady-state `for(;;)` park. Each held a bare `sti; hlt` before this section.
+  - NOT the input-batching halt in the same file, and the exclusion is deliberate rather than an oversight: it is a bounded wait to let input accumulate (up to `max_batch` iterations per frame, 12 under TCG), so it is not time the CPU has nothing to do, and routing it would pay a predicate sample plus two `rdtsc` reads per iteration on a per-frame path. The accounting contract is therefore "terminal idle halts", not "every `hlt` in the tree", and `idle_tsc_cycles` must be read that way.
+  - `src/kernel/smp/smp.c` -- the AP park loop, `sti; for(;;) hlt` before this section and `sti; for(;;) pm_idle_c1()` after it.
+  - NOT the five FATAL parks in that same file (`cli; hlt` at `smp.c:149`, `:233`, `:250`, `:296`, `:318` -- GS self-pointer mismatch, impostor LAPIC id, panic-safe-id publish failure, and two bringup-abandonment paths). Stated because silence reads as an oversight: those are unrecoverable dead-CPU parks, not idle waits. They halt with interrupts MASKED and never wake, so `pm_idle_c1()` would refuse them anyway, and a CPU that failed its own identity check must not be running the predicate or touching per-CPU state. Found by the `review-evidence-mapper` sweep of every `hlt` in the two wired files, 2026-09-03.
+  - `find_next_task()` returns the CURRENT thread when nothing else is runnable (`src/kernel/sched/task.c:317-320`, `:358-361`), and both scheduling paths then return the current interrupt frame, so there is no "nothing runnable" call site to hook and an infinite idle loop must never be called from `schedule()`.
+- [x] Commit: `"kernel/pm: race-safe C1 idle entry, per-CPU idle cycle accounting"`
+
+**Test checkpoint:** `pm_idle_c1()` STILL HALTS when the predicate is false and returns 0 (the never-spin property -- a refusal there would peg an AP forever); it returns 1 when idle; it returns 0 without halting only for an interrupts-masked caller; `pm_deep_idle_allowed()` is false when `PowerIdleEnable` is 0; `idle_tsc_cycles` advances across every halt and never on a backwards TSC sample; the caller's IF is restored on every exit. `bash scripts/test.sh SUITE=boot` green; `tail -1 build/build.log` is `=== BUILD OK ===`; `make KERNEL_TESTS=off` links, because the test build cannot catch a declaration that only the release build misses. Test on: QEMU TCG + KVM, 1 and 2 CPUs.
+
+> **Verified:** 2026-09-04 | 6/6 items ([/] x1 parked: the AP rendezvous; the accounting-precision and S1-entry residues moved to the OPEN sections that own them, §25 and §3, rather than being parked into a section this commit closes) | build OK | 32923 kernel + 17 user-mode tests, 0 failures | sched 522, ipc 379 | smoke matrix 4/4 (TCG+KVM x 1+2 CPU) | `make KERNEL_TESTS=off` links (the release-only defect round 1 caught)
+> **Deferred:** [M] the accounting is an UPPER BOUND, not halted time: the instruction after `hlt` retires only once the waking ISR has returned, and on the BSP the scheduler may switch away first. Safe to ship only because nothing consumes it yet -> XREF: 02-kernel-core/TODO-26 §25 (item: "`SYSTEM_PROCESSOR_IDLE_INFORMATION` -- one fixed-size entry per processor")
+> **Deferred:** [H] S1 entry from any idle path, and `acpi_enter_s1()` itself: S1 is a system sleep transition needing the orchestration §3 owns, and a wrapper today would be dead code (`acpi_enter_sleep_state()` is BSP-only and single-flight) -> XREF: 02-kernel-core/TODO-26 §3 (item: "`pm_enter_s3()` -- runs on a dedicated `PASSIVE_LEVEL` worker, NOT `DISPATCH_LEVEL`")
+> **Deferred:** [H] AP quiesce before any SLP_EN write: no resumable rendezvous exists, and an online-mask popcount is NOT a substitute (`smp_retract_cpu_online()` clears the bit before the CPU stops) -> XREF: 01-boot-platform/TODO-10-bare-metal-hardening.md (live CPU online lifecycle / park)
+> **Accepted:** [M] `pm_deep_idle_allowed()` is ADVISORY: a remote `dpc_insert_core()` can enqueue immediately after the sample, so it may not gate deeper idle until an interlocked idle-entry protocol and DPC wake IPI exist (reason: harmless while the predicate never gates the halt) -> XREF: 02-kernel-core/TODO-26 §16 (item: "BLOCKING PRECONDITION: `pm_deep_idle_allowed()` (§2) is ADVISORY")
+> **Accepted:** [M] `test_dpc_insert_remove()`'s exact-delta depth assertions are not interference-proof; this section made the reads well-defined and changed no assertion (reason: DPC test-surface design belongs to its owner) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §19 (item: "Give the depth assertions an observation that cannot be perturbed by unrelated queue traffic")
+> **Quality reviewed:** 2026-09-04 | Codex 11 rounds (design, adversarial x6, consistency x5, perf x2) + kernel-explorer + review-evidence-mapper | 6H+14M+2L fixed, 1 rejected, 6 accepted/deferred | scope: kernel-code-quality gates, SMP, release-vs-test build parity
+> **Notes:**
+> - **What shipped:** `pm_idle_c1()`/`pm_deep_idle_allowed()`/`pm_idle_cycles()`/`pm_idle_delta()`/`pm_idle_init()` (`src/kernel/pm_idle.c`, `include/kernel/pm.h`), a tail-appended `per_cpu_data.idle_tsc_cycles`, and the `PowerIdleEnable` policy cache. Wired at both BSP terminal idle points in `compositor.c` and the AP park loop in `smp.c`. 8 tests in `test_pm_idle.c`.
+> - **The design was rewritten before any code:** the section specified `acpi_enter_sleep_state(1)` in the idle loop. That is unimplementable here -- the function refuses every caller off the BSP (`acpi.c:1613`) and confirms its wake through `WAK_STS`, which a timer tick never sets -- and wrong regardless, since ACPI 6.5 section 8.1 makes C1-Cn the processor idle states and S1 a whole-machine transition. §16's own scope boundary already said §2 provides the basic idle path.
+> - **The load-bearing correction:** the first implementation let a false predicate REFUSE the halt. An idle AP has no DPC drain trigger (`ktimer.c:248-251`), so a stranded DPC would have pinned the predicate false forever and spun a whole logical CPU. `pm_idle_c1()` therefore always halts and only REPORTS readiness.
+> - **How it integrates:** `pm_idle_init()` runs in `boot_phase2()` after registry population; APs park in `pm_idle_c1()` long before that, which is why the policy cache is release/acquire published and an unread cache reads as enabled -- exactly the unconditional `hlt` every site did before.
+> - **Scope boundary:** the C1 primitive only. §16 replaces the fixed C1 choice with a governor, §25 exposes the counter through `NtQuerySystemInformation`, and S1 as a system-sleep operation stays with §3.
+> - **Four halt oracles were tried before one held:** elapsed TSC cycles (passes with the `hlt` deleted), `per_cpu_data.irq_count` (a dead field -- zeroed in four places, incremented nowhere), an advancing tick counter (non-causal both ways), and a 512-byte opcode SEARCH (runs past a 0x97-byte function). What shipped is a global label emitted at the halt site plus a per-CPU reachability counter, so removing the halt is a LINK error and skipping it fails a test.
 
 - [/] Quiesce the APs before any SLP_EN write. BLOCKED: no AP park/rendezvous facility exists
   - `acpi_enter_sleep_state()` disables interrupts on the CALLING CPU only, so every other processor keeps taking interrupts and driving devices across the transition.
   - `include/kernel/smp.h` has only the test-only `smp_test_park_cpu`. -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` (live CPU online lifecycle / park)
   - The function's own refusal block cites "no APs are stopped" as a blocker for S3/S4, and S1 falls straight through it carrying the identical deficiency.
   - Harmless today only because no production caller exists. Found by `kernel-quality-auditor` during the section-1 review, 2026-09-03.
-  - The function's own refusal block cites "no APs are stopped" as a blocker for S3/S4, and S1 falls straight through it carrying the identical deficiency. Harmless today only because no production caller exists.
-  - Found by `kernel-quality-auditor` during the §1 review, 2026-09-03.
-
-> **Deferred:** [M] not started this pass -- `.text` budget is 95 bytes at this HEAD (`scripts/overnight/bss-headroom.py`, measured repeatedly today across 5 other sections, unchanged all session); any new kernel code is expected to fail the link identically. Also `SPLIT-RECOMMENDED` (7 work items) per `section-manifest.py`, so a split or a structured waiver is owed before implementation regardless. No source changed. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
-
----
+  - A live online-mask popcount is NOT a substitute, and the 2026-09-03 design review rejected exactly that proposal: `smp_retract_cpu_online()` clears the mask bit BEFORE the retiring CPU has stopped executing, so a popcount of 1 never proves the other processors are parked. What is owed is a generation-tagged stop-the-world rendezvous that blocks CPU admission, collects an acknowledgement from every target CPU, and holds them in a RESUMABLE barrier across the `SLP_EN` write.
 
 ## 3. S3: Suspend to RAM
 - [ ] `pm_enter_s3()` -- runs on a dedicated `PASSIVE_LEVEL` worker, NOT `DISPATCH_LEVEL` (steps 1+3 block; DISPATCH_LEVEL forbids blocking/paging/mutex per the IRQL contract) -> XREF: `TODO-07-irql-model-dpcs.md` §7:
@@ -232,6 +253,10 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   7. Call `pm_notify_resume()` (§9) -- drivers transition back D3->D0
   8. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
 - [ ] **Call `uefi_secureboot_refresh()` after runtime services come back online and before re-entering userspace** (filed 2026-05-01 from [`01-boot-platform/TODO-02-uefi-hardening-secureboot.md §5`](../01-boot-platform/TODO-02-uefi-hardening-secureboot.md#5-secure-boot-state-detection)): an attacker with physical access can clear SetupMode and re-add SecureBoot keys while the OS sleeps; the refresh API re-reads SecureBoot/SetupMode/AuditMode/DeployedMode/PK/KEK and emits LOG_FATAL + sets `HKLM\SYSTEM\SecureBoot\Drift = 1` on mismatch with the boot snapshot. Must run after `pm_notify_resume()` finishes (storage + registry back to D0) and before user threads unblock.
+- [ ] Expose S1 as an explicit system-sleep operation once this section's orchestration exists, and NOT before
+  - S1 needs the same machinery S3 does, minus the state save: callbacks broadcast, scheduler frozen, APs quiesced, devices to D3. `acpi_enter_sleep_state(1)` already performs the PM1 write and confirms the wake through `WAK_STS`; what is missing is everything around it.
+  - It is deliberately NOT reachable from the idle path. §2 ships C1 (`HLT`) as the processor idle state and documents why a PM1 `SLP_EN` write can never be a deeper `HLT` -> XREF: `02-kernel-core/TODO-26` §2 (item: "`pm_idle_c1()` in `src/kernel/pm_idle.c`").
+  - Blocked on the same AP rendezvous §2 parks against: entering any sleep state with other processors live behind a local `cli` is the [H] hazard §1 recorded.
 - [ ] Power button physical press -> PM1 fixed event (§1) generates SCI; firmware raises the CPU from S3
 - [ ] RTC alarm: `acpi_set_wakeup_alarm(seconds)` -- programs CMOS RTC alarm registers (port 0x70/0x71), sets `RTC_EN` in PM1a_EN; used for timed wake (-> `Task Scheduler` integration, future)
 - [ ] USB device activity: `XHCI_S3_WAKEUP_EN` -- xHCI remote-wakeup enable bit in the USB port status register (→ XREF: `04-drivers-hardware/TODO-10-usb-stack.md`)
@@ -702,7 +727,7 @@ Kernel-core governor framework that sits between the scheduler's load metrics an
 Kernel-core idle governor that selects the optimal C-state based on predicted idle duration and latency constraints. The C-state hardware interface (`_CST`, `MWAIT`) is owned by D04T03§8; this section owns the idle prediction and selection policy.
 
 > [!IMPORTANT]
-> **Scope boundary:** D04T03§8 parses `_CST` and provides `cpuidle_enter(cpu, cstate)`. This section owns the governor that decides *which* C-state to enter. §2 of this TODO provides the basic S1/HLT idle path; this section replaces it with a full governor.
+> **Scope boundary:** D04T03§8 parses `_CST` and provides `cpuidle_enter(cpu, cstate)`. This section owns the governor that decides *which* C-state to enter. §2 of this TODO provides the basic C1 (`HLT`) idle path and the `pm_deep_idle_allowed()` readiness predicate; this section replaces the fixed C1 choice with a full governor. §2 deliberately does NOT enter S1: that is a system sleep transition, not a CPU idle state.
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §8` -- `_CST` parsing and `cpuidle_enter()` hardware interface
 - [ ] `cpuidle_governor_t`:
   ```c
@@ -722,6 +747,12 @@ Kernel-core idle governor that selects the optimal C-state based on predicted id
 - [ ] Per-CPU, per-C-state: `entries`, `total_residency_ns`, `rejected` (selected but actual idle was too short)
 - [ ] `/sys/cpuidle` VFS file: columns `CPU  C0%  C1%  C2%  C3%  Governor  AvgIdleUs`
 - [ ] Boot log: `[CPUIDLE] Governor: %s, max C-state: C%u, latency budget: %u us`
+- [ ] BLOCKING PRECONDITION: `pm_deep_idle_allowed()` (§2) is ADVISORY and must not be treated as a synchronisation point by this governor until an interlocked idle-entry protocol exists.
+  - `dpc_insert_core()` can target any CPU, taking that queue's lock and incrementing its depth (`src/kernel/sched/dpc.c:586-598`, `:642`), so a DPC can land immediately after the predicate is sampled. §2's read is a relaxed atomic, which makes the READ well-defined but cannot make the ANSWER authoritative.
+  - Harmless in §2 because the predicate is only reported and the halt is unconditional -- a plain `HLT` wakes on the next interrupt regardless. It stops being harmless HERE, where a stale "ready" would select a state with a real exit latency and delay queued work, and there is no DPC wake IPI to cut it short.
+  - What is owed before this governor may select deeper than C1: a cross-CPU enqueue must observe that the target is entering idle and send a wake IPI, and the SMP remote-enqueue case needs a test. -> XREF: `02-kernel-core/TODO-26` §2 (item: "`pm_deep_idle_allowed()` -- the readiness predicate")
+- [ ] Kernel-debugger interaction: when `kd_present` is true, never select a C-state deeper than C1 while `kd_breakin_requested` is set, and call `kd_poll()` before descending, so WinDbg breakin bytes are not delayed behind a deep-sleep exit latency.
+  - Received here 2026-09-03 from `02-kernel-core/TODO-29` §15's mirror item, which had been aimed at §2 and no longer described anything §2 does: §2's C1 halt is unconditional by design and a plain `HLT` wakes on the COM IRQ regardless, so there is nothing to suppress until a state with a real exit latency can be chosen. -> XREF: `02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md` (item: "Mirror `TODO-26-power-management.md §16`")
 - [ ] Commit: `"kernel/pm: CPU idle governor -- menu/ladder algorithms, C-state selection, idle stats"`
 
 **Test checkpoint:** `cpuidle_get_governor()` returns non-NULL. `select()` returns valid C-state index (0 <= idx <= max_cstate). `reflect()` updates prediction. Ladder governor promotes after N consecutive deep idles. Test on: QEMU TCG.
@@ -955,6 +986,32 @@ Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe
 
 ---
 
+## 25. Per-CPU Idle-Time Accounting via `NtQuerySystemInformation`
+
+> **Spawned-by:** §2 (split)
+
+Split out of §2 at implementation time: §2 owns the C1 idle primitive and the per-CPU `idle_tsc_cycles` counter that feeds this; this section owns EXPOSING that counter through the NT information-class surface, which is a different subsystem (`src/kernel/nt/nt_syscall.c` dispatch and user-facing marshalling) with a different failure mode (an ABI shape and a class number that must match Windows, not an SMP-safety question). Neither half is useful without the other, but they are reviewed against different things. -> XREF: `02-kernel-core/TODO-26` §2 (item: "`uint64_t idle_tsc_cycles` appended at the TAIL of `struct per_cpu_data`").
+
+- [ ] Verify the numeric `SystemProcessorIdleInformation` class value against an authoritative Windows/ReactOS source BEFORE picking one, and cite what was checked:
+  - The neighbouring classes in `src/kernel/nt/nt_syscall.c` are real Win32 values rather than arbitrary local numbers, so a guessed value is a silent parity break that no build, test or boot would catch.
+  - The class is not defined anywhere in the tree today, so there is no existing value to be consistent with.
+- [ ] `SYSTEM_PROCESSOR_IDLE_INFORMATION` -- one fixed-size entry per processor, Win32-parity field order and widths, populated from each CPU's `idle_tsc_cycles` (§2).
+- [ ] BLOCKING PRECONDITION: do NOT expose the counter until §2's accounting measures halted cycles rather than halt-to-frame-resumption
+  - Today it also includes the waking ISR, and on the BSP possibly another thread's quantum, so exporting it now would ship a Win32-visible value wrong by up to a scheduling quantum. -> XREF: `02-kernel-core/TODO-26` §2 (item: "`pm_idle_c1()` in `src/kernel/pm_idle.c`")
+- [ ] Add the `case` to the `NtQuerySystemInformation()` dispatch switch in `src/kernel/nt/nt_syscall.c`
+  - Follow the existing probe-then-`copy_to_user` pattern: size-check against `buf_size`, write `*return_length`, and return `STATUS_INFO_LENGTH_MISMATCH` on a short buffer rather than a partial copy.
+- [ ] Bound the entry count by `MAX_CPUS` and filter with `smp_cpu_is_online()`, NOT by `smp_cpu_count()`: logical CPU slots are sparse, so a count is never a valid slot bound (CLAUDE.md "A CPU COUNT is never a slot bound").
+- [ ] Take ONE `smp_online_mask()` snapshot for the whole reply, so the entry count and the entries themselves cannot disagree with each other when a CPU parks mid-call.
+- [ ] `struct per_cpu_data.irq_count` is DEAD and must be either driven or deleted before any information class reports interrupt counts:
+  - It is zeroed at `src/kernel/smp/smp.c:125`, `:260`, `:375` and `:399` and incremented NOWHERE in the tree (verified by grep across `src/kernel/`, 2026-09-03), so it reads a constant 0 on every CPU while looking exactly like a maintained counter.
+  - Found while implementing §2: it was used as the "did this CPU actually halt" probe in `src/kernel/test/test_pm_idle.c` and both halt assertions failed against it, which is the only reason it surfaced. It was NOT replaced by `system_get_ticks()` -- that was tried next and rejected as non-causal in both directions. The oracle that shipped is an exact-address check on a global label emitted at the halt site, plus a test-only reachability counter.
+  - The cost of leaving it is that the next consumer to reach for it, most likely this section or a `SystemProcessorPerformanceInformation` sibling, ships a Win32-visible zero rather than a count. Its owning TODO (`01-boot-platform/TODO-10-bare-metal-hardening.md`) is stamped DONE, so the item is filed here where it is reachable, against the section that would consume it.
+- [ ] Commit: `"kernel/nt: SystemProcessorIdleInformation -- per-CPU idle time via NtQuerySystemInformation"`
+
+**Test checkpoint:** the class returns `STATUS_SUCCESS` with `*return_length` equal to `entries * sizeof(SYSTEM_PROCESSOR_IDLE_INFORMATION)`; a short buffer returns `STATUS_INFO_LENGTH_MISMATCH` and copies nothing; reported idle cycles are monotonic across two consecutive calls. `bash scripts/test.sh SUITE=boot` green. Test on: QEMU TCG + KVM, 1 and 2 CPUs.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                         | 🪟 Win11       | 🐧 Linux       | 🚀 Impossible OS |
@@ -962,7 +1019,7 @@ Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe
 | 💎  | S5 ACPI shutdown                | ✅ Full        | ✅ Full        | ✅ Done §1       |
 | 💎  | ACPI S-state discovery          | ✅ ACPI.sys    | ✅ acpi_sleep  | ✅ Done §1       |
 | 💎  | PM1 fixed-event SCI             | ✅ ACPI.sys    | ✅ acpi_sci    | ✅ Done §1       |
-| 💎  | S1 idle / HLT                   | ✅ Full        | ✅ cpuidle     | ⬜ §2            |
+| 💎  | C1 idle / HLT                   | ✅ Full        | ✅ cpuidle     | ⬜ §2            |
 | 💎  | S3 suspend RAM                  | ✅ Full        | ✅ sleep       | ⬜ §3            |
 | 💎  | S4 hibernate disk               | ✅ Full        | ✅ swsusp      | ⬜ §4            |
 | 💎  | Fast startup hiberboot          | ✅ Default     | ❌ None        | ⬜ §11           |
@@ -1047,7 +1104,8 @@ After §1 through §21, Impossible OS reaches parity for laptop-grade power on r
 
 ## Verification
 
-- [ ] **S1 idle**: run `powercfg /query`; set `SleepTimeout=0`, `HibernateTimeout=0`; confirm CPU stays at `HLT` when scheduler is idle (verify via PMU idle counter).
+- [ ] **C1 idle**: with `SleepTimeout=0` and `HibernateTimeout=0`, confirm the CPU stays at `HLT` when the machine is idle and `pm_idle_cycles()` advances on every online CPU (§2)
+  - Run `powercfg /query` to read the current policy. NOT an S1 check: §2 deliberately never enters S1 from the idle path.
 - [ ] **S3 round-trip in QEMU**: QEMU supports S3 with `-machine q35,acpi=on`; call `pm_enter_s3()` from the shell; verify system re-appears at the desktop with all tasks intact and TSC recalibrated (serial log shows `[TSC] recalibrated after S3 wake`).
 - [ ] **S4 round-trip in QEMU**: enable a hibernation partition; call `pm_enter_s4()`; power off QEMU; restart; verify `[HIBER] resuming from image` in serial log and desktop restores to pre-hibernate state.
 - [ ] **Fast startup**: `powercfg /hibernate on`; perform shutdown via `pm_fast_shutdown()`; restart; serial log shows `[BOOT] Fast startup resume` and kernel state is restored without user sessions.

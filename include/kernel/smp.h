@@ -487,6 +487,17 @@ struct per_cpu_data {
      * lower-to-known-level recovery, e.g. task_exit -- counted, not a bug). */
     uint32_t          irql_violations;
     uint32_t          irql_forced_lowers;
+
+    /* Accumulated halt cycles from pm_idle_c1() (todo/02-kernel-core/TODO-26-power-management.md section 2). An UPPER
+     * BOUND over TERMINAL idle sites only, not processor idle time -- it also
+     * covers the waking ISR, and the batching halt in compositor.c is excluded
+     * by design. See include/kernel/pm.h for both qualifications.
+     * Written ONLY by its owning CPU, inside that function; read by
+     * pm_idle_cycles(). Appended at the TAIL because the _Static_asserts below
+     * pin gs:0/24/32/104/112/120/128/136 for syscall_entry.asm, the ISR stubs
+     * and the KPTI trampoline -- a field inserted ahead of those shifts every
+     * one of them. */
+    uint64_t          idle_tsc_cycles;
 };
 
 #define TRANSITION_RING_SIZE         64

@@ -31,6 +31,7 @@
 #include "kernel/fs/partition.h"   /* ab_boot_mark_slot_successful (TODO-21 A/B mark-good) */
 #include "kernel/boot_status.h"    /* boot_status_accept_advance (single bless authority) */
 #include "kernel/panic.h"        /* panic_screen -- declared, not re-externed locally */
+#include "kernel/pm.h"
 
 /* Headless state + test seed. All reads/writes are plain volatile
  * because tests + compositor thread never race on them today:
@@ -182,7 +183,7 @@ void compositor_run(void)
          * this IS the terminal peak for this mode (TODO-10 sec32). */
         (void)boot_stack_measure("steady state (headless)");
         for (;;)
-            __asm__ volatile ("sti; hlt");
+            pm_idle_c1();   /* permanent park: same halt, with idle accounting */
     }
 
     fb_fill_rect(0, 0, fb_get_width(), fb_get_height(), 0x00000000);
@@ -228,7 +229,11 @@ void compositor_run(void)
             for (batch = 0; batch < max_batch; batch++) {
                 int32_t nx, ny;
                 uint8_t nb;
-                /* Allow IRQs to fire */
+                /* Allow IRQs to fire. Deliberately NOT pm_idle_c1(): this is
+                 * a bounded wait to let input accumulate, not "this CPU has
+                 * nothing to do", and it runs up to max_batch times per frame,
+                 * where a predicate sample plus two RDTSC reads would be a
+                 * per-frame cost for time that is not idle (todo/02-kernel-core/TODO-26-power-management.md section 2). */
                 __asm__ volatile ("sti; hlt");
                 /* Re-read the merged cursor (same source-merge as above) */
                 if (virtio_input_available()) {
@@ -520,7 +525,12 @@ void compositor_run(void)
         /* Periodically write AHCI error counters to registry */
         ahci_flush_error_counters();
 
-        /* Sleep until next IRQ. */
-        __asm__ volatile ("sti; hlt");
+        /* Sleep until next IRQ. pm_idle_c1() performs the same STI;HLT --
+         * whose interrupt shadow is what closes the local wake-loss window --
+         * and accounts the halted cycles to this CPU. It does NOT promise that
+         * a pending DPC prevents the sleep: readiness is sampled and reported,
+         * never acted on, because refusing here would spin rather than service
+         * anything (todo/02-kernel-core/TODO-26-power-management.md section 2). */
+        pm_idle_c1();
     }
 }

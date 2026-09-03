@@ -646,8 +646,14 @@ static void test_dpc_worker_started(void)
 
 /* Test: insert/remove return codes, depth accounting, and queued_cpu binding.
  * Runs at HIGH_LEVEL to block this CPU's timer-tick DPC drain so the live
- * per-CPU queue state is observed deterministically (per-CPU queue: no other
- * CPU touches it). */
+ * per-CPU queue state is observed deterministically.
+ *
+ * HIGH_LEVEL does NOT make this queue private, and an earlier version of this
+ * comment claimed it did: dpc_insert_core() lets ANY CPU target this queue and
+ * increment its depth under that queue's lock, and raising local IRQL excludes
+ * none of that. The depth snapshots below therefore use the same relaxed
+ * atomic load the writers use, so the reads are well-defined; what the local
+ * IRQL raise buys is only that OUR OWN drain cannot run underneath them. */
 static void test_dpc_insert_remove(void)
 {
     KDPC dpc;
@@ -660,16 +666,16 @@ static void test_dpc_insert_remove(void)
     KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0);
 
     KeRaiseIrql(HIGH_LEVEL, &old);
-    d0   = q->depth;
+    d0   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
     r1   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
     qf1  = dpc.queued;
     qcpu = dpc.queued_cpu;
-    d1   = q->depth;
+    d1   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
     r2   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
-    d2   = q->depth;
+    d2   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
     rm1  = KeRemoveQueueDpc(&dpc);
     qf2  = dpc.queued;
-    d3   = q->depth;
+    d3   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
     rm2  = KeRemoveQueueDpc(&dpc);
     KeLowerIrql(old);
 

@@ -22,6 +22,7 @@
 #include "kernel/barrier.h"
 #include "kernel/atomic.h"
 #include "kernel/config.h"
+#include "kernel/pm.h"         /* pm_idle_c1 -- the AP park loop's halt */
 #ifdef KERNEL_TESTS
 #include "kernel/topology.h"   /* g_topo_cpu_count -- S27 park-injection check */
 #endif
@@ -327,7 +328,9 @@ void ap_entry(uint32_t cpu_index)
      * wake it when the scheduler is ready. */
     __asm__ volatile("sti");
     for (;;)
-        __asm__ volatile("hlt");
+        pm_idle_c1();   /* same STI;HLT, plus per-CPU idle accounting. It
+                         * always halts -- a refusal here would spin forever,
+                         * since an idle AP has no DPC drain trigger. */
 }
 
 /* ---- SMP initialization (BSP side) ---- */
