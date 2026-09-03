@@ -8,7 +8,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 # TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)
 
-> **Validated:** 2026-09-03 | validate-todo-file clean (structure / IO table / XREF / test wiring); §1's missing Notes block added; todo-graph 10/10; no hard-wrap; no code-block bloat; bat runner present
+> **Validated:** 2026-09-03 | validate-todo-file clean; §1's missing Notes block added; 8 mistargeted compact/full XREFs corrected (each verified against the real target section heading -- D02T19§9->D02T09§9, D04T04§1/§4/§6/§7->D04T03§4/§6/§4/§8, D03T05§9->D03T06§9, D02T05§4->D02T12§4, TODO-08§1->§3, TODO-12§5->§4, TODO-11§2->§7) plus the self-contradicting legend example; todo-graph 10/10; no hard-wrap; no code-block bloat; bat runner present
 
 > **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers S1 CPU-halt idle, S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
 
@@ -38,18 +38,18 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - `src/kernel/sched/task.c` -- scheduler freeze for S3/S4
 - `src/kernel/mm/vmm.c` -- page table save for S3 wakeup identity map
 - → XREF: `TODO-07-irql-model-dpcs.md §3` -- DPCs and IRQL transitions must be quiesced before entering any sleep state; `KeLowerIrql(PASSIVE_LEVEL)` required on resume
-- → XREF: `TODO-08-time-filetime-management.md §1` -- TSC must be recalibrated after S3/S0ix wake (clock drift); `acpi_pm_timer_read()` used as reference; §1 = Invariant TSC Detection and Per-CPU Offset Calibration
+- → XREF: `TODO-08-time-filetime-management.md §3` -- TSC must be recalibrated after S3/S0ix wake (clock drift); `acpi_pm_timer_read()` used as reference; §3 = Invariant TSC Detection and Per-CPU Offset Calibration
 - → XREF: `TODO-08-time-filetime-management.md §14` -- S3/S4 resume path must call `ke_suspend_bias_update()` to adjust `InterruptTimeBias` by the sleep duration; §14 = Suspend/Hibernate Time Bias Tracking
 - → XREF: `TODO-01-kernel-init-sequencing.md §3` -- S4 resume check runs early in Phase 1; must distinguish cold boot from hibernate resume via hibernation signature
 - → XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md §3` -- driver model HAL vtables required for USB xHCI to register power callbacks; xHCI D3cold->D0 handled via callback registered in §9
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` -- IXFS WAL journal (`ixfs_journal_begin`/`commit`/`abort`) must be verified (§1 Subsystem Verification) before S4 journal-flush dependency is safe; storage driver must reach D0 before journal replay on resume
-- → XREF: `TODO-12-native-api-ssdt.md §5` -- SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140--0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; TODO-12 §22 wires power syscalls into the SSDT
-- → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §2` -- LAPIC timer recalibration required after HWP/CPPC frequency changes (§15 CPU frequency scaling)
+- → XREF: `TODO-12-native-api-ssdt.md §4` -- SSDT indices 0x00D7 (NtShutdownSystem) and 0x0140--0x0145 (NtSetSystemPowerState, NtInitiatePowerAction, NtPowerInformation, NtGetDevicePowerState, NtSetThreadExecutionState, NtRequestWakeupLatency) reserved for this TODO; TODO-12 §22 wires power syscalls into the SSDT
+- → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §7` -- LAPIC timer recalibration required after HWP/CPPC frequency changes (§15 CPU frequency scaling)
 - → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §6` -- ACPICA-based `_PSS` P-state parsing; §15 here owns the kernel-core governor framework that consumes it
 - → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §4` -- ACPICA-based `IA32_THERM_STATUS` per-core temp; §14 here owns the ACPI thermal zone framework
 - → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §8` -- ACPICA-based `_CST` C-state parsing; §16 here owns the kernel-core idle governor
 - → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` vtable consumed by §15; scheduler provides load metrics for governor
-- → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §10` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
+- → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §9` -- Intel hybrid P/E-core detection feeds §15 HWP/CPPC governor with core asymmetry data
 - → XREF: `04-drivers-hardware/TODO-17-gpu-display-drivers.md` -- GPU power management (DPMS, RTD3 runtime D3, Panel Self-Refresh) owned by GPU TODO; §18 `DisplayOffTimeout` triggers DPMS via `gfx_set_dpms(DPMS_OFF)`
 
 ---
@@ -93,18 +93,18 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)      | §4, §9                     |  [ ]   |
 | 💎  |  12   | §12 Runtime device idle management                  | §8, §9                     |  [ ]   |
 | 💎  |  13   | §13 Power request tracking & wake source management | §9, §12                    |  [ ]   |
-| 💎  |  14   | §14 ACPI thermal zone management                    | §5, D04T04§1               |  [ ]   |
-| 💎  |  15   | §15 CPU frequency scaling governor framework        | §2, D04T04§4, D03T05§9     |  [ ]   |
-| 💎  |  16   | §16 CPU idle governor framework                     | §2, D04T04§7               |  [ ]   |
+| 💎  |  14   | §14 ACPI thermal zone management                    | §5, D04T03§4               |  [ ]   |
+| 💎  |  15   | §15 CPU frequency scaling governor framework        | §2, D04T03§6, D03T06§9     |  [ ]   |
+| 💎  |  16   | §16 CPU idle governor framework                     | §2, D04T03§8               |  [ ]   |
 | 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER)  | §9                         |  [ ]   |
 | 💎  |  18   | §18 Power plan UI & `powercfg`                      | §6, §7, §13, §14, §15, §16 |  [ ]   |
-| ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T19§9         |  [ ]   |
-| 💎  |  20   | §20 Power syscalls wired to SSDT                    | §2, §6, D02T05§4           |  [ ]   |
+| ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T09§9         |  [ ]   |
+| 💎  |  20   | §20 Power syscalls wired to SSDT                    | §2, §6, D02T12§4           |  [ ]   |
 | 💎  |  21   | §21 Linux `/sys/power` suspend variant parity       | §1, §10                    |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
-> Compact XREF notation: D=domain, T=TODO, §=section (e.g. D02T06§3 = domain 02, TODO-17, §3).
+> Compact XREF notation: D=domain, T=TODO, §=section (e.g. D02T06§3 = domain 02, TODO-06, §3).
 
 ---
 
@@ -184,7 +184,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   2. Re-initialise IOAPIC routing (MADT-based)
   3. Restore BSP general-purpose + SSE registers
   4. Wake AP CPUs: write `INIT`->`SIPI`->`SIPI` IPI sequence; each AP restores its own saved state and un-parks from the spin barrier
-  5. Recalibrate TSC (→ XREF: `TODO-08-time-filetime-management.md §1`) -- PM timer used as reference
+  5. Recalibrate TSC (→ XREF: `TODO-08-time-filetime-management.md §3`) -- PM timer used as reference
   6. Compute sleep duration from RTC/UEFI time delta; call `ke_suspend_bias_update()` (→ XREF: `TODO-08-time-filetime-management.md §14`)
   7. Call `pm_notify_resume()` (§9) -- drivers transition back D3->D0
   8. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
@@ -397,7 +397,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [ ] Network keepalive: the NIC (if `_DSM` advertises DRIPS/D0ix support) remains powered in D0i3 state for ARP/IPv6 NS replies and WoL packets; `rtl8139_d0i3_enter()` / `rtl8139_d0i3_exit()` stubs (full implementation depends on the specific NIC driver)
 - [ ] Any interrupt or I/O wakes the CPU from `mwait`; execution resumes immediately after the `mwait` instruction; no page table or register restore needed (unlike S3)
 - [ ] Call `pm_notify_resume(PM_RESUME_S0IX)` (§9) to un-gate devices
-- [ ] TSC recalibration (→ XREF: `TODO-08-time-filetime-management.md §1`) may be needed if `mwait` C10 was held for > 1 second (TSC stops in deep C-states on some CPUs)
+- [ ] TSC recalibration (→ XREF: `TODO-08-time-filetime-management.md §3`) may be needed if `mwait` C10 was held for > 1 second (TSC stops in deep C-states on some CPUs)
 - [ ] Directed PoFx (DFx, PoFx v3): the power manager *directs* entire device stacks to enter low-power during Modern Standby idle when no activator-brokered activity; unlike runtime PM where the device self-idles, DFx is top-down OS-directed
 - [ ] `pm_dfx_power_down(dev_stack)` -- OS calls `PO_FX_DIRECTED_POWER_DOWN_CALLBACK` on each driver in the stack; driver must save state, stop DMA, enter D3
 - [ ] `pm_dfx_power_up(dev_stack)` -- called on activator wake or system exit from S0ix; driver restores state
@@ -538,7 +538,7 @@ Track which applications and drivers are preventing system idle sleep, and provi
 Implement the OSPM thermal policy engine per ACPI spec chapter 11. This is the kernel-core framework that processes thermal zones from ACPI namespace (`_TZ`), evaluates temperature (`_TMP`), and enforces passive cooling (CPU throttle) and active cooling (fan control) based on trip points.
 
 > [!IMPORTANT]
-> **Scope boundary with D04T04§6:** TODO-26 §6 covers per-core MSR-based thermal monitoring (`IA32_THERM_STATUS`, LAPIC Thermal LVT). This section covers the ACPI thermal zone framework that sits above it -- processing `_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx` objects and coordinating cooling responses. Both are needed for full parity.
+> **Scope boundary with D04T03§4:** TODO-26 §6 covers per-core MSR-based thermal monitoring (`IA32_THERM_STATUS`, LAPIC Thermal LVT). This section covers the ACPI thermal zone framework that sits above it -- processing `_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx` objects and coordinating cooling responses. Both are needed for full parity.
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §4` -- MSR-based per-core thermal; this section adds ACPI thermal zones
 - [ ] Walk ACPI namespace for `ThermalZone` objects (`\_TZ.*` or `\_SB.*.TZ*`)
 - [ ] For each thermal zone, evaluate:
@@ -581,14 +581,14 @@ Implement the OSPM thermal policy engine per ACPI spec chapter 11. This is the k
 
 ## 15. CPU Frequency Scaling Governor Framework
 
-Kernel-core governor framework that sits between the scheduler's load metrics and the ACPI/HWP/CPPC frequency control hardware. This is the kernel-core responsibility -- the ACPI `_PSS` parsing lives in D04T04§4; the scheduler's `cpufreq_register_driver()` vtable lives in D03T05§9.
+Kernel-core governor framework that sits between the scheduler's load metrics and the ACPI/HWP/CPPC frequency control hardware. This is the kernel-core responsibility -- the ACPI `_PSS` parsing lives in D04T03§6; the scheduler's `cpufreq_register_driver()` vtable lives in D03T06§9.
 
 > [!IMPORTANT]
-> **Scope boundary:** D04T04§4 parses `_PSS` P-state tables via ACPICA and provides the hardware driver. D03T05§9 provides the scheduler hook. This section owns the policy layer -- governor algorithms, HWP/CPPC native support, and the connection between them.
+> **Scope boundary:** D04T03§6 parses `_PSS` P-state tables via ACPICA and provides the hardware driver. D03T06§9 provides the scheduler hook. This section owns the policy layer -- governor algorithms, HWP/CPPC native support, and the connection between them.
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §6` -- `_PSS` P-state hardware driver
 > → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §9` -- `cpufreq_register_driver()` and load metrics
-> → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §2` -- LAPIC timer recalibration after frequency change
-> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §10` -- Intel hybrid P/E-core topology data
+> → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §7` -- LAPIC timer recalibration after frequency change
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §9` -- Intel hybrid P/E-core topology data
 - [ ] `cpufreq_governor_t` interface:
   ```c
   typedef struct {
@@ -637,10 +637,10 @@ Kernel-core governor framework that sits between the scheduler's load metrics an
 
 ## 16. CPU Idle Governor Framework
 
-Kernel-core idle governor that selects the optimal C-state based on predicted idle duration and latency constraints. The C-state hardware interface (`_CST`, `MWAIT`) is owned by D04T04§7; this section owns the idle prediction and selection policy.
+Kernel-core idle governor that selects the optimal C-state based on predicted idle duration and latency constraints. The C-state hardware interface (`_CST`, `MWAIT`) is owned by D04T03§8; this section owns the idle prediction and selection policy.
 
 > [!IMPORTANT]
-> **Scope boundary:** D04T04§7 parses `_CST` and provides `cpuidle_enter(cpu, cstate)`. This section owns the governor that decides *which* C-state to enter. §2 of this TODO provides the basic S1/HLT idle path; this section replaces it with a full governor.
+> **Scope boundary:** D04T03§8 parses `_CST` and provides `cpuidle_enter(cpu, cstate)`. This section owns the governor that decides *which* C-state to enter. §2 of this TODO provides the basic S1/HLT idle path; this section replaces it with a full governor.
 > → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §8` -- `_CST` parsing and `cpuidle_enter()` hardware interface
 - [ ] `cpuidle_governor_t`:
   ```c
@@ -744,8 +744,8 @@ Before changing system or device power state, query all affected drivers and all
 On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LITTLE), the scheduler should place tasks on the most energy-efficient core that can meet the task's performance requirements. This is Impossible OS's competitive edge -- integrating power and scheduling into a single decision loop rather than layering them separately.
 
 > [!IMPORTANT]
-> **Scope boundary:** D02T19§9 detects Intel hybrid P/E-core topology and Intel Thread Director (ITD) / Hardware Feedback Interface (HFI). D03T05§9 provides the scheduler's load metrics. This section integrates those signals with the CPU frequency governor (§15) to make energy-aware placement decisions.
-> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §10` -- P/E-core detection, HFI capability data
+> **Scope boundary:** D02T09§9 detects Intel hybrid P/E-core topology and Intel Thread Director (ITD) / Hardware Feedback Interface (HFI). D03T06§9 provides the scheduler's load metrics. This section integrates those signals with the CPU frequency governor (§15) to make energy-aware placement decisions.
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §9` -- P/E-core detection, HFI capability data
 > → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §9` -- scheduler load tracking, PELT utilization
 - [ ] `em_cpu_t` per logical CPU:
   ```c
@@ -776,7 +776,7 @@ On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LIT
 
 ## 20. Power Syscalls Wired to SSDT
 
-Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. See TODO-12-native-api-ssdt.md §5 (SSDT layout) and §22 (power syscalls).
+Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. See TODO-12-native-api-ssdt.md §4 (SSDT layout) and §22 (power syscalls).
 
 - [ ] `NtShutdownSystem(Action)` -> SSDT 0x00D7: call `pm_shutdown()` / `pm_reboot()` based on action; requires `SeShutdownPrivilege`
 - [ ] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` -> SSDT 0x0140: route through ACPI S-state transition (§2)
