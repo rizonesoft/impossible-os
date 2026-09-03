@@ -1622,6 +1622,13 @@ static void test_icon_cache_eviction_borrowed_safe(void)
  * afterward so later tests / gallery_open() see a working subsystem. */
 static void test_ctrl_init_degrades_on_oom(void)
 {
+    /* TEST-SIDE-EFFECT-ALLOWED: controlled fault-recovery test of
+     * ctrl_init()'s own degrade/recover contract. ctrl_init() is a
+     * desktop-subsystem init that is idempotent by design (the CAS
+     * state machine it added exists specifically so a repeat call is
+     * safe), degrades rather than halts on failure, and touches no
+     * boot-critical/hardware state -- unlike the enumerated
+     * pmm_init()/vmm_init()/acpi_init() class this policy protects. */
     ctrl_test_reset_for_fault_injection();
     TEST_ASSERT_EQ(ctrl_ready(), 0, "reset leaves controls not-ready");
 
@@ -1646,6 +1653,7 @@ static void test_ctrl_init_recovers_after_oom(void)
 {
     int id;
 
+    /* TEST-SIDE-EFFECT-ALLOWED: see test_ctrl_init_degrades_on_oom. */
     ctrl_test_reset_for_fault_injection();
     pmm_alloc_fail_next();
     ctrl_init();
@@ -1685,6 +1693,7 @@ static void test_ctrl_init_idempotent_when_ready(void)
     uint64_t used_before, used_after;
     int id;
 
+    /* TEST-SIDE-EFFECT-ALLOWED: see test_ctrl_init_degrades_on_oom. */
     ctrl_test_reset_for_fault_injection();
     ctrl_init();
     TEST_ASSERT_EQ(ctrl_ready(), 1, "clean init reaches READY");

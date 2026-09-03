@@ -30,13 +30,16 @@
  *
  * ctrl_init_state makes initialization concurrency-safe even though the
  * one production call site (boot_desktop.c) is BSP-only today: two CPUs
- * observing ctrl_windows == NULL and both entering pmm_alloc_pages_hhdm()
- * -- which has no internal SMP lock -- can corrupt PMM state or publish
- * mismatched phys/pages metadata. The CAS makes exactly one caller the
- * allocator; atomic_set's release semantics on the READY transition make
- * every write below it (cw's contents, ctrl_windows_phys/pages, the
- * ctrl_windows pointer itself) visible to any CPU that acquire-reads
- * CTRL_INIT_READY before touching ctrl_windows. */
+ * both observing ctrl_windows == NULL and both entering
+ * pmm_alloc_pages_hhdm() would double-allocate and publish mismatched
+ * phys/pages metadata against each other. The CAS makes exactly one
+ * caller the allocator; atomic_set's release semantics on the READY
+ * transition make every write below it (cw's contents,
+ * ctrl_windows_phys/pages, the ctrl_windows pointer itself) visible to
+ * any CPU that acquire-reads CTRL_INIT_READY before touching
+ * ctrl_windows. This closes only the ctrl-vs-ctrl race: the PMM bitmap
+ * itself has no internal SMP lock, so a concurrent UNRELATED PMM caller
+ * is still a live, separately-tracked PMM bitmap locking gap. */
 #define CTRL_INIT_UNINIT       0
 #define CTRL_INIT_INITIALIZING 1
 #define CTRL_INIT_READY        2
@@ -241,7 +244,7 @@ void ctrl_init(void)
          * boot-time allocations free up -- can still succeed. */
         klog(LOG_ERROR, "ctrl",
              "controls: failed to allocate window pool (%u bytes) -- controls degraded",
-             bytes);
+             (uint64_t)bytes);
         atomic_set(&ctrl_init_state, CTRL_INIT_UNINIT);
         return;
     }
@@ -263,16 +266,26 @@ int ctrl_ready(void)
 #ifdef KERNEL_TESTS
 /* Test-only: free the window pool and reset to uninitialized so a test can
  * exercise ctrl_init()'s OOM path via pmm_alloc_fail_next(), then
- * re-initialize for real afterward. Never called outside KERNEL_TESTS. */
+ * re-initialize for real afterward. Never called outside KERNEL_TESTS.
+ *
+ * Un-publish BEFORE freeing -- the mirror image of ctrl_init()'s publish
+ * order (state stored LAST). Teardown must un-publish FIRST: once
+ * ctrl_init_state is UNINIT, ctrl_ready() and the two lookup guards
+ * refuse before ctrl_windows is ever touched, so nothing can observe
+ * READY while the frames underneath it are being freed. */
 void ctrl_test_reset_for_fault_injection(void)
 {
-    if (ctrl_windows) {
-        pmm_free_contiguous(ctrl_windows_phys, ctrl_windows_pages);
-        ctrl_windows       = (struct ctrl_window *)0;
-        ctrl_windows_phys  = 0;
-        ctrl_windows_pages = 0;
-    }
+    uintptr_t phys = ctrl_windows_phys;
+    uint64_t  pages = ctrl_windows_pages;
+    int       had_pool = (ctrl_windows != (struct ctrl_window *)0);
+
+    ctrl_windows       = (struct ctrl_window *)0;
+    ctrl_windows_phys  = 0;
+    ctrl_windows_pages = 0;
     atomic_set(&ctrl_init_state, CTRL_INIT_UNINIT);
+
+    if (had_pool)
+        pmm_free_contiguous(phys, pages);
 }
 #endif
 

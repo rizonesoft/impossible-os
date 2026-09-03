@@ -279,6 +279,37 @@ static void test_tls_expansion_boundary(void)
     }
 }
 
+/* TLS_MAXIMUM_AVAILABLE and TLS_EXPANSION_BITMAP_WORDS are DERIVED from
+ * the other two constants (per their own doc comments in task.h), not
+ * independent literals -- a drift in the arithmetic (not just a typo in
+ * one value) has no other net, since no _Static_assert covers it. */
+static void test_tls_constants(void)
+{
+    TEST_ASSERT_EQ((uint32_t)(TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS),
+                   (uint32_t)TLS_MAXIMUM_AVAILABLE,
+                   "TLS_MAXIMUM_AVAILABLE == TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS");
+    TEST_ASSERT_EQ((uint32_t)(TLS_EXPANSION_SLOTS / 64),
+                   (uint32_t)TLS_EXPANSION_BITMAP_WORDS,
+                   "TLS_EXPANSION_BITMAP_WORDS == TLS_EXPANSION_SLOTS / 64 (bit-per-slot)");
+}
+
+/* The 4 POST16 codes bracketing TLS expansion (entry/alloc/boundary-test/
+ * cleanup) must be non-zero and pairwise distinct, or two stages become
+ * indistinguishable on serial during a boot-path hang. */
+static void test_tls_expansion_post_codes(void)
+{
+    TEST_ASSERT(POST16_TLS_EXPAND != 0 && POST16_TLS_EXPAND_ALLOC != 0 &&
+                POST16_TLS_EXPAND_TEST != 0 && POST16_TLS_EXPAND_CLEAN != 0,
+                "all 4 TLS expansion POST16 codes are non-zero");
+    TEST_ASSERT(POST16_TLS_EXPAND != POST16_TLS_EXPAND_ALLOC &&
+                POST16_TLS_EXPAND != POST16_TLS_EXPAND_TEST &&
+                POST16_TLS_EXPAND != POST16_TLS_EXPAND_CLEAN &&
+                POST16_TLS_EXPAND_ALLOC != POST16_TLS_EXPAND_TEST &&
+                POST16_TLS_EXPAND_ALLOC != POST16_TLS_EXPAND_CLEAN &&
+                POST16_TLS_EXPAND_TEST != POST16_TLS_EXPAND_CLEAN,
+                "all 4 TLS expansion POST16 codes are pairwise distinct");
+}
+
 /* ---- Extended Auxiliary Vector (S13) ---- */
 
 static void test_rdrand_bytes_smoke(void)
@@ -306,6 +337,38 @@ static void test_rdrand_bytes_smoke(void)
     /* NULL buf and zero size both return 0 (parameter validation) */
     TEST_ASSERT_EQ(rdrand_bytes((uint8_t *)0, 16), 0, "rdrand_bytes(NULL, 16) returns 0");
     TEST_ASSERT_EQ(rdrand_bytes(buf, 0), 0, "rdrand_bytes(buf, 0) returns 0");
+}
+
+/* Linux ELF auxv ABI -- these values are a hard contract with glibc/musl,
+ * not internal choices, so a per-value literal echo (compiler already
+ * enforces that a #define equals itself) would be tautological. What
+ * actually matters and has zero coverage elsewhere: none of the 13
+ * AT_* type codes this codebase pushes into the auxv array collide with
+ * each other. A collision would silently overwrite one entry's (type,
+ * value) pair with another's when task_exec() builds the vector,
+ * corrupting whichever field lost the race -- exactly the failure mode
+ * dynamically linked binaries decode by these exact numbers. */
+static void test_auxv_constants(void)
+{
+    const int32_t used[] = {
+        AT_PHDR, AT_PHENT, AT_PHNUM, AT_BASE, AT_FLAGS,
+        AT_UID, AT_EUID, AT_GID, AT_EGID, AT_SECURE,
+        AT_RANDOM, AT_HWCAP, AT_HWCAP2,
+    };
+    const uint32_t n = sizeof(used) / sizeof(used[0]);
+    uint32_t i, j;
+    int all_distinct = 1;
+
+    for (i = 0; i < n && all_distinct; i++) {
+        for (j = i + 1; j < n; j++) {
+            if (used[i] == used[j]) {
+                all_distinct = 0;
+                break;
+            }
+        }
+    }
+    TEST_ASSERT(all_distinct,
+                "all AT_* auxv type codes this codebase pushes are pairwise distinct");
 }
 
 /* Boundary coverage for the n%8 partial-chunk path. The chunk loop in
@@ -796,7 +859,13 @@ void test_register_peb_teb(void)
                             test_tls_expansion_reuse, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: TLS expansion boundary",
                             test_tls_expansion_boundary, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS constants",
+                            test_tls_constants, TEST_CAT_ABI);
+    test_suite_register_cat("PEB/TEB: TLS expansion POST codes",
+                            test_tls_expansion_post_codes, TEST_CAT_ABI);
     /* S13: Extended ELF auxv */
+    test_suite_register_cat("PEB/TEB: auxv constants",
+                            test_auxv_constants, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: rdrand_bytes smoke",
                             test_rdrand_bytes_smoke, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: rdrand_bytes boundaries",

@@ -321,7 +321,7 @@ VFS uses A-Z (26 letters). MBR partition table is at offset 0x1BE. GPT header at
 - [x] `_Static_assert(GPT_HEADER_LBA == 1)` + `GPT_ENTRY_SIZE == 128` in gpt.h
 - [x] Runtime: `drive_index()` already rejects letters outside A-Z (returns -1); `vfs_mount()` checks `idx < 0`
 - [x] Unit test: `test_vfs_drive_constants` -- VFS_MAX_DRIVES==26, Z valid, '[' rejected, '@' rejected
-- [x] Unit test: `test_mbr_gpt_constants` -- MBR offset 446, sig 510, entry 16, 4 partitions, GPT LBA 1, GPT entry 128
+- [x] `test_mbr_gpt_constants` REMOVED 2026-09-03 (empty body; the claim was already covered by the `_Static_assert`s above -- a runtime dup would be tautological)
 - [x] Documentation: MBR layout table in mbr.h, GPT constants documented in gpt.h
 
 **Test checkpoint:** Change VFS_MAX_DRIVES -> static assert fires. Out-of-range drive letter -> runtime rejection. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
