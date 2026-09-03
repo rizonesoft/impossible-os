@@ -21,7 +21,8 @@ diagnostics-dump point unless noted otherwise.
 | `tpm-events.json` | `tpm_evlog_export_cel()` (`tpm.c`) | Parsed TCG measured-boot event log (CEL-JSON subset). |
 | `firmware-tables.json` | firmware-tables writer (`firmware_tables_json.c`) | ACPI/SMBIOS firmware-table inventory + conformance profile; `generated_at_utc` from the loader build time. |
 | `firmware-advisor.json` | firmware advisor (`firmware_advisor.c`) | Firmware quirk / advisory findings. |
-| `boot-health.json` | `boot_health_publish_json()` (`boot_health.c`) | Per-phase perf budgets + threshold alarms (owner TODO-29). |
+| `..\Perf\boot-trend.json` | `boot_trend_publish_json()` (`boot_trend.c`) | Rolling boot-perf regression file: up to 16 entries of `boot_seq`/`unix_time`/`phase_durations_ms`, newest first, with a 3-run median growth alarm. (Lives under `X:\Perf\`, not `X:\Diag\`.) Wire format: [`boot-trend-schema.md`](boot-trend-schema.md). |
+| `boot-health.json` | `boot_health_publish_json()` (`boot_health.c`) | Consolidated boot-health dashboard: degraded caps and subsystems, missing capabilities, perf-budget breaches, MAT W^X violations, active firmware quirks, recent boot times, Secure Boot state (owner TODO-29). Wire format: [`boot-health-schema.md`](boot-health-schema.md). |
 | `entropy.json` | `entropy_publish_json()` (`entropy_registry.c`) | Early-entropy / seed diagnostics (owner TODO-12). |
 | `lvfs-metadata.json` | (not kernel-written) input cache read by `firmware_advisor_init()` -> `fa_read_cache_text()` (`firmware_advisor.c`) | Offline LVFS firmware metadata cache the advisor CONSUMES; staged onto X:\Diag out-of-band, not produced by a boot writer. |
 | `boot-reserved.json` | `boot_reserved_blackbox_dump()` | Physical ranges the PMM kept reserved at boot. |

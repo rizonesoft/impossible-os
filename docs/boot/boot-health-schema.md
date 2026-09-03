@@ -110,10 +110,14 @@ Each entry is one boot-step that exceeded its budget classification:
   on-device triage when serial is unavailable.
 - Boot-trend rolling regression file ([Boot Perf Trend File +
   Regression Detection](../../todo/01-boot-platform/TODO-29-boot-perf-health-observability.md#3-boot-perf-trend-file--regression-detection),
-  planned): aggregates `recent_boot_times_unix` and `perf_breaches`
-  across boots.
-- CI regression gate (planned, owned by the boot-perf trend section
-  above): refuses a green build if any HARD perf breach or MAT W^X
-  violation appears in the JSON.
+  SHIPPED): `X:\Perf\boot-trend.json`, written by
+  `boot_trend_publish_json()` (`src/kernel/main/boot_trend.c`). It rolls
+  a per-boot `{boot_seq, unix_time, phase_durations_ms}` entry and does
+  NOT carry `recent_boot_times_unix` or `perf_breaches`; wire format:
+  [`boot-trend-schema.md`](boot-trend-schema.md).
+- CI regression gate (planned, owned by
+  [TODO-28 boot validation and certification matrix](../../todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md)
+  section 9, NOT by the trend section above): refuses a green build if
+  any HARD perf breach or MAT W^X violation appears in the JSON.
 - Bare-metal triage: read directly from `X:\Diag\boot-health.json` over
   the storage path when serial output is not accessible.

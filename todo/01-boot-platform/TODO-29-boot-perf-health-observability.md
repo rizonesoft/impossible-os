@@ -76,7 +76,7 @@ implements_after: TODO-04
 | ⭐  |  10   | UEFI RT SetVariable latency (>50ms threshold)               | §1, T04 §11                                     |  [/]   |
 | ⭐  |  11   | Phase-3 X:\Diag JSON writer batching                        | T04 §8, T27 §2 (advisor)                        |  [/]   |
 | ⭐  |  12   | AVX-512 throttle policy when APERF/MPERF absent             | T19 §3                                          |  [/]   |
-| ⭐  |  13   | Boot history ring depth + format (8 → 32+ entries)          | T01 §11                                         |  [/]   |
+| ⭐  |  13   | Boot history ring depth + format (8 → 32+ entries)          | T03 §20                                         |  [/]   |
 | ⭐  |  14   | FAT32 dirty-mount fsck cost in VFS step                     | D05 T04                                         |  [/]   |
 | ⭐  |  15   | User-mode binary spawn latency (~1s task_create→ELF)        | T22 (sched / exec)                              |  [/]   |
 | ⭐  |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
@@ -309,7 +309,7 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 
 ## 9. EXEC Step Latency Profile
 
-Smoke (KVM, 2026-05-03 latest) records `EXEC took 13834ms (target 100ms)` -- a HARD-budget breach 138x over target, ~11x worse than the 1210ms originally observed when this section was filed. The EXEC step covers SSDT registration (470 main slots + ~1300 shadow stubs), syscall handler wire-up, NT subsystem registration, ETW init, and exec format dispatch (ELF + EIF + PE32+). Without per-substep timing the slow path is invisible. The 11x growth is itself a regression signal -- find when EXEC went from ~1.2s to ~13.8s and bisect the responsible commit before optimizing.
+Smoke (KVM, 2026-05-03 latest) records `EXEC took 13834ms (target 100ms)` -- a HARD-budget breach 138x over target, ~11x worse than the 1210ms originally observed when this section was filed. The EXEC step covers SSDT registration (477 main slots per `SSDT_MAIN_COUNT`, `include/kernel/nt/service_numbers.h:672`, plus ~1300 shadow stubs), syscall handler wire-up, NT subsystem registration, ETW init, and exec format dispatch (ELF + EIF + PE32+). Without per-substep timing the slow path is invisible. The 11x growth is itself a regression signal -- find when EXEC went from ~1.2s to ~13.8s and bisect the responsible commit before optimizing.
 
 **Files:** `src/kernel/exec.c`, `src/kernel/nt/ssdt.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
 
@@ -386,14 +386,16 @@ Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; 
 
 **Files:** `src/kernel/main/boot_history.c` (+ matching public header to add), registry mirror
 
-- [/] Bump `BOOT_HIST_RING_LEN` from 8 to 32; update size-pin static asserts + tests + JSON schema docs in lockstep. PARKED: needs the NVRAM-blob migration decision -> XREF: `01-boot-platform/TODO-01` §11 (boot history owner).
-- [/] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape). PARKED: needs the NVRAM-blob migration decision -> XREF: `01-boot-platform/TODO-01` §11 (boot history owner).
-- [/] Decide: grow NVRAM variable in-place with tail-append schema, or version-bump and migrate. PARKED: needs the NVRAM-blob migration decision -> XREF: `01-boot-platform/TODO-01` §11 (boot history owner).
+- [/] Bump `BOOT_HIST_RING_LEN` from 8 to 32; update size-pin static asserts + tests + JSON schema docs in lockstep.
+  - PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
+- [/] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape).
+  - PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
+- [/] Decide: grow NVRAM variable in-place with tail-append schema, or version-bump and migrate. PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
 - [/] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
 
 **Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
 
-> **Deferred:** [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation. -> XREF: 01-boot-platform/TODO-01 §11 (boot history owner).
+> **Deferred:** [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation, so the park is operator-gated. CORRECTED 2026-09-03: this stamp named `01-boot-platform/TODO-01` §11 as the boot history owner, which is Capability Negotiation and Degraded-Feature Flags. `BOOT_HIST_RING_LEN` and `BOOT_HIST_BIN_SIZE` are defined and owned by `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (ring producer, `[x]`), with §21 the consumer. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (item: "`BOOT_HIST_RING_LEN` (8) + `BOOT_HIST_BIN_SIZE` (128) + sentinels").
 ---
 
 ## 14. FAT32 Dirty-Mount fsck Cost in VFS Step
@@ -506,7 +508,7 @@ Items moved here VERBATIM from their original, already-stamped sections, where t
 From the stamped section 1:
 - [/] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
   - BLOCKED on the kernel image ceiling, not on design. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
-  - Two full tables emit one serial line per step each -- `boot_timing_print_steps()` (`src/kernel/boot_timing.c:73`) and the sorted table in `boot_perf_dump()` (`:762`), 45 lines apiece on a 45-step boot, confirmed at `build/smoke-test.stripped.log:620` and `:666`. Gating both and replacing them with one summary line naming the three slowest INTERVALS by both endpoints is what shipped in the parked patch.
+  - Two full tables emit one serial line per step each -- `boot_timing_print_steps()` (`src/kernel/boot_timing.c:73`) and the sorted table in `boot_perf_dump()` (`:762`), 45 lines apiece on a 45-step boot. The earlier draft cited `build/smoke-test.stripped.log` line numbers; every smoke run regenerates that file, so the citation went stale and is replaced here by the two emitting code sites above. Gating both and replacing them with one summary line naming the three slowest INTERVALS by both endpoints is what shipped in the parked patch.
 
 Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX leg:
 - [/] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
@@ -516,8 +518,8 @@ Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX le
   - Not a regression and not muted: the finding is that the reporter states a platform-relative fact in absolute terms. The provenance is the header line above; this section owns the budget reporter, and the TPM work that happened to observe it has no dependency on the fix.
 
 - [/] The total-budget line names the wrong window: `boot_perf_total_check()` prints "first-step to DESKTOP_READY wall clock" but the measured span ends at `DEFERRED`.
-  - `src/kernel/boot_perf_budget.c:161` prints it and `include/kernel/boot_perf_budget.h:31` calls `DESKTOP_READY` the last recorded step; `boot_run_deferred()` records `DEFERRED` after it (`src/kernel/main/boot_init.c:213`).
-  - Live evidence: `DESKTOP_READY` at `+2992ms` then `DEFERRED` at `+3120ms`, `build/smoke-test.stripped.log:664-665`. The reported total silently includes the deferred-init work the name excludes.
+  - `src/kernel/boot_perf_budget.c:174` hardcodes the `DESKTOP_READY` text while `boot_perf_total_check()` measures through the LAST recorded step (`steps[n-1].tsc`, `src/kernel/boot_perf_budget.c:156`); `boot_run_deferred()` records `DEFERRED` after it (`src/kernel/main/boot_init.c:213`). The string does not appear in `include/kernel/boot_perf_budget.h` at all, which the earlier draft cited.
+  - Observed 2026-05-03: `DESKTOP_READY` at `+2992ms` then `DEFERRED` at `+3120ms`. The line numbers that anchored this are gone (the smoke log is regenerated per run); the durable anchor is the ordering itself, at `src/kernel/main/boot_init.c:213`. The reported total silently includes the deferred-init work the name excludes.
   - Found 2026-09-03 while verifying a §20 claim that rested on the same wrong premise. NOT itself blocked by the image ceiling -- the repair is string text in `.rodata`, which has budget -- but it shares this section's park because it is the same reporter. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
@@ -553,7 +555,7 @@ From the stamped section 3:
   - A full ring COUNTS rather than terminating, or an oversized array with a valid prefix would be truncated silently.
   - Over-long arrays are CANONICALIZED with a WARN rather than quarantined: the file parsed and its schema checked out, so the atomic rewrite repairs it and the history survives.
 - [/] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline. (TODO-24 §6)
-  - SHIPPED half: `boot_trend_publish_json()` now refuses up front when BlackBox is absent (`src/kernel/main/boot_trend.c:268`) instead of allocating two 16 KiB buffers, parsing and rebuilding the document, and only then failing at `vfs_open` with a warning that read like an I/O error. No artifact was produced on that path before or after, so this states the limitation rather than adding one.
+  - SHIPPED half: `boot_trend_publish_json()` now refuses up front when BlackBox is absent (`src/kernel/main/boot_trend.c:255-262`) instead of allocating two 16 KiB buffers, parsing and rebuilding the document, and only then failing at `vfs_open` with a warning that read like an I/O error. No artifact was produced on that path before or after, so this states the limitation rather than adding one.
   - PARKED half: the actual parity fix. `boot-profile` and `boot-timeline` DO fall back to `klog_dir` on C: (`src/kernel/main/boot_progress.c:387`); matching them means building three paths at runtime across five call sites, which does not fit. MEASURED 2026-09-03: 47 bytes of `.text` slack. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
 
 - [x] Bound the freestanding cJSON exponent (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT` 400). Review-round finding on a path this section's writer feeds untrusted disk bytes into.
@@ -573,7 +575,7 @@ From the stamped section 3:
 > - MEASURED against a 47-byte `.text` ceiling: the linearization FREES 128 bytes, the BlackBox gate and bounded scan spend that, and the testable-seam extraction costs 32 more, leaving 15 bytes. The host-side test costs the image nothing.
 > - Scope boundary: two halves are parked and named above -- moving publication behind a real post-handoff mechanism (§7) and the runtime C: path construction (`02-kernel-core/TODO-33` §7).
 >
-> **Verified:** 2026-09-03 | commit `76eb18b24` | 3/6 items | build OK | 32845 kernel + 17 user-mode tests | smoke matrix 4/4 (kvm+tcg, 1+2 cpu) | WHPX boundary leg reached `C:\>` | host suite 48/48
+> **Verified:** 2026-09-03 | commit `76eb18b24` | 3/5 items | build OK | 32845 kernel + 17 user-mode tests | smoke matrix 4/4 (kvm+tcg, 1+2 cpu) | WHPX boundary leg reached `C:\>` | host suite 48/48
 > **Accepted:** [H] `vfs_rename_ex` resolves by generated SFN only, so the advertised atomic publish degrades to `.tmp` litter on long names (reason: FAT32 driver surface, field-recorded on WHPX, not this section's code) -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §16 (item: "FIELD DEFECT 2026-07-30: `vfs_rename_ex` fails on a long two-dot filename" at line 456)
 > **Accepted:** [H] both 16 KiB allocations mutate the unlocked PMM bitmap, which a storage AP that outlived its 10s barrier can race (reason: `include/kernel/mm/pmm.h:67-73` states this is the unlocked-bitmap defect itself and not something a caller can code around) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §7 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [H] the 64-entry scan cap bounds the WALK but not the PARSE: cJSON builds the whole tree from a 16 KiB file first (reason: parser-layer budget, already owned) -> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` §6 (item: "Bound parse heap for untrusted JSON" at line 294)
@@ -647,4 +649,4 @@ Tests live under `src/kernel/test/test_boot_health.c` (NEW). Registered via `tes
 - [ ] Boot heartbeat fires during a synthetic 1s busy-loop step; absent on <250ms steps.
 - [ ] Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 boot-health pure-helper suites (§1, §2, §3, §5, §8), 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | CORRECTED 2026-09-03: the 5 suites in `src/kernel/test/test_boot_health.c` all cover the §2 Secure Boot classifier (`boot_health_classify_secureboot` / `boot_health_secureboot_name`), not the five helpers listed below. §5's coverage is 6 suites in `src/kernel/test/test_mat_violation.c`. The §1, §3 and §8 helpers named below do not exist in the tree, which is why those items are still open.
