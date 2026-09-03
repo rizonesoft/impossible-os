@@ -84,9 +84,9 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎  |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
 | ⭐  |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
 | 💎  |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
-| ⭐  |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [ ]   |
-| ⭐  |  19   | Compile the EXCEPT_TELEMETRY=off flavor in a gate, not by hand     | §16                        |  [ ]   |
-| 💎  |  20   | Owner-stable SEH stack bounds + fault-address provenance           | §14                        |  [ ]   |
+| ⭐  |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [/]   |
+| ⭐  |  19   | Compile the EXCEPT_TELEMETRY=off flavor in a gate, not by hand     | §16                        |  [/]   |
+| 💎  |  20   | Owner-stable SEH stack bounds + fault-address provenance           | §14                        |  [/]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -764,14 +764,16 @@ The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic
 > [!NOTE]
 > Filed 2026-08-01 from TODO-04 §49, which hit it live: growing `src/kernel/test/test_usermode_launcher.c` (test code in a DIFFERENT category, which does not execute in the `except` suite) moved `test_register_kworker` to exactly `base+0x10` for `tu_continue_execution_handler`, and `test_rtlunwind_continue_execution_invalid` began returning `STATUS_SUCCESS` instead of `STATUS_INVALID_DISPOSITION` -- a red suite caused by an unrelated section's code size. §49 fixed the CODE RANGE half at source by anchoring it inside the `img` buffer (static storage no `.pdata` can cover) rather than at a fixed RVA from `base`; see `tu_register_handler_fn`. The SENTINEL half is untouched and is the same hazard. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §49 (item: "Reap or fence the whole CAPTURED DESCENDANT TREE at the run boundary, not just the top-level pid")
 
-- [ ] Anchor the fixtures' stop-sentinel to the metadata image, not to `base + 0x1000`
+- [/] Anchor the fixtures' stop-sentinel to the metadata image, not to `base + 0x1000` -- BLOCKED, Codex outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
       - Ten call sites in `src/kernel/test/test_unwind.c` declare `const uint64_t SENTINEL = base + 0x1000;` with the comment "outside the table -> lookup NULL". That address is real kernel `.text` whenever the handler sits below the image buffer, so a real function there makes the lookup SUCCEED and the walk continue past the frame the fixture meant to stop at.
       - The fix shape that needs no per-caller arithmetic: have `tu_register_handler_fn` return the sentinel alongside `base` and `body_pc`, pointing inside `img` but outside the synthetic code range.
-- [ ] Prove the independence rather than asserting it
+- [/] Prove the independence rather than asserting it -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
       - A fixture that only passes today is what this section is about. Add a check that the addresses the fixtures rely on carry no static unwind entry -- a `RtlLookupFunctionEntry` on the sentinel returning NULL is exactly the property the comment already claims.
-- [ ] Commit: `"test: anchor unwind fixtures to their own image, not to linker layout"`
+- [/] Commit: `"test: anchor unwind fixtures to their own image, not to linker layout"` -- BLOCKED, same outage
 
 **Test checkpoint:** every RtlUnwindEx fixture produces the same verdict after an unrelated translation unit grows by several KB; a lookup on the stop-sentinel returns NULL by construction rather than by luck. Test on: QEMU TCG, QEMU KVM.
+
+> **Deferred:** [L] not started this pass -- Codex design-review gate unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). No source changed.
 
 ---
 
@@ -785,15 +787,17 @@ The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic
 > [!NOTE]
 > Filed 2026-08-14 from `00-infrastructure/TODO-03 §11`, which hit it live. That section added two static fault-address selectors to `src/kernel/except.c` and placed them inside the `#if CONFIG_EXCEPT_TELEMETRY` block while their callers (kernel SEH's filter and handler paths) sat outside it. The default build and the full 29,415-test suite were green; `EXCEPT_TELEMETRY=off` failed with `call to undeclared function` at `except.c:750` and `:1018`. Found by an adversarial reviewer reading the preprocessor regions, not by any gate. Fixed at source by moving the selectors above the conditional -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` §11 (item: "Fixed while proving the fixture: kernel SEH published the faulting RIP where its contract promises the DATA address").
 
-- [ ] Compile every declared flavor of the kernel in one gate, not just the default
+- [/] operator-gated: Compile every declared flavor of the kernel in one gate, not just the default -- touches the receipt surface, no unattended owner can clear this
       - The flavor axes already exist in `make print-abi-config` (`KERNEL_TESTS`, `EXCEPT_TELEMETRY`, `BUILD_ALT_BOOT`); read them from there rather than hardcoding a second list that can drift from the first.
       - A full cross-product is not required and would be slow. Compiling each axis's NON-default value once against the default of the others catches the whole "definition inside a conditional, caller outside it" class, which is the failure this section was filed for.
-- [ ] Decide where the gate runs, and say why in the commit
+- [/] operator-gated: Decide where the gate runs, and say why in the commit
       - CI is the honest home (it already builds on push); the pre-push tooling pack is the alternative but it is already past the tool wall on tooling-touching pushes.
       - This touches `Makefile` / `scripts/build.sh` (the receipt surface) so it is operator work: an unattended run may not edit those.
-- [ ] Commit: `"ci: compile every declared kernel flavor, not just the default"`
+- [/] operator-gated: Commit: `"ci: compile every declared kernel flavor, not just the default"`
 
 **Test checkpoint:** deliberately moving a function used outside a `#if CONFIG_*` region to inside it makes the new gate FAIL, and moving it back makes it pass; the default build time is unchanged.
+
+> **Deferred:** [M] not started this pass -- this section's own text already marks it operator work ("touches `Makefile`/`scripts/build.sh`, the receipt surface -- an unattended run may not edit those"), independent of the Codex outage also in effect right now (gotcha `.claude/state/live-gotchas.md` 2026-09-03). No source changed.
 
 ---
 
@@ -807,20 +811,22 @@ TWO findings from the `00-infrastructure/TODO-03` section 11 review that belong 
 > [!NOTE]
 > Filed 2026-08-14. Section 11 shipped a poisoned-boundary fixture that runs a suspect helper under `KI_TRY` so an out-of-bounds READ fails one assertion instead of halting the boot. Building it required the fixture to reproduce a pattern this TODO's own suite established, and reviewing it surfaced two gaps in exception-dispatch territory rather than in the test harness: the two checklist items below. A third finding from the same review, kernel-VA RESERVATION, is deliberately NOT owned here -- it belongs to the existing central-VA-allocator item in `03-memory-concurrency/TODO-01-vmm-memory-protection.md` and is routed there by the note under the checklist -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` section 11 (item: "A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page")
 
-- [ ] Give `ki_seh_register()` a way to protect the running thread without rewriting `stack_base`/`stack_size`
+- [/] Give `ki_seh_register()` a way to protect the running thread without rewriting `stack_base`/`stack_size` -- BLOCKED, Codex outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
       - `ki_seh_register()` refuses to publish a node outside the current thread's tracked stack window (`src/kernel/except.c:667`), and the boot thread tracks none, so every existing caller brackets the window by ASSIGNING to `thread_current()->stack_base` and `->stack_size` and restoring afterwards (`src/kernel/test/poison_tail.c:test_seh_open_window`, used by `test_except.c`).
       - That is unsound on SMP: `thread_current()` (`src/kernel/sched/task.c:5996`) reads the GLOBAL `current_task`/`current_thread` indices, not per-CPU state, so scheduling on another CPU can change which thread the cursor names between the save, the set and the restore -- leaving a foreign thread carrying a temporary window, or the registration unlinked so the fault it was meant to catch stays terminal.
       - The window is also a fixed 32 KiB centred on the caller's SP while a kernel thread stack is 8 KiB, so on any thread with tracked bounds it covers ~24 KiB that is not the stack, including past its guard page -- and `ki_seh_addr_on_kstack()` and the unwinder trust those bounds while it is open.
       - Shape: either support the boot stack explicitly, or make registration validate against per-CPU/owner-stable bounds, so no caller needs to touch scheduler metadata at all. The two test-side helpers then collapse to nothing.
-- [ ] Distinguish an UNKNOWN fault address from a real fault at address 0
+- [/] Distinguish an UNKNOWN fault address from a real fault at address 0 -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
       - `except_common_handler` builds `STATUS_ACCESS_VIOLATION` records for #GP/#NP with `NumberParameters = 2` and `ExceptionInformation[1] = 0` (`src/kernel/except.c:1022-1026`) precisely because those vectors carry no CR2 and the address is not known; the record must still be well-formed.
       - Downstream cannot tell that fabricated 0 from a genuine NULL dereference. `ki_exception_data_address()` reports it as a present data address, so an SEH filter keyed on address 0 can claim an unrelated protection fault, and diagnostics cannot separate "unknown" from "NULL".
       - Shape: address-known PROVENANCE in the record -- a flag, a distinct status, or a discriminator both selectors consume. This is an exception-ABI decision, which is why section 11 documented the limitation at both the producer and the selector rather than inventing a bit.
-- [ ] Commit: `"kernel: owner-stable SEH stack bounds and fault-address provenance"`
+- [/] Commit: `"kernel: owner-stable SEH stack bounds and fault-address provenance"` -- BLOCKED, same outage
 
 **Not owned here:** kernel-VA RESERVATION. Section 11 also added an unregistered VA carve and could only defend it by verifying its own mapping on every use, but that work already has an owner and creating a second one here would split it -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md` §MMIO mapping (item: "Implement `vmm_map_mmio(phys_base, size)` -- 4 KiB PTEs, `PCD=1`+`PWT=1` (UC), return VA via a central kernel VA allocator with reserved non-overlapping ranges" at line 240). `src/kernel/mm/vmm.c:1490` already points at that TODO, and its sibling item covers the unlocked `get_or_create_table()` this fixture's first arm also exercises.
 
 **Test checkpoint:** a `KI_TRY` region protects a fault on a thread whose scheduling changed during the region, with no scheduler metadata written by the caller; and an SEH filter keyed on address 0 does NOT match a #GP with no known address. Test on: QEMU TCG, QEMU KVM (2 CPUs).
+
+> **Deferred:** [M] not started this pass -- SMP scheduler-metadata + exception-ABI decision, Codex design-review gate unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). No source changed.
 
 ---
 
