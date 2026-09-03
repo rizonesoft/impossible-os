@@ -613,6 +613,7 @@ Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 3820
 - [ ] Unpark what the new headroom actually admits, and say what it does NOT
   - The unparking is a status sweep owned by §11; this section only removes the constraint. Name the sections the measured headroom now fits rather than declaring the queue unblocked -> XREF: this file §11 (item: "Unpark the ceiling-stalled kernel queue").
   - The sections parked on this ceiling as of 2026-09-03 -> XREF: `02-kernel-core/TODO-04-system-logging.md` §14 (item: "Add the RUNTIME regression test driving the renderer at 7/8/9/10-digit `sec` values with guard bytes").
+  - Also parked here, with its work preserved as a patch rather than re-derived -> XREF: `02-kernel-core/TODO-09-x86-64-architecture.md` §20 (item: "`topology_init()` consume `per_cpu_data.core_type`"). Measured 2026-09-03 against a green control at `d1cd53651`: the change moves `__kernel_end` `0x7fead5` -> `0x7ffad5`, a full page against the 95-byte `.text` budget, so this one is a re-apply once the headroom exists, not a re-implementation.
 - [ ] State plainly in the Notes that a FOURTH pass is expected, and leave the reserve named for it
   - §10 read as solved and the ceiling returned unannounced; §12 fixed that by naming a reserve, which is the only reason this section was cheap to write. Keep the chain going rather than closing it.
 - [ ] Commit: `"kernel/mm: third tactical reclamation pass -- buy a page of headroom"`

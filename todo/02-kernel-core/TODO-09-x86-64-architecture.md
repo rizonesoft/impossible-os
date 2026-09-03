@@ -86,7 +86,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                     | §1, §4     |  [/]   |
 | 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection            | §4         |  [/]   |
 | 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                   | §4, §11    |  [/]   |
-| 💎  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)       | --         |  [ ]   |
+| 💎  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)       | --         |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -576,9 +576,15 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 9:
-- [ ] `topology_init()` consume `per_cpu_data.core_type` (published per-AP by `01-boot-platform/TODO-09 §6`) to derive accurate `p_core_mask`/`e_core_mask` on Intel hybrid; today BSP core type is applied to all CPUs
+- [/] `topology_init()` derive `p_core_mask`/`e_core_mask` from each AP's own published `core_type` on Intel hybrid -- BLOCKED on the `USER_BASE` ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
+  - Implemented and reverted 2026-09-03, not merely estimated. The source is `per_cpu_data.core_type`, published per-AP by `01-boot-platform/TODO-09` §6. The change reads each online slot's `core_type` (published by `cpu_validate_ap_features()` before `smp_publish_cpu_online()` writes the mask bit, so the acquire edge carries it), seeds slot 0 from the BSP's own CPUID `0x1A` because the BSP never runs that path, and sets a mask bit only for `CORE_TYPE_P`/`CORE_TYPE_E` on an online slot. Preserved at `.claude/state/deferred-TODO-09-x86-64-architecture-s20.patch` (125 insertions across `topology.c`, `topology.h`, `test_cpu_security.c`).
+  - MEASURED 2026-09-03 with a control: a clean HEAD (`d1cd53651`) build is green at `__kernel_end` `0x7fead5` with a `.text` budget of **95 bytes** (`scripts/overnight/bss-headroom.py`); the change moves it to `0x7ffad5`, page-aligning `__kernel_end` onto `0x800000` exactly, and `scripts/build.sh` refuses with `BSS COLLISION`. The delta is a full page against a 95-byte budget, so it cannot be trimmed to fit.
+  - The item text as filed said "today BSP core type is applied to all CPUs". That was already stale: `topology.c` leaves every slot `CORE_TYPE_GENERIC` with both masks zero rather than propagating the BSP type, so the defect is missing classification, not a wrong one. Rewritten above to match the shipped code.
+  - Re-apply the patch, rebuild, and run the full pipeline once §13 reports a page of headroom; the three new `TEST_CAT_X86` suites assert the mask-vs-`core_type` iff, disjointness and range, and online-only classification.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [M] `topology_init()` per-AP P/E classification implemented then reverted -- the `.text` growth page-aligns `__kernel_end` onto `USER_BASE` and `scripts/build.sh` refuses the link (reason: 95-byte `.text` budget at HEAD, measured with a green control build; the owner of the headroom is a different TODO) -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "The sections parked on this ceiling as of 2026-09-03")
 
 ---
 
