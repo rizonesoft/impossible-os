@@ -233,7 +233,8 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 - [x] `boot_policy_menu_should_show()` skips UI on forced-selection reasons; only soft reasons (STORE_DEFAULT, BOOTNEXT_HINT, UNKNOWN_BOOTCURRENT) render the menu.
 - [x] `timeout_override == 0` honored as immediate auto-boot (kiosk path; UI suppressed). Schema range stays 0..600.
 - [x] Watchdog refresh throttled to 10s intervals inside `boot_menu_run()` (firmware WD is 60s; per-tick refresh was wasteful).
-- [ ] Dirty-rectangle repaint for `boot_menu_render()`: draw title once, repaint only changed rows on selection moves + footer once per second.
+- [/] Dirty-rectangle repaint for `boot_menu_render()`: draw title once, repaint only changed rows on selection moves + footer once per second.
+  - PARKED with no external blocker: a §6-owned bootloader optimization in `src/boot/uefi`, which sits outside the kernel image ceiling, so it is unscheduled rather than gated. The trigger is recorded in this section's Deferred stamp (full-band redraw on a 4K GOP causes key-repeat jank).
 - [x] Commit: `"boot: menu renderer + countdown + input infrastructure"`
 
 **Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Smoke test verified menu-skip path: serial shows `[BOOT] menu: skipped (no viable candidates)` on FALLBACK_STORE_INVALID with no bootentries.json, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
@@ -289,8 +290,10 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 
 - [x] `kind: safe` admitted via `supported_kinds_mask` widen; post-policy materialization sets `boot_config.boot_mode = 1`. `safe_mode_subset` payload parsing deferred to §13.
 - [x] F8 hotkey wires safe-mode intent into `boot_config.boot_mode = 1` independent of selected envelope kind (closes §7's deferred F8 wire-up).
-- [ ] `kind: test` admission + `test_suite` payload parsing deferred to §13 (per-kind handler reads payload; without it every test entry would run all categories).
-- [ ] `kind: diagnostics` admission deferred to §13 + an early-policy-read redesign (`boot_config.verbose` is consumed pre-policy).
+- [/] `kind: test` admission + `test_suite` payload parsing deferred to §13 (per-kind handler reads payload; without it every test entry would run all categories).
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-07 §13 (item: "Entry kinds: split, UKI, chainload, network, resume"). Still `[/]` as of 2026-09-03: the per-kind handler table that would read the payload object has not shipped.
+- [/] `kind: diagnostics` admission deferred to §13 + an early-policy-read redesign (`boot_config.verbose` is consumed pre-policy).
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-07 §13 (item: "Entry kinds: split, UKI, chainload, network, resume"). Also needs the early-policy-read redesign, because `boot_config.verbose` is consumed before policy is read.
 - [x] On SAFE selection, `boot_config.boot_mode` is materialized post-policy pre-EBS; existing kernel consumers read the field unchanged.
 - [x] KUSD `SafeBootMode` consumer mirrors `boot_config.boot_mode` per [02-kernel-core TODO-02](../02-kernel-core/TODO-02-kernel-configuration-policy.md#5-safe-mode-policy-and-effective-safe-mode); §8 only changes the producer.
 - [x] `supported_kinds_mask` widened to include KIND_SAFE only; TEST + DIAGNOSTICS stay filtered until §13.
@@ -318,13 +321,20 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 
 Generate entries from runtime state; the user sees a single coherent menu instead of two parallel mechanisms. Demote-not-drop on failure. **Section deferred 2026-05-09**: the runtime-state producers (TODO-21 A/B slot metadata + TODO-22 recovery partition) are not yet shipped; §9 has nothing to integrate until they land. See blocker XREFs per item below; re-enter §9 after the prerequisites land.
 
-- [ ] Generate entries for slot A, slot B, recovery, fallback. Blocked: TODO-21 §1+§3, TODO-22 §1.
-- [ ] Merge A/B success/failure counters into entry labels. Producers ready (TODO-21 §1 metadata + §4 tries + §6 `boot_info.ab_slot_tries`/`ab_slot_flags`); the label-merge is §9 work when this section re-enters.
-- [ ] Auto-select recovery on double-fail with `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD`. Blocked: TODO-21 §4 + TODO-22 §2; sentinel enum value lands when TODO-22 §2 ships.
-- [ ] Demote-not-drop visual (greyed-out + `last_failure_reason` label). Partially unblocked: §6+§8 keep TRIES_EXHAUSTED rows visible; §7 adds `[FAIL]` indicator. The greyed style + label string remains §9 scope.
-- [ ] Display rollback reason in menu line. Partially unblocked: TODO-21 §6 ships the rollback-reason source (`boot_info.ab_select_reason`/`ab_from_slot`) + the VPD display already; the menu-line rendering remains §9 scope.
-- [ ] Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`. Blocked: TODO-22 §2 (recovery load path).
-- [ ] Commit: `"boot: integrate A/B and recovery entries"`
+- [/] Generate entries for slot A, slot B, recovery, fallback. Blocked: TODO-21 §1+§3, TODO-22 §1.
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5) + 01-boot-platform/TODO-22 §1 (item: "GPT layout: EFI (64 MiB) + Slot A ..." at line 5). Both still `[/]` as of 2026-09-03.
+- [/] Merge A/B success/failure counters into entry labels. Producers ready (TODO-21 §1 metadata + §4 tries + §6 `boot_info.ab_slot_tries`/`ab_slot_flags`); the label-merge is §9 work when this section re-enters.
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5). The producers exist; what is missing is this section re-entering to merge the counters into the label, so the park is on §9 scheduling rather than on data.
+- [/] Auto-select recovery on double-fail with `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD`. Blocked: TODO-21 §4 + TODO-22 §2; sentinel enum value lands when TODO-22 §2 ships.
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-22 §1 (item: "GPT layout: EFI (64 MiB) + Slot A ..." at line 5). The `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD` sentinel enum value lands with TODO-22 §2.
+- [/] Demote-not-drop visual (greyed-out + `last_failure_reason` label). Partially unblocked: §6+§8 keep TRIES_EXHAUSTED rows visible; §7 adds `[FAIL]` indicator. The greyed style + label string remains §9 scope.
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5). Partially unblocked already: §6 and §8 keep TRIES_EXHAUSTED rows visible and §7 adds the `[FAIL]` indicator, so only the greyed style and the label string remain §9 scope.
+- [/] Display rollback reason in menu line. Partially unblocked: TODO-21 §6 ships the rollback-reason source (`boot_info.ab_select_reason`/`ab_from_slot`) + the VPD display already; the menu-line rendering remains §9 scope.
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5). TODO-21 §6 shipped the rollback-reason source and the VPD display; only the menu-line rendering remains §9 scope.
+- [/] Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`. Blocked: TODO-22 §2 (recovery load path).
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-22 §1 (item: "GPT layout: EFI (64 MiB) + Slot A ..." at line 5). The recovery load path has to exist before the mask can honestly admit `BOOT_ENTRY_KIND_RECOVERY`.
+- [/] Commit: `"boot: integrate A/B and recovery entries"`
+  - PARKED with the rest of §9; this is the section commit and closes when the six items above do. Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5).
 
 **Test checkpoint:** Corrupt slot A kernel; reboot 3 times; menu shows `Slot A (try 3/3, kernel CRC fail)` greyed out and auto-selects slot B. Both slots fail -> recovery selected without user input. Recovery partition corrupt + both slots fail -> fallback default with ALL_PATHS_BAD reason. Test on: QEMU TCG (deterministic); bare metal. **Cannot run today** -- requires TODO-21 + TODO-22 producers.
 
@@ -343,12 +353,18 @@ Generate entries from runtime state; the user sees a single coherent menu instea
 
 After an update, the previous kernel stays available until the new kernel is confirmed good. Health gate (§14) is the gating signal, not a wall-clock timer. **Section deferred 2026-05-09**: the producers it integrates (§14 health gate + the post-update insertion hook owned by the updater in 15-installer-release) are not yet shipped; without them §10's items have nothing to integrate. Same shape as §9. See blocker XREFs per item below; re-enter §10 after the prerequisites land.
 
-- [ ] Persist last-known-good kernel path + manifest digest + slot id in the entry store. Blocked: §14 (kernel-good signal) + 15-installer-release TODO-03 §6 (updater that writes the persisted state).
-- [ ] Insert "Previous kernel (known-good)" entry post-update; remove ONLY after §14 marks new kernel good. Blocked: §14 + updater hook.
-- [ ] Interlock with TODO-13 measured boot + TODO-06 §1 manifest digest. TODO-06 §1 is shipped; TODO-13 §9 (attestation export) consumes the selected entry id but the digest-equality check still depends on the updater wiring.
-- [ ] Failed-health or panic auto-promotes previous-kernel; `last_failure_reason` set on the new entry. Blocked: §14 (health-gate failure source) + a panic-counter persistence path (no current owner).
-- [ ] Manifest-missing fallback -> `BOOT_REJECT_REASON_MANIFEST_UNREADABLE`. Blocked: enum value not yet added; manifest read in bootloader is partial (TODO-06 §7 manifest verification is `[/]`).
-- [ ] Commit: `"boot: previous-kernel known-good entries"`
+- [/] Persist last-known-good kernel path + manifest digest + slot id in the entry store. Blocked: §14 (kernel-good signal) + 15-installer-release TODO-03 §6 (updater that writes the persisted state).
+  - Blocker owner: -> XREF: 15-installer-release/TODO-03 §6 (item: "`scripts/make-delta.sh`" at line 7). Also gated on §14 supplying the kernel-good signal.
+- [/] Insert "Previous kernel (known-good)" entry post-update; remove ONLY after §14 marks new kernel good. Blocked: §14 + updater hook.
+  - Blocker owner: -> XREF: 15-installer-release/TODO-03 §6 (item: "`scripts/make-delta.sh`" at line 7). Removal is gated on §14 marking the new kernel good, so the entry lifecycle needs both halves.
+- [/] Interlock with TODO-13 measured boot + TODO-06 §1 manifest digest. TODO-06 §1 is shipped; TODO-13 §9 (attestation export) consumes the selected entry id but the digest-equality check still depends on the updater wiring.
+  - Blocker owner: -> XREF: 15-installer-release/TODO-03 §6 (item: "`scripts/make-delta.sh`" at line 7). TODO-06 §1 shipped; the digest-equality check still waits on the updater wiring, and TODO-13 §9 only consumes the selected entry id.
+- [/] Failed-health or panic auto-promotes previous-kernel; `last_failure_reason` set on the new entry. Blocked: §14 (health-gate failure source) + a panic-counter persistence path (no current owner).
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-30 §7 (item: "Track crash/hang counts by bucket across boots") -- that item owns cross-boot crash and hang counts, which is the panic-counter persistence this needs; it was recorded as ownerless before 2026-09-03. Also gated on §14 for the health-gate failure source.
+- [/] Manifest-missing fallback -> `BOOT_REJECT_REASON_MANIFEST_UNREADABLE`. Blocked: enum value not yet added; manifest read in bootloader is partial (TODO-06 §7 manifest verification is `[/]`).
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-06 §7 (item: "manifest verification"). The `BOOT_REJECT_REASON_MANIFEST_UNREADABLE` enum value is not added yet and the bootloader-side manifest read is still partial.
+- [/] Commit: `"boot: previous-kernel known-good entries"`
+  - PARKED with the rest of §10; this is the section commit and closes when the five items above do. Blocker owner: -> XREF: 15-installer-release/TODO-03 §6 (item: "`scripts/make-delta.sh`" at line 7).
 
 **Test checkpoint:** Apply update -> reboot -> menu shows new + previous. Boot new + health gate passes -> reboot -> previous-kernel entry retired. Boot new and panic 3x -> previous-kernel entry auto-selected. Manifest deleted post-update -> previous-kernel stays around. Test on: QEMU TCG; bare metal. **Cannot run today** -- requires §14 + the updater + a panic-counter producer.
 
@@ -560,17 +576,22 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > **Note:** Several items below reference a "live-boot integration harness" -- a framework that boots an image in QEMU/WHPX/bare-metal with seeded `bootentries.json` + simulated UEFI variable state, asserts kernel/serial output, and tears down. This harness does not yet have a current owner; it is scope-gap-protocol Branch C work (new TODO file in `00-infrastructure` or successor) that landed when the QEMU smoke test gained richer assertion capability beyond `Boot complete in` + `C:\>`. Until that owner is filed, the items below citing the harness stay `[ ]`/`[/]` with the gap explicit.
 
 - [x] Parser fixture tests (envelope + per-kind + invalid cases): covered by the host validator suite (§1), kernel parser suite (§2), and entry-kind suite (§13). See each section's Test runner line for current case counts.
-- [ ] QEMU boot menu timeout/default-selection scenario. Pre-EBS UEFI menu_run is not kernel-testable; needs a live-boot harness.
+- [/] QEMU boot menu timeout/default-selection scenario. Pre-EBS UEFI menu_run is not kernel-testable; needs a live-boot harness.
+  - PARKED, operator-gated: `menu_run` is pre-EBS UEFI, so exercising a timeout or default-selection needs keystroke injection into firmware from a live-boot harness that does not exist and has no TODO owner. Only an operator standing up that harness clears it.
 - [/] Firmware-vs-OS layer separation scenario: §3 ladder + §4 reject-record path tested; §6 menu_should_show covers UNKNOWN_BOOTCURRENT rendering. Full end-to-end fall-through to in-store default needs an integration / live-boot harness.
-- [ ] A/B rollback entry-selection scenario (1/2/3-fail). Blocked: [`TODO-21 §1`](TODO-21-ab-boot-rollback.md), [`TODO-21 §3`](TODO-21-ab-boot-rollback.md), [`TODO-21 §4`](TODO-21-ab-boot-rollback.md).
-- [ ] Recovery auto-select + ALL_PATHS_BAD scenario. Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md), [`TODO-22 §2`](TODO-22-recovery-partition.md).
+- [/] A/B rollback entry-selection scenario (1/2/3-fail). Blocked: [`TODO-21 §1`](TODO-21-ab-boot-rollback.md), [`TODO-21 §3`](TODO-21-ab-boot-rollback.md), [`TODO-21 §4`](TODO-21-ab-boot-rollback.md).
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5). The scenario needs real 1/2/3-fail counter state from the A/B producers.
+- [/] Recovery auto-select + ALL_PATHS_BAD scenario. Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md), [`TODO-22 §2`](TODO-22-recovery-partition.md).
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-22 §1 (item: "GPT layout: EFI (64 MiB) + Slot A ..." at line 5). The scenario needs the recovery load path and the ALL_PATHS_BAD sentinel.
 - [/] Per-entry health-gate scenario: unit-level coverage shipped via §14 (`test_boot_health_check.c` + health_check_subset parser fixtures); full live-boot scenario needs the live-boot harness.
 - [/] Entry-kind dispatch: SPLIT/UKI/SAFE covered via §13; chainload -> [`T27 §1`](TODO-27-uefi-advanced.md), network -> [`T25 §7`](TODO-25-network-pxe-http-boot.md), resume -> [`T26 §3`](TODO-26-hibernation-resume-fast-startup-handoff.md).
 - [/] Loader UEFI variable scenario: helper-level coverage shipped via §15 (`test_smbios_parse.c`); live post-boot readback needs the live-boot harness.
 - [x] Bootstrap idempotency scenario: covered by §16 `emit-seed: idempotent` + 3-entry default (`test_bootcfg.py`).
 - [x] BlackBox-vs-NVRAM audit scenario: covered by §12 (`test_boot_audit.c` + bootcfg mutation-log).
-- [ ] Audit dual-write-failure dedup harness. No current owner -- scope-gap-protocol Branch C: needs a static-helper testability seam in `boot_audit.c` ([L]). Property already correct by construction.
-- [ ] Audit JSONL rotation on FAT32 LFN. Blocked on cross-cluster LFN removal in [`../05-storage-filesystems/TODO-04 §16`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md) (currently refuses non-first-cluster destinations).
+- [/] Audit dual-write-failure dedup harness. No current owner -- scope-gap-protocol Branch C: needs a static-helper testability seam in `boot_audit.c` ([L]). Property already correct by construction.
+  - PARKED with no external blocker: what is missing is a static-helper testability seam in `boot_audit.c` (scope-gap-protocol Branch C, [L]), which is §17-owned work nobody has scheduled. The property itself is already correct by construction, so this is test reach and not a defect.
+- [/] Audit JSONL rotation on FAT32 LFN. Blocked on cross-cluster LFN removal in [`../05-storage-filesystems/TODO-04 §16`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md) (currently refuses non-first-cluster destinations).
+  - Blocker owner: -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations" at line 408). That item shipped the REFUSAL of non-first-cluster destinations, not the cross-cluster LFN removal this needs, so the block still holds as of 2026-09-03.
 - [/] `bootcfg.exe` round-trip scenario: offline subset shipped via §11+§16 (`test_bootcfg.py`); live-boot `bootcfg.exe` deferred per [`§11`](#11-boot-entry-editor-tooling).
 - [x] Commit: `"test: boot entry test suite aggregation + status"` (commit `27c6d2c8`)
 
@@ -598,9 +619,12 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 
 - [x] BLS display ordering by `sort_key` then `machine_id` (`id` tiebreak), shared by the menu + `LoaderEntries`. Helpers `boot_entry_bls_less`/`boot_entries_bls_sort` in `boot_entries_parser.c`; unit-tested in `test_boot_entry_parser.c`.
 - [x] `LoaderConfigTimeoutOneShot`: 0 = menu no timeout, 1..60 honored, 61..3600 clamped to 60 + `[WARN]` (watchdog-window divergence, not a silent drop); a present one-shot forces the menu. Kiosk stays on per-entry `timeout_override`.
-- [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: deferred -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
-- [ ] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
-- [ ] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
+- [/] Distinct `LoaderTimeInitUSec`/`ExecUSec`: deferred -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
+  - PARKED as a §18-owned follow-up, no external blocker: `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point, so both values publish 0. It folds into the publish-relocation item below and clears with it.
+- [/] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
+  - PARKED as a §18-owned follow-up, no external blocker: needs bad-counted-last joined to the §5 counter state plus a `version` sub-key that `boot_entry_envelope_t` does not carry. Advertise `LoaderFeatures` bit 8 only once both land.
+- [/] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
+  - PARKED as a §18-owned follow-up, no external blocker: move the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS). This is the item the two above wait on.
 - [x] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
 
 **Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
