@@ -72,8 +72,8 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎  |  17   | Process groups and sessions (setpgid/setsid)              | --                 |  [/]   |
 | 💎  |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
 | 💎  |  19   | `task_exec` commit point + kernel-stack reclamation       | §14, §15           |  [x]   |
-| 💎  |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [ ]   |
-| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)          | --                 |  [ ]   |
+| 💎  |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [/]   |
+| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)          | --                 |  [/]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -551,7 +551,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > - **Downstream effects:** unblocks a shell's job control + `kill -pgid`; §18 WUNTRACED/WCONTINUED and orphan SIGHUP/SIGCONT delivery still need job-control stop/cont signals. Design + review adoptions in the commit message.
 > - **Scope boundary:** §17 owns the kernel primitives + foreground-group API; Linux syscall adapters -> TODO-10; the terminal/user-lib consumer -> terminal TODO; job-control stop/cont signals -> the orphan-delivery follow-up above.
 > **Verified:** 2026-07-13 | commit `31fcdfde` | 6/7 items | build OK | tests 470/470 PASS (SUITE=sched subset; full suite green per §14) | smoke PASS (KVM 2.5s)
-> **Accepted:** [H] concurrent creators can corrupt the task table -- slot reservation (`pid = num_tasks`) stays lock-free; §17's job-control lock only linearizes the pgid/sid+`num_tasks++` publish (pre-existing convention, Opus auditor rates LOW) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Tasks-publication lock: serialize num_tasks++/slot-publish vs scheduler enumeration" at line 123)
+> **Accepted:** [H] two DISTINCT concurrency invariants, not one -- (a) slot CLAIM: creator-vs-creator, `pid = num_tasks` stays lock-free -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §13 (item: "Atomic task-slot CLAIM" at line 301, itself -> XREF: this file §9); (b) PUBLICATION: writer-vs-reader, `num_tasks++`/slot-publish ordering vs scheduler enumeration -- §17's job-control lock only linearizes the pgid/sid+publish, not admission (pre-existing convention, Opus auditor rates LOW) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §3 (item: "Tasks-publication lock: serialize num_tasks++/slot-publish vs scheduler enumeration" at line 123)
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
@@ -703,6 +703,8 @@ A live task was observed executing against a REAPED task's PML4 whose frames had
 
 **Test checkpoint:** a unit test drives reap-then-reuse of a user PML4 and asserts no runnable thread's CR3 names a freed frame; the debug-build assertion fires on a deliberately-inverted ordering. Re-run the 8.2.2 CI-parity quota suite and record the result either way -- a green run is evidence about the trigger, not about the invariant. Test on: QEMU TCG (8.2.2 and current), QEMU KVM; bare metal.
 
+> **Deferred:** [H] not started this pass -- this is a security/correctness-critical SMP page-table-lifetime invariant (11 items spanning a fallible `vmm_set_user_page`, `task_create_user` cr3=0 handling, an unwind-ladder extraction, the reap-vs-exec invariant itself, a re-exec frame leak, and a debug-build assertion) and the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). Shipping unreviewed changes to page-table lifetime code is worse than parking it untouched. No source changed.
+
 ---
 
 ## 21. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
@@ -710,18 +712,18 @@ A live task was observed executing against a REAPED task's PML4 whose frames had
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 1:
-- [ ] Concurrent `NtSetCurrentDirectory` non-linearizable (resolves vs a cwd snapshot outside `chdir_lock`; racing relative chdirs leave a non-serial cwd). Low-pri (Win not-thread-safe); fix via cwd gen-counter + verify-retry
-- [ ] Non-ASCII CWD: NtSetCurrentDirectory narrows via `nt_unicode_to_ascii` (rejects >0x7F), NtQuery/PEB byte-widen `cwd`; store cwd UTF-8 + strict UTF-16<->UTF-8 at NtSet/NtQuery/PEB so `SearchPathW` CWD supports non-ASCII -> XREF: `TODO-22 §14`.
+- [/] Concurrent `NtSetCurrentDirectory` non-linearizable -- BLOCKED, Codex review unavailable -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [/] Non-ASCII CWD (UTF-8 storage) -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (also -> XREF: `TODO-22` §14)
 From the stamped section 9:
-- [ ] Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process: needs the per-process VM/commit counters this section already owes `RLIMIT_AS`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §9`
+- [/] Enforce working-set Min/Max -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (also -> XREF: `TODO-25-kernel-resource-accounting-quotas.md` §9)
 
 Filed 2026-08-16 from the 01-boot-platform/TODO-01 §25 review:
-- [ ] Make the two `task_create` concurrency XREFs name their distinct invariants: today one stamp reads as though the other already owns its defect.
-  - They are NOT the same race. Slot CLAIM is creator-versus-creator: two creators read the same `num_tasks` before either reserves it (owner `03-memory-concurrency/TODO-06 §13`, item "Atomic task-slot CLAIM" at line 300, referenced from line 315). PUBLICATION is writer-versus-reader: ordering `num_tasks++` and the slot publish against scheduler enumeration and `job_kill_all_members`.
-  - The work is to state which invariant each stamp covers, NOT to pick one canonical owner: collapsing them would leave the other invariant untracked. Line 554's stamp mixes both descriptions today.
-  - Confirmed at source while reviewing TODO-01 §25: [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) selects the slot at 830-835 and publishes at 1119-1125 under `pgroup_jobctl_lock()`, which covers process-group membership and not slot admission. They are separate phases, which is why they are separate invariants.
+- [x] Make the two `task_create` concurrency XREFs name their distinct invariants: today one stamp reads as though the other already owns its defect.
+  - Fixed 2026-09-03 in this file's §17 `Accepted:` stamp (line ~554): rewritten to name BOTH invariants separately -- slot CLAIM (creator-vs-creator, `pid = num_tasks` lock-free) now points at `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §13 (item: "Atomic task-slot CLAIM" at line 301, which itself already XREFs this file §9); PUBLICATION (writer-vs-reader, `num_tasks++`/slot-publish ordering) keeps its existing `03-memory-concurrency/TODO-07-smp-phase2.md` §3 XREF. Confirmed at source: [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) selects the slot at 830-835 and publishes at 1119-1125 under `pgroup_jobctl_lock()`, which covers process-group membership only, not slot admission -- two separate phases, two separate invariants, now two separate XREFs instead of one stamp implying the other invariant is already owned.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [M] 4/5 items not started this pass -- the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03); the 5th (the XREF-clarity item) needed no code and shipped. No source changed.
 
 ---
 
