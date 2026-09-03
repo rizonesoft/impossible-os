@@ -243,7 +243,7 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 > - Deferred (no code shipped): the panic BSOD QR encoder + render -- needs a multi-version V5/6 ECL-M encoder for the ~120-char URL plus segno + phone-scan validation (Gate 11), unavailable autonomously.
 > - Reuse seed: a segno-verified V3/ECL-L encoder exists in `src/boot/uefi/bootx64.c` (error-screen QR), LANDED 2026-05-02 by TODO-03 §14 commit `134702ae`; extend it to V5/6 + ECL-M when validation is available (see the section's IMPORTANT callout). The seed was never the blocker, so every §6 item is marked operator-gated.
 > - Scope boundary: §6 owns the kernel panic QR; the bootloader error-screen QR encoder is owned by → XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §14.
-> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (feasibility analysis)
+> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/6 items | build OK (no code change) | manual (feasibility analysis)
 > **Deferred:** [M] panic BSOD QR encoder + render unimplemented (reason: needs V5/6 ECL-M encoder + segno reference + phone-scan validation per boot-code-quality Gate 11, unavailable autonomously) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §14 (item: "Standalone encoder ... not yet implemented" at line 513) (SEED LANDED 2026-05-02 by TODO-03 §14 commit `134702ae`: the segno-verified V3/ECL-L encoder exists in `bootx64.c`. It was never the blocker -- the remaining gate is validation capability alone, so every §6 item is now marked operator-gated.)
 
 ---
@@ -275,7 +275,7 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 > - Blocker (WM half): full delivery depends on the WM maintaining `g_active_spinners[]` and calling `spinner_tick()` per frame, owned cross-domain by → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 (item: "Per-frame `spinner_tick()` over the active-spinner list" at line 197), still `[ ]` on 2026-09-03.
 > - Blocker (kernel half, binds first): the `spinner_t` pool and renderer are kernel `.text`, and the image has 47 bytes of slack below `USER_BASE` measured 2026-09-03 -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7.
 > - Scope boundary: §7 owns the kernel `spinner_t` pool/render; the per-frame compositor tick wiring is owned by the WM TODO.
-> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/8 items | build OK (no code change) | manual (dependency analysis)
+> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/9 items | build OK (no code change) | manual (dependency analysis)
 > **Deferred:** [M] multi-instance spinner_t pool + compositor integration unimplemented (reason: desktop-polish; single boot spinner works; full delivery needs WM per-frame spinner_tick wiring) -> XREF: 08-graphics-ui/TODO-08-window-manager.md §8 (item: "Per-frame `spinner_tick()` over the active-spinner list" at line 197) (STILL OPEN 2026-09-03: TODO-08 §8 is `[ ]`. A second gate now binds first -- the kernel-image ceiling leaves 47 bytes of `.text`, so the pool/render items are parked on -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Remove the `scripts/build.sh` BSS-collision guard" at line 254), and only the compositor-tick item is WM-owned.)
 
 ---
@@ -300,7 +300,7 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 > - Deferred (no code shipped): the vital-signs overlay strip (CPU/RAM/IRQ/uptime/FPS). The CPU% source SHIPPED 2026-07-20 (`task_acct_sample()`, TODO-25 §7 commit `4b541c54`), so the original blocker is gone; the section is now parked on the kernel-image ceiling, measured 2026-09-03 at 47 bytes of `.text`.
 > - Blocker (current): kernel-image size -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7. A whole new desktop overlay translation unit cannot link into 47 bytes of `.text` slack. The former blocker (per-process CPU-time accounting, TODO-25 §7) is CLOSED.
 > - Scope boundary: §8 owns the desktop overlay (`src/desktop/vital_signs.c`); the scheduler CPU-time accounting source is owned by TODO-25 §7.
-> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (dependency analysis)
+> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/7 items | build OK (no code change) | manual (dependency analysis)
 > **Deferred:** [M] runtime vital-signs strip unimplemented (reason: needs scheduler per-CPU CPU% accounting) -> XREF: 02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7 (item: "Track per-process and per-job CPU time with user/kernel split") (BLOCKER RESOLVED 2026-07-20 by 02-kernel-core/TODO-25 §7 commit `4b541c54`: `task_acct_sample()` publishes per-process user/kernel CPU time under one timestamp, which is the CPU% source this section named. §8 is NOT re-opened: it is re-owned to the kernel-image ceiling, MEASURED 2026-09-03 at 47 bytes of `.text` against a new desktop overlay -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Remove the `scripts/build.sh` BSS-collision guard" at line 254).)
 
 ---
@@ -369,7 +369,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- 44 asserts; full suite 2605 kernel + 16 user-mode 0 failures; smoke PASS shows `[BOOT-LOAD] all subsystems loaded clean` (NIC absent -> SKIPPED) + dump.
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
 > - Scope boundary: §11 ships infra + storage/network wiring. Granular per-driver coverage, probe-result aggregation and NVMe per-controller status are NOT open here -- all seven §11 items are `[x]`; those three were moved verbatim to §12, where they are parked on the kernel-image ceiling.
-> **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 6/9 items | build OK | smoke PASS + tests 2605/2605
+> **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 7/7 items | build OK | smoke PASS + tests 2605/2605 (count corrected 2026-09-03: the stamp read 6/9 against the pre-split body; the three unshipped items became §12)
 > **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 381)
 > **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 382)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
