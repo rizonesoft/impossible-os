@@ -70,6 +70,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
 | 💎  |  17   | Per-CPU threaded DPC worker affinity                   | §8, §15     |  [/]   |
 | ⭐  |  18   | System worker thread pool (long-period periodic)       | §8          |  [/]   |
+| 💎  |  19   | Interference-proof DPC depth-accounting test seam      | §4, §8      |  [ ]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.
@@ -618,6 +619,29 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 > **Deferred:** [M] Consumer 2 -- UEFI variable-store health monitor (`uefi_runtime_refresh_vars_registry` + `uefi_vars_health_tick`, new) -> XREF: 01-boot-platform/TODO-02-uefi-hardening-secureboot.md §14 (UEFI vars registry)
 > **Deferred:** [M] Consumer 3 -- S3 resume re-prime (SecureBoot + vars registry after `pm_notify_resume`) -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (S3 suspend/resume -- not yet created)
 > **Quality reviewed:** 2026-06-26 | Codex 8x (design, adversarial, re-adversarial x4, consistency, perf) | 7H+4M fixed, 1M accepted (gen-wrap), 2M deferred | scope: kernel-code-quality
+
+---
+
+## 19. Interference-Proof DPC Depth-Accounting Test Seam
+
+> **Spawned-by:** root
+
+> **User impact:** an intermittent scheduler-suite failure that reproduces on nobody's machine, or worse, a real depth-accounting regression that ships because unrelated queue traffic happened to cancel it out. Both cost a debugging session that starts by disbelieving the test.
+
+`test_dpc_insert_remove()` (`src/kernel/test/test_sched.c`) takes four separate depth snapshots around insert/insert/remove/remove and asserts EXACT deltas between them. Its reads are well-defined as of 2026-09-04 (every access to that field, in `src/kernel/sched/dpc.c` and in the tests, is now a matching relaxed atomic), but well-defined is not the same as serialized: `dpc_insert_core()` lets ANY CPU target this queue and mutate its depth under that queue's lock (`src/kernel/sched/dpc.c:586-598`, `:648`), and raising local IRQL to `HIGH_LEVEL` stops only THIS CPU's drain. Quota producers target CPU 0 from interrupt-capable paths, and CPU 0 is where this test runs.
+
+Found during the TODO-26 §2 review (2026-09-04, adversarial + consistency legs agreeing), while converting that field to a single atomic access discipline. Filed here rather than fixed there because the remedy is DPC test-surface design, which this TODO owns; §2 only made the existing reads well-defined and changed the assertions in no way. -> XREF: `02-kernel-core/TODO-26-power-management.md` §2 (item: "`pm_deep_idle_allowed()` -- the readiness predicate").
+
+- [ ] Give the depth assertions an observation that cannot be perturbed by unrelated queue traffic. Either is acceptable; pick one and say why:
+  - a test-only seam that samples depth AND the queue contents in one critical section under `DPC_QLOCK`, so the pair is consistent by construction; or
+  - a test-only private `struct dpc_queue` that no production producer can target, leaving the shared-queue test to assert only the named KDPC's membership and return-state contract.
+- [ ] Keep the parts of `test_dpc_insert_remove()` that ARE deterministic on the shared queue
+  - `KeInsertQueueDpc`/`KeRemoveQueueDpc` return codes, `dpc.queued` and `dpc.queued_cpu` binding are properties of the NAMED object, which no remote producer can disturb. Only the global depth deltas are interference-prone.
+- [ ] Do NOT "fix" this by widening the assertions to accept a range
+  - A test that accepts two answers verifies nothing (CLAUDE.md, "Never paper over test failures with platform workarounds"). The point is to make the OBSERVATION serialized, not the expectation loose.
+- [ ] Commit: `"test/sched: interference-proof DPC depth accounting"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=sched` green, and the depth assertions still fail when depth bookkeeping is deliberately broken (mutate one `__atomic_sub_fetch` in `dpc.c` and confirm the test goes red -- a control that must fire, or the new seam is measuring nothing).
 
 ---
 
