@@ -82,7 +82,7 @@ implements_after: TODO-04
 | ⭐  |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
 | ⭐  |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
 | 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
-| 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | --                                              |  [ ]   |
+| 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [/]   |
 | 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [ ]   |
 | 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [ ]   |
 
@@ -465,15 +465,30 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3. Split 2026-09-03 on a `SPLIT-RECOMMENDED` manifest verdict (6 work items): the boot-trend writer group became §20 and the per-driver degraded-state item became §21; what remains here is the boot perf REPORTING surface (what the serial log prints and how a budget breach is stated).
 
 From the stamped section 1:
-- [ ] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
+- [/] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
+  - BLOCKED on the kernel image ceiling, not on design. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
+  - Two full tables emit one serial line per step each -- `boot_timing_print_steps()` (`src/kernel/boot_timing.c:73`) and the sorted table in `boot_perf_dump()` (`:762`), 45 lines apiece on a 45-step boot, confirmed at `build/smoke-test.stripped.log:620` and `:666`. Gating both and replacing them with one summary line naming the three slowest INTERVALS by both endpoints is what shipped in the parked patch.
 
 Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX leg:
-- [ ] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
+- [/] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
+  - BLOCKED on the same image ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
   - Observed on the WHPX boundary leg for a change touching NO VFS, EXEC or loader code: `VFS -> PARTITION took 5725ms (target 500ms)` and `EXEC -> DESKTOP_READY took 2319ms (target 100ms)`, both `[FAIL]`, while all four KVM and TCG legs of the same image reported zero `BOOT-BUDGET` lines.
   - The targets are wall-clock and WHPX boots roughly an order of magnitude slower than KVM (~141s against ~2s), so every WHPX run reports a red `[FAIL]` that names a phase nothing regressed. That trains a reader to skim the one signal the leg exists to produce.
   - Not a regression and not muted: the finding is that the reporter states a platform-relative fact in absolute terms. The provenance is the header line above; this section owns the budget reporter, and the TPM work that happened to observe it has no dependency on the fix.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [M] 2026-09-03 -- code COMPLETE and design-reviewed, reverted on the kernel image ceiling; the tree was left green. MEASURED at `a0a78bde1`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **47 bytes** of `.text` slack, and this section costs **+2,448 bytes** of `.text`, which landed `__kernel_end` exactly on `0x800000` and tripped the `scripts/build.sh` BSS guard. Trimming cannot rescue it: 47 bytes does not admit a format string. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
+>
+> Design settled, so the redo is apply-then-re-verify rather than a re-design. The diff is preserved at `.claude/state/deferred-TODO-29-boot-perf-health-observability-s19.patch` (gitignored: survives a rollover, NOT a fresh clone), and every decision below is recorded here in case it is lost:
+>
+> - The accelerator is MEASURED, never derived from the hypervisor identity: WHPX presents as "Microsoft Hv" and is indistinguishable from a fast native Hyper-V boot. `boot_perf_machine_index()` is the 25th percentile of observed/target across every budgeted step, Q8.8 fixed point (freestanding: no float), clamped to `[1.00x, 64.00x]` and requiring >= 5 samples.
+> - p25 rather than the median, per the design review: a regression hitting more than half but fewer than three quarters of the phases would carry a median with it. The minimum is rejected for the opposite reason -- one quantized fast interval would pin the index at 1.00x on a genuinely slow machine.
+> - The index NEVER gates emission. A breach line is emitted on the ABSOLUTE class exactly as today and carries its raw target, its effective target and the index; only the log LEVEL comes from the scaled class. Scaling emission would let a uniform regression raise the index and hide itself.
+> - Cross-boot regression detection stays where it already lives and does not depend on the index: `boot_perf_read_prev()` declines a comparison whose baseline came from a different machine configuration (`src/kernel/boot_timing.c:593`), and §3's boot-trend detector compares per-phase 3-run medians across boots.
+> - Overflow: `observed_ms` saturates at `UINT32_MAX` upstream (`boot_timing.c:97`), so each ratio is `(u64)observed * 256 / target` saturated to the 64x ceiling BEFORE it is stored as `uint32_t`; nearest-rank p25 selects an existing sample, so no even-count average exists.
+> - `boot_perf_total_check()` takes the same rule. Without it a 141-second WHPX boot reports a permanent `[FAIL] TOTAL` line against the 4,000 ms absolute target that no change can ever clear.
+> - Table gating uses `debug || test || verbose` -- no new `boot.conf` key and no `boot_info` ABI change. Safe against the smoke gate: the required `[PHASE0] BOOT_INFO` signal (`scripts/test-smoke.sh:146`) is emitted live by `boot_progress`, not by either table.
 
 ---
 
