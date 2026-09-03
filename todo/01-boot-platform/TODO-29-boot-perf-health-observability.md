@@ -84,7 +84,7 @@ implements_after: TODO-04
 | 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
 | 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [/]   |
 | 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [/]   |
-| 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [ ]   |
+| 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [/]   |
 
 ---
 
@@ -550,29 +550,39 @@ From the stamped section 3:
 > **Spawned-by:** §19 (split)
 
 From the stamped section 2 (filed 2026-08-14 by the `01-boot-platform/TODO-10 §27` review):
-- [ ] Per-DRIVER degraded state for storage, not just a per-subsystem bit: `boot_health.c` has no `SUBSYS_AHCI`/`SUBSYS_NVME` to set, so a boot that excluded one storage driver reports only the aggregate class. XREF: `01-boot-platform/TODO-10 §27`.
+- [/] Per-DRIVER degraded state for storage, not just a per-subsystem bit. PARKED on the kernel image ceiling; owner named in this section's Deferred stamp. XREF: `01-boot-platform/TODO-10 §27`.
+  - `boot_health.c` has no `SUBSYS_AHCI`/`SUBSYS_NVME` to set, so a boot that excluded one storage driver reports only the aggregate class.
   - TODO-10 §27 made a storage driver whose async init did not complete excludable from `ahci_setup_interrupts()` and `blkdev_register_all()`, but the mask (`storage_unsafe`) is a local in `boot_phase2` and is never published anywhere durable.
   - Parity: Windows marks the devnode `CM_PROB_FAILED_START` ("Code 10"), a persistent per-device property queryable via `CM_Get_DevNode_Status` long after boot; Linux leaves the device unbound and visible in `/sys`. Impossible OS has only the boot-time klog ERROR text, so nothing can answer "is AHCI excluded right now".
   - Wants either `SUBSYS_*` entries per storage driver or a small queryable degraded-driver registry that `boot_health_publish_json()` reads.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text from §2.
 
+> **Deferred:** [M] 2026-09-03 -- design-reviewed and PARKED BEFORE implementation on the kernel image ceiling; no code was written and the tree was left green. MEASURED at `3032a376e`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **15 bytes** of `.text` slack (`precision: section-exact`, `tightest: .text`). -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §21 once the guard is gone").
+> - Why no probe patch was preserved, unlike §19: the budget is already section-exact and the smallest comparable helper SHIPPED in the consumer file, `boot_health_secureboot_name`, is **30 bytes** of `.text` on its own (`llvm-nm --print-size`) -- twice the whole budget before a single emit loop, name table or publish store. Building it to reconfirm a measured 15 bytes buys no information; the design of record below is what makes the redo implement-then-verify.
+> - REJECTED, the first alternative the item names: new `SUBSYS_AHCI`/`SUBSYS_NVME` enum entries. `SUBSYS_COUNT` is 30 against a `_Static_assert` cap of 32 (`include/kernel/boot_init.h:76`), so four storage drivers force `boot_info.degraded_mask` from `uint32` to `uint64` -- a `BOOT_INFO_VERSION` bump plus the bootloader mirror, which is an ABI change this section does not warrant.
+> - ACCEPTED, the second alternative: a file-scope `uint32` in `boot_storage.c` published once from `storage_unsafe` and read by `boot_health_publish_json()` through an accessor, emitted as a JSON array of driver names. No SMP primitive is needed -- the BSP writes it in Phase 2 and the BSP reads it in Phase 3; document the accessor as immutable after the storage phase rather than adding release/acquire.
+> - THE MASK IS NOT THE DEGRADED SET, and shipping it as one would have inverted this section's purpose. CONFIRMED at `src/kernel/main/boot_storage.c:531`: `storage_unsafe` is populated only for FATAL-fallback steps that ended SKIP, while the `else if (async_rc == BOOT_DEGRADED)` branch marks only the aggregate span and leaves the mask zero, and the sequential branch (`:560`) discards every initializer's return value. A `degraded_storage_drivers` array built from it would read EMPTY for a driver that explicitly failed. The redo either builds one mask meaning "not fully healthy" (SKIP-excluded plus completed-`BOOT_DEGRADED`, with the sequential branch capturing return values) or names the field `excluded_storage_drivers` for the narrower meaning it actually has.
+> - No positional name array pinned by a `_Static_assert`: the assert pins numeric bit layout and cannot prove a string still names its driver. Use named `{bit, name}` entries, the same reasoning that replaced `(1u << i)` with `storage_unsafe_bit[]` at `src/kernel/main/boot_storage.c:389`. Publish the finalized mask BEFORE the AHCI suppression branch (`boot_storage.c:576`), not merely before `blkdev_register_all()`, so the first consumer decision reads a settled value.
+> - Wiring the redo must carry: a row in the `## Top-level keys` table of `docs/boot/boot-health-schema.md`, which declares itself the canonical wire format and enumerates every key with requiredness. Adding an optional field is not a `schema_version` bump, but leaving it undocumented ships a key whose degraded-versus-excluded meaning no consumer can resolve.
+
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                          | 🪟 Win11                      | 🐧 Linux                          | 🚀 Impossible OS                   |
-| --- | -------------------------------- | ----------------------------- | --------------------------------- | ---------------------------------- |
-| 💎  | Per-phase boot perf budgets      | ⚠️ ETW boot trace (post-hoc)  | ⚠️ systemd-analyze (post-hoc)     | ⬜ §1 boot-time alarms             |
-| ⭐  | Consolidated boot health JSON    | ⚠️ msinfo32 + Event Viewer    | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
-| ⭐  | Boot perf trend regression alarm | ❌ no built-in                | ❌ no built-in                    | ⚠️ §3 trend+WARN; §20 linear scan  |
-| 💎  | SMBIOS init speed                | ⚠️ NT HAL parses lazily       | ⚠️ dmidecode-driven, scattered    | ✅ §4 51ms (was 1342ms; RAM copy)  |
-| ⭐  | MAT W^X root-cause attribution   | ❌ unsupported                | ⚠️ /sys/firmware/efi/* raw        | ✅ §5 per-violation phys+attr      |
-| 💎  | PS/2 mouse init speed            | ⚠️ HAL probes serially        | ⚠️ atkbd serial probe             | ✅ §6 100ms (was 1149ms; split TO) |
-| ⭐  | Async font / icon load           | ✅ Win11 SystemAssets fade-in | ⚠️ DE-dependent (KDE/GNOME async) | ⬜ §7 minimal face + swap          |
-| 💎  | Boot heartbeat telemetry         | ✅ ETW Microsoft-Windows-Boot | ⚠️ printk timestamps only         | ⬜ §8 250ms HB + LAPIC ISR         |
-| ⭐  | PAT WC-trap hypervisor surfacing | ❌ silent WT fallback         | ❌ silent WT fallback             | ⬜ §17 firmware_quirks_active[]    |
-| 💎  | Boot critical-path attribution   | ⚠️ WPA stack (post-hoc)       | ✅ systemd-analyze critical-chain | ⬜ §18 [BOOT-CRIT] + cause class   |
+| ⭐  | Feature                           | 🪟 Win11                        | 🐧 Linux                          | 🚀 Impossible OS                   |
+| --- | --------------------------------- | ------------------------------- | --------------------------------- | ---------------------------------- |
+| 💎  | Per-phase boot perf budgets       | ⚠️ ETW boot trace (post-hoc)    | ⚠️ systemd-analyze (post-hoc)     | ⬜ §1 boot-time alarms             |
+| ⭐  | Consolidated boot health JSON     | ⚠️ msinfo32 + Event Viewer      | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
+| ⭐  | Boot perf trend regression alarm  | ❌ no built-in                  | ❌ no built-in                    | ⚠️ §3 trend+WARN; §20 linear scan  |
+| 💎  | SMBIOS init speed                 | ⚠️ NT HAL parses lazily         | ⚠️ dmidecode-driven, scattered    | ✅ §4 51ms (was 1342ms; RAM copy)  |
+| ⭐  | MAT W^X root-cause attribution    | ❌ unsupported                  | ⚠️ /sys/firmware/efi/* raw        | ✅ §5 per-violation phys+attr      |
+| 💎  | PS/2 mouse init speed             | ⚠️ HAL probes serially          | ⚠️ atkbd serial probe             | ✅ §6 100ms (was 1149ms; split TO) |
+| ⭐  | Async font / icon load            | ✅ Win11 SystemAssets fade-in   | ⚠️ DE-dependent (KDE/GNOME async) | ⬜ §7 minimal face + swap          |
+| 💎  | Boot heartbeat telemetry          | ✅ ETW Microsoft-Windows-Boot   | ⚠️ printk timestamps only         | ⬜ §8 250ms HB + LAPIC ISR         |
+| ⭐  | PAT WC-trap hypervisor surfacing  | ❌ silent WT fallback           | ❌ silent WT fallback             | ⬜ §17 firmware_quirks_active[]    |
+| 💎  | Boot critical-path attribution    | ⚠️ WPA stack (post-hoc)         | ✅ systemd-analyze critical-chain | ⬜ §18 [BOOT-CRIT] + cause class   |
+| ⭐  | Per-driver storage degraded state | ✅ CM_PROB_FAILED_START devnode | ⚠️ device left unbound under /sys | ⬜ §21 registry (ceiling-parked)   |
 
 ---
 
