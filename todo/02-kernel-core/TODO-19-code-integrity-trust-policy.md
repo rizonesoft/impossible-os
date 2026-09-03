@@ -239,12 +239,12 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 1:
-- [ ] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` (boot_desktop.c Phase 3) + add `SUBSYS_CI`; the module is unwired today so accessors fail closed until called.
-- [ ] Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key + key epoch (non-circular); `crypto_ed25519_check` is available.
-- [ ] Persistent CI-policy version floor (anti-rollback): reuse the `boot_rollback.c` mechanism but a DISTINCT counter (NOT `IPOSRequiredSecVersion`); fail-closed reads, steady-boot advance.
-- [ ] Ratchet-domain merge: policy_lock caps ci.mode at 2 + collapses SB to a bool (vs CI UNKNOWN->ENFORCE / ACTIVE->SECUREBOOT). Wiring the ratchet needs a shared tri-state SB resolver + full ci_enforcement_t mode domain.
+- [/] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` + add `SUBSYS_CI` -- BLOCKED, Codex review unavailable -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [/] Authenticate the policy artifact's own Ed25519 signature -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [/] Persistent CI-policy version floor (anti-rollback counter) -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [/] Ratchet-domain merge (shared tri-state SB resolver) -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
 From the stamped section 2:
-- [ ] Gate dynamic-code sites: `NtAllocateVirtualMemory` (PAGE_EXECUTE) + `NtProtectVirtualMemory` (non-exec->exec) in src/kernel/nt/nt_memory.c must call `ci_validate_dynamic_code` before changing PTEs. -> XREF: T19 §4.
+- [/] Gate dynamic-code sites in `nt_memory.c` via `ci_validate_dynamic_code` -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (also -> XREF: T19 §4)
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
