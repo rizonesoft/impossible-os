@@ -8,6 +8,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 # TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)
 
+> **Validated:** 2026-09-03 | validate-todo-file clean (structure / IO table / XREF / test wiring); §1's missing Notes block added; todo-graph 10/10; no hard-wrap; no code-block bloat; bat runner present
+
 > **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers S1 CPU-halt idle, S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
 
 > [!IMPORTANT]
@@ -127,6 +129,13 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [x] Commit: `"kernel/acpi: S1/S3/S4 sleep type parsing, PM1 state machine, fixed-event ISR"`
 
 **Test checkpoint:** `acpi_sleep_supported(5)` returns 1. `acpi_get_slp_typa(S5)` != 0xFFFF. `acpi_enter_sleep_state(2)` returns -1 (unsupported). `acpi_enter_sleep_state(6)` returns -1 (invalid). 7 tests in `test_acpi_power.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - **What shipped:** `acpi_power_init()`/`acpi_sleep_supported()`/`acpi_enable_fixed_events()`/`acpi_register_sci()`/`acpi_enter_sleep_state()` (`src/kernel/acpi.c:681-925`) -- PM1 sleep-type parsing + fixed-event SCI dispatch.
+> - **How it integrates:** wired into Phase 2 boot in `boot_storage.c` after timer init, ahead of every §2+ consumer in this file.
+> - **Downstream effects:** §2-§21 build on `acpi_sleep_supported()`/`acpi_enter_sleep_state()`; S3/S4 still need their own state-save/wakeup-vector work (§3/§4).
+> - **Canonical doc:** `include/kernel/acpi.h`; `src/kernel/test/test_acpi_power.c` (11 assertions, `TEST_CAT_BOOT`).
+> - **Scope boundary:** §1 owns discovery + the PM1 register sequence only; S3/S4 resume, EC, battery, governors are the sections below.
 
 ---
 
