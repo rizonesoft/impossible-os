@@ -14,7 +14,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 > **Goal:** Build the kernel's authoritative configuration plane: boot arguments, BCD-style boot entries, safe-mode flags, control sets, LastKnownGood, feature flags, runtime tunables, debug policy, crash policy, and immutable early-boot policy. The Registry stores durable state, but the kernel must own parsing, validation, phase-safe publication, rollback, and the contract every subsystem consumes.
 
 > [!IMPORTANT]
-> **Current state:** Boot config is partially delivered by the UEFI bootloader through `g_boot_info.config` and consumed by Phase 0. Registry policy exists only as ad-hoc reads in individual subsystems. There is no typed kernel configuration API, no safe-mode policy object, no BCD-equivalent boot-entry parser, no control-set selection, no rollback to LastKnownGood, and no global feature-flag/tunable registry. `KUSER_SHARED_DATA` already reserves `SafeBootMode`, `KdDebuggerEnabled`, and `MitigationPolicies`, but `kusd_init()` does not populate those policy fields today.
+> **Current state (refreshed 2026-09-03 at file close-out; the pre-work reading this replaced is preserved in the §1 and §2 stamps).** SHIPPED: the typed boot-argument schema and parser (§1, `src/kernel/config.c`), the immutable `kernel_config_t` Phase 0 snapshot (§2), the `safe_mode_t` policy object (§5), the runtime tunable registry (§6, `src/kernel/tunables.c`), feature-flag gates and cohorts (§7), the read half of the native config syscall (§8), phase-sealed policy locks with tamper audit (§9), the boot acceptance ledger (§10), and `config_dump` plus tests and docs (§11). `kusd_init()` DOES populate the `KUSER_SHARED_DATA` policy mirror now (`src/kernel/time/kusd_time.c:179-189`). STILL OPEN, all parked with named blockers: the registry-backed policy merge (§3) and control-set / LastKnownGood selection (§4), both gated on the registry substrate plus an operator-reserved ordering decision; and the privileged write path for tunables (§12), blocked on the kernel image ceiling. Registry policy is therefore still read ad hoc by individual subsystems, and no configured quota cap can be enforced until §12 lands.
 
 ## Inputs
 
@@ -91,7 +91,7 @@ Parse the bootloader handoff into typed, validated keys before any Phase 0 consu
 > - `boot_config` fields project as the BOOTCFG layer; cmdline overrides per §3 precedence with `source`/`present`/`raw` provenance. Codex 4x adoptions in commit.
 > - Tests: `test_kernel_config.c`, 11 suites under `TEST_CAT_BOOT` (alias, unknown-key halt, allow_unknown, CSV, bad-value, bounded/unterminated cmdline).
 > - Scope: §1 owns schema + cmdline parser + provenance; §2 owns the `kernel_config_t` snapshot; §3 owns the registry precedence merge + BOOTCFG explicit-vs-default.
-> **Verified:** 2026-06-20 | commit `pending` | 7/7 items | build OK | smoke PASS (KVM 2.65s)
+> **Verified:** 2026-06-20 | commit `fb050e700` | 7/7 items | build OK | smoke PASS (KVM 2.65s)
 > **Deferred:** [M] BOOTCFG explicit-vs-default provenance needs a `boot_config` presence bitset (BOOT_INFO_VERSION bump) -> XREF: 02-kernel-core/TODO-02 §3 (item: "Resolve boot_config explicit-vs-default in the merge" at line 134)
 > **Quality reviewed:** 2026-06-20 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 1H+2M fixed | scope: kernel-code-quality
 
@@ -117,7 +117,7 @@ Publish one read-only snapshot that all later phases consume instead of rereadin
 > - `boot_args_t` stays the private parser input; consumers read the flattened typed fields, never re-deriving defaults/enums. Codex 4x adoptions in commit.
 > - ABI guard: `KERNEL_CONFIG_SIZE_V1` exact-size `_Static_assert` + 4 offset pins (a `<=N` guard would miss reorder/repack).
 > - Scope: §2 owns the immutable snapshot; §3 owns the registry precedence merge; §4 owns the control-set target; §6 owns panic/runtime tunables.
-> **Verified:** 2026-06-20 | commit `pending` | 6/6 items | build OK | smoke PASS (KVM 2.71s)
+> **Verified:** 2026-06-20 | commit `2d3b2fb07` | 6/6 items | build OK | smoke PASS (KVM 2.71s)
 > **Quality reviewed:** 2026-06-20 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) | 2H+2M fixed | scope: kernel-code-quality
 
 ---
@@ -126,13 +126,20 @@ Publish one read-only snapshot that all later phases consume instead of rereadin
 
 Merge persisted policy without letting malformed registry data silently reshape boot-critical behavior.
 
-- [ ] Load `HKLM\SYSTEM\CurrentControlSet\Control\Kernel` during Phase 2.
-- [ ] Merge precedence: compiled defaults < boot entry defaults < registry policy < boot command line < firmware-enforced policy.
-- [ ] Produce per-key provenance for `config_dump`.
-- [ ] Log every override with previous value, new value, and source.
-- [ ] Reject malformed security-sensitive values with an explicit `"[CONF] rejected policy override"` log and keep the last valid value instead of silently coercing.
-- [ ] Resolve boot_config explicit-vs-default in the merge: the struct has no per-key presence bit. Add a producer presence bitset (BOOT_INFO_VERSION bump) or define boot.conf-default == compiled-default. (Codex §1 design H)
-- [ ] Commit: `"kernel: merge registry-backed policy into effective configuration"`
+- [/] Load `HKLM\SYSTEM\CurrentControlSet\Control\Kernel` during Phase 2. -- PARKED: the `CurrentControlSet` link this key hangs off is not created yet.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion")
+- [/] Merge precedence: compiled defaults < boot entry defaults < registry policy < boot command line < firmware-enforced policy. -- PARKED on §4 plus the operator-reserved Phase-2 policy-object decision.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`"). ALSO operator-gated: the §3-before-§4 reorder and the separate Phase-2 effective-policy object are an operator-reserved architecture decision with no TODO owner, so §4 shipping does not by itself release this item.
+- [/] Produce per-key provenance for `config_dump`. -- PARKED on §4 plus the operator-reserved Phase-2 policy-object decision.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`"). ALSO operator-gated: the §3-before-§4 reorder and the separate Phase-2 effective-policy object are an operator-reserved architecture decision with no TODO owner, so §4 shipping does not by itself release this item.
+- [/] Log every override with previous value, new value, and source. -- PARKED on §4 plus the operator-reserved Phase-2 policy-object decision.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`"). ALSO operator-gated: the §3-before-§4 reorder and the separate Phase-2 effective-policy object are an operator-reserved architecture decision with no TODO owner, so §4 shipping does not by itself release this item.
+- [/] Reject malformed security-sensitive values with an explicit `"[CONF] rejected policy override"` log and keep the last valid value instead of silently coercing. -- PARKED with the rest of §3.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`"). ALSO operator-gated: the §3-before-§4 reorder and the separate Phase-2 effective-policy object are an operator-reserved architecture decision with no TODO owner, so §4 shipping does not by itself release this item.
+- [/] Resolve boot_config explicit-vs-default in the merge: the struct has no per-key presence bit. Add a producer presence bitset (BOOT_INFO_VERSION bump) or define boot.conf-default == compiled-default. (Codex §1 design H) -- PARKED with §3.
+  - Carries a `BOOT_INFO_VERSION` bump in both headers, so schedule it where a protocol bump is acceptable rather than squeezing it in beside another section. Blocker owner: -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`")
+- [/] Commit: `"kernel: merge registry-backed policy into effective configuration"` -- PARKED with §3.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`"). ALSO operator-gated: the §3-before-§4 reorder and the separate Phase-2 effective-policy object are an operator-reserved architecture decision with no TODO owner, so §4 shipping does not by itself release this item.
 
 **Test checkpoint:** Registry sets `debug=0`, command line sets `debug=1`, and `config_dump` reports `effective=1 source=cmdline`. Invalid `panic.timeout=-1` logs a rejection and leaves the compiled default in place. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -144,12 +151,18 @@ Merge persisted policy without letting malformed registry data silently reshape 
 
 Turn `Select` values and boot outcomes into deterministic control-set choice instead of ad-hoc registry reads.
 
-- [ ] Implement `kernel_select_control_set()`: Current, Default, Failed, LastKnownGood.
-- [ ] Resolve `CurrentControlSet` only after `Select` values are validated and persist the chosen control set id in `kernel_config_t`.
-- [ ] Mark boot as pending until §10 reports that the configured acceptance stage is reached and the kernel can report success to D01 T21 §5.
-- [ ] On successful boot, update LastKnownGood only after the §10 acceptance policy confirms critical services and registry flush succeeded.
-- [ ] On failed boot, record failure reason, roll back the control set, and pass the rollback hint to D01 T21 §4-§5.
-- [ ] Commit: `"kernel: add control-set and LastKnownGood selection policy"`
+- [/] Implement `kernel_select_control_set()`: Current, Default, Failed, LastKnownGood. -- PARKED: `SYSTEM\Select` / `ControlSetNNN` do not exist yet.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion")
+- [/] Resolve `CurrentControlSet` only after `Select` values are validated and persist the chosen control set id in `kernel_config_t`. -- PARKED on the registry substrate.
+  - The chosen id cannot go in the immutable §2 `kernel_config_t`; it needs the Phase-2 effective-policy object the operator decision still gates. Blocker owner: -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion")
+- [/] Mark boot as pending until §10 reports that the configured acceptance stage is reached and the kernel can report success to D01 T21 §5. -- PARKED on the §10 acceptance ledger.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`")
+- [/] On successful boot, update LastKnownGood only after the §10 acceptance policy confirms critical services and registry flush succeeded. -- PARKED on the §10 acceptance ledger.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`")
+- [/] On failed boot, record failure reason, roll back the control set, and pass the rollback hint to D01 T21 §4-§5. -- PARKED on the §10 acceptance ledger plus the registry substrate.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`")
+- [/] Commit: `"kernel: add control-set and LastKnownGood selection policy"` -- PARKED with §4.
+  - Blocker owner: -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`")
 
 **Test checkpoint:** With `Current=2`, `Default=1`, and `LastKnownGood=3`, a failed boot before ready logs `"[CONF] control set rollback: ControlSet002 -> ControlSet003"` and the next boot selects `ControlSet003`. Successful boot updates `LastKnownGood` only after registry flush succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -210,7 +223,7 @@ Give subsystems one typed registration surface for mutable policy instead of one
 > - Codex review adoptions (design + adversarial + test-coverage + consistency + perf + re-adversarial) in the section ship + review commits.
 
 > **Verified:** 2026-06-20 | commit `692c3d1b` | 5/6 items | build OK | tests 2978/2978 PASS
-> **Accepted:** [M] module-namespace loader register/unregister call (item 6, `[/]`) is owned by the kernel module system -> XREF: 04-drivers-hardware/TODO-05 §5 (item: "Parse `module_param` declarations ... register each as a `module.<name>.` tunable" at line 155)
+> **Accepted:** [M] module-namespace loader register/unregister call (item 6, `[/]`) is owned by the kernel module system -> XREF: 04-drivers-hardware/TODO-05 §5 (item: "Parse `module_param` declarations ... register each as a `module.<name>.` tunable" at line 157)
 > **Quality reviewed:** 2026-06-20 | Codex 12x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 8H+14M fixed | scope: kernel-code-quality
 
 ---
@@ -249,8 +262,11 @@ Expose the effective configuration through stable NT contracts once the SSDT sur
 
 - [x] Add `SystemKernelConfigInformation` (0x1000) to `NtQuerySystemInformation`: `nt_query_kernel_config_information` marshals the snapshot + tunable/feature counts + lock phase (Probe + `copy_to_user`, two-pass length).
 - [/] Shared ABI struct `SYSTEM_KERNEL_CONFIG_INFORMATION` (size/offset asserts) in `nt/sysconfig_info.h`; set/write contract rides `NtSetSystemInformation`, deferred with the privilege gate. -> XREF: 02-kernel-core/TODO-15 §8
+  - Re-pointed 2026-09-03: TODO-15 §8 SHIPPED (`SeSinglePrivilegeCheck`, commit `0051a8d28`), so the old target is closed and no longer sweeps this item. The live blocker is the kernel image ceiling -> XREF: 02-kernel-core/TODO-02 §12 (item: "Privileged production write path for tunables"). The residual unlocked `Privileges[]` scan is owned separately -> XREF: 02-kernel-core/TODO-15 §4 (item: "**Per-token lock for SMP safety**").
 - [/] Enforce `SeSystemProfilePrivilege` for writes -- deferred: an SMP-safe check needs the SRM's `SeSinglePrivilegeCheck` + per-token lock. -> XREF: 02-kernel-core/TODO-15 §8
+  - Re-pointed 2026-09-03: TODO-15 §8 SHIPPED (`SeSinglePrivilegeCheck`, commit `0051a8d28`), so the old target is closed and no longer sweeps this item. The live blocker is the kernel image ceiling -> XREF: 02-kernel-core/TODO-02 §12 (item: "Privileged production write path for tunables"). The residual unlocked `Privileges[]` scan is owned separately -> XREF: 02-kernel-core/TODO-15 §4 (item: "**Per-token lock for SMP safety**").
 - [/] Return provenance, effective value, mutability -- snapshot fields shipped in the query class; per-key provenance ships with the set path. -> XREF: 02-kernel-core/TODO-15 §8
+  - Re-pointed 2026-09-03: TODO-15 §8 SHIPPED (`SeSinglePrivilegeCheck`, commit `0051a8d28`), so the old target is closed and no longer sweeps this item. The live blocker is the kernel image ceiling -> XREF: 02-kernel-core/TODO-02 §12 (item: "Privileged production write path for tunables"). The residual unlocked `Privileges[]` scan is owned separately -> XREF: 02-kernel-core/TODO-15 §4 (item: "**Per-token lock for SMP safety**").
 - [x] Read-path marshalling + unit coverage landed (`test_cfg_query_syscall`); write-path privilege/ACCESS_DENIED ABI checks deferred with the set path, not dropped.
 - [x] Commit: `"kernel: add native configuration query and set syscalls"`
 
@@ -261,13 +277,13 @@ Expose the effective configuration through stable NT contracts once the SSDT sur
 > **Notes:**
 > - Read path: `SystemKernelConfigInformation` (0x1000) on `NtQuerySystemInformation` -> `nt_query_kernel_config_information` marshals the snapshot + tunable/feature counts + lock phase; ABI in `nt/sysconfig_info.h` (28-byte static-asserted).
 > - User pointers go through `ProbeForWriteIfUser` + `copy_to_user`; reserved padding zeroed (no kernel-stack leak); two-pass `return_length` / `STATUS_INFO_LENGTH_MISMATCH` contract.
-> - Set path (`NtSetSystemInformation` config-set) + the `SeSystemProfilePrivilege` gate are deferred: an unlocked `Privileges[]` scan races `NtAdjustPrivilegesToken`, so a sound check needs the SRM's `SeSinglePrivilegeCheck` + per-token lock.
+> - Set path (`NtSetSystemInformation` config-set) + the `SeSystemProfilePrivilege` gate are deferred. CORRECTED 2026-09-03: this bullet used to say the gate needs the SRM to build `SeSinglePrivilegeCheck`, which shipped 2026-07-05 (`src/kernel/security/privileges.c:241`, commit `0051a8d28`). What did NOT ship is the per-token lock, so `sep_token_holds` (`privileges.c:171`) still scans `tok->Privileges[]` unlocked and races `NtAdjustPrivilegesToken` -- a residue every shipped caller already carries, owned by TODO-15 §4. The set path itself is now blocked on the kernel image ceiling, not on the SRM; see §12.
 > - Tests exercise the marshaller at CPL 0 (IfUser probes no-op): undersized/NULL/exact/oversized-canary + every field mirrored + optional `return_length`.
 > - Owns the read/query surface only; write path + per-key provenance owned by the deferred set path. Codex review adoptions in the section ship + review commits.
 
 > **Verified:** 2026-06-20 | commit `2f22daeb` | 3/5 items | build OK | tests 3058/3058 PASS
-> **Accepted:** [H] `copy_to_user` is not fault-recoverable -- an in-range-but-unmapped user pointer faults the kernel (systemic to every Probe + `copy_to_user` syscall, not new in this class) -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 392)
-> **Deferred:** [H] Set/write path + `SeSystemProfilePrivilege` enforcement (items above, `[/]`) need a SMP-safe privilege check -> XREF: 02-kernel-core/TODO-15 §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 471)
+> **Accepted:** [H] `copy_to_user` is not fault-recoverable -- an in-range-but-unmapped user pointer faults the kernel (systemic to every Probe + `copy_to_user` syscall, not new in this class) -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 392) (RESOLVED 2026-07-18 by TODO-23 §13 commit `c2d25f639`: `copy_to_user` at `src/kernel/cpu_security.c:674` now delegates to `__uaccess_copy_to`, so a #PF on the user operand returns -1 instead of bugchecking. The mechanism that shipped is a static RIP-keyed exception table, NOT the per-CPU `safe_return_rip` slot this XREF named; the item text is the stale half, the recovery is real.)
+> **Deferred:** [H] Set/write path + `SeSystemProfilePrivilege` enforcement (items above, `[/]`) need a SMP-safe privilege check -> XREF: 02-kernel-core/TODO-15 §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 471) (PARTIALLY RESOLVED 2026-07-05 by TODO-15 §8 commit `0051a8d28`: `SeSinglePrivilegeCheck` shipped at `src/kernel/security/privileges.c:241` and has nine callers. The per-token lock this stamp also named did NOT ship -- `sep_token_holds` at `privileges.c:171` still scans `tok->Privileges[]` unlocked, so a check racing `NtAdjustPrivilegesToken` reads a torn array. That residue is shared by every shipped caller and is repointed at its real owner -> XREF: 02-kernel-core/TODO-15 §4 (item: "**Per-token lock for SMP safety**"). The set path itself is now blocked on the kernel image ceiling, not on the SRM -> XREF: 02-kernel-core/TODO-02 §12 (item: "Privileged production write path for tunables").)
 > **Quality reviewed:** 2026-06-20 | Codex 7x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 1C+1H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -294,7 +310,7 @@ Define when policy stops being mutable and make every blocked mutation observabl
 > - **Canonical doc:** `include/kernel/policy_lock.h` header contract (ratchet-encoding invariant, panic policy, locking).
 > - **Scope boundary:** §9 owns policy lock state + tamper audit; notification fanout owned by TODO-16; ETW durable persistence by TODO-04 §7; mechanism enforcement of KASLR/SMEP/KPTI lives in vmm/cpu_security.
 > **Verified:** 2026-06-20 | commit `8494805d` | 5/6 items | build OK | tests 3192/3192 PASS
-> **Accepted:** [M] policy-tamper/change notification fanout out of §9 scope (the `[/]` audit item) -> XREF: 02-kernel-core/TODO-16 §5 (item: "Security: ... policy-lock tamper/change" at line 84 -- `policy_lock.c` publishes `ETW_EVT_POLICY_TAMPER`/`POLICY_CHANGE` via `knf_publish` once the facility lands)
+> **Accepted:** [M] policy-tamper/change notification fanout out of §9 scope (the `[/]` audit item) -> XREF: 02-kernel-core/TODO-16 §5 (item: "Security: ... policy-lock tamper/change" at line 155 -- `policy_lock.c` publishes `ETW_EVT_POLICY_TAMPER`/`POLICY_CHANGE` via `knf_publish` once the facility lands)
 > **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M fixed, 0 open, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -416,12 +432,14 @@ From the stamped section 6:
 ## Verification
 
 - [x] `bash scripts/build.sh clean` then `tail -1 build/build.log` shows `=== BUILD OK ===` (2026-06-20)
-- [/] `make test-boot` passes parser, precedence, lock-phase tests (3209 kernel + 16 user PASS 2026-06-20); the rollback test is deferred -> 02-kernel-core/TODO-02 §4 (control-set impl).
+- [/] `make test-boot` passes parser, precedence, lock-phase tests; the rollback test is deferred -> 02-kernel-core/TODO-02 §4 (control-set impl).
+  - Refreshed 2026-09-03: `bash scripts/test.sh QUIET=1` reports `PASS: 32845 kernel + 17 user-mode tests passed` on KVM and `32819 + 17` under `FORCE_TCG=1`, both exit 0. The stale `3209 kernel + 16 user PASS 2026-06-20` reading it replaced predated 15 months of suite growth.
 - [ ] Boot with `safemode=network` logs `"[CONF] safe_mode=network"` and skips GUI-only services (manual -- needs a safemode boot on WHPX/bare metal)
 - [/] Failed boot leaves acceptance pending; next boot selects LastKnownGood/rollback -- deferred -> 02-kernel-core/TODO-02 §4 (failed-boot rollback + control-set).
 - [/] Boot with `bootstatuspolicy=IgnoreAllFailures recoveryenabled=no`: the §10 acceptance transition is smoke-verified (`"[CONF] boot accepted (stage=accepted)"`); the rollback-counter-pending leg needs the §4 failed-boot path.
 - [x] `NtQuerySystemInformation(SystemKernelConfigInformation)` snapshot version + size covered by `test_cfg_query_syscall` / `test_cfg_snapshot_*` (boot suite, 2026-06-20)
-- [ ] Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (manual)
+- [/] Verify on: QEMU WHPX, VirtualBox, bare metal (manual). QEMU TCG and KVM CLOSED 2026-09-03 from this host.
+  - KVM `32845 kernel + 17 user-mode` PASS, TCG (`FORCE_TCG=1`) `32819 + 17` PASS, both exit 0. WHPX needs native Windows, VirtualBox needs VirtualBox, bare metal needs hardware; those three stay operator-gated.
 - [x] Commit: `"kernel: complete configuration and policy plane"`
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
