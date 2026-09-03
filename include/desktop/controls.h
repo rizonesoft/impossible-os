@@ -121,8 +121,24 @@ struct ctrl_window {
 
 /* ---- Lifecycle ---- */
 
-/* Initialize the controls subsystem (call once at boot) */
+/* Initialize the controls subsystem (call once at boot, after pmm_init).
+ * The window pool is frame-backed (see TODO-33 s13); allocation failure
+ * degrades rather than halts -- ctrl_ready() reports the outcome. */
 void ctrl_init(void);
+
+/* Returns 1 if the window pool allocated successfully and controls can be
+ * created; 0 if ctrl_init() degraded (OOM) or has not run yet. Callers
+ * that create UI at boot (e.g. gallery_open()) must check this before
+ * treating control creation as authoritative -- ctrl_create_*() already
+ * returns -1 per-call when degraded, but a caller that ignores every
+ * individual return value needs one place to check readiness up front. */
+int ctrl_ready(void);
+
+#ifdef KERNEL_TESTS
+/* Test-only: free the window pool and reset to uninitialized so a test can
+ * drive ctrl_init()'s OOM path via pmm_alloc_fail_next(). */
+void ctrl_test_reset_for_fault_injection(void);
+#endif
 
 /* Create controls -- returns control ID (>= 0) or -1 on failure */
 int ctrl_create_button(int window_handle, uint32_t x, uint32_t y,

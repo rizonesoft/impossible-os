@@ -92,7 +92,7 @@ Parse the bootloader handoff into typed, validated keys before any Phase 0 consu
 > - Tests: `test_kernel_config.c`, 11 suites under `TEST_CAT_BOOT` (alias, unknown-key halt, allow_unknown, CSV, bad-value, bounded/unterminated cmdline).
 > - Scope: §1 owns schema + cmdline parser + provenance; §2 owns the `kernel_config_t` snapshot; §3 owns the registry precedence merge + BOOTCFG explicit-vs-default.
 > **Verified:** 2026-06-20 | commit `fb050e700` | 7/7 items | build OK | smoke PASS (KVM 2.65s)
-> **Deferred:** [M] BOOTCFG explicit-vs-default provenance needs a `boot_config` presence bitset (BOOT_INFO_VERSION bump) -> XREF: 02-kernel-core/TODO-02 §3 (item: "Resolve boot_config explicit-vs-default in the merge" at line 134)
+> **Deferred:** [M] BOOTCFG explicit-vs-default provenance needs a `boot_config` presence bitset (BOOT_INFO_VERSION bump) -> XREF: 02-kernel-core/TODO-02 §3 (item: "Resolve boot_config explicit-vs-default in the merge" at line 139)
 > **Quality reviewed:** 2026-06-20 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
@@ -143,7 +143,7 @@ Merge persisted policy without letting malformed registry data silently reshape 
 
 **Test checkpoint:** Registry sets `debug=0`, command line sets `debug=1`, and `config_dump` reports `effective=1 source=cmdline`. Invalid `panic.timeout=-1` logs a rejection and leaves the compiled default in place. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] §3 registry merge requires §4 control-set selection FIRST (which `ControlSetNNN` is authoritative for this boot, incl. Failed/LastKnownGood/rollback) -- the §3-before-§4 order is inverted, and a Phase-2 merge cannot authoritatively affect already-consumed Phase-0/1 keys (debug/safemode/CI/verifier), so it must publish a SEPARATE runtime-phase effective-policy object rather than mutate the immutable §2 snapshot. Operator-reserved ordering/architecture decision (reorder §3/§4 + scope the registry layer to runtime keys). When unblocked, add `BOOT_ARG_SRC_REGISTRY` (between BOOTCFG and CMDLINE) + reuse the §1 `validate_value` for one descriptor-driven merge + a static `Control\Kernel`-name->descriptor map. -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 147)
+> **Deferred:** [H] §3 registry merge requires §4 control-set selection FIRST (which `ControlSetNNN` is authoritative for this boot, incl. Failed/LastKnownGood/rollback) -- the §3-before-§4 order is inverted, and a Phase-2 merge cannot authoritatively affect already-consumed Phase-0/1 keys (debug/safemode/CI/verifier), so it must publish a SEPARATE runtime-phase effective-policy object rather than mutate the immutable §2 snapshot. Operator-reserved ordering/architecture decision (reorder §3/§4 + scope the registry layer to runtime keys). When unblocked, add `BOOT_ARG_SRC_REGISTRY` (between BOOTCFG and CMDLINE) + reuse the §1 `validate_value` for one descriptor-driven merge + a static `Control\Kernel`-name->descriptor map. -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 154)
 
 ---
 
@@ -194,7 +194,7 @@ Represent safe mode as a first-class kernel policy object, not a scattered colle
 > - Codex review adoptions + per-finding evidence in the section ship commit.
 
 > **Verified:** 2026-06-20 | commit `4b3ba505` | 5/6 items | build OK | tests 2915/2915 PASS
-> **Deferred:** [M] Surface selected control set through `kernel_config_get()` -- depends on the §4 control-set field (item 3 of this section is `[/]`) -> XREF: 02-kernel-core/TODO-02 §4 (item: "persist the chosen control set id in `kernel_config_t`" at line 148)
+> **Deferred:** [M] Surface selected control set through `kernel_config_get()` -- depends on the §4 control-set field (item 3 of this section is `[/]`) -> XREF: 02-kernel-core/TODO-02 §4 (item: "persist the chosen control set id in `kernel_config_t`" at line 156)
 > **Quality reviewed:** 2026-06-20 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 1H+3M fixed | scope: kernel-code-quality
 
 ---
@@ -251,7 +251,7 @@ Make feature flags discoverable, auditable, and safe enough for staged rollout i
 > - Registry-backed override provider is owned by the registry-merge feature (§3); §7 ships the boot provider. Codex review adoptions in the section ship + review commits.
 
 > **Verified:** 2026-06-20 | commit `e8238fc2` | 4/5 items | build OK | tests 3028/3028 PASS
-> **Deferred:** [M] Registry-backed feature-override provider (item 1, `[/]`) needs the registry merge -> XREF: 02-kernel-core/TODO-02 §3 (item: "Merge precedence: compiled defaults < boot entry defaults < registry policy < boot command line < firmware-enforced policy" at line 130)
+> **Deferred:** [M] Registry-backed feature-override provider (item 1, `[/]`) needs the registry merge -> XREF: 02-kernel-core/TODO-02 §3 (item: "Merge precedence: compiled defaults < boot entry defaults < registry policy < boot command line < firmware-enforced policy" at line 131)
 > **Quality reviewed:** 2026-06-20 | Codex 8x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 3H+8M fixed | scope: kernel-code-quality
 
 ---
@@ -337,7 +337,7 @@ Turn boot success into an explicit policy-controlled state machine so rollback, 
 > - **Canonical doc:** `include/kernel/boot_status.h` header contract (stage model, exactly-once bless, durable record).
 > - **Scope boundary:** §10 owns the ledger + policy + durable record + mark-good gate; the LastKnownGood control-set copy is owned by §4; failure-bucket classification + escalation are owned by TODO-30 §7.
 > **Verified:** 2026-06-20 | commit `ae70bfb7` | 4/6 items | build OK | smoke PASS (KVM 2.9s)
-> **Accepted:** [H] LastKnownGood control-set copy at the accepted transition is owned elsewhere -> XREF: 02-kernel-core/TODO-02 §4 (item: "On successful boot, update LastKnownGood only after the §10 acceptance policy confirms critical services and registry flush succeeded" at line 150)
+> **Accepted:** [H] LastKnownGood control-set copy at the accepted transition is owned elsewhere -> XREF: 02-kernel-core/TODO-02 §4 (item: "On successful boot, update LastKnownGood only after the §10 acceptance policy confirms critical services and registry flush succeeded" at line 160)
 > **Accepted:** [M] failure-bucket classification + recovery escalation consume §10's durable record -> XREF: 02-kernel-core/TODO-30 §7 (item: "Track crash/hang counts by bucket across boots" at line 96)
 > **Quality reviewed:** 2026-06-20 | Codex 10x (design, adversarial, consistency, perf, re-adversarial) | 9H+5M fixed, 1H rejected, 2 accepted-XREF | scope: kernel-code-quality
 
@@ -364,7 +364,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 > - **Canonical doc:** `include/kernel/config.h` contract + the `k_arg_table` schema in `config.c`.
 > - **Scope boundary:** §11 owns `config_dump` + docs + existing-test wiring; the LastKnownGood state-machine + failed-boot rollback tests are owned by §4; the full 5-layer config-invariant tracking is owned by TODO-31 §2.
 > **Verified:** 2026-06-20 | commit `e81e3b45` | 3/5 items | build OK | smoke PASS (KVM 3.1s)
-> **Deferred:** [M] LastKnownGood state-machine + failed-boot rollback tests are in-scope but blocked on §4's deferred control-set impl -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 147)
+> **Deferred:** [M] LastKnownGood state-machine + failed-boot rollback tests are in-scope but blocked on §4's deferred control-set impl -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 154)
 > **Quality reviewed:** 2026-06-20 | Codex 5x (design, adversarial, consistency, perf; re-adversarial skipped: review-fix diff <50 LOC, no locking/atomics/lifecycle) | 2H+4M+1L fixed | scope: kernel-code-quality
 
 ---

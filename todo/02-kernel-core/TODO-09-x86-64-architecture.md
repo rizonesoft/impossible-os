@@ -587,8 +587,8 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 > - Effect: a user thread can no longer block a logical CPU unboundedly with UMWAIT/TPAUSE; SERIALIZE/RDPID instruction adoption deferred (AP-gate + TSC_AUX reliability for marginal gain).
 
 > **Verified:** 2026-06-28 | commit `5f2081e0` | 3/5 items | build OK | smoke PASS (KVM 2.69s)
-> **Deferred:** [L] SERIALIZE instruction adoption (`cpu_serialize()` helper + CPUID-fence-site swap) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- SERIALIZE adoption" at line 553)
-> **Deferred:** [L] RDPID instruction adoption (`cpu_current_id()` helper) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- RDPID adoption" at line 554)
+> **Deferred:** [L] SERIALIZE instruction adoption (`cpu_serialize()` helper + CPUID-fence-site swap) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- SERIALIZE adoption" at line 575)
+> **Deferred:** [L] RDPID instruction adoption (`cpu_current_id()` helper) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- RDPID adoption" at line 576)
 > **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 1H+3M+3L fixed | scope: kernel-code-quality
 
 ---

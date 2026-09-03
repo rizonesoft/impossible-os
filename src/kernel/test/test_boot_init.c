@@ -287,10 +287,6 @@ static void test_boot_perf_record_size(void)
                    "boot_perf_record_t is 24 bytes");
 }
 
-static void test_boot_perf_header_magic(void)
-{
-}
-
 /* ---- Boot perf POST codes ---- */
 
 static void test_bootperf_post_codes(void)
@@ -490,7 +486,6 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: defer register", test_boot_defer_register, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: deferred POST codes", test_deferred_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: perf record size", test_boot_perf_record_size, TEST_CAT_BOOT);
-    test_suite_register_cat("Boot init: perf magic", test_boot_perf_header_magic, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: bootperf POST codes", test_bootperf_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async POST codes", test_async_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async IPI vector", test_async_ipi_vector, TEST_CAT_BOOT);

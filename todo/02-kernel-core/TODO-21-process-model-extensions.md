@@ -312,7 +312,7 @@ This section ships the native rlimit STORAGE + a locked, privilege-aware accesso
 > - **Canonical doc** -- `include/kernel/task_limits.h` header block (ABI numbering + scope/ownership map).
 > - **Scope boundary** -- §9 owns rlimit STORAGE + accessors + inheritance; enforcement (AS/CPU) is a follow-up owned here, the Windows quota projection is `TODO-25 §8`, Linux `get/set/prlimit` await a `linux_syscall_table`.
 > **Verified:** 2026-07-11 | commit `8e4bfc30` | 4/10 items | build OK | 8 rlimit tests PASS
-> **Accepted:** [H] task-slot allocation race (a tick preempts ring-0 mid-`task_create`; two creators can claim the same `num_tasks` slot) -- pre-existing, systemic across all per-process inheritance -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §13` (item: "Atomic task-slot CLAIM" at line 300)
+> **Accepted:** [H] task-slot allocation race (a tick preempts ring-0 mid-`task_create`; two creators can claim the same `num_tasks` slot) -- pre-existing, systemic across all per-process inheritance -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §13` (item: "Atomic task-slot CLAIM" at line 301)
 > **Quality reviewed:** 2026-07-11 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 2H+6M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ## 10. CPU Affinity per Process
@@ -398,8 +398,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 398)
 > **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 399)
 > **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 1317)
-> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 1319)
-> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 1321)
+> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 1321)
+> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 1323)
 > **Quality reviewed:** 2026-07-12 | Codex 22x (design, adversarial, re-adversarial, consistency, perf) | ~21H+6M fixed, 3H accepted-XREF, 3M deferred | scope: kernel-code-quality + kernel-quality-auditor (no C/H)
 
 ---

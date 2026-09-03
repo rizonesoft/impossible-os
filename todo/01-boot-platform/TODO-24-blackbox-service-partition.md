@@ -208,7 +208,7 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 > - All log paths (`kernel.log`, subsystem logs, `events.jsonl`, `crash_recovery.log`, `boot-profile.log`, `Serial\`) build from `klog_dir` at runtime; C:\ fallback with a warning when X: is unmounted.
 > - Two hardening items remain open and are DEFERRED below (latent reentrancy guard + durable-write honesty); the core migration is shipped and exercised (smoke shows `X:\Logs` active).
 > **Deferred:** [M] klog_disk_flush C:\-fallback re-entrancy guard is latent until the BlackBox-mount-fail (sole-C:\) path is reproduced with fault injection -> XREF: 01-boot-platform/TODO-24 §5 (item: "klog_disk_flush re-entrancy guard when C:\ fallback is active" at line 187); depends on 00-infrastructure/TODO-03 §1 (test_add_fault) + §6
-> **Deferred:** [H] durable-write/write-success honesty retrofit for X:\ diagnostic writers (health/audit/WER ack without vfs_flush); MarkGood-gating is an operator-reserved decision (line 190), retrofit is substantial follow-up -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 188)
+> **Deferred:** [H] durable-write/write-success honesty retrofit for X:\ diagnostic writers (health/audit/WER ack without vfs_flush); MarkGood-gating is an operator-reserved decision (line 190), retrofit is substantial follow-up -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 193)
 
 ---
 
@@ -231,7 +231,7 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 > - `boot-timeline.json` now warns (not silently drops) when its target dir is missing, matching `boot-profile.log`'s open-failure behavior.
 > - Serial session logs stay at `X:\Logs\Serial\` (owned by §5). The two boot-trend follow-ups moved to TODO-29 §20 on 2026-09-03: the O(N^2) linearization SHIPPED, and the C:\ fallback is parked on the kernel image ceiling behind an explicit BlackBox-absent refusal.
 > **Verified:** 2026-06-17 | commit `994e9794` | 5/5 items | build OK | smoke PASS (TCG 2.66s)
-> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §20 (item: "C:\ fallback for `boot-trend.json`" at line 518). Moved from §3 to §20 on 2026-09-03; the writer now REFUSES up front when BlackBox is absent instead of failing at `vfs_open`, and the runtime path construction stays parked on the kernel image ceiling.
+> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §20 (item: "C:\ fallback for `boot-trend.json`" at line 557). Moved from §3 to §20 on 2026-09-03; the writer now REFUSES up front when BlackBox is absent instead of failing at `vfs_open`, and the runtime path construction stays parked on the kernel image ceiling.
 > **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> RESOLVED 2026-09-03 in 01-boot-platform/TODO-29 §20 (item: "Linearize `boot_trend_publish_json()` traversal" at line 513, now `[x]`): the loop walks `json_array_first`/`json_array_next` and bounds the scan at `BOOT_TREND_MAX_SCAN`.
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- 9-line warn+comment fix) | 1M+1L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
@@ -282,7 +282,7 @@ Move performance and diagnostic outputs to their BlackBox directories.
 > - Fixed a parent-directory handle leak in the hwdump create-via-dir path (the `dir` node was never `vfs_close`'d).
 > - `firmware-tables.json` C:\ fallback gap accepted to TODO-29 §11 (below).
 > **Verified:** 2026-06-17 | commit `fb846f65` | 5/5 items | build OK | smoke PASS (TCG 2.61s)
-> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 335)
+> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 358)
 > **Quality reviewed:** 2026-06-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -334,10 +334,10 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 > - Disk-space cleanup runs when X:\ FAT32 is <10% free: prunes Boot\ sessions beyond MaxBootSessions(10) + rotated `*.log.N`/`*.jsonl.N` in Logs\, rechecks free, then aims to fall back to C:\ if still critical.
 > - Review hardened two hazards: the rotated-log matcher now requires `VFS_FILE` + a `.log`/`.jsonl` infix (was deleting any `.<digit>` name), and the freed-bytes display is clamped against uint64 underflow.
 > - Four refinements remain open (`[/]` -- items above): durable low-space C:\ fallback (redirect currently defeated by `klog_resolve_dir`), oldest-by-filename retention, path-builder hardening, registry-backed quota config.
-> **Deferred:** [M] §10 critical-low C:\ redirect is defeated by `klog_resolve_dir()` re-setting the flag -> XREF: 01-boot-platform/TODO-24 §10 (item: "Durable low-space C:\ fallback" at line 316)
-> **Deferred:** [M] Boot\ retention deletes `vfs_readdir` slot order, not oldest-by-filename -> XREF: 01-boot-platform/TODO-24 §10 (item: "Boot\ retention precision" at line 317)
-> **Deferred:** [M] cleanup path builders silently truncate long names (`path[64]`) -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 318)
-> **Deferred:** [M] `MaxBootSessions`/`MinFreeMiB` hardcoded, not registry-backed -> XREF: 01-boot-platform/TODO-24 §10 (item: "Wire `MaxBootSessions`/`MinFreeMiB`" at line 320)
+> **Deferred:** [M] §10 critical-low C:\ redirect is defeated by `klog_resolve_dir()` re-setting the flag -> XREF: 01-boot-platform/TODO-24 §10 (item: "Durable low-space C:\ fallback" at line 322)
+> **Deferred:** [M] Boot\ retention deletes `vfs_readdir` slot order, not oldest-by-filename -> XREF: 01-boot-platform/TODO-24 §10 (item: "Boot\ retention precision" at line 324)
+> **Deferred:** [M] cleanup path builders silently truncate long names (`path[64]`) -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 325)
+> **Deferred:** [M] `MaxBootSessions`/`MinFreeMiB` hardcoded, not registry-backed -> XREF: 01-boot-platform/TODO-24 §10 (item: "Wire `MaxBootSessions`/`MinFreeMiB`" at line 327)
 
 ---
 
@@ -390,10 +390,10 @@ FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed
 > - At BlackBox mount `fat32_is_dirty()` reads the FAT[1] clean-shutdown bit (27); a dirty volume runs `fat32_run_fsck(vol,1)`; `mark_dirty` on mount, `mark_clean` at `acpi_shutdown` (acpi.c:940).
 > - Consistency-verified happy path: the constant has one definition, shutdown reaches `mark_clean` for X:, and `is_dirty` is populated at init before §3's BlackBox dirty check.
 > - Four FAT32-robustness hardenings (open `[/]` items) are DEFERRED -- malformed/external-FAT defenses on shared `fat32_core.c`/`fat32_fsck.c`; the kernel-formatted BlackBox volume is trusted.
-> **Deferred:** [H] FAT[1] reserved high bits (28-31) zeroed by both marker writers -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT[1] high-nibble preservation" at line 367)
-> **Deferred:** [H] torn FAT-mirror marker write -> false-clean -> skips fsck (no error propagation) -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT marker write error propagation" at line 368)
-> **Deferred:** [H] fsck `walk_directory` recurses on directory cycles -> stack exhaustion -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 369)
-> **Deferred:** [H] fsck repair writes outside FAT on forged BPB geometry -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck BPB geometry validation" at line 370)
+> **Deferred:** [H] FAT[1] reserved high bits (28-31) zeroed by both marker writers -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT[1] high-nibble preservation" at line 375)
+> **Deferred:** [H] torn FAT-mirror marker write -> false-clean -> skips fsck (no error propagation) -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT marker write error propagation" at line 377)
+> **Deferred:** [H] fsck `walk_directory` recurses on directory cycles -> stack exhaustion -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 379)
+> **Deferred:** [H] fsck repair writes outside FAT on forged BPB geometry -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck BPB geometry validation" at line 381)
 
 ---
 
@@ -421,9 +421,9 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 > - `wer_write_crash_report` (wer.c) writes a JSON crash report (`{pid,name,exception,status,fault_addr,rip,rsp,error_code,registers,cs,stack,user_trace_available}`, filename `PID_YYYYMMDDHHMMSS.json`) to `X:\Crash\WER\` (C:\ fallback) from the `except.c` user-fault exception terminal (TODO-23 §12 enriched it; the idt.c fallback is panic-only).
 > - Fixed a JSON-injection bug: `t->name` is now escaped (`"`,`\`,control -> `\u00XX`) with a `pos<820` bound, so a crafted/long name can't break the report or overflow `buf[1536]` (re-adversarial-confirmed margin).
 > - Two robustness items remain open (`[/]`): WER persistence runs in the exception path (FS-reentrancy/deadlock risk) and open-failure is silent; the write-honesty (flush/return-check) is owned by §5's durable-write retrofit.
-> **Accepted:** [M] WER writer ignores `vfs_write`/`vfs_close` returns + no `vfs_flush` (false success) -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 188)
-> **Deferred:** [H] WER persistence does VFS I/O in the exception path (reentrancy/deadlock if fault was in FS) -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER in exception path" at line 401)
-> **Deferred:** [M] WER open-failure is a silent drop with no panic-safe diagnostic -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER open-failure observability" at line 402)
+> **Accepted:** [M] WER writer ignores `vfs_write`/`vfs_close` returns + no `vfs_flush` (false success) -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 193)
+> **Deferred:** [H] WER persistence does VFS I/O in the exception path (reentrancy/deadlock if fault was in FS) -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER in exception path" at line 413)
+> **Deferred:** [M] WER open-failure is a silent drop with no panic-safe diagnostic -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER open-failure observability" at line 414)
 
 ---
 
@@ -472,7 +472,7 @@ Update cross-references across affected TODOs.
 > - Propagated the C:\ -> X:\ log/crash/perf/diag path migration across boot-platform + cross-domain TODOs (TODO-04 logging, TODO-10, TODO-14, TODO-27); fixed the current-state callout + a wrong evidence line-ref this review.
 > - Corrected the stale current-state A/B count (4 -> 6 partitions) to match §14's realized layout.
 > - Incomplete (open `[/]`/`[ ]`): two cross-domain TODOs still describe dumps in `CrashDumps\` and two TODO-27 consumers lack reciprocal TODO-24 ownership XREFs -- deferred below.
-> **Deferred:** [M] cross-domain crash-dump path sync incomplete + missing reciprocal TODO-24 owner XREFs -> XREF: 01-boot-platform/TODO-24 §15 (item: "Finish cross-domain crash-dump sync" at line 452)
+> **Deferred:** [M] cross-domain crash-dump path sync incomplete + missing reciprocal TODO-24 owner XREFs -> XREF: 01-boot-platform/TODO-24 §15 (item: "Finish cross-domain crash-dump sync" at line 465)
 
 ---
 
@@ -498,7 +498,7 @@ Update cross-references across affected TODOs.
 > - `crash_recovery.log` needs no separate age-out (§7's `VFS_O_TRUNC` rewrite from the capped ring already bounds it); `.dmp` rotation owned by TODO-27 §5-§8.
 
 > **Verified:** 2026-06-17 | commit `92a05b47` | 5/5 items | build OK
-> **Deferred:** [M] >32 undeletable WER reports halt the prune (bounded FNV-1a failed-set, hash-collision skip); corruption-only -- fsck-on-mount repairs the directory before prune runs -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 369)
+> **Deferred:** [M] >32 undeletable WER reports halt the prune (bounded FNV-1a failed-set, hash-collision skip); corruption-only -- fsck-on-mount repairs the directory before prune runs -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 379)
 > **Quality reviewed:** 2026-06-17 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M fixed, 1M deferred | scope: kernel-code-quality
 
 ---

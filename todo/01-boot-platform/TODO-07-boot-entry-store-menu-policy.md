@@ -433,8 +433,8 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 > - Scope boundary: §12 owns codes + sticky + JSONL + mutation log. §14 flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`.
 
 > **Verified:** 2026-05-10 | commit `38517fcc` | 7/7 items | build OK | smoke PASS (KVM 2.41s, seq=1) | tests 32/32 bootcfg + 22 boot_audit
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 572)
-> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 573)
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 591)
+> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 593)
 > **Quality reviewed:** 2026-05-10 | Codex 12x (design + adversarial 2x + test-coverage + re-adversarial 5x + adversarial-impl 4x + consistency + perf) | 7H+5M+0L fixed, 0 open, 2L deferred-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -607,7 +607,7 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > - Scope boundary: §17 owns aggregation + status. New tests for covered behavior belong in their owner sections; dual-write testability + FAT32 LFN belong elsewhere.
 
 > **Verified:** 2026-05-19 | commit `27c6d2c8` (impl) + `a6e2124e` (commit-row flip) | 4/14 items + 5 partial + 5 blocked | build OK (no source changes; verified during §16 commit `17ee74f9`) | lint clean
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 572)
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 591)
 > **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations until cross-cluster LFN removal lands" at line 393)
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
 

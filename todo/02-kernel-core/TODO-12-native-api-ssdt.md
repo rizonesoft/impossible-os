@@ -672,8 +672,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Scope boundary: user-buffer probes, IOCP OB-isolation, IXFS long-name rejection deferred to owners; & 0x7F narrowing + size-hint omission are known Lows.
 > - Test gap: security-path negative tests need a live VFS file-handle fixture; registration checks cover all handlers.
 > **Verified:** 2026-07-02 | commit `24c110fb` | 16/16 items | build OK | abi 426/426 PASS
-> **Accepted:** [Critical] IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task inject/drain), no per-process OB isolation -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate IO completion ports to OB handles" at line 332)
-> **Accepted:** [M] IXFS silently truncates names > 252 bytes on rename/create, so a 252-259 char op resolves to a different entry -> XREF: 05-storage-filesystems/TODO-06 §1 (item: "Reject over-length names" at line 82)
+> **Accepted:** [Critical] IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task inject/drain), no per-process OB isolation -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate IO completion ports to OB handles" at line 413)
+> **Accepted:** [M] IXFS silently truncates names > 252 bytes on rename/create, so a 252-259 char op resolves to a different entry -> XREF: 05-storage-filesystems/TODO-06 §1 (item: "Reject over-length names" at line 83)
 > **Quality reviewed:** 2026-07-02 | Codex 8x (adversarial x2, consistency x2, perf x2, re-adversarial x2) | 4H+4M fixed, 1Crit+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -805,7 +805,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > - Test gap: ReturnSingleEntry/RestartScan packed-flag paths + relative-name (RootDirectory) create/open are untested.
 > **Verified:** 2026-07-02 | commit `517cb921` | 6/8 items | build OK | ob 426/426 PASS
 > **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1232)
-> **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
+> **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
 > **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 272)
 > **Deferred:** [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI -> XREF: 02-kernel-core/TODO-12 §17 (item: "`NtQueryDirectoryObject` returns the legacy 96-byte ASCII" at line 793)
 > **Deferred:** [H] oa_name ignores OBJECT_ATTRIBUTES.RootDirectory (relative names resolve as absolute) -> XREF: 02-kernel-core/TODO-12 §17 (item: "`oa_name` (nt_namespace.c) ignores OBJECT_ATTRIBUTES.RootDirectory" at line 794)

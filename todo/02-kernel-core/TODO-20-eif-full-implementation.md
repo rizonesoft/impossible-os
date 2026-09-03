@@ -191,7 +191,7 @@ The spec defines a key-value metadata section (name, version, author, icon, min_
 > - Scope: parser + logs + first-load naming. build_id module-identity STORAGE -> `TODO-17-binary-system.md §6`; loader-owned registration + replace-on-re-exec renaming -> this TODO §3.
 >
 > **Verified:** 2026-07-10 | commit `ff583f8f` | 7/7 items | build OK | tests 726+16 PASS
-> **Accepted:** [H] build_id/version/author/min_os decoded but never reach `loaded_module_t` (crash/debug id unreachable post-load) -> XREF: 02-kernel-core/TODO-17 §6 (item: "Extend module identity beyond `name`" at line 243)
+> **Accepted:** [H] build_id/version/author/min_os decoded but never reach `loaded_module_t` (crash/debug id unreachable post-load) -> XREF: 02-kernel-core/TODO-17 §6 (item: "Extend module identity beyond `name`" at line 245)
 > **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -235,7 +235,7 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 - [ ] Commit: `"kernel: eif -- optional import stub generation"`
 
 **Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] Optional-import STUB slots (spec rule 5) blocked: the EIF dispatch table is data-only (`{syscall_id, available}`; user code checks availability before SYSCALL), and a callable stub needs the unsettled EIF import-CALL ABI plus a per-process read-only user stub page -> XREF: 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI" at line 388); per-process user mapping -> this TODO §9.
+> **Deferred:** [M] Optional-import STUB slots (spec rule 5) blocked: the EIF dispatch table is data-only (`{syscall_id, available}`; user code checks availability before SYSCALL), and a callable stub needs the unsettled EIF import-CALL ABI plus a per-process read-only user stub page -> XREF: 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI" at line 402); per-process user mapping -> this TODO §9.
 
 ---
 

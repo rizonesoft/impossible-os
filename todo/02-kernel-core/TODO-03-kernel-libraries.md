@@ -270,7 +270,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Canonical doc: `include/kernel/csprng.h` + the `include/kernel/entropy.h` conditioner contract.
 > - Scope boundary: boot seed payload mixing/ordering/policy stay with `01-boot-platform/TODO-12` §7-§9; virtio-rng hook with `04-drivers-hardware/TODO-09` §12; `canary_init()` with `TODO-10` §11.
 > **Verified:** 2026-06-12 | commit `99910014` | 9/12 items | build OK | tests 4523/4523 PASS, smoke PASS
-> **Accepted:** [H] `NtGetRandom` (and every UserMode NtXxx handler) trusts `ProbeFor*IfUser` range-only check; a ring-3 low kernel VA below `MM_USER_PROBE_ADDRESS` passes (systemic, per-process frames shared until PE loader) -> XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §2 (item: "Harden the user-copy path to reject supervisor destinations" at line 142)
+> **Accepted:** [H] `NtGetRandom` (and every UserMode NtXxx handler) trusts `ProbeFor*IfUser` range-only check; a ring-3 low kernel VA below `MM_USER_PROBE_ADDRESS` passes (systemic, per-process frames shared until PE loader) -> XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §2 (item: "Harden the user-copy path to reject supervisor destinations" at line 143)
 > **Accepted:** [H] global `s_previous_mode` can race on SMP, skipping a handler's probe (reason: gated on SMP user scheduling) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §12 (item: "Make `s_previous_mode` ... per-CPU" at line 431)
 > **Quality reviewed:** 2026-06-12 | Codex 11x (design + test-coverage + adversarial + consistency + perf + re-adversarial) | 3H+5M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 
@@ -350,7 +350,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS source into `src/libs/mbedtls/`" at line 320)
+> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS source into `src/libs/mbedtls/`" at line 323)
 
 ---
 

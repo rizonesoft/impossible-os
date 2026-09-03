@@ -323,14 +323,6 @@ static void test_mdmp_header_offsets(void)
                    "MINIDUMP_HEADER.Flags at 0x18");
 }
 
-static void test_mdmp_signature(void)
-{
-}
-
-static void test_mdmp_version(void)
-{
-}
-
 static void test_mdmp_stream_types(void)
 {
     TEST_ASSERT_EQ(ThreadListStream, 3, "ThreadListStream == 3");
@@ -441,10 +433,6 @@ static void test_mdmp_type_flags(void)
                    "MiniDumpWithoutOptionalData == 0x400");
 }
 
-static void test_mdmp_processor_arch(void)
-{
-}
-
 /* ---- Registration ---- */
 
 void test_register_crashdump(void)
@@ -498,10 +486,6 @@ void test_register_crashdump(void)
                             test_mdmp_header_offsets, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: MDMP directory size",
                             test_mdmp_directory_size, TEST_CAT_BOOT);
-    test_suite_register_cat("Crash: MDMP signature",
-                            test_mdmp_signature, TEST_CAT_BOOT);
-    test_suite_register_cat("Crash: MDMP version",
-                            test_mdmp_version, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: MDMP stream types",
                             test_mdmp_stream_types, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: exception stream size",
@@ -520,8 +504,6 @@ void test_register_crashdump(void)
                             test_mdmp_format_post_code, TEST_CAT_BOOT);
     test_suite_register_cat("Crash: MINIDUMP_TYPE flags",
                             test_mdmp_type_flags, TEST_CAT_BOOT);
-    test_suite_register_cat("Crash: processor arch constants",
-                            test_mdmp_processor_arch, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

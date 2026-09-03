@@ -291,9 +291,9 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 > - Scope boundary: AP LAPIC timers stay masked until per-CPU run queues land (own open item below); recalibrate-on-frequency-change is owned by the cpufreq governor section.
 > **Verified:** 2026-06-12 | commit `4208a2e0` | 5/7 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
 > **Deferred:** [H] AP LAPIC timer bring-up (BSP-only tick today) blocked on per-CPU scheduler infrastructure -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`; initialise each during `sched_init_cpu(cpu_id)` called by each AP" at line 117)
-> **Accepted:** [M] recalibrate hook for CPU frequency changes -> XREF: 02-kernel-core/TODO-26 §15 (item: "Timer recalibration on frequency transition" at line 608)
-> **Accepted:** [H] `nt_timer_tick()` walks every armed timer in the 100 Hz ISR (O(N) IRQ-off work at scale) -> XREF: 02-kernel-core/TODO-05 (item: "Replace the flat NT timer armed list with an ordered structure" at line 245)
-> **Accepted:** [M] DPC drain in the timer ISR caps count (32) but not per-callback runtime -> XREF: 02-kernel-core/TODO-07 §6 (item: "DPC runtime budget in the timer ISR drain" at line 211)
+> **Accepted:** [M] recalibrate hook for CPU frequency changes -> XREF: 02-kernel-core/TODO-26 §15 (item: "Timer recalibration on frequency transition" at line 631)
+> **Accepted:** [H] `nt_timer_tick()` walks every armed timer in the 100 Hz ISR (O(N) IRQ-off work at scale) -> XREF: 02-kernel-core/TODO-05 (item: "Replace the flat NT timer armed list with an ordered structure" at line 297)
+> **Accepted:** [M] DPC drain in the timer ISR caps count (32) but not per-callback runtime -> XREF: 02-kernel-core/TODO-07 §6 (item: "DPC runtime budget in the timer ISR drain" at line 212)
 > **Quality reviewed:** 2026-06-12 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H+2M accepted-XREF | scope: kernel-code-quality
 
 ---

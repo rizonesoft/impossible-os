@@ -105,6 +105,16 @@ void gallery_open(void)
     if (gallery_handle >= 0 && gallery_is_open())
         return;
 
+    /* Degraded controls subsystem (TODO-33 s13, window-pool OOM): every
+     * ctrl_create_*() call below would return -1, and this function used
+     * to ignore that and unconditionally report success. Refuse up front
+     * instead of opening a blank, non-functional dialog under a "Control
+     * Gallery opened" log line. */
+    if (!ctrl_ready()) {
+        klog(LOG_ERROR, "GALLERY", "controls degraded -- gallery not opened");
+        return;
+    }
+
     h = wm_create_window("Control Gallery", 50, 40, 420, 360,
                           WM_DIALOG_FLAGS);
     if (h < 0) {

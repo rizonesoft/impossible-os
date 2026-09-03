@@ -129,10 +129,6 @@ static void test_rtlpp_content(void)
 
 #include "kernel/sched/task.h"
 
-static void test_tls_constants(void)
-{
-}
-
 /* TLS tests skip when current task has no TEB (PID 0 = kernel bootstrap).
  * Real validation happens through user-mode binaries that exec(). */
 static int tls_test_skip_if_no_teb(void)
@@ -283,18 +279,7 @@ static void test_tls_expansion_boundary(void)
     }
 }
 
-static void test_tls_expansion_post_codes(void)
-{
-}
-
 /* ---- Extended Auxiliary Vector (S13) ---- */
-
-static void test_auxv_constants(void)
-{
-    /* Linux ELF auxv ABI -- these values are a hard contract with glibc/musl.
-     * If any of these change, dynamically linked binaries will misinterpret
-     * the auxv block on the initial user stack. */
-}
 
 static void test_rdrand_bytes_smoke(void)
 {
@@ -803,8 +788,6 @@ void test_register_peb_teb(void)
     test_suite_register_cat("PEB/TEB: populated", test_peb_populated, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: RTLPP content", test_rtlpp_content, TEST_CAT_ABI);
     /* S12: TLS expansion slots */
-    test_suite_register_cat("PEB/TEB: TLS constants",
-                            test_tls_constants, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: TLS static alloc/free",
                             test_tls_static_alloc_free, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: TLS expansion alloc",
@@ -813,11 +796,7 @@ void test_register_peb_teb(void)
                             test_tls_expansion_reuse, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: TLS expansion boundary",
                             test_tls_expansion_boundary, TEST_CAT_ABI);
-    test_suite_register_cat("PEB/TEB: TLS POST codes",
-                            test_tls_expansion_post_codes, TEST_CAT_ABI);
     /* S13: Extended ELF auxv */
-    test_suite_register_cat("PEB/TEB: auxv constants",
-                            test_auxv_constants, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: rdrand_bytes smoke",
                             test_rdrand_bytes_smoke, TEST_CAT_ABI);
     test_suite_register_cat("PEB/TEB: rdrand_bytes boundaries",

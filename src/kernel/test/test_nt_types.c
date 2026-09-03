@@ -365,10 +365,6 @@ static void test_filetime_dos_roundtrip(void)
     TEST_ASSERT_EQ(date & 0x1F, 5, "DOS date day = 5");
 }
 
-static void test_filetime_ticks_per_second(void)
-{
-}
-
 static void test_filetime_pre_epoch_guard(void)
 {
     /* filetime_to_unix_seconds must return 0 for pre-Unix-epoch FILETIMEs */
@@ -1073,7 +1069,6 @@ void test_register_nt_types(void)
     test_suite_register_cat("NT: FILETIME epoch", test_filetime_epoch, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME roundtrip", test_filetime_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME DOS roundtrip", test_filetime_dos_roundtrip, TEST_CAT_ABI);
-    test_suite_register_cat("NT: FILETIME ticks/sec", test_filetime_ticks_per_second, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME pre-epoch guard", test_filetime_pre_epoch_guard, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME DOS low clamp", test_filetime_dos_clamp_low, TEST_CAT_ABI);
     test_suite_register_cat("NT: FILETIME days year guard", test_filetime_days_year_guard, TEST_CAT_ABI);

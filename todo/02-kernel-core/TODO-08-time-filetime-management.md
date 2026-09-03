@@ -212,7 +212,7 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 > - Canonical: `src/kernel/drivers/rtc.c`; consumer seam `src/kernel/time/wall_clock.c`.
 > - Scope boundary: the hard gate is the hardware-safety boundary for all CMOS consumers (compositor/desktop call `rtc_read()` directly, protected, no port I/O); §6+ own the higher-level time service.
 > **Verified:** 2026-06-27 | commit `d2930860` | 7/7 items | build OK | 229 kernel + 16 user PASS | smoke PASS (TCG 2.56s, RTC present -> Serial_26062701.log)
-> **Accepted:** [M] no-RTC serial-log rotation deletes by seq not recency (cap bounds growth, so not a leak; needs a cross-boot counter) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 175)
+> **Accepted:** [M] no-RTC serial-log rotation deletes by seq not recency (cap bounds growth, so not a leak; needs a cross-boot counter) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 178)
 > **Quality reviewed:** 2026-06-27 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -426,7 +426,7 @@ Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed value
 > - Scope boundary: §13 wires the timestamps; rate-stable klog capture is TODO-04 §9; NTFS compressed-write stamping is 05-storage/TODO-02 §2.
 > **Verified:** 2026-06-27 | ship `2bf8ba15` + review fixes | 5/5 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.53s)
 > **Accepted:** [H] NTFS compressed-write path skips the `$STANDARD_INFORMATION` timestamp update -> XREF: 05-storage-filesystems/TODO-02-ntfs-readwrite.md §2 (item: "Compressed-write `$STANDARD_INFORMATION` timestamps" at line 84)
-> **Accepted:** [M] klog disk-log event-time reconstruction assumes 100 Hz (drifts after NtSetTimerResolution); needs a rate-stable capture -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Rate-stable `klog_entry_t.timestamp`" at line 464)
+> **Accepted:** [M] klog disk-log event-time reconstruction assumes 100 Hz (drifts after NtSetTimerResolution); needs a rate-stable capture -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Rate-stable `klog_entry_t.timestamp`" at line 492)
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 1H+1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -449,7 +449,7 @@ When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrup
 > - Canonical: `src/kernel/time/wall_clock.c` (primitive); resume owner is power management.
 > - Scope boundary: §14 owns the bias-application primitive; the S3/S4 resume hook + RTC wake alarm are TODO-26 (power management).
 > **Verified:** 2026-06-27 | primitive shipped (§7) | 1/5 items | build OK | resume path deferred
-> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 170)
+> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 185)
 > **Quality reviewed:** 2026-06-27 | scope: N/A (infra-blocked defer; the shipped `ke_suspend_bias_update` primitive was quality-reviewed under §7)
 
 ---

@@ -14,8 +14,10 @@
 #include "kernel/drivers/mouse.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/types.h"
+#include "libc/string.h"
 #include "desktop/terminal.h"
 #include "desktop/wm.h"
+#include "desktop/controls.h"
 #include "kernel/test/input_record.h"
 #include "kernel/test/wcag.h"
 #include "kernel/test/test_desktop_reset.h"
@@ -1610,6 +1612,99 @@ static void test_icon_cache_eviction_borrowed_safe(void)
     icon_store_test_force_ready(prev_ready);
 }
 
+/* ---- ctrl_init frame-backed window pool (TODO-33 s13) ----------------- */
+
+/* Forces the CTRL_MAX_WINDOWS pool allocation to fail (pmm_alloc_pages_hhdm
+ * -> pmm_alloc_contiguous, multi-frame, so pmm_alloc_fail_next's single-shot
+ * countdown fires on it) and asserts ctrl_init() degrades instead of
+ * crashing: ctrl_ready() stays false, and the lookup entry points that
+ * guard on ctrl_windows do not NULL-deref. Restores the real pool
+ * afterward so later tests / gallery_open() see a working subsystem. */
+static void test_ctrl_init_degrades_on_oom(void)
+{
+    ctrl_test_reset_for_fault_injection();
+    TEST_ASSERT_EQ(ctrl_ready(), 0, "reset leaves controls not-ready");
+
+    pmm_alloc_fail_next();
+    ctrl_init();
+    TEST_ASSERT_EQ(ctrl_ready(), 0,
+                   "forced OOM leaves ctrl_init() degraded, not initialized");
+
+    /* Degraded lookup paths must return -1 (no control created), not crash. */
+    TEST_ASSERT(ctrl_create_button(0, 0, 0, 10, 10, "x", (ctrl_click_fn)0) == -1,
+                "ctrl_create_button returns -1 while degraded, no crash");
+
+    /* Recover for the next test / any later consumer in this boot. */
+    ctrl_init();
+    TEST_ASSERT_EQ(ctrl_ready(), 1, "un-injected ctrl_init() recovers");
+}
+
+/* Companion to the above: after a degrade-then-recover cycle, a normal
+ * control creation succeeds -- proves the recovered pool is actually
+ * usable, not just non-NULL. */
+static void test_ctrl_init_recovers_after_oom(void)
+{
+    int id;
+
+    ctrl_test_reset_for_fault_injection();
+    pmm_alloc_fail_next();
+    ctrl_init();
+    TEST_ASSERT_EQ(ctrl_ready(), 0, "degraded before recovery");
+
+    ctrl_init();
+    TEST_ASSERT_EQ(ctrl_ready(), 1, "recovered before use");
+
+    id = ctrl_create_button(0, 0, 0, 10, 10, "x", (ctrl_click_fn)0);
+    TEST_ASSERT(id >= 0, "recovered pool actually creates a control");
+
+    /* This test creates a real, live control on window_handle 0 in the
+     * shared pool -- leaving it behind would leak into whatever real
+     * window later claims that slot (gallery_open() runs on the same
+     * pool post-boot). ctrl_destroy() alone only tombstones the control's
+     * TYPE: it leaves cw->active and cw->count set, so window_handle 0
+     * stays "in use" with count 1 and a later client's first control
+     * gets id 1, not id 0. ctrl_destroy_all() clears active/count/
+     * focused_id too, returning the whole window slot to the pristine
+     * state get_or_create_ctrl_window() produces on first use --
+     * restoring the invariant every later fault-injection test and the
+     * real subsystem depend on. */
+    ctrl_destroy_all(0);
+    TEST_ASSERT(ctrl_create_button(0, 0, 0, 10, 10, "y", (ctrl_click_fn)0) == 0,
+                "post-cleanup handle 0 is pristine: next control gets id 0");
+    ctrl_destroy_all(0);
+}
+
+/* CAS-guard idempotency: the two tests above only exercise UNINIT ->
+ * degraded -> UNINIT -> READY. Neither ever calls ctrl_init() a second
+ * time while already READY, so the atomic_cmpxchg guard that stops a
+ * repeat/concurrent caller from reallocating the pool had zero coverage.
+ * This asserts a repeat call is a true no-op: still READY, no second
+ * PMM allocation, and an existing control survives untouched. */
+static void test_ctrl_init_idempotent_when_ready(void)
+{
+    uint64_t used_before, used_after;
+    int id;
+
+    ctrl_test_reset_for_fault_injection();
+    ctrl_init();
+    TEST_ASSERT_EQ(ctrl_ready(), 1, "clean init reaches READY");
+
+    id = ctrl_create_button(0, 0, 0, 10, 10, "x", (ctrl_click_fn)0);
+    TEST_ASSERT(id >= 0, "control created before the repeat call");
+
+    used_before = pmm_get_used_frames();
+    ctrl_init();
+    used_after = pmm_get_used_frames();
+
+    TEST_ASSERT_EQ(ctrl_ready(), 1, "still READY after a repeat call");
+    TEST_ASSERT_EQ(used_before, used_after,
+                   "repeat ctrl_init() does not allocate a second pool");
+    TEST_ASSERT(strcmp(ctrl_get_text(0, id), "x") == 0,
+                "the control created before the repeat call survives it");
+
+    ctrl_destroy_all(0);
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -1710,6 +1805,12 @@ void test_register_desktop(void)
                             test_icon_color_tint_normalized, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: icon cache eviction never frees borrowed IRES pixels",
                             test_icon_cache_eviction_borrowed_safe, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: ctrl_init degrades (not crashes) under forced OOM",
+                            test_ctrl_init_degrades_on_oom, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: ctrl_init recovers after a forced-OOM degrade",
+                            test_ctrl_init_recovers_after_oom, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: repeat ctrl_init() while READY is a no-op",
+                            test_ctrl_init_idempotent_when_ready, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

@@ -46,10 +46,6 @@ static void test_ixfs_superblock_size(void)
                    "IXFS superblock is 512 bytes");
 }
 
-static void test_ixfs_magic_value(void)
-{
-}
-
 static void test_ixfs_superblock_offsets(void)
 {
     TEST_ASSERT_EQ(__builtin_offsetof(struct ixfs_superblock, s_magic), 0,
@@ -64,10 +60,6 @@ static void test_ixfs_superblock_offsets(void)
                    "s_checksum at offset 128");
     TEST_ASSERT_EQ(__builtin_offsetof(struct ixfs_superblock, s_reserved), 132,
                    "s_reserved at offset 132");
-}
-
-static void test_ixfs_version(void)
-{
 }
 
 static void test_ixfs_inode_size(void)
@@ -235,12 +227,8 @@ void test_register_ixfs(void)
 {
     test_suite_register_cat("IXFS: superblock size",
                             test_ixfs_superblock_size, TEST_CAT_FS);
-    test_suite_register_cat("IXFS: magic value",
-                            test_ixfs_magic_value, TEST_CAT_FS);
     test_suite_register_cat("IXFS: superblock offsets",
                             test_ixfs_superblock_offsets, TEST_CAT_FS);
-    test_suite_register_cat("IXFS: version",
-                            test_ixfs_version, TEST_CAT_FS);
     test_suite_register_cat("IXFS: inode size",
                             test_ixfs_inode_size, TEST_CAT_FS);
 

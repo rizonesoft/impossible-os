@@ -90,10 +90,6 @@ static void test_alpc_msg_types_unique(void)
 
 /* ---- Max inline message length ----------------------------------------- */
 
-static void test_alpc_max_message_length(void)
-{
-}
-
 /* ---- ALPC_PORTFLG_* bits are pairwise non-overlapping ------------------ */
 
 static void test_alpc_portflg_nonoverlap(void)
@@ -3283,8 +3279,6 @@ void test_register_alpc(void)
                             test_alpc_port_message_layout, TEST_CAT_IPC);
     test_suite_register_cat("alpc: message type codes",
                             test_alpc_msg_types_unique, TEST_CAT_IPC);
-    test_suite_register_cat("alpc: max message length",
-                            test_alpc_max_message_length, TEST_CAT_IPC);
     test_suite_register_cat("alpc: ALPC_PORTFLG_* non-overlap",
                             test_alpc_portflg_nonoverlap, TEST_CAT_IPC);
     test_suite_register_cat("alpc: ALPC_MSGFLG_* non-overlap",

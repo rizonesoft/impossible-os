@@ -60,6 +60,7 @@
 #include "desktop/desktop.h"
 #include "desktop/terminal.h"
 #include "desktop/gallery.h"
+#include "desktop/controls.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/elf.h"
 #include "kernel/ipc/pipe.h"
@@ -456,6 +457,10 @@ void boot_phase3(void)
     wm_init();
     POST16(POST16_DESKTOP);
     desktop_init();
+    /* Frame-backed window-control pool (TODO-33 s13); degrades rather than
+     * halts on OOM, so no POST16/failure check here -- ctrl_ready() is the
+     * degraded-status surface consumers (gallery_open()) check. */
+    ctrl_init();
     POST16(POST16_DESKTOP_OK);
 
     /* Finish boot splash and stop timer-driven spinner */

@@ -76,10 +76,6 @@ static void test_vfs_drive_constants(void)
     TEST_ASSERT(vfs_is_mounted('@') == 0, "@ (before A) rejected as drive letter");
 }
 
-static void test_mbr_gpt_constants(void)
-{
-}
-
 /* ---- VFS_O_TRUNC end-to-end ------------------------------------------ */
 
 /* Helper: write `len` bytes of `pattern` at offset 0 of `path`. */
@@ -303,7 +299,6 @@ void test_register_vfs(void)
     test_suite_register_cat("VFS: open nonexistent", test_vfs_open_nonexistent, TEST_CAT_FS);
     test_suite_register_cat("VFS: mkdir+rmdir", test_vfs_mkdir_rmdir, TEST_CAT_FS);
     test_suite_register_cat("VFS: drive letter range", test_vfs_drive_constants, TEST_CAT_FS);
-    test_suite_register_cat("VFS: MBR+GPT constants", test_mbr_gpt_constants, TEST_CAT_FS);
     test_suite_register_cat("VFS: O_TRUNC shrinks (IXFS, no stale tail)",
         test_vfs_o_trunc_ixfs_shrinks, TEST_CAT_FS);
     test_suite_register_cat("VFS: O_TRUNC without O_WRITE rejected",

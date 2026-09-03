@@ -14,10 +14,37 @@
 #include "desktop/font.h"       /* bitmap font -- kept as fallback */
 #include "font_mgr.h"            /* TrueType fonts -- primary rendering */
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/mm/pmm.h"      /* pmm_alloc_pages_hhdm -- frame-backed window pool */
+#include "kernel/klog.h"
+#include "libc/string.h"        /* memset -- zero the frame-backed window pool */
+#include "kernel/atomic.h"      /* atomic_t -- concurrency-safe ctrl_init() */
 
-/* ---- Per-window control storage ---- */
+/* ---- Per-window control storage ----
+ *
+ * Frame-backed (TODO-33 s13): was `static struct ctrl_window
+ * ctrl_windows[CTRL_MAX_WINDOWS]` (180,736 bytes of .bss). Every access
+ * site already uses ctrl_windows[i]/&ctrl_windows[i], which is identical
+ * syntax whether ctrl_windows is an array or a pointer, so the only real
+ * changes are the declaration, explicit-byte-count allocation in
+ * ctrl_init(), and a guard at the two lookup entry points.
+ *
+ * ctrl_init_state makes initialization concurrency-safe even though the
+ * one production call site (boot_desktop.c) is BSP-only today: two CPUs
+ * observing ctrl_windows == NULL and both entering pmm_alloc_pages_hhdm()
+ * -- which has no internal SMP lock -- can corrupt PMM state or publish
+ * mismatched phys/pages metadata. The CAS makes exactly one caller the
+ * allocator; atomic_set's release semantics on the READY transition make
+ * every write below it (cw's contents, ctrl_windows_phys/pages, the
+ * ctrl_windows pointer itself) visible to any CPU that acquire-reads
+ * CTRL_INIT_READY before touching ctrl_windows. */
+#define CTRL_INIT_UNINIT       0
+#define CTRL_INIT_INITIALIZING 1
+#define CTRL_INIT_READY        2
+static atomic_t ctrl_init_state = ATOMIC_INIT(CTRL_INIT_UNINIT);
 
-static struct ctrl_window ctrl_windows[CTRL_MAX_WINDOWS];
+static struct ctrl_window *ctrl_windows;
+static uintptr_t           ctrl_windows_phys;
+static uint64_t            ctrl_windows_pages;
 
 /* ---- Helpers ---- */
 
@@ -41,6 +68,9 @@ static struct ctrl_window *get_ctrl_window(int window_handle)
 {
     uint32_t i;
 
+    if (atomic_read(&ctrl_init_state) != CTRL_INIT_READY)
+        return (struct ctrl_window *)0;
+
     /* Look for existing slot */
     for (i = 0; i < CTRL_MAX_WINDOWS; i++) {
         if (ctrl_windows[i].active &&
@@ -59,6 +89,9 @@ static struct ctrl_window *get_or_create_ctrl_window(int window_handle)
     cw = get_ctrl_window(window_handle);
     if (cw)
         return cw;
+
+    if (atomic_read(&ctrl_init_state) != CTRL_INIT_READY)
+        return (struct ctrl_window *)0;
 
     /* Allocate a new slot */
     for (i = 0; i < CTRL_MAX_WINDOWS; i++) {
@@ -179,13 +212,69 @@ static void draw_text_left(int handle, uint32_t rx, uint32_t ry,
 
 void ctrl_init(void)
 {
+    /* Explicit byte count -- sizeof(ctrl_windows) would silently collapse
+     * to the size of a pointer now that this is frame-backed, not a BSS
+     * array (TODO-33 s13). */
+    const uint32_t bytes =
+        (uint32_t)((uint64_t)CTRL_MAX_WINDOWS * sizeof(struct ctrl_window));
+    uintptr_t phys = 0;
+    uint64_t  pages = 0;
+    struct ctrl_window *cw;
     uint32_t i;
-    for (i = 0; i < CTRL_MAX_WINDOWS; i++) {
-        ctrl_windows[i].active = 0;
-        ctrl_windows[i].count = 0;
-        ctrl_windows[i].focused_id = -1;
+
+    /* Only the CAS winner allocates. A loser (already INITIALIZING or
+     * READY, from another CPU or a repeat call) returns immediately --
+     * idempotent, and safe under concurrent callers. */
+    if (atomic_cmpxchg(&ctrl_init_state, CTRL_INIT_UNINIT,
+                       CTRL_INIT_INITIALIZING) != CTRL_INIT_UNINIT)
+        return;
+
+    cw = (struct ctrl_window *)pmm_alloc_pages_hhdm(bytes, &phys, &pages);
+    if (!cw) {
+        /* Degraded, not fatal: the window-control gallery is diagnostic
+         * UI, not load-bearing. Every ctrl_create_*() call already
+         * returns -1 while ctrl_windows is NULL (via the two lookup
+         * guards below); ctrl_ready() lets a caller that ignores
+         * per-call return values (e.g. gallery_open()) check up front
+         * instead of reporting a false success. Back to UNINIT (not a
+         * terminal failed state) so a later retry -- e.g. after other
+         * boot-time allocations free up -- can still succeed. */
+        klog(LOG_ERROR, "ctrl",
+             "controls: failed to allocate window pool (%u bytes) -- controls degraded",
+             bytes);
+        atomic_set(&ctrl_init_state, CTRL_INIT_UNINIT);
+        return;
     }
+    memset(cw, 0, bytes);
+    for (i = 0; i < CTRL_MAX_WINDOWS; i++)
+        cw[i].focused_id = -1;   /* -1 != memset's zero */
+
+    ctrl_windows_phys  = phys;
+    ctrl_windows_pages = pages;
+    ctrl_windows       = cw;     /* publication word before the release below */
+    atomic_set(&ctrl_init_state, CTRL_INIT_READY);
 }
+
+int ctrl_ready(void)
+{
+    return atomic_read(&ctrl_init_state) == CTRL_INIT_READY;
+}
+
+#ifdef KERNEL_TESTS
+/* Test-only: free the window pool and reset to uninitialized so a test can
+ * exercise ctrl_init()'s OOM path via pmm_alloc_fail_next(), then
+ * re-initialize for real afterward. Never called outside KERNEL_TESTS. */
+void ctrl_test_reset_for_fault_injection(void)
+{
+    if (ctrl_windows) {
+        pmm_free_contiguous(ctrl_windows_phys, ctrl_windows_pages);
+        ctrl_windows       = (struct ctrl_window *)0;
+        ctrl_windows_phys  = 0;
+        ctrl_windows_pages = 0;
+    }
+    atomic_set(&ctrl_init_state, CTRL_INIT_UNINIT);
+}
+#endif
 
 /* ============================================================================
  * Control creation
