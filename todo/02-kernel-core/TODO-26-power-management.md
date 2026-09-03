@@ -82,7 +82,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | ⭐  | Order | Deliverable                                         | Depends On                 | Status |
 | --- | :---: | --------------------------------------------------- | -------------------------- | :----: |
 | 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | (none)                     |  [x]   |
-| 💎  |   2   | §2 S1: CPU halt / idle thread integration           | §1                         |  [ ]   |
+| 💎  |   2   | §2 S1: CPU halt / idle thread integration           | §1                         |  [/]   |
 | 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)   | §1, §2, D02T06§3           |  [ ]   |
 | 💎  |   4   | §4 S4: hibernate to disk (image write + resume)     | §3                         |  [ ]   |
 | 💎  |   5   | §5 ACPI Embedded Controller (EC) driver             | §1                         |  [ ]   |
@@ -166,6 +166,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [ ] Commit: `"kernel/acpi: S1 CPU halt, idle thread power-saving integration"`
 
 **Test checkpoint:** `acpi_enter_s1()` halts CPU; resumes on next interrupt. `sched_idle_cpu()` uses S1 when available, falls back to `HLT`. `pm_deep_idle_allowed()` returns false when DPCs pending. Per-CPU `idle_tsc_cycles` counter increments during idle. Test on: QEMU TCG + WHPX.
+
+> **Deferred:** [M] not started this pass -- `.text` budget is 95 bytes at this HEAD (`scripts/overnight/bss-headroom.py`, measured repeatedly today across 5 other sections, unchanged all session); any new kernel code is expected to fail the link identically. Also `SPLIT-RECOMMENDED` (7 work items) per `section-manifest.py`, so a split or a structured waiver is owed before implementation regardless. No source changed. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
 
 ---
 

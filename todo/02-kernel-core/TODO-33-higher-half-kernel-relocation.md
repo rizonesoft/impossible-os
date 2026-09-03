@@ -617,6 +617,7 @@ Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 3820
   - Also parked here -> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` §32 (the `ixfs_finddir` use-after-free fix). Two pieces wait on this same headroom: flipping `HEAP_ZERO_ON_FREE` now that the IXFS use-after-free is fixed (crosses the ceiling by itself -- makes `heap_secure_zero` reachable), and six `TEST_CAT_FS` regression cases for the new inode-bounds invariant, preserved at `.claude/state/deferred-TODO-10-kernel-security-hardening-s32-tests.patch` (the test file counts against the same image budget as production code).
   - Also parked here, work preserved as a patch -> XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md` §28 (item: "Add an SMP regression test for TEB-published-without-kernel_gs_base").
   - Also parked here (3 items: tail-pack path, variable-length unveil_entry, ACCESS_MASK enforcement) -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md` §32.
+  - Also parked here -> XREF: `02-kernel-core/TODO-26-power-management.md` §2 (S1 idle integration; SPLIT-RECOMMENDED, 7 items -- also owes a split regardless of headroom).
 - [ ] State plainly in the Notes that a FOURTH pass is expected, and leave the reserve named for it
   - §10 read as solved and the ceiling returned unannounced; §12 fixed that by naming a reserve, which is the only reason this section was cheap to write. Keep the chain going rather than closing it.
 - [ ] Commit: `"kernel/mm: third tactical reclamation pass -- buy a page of headroom"`
