@@ -73,9 +73,9 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)    | §5                                 |  [x]   |
 | ⭐  |  15   | Anti-rollback terminal give-up durable record                 | TODO-01 §25; D02 T33 §7 (ceiling)  |  [/]   |
 | ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)             | §9                                 |  [/]   |
-| 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it        | §14; §5                            |  [ ]   |
+| 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it        | §14; §5; D02 T33 §7 (ceiling)      |  [/]   |
 | 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port   | §14                                |  [x]   |
-| 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff    | §14                                |  [ ]   |
+| 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff    | §14; D02 T33 §7 (image ceiling)    |  [/]   |
 | 💎  |  20   | Complete the `.bss` poison reset discipline across the loader | §18                                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
@@ -545,6 +545,7 @@ Section 9 ships `boot_timeline_dump_json()` and the `boot-timeline.json` artifac
 
 > **Spawned-by:** §14 (review)
 > **User impact:** a machine that crashes during Phase 0 and then crashes again on the next boot reports only the SECOND crash. The first one -- the one that started the failure -- is gone, so the user debugging a boot loop is handed the symptom and never the cause.
+> **Deferred:** 2026-09-03 | kernel-image ceiling, MEASURED at 79 bytes of `.text`. Both candidate mechanisms and the mandatory `TEST_CAT_BOOT` fixture are kernel `.text`; the section is parked on size alone, not on any missing capability -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard").
 
 Section 14 stops firmware and BOOTX64 from handing out the evidence page, but the kernel then overwrites it itself. `kernel_main` runs all of `boot_phase0()` BEFORE calling `panic_evidence_restore_early()` ([`src/kernel/main.c:24`](../../src/kernel/main.c)), and the panic collector unpublishes, zeroes and rewrites the page directly ([`src/kernel/panic.c:2103`](../../src/kernel/panic.c)) while its prior-record guard only arms once the restore has recorded `s_prev_crash_epoch`. So any panic inside Phase 0 destroys the previous boot's record despite a successful loader pin. No SMP is needed to reach this: BSP ordering alone is sufficient.
 
@@ -552,16 +553,21 @@ Found by the section 14 design review, verified at both file:line refs above.
 
 **Files:** [`src/kernel/main.c`](../../src/kernel/main.c), [`src/kernel/panic.c`](../../src/kernel/panic.c)
 
-- [ ] Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates
+- [/] Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates -- blocked on the kernel-image ceiling
   - The restore currently depends on PMM having reserved low memory and klog being up, which is why it sits after Phase 0. Splitting capture from reporting removes that dependency: copy the page into kernel static storage first, report it once klog exists.
-- [ ] Alternatively, have the panic collector refuse to overwrite a page whose record predates this boot until the restore has run, rather than moving the restore
-  - Pick one and record why in the section's Notes; shipping both would leave two mechanisms owning the same invariant.
-- [ ] Add a `TEST_CAT_BOOT` assertion in [`src/kernel/test/test_boot_diag.c`](../../src/kernel/test/test_boot_diag.c) that a publish into a fixture page carrying a prior-boot record does not destroy it before a restore has run
-- [ ] Commit: `"panic: capture cross-boot evidence before Phase 0 can overwrite it"`
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Alternatively, have the panic collector refuse to overwrite a page whose record predates this boot until the restore has run, rather than moving the restore -- same blocker
+  - Pick one and record why in the section's Notes; shipping both would leave two mechanisms owning the same invariant. The choice is deliberately NOT made here: it is a design call best made against the image budget that actually exists when the ceiling lifts.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Add a `TEST_CAT_BOOT` assertion in [`src/kernel/test/test_boot_diag.c`](../../src/kernel/test/test_boot_diag.c) that a publish into a fixture page carrying a prior-boot record does not destroy it before a restore has run
+  - Parked on the same ceiling, and it is the item that makes the whole section unreachable rather than merely expensive: a fixture case seeding a prior-boot record costs hundreds of bytes of `.text` against 79 available.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Commit: `"panic: capture cross-boot evidence before Phase 0 can overwrite it"` -- lands once the ceiling is gone
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
 
 **Test checkpoint:** a fixture page seeded with a valid prior-boot record survives a simulated Phase-0 panic and is still restorable; the 4-leg smoke matrix stays green.
 
-> **Blocked:** kernel `.text` headroom is 79 bytes at `__kernel_end == 0x7ff000` (measured 2026-08-30, section 12's deferral note), so the reordering plus its test may not fit until the image ceiling moves -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard").
+**Measured blocker (re-measured 2026-09-03).** `scripts/overnight/bss-headroom.py` reports `__kernel_end` at `0x7fead5`, page-aligning to `0x7ff000`, with **79 bytes** of `.text` growth before `scripts/build.sh` refuses at `USER_BASE == 0x800000`. Nothing in this section is bootloader-side: both candidate mechanisms live in `src/kernel/main.c` / `src/kernel/panic.c` and the mandatory fixture lives in `src/kernel/test/test_boot_diag.c`. The neighbouring measurements in `02-kernel-core/TODO-33` §7 price a comparable production-only change at +96 bytes and a comparable test block in the thousands, so this is unreachable by an order of magnitude rather than trimmable. No code was written: parking before implementing is what the section-pack gate asks for on a TIGHT image.
 
 ---
 
@@ -612,6 +618,7 @@ Found by the section 14 performance review, which was right where the boot-quali
 
 > **Spawned-by:** §14 (review)
 > **User impact:** on a machine where firmware refuses the pin, the kernel still writes the evidence page -- a page firmware may own -- because nothing tells it the pin failed. The user sees no warning, and a crash report that reads "no prior crash" is indistinguishable from one whose record was never protected in the first place.
+> **Deferred:** 2026-09-03 | kernel-image ceiling, MEASURED at 79 bytes of `.text`. The producer half is bootloader-side and would fit; the decode helper, the kernel-side gate and the mandatory `TEST_CAT_BOOT` fixture are all kernel `.text`, and shipping the field without the gate that reads it would be false completeness -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard").
 
 Section 14 pins the page and reports the outcome on serial, but the outcome never reaches the kernel. `panic_evidence_take` and the publish path dereference `PANIC_EVIDENCE_ADDR` unconditionally ([`src/kernel/panic.c:1605`](../../src/kernel/panic.c), [`src/kernel/panic.c:2103`](../../src/kernel/panic.c)), and the PMM's first-MiB reservation stops allocator REUSE, not direct writes. That exposure predates section 14 -- before the pin there was none at all, on every boot -- and a recorded outcome is what finally lets the kernel decline.
 
@@ -619,17 +626,26 @@ Raised by the section 14 adversarial review, verified at both refs.
 
 **Files:** [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h), [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h), [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), [`src/kernel/panic.c`](../../src/kernel/panic.c)
 
-> **Blocked (operator-gated):** the field needs a one-line `F(panic_page_reservation);` row in [`tools/boot-info-manifest/dump-fields.inc`](../../tools/boot-info-manifest/dump-fields.inc). `receipt_surface_guard.py` classifies `tools/boot-info-manifest/*` as receipt machinery the unattended run may not edit, and `check-doc-coverage.py` refuses any `boot_info` field lacking that row plus an ownership-matrix row, so the field cannot land from an unattended session. Measured 2026-08-30 by adding the field and running the checker. Filed as a runner finding in `todo/overnight-runner-improvements/overnight-runner-improvements-v18.md`. **Unblocked 2026-09-03 at the v18 close-out:** `receipt_surface_guard.py` now classifies `tools/boot-info-manifest/` as machinery by file type (`*.c`, `*.h`, `*.sh`, `*.py`), so the declarative `dump-fields.inc` row is ordinary work and this item is runnable unattended; the operator gate no longer applies.
+> **Blocked (operator-gated):** the field needs a one-line `F(panic_page_reservation);` row in [`tools/boot-info-manifest/dump-fields.inc`](../../tools/boot-info-manifest/dump-fields.inc). `receipt_surface_guard.py` classifies `tools/boot-info-manifest/*` as receipt machinery the unattended run may not edit, and `check-doc-coverage.py` refuses any `boot_info` field lacking that row plus an ownership-matrix row, so the field cannot land from an unattended session. Measured 2026-08-30 by adding the field and running the checker. Filed as a runner finding in `todo/overnight-runner-improvements/overnight-runner-improvements-v18.md`. **Unblocked 2026-09-03 at the v18 close-out:** `receipt_surface_guard.py` now classifies `tools/boot-info-manifest/` as machinery by file type (`*.c`, `*.h`, `*.sh`, `*.py`), so the declarative `dump-fields.inc` row is ordinary work and this item is runnable unattended; the operator gate no longer applies. The section is now parked on a DIFFERENT blocker -- the kernel-image ceiling -- and that one is not operator-gated, so do not read the sentence above as "runnable now".
 
-- [ ] Add `uint32_t panic_page_reservation` at the tail of `struct boot_info` with the matching mirror field, offset `_Static_assert`s, and a `BOOT_INFO_VERSION` 24 -> 25 bump in BOTH headers
+- [/] Add `uint32_t panic_page_reservation` at the tail of `struct boot_info` with the matching mirror field, offset `_Static_assert`s, and a `BOOT_INFO_VERSION` 24 -> 25 bump in BOTH headers
   - A tail field, not a pad carve: every reserved pad in the struct was consumed by the v21/v22 carves and there is no trailing pad.
   - Lands with the `dump-fields.inc` row, a `docs/boot/boot-info-fields.md` ownership-matrix row, and a `docs/boot/boot-protocol-changelog.md` entry in the same commit.
-- [ ] Encode it as one self-describing word so "the producer never wrote this" stays distinct from every outcome it can report, and decode it with a pure helper
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Encode it as one self-describing word so "the producer never wrote this" stays distinct from every outcome it can report, and decode it with a pure helper
   - Whole-word zero is what a pre-v25 loader leaves behind, so it must decode as UNREPORTED and route through today's restore behaviour unchanged. A nonzero word that is not a known encoding decodes as MALFORMED rather than being read as UNREPORTED.
   - States are protected / unprotected / unreported / malformed. It reports PROTECTION, never DESTRUCTION: `EFI_NOT_FOUND` proves only that the page was unavailable, and a success proves only that nothing took it after firmware init. Never render "clobbered" from it.
-- [ ] Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own
-- [ ] Unit-test the decode helper in [`src/kernel/test/test_boot_diag.c`](../../src/kernel/test/test_boot_diag.c) (`TEST_CAT_BOOT`) against a fixture word, not the live page
-- [ ] Commit: `"boot: carry the panic-page pin outcome in the boot_info handoff"`
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own -- kernel `.text`, blocked on the image ceiling
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Unit-test the decode helper in [`src/kernel/test/test_boot_diag.c`](../../src/kernel/test/test_boot_diag.c) (`TEST_CAT_BOOT`) against a fixture word, not the live page
+  - Four fixture words plus a malformed control; the block is the section's largest `.text` cost and is what puts it out of reach rather than merely over budget.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [/] Commit: `"boot: carry the panic-page pin outcome in the boot_info handoff"` -- lands whole, once the ceiling is gone
+  - Splitting producer from consumer across two commits was considered and rejected: a `boot_info` field that nothing reads is a version bump spent on nothing, and it would leave `BOOT_INFO_VERSION` 25 meaning two different things depending on which half shipped.
+  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+
+**Measured blocker (2026-09-03).** `scripts/overnight/bss-headroom.py` reports 79 bytes of `.text` headroom before `__kernel_end` crosses `USER_BASE`. The bootloader half of this section costs the kernel image nothing (`BOOTX64.EFI` is a separate binary), but the decode helper, the `panic.c` gate and the fixture block are all kernel `.text`, and `02-kernel-core/TODO-33` §7 records a comparable production-only change measured at +96 bytes. No code was written; the section is parked before implementation as the section-pack gate asks on a TIGHT image.
 
 **Test checkpoint:** the decode helper returns each of the four states for its corresponding fixture word and MALFORMED for an unknown nonzero encoding; a boot whose pin failed leaves the evidence page untouched; the 4-leg smoke matrix stays green and `compare.sh` reports no kernel-vs-mirror drift.
 

@@ -46,23 +46,23 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     473 |     136831 |
+| **Markdown** (`.md`)        |     473 |     136853 |
 | **JSON** (`.json`)          |      16 |       2453 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1855 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **521** | **143325** |
+| **Subtotal**                | **521** | **143347** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
 | **Core code + tooling**                              | **1330** |  **674994** |
-| **Supporting text + metadata**                       |  **521** |  **143325** |
-| **Written here**                                     | **1851** |  **818319** |
+| **Supporting text + metadata**                       |  **521** |  **143347** |
+| **Written here**                                     | **1851** |  **818341** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      517 |      468739 |
-| **All lines in tree**                                | **2368** | **1287058** |
+| **All lines in tree**                                | **2368** | **1287080** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,7 +77,7 @@
 
 |                       |         Linux |     Windows | Impossible OS |
 | --------------------- | ------------: | ----------: | ------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |     1,287,058 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |     1,287,080 |
 | **Developers**        | ~1,000 active | ~5,000 peak |             1 |
 | **Time span**         |      33 years |    40 years |    6 month(s) |
 
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-09-03 03:51 · commit `016d5f090`*
+*Last updated: 2026-09-03 04:04 · commit `fd09df1ad`*
