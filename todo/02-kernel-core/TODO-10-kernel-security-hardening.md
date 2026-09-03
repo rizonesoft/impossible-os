@@ -94,7 +94,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.)  | §26                        |  [x]   |
 | 💎  |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
 | 💎  |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
-| 💎  |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [ ]   |
+| 💎  |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [/]   |
 | 💎  |  32   | Post-ship follow-up backfill (2026-07-31 cohort)                | --                         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
@@ -940,17 +940,23 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 > [!WARNING]
 > Found 2026-07-29 by the adversarial review of `00-infrastructure/TODO-04` §25, which needed the opposite property. That section authenticates launcher records with a per-boot nonce held in a kernel static; a binary that can replay kernel memory to serial can echo the tag without ever learning its bytes, so §25's non-forgeability holds only against callers that cannot exercise this primitive. The nonce is a symptom -- the disclosure is the defect.
 
-- [ ] Validate the whole `[buf, buf + len)` range against the user address window with overflow-safe arithmetic (a
-      `buf + len` that wraps must be refused, not truncated) before any dereference, and reject a range that is not entirely user-accessible with the same status a bad handle gets. `include/kernel/mm/user_range.h` owns the window bounds; do not restate them
-- [ ] Copy through a kernel bounce buffer on the recoverable user-copy path rather than dereferencing the user pointer in
-      place, so a page that disappears between validation and use faults recoverably instead of taking the kernel down. `copy_from_user` already exists for the NT syscall surface (`nt_syscall.c`) -- reuse it rather than adding a second mechanism
-- [ ] Audit every remaining legacy (non-NT) syscall that consumes a caller pointer for the same shape, `sys_log` included,
-      and fix each rather than only the one the review named. A per-syscall inventory belongs in the commit message
-- [ ] Add a ring-3 regression test that passes a kernel address to the offending syscalls and asserts a refusal rather
-      than a dump, plus a bounds test for the wrapping `buf + len` case
-- [ ] Commit: `"security: validate user pointers in the legacy syscall surface"`
+> [!WARNING]
+> **`sys_read` is the same defect on the WRITE side, and the section text did not know it.** Verified 2026-09-03 at `src/kernel/sched/syscall.c:146` (`char *dst = (char *)buf;`) and `:167` (`dst[0] = c;`): the identical unvalidated ring-3 pointer is STORED THROUGH, so this is an arbitrary kernel-memory WRITE primitive, strictly worse than the disclosure the section was filed for. `sys_readfile` (`:193-194`) casts two caller pointers the same way. The audit item below now names them.
+
+- [/] Validate `[buf, buf + len)` against the user-accessible ranges with overflow-safe arithmetic before any dereference, refusing a wrapping length -- BLOCKED on the ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
+  - Design of record, written from a build that was MEASURED rather than sketched, so the redo starts from a design: `user_range_ok(base, len)` as a `static inline` in `include/kernel/mm/user_range.h`, returning 1 for `len == 0`, else requiring `base` inside `[USER_ELF_BASE, USER_ELF_END)` with `len <= USER_ELF_END - base`, or inside `[SECTION_VIEW_BASE, SECTION_VIEW_LIMIT)` with `len <= SECTION_VIEW_LIMIT - base`, else 0. `base + len` is never computed, so a wrapping length cannot be truncated into a pass.
+  - The bound must be the ACCESSIBLE SUB-RANGES, not `MM_USER_BASE`/`MM_USER_END`. The kernel links LOW (`0x100000 .. 0x800000`), which is numerically inside the canonical user window, so a memmap-based check would admit every kernel static and look correct while defending nothing.
+  - Preserved at `.claude/state/deferred-TODO-10-kernel-security-hardening-s31.patch` (helper plus both call sites, built with `git add -N`).
+- [/] Copy through a kernel bounce buffer rather than dereferencing in place, so a page that vanishes between validation and use faults recoverably -- BLOCKED on the ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
+  - CORRECTION to this item as filed: reusing `copy_from_user` is necessary but NOT sufficient, and reading the item as "just call `copy_from_user`" would ship a non-fix. Verified at `src/kernel/cpu_security.c:652-672`: it is fault-RECOVERABLE (it delegates to `__uaccess_copy_from` behind the RIP-keyed exception table) and performs NO range check whatsoever, so a kernel address handed to it is mapped, readable, and copied out successfully. Validation has to happen first; the bounce buffer only converts a disappearing page into a recoverable fault.
+- [/] Audit every remaining legacy (non-NT) syscall that consumes a caller pointer, and fix each rather than only the one the review named -- BLOCKED on the same ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
+  - Known members as of 2026-09-03: `sys_write` (`syscall.c:81`, read), `sys_read` (`:146`, WRITE), `sys_readfile` (`:193-194`, both), and `sys_log` as originally filed. The inventory belongs in the commit message; this list is the starting point, not the finding.
+- [/] Add a ring-3 regression test: a kernel address to each offending syscall asserts a refusal not a dump, plus a wrapping-`buf + len` bounds case -- BLOCKED on the ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
+- [/] Commit: `"security: validate user pointers in the legacy syscall surface"` -- BLOCKED on the same ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
 
 **Test checkpoint:** A ring-3 binary calling `sys_write(1, <kernel address>, N)` receives an error status and produces NO serial output from kernel memory; a call with `buf + len` wrapping past the top of the address space is refused; ordinary user-buffer writes are unaffected and the user-mode suite stays green. Test on: QEMU TCG, QEMU KVM.
+
+> **Deferred:** [H] the minimal fix was IMPLEMENTED and MEASURED against a green control, then reverted: it does not fit the kernel image ceiling (reason: a clean HEAD `02b043249` builds at `__kernel_end` `0x7fead5` with a `.text` budget of 95 bytes per `scripts/overnight/bss-headroom.py`; the guard moves it to `0x7ffad5`, page-aligning onto `0x800000` = `USER_BASE`, and `scripts/build.sh` refuses with `BSS COLLISION`). NO PARTIAL SHIP IS AVAILABLE -- a single-call-site variant was measured separately and crosses the same boundary, so the highest-value half cannot be landed alone. This is a LIVE arbitrary-kernel-memory disclosure AND write primitive reachable from any ring-3 binary; it is parked on image headroom, not on doubt about the fix. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT")
 
 ---
 
