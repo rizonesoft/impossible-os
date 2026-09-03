@@ -265,13 +265,20 @@ Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase bef
 > [!NOTE]
 > Plan sharpened by Codex design review (2026-06-20). §7 is a compositor + font-subsystem refactor, NOT simple deferral. Deferred this pass (multi-commit); items below are the vetted plan.
 
-- [ ] Compositor-polled incremental loader: state machine ticked once per presented frame after `DESKTOP_READY` (per-tick budget), one TTF/icon slot per tick. NO `thread_create`/sys_wq/DPC -- thread-deferred init starves behind the compositor (documented `boot_run_deferred` incident).
-- [ ] Immutable face-bundle publish in `gfx_text.c`: each face = immutable bundle (fontinfo/metrics/glyph-cache/atlases/ascent), built off-side, published via release-store + acquire-load in the draw path; remove `ttf_get` per-call pixel_size/scale mutation.
-- [ ] Boot-atlas fallback adapter: expose the Phase-1 18px ASCII atlas through the normal measure/draw API (first paint keeps titles/controls/labels); placeholders for bold/mono/non-ASCII + `icon_get`/`icon_draw_scaled` until each family publishes.
-- [ ] On each face/icon-family publish, invalidate + redraw the affected compositor surfaces (atomic swap visible, no torn glyph reads).
-- [ ] Once the post-`DESKTOP_READY` tick mechanism exists, move `boot_trend_publish_json()` onto it. -> XREF: this file §20 (item: "Move `boot_trend_publish_json()`").
+- [/] Compositor-polled incremental loader: a state machine ticked once per presented frame after `DESKTOP_READY`, one TTF/icon slot per tick under a per-tick budget.
+  - NO `thread_create`/sys_wq/DPC: thread-deferred init starves behind the compositor (the documented `boot_run_deferred` incident).
+  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
+- [/] Immutable face-bundle publish in `gfx_text.c`: each face is an immutable bundle (fontinfo/metrics/glyph-cache/atlases/ascent), built off-side.
+  - Published via release-store and read by acquire-load in the draw path; removes the `ttf_get` per-call pixel_size/scale mutation.
+  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
+- [/] Boot-atlas fallback adapter: expose the Phase-1 18px ASCII atlas through the normal measure/draw API (first paint keeps titles/controls/labels); placeholders for bold/mono/non-ASCII + `icon_get`/`icon_draw_scaled` until each family publishes.
+  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
+- [/] On each face/icon-family publish, invalidate + redraw the affected compositor surfaces (atomic swap visible, no torn glyph reads).
+  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
+- [/] Once the post-`DESKTOP_READY` tick mechanism exists, move `boot_trend_publish_json()` onto it. -> XREF: this file §20 (item: "Move `boot_trend_publish_json()`").
+  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
   - It is still inline at `src/kernel/main/boot_desktop.c:819`, before `task_create(cmd.exe)`, so its cJSON round trip and synchronous VFS I/O delay the real userland handoff.
-- [ ] Commit: `"desktop: async font + icon load (1.3s -> <50ms blocking)"`
+- [/] Commit: `"desktop: async font + icon load (1.3s -> <50ms blocking)"`
 
 **Test checkpoint:** `DESKTOP_READY` fires within 50ms of `boot_phase3()` start; first paint renders fallback text (boot atlas) + icon placeholders (no blank labels); each TTF/icon family publishes within 2s post-desktop-ready via the compositor-polled loader (no kthread) and swaps in atomically with a surface redraw; no torn-glyph glitch. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -283,11 +290,17 @@ Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase bef
 
 A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the next `boot_progress` line emits or (b) the watchdog fires (TODO-23). A 250ms heartbeat fills the gap with "still working" telemetry.
 
-- [ ] `boot_heartbeat_arm(phase_ms_target)` and `boot_heartbeat_pet()` in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h). ISR-SAFE ONLY: the 250ms LAPIC-timer ISR increments an in-memory counter + records elapsed; the `[BOOT-HB] phase=<step> elapsed=<ms> target=<target>` serial line is DRAINED outside interrupt context (next `boot_progress` entry/exit), never from the ISR -- TODO-14 §4 permanently deferred the in-ISR visual heartbeat after `fb_swap_rect` caused recursive interrupts on bare metal; serial writes carry the same risk. A new `boot_info.heartbeat_seq` field is a BOOT_INFO_VERSION bump -> add it via the boot_info ABI owner path (CLAUDE.md boot_info ABI), not ad hoc.
-- [ ] Wire arm/pet into `boot_progress`: every step entry arms (with the §1 budget as target), every step exit pets (cancels the next heartbeat). Long-running steps emit 4 heartbeats/sec; short steps emit zero.
-- [ ] -> XREF: `TODO-23-boot-watchdog.md` owns the LAPIC/NMI timer + hard-cap reset; §8 is the SOFT serial-counter signal layered on TODO-23's timer (no duplicate timer ownership). TODO-14 §4 (in-ISR visual heartbeat) stays permanently deferred; §8 is serial-only + ISR-safe-drain.
-- [ ] Boot-health.json (§2) records the maximum heartbeat gap observed during the boot, surfacing pauses that stayed under the WARN threshold but were unusually slow.
-- [ ] Commit: `"boot: heartbeat telemetry during long phases"`
+- [/] `boot_heartbeat_arm(phase_ms_target)` and `boot_heartbeat_pet()` in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h). ISR-SAFE ONLY.
+  - The 250ms LAPIC-timer ISR increments an in-memory counter and records elapsed; the `[BOOT-HB] phase=<step> elapsed=<ms> target=<target>` serial line is DRAINED outside interrupt context (next `boot_progress` entry/exit), never from the ISR.
+  - TODO-14 §4 permanently deferred the in-ISR visual heartbeat after `fb_swap_rect` caused recursive interrupts on bare metal; serial writes carry the same risk.
+  - A new `boot_info.heartbeat_seq` field is a BOOT_INFO_VERSION bump: add it via the boot_info ABI owner path (CLAUDE.md boot_info ABI), not ad hoc.
+  - PARKED: needs TODO-23's LAPIC/NMI timer plus a `boot_info.heartbeat_seq` ABI bump -> XREF: `01-boot-platform/TODO-23-boot-watchdog.md` (timer owner).
+- [/] Wire arm/pet into `boot_progress`: every step entry arms (with the §1 budget as target), every step exit pets (cancels the next heartbeat). Long-running steps emit 4 heartbeats/sec; short steps emit zero.
+  - PARKED: needs TODO-23's LAPIC/NMI timer plus a `boot_info.heartbeat_seq` ABI bump -> XREF: `01-boot-platform/TODO-23-boot-watchdog.md` (timer owner).
+- -> XREF: `TODO-23-boot-watchdog.md` owns the LAPIC/NMI timer + hard-cap reset; §8 is the SOFT serial-counter signal layered on TODO-23's timer (no duplicate timer ownership). TODO-14 §4 (in-ISR visual heartbeat) stays permanently deferred; §8 is serial-only + ISR-safe-drain.
+- [/] Boot-health.json (§2) records the maximum heartbeat gap observed during the boot, surfacing pauses that stayed under the WARN threshold but were unusually slow.
+  - PARKED: needs TODO-23's LAPIC/NMI timer plus a `boot_info.heartbeat_seq` ABI bump -> XREF: `01-boot-platform/TODO-23-boot-watchdog.md` (timer owner).
+- [/] Commit: `"boot: heartbeat telemetry during long phases"`
 
 **Test checkpoint:** A 1342ms SMBIOS init with target 100ms emits 4-5 `[BOOT-HB] phase=SMBIOS elapsed=Xms target=100` lines. A <250ms phase emits zero heartbeats. Heartbeat ISR is harmless when LAPIC timer is the active scheduler tick (no double-fire, no priority inversion).
 
@@ -300,11 +313,15 @@ Smoke (KVM, 2026-05-03 latest) records `EXEC took 13834ms (target 100ms)` -- a H
 
 **Files:** `src/kernel/exec.c`, `src/kernel/nt/ssdt.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
 
-- [ ] Bisect the 1210ms -> 13834ms regression first: walk recent commits to `src/kernel/exec.c` and `src/kernel/nt/ssdt.c`; identify the responsible change before adding profiling.
-- [ ] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
-- [ ] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
-- [ ] Profile SSDT registration hot path; pick a fix path: bulk-register via static const array, lazy shadow-stub registration, or accept current cost with a justified budget.
-- [ ] Commit: `"boot: EXEC step substep timing + SSDT registration profile"`
+- [/] Bisect the 1210ms -> 13834ms regression first: walk recent commits to `src/kernel/exec.c` and `src/kernel/nt/ssdt.c`; identify the responsible change before adding profiling.
+  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
+- [/] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
+  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
+- [/] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
+  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
+- [/] Profile SSDT registration hot path; pick a fix path: bulk-register via static const array, lazy shadow-stub registration, or accept current cost with a justified budget.
+  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
+- [/] Commit: `"boot: EXEC step substep timing + SSDT registration profile"`
 
 **Test checkpoint:** Boot serial shows ~5 EXEC sub-step lines with ms deltas; the largest contributor is named in the perf summary; total EXEC drops below 500ms or the budget is justified in `boot_perf_budgets[]`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -317,10 +334,11 @@ Smoke (KVM, 2026-05-03) records `UEFI: RT SetVariable took 109 ms (threshold 50 
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/boot_perf_budget.c`, `src/kernel/main/boot_progress.c`
 
-- [ ] Capture the variable name + size in every >50ms RT-SetVariable WARN line.
-- [ ] Verify boot perf save (`bootperf` step) batches its writes; fix to a single-blob write if the 31-step bin currently fragments into 31 calls.
-- [ ] If OVMF flash-emulation latency is the root cause, exempt OVMF via `firmware_quirks_is_active(QUIRK_SLOW_NVRAM)` instead of leaving the WARN spam.
-- [ ] Commit: `"boot: per-call RT SetVariable latency tracking + bootperf write batching"`
+- [/] Capture the variable name + size in every >50ms RT-SetVariable WARN line. PARKED, operator-gated: validated only against live NVRAM-write timing on real flash and OVMF.
+- [/] Verify boot perf save (`bootperf` step) batches its writes; fix to a single-blob write if the 31-step bin currently fragments into 31 calls. PARKED, operator-gated: validated only against live NVRAM-write timing on real flash and OVMF.
+- [/] If OVMF flash-emulation latency is the root cause, exempt OVMF via `firmware_quirks_is_active(QUIRK_SLOW_NVRAM)` instead of leaving the WARN spam.
+  - PARKED, operator-gated: validated only against live NVRAM-write timing on real flash and OVMF.
+- [/] Commit: `"boot: per-call RT SetVariable latency tracking + bootperf write batching"`
 
 **Test checkpoint:** Serial shows the variable name on every >50ms RT SetVariable WARN. Bare-metal RT SetVariable consistently <50ms (real flash). OVMF still warns but with the variable name + size for triage.
 
@@ -333,11 +351,13 @@ Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmw
 
 **Files:** new `src/kernel/fs/fat32/fat32_batch.c`, plus the 5 Phase-3 writer call sites
 
-- [ ] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms.
-- [ ] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
-- [ ] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log).
-- [ ] `firmware-tables.json` C:\ fallback: `firmware_tables_json.c:505` hardcodes `X:\Diag\` -- use `klog_using_blackbox ? "X:\\Diag\\" : klog_dir` like the other writers. (TODO-24 §8)
-- [ ] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
+- [/] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms. PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
+- [/] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
+  - PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
+- [/] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log). PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
+- [/] `firmware-tables.json` C:\ fallback: `src/kernel/firmware_tables_json.c:506` hardcodes `X:\Diag\` -- use `klog_using_blackbox ? "X:\\Diag\\" : klog_dir` like the other writers. (TODO-24 §8)
+  - PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
+- [/] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
 
 **Test checkpoint:** Boot serial shows ~5x reduction in cumulative `boot_progress` delta for the X:\Diag write block. All 5 files persist with byte-identical content vs the per-file path. Smoke confirms no FAT32 cache regressions.
 
@@ -350,9 +370,10 @@ Smoke records `simd: MPERF/APERF unavailable; enabling AVX-512 without throttle 
 
 **Files:** `src/kernel/cpu_security.c`, `src/kernel/gfx/gfx_simd.c`, `src/kernel/gfx/gfx_simd_avx512.c`, `src/kernel/cpuid.c`
 
-- [ ] Hypervisor-bit aware logging: hypervisor present = LOG_INFO (expected); bare metal + AVX-512 + no MPERF = LOG_WARN (real regression).
-- [ ] `boot.conf simd_max_avx_level=avx2` override pins the SIMD ceiling to AVX2 on systems with observed throttling.
-- [ ] Commit: `"simd: AVX-512 throttle policy when APERF/MPERF unavailable"`
+- [/] Hypervisor-bit aware logging: hypervisor present = LOG_INFO (expected); bare metal + AVX-512 + no MPERF = LOG_WARN (real regression).
+  - PARKED, operator-gated: reproducible only on bare-metal Intel where a hypervisor hides APERF/MPERF; not reachable from WSL.
+- [/] `boot.conf simd_max_avx_level=avx2` override pins the SIMD ceiling to AVX2 on systems with observed throttling. PARKED, operator-gated: reproducible only on bare-metal Intel where a hypervisor hides APERF/MPERF; not reachable from WSL.
+- [/] Commit: `"simd: AVX-512 throttle policy when APERF/MPERF unavailable"`
 
 **Test checkpoint:** Hyper-V smoke shows LOG_INFO (no WARN). Synthetic bare-metal-no-MPERF fixture or real bare-metal Haswell test laptop shows LOG_WARN. `boot.conf simd_max_avx_level=avx2` clamps the runtime ceiling.
 
@@ -365,10 +386,10 @@ Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; 
 
 **Files:** `src/kernel/main/boot_history.c` (+ matching public header to add), registry mirror
 
-- [ ] Bump `BOOT_HIST_RING_LEN` from 8 to 32; update size-pin static asserts + tests + JSON schema docs in lockstep.
-- [ ] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape).
-- [ ] Decide: grow NVRAM variable in-place with tail-append schema, or version-bump and migrate.
-- [ ] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
+- [/] Bump `BOOT_HIST_RING_LEN` from 8 to 32; update size-pin static asserts + tests + JSON schema docs in lockstep. PARKED: needs the NVRAM-blob migration decision -> XREF: `01-boot-platform/TODO-01` §11 (boot history owner).
+- [/] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape). PARKED: needs the NVRAM-blob migration decision -> XREF: `01-boot-platform/TODO-01` §11 (boot history owner).
+- [/] Decide: grow NVRAM variable in-place with tail-append schema, or version-bump and migrate. PARKED: needs the NVRAM-blob migration decision -> XREF: `01-boot-platform/TODO-01` §11 (boot history owner).
+- [/] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
 
 **Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
 
@@ -381,10 +402,13 @@ Smoke (KVM, 2026-05-03) shows VFS step durations swinging by 4x depending on whe
 
 **Files:** `src/kernel/fs/fat32/fat32_fsck.c`, `src/kernel/fs/fat32/fat32_ops.c`, `include/kernel/boot_init.h`
 
-- [ ] Sub-time the dirty-mount path: emit `boot_progress` substeps for `fat32_fsck.bpb_validate`, `fat32_fsck.fat_compare`, `fat32_fsck.cluster_walk`. Today the only signal is the wall-clock VFS delta.
-- [ ] Add a `fsck_ran` boolean + `fsck_duration_ms` to the boot-health JSON (§2) so VFS step variance is attributable rather than mysterious.
-- [ ] Investigate a fast-clean shutdown path that flips the dirty bit on graceful poweroff (cmd.exe `shutdown` + ACPI S5) so subsequent boots skip fsck. Today the volume is dirty on every boot because the smoke teardown SIGTERMs QEMU mid-flight.
-- [ ] Commit: `"fs: fat32 fsck substep timing + dirty-mount duration in boot-health"`
+- [/] Sub-time the dirty-mount path: emit `boot_progress` substeps for `fat32_fsck.bpb_validate`, `fat32_fsck.fat_compare`, `fat32_fsck.cluster_walk`. Today the only signal is the wall-clock VFS delta.
+  - PARKED: needs the FAT32 fsck owner plus an ACPI-S5 shutdown hook -> XREF: `05-storage-filesystems/TODO-04` (FAT32 fsck owner).
+- [/] Add a `fsck_ran` boolean + `fsck_duration_ms` to the boot-health JSON (§2) so VFS step variance is attributable rather than mysterious.
+  - PARKED: needs the FAT32 fsck owner plus an ACPI-S5 shutdown hook -> XREF: `05-storage-filesystems/TODO-04` (FAT32 fsck owner).
+- [/] Investigate a fast-clean shutdown path that flips the dirty bit on graceful poweroff (cmd.exe `shutdown` + ACPI S5) so subsequent boots skip fsck. Today the volume is dirty on every boot because the smoke teardown SIGTERMs QEMU mid-flight.
+  - PARKED: needs the FAT32 fsck owner plus an ACPI-S5 shutdown hook -> XREF: `05-storage-filesystems/TODO-04` (FAT32 fsck owner).
+- [/] Commit: `"fs: fat32 fsck substep timing + dirty-mount duration in boot-health"`
 
 **Test checkpoint:** Boot serial shows 3 substep lines under VFS when fsck triggers; absent when volume was clean. Boot-health.json carries `fat32: { fsck_ran: bool, fsck_duration_ms: u32 }`. Graceful-shutdown smoke confirms the next boot skips fsck.
 
@@ -397,10 +421,13 @@ Smoke (KVM, 2026-05-03) shows a consistent ~1s gap between `sched: Task N ("cmd.
 
 **Files:** `src/kernel/sched/syscall.c` (SYS_EXEC), `src/kernel/exec.c`, `src/kernel/sched/task.c`, `src/kernel/main/boot_desktop.c` (cmd.exe shell_loader_func)
 
-- [ ] Add `boot_progress` substeps inside the SYS_EXEC path: read_file, format_dispatch, segment_load, page_table_install, auxv_setup, scheduler_resume. Capture per-step ms.
-- [ ] Profile the ELF loader's per-segment work; a 67 KiB cmd.exe loading 3 segments in ~1s suggests page-by-page allocation rather than batched. Investigate whether `pmm_alloc_contiguous` for the segment span shaves the cost.
-- [ ] If the gap is scheduler-side (task created but not picked for ~1s), audit the round-robin policy for boot-time starvation -- a freshly-created kernel task should run before idle.
-- [ ] Commit: `"kernel: SYS_EXEC substep timing + spawn-latency profile"`
+- [/] Add `boot_progress` substeps inside the SYS_EXEC path: read_file, format_dispatch, segment_load, page_table_install, auxv_setup, scheduler_resume. Capture per-step ms.
+  - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
+- [/] Profile the ELF loader's per-segment work; a 67 KiB cmd.exe loading 3 segments in ~1s suggests page-by-page allocation rather than batched. Investigate whether `pmm_alloc_contiguous` for the segment span shaves the cost.
+  - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
+- [/] If the gap is scheduler-side (task created but not picked for ~1s), audit the round-robin policy for boot-time starvation -- a freshly-created kernel task should run before idle.
+  - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
+- [/] Commit: `"kernel: SYS_EXEC substep timing + spawn-latency profile"`
 
 **Test checkpoint:** Boot serial shows 6 substep lines per user-mode spawn. cmd.exe spawn drops below 200ms or the cost is justified in `boot_perf_budgets[]`. test=1 mode shows the same pattern for the 16 user-mode test binaries (16 × 200ms = 3.2s vs 16 × 1s = 16s today is the upper bound on the win).
 
@@ -413,11 +440,15 @@ Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 
 
 **Files:** `src/kernel/drivers/lapic.c`, `src/kernel/cpuid.c`, `src/kernel/time/mono_clock.c`, `src/kernel/time/kusd_time.c`
 
-- [ ] Verify all TSC-freq consumers (KUSD QpcFreq, time_get_tsc_ns_per_tick, perf_record timestamps) read from a single latched value computed once at LAPIC init, not re-queried.
-- [ ] Add a one-time post-init self-check: re-read MSR 0x40000023 and compare against the latched value; if it drifted by > 1%, log LOG_WARN with both values for triage.
-- [ ] CPUID 0x15/0x16 fallback: when the hypervisor MSR is absent (bare metal Intel Tier 1), pin to CPUID 0x15 ratio + 0x16 base which Linux trusts as authoritative.
-- [ ] Boot-health.json (§2) records the latched TSC freq + the source (Hyper-V MSR / CPUID 0x15 / PIT / HPET) so operator triage can spot when a hypervisor reset confused the calibration.
-- [ ] Commit: `"time: TSC frequency single-latch + drift-check + CPUID fallback"`
+- [/] Verify all TSC-freq consumers (KUSD QpcFreq, time_get_tsc_ns_per_tick, perf_record timestamps) read from a single latched value computed once at LAPIC init, not re-queried.
+  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
+- [/] Add a one-time post-init self-check: re-read MSR 0x40000023 and compare against the latched value; if it drifted by > 1%, log LOG_WARN with both values for triage.
+  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
+- [/] CPUID 0x15/0x16 fallback: when the hypervisor MSR is absent (bare metal Intel Tier 1), pin to CPUID 0x15 ratio + 0x16 base which Linux trusts as authoritative.
+  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
+- [/] Boot-health.json (§2) records the latched TSC freq + the source (Hyper-V MSR / CPUID 0x15 / PIT / HPET) so operator triage can spot when a hypervisor reset confused the calibration.
+  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
+- [/] Commit: `"time: TSC frequency single-latch + drift-check + CPUID fallback"`
 
 **Test checkpoint:** Smoke shows one `[time] TSC freq locked: <N> MHz from <source>` line; no later line reports a different freq. Synthetic-drift fixture (mock MSR returning a different value on second read) triggers the LOG_WARN. boot-health.json carries `tsc: { freq_hz: u64, source: "hyperv-msr"|"cpuid-0x15"|"pit"|"hpet" }`.
 
@@ -430,11 +461,13 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 **Files:** `src/kernel/cpu_security.c` (PAT programming), `src/kernel/firmware_quirks_table.inc`, `include/kernel/firmware_quirks.h`, `src/kernel/firmware_quirks.c`, `src/kernel/main/boot_health.c` (auto-picked up via `firmware_quirks_iter_next`)
 
-- [ ] Add `FW_QUIRK_PAT_WC_TRAPPED` to `firmware_quirks_table.inc` with bit assignment + canonical name `"pat_wc_trapped"`.
-- [ ] In `cpu_configure_pat()`, register the quirk via `firmware_quirks_register(FW_QUIRK_PAT_WC_TRAPPED)` when the post-write readback shows entry 1 != WC; downgrade the WARN to INFO once the quirk fires.
-- [ ] Update `vmm_map_mmio_wc()` to log a single INFO line when the quirk is active, instead of every caller silently getting WT.
-- [ ] Verify `firmware_quirks_active[]` in `boot-health.json` lists `"pat_wc_trapped"` on KVM/WHPX hosts that exhibit the trap; absent on bare metal.
-- [ ] Commit: `"firmware: register pat_wc_trapped quirk for PAT-trapping hypervisors"`
+- [/] Add `FW_QUIRK_PAT_WC_TRAPPED` to `firmware_quirks_table.inc` with bit assignment + canonical name `"pat_wc_trapped"`. PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [/] In `cpu_configure_pat()`, register the quirk via `firmware_quirks_register(FW_QUIRK_PAT_WC_TRAPPED)` when the post-write readback shows entry 1 != WC; downgrade the WARN to INFO once the quirk fires.
+  - PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [/] Update `vmm_map_mmio_wc()` to log a single INFO line when the quirk is active, instead of every caller silently getting WT. PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [/] Verify `firmware_quirks_active[]` in `boot-health.json` lists `"pat_wc_trapped"` on KVM/WHPX hosts that exhibit the trap; absent on bare metal.
+  - PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [/] Commit: `"firmware: register pat_wc_trapped quirk for PAT-trapping hypervisors"`
 
 **Test checkpoint:** On KVM smoke, post-boot `boot-health.json` shows `"firmware_quirks_active": [..., "pat_wc_trapped", ...]`. On bare metal Intel where PAT writes succeed, the quirk is absent. The original WARN downgrades to a single INFO line. Test on: QEMU KVM, QEMU TCG, QEMU WHPX, VirtualBox, bare metal i5-4210U.
 
@@ -445,15 +478,19 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 §1-§3 expose per-phase durations + budgets + trend deltas, but a boot delay caused by ORDERING (step B waited on step A), a hardware WAIT (device poll), or scheduler STARVATION reads as "phase slow" with no actionable cause. Linux `systemd-analyze critical-chain` / `blame` / `dot` expose exactly this; this section adds the dependency + resource-wait attribution layer on top of the §1 timeline.
 
-- [ ] Tag each `boot_progress` step delta with a cause class (`COMPUTE`, `HW_WAIT`, `IO_WAIT`, `SCHED_WAIT`) so a slow step records WHY, not just how long.
-- [ ] `boot_critical_chain()` -- walk the §1 timeline, emit the ordered longest-pole chain (each step + dominant wait class) as `[BOOT-CRIT] <step> <ms> <cause>` lines (systemd-analyze critical-chain parity).
-- [ ] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
-- [ ] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test.
-- [ ] -> XREF: `TODO-14-boot-diagnostics.md §9` (Boot Timeline Visualization) -- the Gantt/SVG viewer consumes this critical-chain + cause-class data; §18 owns the attribution, §9 owns the visual.
-- [ ] Record a milestone between EXEC and DESKTOP_READY: that interval is 2272ms and its real content is TTF/glyph/icon loading plus a 1935x1080 JPEG decode, none of which EXEC names.
+- [/] Tag each `boot_progress` step delta with a cause class (`COMPUTE`, `HW_WAIT`, `IO_WAIT`, `SCHED_WAIT`) so a slow step records WHY, not just how long.
+  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
+- [/] `boot_critical_chain()` -- walk the §1 timeline, emit the ordered longest-pole chain (each step + dominant wait class) as `[BOOT-CRIT] <step> <ms> <cause>` lines (systemd-analyze critical-chain parity).
+  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
+- [/] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
+  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
+- [/] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test. PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
+- -> XREF: `TODO-14-boot-diagnostics.md §9` (Boot Timeline Visualization) -- the Gantt/SVG viewer consumes this critical-chain + cause-class data; §18 owns the attribution, §9 owns the visual.
+- [/] Record a milestone between EXEC and DESKTOP_READY: that interval is 2272ms and its real content is TTF/glyph/icon loading plus a 1935x1080 JPEG decode, none of which EXEC names.
+  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
 - [x] `vfs_rename_ex` rc=-1 on the boot-trend .tmp rename: ROOT-CAUSED 2026-07-27 (the two-dot guess was wrong). Diagnostics added at each failure site; the two real FAT32 defects are owned by `05-storage-filesystems/TODO-04 §4`.
   Filed THERE rather than here on purpose: this section carries a `Deferred:` stamp, which makes `sequencer_triage.py` class the whole file DONE, so an item added here would never be seen by the overnight runner. Worth remembering as a general trap -- a deferred section is a grave for new items.
-- [ ] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
+- [/] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
 
 **Test checkpoint:** Boot serial emits `[BOOT-CRIT]` lines naming the ordered longest-pole chain with per-step cause class; `boot-health.json` carries `critical_chain[]` (top-N) + a blame-sorted view. Pure-helper test covers the longest-pole walk + cause classifier. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
