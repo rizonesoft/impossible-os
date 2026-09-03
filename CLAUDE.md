@@ -179,6 +179,7 @@ Short-form list (group / rule):
 - **Init ordering:** no `thread_create` for deferred init (compositor starves threads); per-thread fault isolation needs SEH (TODO-10).
 - **Disk-sourced config:** dynamic buffers + hard-fail overflow, never silent truncate (boot.conf 2026-04-21 incident).
 - **Boot handoff trust:** a producer-set `BOOT_PAYLOAD_FLAG_RESERVED` is a REQUEST, not proof the reservation pass pinned the range (the pass skips an out-of-contract length); every consumer of a bounded payload type applies the same predicate the pass did, and `canary_init()` does it pre-IDT where a fault has no handler.
+- **Uninitialised loader `.bss`:** UEFI does not zero BOOTX64's `.bss`, so a static read before its initialiser holds firmware poison (`0xAF` bytes) or the previous boot's value, never 0. Reset it as the first statement of `efi_main`; make readiness a wide exact-match cookie tested with `!=` (a boolean is useless -- `0xAF` is non-zero and reads as "configured"); and mark the cookie `volatile`, or clang narrows it to one byte and deletes the wide compare. Invisible under every emulator.
 - **Cross-boot durability:** a record that must survive a reset needs `cache_writeback_range()`, not a barrier (RESET invalidates caches without writeback; invisible under every emulator). Store the publication word LAST rather than ordering flushes behind it; durably clear only where an owner arbitrates replacement; CLFLUSH is CPUID-gated and AMD orders it by MFENCE, not SFENCE; never bound a line-flush loop by an end address.
 
 ## Safety Gates

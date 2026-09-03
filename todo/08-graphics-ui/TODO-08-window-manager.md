@@ -194,6 +194,8 @@ Dirty-rect union: only re-composite screen regions touched by changed windows. F
 - [ ] `wm_composite()` gate: early return if `!g_dirty_full && g_dirty_w == 0 && !anim_mgr_any_active()`
 - [ ] Partial composite path: if `!g_dirty_full`: clip compositor to `(g_dirty_x, g_dirty_y, g_dirty_w, g_dirty_h)` -- only blit windows that overlap; skip others
 - [ ] Frame time: `system_get_ticks()` before/after composite; if `Δ × 10 > 16`: serial warn; log max observed frame time per 100 frames
+- [ ] Per-frame `spinner_tick()` over the active-spinner list, so a multi-instance spinner pool has a compositor driver
+  - -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md` §7 (item: "Compositor integration: WM maintains a `spinner_t *g_active_spinners[8]` list" at line 266)
 - [ ] Reset: `g_dirty_w = g_dirty_h = 0; g_dirty_full = 0` at end of `wm_composite()`
 - [ ] Commit: `"wm: compositor perf -- dirty-rect union, frame-skip when idle, 16 ms frame-time warning"`
 

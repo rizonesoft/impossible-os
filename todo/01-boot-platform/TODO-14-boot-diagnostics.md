@@ -37,7 +37,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 - → XREF: `02-kernel-core/TODO-27-crash-dump-generation.md` -- crash dumps complement §5 panic forensics; coordinate PMM page reservation at `0x80000` to avoid collision with minidump workspace
 - → XREF: `02-kernel-core/TODO-14-registry-completion.md` -- `VitalSigns` registry key (visual POST / debug bar: [TODO-15 -- Visual POST Display](TODO-15-visual-post-display.md)); `HKLM\SYSTEM\Boot\AliveBlink` is N/A because §4 is permanently deferred.
 - → XREF: `TODO-02-uefi-hardening-secureboot.md §7` -- boot UX polish calls `boot_splash_status()` via the §2 API
-- → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 -- compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame; that file §8 (Compositor Performance) owns per-frame integration
+- → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 (item: "Per-frame `spinner_tick()` over the active-spinner list" at line 197) -- the compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame
 - → XREF: `TODO-03-bootloader-error-recovery.md §13` -- bootloader-stage NVRAM error codes; §3 here persists kernel-stage panic evidence, §13 there persists UEFI-stage boot error codes -- complementary
 - → XREF: `TODO-03-bootloader-error-recovery.md §14` -- bootloader QR code on UEFI error screen; §4 here does the same for kernel-stage panic BSOD -- share QR encoder if both are implemented
 - → XREF: `TODO-15-visual-post-display.md` -- full-screen VPD (tiered bars, splash integration, NVRAM last-boot) complements this file; TODO-14 owns POST16 I/O port `0x80`, framebuffer corner digits, named-stage serial, and panic evidence specs
@@ -91,7 +91,8 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 - [x] Add `post_code(uint8_t code)` inline in `bootx64.c`: `outb(0x80, code)`; add `post_code16(uint16_t code)` (writes high byte to port `0x80`, logs full value on serial) plus legacy 8-bit names `POST_ENTRY` through `POST_KERNEL_JUMP` for reference
 - [x] Insert `post_code16()` at bootloader milestones: `0xB001` entry, `0xB090`/`0xB091` boot device (LoadedImage) before GOP, `0xB010` GOP init, `0xB020`/`0xB021` ELF open/load, `0xB030` RSDP, `0xB080`-`0xB085` USB discovery and xHCI DMA/takeover substeps, `0xB040` memory map, `0xB050` ExitBootServices, `0xB060` page tables, `0xB070` kernel jump
 - [x] QEMU ignores port 0x80 writes silently -- no fault, verified by clean build
-- [ ] **POST-card milestone discrimination (deferred):** `post_code16` writes the high byte `0xB0` to port 0x80, so an 8-bit card shows `0xB0` for every bootloader milestone. Evaluate low-byte/sequence emission -- architect call.
+- [/] operator-gated (architect call + a POST card on bare metal): **POST-card milestone discrimination (deferred):** `post_code16` writes the high byte `0xB0` to port 0x80,
+  - so an 8-bit card shows `0xB0` for every bootloader milestone. Evaluate low-byte/sequence emission -- architect call.
 - [x] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
 
 **Test checkpoint:** UEFI build; milestones emit `outb(0x80, code)` in order. QEMU WHPX, QEMU TCG, VirtualBox: no fault on port writes. Bare metal: an 8-bit POST card shows the high byte `0xB0` (bootloader-range) if present; per-milestone detail is on serial (the low-byte improvement is the deferred item above).
@@ -100,7 +101,7 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 > - Integration: QEMU ignores port 0x80 writes silently (no fault); on bare metal an 8-bit POST card shows the high byte `0xB0` (bootloader range) -- per-milestone discrimination is on serial only (low-byte card emission is deferred).
 > - Scope boundary: bootloader-stage codes only; kernel-stage POST display is §2/§3.
 > **Verified:** 2026-04-12 -- Milestone table reconciled to `post_code16`; Codex: disarm watchdog on `init_gop` error return before firmware UI. Accepted: none.
-> **Deferred:** [M] 8-bit POST card shows only the high byte `0xB0`, no per-milestone discrimination (serial is per-milestone) -> XREF: 01-boot-platform/TODO-14 §1 (item: "POST-card milestone discrimination (deferred)" at line 87)
+> **Deferred:** [M] 8-bit POST card shows only the high byte `0xB0`, no per-milestone discrimination (serial is per-milestone) -> XREF: 01-boot-platform/TODO-14 §1 (item: "POST-card milestone discrimination (deferred)" at line 94)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 1M deferred (card byte encoding), doc-overstatement fixed | scope: boot-code-quality (re-adversarial skipped -- doc-accuracy fix only, finding deferred not coded)
 
 ---
@@ -119,7 +120,8 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [x] `boot_progress_poll()`: re-sends last stage to `boot_splash_status()` for timer-driven visual refresh (no in-tree caller yet -- wire with splash/timer when UI needs refresh without new history rows)
 - [x] `boot_timeline_dump_json()`: writes unified FPDT + TSC step timeline as JSON to `boot-timeline.json` (BlackBox `X:\Perf\` or klog dir fallback); uses `boot_timing_get_fpdt_entries()` + `boot_timing_get_steps()` + `boot_prog_tsc_delta_ms()` (`src/kernel/main/boot_progress.c`); path moved from `X:\Boot\` by TODO-04 FPDT and Boot Timing Normalization
 - [x] `boot_timeline_dump_json()` invoked after successful desktop-ready init (`src/kernel/main/boot_desktop.c` ~229, after NVRAM POST success + timing reports)
-- [ ] **Wire + harden the named-stage API (deferred):** `boot_stage_report`/`boot_progress_poll` have zero callers. Wire boot-path callers, map `s_meta`->`POST16_*`, saturate the tsc-delta, guard `s_meta` completeness, forward percent/splash.
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): **Wire + harden the named-stage API (deferred):** `boot_stage_report`/`boot_progress_poll` have zero callers. Wire boot-path callers, map `s_meta`->`POST16_*`, saturate the tsc-delta,
+  - guard `s_meta` completeness, forward percent/splash.
 - [x] Commit: `"kernel: boot progress named-stage API + stage history + elapsed-ms tracking"` (exact subject varies across bring-up commits)
 
 **Test checkpoint:** Serial shows `[+NNNms]` lines with stage names for at least 8 transitions; `boot_stage_history_get()` does not fault when called from panic paths. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -128,7 +130,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 > - Integration: serial `[+NNNms] STAGE: msg`; `boot_timeline_dump_json()` runs at desktop-ready (`boot_desktop.c`); `boot_stage_history_get()` feeds §5 panic forensics.
 > - Scope boundary: `boot_progress_poll()` has no in-tree caller yet (wire with splash/timer when the UI needs a refresh without new history rows).
 > **Verified:** 2026-04-12 -- Named-stage API + `boot_timeline_dump_json` wiring; Codex: safe TSC-to-ms when `freq < 1000`, close timeline parent dir after `create`. Accepted: none.
-> **Deferred:** [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded) -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 115)
+> **Deferred:** [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded) -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 123)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 2H+3M deferred (unwired API + latent fixes) | scope: kernel-code-quality (re-adversarial skipped -- findings deferred not coded; boot_timeline_dump_json live path unaffected in practice)
 
 ---
@@ -151,7 +153,7 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 > - Integration: called from `boot_stage_report()` after the serial write; port 0x80 high byte tracks the 16-bit POST; cleared at `BOOT_STAGE_DESKTOP_READY` over the `POST16_*` geometry.
 > - Scope boundary: skips pixel writes when the framebuffer is unavailable or postcode=0 after config parse.
 > **Verified:** 2026-04-12 -- Desktop-ready clear uses `POST16_*` geometry; same TSC-ms guard as §2. Accepted: none.
-> **Accepted:** [M] explicit clear-on-DESKTOP_READY only runs via the unwired `boot_stage_report`; the live path relies on desktop overdraw -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 115)
+> **Accepted:** [M] explicit clear-on-DESKTOP_READY only runs via the unwired `boot_stage_report`; the live path relies on desktop overdraw -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 123)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1M accepted-XREF (clear-wiring owned by §2); doc-accuracy fixed | scope: kernel-code-quality (re-adversarial skipped -- doc fix, finding accepted to §2)
 
 ---
@@ -199,7 +201,7 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 - [x] Unexpected-shutdown notice: kernel-side `panic_had_previous_crash()` flag (NOT `g_boot_info` -- avoids the boot ABI change) -> `boot_splash_diag` + klog before `boot_splash_finish`.
 - [/] PARKED: nothing preserves `0x80000` between the reset and Phase 0 -- firmware and BOOTX64 allocate before the kernel restores it -> XREF: `01-boot-platform/TODO-10` §28 (item: "Decide and implement the memory-type policy").
   - The kernel-side half above is real and verified: `pmm_init`'s first-1-MiB reservation keeps the page out of THIS boot's allocator. The pre-kernel window is what nothing covers -- firmware and the bootloader run and allocate before `panic_evidence_restore_early` reads the page, and neither reserves nor copies it first.
-  - TODO-10 §28 made the record reach memory before the reset, which was the missing half on the write side. Surviving until Phase 0 reads it is this side's guarantee, and it is unowned: the shape is an `AllocateAddress` reservation at bootloader entry (or an early copy out), with the outcome reported through the `boot_info` handoff so the kernel can distinguish "no crash" from "record lost".
+  - TODO-10 §28 made the record reach memory before the reset, which was the missing half on the write side. The gap has since SPLIT and is half closed: §14 shipped the `AllocateAddress` reservation at bootloader entry (2026-08-30, `41753ca67`), so firmware and BOOTX64 can no longer hand the page out. What remains is reporting the pin outcome through the `boot_info` handoff so the kernel can distinguish "no crash" from "record lost", and that half is owned by this file's §19, parked on the kernel-image ceiling.
 - [x] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
 
 **Test checkpoint:** Force a panic (`crash_test=1`), reboot: serial shows `[PANIC] Previous crash evidence found`; `X:\Crash\last-panic.txt` contains the fault RIP + POST code. QEMU WHPX, QEMU TCG, VirtualBox, bare metal: evidence survives warm reboot.
@@ -211,8 +213,8 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` + `X:\Crash\` artifact index).
 > - Scope boundary: §5 is the warm-reboot evidence page; full minidump (MEMORY.DMP) generation is `02-kernel-core/TODO-27`; the `X:\Crash\` path is owned by TODO-24 §7.
 > **Verified:** 2026-06-14 | ship `a59b8f64` (+ this review commit) | 7/9 items | build OK | smoke PASS + tests 2633
-> **Accepted:** [H] `0x80000` is only kernel-reserved, not bootloader/reboot-reserved (firmware/BOOTX64 can clobber it pre-restore on bare metal) -> XREF: 01-boot-platform/TODO-14 §5 (item: "Bare-metal reboot-reservation of `0x80000`" at line 368)
-> **Accepted:** [H] IXFS `vfs_flush` (C:\ fallback) does not `blkdev_sync`, so consume-after-flush can lose the retry copy (reason: FS-layer durability contract) -> XREF: 01-boot-platform/TODO-14 §5 (item: "last-panic.txt true durability" at line 369)
+> **Accepted:** [H] `0x80000` is only kernel-reserved, not bootloader/reboot-reserved (firmware/BOOTX64 can clobber it pre-restore on bare metal) -> XREF: 01-boot-platform/TODO-14 §14 (item: "Pin the page with `AllocatePages(AllocateAddress, EfiLoaderData, 1)` as the FIRST firmware call `efi_main` makes" at line 458). (RESOLVED 2026-08-30 by §14 commit `41753ca67`: the page is pinned ahead of every firmware call, `ClearScreen` included. The original pointer named a §5 item that does not exist; §14 is where the work landed.)
+> **Accepted:** [H] IXFS `vfs_flush` (C:\ fallback) does not `blkdev_sync`, so consume-after-flush can lose the retry copy (reason: FS-layer durability contract) -> XREF: 01-boot-platform/TODO-14 §12 (item: "last-panic.txt durability is parked on the IXFS owner: flush never reaches the device" at line 414). (RELOCATED 2026-08-30: the original pointer named a §5 item that does not exist; the live park now sits in §12 and carries the true owner, `05-storage-filesystems/TODO-06` §1 "**Flush must reach the DEVICE**".)
 > **Quality reviewed:** 2026-06-14 | Codex 14x (design + test-coverage + adversarial + re-adversarial + adversarial-impl + consistency + perf) | 1C+6H+8M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -225,21 +227,24 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 > [!IMPORTANT]
 > **Validation blocker (recorded, not skipped).** boot-code-quality Gate 11 makes segno module-for-module comparison plus a real phone scan **non-negotiable** for any QR encoder change. Neither `segno` (the Python reference) nor a scanning phone is available in this autonomous environment, so a new encoder cannot be proven correct here. A **V3/ECL-L** segno-verified encoder already exists at `src/boot/uefi/bootx64.c` (`qr_encode_data` / `qr_reed_solomon` / `qr_place_*`, shipped under the error-screen QR feature). That encoder is the reuse seed, but it is **not drop-in**: V3/ECL-L holds ~53 byte-mode bytes (it encodes the short `...co/err/XXXX`), whereas the panic URL below runs ~120 chars and needs **Version 5/6 plus ECL-M**, which adds multi-block Reed-Solomon interleaving and per-version alignment-pattern tables. Ship §6 only on a host with `segno` plus a scanning phone (or bare metal for the on-screen scan).
 
-- [ ] Extend the segno-verified bootloader V3/ECL-L encoder into freestanding `src/kernel/qr_encode.c`: `qr_encode(text, matrix, &size)` for QR **version 3-6 at ECL-M** (deltas from the V3 seed in the callout above)
-- [ ] `panic_qr_url(buf, bufsize, message, post_code, os_version)`: format `https://docs.impossible-os.dev/panic?msg=<short>&post=0x{post}&v={ver}` (message truncated to 40 chars; not shipped ahead of the encoder)
-- [ ] In `kernel_panic()` BSOD renderer: after the main panic screen, call `qr_encode(url, matrix, &qr_size)`; render at bottom-right (12 px from corner), module = 4 px, white-on-black, quiet zone = 4 modules
-- [ ] Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
-- [ ] Validate before ship (Gate 11): diff each test URL against `segno.make(url, error='M', boost_error=False)` module-for-module (0 diffs), then phone-scan the rendered BSOD on bare metal
-- [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
+- [/] operator-gated (segno + phone scan, Gate 11): Extend the segno-verified bootloader V3/ECL-L encoder into freestanding `src/kernel/qr_encode.c`
+  - `qr_encode(text, matrix, &size)` for QR **version 3-6 at ECL-M** (deltas from the V3 seed in the callout above)
+- [/] operator-gated (segno + phone scan, Gate 11): `panic_qr_url(buf, bufsize, message, post_code, os_version)`
+  - format `https://docs.impossible-os.dev/panic?msg=<short>&post=0x{post}&v={ver}` (message truncated to 40 chars; not shipped ahead of the encoder)
+- [/] operator-gated (segno + phone scan, Gate 11): In `kernel_panic()` BSOD renderer: after the main panic screen, call `qr_encode(url, matrix, &qr_size)`; render at bottom-right (12 px from corner), module = 4 px, white-on-black,
+  - quiet zone = 4 modules
+- [/] operator-gated (segno + phone scan, Gate 11): Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
+- [/] operator-gated (segno + phone scan, Gate 11): Validate before ship (Gate 11): diff each test URL against `segno.make(url, error='M', boost_error=False)` module-for-module (0 diffs), then phone-scan the rendered BSOD on bare metal
+- [/] operator-gated (segno + phone scan, Gate 11): Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
 **Test checkpoint:** With §5+§6 shipped: forced panic shows scannable QR bottom-right; URL resolves to docs panic page; encoder matrix matches segno for every test URL. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; QR encoder needs segno reference + phone-scan validation) | validation: segno module-diff + phone-scan on bare metal, pending
 > **Notes:**
 > - Deferred (no code shipped): the panic BSOD QR encoder + render -- needs a multi-version V5/6 ECL-M encoder for the ~120-char URL plus segno + phone-scan validation (Gate 11), unavailable autonomously.
-> - Reuse seed: a segno-verified V3/ECL-L encoder exists in `src/boot/uefi/bootx64.c` (error-screen QR); extend it to V5/6 + ECL-M when validation is available (see the section's IMPORTANT callout).
+> - Reuse seed: a segno-verified V3/ECL-L encoder exists in `src/boot/uefi/bootx64.c` (error-screen QR), LANDED 2026-05-02 by TODO-03 §14 commit `134702ae`; extend it to V5/6 + ECL-M when validation is available (see the section's IMPORTANT callout). The seed was never the blocker, so every §6 item is marked operator-gated.
 > - Scope boundary: §6 owns the kernel panic QR; the bootloader error-screen QR encoder is owned by → XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §14.
 > **Verified:** 2026-06-14 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (feasibility analysis)
-> **Deferred:** [M] panic BSOD QR encoder + render unimplemented (reason: needs V5/6 ECL-M encoder + segno reference + phone-scan validation per boot-code-quality Gate 11, unavailable autonomously) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §14 (segno-verified QR encoder reuse seed)
+> **Deferred:** [M] panic BSOD QR encoder + render unimplemented (reason: needs V5/6 ECL-M encoder + segno reference + phone-scan validation per boot-code-quality Gate 11, unavailable autonomously) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §14 (item: "Standalone encoder ... not yet implemented" at line 513) (SEED LANDED 2026-05-02 by TODO-03 §14 commit `134702ae`: the segno-verified V3/ECL-L encoder exists in `bootx64.c`. It was never the blocker -- the remaining gate is validation capability alone, so every §6 item is now marked operator-gated.)
 
 ---
 
@@ -251,24 +256,27 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 > [!NOTE]
 > The existing `spinner_init/start/advance/stop` API covers the boot splash single spinner (shipped with §1--§3 above). This section adds a multi-instance layer without breaking boot splash.
 
-- [ ] Define `spinner_t` struct: `int32_t cx, cy, radius, stroke; uint32_t color; int32_t angle, sweep; uint8_t active; uint8_t size_class`
-- [ ] `spinner_create(uint8_t size_class, uint32_t color)`: allocate from a static pool of 8 `spinner_t` slots; size classes: `SPINNER_SMALL=16`, `SPINNER_MEDIUM=32`, `SPINNER_LARGE=48`, `SPINNER_XLARGE=64` (px radius); returns `spinner_t*` or NULL if pool full
-- [ ] `spinner_destroy(spinner_t *s)`: mark slot as inactive; stop animation
-- [ ] `spinner_set_position(spinner_t *s, int32_t cx, int32_t cy)`: update position without restarting
-- [ ] `spinner_tick(spinner_t *s)`: advance angle + breathing (port animation logic from existing `spinner_advance()` -- single instance → multi); call `spinner_render(s, cx, cy)`
-- [ ] `spinner_render(spinner_t *s, struct fb_surface *surface, int32_t x, int32_t y)`: draw arc ring onto `surface` (compositor surface or direct framebuffer)
-- [ ] Compositor integration: WM maintains a `spinner_t *g_active_spinners[8]` list; compositor loop calls `spinner_tick()` on each non-NULL entry per frame; used by loading dialogs, Start Menu search, download progress, Service Manager
-- [ ] Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
-- [ ] Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Define `spinner_t` struct: `int32_t cx, cy, radius, stroke; uint32_t color; int32_t angle, sweep; uint8_t active; uint8_t size_class`
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_create(uint8_t size_class, uint32_t color)`: allocate from a static pool of 8 `spinner_t` slots; size classes: `SPINNER_SMALL=16`, `SPINNER_MEDIUM=32`, `SPINNER_LARGE=48`,
+  - `SPINNER_XLARGE=64` (px radius); returns `spinner_t*` or NULL if pool full
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_destroy(spinner_t *s)`: mark slot as inactive; stop animation
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_set_position(spinner_t *s, int32_t cx, int32_t cy)`: update position without restarting
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_tick(spinner_t *s)`: advance angle + breathing (port animation logic from existing `spinner_advance()` -- single instance → multi); call `spinner_render(s, cx, cy)`
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_render(spinner_t *s, struct fb_surface *surface, int32_t x, int32_t y)`: draw arc ring onto `surface` (compositor surface or direct framebuffer)
+- [/] blocked on 08-graphics-ui/TODO-08 §8 (compositor tick): Compositor integration: WM maintains a `spinner_t *g_active_spinners[8]` list; compositor loop calls `spinner_tick()` on each non-NULL entry per frame; used by loading dialogs,
+  - Start Menu search, download progress, Service Manager
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
 
 **Test checkpoint:** With §7 shipped: pool of 8; compositor ticks each active `spinner_t` per frame per → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8; boot splash still uses slot 0. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; desktop-polish blocked on WM compositor integration) | validation: on-screen multi-spinner under the WM compositor loop, pending
 > **Notes:**
 > - Deferred (no code shipped): the multi-instance `spinner_t` pool + compositor integration. Single boot-splash spinner works; this is desktop polish (spinners across loading dialogs, Start Menu, etc.) needing WM compositor surfaces.
-> - Blocker: full delivery depends on the WM maintaining `g_active_spinners[]` and calling `spinner_tick()` per frame, owned cross-domain by → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 (Compositor Performance).
+> - Blocker (WM half): full delivery depends on the WM maintaining `g_active_spinners[]` and calling `spinner_tick()` per frame, owned cross-domain by → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 (item: "Per-frame `spinner_tick()` over the active-spinner list" at line 197), still `[ ]` on 2026-09-03.
+> - Blocker (kernel half, binds first): the `spinner_t` pool and renderer are kernel `.text`, and the image has 47 bytes of slack below `USER_BASE` measured 2026-09-03 -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7.
 > - Scope boundary: §7 owns the kernel `spinner_t` pool/render; the per-frame compositor tick wiring is owned by the WM TODO.
 > **Verified:** 2026-06-14 | deferred -- no code shipped | 0/8 items | build OK (no code change) | manual (dependency analysis)
-> **Deferred:** [M] multi-instance spinner_t pool + compositor integration unimplemented (reason: desktop-polish; single boot spinner works; full delivery needs WM per-frame spinner_tick wiring) -> XREF: 08-graphics-ui/TODO-08-window-manager.md §8 (Compositor Performance)
+> **Deferred:** [M] multi-instance spinner_t pool + compositor integration unimplemented (reason: desktop-polish; single boot spinner works; full delivery needs WM per-frame spinner_tick wiring) -> XREF: 08-graphics-ui/TODO-08-window-manager.md §8 (item: "Per-frame `spinner_tick()` over the active-spinner list" at line 197) (STILL OPEN 2026-09-03: TODO-08 §8 is `[ ]`. A second gate now binds first -- the kernel-image ceiling leaves 47 bytes of `.text`, so the pool/render items are parked on -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Remove the `scripts/build.sh` BSS-collision guard" at line 254), and only the compositor-tick item is WM-owned.)
 
 ---
 
@@ -277,22 +285,23 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 **Files:** `src/desktop/vital_signs.c`, `include/desktop/vital_signs.h`
 
-- [ ] Activate when `boot.conf` key `VitalSigns=1` or `HKLM\SYSTEM\Boot\VitalSigns` = 1 (→ XREF `02-kernel-core/TODO-14-registry-completion.md`)
-- [ ] `vital_signs_init()`: called from desktop init; allocates a 20 px compositor overlay surface pinned to the bottom of the screen
-- [ ] `vital_signs_tick()`: called every 500 ms from a PIT-driven callback; reads: CPU usage % from scheduler stats, RAM used/total from PMM, IRQ count/s from IRQ counter differential, uptime in seconds from PIT ticks, framerate from compositor frame counter
-- [ ] Render format (FONT_MONO at 10 px, white on 50% transparent black): `[CPU: 23%] [RAM: 1.2/4.0 GB] [IRQ: 1234/s] [Uptime: 00:03:42] [FPS: 60]`
-- [ ] `VitalSignsExtended=1` adds second line: `[Free: 2847 pages] [TCP: 3] [VFS R: 1.2 MB/s W: 0.4 MB/s] [Temp: 62°C]` (CPU temp from ACPI thermal zone if available, 0 if not)
-- [ ] The overlay is always rendered above the desktop wallpaper and windows; zorder = top - 1 (below cursor, above everything else)
-- [ ] Commit: `"desktop: runtime vital signs strip -- CPU/RAM/IRQ/FPS overlay for developers"`
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Activate when `boot.conf` key `VitalSigns=1` or `HKLM\SYSTEM\Boot\VitalSigns` = 1 (→ XREF `02-kernel-core/TODO-14-registry-completion.md`)
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `vital_signs_init()`: called from desktop init; allocates a 20 px compositor overlay surface pinned to the bottom of the screen
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `vital_signs_tick()`: called every 500 ms from a PIT-driven callback; reads: CPU usage % from scheduler stats, RAM used/total from PMM, IRQ count/s from IRQ counter differential,
+  - uptime in seconds from PIT ticks, framerate from compositor frame counter
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Render format (FONT_MONO at 10 px, white on 50% transparent black): `[CPU: 23%] [RAM: 1.2/4.0 GB] [IRQ: 1234/s] [Uptime: 00:03:42] [FPS: 60]`
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `VitalSignsExtended=1` adds second line: `[Free: 2847 pages] [TCP: 3] [VFS R: 1.2 MB/s W: 0.4 MB/s] [Temp: 62°C]` (CPU temp from ACPI thermal zone if available, 0 if not)
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): The overlay is always rendered above the desktop wallpaper and windows; zorder = top - 1 (below cursor, above everything else)
+- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Commit: `"desktop: runtime vital signs strip -- CPU/RAM/IRQ/FPS overlay for developers"`
 
 **Test checkpoint:** With §8 shipped: `VitalSigns=1` shows bottom strip updating ~500 ms; CPU, RAM, IRQ, uptime, FPS plausible. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; blocked on scheduler CPU% accounting) | validation: on-screen overlay with live metrics, pending
 > **Notes:**
-> - Deferred (no code shipped): the vital-signs overlay strip (CPU/RAM/IRQ/uptime/FPS). The CPU% metric needs scheduler per-CPU CPU-time accounting, which does not exist yet.
-> - Blocker: per-process/per-thread CPU-time accounting (the CPU% source) is owned cross-domain by → XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md` §7 (CPU, I/O, and Wakeup Accounting).
+> - Deferred (no code shipped): the vital-signs overlay strip (CPU/RAM/IRQ/uptime/FPS). The CPU% source SHIPPED 2026-07-20 (`task_acct_sample()`, TODO-25 §7 commit `4b541c54`), so the original blocker is gone; the section is now parked on the kernel-image ceiling, measured 2026-09-03 at 47 bytes of `.text`.
+> - Blocker (current): kernel-image size -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7. A whole new desktop overlay translation unit cannot link into 47 bytes of `.text` slack. The former blocker (per-process CPU-time accounting, TODO-25 §7) is CLOSED.
 > - Scope boundary: §8 owns the desktop overlay (`src/desktop/vital_signs.c`); the scheduler CPU-time accounting source is owned by TODO-25 §7.
 > **Verified:** 2026-06-14 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (dependency analysis)
-> **Deferred:** [M] runtime vital-signs strip unimplemented (reason: needs scheduler per-CPU CPU% accounting) -> XREF: 02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7 (item: "Track per-process and per-job CPU time with user/kernel split")
+> **Deferred:** [M] runtime vital-signs strip unimplemented (reason: needs scheduler per-CPU CPU% accounting) -> XREF: 02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7 (item: "Track per-process and per-job CPU time with user/kernel split") (BLOCKER RESOLVED 2026-07-20 by 02-kernel-core/TODO-25 §7 commit `4b541c54`: `task_acct_sample()` publishes per-process user/kernel CPU time under one timestamp, which is the CPU% source this section named. §8 is NOT re-opened: it is re-owned to the kernel-image ceiling, MEASURED 2026-09-03 at 47 bytes of `.text` against a new desktop overlay -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Remove the `scripts/build.sh` BSS-collision guard" at line 254).)
 
 ---
 
@@ -359,7 +368,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Integration: storage probe block + `deferred_net_init`/`net_init` record real outcomes; report + dump both run after `boot_run_deferred` so the record is complete; serial klog is authoritative (Codex adoptions in commit message).
 > - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- 44 asserts; full suite 2605 kernel + 16 user-mode 0 failures; smoke PASS shows `[BOOT-LOAD] all subsystems loaded clean` (NIC absent -> SKIPPED) + dump.
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
-> - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver coverage + probe-result aggregation + NVMe per-controller status are the open `[ ]` items in this section.
+> - Scope boundary: §11 ships infra + storage/network wiring. Granular per-driver coverage, probe-result aggregation and NVMe per-controller status are NOT open here -- all seven §11 items are `[x]`; those three were moved verbatim to §12, where they are parked on the kernel-image ceiling.
 > **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 6/9 items | build OK | smoke PASS + tests 2605/2605
 > **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 381)
 > **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 382)
@@ -475,9 +484,9 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
 > - Scope boundary: this section pins the page. Recording the outcome in the handoff is section 19, stopping the kernel's own Phase-0 writer from overwriting the record is section 17, and the pre-serial UART hazard the review surfaced is section 18.
 
 > **Verified:** 2026-08-30 | commit `41753ca67` | 4/4 items | build OK | smoke-matrix 4/4 (kvm+tcg x 1+2 cpu) | 32845 kernel + 17 user tests | WHPX boots to shell
-> **Deferred:** [H] A Phase-0 panic overwrites the prior record before `panic_evidence_restore_early()` runs -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §17 (item: "Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates" at line 525)
-> **Deferred:** [H] `boot_set_section()` reaches `serial_early_print` before `serial_early_init`, driving a poisoned `.bss` UART port -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §18 (item: "Gate the early-serial path on an explicit \"serial is configured\" flag rather than on `s_serial_port` being non-zero" at line 551)
-> **Deferred:** [H] The kernel writes the evidence page even when the pin failed, because the outcome never reaches it (reason: needs a boot_info field the run may not land) -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §19 (item: "Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own" at line 579)
+> **Deferred:** [H] A Phase-0 panic overwrites the prior record before `panic_evidence_restore_early()` runs -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §17 (item: "Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates" at line 565)
+> **Deferred:** [H] `boot_set_section()` reaches `serial_early_print` before `serial_early_init`, driving a poisoned `.bss` UART port -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §18 (item: "Gate the early-serial path on an explicit \"serial is configured\" flag rather than on `s_serial_port` being non-zero" at line 596). (RESOLVED 2026-09-03 by §18 commit `8cf0a2f33`: the early path now gates on the wide `EARLY_DIAG_READY` cookie, `src/boot/uefi/bootx64.c:913`.)
+> **Deferred:** [H] The kernel writes the evidence page even when the pin failed, because the outcome never reaches it (reason: needs a boot_info field the run may not land) -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §19 (item: "Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own" at line 648)
 > **Quality reviewed:** 2026-08-30 | Codex 7x (design, adversarial, re-adversarial, consistency, perf) | 3H+6M+0L fixed, 0 open | scope: boot-code-quality
 
 ---
@@ -747,7 +756,7 @@ Two earlier drafts of this paragraph were wrong and both errors are recorded her
 | ⭐  | Alive hang pixel           | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred         |
 | ⭐  | Live vital overlay         | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip          |
 
-> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) and the **viewers** shipped in §16 as the host-side `tools/boot-timeline/` converter (Gantt SVG matching `systemd-analyze plot`, plus a Chrome trace-event export neither Windows nor `systemd-analyze` offers). §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
+> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) and the **viewers** shipped in §16 as the host-side `tools/boot-timeline/` converter (Gantt SVG matching `systemd-analyze plot`, plus a Chrome trace-event export neither Windows nor `systemd-analyze` offers). §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 the kernel-image ceiling -- its former scheduler-CPU% blocker closed 2026-07-20 with TODO-25 §7); **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 
 ---
 
@@ -776,7 +785,7 @@ Two earlier drafts of this paragraph were wrong and both errors are recorded her
 
 ## Verification
 
-- [x] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===` (clean build 2026-06-14, exit 0)
+- [x] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===` (re-run at close-out 2026-09-03: `=== BUILD OK ===`; full suite `PASS: 32845 kernel + 17 user-mode tests passed`)
 - [ ] Serial log shows `[+Nms] BOOT_PMM: Physical memory manager ready` style entries for at least 8 stages (manual -- serial capture on QEMU/hardware)
 - [ ] POST code visible in top-right corner during QEMU boot; disappears when desktop loads (manual -- visual)
 - [~] `AliveBlink=1` visual-blink verification -- N/A; §4 is permanently deferred
