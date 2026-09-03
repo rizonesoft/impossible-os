@@ -117,8 +117,10 @@ Route log entries to dedicated per-subsystem log files based on the subsystem ta
 - [x] Fall back to `kernel.log` for unknown tags -- `dispatch_filename()` returns "kernel.log" for unmatched
 - [x] Boot-session numbered logs (`YYMMDDN.LOG`) on X: continue to contain all subsystems combined
 - [x] Per-subsystem files now created on first write (`vfs_open ... VFS_O_CREATE`) so the X:\Logs BlackBox path (dirs-only skeleton) gets the split logs, not just `kernel.log` (§2 review fixed silent-skip)
-- [ ] Live-mode (C:\DEBUG) runs per-subsystem routing on every per-line `klog_disk_flush()` -- batch it to periodic/final drains (needs `klog_disk_flush_all` to clear `live_enabled` so the drain still routes) (§2 review perf)
-- [ ] Left-align flag (`%-Ns`) in `klog`: the parser takes zero-pad + width but no `-`, so `%-18s` is emitted LITERALLY and its argument never consumed, shifting every later field. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §10`
+- [/] Live-mode (C:\DEBUG) runs per-subsystem routing on every per-line `klog_disk_flush()` -- batch it to periodic/final drains (needs `klog_disk_flush_all` to clear `live_enabled` so the drain still routes) (§2 review perf)
+      - PARKED on the semantics this section's own Deferred stamp names: batching to periodic/final drains needs `klog_disk_flush_all()` to clear `live_enabled` so the final drain still routes. No cross-TODO owner -- it is in-scope perf work for this section, waiting on that clarification rather than on another file.
+- [/] Left-align flag (`%-Ns`) in `klog`: the parser takes zero-pad + width but no `-`, so `%-18s` is emitted LITERALLY and its argument never consumed, shifting every later field. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §10`
+      - PARKED with the owner already named in the item text: the formatter work belongs to the kernel resource-accounting TODO's `klog` format item, and this is the consumer side.
 - [x] Commit: `"kernel: per-subsystem log files"`
 
 **Test checkpoint:** after a flush, `X:\Logs\network.log` / `boot.log` / `fs.log` / `mm.log` / `drivers.log` / `security.log` exist and contain their tagged entries (not just `kernel.log`); an unknown tag routes to `kernel.log`; the numbered boot log keeps all subsystems combined. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -367,11 +369,14 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [/] In JSON Lines flush: append `"hmac":"<64hex>"` = `crypto_blake2b_keyed(key, prev_hmac || json_body)`; chain tail MUST mirror the §6 commit/rollback/salvage state machine; bump `line[512]` to >=640
 - [/] Anchor the verifier key OUTSIDE the mutable log domain (TPM/protected UEFI NVRAM, NOT `HKLM`); publish after the registry/TPM subsystem is up; WARN+disable on failure (operator-reserved)
 - [/] Implement `klog_verify_chain(const char *jsonl_path)`: recompute each HMAC against the chain (constant-time `crypto_verify32`); per-file epoch header so a rotation reset cannot mask truncation
-- [ ] Wire into `dmpanalyze.exe` (-> XREF: TODO-27 §9): `dmpanalyze /verifylog` verifies the chain -- BLOCKED: `dmpanalyze.exe` (TODO-27 §9) not implemented
+- [/] Wire into `dmpanalyze.exe` (-> XREF: TODO-27 §9): `dmpanalyze /verifylog` verifies the chain -- BLOCKED: `dmpanalyze.exe` (TODO-27 §9) not implemented
+      - PARKED on the analyzer not existing yet; the blocker is named in the item and in this section's second Deferred stamp -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md` §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app").
 - [/] Gate behind `boot.conf` `log_integrity=1` (typed `boot_arg_desc_t` row in `config.c`; default enabled, disablable for perf debug)
 - [/] Add Phase-2 key-mint POST codes only (`POST16(0xDE20)` entry, `POST16(0xDE21)` key minted; range `0xDE2x` free); runtime seal/verify are post-Phase-3 (no POST16)
-- [ ] Consumer: Code Integrity allow/deny/audit decisions emit INTO this HMAC chain for tamper-evident CI forensics. -> XREF: D02 T19 §10 (CI audit events).
-- [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
+- [/] Consumer: Code Integrity allow/deny/audit decisions emit INTO this HMAC chain for tamper-evident CI forensics. -> XREF: D02 T19 §10 (CI audit events).
+      - PARKED on the producing side: this is the Code Integrity audit-event work emitting into the chain, so it cannot land before that emitter exists. Owner named in the item's own XREF.
+- [/] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
+      - PARKED, **operator-gated**: this section's Critical Deferred stamp records that verifier-key anchoring is an operator-reserved security-architecture decision (the 2026-06-21 design review found `HKLM` key storage gives a false integrity guarantee). No TODO can clear it; only a human decision can, so the sweep will never re-open this on its own.
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -395,7 +400,8 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [/] Persist provider manifest under Registry `HKLM\SYSTEM\Logs\ETW\Providers\<guid>` AFTER dropping `s_etw_lock`; never call registry/VFS/heap under the irqsave lock
 - [/] `klog(LOG_INFO, "etw", ...)` trace on provider register/unregister (observable; ETW is post-boot, no POST16)
 - [/] Unit tests in `test_klog.c`: provider register + enumerate roundtrip; two sessions enabling one provider; one session enabling two providers with different masks; non-matching keyword dropped; bad/non-NUL-terminated name rejected
-- [ ] Commit: `"kernel: ETW provider registration + per-session keyword/level filtering"`
+- [/] Commit: `"kernel: ETW provider registration + per-session keyword/level filtering"`
+      - PARKED behind this section's own ETW ABI redesign, which its High Deferred stamp records as required before any code: there is no event-metadata wire ABI for provider/keyword and scalar masks cannot hold multiple providers. The commit marker lands when that redesign does.
 
 **Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -412,7 +418,8 @@ Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (us
 - [/] Self-describing schema: provider declares a field name/type array at registration; events carry a schema id so consumers decode payload fields without an external manifest (built on §11 registration)
 - [/] `klog(LOG_INFO, "etw", ...)` trace on autologger start + stack-capture enable (observable)
 - [/] Unit tests: stack-walk produces >= 1 resolvable frame; autologger config parse + session start; schema register + field decode roundtrip
-- [ ] Commit: `"kernel: ETW stack-walk, autologger, and self-describing event schema"`
+- [/] Commit: `"kernel: ETW stack-walk, autologger, and self-describing event schema"`
+      - PARKED behind the ETW provider model this section builds on -- stack-walk flag, autologger session and self-describing schema all need provider registration plus per-session enablement first -> XREF: `02-kernel-core/TODO-04-system-logging.md` §11 (item: "Define `etw_provider_t`").
 
 **Test checkpoint:** Enable stack capture on a provider; a logged event carries a non-empty frame array with at least one image+offset resolved. A registry-declared autologger session is active at first user-mode entry. A self-describing event decodes its field names without an external manifest. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
