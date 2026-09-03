@@ -1441,6 +1441,20 @@ assert_exit_zero "memmap layout gate: constants + translation helpers" \
 assert_exit_zero "boot pure-header gate: Authenticode hash + TCG event-log walk" \
     bash "$REPO_ROOT/tools/boot-header-tests/run.sh"
 
+# --- boot-entries parser poison gate -----------------------------------------
+# BOOTX64.EFI does not zero .bss and firmware pool-poisons it with 0xAF, so the
+# parser's CRC readiness flag could start non-zero: the old `if (!g_crc32_ready)`
+# guard then skipped crc32_init() and every CRC was computed over a poisoned
+# table, rejecting a VALID boot-entry store as CRC_MISMATCH and sending the
+# loader to a possibly different kernel. This runs host-side for the same reason
+# as the gate above -- the equivalent TEST_CAT_BOOT case was written and its
+# build FAILED on the BSS-collision guard (measured 2026-09-03, 47 bytes of
+# .text headroom). The suite carries a CONTROL case that must report a WRONG crc
+# for a poisoned-but-believed-ready table, so a vacuous pass is detectable.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[boot_entries_parser_gate]${NC}"
+assert_exit_zero "boot-entries parser gate: poison-proof CRC table + reset" \
+    bash "$REPO_ROOT/tools/boot-entries-parser-tests/run.sh"
+
 # --- atomic-claim gate (generated object) ------------------------------------
 # The panic path's ownership transitions each claim a resource AND record who
 # owns it in ONE compare-exchange, so that an abort at any instruction boundary

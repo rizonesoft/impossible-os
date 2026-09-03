@@ -1024,7 +1024,15 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
  * the object to be emitted. Read naively the count would suggest this change
  * ADDED a hazard; what it did was move one out of the compiler's discretion.
  *
- * RESET (a read can reach them before any write on some path):
+ * RESET. All but one are here because a read can reach them before any write
+ * on some path. The exception is g_panic_page_attempted, and it is called out
+ * rather than filed quietly: by control flow it IS write-before-read today
+ * (its sole read is dominated by its sole write), so it belongs to the bucket
+ * below on that test alone. It is reset anyway because it had no emitted
+ * object at all -- see its entry under boot_fatal_statics_reset() -- which
+ * makes its safety a property of the optimiser rather than of this code. The
+ * bucket criterion is therefore "a read could observe a value this boot did
+ * not write", which poison and codegen promotion both satisfy:
  *   early_diag_reset()          s_serial_ready, s_serial_port, s_serial_source,
  *                               s_serial_baud, s_spcr_skipped, s_spcr_skip_addr,
  *                               s_boot_log_ready, boot_log_buf, boot_log_pos
@@ -1144,7 +1152,21 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
  * Note what is NOT here: gST, gBS and gImageHandle are assigned from the
  * firmware arguments immediately after this returns and nothing can read them
  * earlier, so they are write-before-read and adding them would imply a hazard
- * that does not exist. */
+ * that does not exist.
+ *
+ * NO POST CODE COVERS THIS WINDOW, DELIBERATELY. Gate 10 asks for a breadcrumb
+ * wherever code runs before serial is configured, and this runs before even
+ * the gST/gBS saves, so the question is a fair one and the section is recording
+ * an answer rather than leaving it unasked. Two reasons not to: the window
+ * contains no fallible operation at all -- it is scalar stores to statics in
+ * the already-mapped image, with no firmware call, no dereference of anything
+ * firmware handed us, and no loop -- and a code emitted here would reach I/O
+ * port 0x80 ONLY, because serial_early_init() has not run. Nothing in the
+ * automated gates reads port 0x80: the smoke matrix greps the SERIAL log. So
+ * it would buy an unobservable claim, readable only by an operator with a POST
+ * card on real hardware, in exchange for one more code to keep unique. If a
+ * fallible operation is ever added to this function, that trade flips and the
+ * breadcrumb should go in with it. */
 static void boot_fatal_statics_reset(void)
 {
     g_ebs_in_progress      = 0;
