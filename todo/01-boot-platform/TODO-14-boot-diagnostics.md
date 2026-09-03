@@ -55,27 +55,28 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                 | Depends On                         | Status |
-| --- | :---: | ----------------------------------------------------------- | ---------------------------------- | :----: |
-| 💎  |   1   | UEFI pre-kernel POST codes                                  | --                                 |  [/]   |
-| 💎  |   2   | Boot progress named-stage API                               | §1                                 |  [/]   |
-| 💎  |   3   | POST-style hex code display                                 | §2                                 |  [x]   |
-| 💎  |   4   | Alive blink / visual heartbeat                              | permanently deferred; hang=TODO-23 |  [/]   |
-| 💎  |   5   | Panic forensic evidence                                     | §2                                 |  [/]   |
-| ⭐  |   6   | Panic QR code                                               | §5; T03 §14 (QR seed)              |  [/]   |
-| 💎  |   7   | System-wide multi-instance spinner                          | D08 T08 §8 (compositor)            |  [/]   |
-| ⭐  |   8   | Runtime vital signs strip                                   | D02 T25 §7 (CPU accounting)        |  [/]   |
-| 💎  |   9   | Boot timeline visualization/import                          | §2                                 |  [/]   |
-| ⭐  |  10   | Bootloader build identity dump in BlackBox                  | TODO-01 §20                        |  [x]   |
-| 💎  |  11   | Boot load status log (ntbtlog parity)                       | §2                                 |  [/]   |
-| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)      | §11; D02 T33 §7 (image ceiling)    |  [/]   |
-| 💎  |  13   | klog format-width contract (`-Wformat` on every call site)  | D02 T33 §7 (image ceiling)         |  [/]   |
-| 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)  | §5                                 |  [x]   |
-| ⭐  |  15   | Anti-rollback terminal give-up durable record               | TODO-01 §25; D02 T33 §7 (ceiling)  |  [/]   |
-| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)           | §9                                 |  [/]   |
-| 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it      | §14; §5                            |  [ ]   |
-| 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port | §14                                |  [x]   |
-| 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff  | §14                                |  [ ]   |
+| ⭐  | Order | Deliverable                                                   | Depends On                         | Status |
+| --- | :---: | ------------------------------------------------------------- | ---------------------------------- | :----: |
+| 💎  |   1   | UEFI pre-kernel POST codes                                    | --                                 |  [/]   |
+| 💎  |   2   | Boot progress named-stage API                                 | §1                                 |  [/]   |
+| 💎  |   3   | POST-style hex code display                                   | §2                                 |  [x]   |
+| 💎  |   4   | Alive blink / visual heartbeat                                | permanently deferred; hang=TODO-23 |  [/]   |
+| 💎  |   5   | Panic forensic evidence                                       | §2                                 |  [/]   |
+| ⭐  |   6   | Panic QR code                                                 | §5; T03 §14 (QR seed)              |  [/]   |
+| 💎  |   7   | System-wide multi-instance spinner                            | D08 T08 §8 (compositor)            |  [/]   |
+| ⭐  |   8   | Runtime vital signs strip                                     | D02 T25 §7 (CPU accounting)        |  [/]   |
+| 💎  |   9   | Boot timeline visualization/import                            | §2                                 |  [/]   |
+| ⭐  |  10   | Bootloader build identity dump in BlackBox                    | TODO-01 §20                        |  [x]   |
+| 💎  |  11   | Boot load status log (ntbtlog parity)                         | §2                                 |  [/]   |
+| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)        | §11; D02 T33 §7 (image ceiling)    |  [/]   |
+| 💎  |  13   | klog format-width contract (`-Wformat` on every call site)    | D02 T33 §7 (image ceiling)         |  [/]   |
+| 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)    | §5                                 |  [x]   |
+| ⭐  |  15   | Anti-rollback terminal give-up durable record                 | TODO-01 §25; D02 T33 §7 (ceiling)  |  [/]   |
+| ⭐  |  16   | Boot timeline export formats (SVG + Chrome trace)             | §9                                 |  [/]   |
+| 💎  |  17   | Restore panic evidence before Phase 0 can overwrite it        | §14; §5                            |  [ ]   |
+| 💎  |  18   | Pre-serial `serial_early_print` drives a poisoned UART port   | §14                                |  [x]   |
+| 💎  |  19   | Record the panic-page pin outcome in the boot_info handoff    | §14                                |  [ ]   |
+| 💎  |  20   | Complete the `.bss` poison reset discipline across the loader | §18                                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -578,14 +579,16 @@ Found by the section 14 performance review, which was right where the boot-quali
 **Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
 
 - [x] Gate the early-serial path on an explicit "serial is configured" flag rather than on `s_serial_port` being non-zero, so poisoned `.bss` cannot be mistaken for a configured UART
-  - Shipped as a wide exact-match cookie (`EARLY_DIAG_READY`, `s_serial_ready`), not the boolean the item proposed: a boolean occupies the same unzeroed `.bss`, and `0xAF` poison is non-zero, so it would read as "configured" exactly as the port did. `serial_early_putchar` tests the cookie; only `serial_early_init` publishes it, after the UART is configured, at both success exits.
+  - Shipped as a wide exact-match cookie (`EARLY_DIAG_READY`, `s_serial_ready`), not the boolean the item proposed: a boolean occupies the same unzeroed `.bss`, and `0xAF` poison is non-zero, so it would read as "configured" exactly as the port did. `serial_early_putchar` tests the cookie; only `serial_early_init` publishes it, at both success exits and after the port writes.
+  - The cookie means "the initialisation sequence ran to completion on a validated base", NOT that the hardware acknowledged anything: `serial_init_port_baud` returns void and nothing reads the port back, so a UART that accepted no writes is still published. The review caught the first draft of this claim overstating it. What the ordering does buy is that a fault or hang inside those writes leaves the cookie unset and the path silent.
   - The design review upgraded the primary mechanism: a cookie is the sole barrier ahead of `boot_set_section`, and a warm reboot can leave the PREVIOUS boot's cookie at the same address, since the image reloads at the same base and nothing scrubs RAM across a reset. So `early_diag_reset()` runs as the FIRST statement of `efi_main` and is the load-bearing invariant; the cookie is defence in depth for anything running ahead of it. A constant cookie discriminates poison from configured, never this boot from the last.
   - The cookies are `volatile` because the property is otherwise optimised away. Measured 2026-09-03 on the real build object: without it clang-19 at `-O2` narrowed both to 1-byte booleans with `cmpb $1` consumers and the 32-bit constant absent from the image. That narrowing is legal only under the assumption that nothing outside the program writes the object, which is the assumption firmware poison violates.
   - Zeroing `.bss` wholesale was rejected as the item anticipated: this file's deliberate poison workarounds stay observable, and the reset is scoped to the ten statics the early-diagnostics path reads.
 - [x] Audit every `serial_early_print` call site reachable before `serial_early_init()` and confirm each is either gated or moved after it
   - The window is `efi_main` entry to the `serial_early_init()` call in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). The only application calls in it are `early_diag_reset()` (now first), `boot_set_section()` and `post_code()`; the remainder are the firmware `AllocatePages` and `ClearScreen`. `post_code` is a bare `outb $0x80` with no static state, so `boot_set_section` was the sole reachable emitter, exactly as the section-14 comment predicted.
-  - No diagnostic is lost by gating it: that line reached a real UART on NO platform before this change. Where `.bss` came up zero the old `if (!s_serial_port)` guard already dropped it, and where `.bss` was poisoned it went to I/O port `0xAFAF`, which is the defect.
-  - Two further statics in the same path were poison-readable and are now reset: `s_spcr_skipped`, read as a boolean at the serial report block, made every machine without an SPCR table print a "non-standard port" line naming a poison address; and `g_boot_section`, which `boot_fatal` tests against `BOOT_SECTION_UNKNOWN` to warn about unattributed failures, a test poison silently defeats.
+  - No diagnostic the operator could rely on is lost by gating it. Where `.bss` came up zero the old `if (!s_serial_port)` guard already dropped the line; where `.bss` was poisoned it went to I/O port `0xAFAF`, an address derived from the poison pattern rather than from any selection this boot made, so whatever it reached was accidental and unvalidated.
+  - The review corrected a stronger claim in this item's first draft. `0xAFAF` is not structurally impossible as a genuine base: `serial_spcr_probe` accepts any nonzero I/O base through `0xFFF8`, and `0xAFAF` is inside that range, so firmware could declare it. The defect was never that the address could not be real, it was writing before anything validated it.
+  - One further static in the same path was poison-readable and is now reset: `s_spcr_skipped`, read as a boolean at the serial report block, made every machine without an SPCR table print a "non-standard port" line naming a poison address. `g_boot_section` is reset alongside it but is NOT a poison fix and the review corrected the first draft of this claim: it carries a non-zero initialiser, so it lands in `.data` (measured at section index 7, not `.bss`) which the PE loader reloads from the image every boot. It is cleared only so the function's contract is uniform.
   - `boot_log_append` carried the same defect in the same call path and is fixed with it: `boot_log_buf` is a poisoned non-NULL pointer that passes `if (!boot_log_buf)`, and `boot_log_pos` was never reset anywhere in the file, so on poisoning firmware the ESP boot log recorded nothing for the whole boot even after `AllocatePool` succeeded.
 - [x] Commit: `"boot: gate early serial on a configured flag, not a poisoned .bss port"`
 
@@ -599,6 +602,9 @@ Found by the section 14 performance review, which was right where the boot-quali
 > - Downstream, a machine whose firmware poisons `.bss` stops driving I/O port `0xAFAF`, stops printing a fabricated "non-standard SPCR port" line, and gets a populated ESP boot log for the first time.
 > - Canonical rationale is the comment block above the cookie declarations; the object-level measurement behind `volatile` is recorded there.
 > - Scope boundary: bootloader only. The kernel-side evidence-page work stays with sections 17 and 19, both of which need kernel `.text` this image has no room for.
+> **Verified:** 2026-09-03 | commit `8cf0a2f33` | 3/3 items | build OK | 32845 kernel + 17 user tests, smoke matrix 4/4
+> **Accepted:** [H] the `.bss` poison discipline stops at the serial path -- 13 further statics are poison-readable, and an early `boot_fatal` renders through a poisoned framebuffer pointer -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md` §20 (item: "Reset the fatal-path and framebuffer statics before any fallible operation in `efi_main`, so a failure that occurs before GOP init reports through predicates this boot actually wrote" at line 657)
+> **Quality reviewed:** 2026-09-03 | Codex 10x (design, adversarial, re-adversarial, consistency, perf) | 1H+4M fixed, 0 open | scope: boot-code-quality
 
 ---
 
@@ -626,6 +632,43 @@ Raised by the section 14 adversarial review, verified at both refs.
 - [ ] Commit: `"boot: carry the panic-page pin outcome in the boot_info handoff"`
 
 **Test checkpoint:** the decode helper returns each of the four states for its corresponding fixture word and MALFORMED for an unknown nonzero encoding; a boot whose pin failed leaves the evidence page untouched; the 4-leg smoke matrix stays green and `compare.sh` reports no kernel-vs-mirror drift.
+
+---
+
+## 20. The `.bss` Poison Discipline Stops at the Serial Path
+
+> **Spawned-by:** §18 (review)
+> **User impact:** on firmware that pool-poisons `.bss`, a boot failure occurring before GOP init writes a graphical error screen through a poisoned framebuffer pointer instead of printing a readable one, so the diagnostic path becomes its own second fault. Separately the watchdog silently never refreshes after arming, and a warm reboot can select the previous boot's kernel path. Each looks like a different intermittent fault on one vendor's machines and none reproduce under an emulator.
+
+Section 18 fixed the early-serial statics. The consistency review of that section then found the same class alive across the rest of the loader: the file's remedy for non-zero `.bss` is an explicit runtime reset, applied where an author remembered it, and nothing enumerates the places it is missing.
+
+Verified 2026-09-03 by reading the emitted object rather than the source, because a non-zero initialiser lands in `.data` and is genuinely safe while a zero one is not: `llvm-readelf-19 -s src/boot/uefi/bootx64.o` puts all thirteen of the symbols below in section index 8 (`.bss`), against index 7 (`.data`) for an initialised control such as `g_boot_section`.
+
+The review disputed this paragraph twice, so it now states only per-predicate facts verified at `file:line` and makes no end-to-end claim about what an early fatal does. Three predicates on the fatal path read poison, in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c):
+
+- `:2078` -- `if (gST && gST->ConOut && !g_ebs_in_progress)`. Poison leaves `g_ebs_in_progress` non-zero, so the ConOut error screen is skipped.
+- `:2156` -- the `else if (bsod_can_render_graphical())` arm then runs, and that predicate passes on ALL FOUR of its terms under `0xAF` fill: `gFramebuffer` is non-NULL, `gFbWidth`/`gFbHeight` read `0xAFAFAFAF` and clear the 800/600 minimums, and `gFbPixelFormat` is not 2. `bsod_render_graphical()` therefore writes through a poisoned framebuffer pointer. This is the most severe consequence found and the reason the section leads with it.
+- `:1957` -- `boot_fatal_dwell` carries its OWN `g_ebs_in_progress` test and skips its Stall-and-keypress branch. Its `GetTime`/TSC fallback dwell runs only if execution survives the render above, which is exactly what is not established.
+
+Two earlier drafts of this paragraph were wrong and both errors are recorded here because they bear on how the sweep should be done: the first attributed the Stall-and-keypress predicate to `boot_fatal` (a probe had matched `boot_fatal_dwell` instead), and the second asserted the machine still pauses. Both functions contain separate `g_ebs_in_progress` tests.
+
+**Files:** [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
+
+- [ ] Reset the fatal-path and framebuffer statics before any fallible operation in `efi_main`, so a failure that occurs before GOP init reports through predicates this boot actually wrote
+  - `g_ebs_in_progress`, `gFramebuffer`, `gFbWidth`, `gFbHeight`, `gFbPixelFormat`, `gFbPitch`, `g_boot_info_ptr`. All confirmed `.bss` by emitted section; the three predicates above already read them today.
+  - Zeroing `gFramebuffer` alone fixes `bsod_can_render_graphical`, since that predicate leads with the NULL test. Do not stop there: `g_ebs_in_progress` independently controls the ConOut branch, and the two are read on the same path.
+- [ ] Clear `g_boot_image_file_path` alongside `g_boot_device_handle` on the LoadedImage lookup-failure path, which today clears only the handle while the adjacent comment claims it clears both
+  - `self_measure_resolve_path()` then hands the poisoned pointer to firmware.
+- [ ] Reset `g_wd_refresh_disabled` before the watchdog is armed, so poison or warm-reboot residue cannot disable every refresh for the whole boot
+- [ ] Reset `g_policy_decoded` at `boot_policy_invoke()` entry so the fallback and allocation-failure paths cannot inherit a previous boot's authoritative kernel selection
+- [ ] Reset `g_conf_res_width` / `g_conf_res_height` at `parse_boot_conf()` entry so an absent `Resolution=` leaves automatic GOP selection working rather than suppressed
+- [ ] Sweep the remaining file-scope statics and record the ones deliberately left alone, since this file relies on observable poison in at least three places by design
+  - The sweep is the deliverable: an unenumerated list is what let this class survive section 18. Classify by emitted section, never by reading the initialiser.
+- [ ] Commit: `"boot: complete the uninitialised-.bss reset discipline across the loader"`
+
+**Test checkpoint:** each reset lands before the first read of the static it covers, demonstrated by the emitted-section classification above plus a walk of the enclosing call path; the 4-leg smoke matrix stays green and serial output is unchanged.
+
+> **Note:** No kernel test surface, for the same reason as section 18: these are file-scope statics in `BOOTX64.EFI`, not `kernel.exe`, so no `TEST_CAT_BOOT` case can reach them to seed the poison, and a kernel-side fixture is separately barred by the 79-byte `.text` headroom.
 
 ---
 

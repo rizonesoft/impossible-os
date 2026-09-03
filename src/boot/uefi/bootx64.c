@@ -444,6 +444,12 @@ static void boot_log_init(void)
     status = gBS->AllocatePool(EfiLoaderData, BOOT_LOG_SIZE, (VOID **)&boot_log_buf);
     if (EFI_ERROR(status)) {
         boot_log_buf = 0;
+        /* Not silent: serial_early_init() ran immediately before this, so a
+         * detected UART is already live and this line reaches the wire. The
+         * ESP boot log is the thing being lost, and losing it without a word
+         * is how an operator ends up reading an empty capture and blaming the
+         * capture. Not fatal -- a boot without the log file is still a boot. */
+        serial_early_print("[WARN] boot_log: buffer alloc failed, no ESP log this boot\n");
         return;
     }
     s_boot_log_ready = EARLY_DIAG_READY;
@@ -485,9 +491,17 @@ static UINT64 s_spcr_skip_addr; /* the address that caused the skip */
  * s_spcr_skipped is included because it is read as a boolean at the serial
  * report block: left at poison it makes EVERY boot without an SPCR table
  * print a "non-standard port" line naming a poison address, a diagnostic
- * that actively misleads. g_boot_section is included because boot_fatal()
- * tests it against BOOT_SECTION_UNKNOWN to warn about unattributed
- * failures, and poison silently defeats that test. */
+ * that actively misleads.
+ *
+ * g_boot_section is the one member of this list that is NOT a poison fix and
+ * is included anyway. It carries a non-zero initialiser, so it lands in
+ * .data (measured: section index 7, not .bss), and the PE loader reloads
+ * .data from the image on every boot -- poison and warm-reboot residue are
+ * both overwritten before entry. Clearing it here costs one store and makes
+ * this function's contract uniform ("every static the early-diagnostics path
+ * reads is deterministic after this returns") rather than a list a reader has
+ * to check symbol by symbol. Do not cite it as evidence that .data is
+ * untrusted; it is not. */
 static void early_diag_reset(void)
 {
     s_serial_ready   = 0;
@@ -861,9 +875,13 @@ static void serial_early_init(void)
     /* Try ACPI SPCR -- preferred detection method */
     if (serial_spcr_probe()) {
         serial_init_port_baud(s_serial_port, s_serial_baud);
-        /* Cookie published only after the UART is genuinely configured, so
-         * a failure inside serial_init_port_baud leaves the path silent
-         * rather than driving a half-programmed port. */
+        /* Published after the port writes, not before, so the cookie means
+         * "the initialisation sequence ran to completion on a validated
+         * base". It is NOT an acknowledgement from the hardware:
+         * serial_init_port_baud returns void and there is no readback, so a
+         * UART that accepted no writes still ends up published. What the
+         * ordering does buy is that a fault or hang inside those writes
+         * leaves the cookie unset and the path silent. */
         s_serial_ready = EARLY_DIAG_READY;
         return;
     }
@@ -12709,11 +12727,16 @@ static inline void post_code16(UINT16 code)
 #define POST_KERNEL_JUMP        0x09
 /* Pre-serial breadcrumb for the panic-evidence pin. 8-bit on purpose: it runs
  * before serial_early_init, and post_code16 would drag serial_early_print in
- * with it. This loader does NOT zero .bss (see the note near the top of the
- * file -- firmware pool-poisons it with 0xAF), so s_serial_port can hold
- * 0xAFAF there, which is NON-ZERO and sails past serial_early_putchar's
- * `if (!s_serial_port) return;` guard straight into inb/outb on an arbitrary
- * I/O port. post_code is a bare `outb $0x80` and touches no static state. */
+ * with it, which writes nothing that early and so would report the step as
+ * silence rather than as a breadcrumb. post_code is a bare `outb $0x80` and
+ * touches no static state at all, which is the property that matters here.
+ *
+ * It USED to matter for a second and worse reason: this loader does NOT zero
+ * .bss (firmware pool-poisons it with 0xAF), so s_serial_port held 0xAFAF and
+ * sailed past the old `if (!s_serial_port) return;` guard into inb/outb on an
+ * arbitrary I/O port. That guard is gone -- serial_early_putchar now tests an
+ * exact-match readiness cookie, so a pre-init call is silent instead of
+ * dangerous. Kept 8-bit regardless, on the first reason. */
 #define POST_PANIC_PAGE         0x0A
 
 /* 16-bit POST codes for UEFI bootloader (0xB000 range) */
@@ -16341,7 +16364,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     gImageHandle = ImageHandle;
 
     /* Mark the source-section hint as soon as gST/gBS are wired, so any
-     * fatal during the very first phase records BL_INIT (not UNKNOWN). */
+     * fatal during the very first phase records BL_INIT (not UNKNOWN).
+     *
+     * This runs before serial_early_init() and boot_log_init(), so the
+     * transition line it prints is dropped by the readiness cookie. That is
+     * deliberate and costs no diagnostic the operator could rely on: where
+     * .bss came up zero the old guard dropped the line, and where .bss was
+     * poisoned it went to port 0xAFAF -- an address derived from the poison
+     * pattern, not from any selection this boot made, so whatever it reached
+     * was accidental. Note 0xAFAF is NOT structurally impossible as a real
+     * base: serial_spcr_probe() accepts any nonzero I/O base through 0xFFF8
+     * and 0xAFAF is inside that range. The defect was never that the address
+     * could not be real -- it was writing before anything validated it. The STATE set here
+     * is the load-bearing half and it is what an early boot_fatal() reports;
+     * the phase itself is on the wire a few lines below as "efi_main
+     * entered". Moving the call later to satisfy print-ordering would trade
+     * fatal attribution for a duplicate line. */
     boot_set_section(BOOT_SECTION_BL_INIT);
 
     /* TODO-14 sec14: pin the panic-evidence page BEFORE anything else this
@@ -16378,11 +16416,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * A breadcrumb first because this is the image's FIRST firmware call, so
      * without one a fault inside the firmware allocator is indistinguishable
      * from never reaching our code at all. It MUST be the 8-bit post_code,
-     * not post_code16: post_code16 also prints through serial_early_print,
-     * and at this point s_serial_port is uninitialised .bss that firmware has
-     * poisoned to 0xAF -- non-zero, so it passes serial_early_putchar's
-     * `if (!s_serial_port) return;` guard and drives inb/outb on an arbitrary
-     * I/O port. post_code is a bare `outb $0x80` with no static state.
+     * not post_code16: post_code16 prints through serial_early_print, which
+     * is gated shut this early and would record the step as silence.
+     * post_code is a bare `outb $0x80` with no static state. (Before the
+     * readiness cookie landed, that gate was `if (!s_serial_port)` and the
+     * 0xAF poison walked straight through it onto an arbitrary I/O port;
+     * the choice of post_code predates the fix and outlives it.)
      * POST16_BL_PANIC_PAGE is emitted later, from the report block, once
      * serial is genuinely up. */
     post_code(POST_PANIC_PAGE);
