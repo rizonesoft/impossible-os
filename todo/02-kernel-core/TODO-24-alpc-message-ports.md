@@ -78,7 +78,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎  |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
 | 💎  |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
 | ⭐  |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [/]   |
-| ⭐  |  13   | Post-ship follow-up backfill (2026-07-31 cohort)         | --            |  [ ]   |
+| ⭐  |  13   | Post-ship follow-up backfill (2026-07-31 cohort)         | --            |  [/]   |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work; Impossible OS is superior or first.
@@ -611,11 +611,13 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 5:
-- [ ] **Race-proof the `AlpcAcceptConnectPort` failure unwinds.** They blindly consume the `client_comm->ConnectedPort` ref, but a sibling `AlpcDisconnectPort` can clear that link and consume its `server_comm` ref first, so the unwind double-frees
+- [/] **Race-proof the `AlpcAcceptConnectPort` failure unwinds.** -- BLOCKED, Codex outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
   - Detach each cross-link under the owning port's lock and consume its reference ONLY if the pointer still matches; hold the `server_comm` creation ref until every detach completes, so no branch writes through a freed port
   - Both the handle-alloc-failure and token-dup-failure branches (`alpc_port.c`); handle-quota exhaustion makes the first attacker-reachable. Add a disconnect-vs-failed-accept race test -> XREF: `02-kernel-core/TODO-24 §7`
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [H] not started this pass -- a security-relevant SMP double-free race (attacker-reachable via handle-quota exhaustion); the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). No source changed.
 
 ---
 
