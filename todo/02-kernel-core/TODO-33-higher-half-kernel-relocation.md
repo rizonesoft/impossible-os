@@ -50,6 +50,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | 🔥  |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [x]   |
 | 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [/]   |
 | 🔥  |  12   | Second tactical BSS pass: reclaim a large static again   | --                     |  [x]   |
+| 🔥  |  13   | Third tactical reclamation pass: buy a page of headroom  | --                     |  [ ]   |
 | 💎  |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎  |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
@@ -570,6 +571,51 @@ Measured largest remaining `.bss` consumers (`build/kernel.map`, 2026-08-18, by 
 > **Accepted:** [M] `pmm_free_contiguous` mutates the frame bitmap and `used_frames` unsynchronized, which is why the pool is not released on the Phase-2 success path (reason: pre-existing, repo-wide) -> XREF: `03-memory-concurrency/TODO-03 §1` (item: "**PMM bitmap SMP locking**" at line 103)
 > **Quality reviewed:** 2026-08-18 | Codex 15x (design, test-coverage, adversarial x3, re-adversarial x8, consistency, perf) + kernel-quality-auditor | 5H+14M+3L fixed, 2M accepted-XREF, 1L rejected | scope: kernel-code-quality
 ---
+
+## 13. Third Tactical Reclamation Pass -- the Trigger Section 12 Named Has Fired
+
+> **Spawned-by:** root
+
+Section 12 wrote down the condition for its own successor and then had nowhere to put it: *"A third pass IS expected, and this is what is left in reserve for it"*, with the trigger stated as *"treat headroom under one page (4096 bytes) as the signal"*. That signal has fired and nothing picks it up, because §12 is stamped `[x]` and scoped to ONE conversion, §10's nomination table is spent, and §7 (the permanent retirement) is cascade-blocked on §3, which is operator-deferred pending `todo/answers.md` Q3. This section is the recurring tactical route, and like §10 and §12 it depends on nothing.
+
+MEASURED 2026-09-03 at `56e11533e`: `__kernel_end` page-aligns to `0x7ff000`, one page below `USER_BASE`, and `scripts/overnight/bss-headroom.py` reports per-section budgets of `.text` **95**, `.rodata` 1826, `.data` 980, `.bss` 1323 bytes. `.text` is the tightest and the constraint is cascading, exactly as §12 described.
+
+**What a user hits if this is not done:** nothing kernel-side ships. On 2026-09-03 alone the ceiling deferred `01-boot-platform/TODO-23` §7, `01-boot-platform/TODO-29` §21, `02-kernel-core/TODO-02` §12, and `02-kernel-core/TODO-04` §14's runtime test plus the whole of its §15, §16 and §17. Each was written or designed and then reverted or parked, so the cost is paid twice: once to build the thing and once to take it back out.
+
+**Reclaiming `.bss` buys `.text` headroom, which is the non-obvious part.** A reader seeing `.text: 95` may conclude that converting a large `.bss` array cannot help. It does: the guard tests `__kernel_end`, and the per-section budgets are all distances to the SAME page boundary, so `.text` is tight only because `.rodata` sits 95 bytes above it and a push there cascades `.data` and `.bss` up a whole page onto `0x800000`. Move a large static out of `.bss` and `__kernel_end` drops a page or more, after which `.text` can grow by that page plus its current 95.
+
+**Reserve, in the order §12 left it** (sizes from `build/kernel.map`, 2026-08-18):
+
+| Symbol         |    Size | Home                       | What must land first                                               |
+| -------------- | ------: | -------------------------- | ------------------------------------------------------------------ |
+| `ctrl_windows` | 180,736 | `../desktop/controls.c:20` | a fallible `ctrl_init()` wired before `gallery_open()` reaches it  |
+| `tasks`        | 203,776 | `sched/task.c:69`          | allocation before Phase 1 unmasks the timer, plus explicit zeroing |
+| `klog_ring`    | 288,000 | `klog.c:78`                | it is written pre-PMM; ruled out by §10 on that ground             |
+| `devices`      | 277,504 | `xhci_dev.c:31`            | a hot-plug ISR writes it; ruled out by §10 on that ground          |
+
+Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 38208, `ports` 37632, `s_bls_fixture` 36992, `glyph_cache` 36480, `s_iocp_pool` 33152.
+
+- [ ] Re-measure the reserve against the CURRENT `build/kernel.map` before choosing, rather than acting on the 2026-08-18 sizes above
+  - The table is a starting point, not evidence. §12's own lesson is that roughly 1.27 MiB was reabsorbed in the month after §10, so both the sizes and the ranking move.
+- [ ] Assess the chosen candidate against the §10 bar and record the reasons here, whether it passes or fails
+  - The bar: allocated once after `pmm_init`, never lazily, never under a spinlock, never written from ISR context. `pmm_alloc_pages_hhdm` does not zero, so anything relying on BSS-zero state needs explicit zeroing.
+  - Include the mechanical symbol-use audit §12 ran: no `sizeof(<array>)`, no whole-array address-of, no static assert naming it, no compile-time consumer of its address. A missed `sizeof` collapses silently to pointer size.
+- [ ] Convert exactly ONE candidate to frame-backed storage, following the `s_recovered` conversion in `klog.c` and the `reg_value_pool` one in `registry.c:364-378`
+  - Explicit byte count, zeroed through a local, publication word stored LAST, and a DEGRADED failure policy rather than a halt wherever the data is diagnostic rather than load-bearing.
+- [ ] Record the acceptance evidence in the §10/§12 shape: `__kernel_end` and headroom before and after, from `build/kernel.map`, same build flavor
+  - State the reclaimed byte count and confirm it matches the predicted whole-page count, so the figure is a prediction met rather than merely a bigger number.
+  - The `scripts/build.sh` guard must be unchanged and unweakened. A conversion accompanied by any relaxation of the check is not a reclamation.
+- [ ] Sweep dead test registrations as a cheap secondary source, and record what it yields
+  - MEASURED 2026-09-03 while closing `02-kernel-core/TODO-04` §16: deleting two registered-but-EMPTY test functions (`test_klog_crash_magic`, `test_etw_session_magic`) and their `test_suite_register_cat` calls moved the `.text` budget from 15 to 95 bytes and `.rodata` from 1794 to 1826. Small next to a pool conversion, and it was the difference between 15 bytes and 95.
+  - This is a real reclaim source with a correctness dividend: a registered empty test reports a pass that verifies nothing, so removing it makes the suite count honest at the same time.
+- [ ] Unpark what the new headroom actually admits, and say what it does NOT
+  - The unparking is a status sweep owned by §11; this section only removes the constraint. Name the sections the measured headroom now fits rather than declaring the queue unblocked -> XREF: this file §11 (item: "Unpark the ceiling-stalled kernel queue").
+  - The sections parked on this ceiling as of 2026-09-03 -> XREF: `02-kernel-core/TODO-04-system-logging.md` §14 (item: "Add the RUNTIME regression test driving the renderer at 7/8/9/10-digit `sec` values with guard bytes").
+- [ ] State plainly in the Notes that a FOURTH pass is expected, and leave the reserve named for it
+  - §10 read as solved and the ceiling returned unannounced; §12 fixed that by naming a reserve, which is the only reason this section was cheap to write. Keep the chain going rather than closing it.
+- [ ] Commit: `"kernel/mm: third tactical reclamation pass -- buy a page of headroom"`
+
+**Test checkpoint:** `bash scripts/build.sh` prints the `BSS check` line with `__kernel_end` at least one page below `0x7ff000` and the headroom recorded in the Notes. Full `scripts/test.sh` green, with the converted pool's owning suite green in its own right rather than only in the aggregate. `scripts/test-smoke.sh` boots to `C:\>`, because an allocation-failure regression in a boot-path pool surfaces as a hang rather than a failing assertion, and `scripts/test-smoke-matrix.sh` if the candidate is touched during boot. A control proves the guard still fires and was not relaxed by a byte. Scope: ONE conversion plus the headroom measurement; the permanent retirement stays §7, the address-space move stays §3, and the unpark sweep stays §11. Platforms: QEMU KVM + TCG; **bare metal**.
 
 ## OS Comparison
 

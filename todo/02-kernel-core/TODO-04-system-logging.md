@@ -73,9 +73,9 @@ title: "TODO-04 -- System Logging"
 | 💎  |  12   | ETW advanced capture (stack/autologger/schema)                      | §11, T23, T18 §4 |  [/]   |
 | 💎  |  13   | Rotated-log compression (LZ4)                                       | §4, T03 §3       |  [x]   |
 | ⭐  |  14   | Serial timestamp render bound                                       | §1               |  [/]   |
-| ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
-| 💎  |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
-| ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [ ]   |
+| ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [/]   |
+| 💎  |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [/]   |
+| ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [/]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -480,10 +480,13 @@ Discovered 2026-07-29 during a `00-infrastructure/TODO-04-usermode-test-framewor
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 9:
-- [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
+- [/] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
 
 From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-08-18):
-- [ ] Cover the crash-recovery DEGRADED path at boot level: force ONLY the recovered-entry pool allocation to fail and assert boot continues, serial replay still happens, and no `crash_recovery.log` is written.
+- [/] Cover the crash-recovery DEGRADED path at boot level: force ONLY the recovered-entry pool allocation to fail and assert boot continues, serial replay still happens, and no `crash_recovery.log` is written.
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
+      - SECOND blocker, independent of the ceiling: the allocation lives inside `klog_crash_recover()` and tests may not call live boot infrastructure, so the fault-injection CALL SITE has to exist first. XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` §6.
   - `s_recovered` is frame-backed as of `02-kernel-core/TODO-33` section 12, so pool-absent is a reachable runtime state rather than an impossible one, and allocation failure degrades to serial-only instead of halting -> XREF: `02-kernel-core/TODO-33 §12` (item: "Convert exactly ONE assessed pool to frame-backed storage").
   - The PURE half already ships assertions: `klog_recovered_at` and `klog_recovered_set_ok` are unit-tested in `src/kernel/test/test_klog.c`, including the absent-pool and incoherent-count refusals with a passing control beside each. What those cannot reach is the boot-level consequence.
   - Not unit-testable as things stand: the allocation lives inside `klog_crash_recover()`, and `src/kernel/test/test_*.c` may not call live boot infrastructure. The injector itself already ships, so the gap is the CALL SITE and not the mechanism -> XREF: `00-infrastructure/TODO-03 §6` (item: "Extended to PMM: 4 `pmm_alloc_fail_*` fields in `per_cpu_data`").
@@ -492,21 +495,28 @@ From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-
   - Cover the allocation-PRIORITY path specifically, under a constrained contiguous heap: the 41-frame recovered pool is taken before the 32-frame crash region, so a fragmentation test must prove recovery can never leave this boot with crash logging unarmed, and that the fallback which releases the pool actually re-arms it.
 
 From `01-boot-platform/TODO-24` sections 5 and 10 (BlackBox klog follow-ups, 2026-08-29) -- both sat as bare `- [ ]` inside Deferred sections of a file the oracle classes DONE, so nothing would ever revisit them:
-- [ ] **klog_disk_flush re-entrancy guard on the C: fallback path** <- XREF: 01-boot-platform/TODO-24 §5
+- [/] **klog_disk_flush re-entrancy guard on the C: fallback path** <- XREF: 01-boot-platform/TODO-24 §5
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
+      - SECOND blocker, named in the item itself: do not land it until the sole-`C:\` (BlackBox-mount-failed) boot is reproduced under fault injection. XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` §6.
   - `klog()` calls `klog_disk_flush()`, which calls `vfs_open()`/`vfs_write()` against `klog_dir`. On the `C:\Impossible\System\Logs\` (IXFS) fallback, a `klog()` from inside an IXFS read/write path re-enters VFS/IXFS synchronously.
   - Fix shape: a per-CPU `klog_in_disk_flush` flag in `src/kernel/klog_disk.c`, or a `klog_no_flush()` variant used from fs-layer emitters.
   - Do not land it until the sole-C:\ (BlackBox-mount-failed) boot is reproduced under fault injection -- the hazard is latent while X:\ mounts, which is why the original 2026-04-18 review could not exercise it. Regression test builds on `00-infrastructure/TODO-03` §1 `test_add_fault` + §6.
-- [ ] **Durable low-space C: fallback for the critical-low redirect** (`klog_disk.c`) <- XREF: 01-boot-platform/TODO-24 §10
-- [ ] klog all-or-nothing kernel.log retry: truncate-to-pre-flush-size rollback so a failed `vfs_write` can be retried cleanly instead of re-appending
+- [/] **Durable low-space C: fallback for the critical-low redirect** (`klog_disk.c`) <- XREF: 01-boot-platform/TODO-24 §10
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
+- [/] klog all-or-nothing kernel.log retry: truncate-to-pre-flush-size rollback so a failed `vfs_write` can be retried cleanly instead of re-appending
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
   - Filed 2026-08-30 by the `01-boot-platform/TODO-19` ADVANCE drain. `klog_disk_flush_locked` stops the loop and retains the cursor on a failed chunk write (no further-chunk corruption), but the retry re-appends what already landed.
   - The prerequisite TODO-19 named is SHIPPED: `vfs_truncate(path, new_size)` at `include/kernel/fs/vfs.h:196` / `src/kernel/fs/vfs.c:885`, with `fat32_vfs_truncate()` wired. What remains is klog-side: record the pre-flush size and roll back to it before re-appending.
   - -> XREF: `01-boot-platform/TODO-19 §8` (item: "All-or-nothing kernel.log retry")
-- [ ] klog durable per-subsystem-file cursor so `boot.log` / `fs.log` and friends survive a subsystem-only write failure
+- [/] klog durable per-subsystem-file cursor so `boot.log` / `fs.log` and friends survive a subsystem-only write failure
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
   - Filed 2026-08-30 by the `01-boot-platform/TODO-19` ADVANCE drain. Subsystem routing is best-effort today and `kernel.log` is the only durable copy, so a per-subsystem write failure silently loses that subsystem's tail.
   - -> XREF: `01-boot-platform/TODO-19 §8` (item: "Durable per-subsystem-file cursor")
   - Add a sticky `klog_blackbox_forced_off` flag honored by `klog_resolve_dir`, so a critical-low redirect to C:\ survives the later resolve that currently re-sets `klog_using_blackbox`.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [M] 2026-09-03 -- parked BEFORE implementation on the kernel image ceiling; no code was written for the parked items and the tree was left green. MEASURED at `56e11533e`: `__kernel_end` page-aligns to `0x7ff000`, one page under `USER_BASE`, with a `.text` budget of 95 bytes (`scripts/overnight/bss-headroom.py`, `precision: section-exact`). Every item here adds kernel `.text`. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
 
 ---
 
@@ -517,31 +527,43 @@ Two related defects in how this subsystem's own tests read the ring. First, `tes
 > [!NOTE]
 > Filed 2026-08-02 from `00-infrastructure/TODO-04-usermode-test-framework.md` §55, which converted the usermode launcher's window scans to a monotonic-sequence bound with content matching and could only buy a MARGIN against the live-array race: it refuses a window of exactly `KLOG_RING_SIZE` because at that width the oldest entry sits on `head` and one concurrent append destroys it, but a window of N-1 still dies after two. That margin is documented as a margin at its definition. This section owns the cure. The "Ring flush reads live entries without lock" row already Accepted in this file's Codex review table is the same underlying issue seen from the flush side.
 
-- [ ] Give klog a snapshot API that copies a selected window under the lock
+- [/] Give klog a snapshot API that copies a selected window under the lock
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - The shape §55 needs is "copy the entries between two monotonic sequence values into caller storage while holding `s_klog_lock`", so a consumer scans an immutable copy rather than the live array. Bound the copy so a caller cannot ask for more than the ring holds.
       - Convert the existing live scans to it: `u_test_scan_window` / `u_test_first_match` in `src/kernel/test/test_usermode_launcher.c`, the marker scan in `test_klog_ring_write`, and `test_klog_receipt_null_ack_is_the_ordinary_path` in the same file (added by `00-infrastructure/TODO-04` §57, which copied the reference shape and inherited the same exposure -- its own review round re-derived this defect independently). Once they consume a stable copy, §55's exact-capacity refusal can be relaxed back to the true arithmetic bound.
       - The window can also be invalidated DURING a scan, not only between the snapshot and the scan: a copy under the lock closes both, whereas a width check at snapshot time closes neither.
       - The exposure is WIDTH-DEPENDENT, which is why a single refusal width is not a fix. A window of width W has its oldest entry at `head - W`, and appends land at `head` outward, so that entry survives exactly `KLOG_RING_SIZE - W + 1` appends: one at `W = N`, two at `W = N-1`, and on the order of a full ring only for the small windows the tests actually open. Section 55 refuses `W = N` for that reason and leaves every wider window still exposed.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §55 (item: "Prove the fix at the boundary the current tests cannot reach: a saturated ring")
-- [ ] Give the test suite a sink-suppressed way to saturate the ring
+- [/] Give the test suite a sink-suppressed way to saturate the ring
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - Saturating the ring is the only way to make the count-vacuity claim against the REAL counter, and doing it through `klog()` is unaffordable: measured from `00-infrastructure/TODO-04` §55, a full run reached its test 367 entries short, so the filler ran every time -- 33,397 serial bytes and 1.09 s of guest time in the harness, about 8.8 s on a real 38400-baud UART, and roughly 24 s at a full 1000-entry shortfall against the 60 s harness deadline.
       - It is also unsafe on the acceptance platform: on SLOW boot media `klog_set_deferred(1)` (`src/kernel/main/boot_media.c`) batches to RAM until `klog_disk_flush_all()`, so driving the ring to saturation evicts entries the deferred flusher has not written and trades real `kernel.log` content for filler.
       - Shape: a `KERNEL_TESTS`-only seam that exercises ring append/head/count/sequence bookkeeping WITHOUT the serial, framebuffer and disk sinks, then restores sink state. With it, §55's saturated-ring test stops skipping and becomes deterministic.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §55 (item: "Prove the fix at the boundary the current tests cannot reach: a saturated ring")
-- [ ] Replace head-position equality with a content-matched sequence window in the klog suite
+- [/] Replace head-position equality with a content-matched sequence window in the klog suite
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - `test_klog_level_drop`, `test_klog_level_pass` and `test_klog_global_level` (`src/kernel/test/test_klog.c`) all decide delivery from `head_before` vs `head_after`. The claim each wants is "an entry matching X did / did not land in the window this test opened", which a sequence bound plus a content match expresses exactly and a head comparison only approximates. `test_klog_ring_write` in the same file is the reference shape after §55.
       - The negative assertions are the load-bearing ones: an unrelated line from another CPU turns "suppressed by the global LOG_ERROR override" into a failure, so the drop tests flake first under `-smp 2`.
       - `test_klog_ctx_tid_populated` and `test_klog_ctx_subsystem_populated` read a fixed `head - 1` offset, which is the same defect in its sharpest form -- they assert against whatever entry happens to sit there.
-- [ ] Prove the negative case cannot be satisfied by an unrelated line
+- [/] Prove the negative case cannot be satisfied by an unrelated line
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - A fixture that logs an unrelated entry inside the measured window must leave every drop verdict unchanged; under the current head comparison it would flip them.
-- [ ] Give the two registered klog/ETW magic tests an assertion, or delete them
+- [x] Deleted the two registered-but-EMPTY klog/ETW magic tests and pinned both constants with `_Static_assert` in `src/kernel/test/test_klog.c` instead
+      - `test_klog_crash_magic` and `test_etw_session_magic` had empty bodies and were registered, so the runner reported two passes that verified nothing. The reported assertion total is unchanged at 32845 because an empty body asserts nothing; what changed is that two suites no longer claim coverage they never had.
+      - A `_Static_assert` is the right tool over a runtime `TEST_ASSERT`: both are compile-time constants, so a runtime check would spend `.text` proving what the compiler already knows. Each is pinned twice, to its value AND to the ASCII it is documented to spell (`KLOG`, `ETWS`), because the value and the comment beside it are two separate claims. Verified not vacuous: breaking one character fails the build with that assert's message.
+      - Bought headroom rather than spending it, which is why this item could land while the rest of the section is parked: the `.text` budget moved 15 -> 95 bytes and `.rodata` 1794 -> 1826 -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Sweep dead test registrations as a cheap secondary source, and record what it yields").
       - `test_klog_crash_magic` (`src/kernel/test/test_klog.c:750`) and `test_etw_session_magic` (same file, line 826) have EMPTY bodies and are registered at lines 1318 and 1338, so the runner counts two passes that verify nothing. This is the sharpest form of the defect this section already owns: not an assertion that can be satisfied by an unrelated line, but an assertion that is not there at all.
       - Both immediate neighbours (`test_klog_crash_header_size`, `test_etw_event_header_size`) carry real size assertions, so these two read as unfinished rather than deliberately empty. The magic values they were named for are `KLOG_CRASH_MAGIC` (`include/kernel/klog.h:333`) and the ETW session equivalent.
       - Assert the value against the header constant if that is meaningful, or delete the suite. A registered test that asserts nothing is worse than an absent one, because the count says it is covered.
       - Found 2026-08-14 during the `00-infrastructure/TODO-03` section 11 loose-ends scan (a pre-existing defect in a file that section was editing for another reason) -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` section 11 (item: "A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page")
-- [ ] Commit: `"kernel: bound klog suite assertions by content in a locked window snapshot"`
+- [/] Commit: `"kernel: bound klog suite assertions by content in a locked window snapshot"`
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
 
 **Test checkpoint:** every klog delivery and suppression verdict is unchanged when an unrelated entry lands inside the measured window, the converted scans read an immutable copy rather than the live ring, and the drop tests stay green on a 2-CPU boot. Test on: QEMU TCG, QEMU KVM (2 CPUs).
+
+> **Deferred:** [M] 2026-09-03 -- parked BEFORE implementation on the kernel image ceiling; no code was written for the parked items and the tree was left green. MEASURED at `56e11533e`: `__kernel_end` page-aligns to `0x7ff000`, one page under `USER_BASE`, with a `.text` budget of 95 bytes (`scripts/overnight/bss-headroom.py`, `precision: section-exact`). Every item here adds kernel `.text`. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
+
+> **Note:** one item of this section DID ship on 2026-09-03 -- the two registered-but-empty magic tests were deleted and replaced with compile-time pins. It landed because it FREED `.text` (15 -> 95 bytes) rather than spending it, which is exactly the asymmetry the ceiling creates.
 
 ---
 
@@ -552,18 +574,24 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 > [!NOTE]
 > Filed 2026-08-02 from the `00-infrastructure/TODO-04-usermode-test-framework.md` section 57 review, where the parity pass identified it against Linux `pr_flush(seq, timeout_ms, reset_on_progress)` -- which blocks until every registered console's own cursor reaches a target sequence, with a timeout and an optional reset-on-progress so a slow-but-advancing console is not cut off. Section 57 shipped a per-record delivery RECEIPT, which is the complementary producer-side mechanism and deliberately NOT this one: the receipt tells one caller about one record at one sink, whereas this is a caller waiting on the whole pipeline reaching a point. Neither substitutes for the other, and the receipt's own header says so. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` section 57 (item: "Publish a delivery acknowledgement from klog at the point a record is actually on the wire")
 
-- [ ] Add a bounded wait for a target sequence across the sinks that have a cursor
+- [/] Add a bounded wait for a target sequence across the sinks that have a cursor
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - Shape: `int klog_flush_until(uint64_t target_seq, uint32_t timeout_ms)`, returning which condition ended the wait (reached, timed out, or no progress) rather than a bare success flag -- a caller that cannot tell a timeout from a completion will treat a stalled sink as a flushed one.
       - Per-sink, not one global verdict: the disk sink has a real cursor and can genuinely lag, serial is synchronous inside `klog_emit`, and the framebuffer has no durability meaning at all. Say which sinks the answer covers instead of implying all of them.
       - Reset-on-progress, as Linux does: a fixed deadline cuts off a slow-but-advancing drain, which on USB boot media is the normal case rather than the pathological one (see the USB boot hardening XREF at the top of this file for the bounded-loop work on that same path).
-- [ ] Do not let the wait itself lose records
+- [/] Do not let the wait itself lose records
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - `klog_set_deferred(1)` batches to RAM until `klog_disk_flush_all()` (`src/kernel/main/boot_media.c` sets it for slow media). A wait that forces a drain has to leave deferred mode exactly as it found it, or it silently changes the logging policy of every subsystem that runs after it.
       - The wait must not hold `s_klog_lock` while it yields, and must not be callable from a panic or fault funnel -- both are the existing constraints on this path, not new ones.
-- [ ] Regression: a target sequence that never arrives ends the wait and says so
+- [/] Regression: a target sequence that never arrives ends the wait and says so
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
       - Pin all three outcomes: a target already reached returns immediately, a target reached mid-wait returns reached, and a sink pinned with no progress returns the no-progress verdict within the timeout rather than spinning.
-- [ ] Commit: `"klog: bounded wait until the sinks reach a target sequence"`
+- [/] Commit: `"klog: bounded wait until the sinks reach a target sequence"`
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
 
 **Test checkpoint:** a caller that emits a record and then waits for its sequence observes the record in `kernel.log` when the wait returns reached; a wait against a sequence no one will emit returns its timeout verdict within the stated bound; and deferred-flush mode is unchanged across both. Test on: QEMU TCG, QEMU KVM.
+
+> **Deferred:** [M] 2026-09-03 -- parked BEFORE implementation on the kernel image ceiling; no code was written and the tree was left green. MEASURED at `56e11533e`: `__kernel_end` page-aligns to `0x7ff000`, one page under `USER_BASE`, with a `.text` budget of 95 bytes (`scripts/overnight/bss-headroom.py`, `precision: section-exact`). A new public `klog_flush_until()` plus its per-sink cursor logic cannot fit in that. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
 
 ## OS Comparison
 
