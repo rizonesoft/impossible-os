@@ -18,6 +18,35 @@
 #include "libc/string.h"        /* strcmp for the rendered-record assertions */
 #include "kernel/test/poison_tail.h"  /* boundary fixture for the short-tag overread check */
 
+/* KLOG_DEC_DIGITS_MAX's correctness, at every width it can be handed.
+ *
+ * The macro bounds the digit buffer the serial renderer writes into, and it
+ * is a FORMULA rather than a literal so that widening the rendered value
+ * moves the bound with it. That only holds while the formula is right, and
+ * `(bytes * 5 + 1) / 2` is not self-evidently the decimal-digit count -- it
+ * is an exact identity at 1, 2, 4 and 8 bytes and nowhere else it would be
+ * used. These pin it against the four maxima by hand: 255, 65535,
+ * 4294967295, 18446744073709551615. A "simplification" that breaks the
+ * identity fails the build here rather than silently narrowing the buffer
+ * in klog.c. Compile-time only, so they cost the kernel image nothing --
+ * which is why they can exist while the image is 15 .text bytes from its
+ * ceiling and the RUNTIME renderer test remains parked. */
+_Static_assert(KLOG_DEC_DIGITS_MAX(1) == 3,
+               "KLOG_DEC_DIGITS_MAX(1) must be 3 -- 255 is three digits");
+_Static_assert(KLOG_DEC_DIGITS_MAX(2) == 5,
+               "KLOG_DEC_DIGITS_MAX(2) must be 5 -- 65535 is five digits");
+_Static_assert(KLOG_DEC_DIGITS_MAX(4) == 10,
+               "KLOG_DEC_DIGITS_MAX(4) must be 10 -- 4294967295 is ten digits");
+_Static_assert(KLOG_DEC_DIGITS_MAX(8) == 20,
+               "KLOG_DEC_DIGITS_MAX(8) must be 20 -- 18446744073709551615 is "
+               "twenty digits");
+
+/* The seconds field the renderer actually emits, pinned as a value. The
+ * assert in klog.c pins the BUFFER against sizeof(sec); this pins what that
+ * resolves to today, so a change to either side is visible as a diff here. */
+_Static_assert(KLOG_TIMESTAMP_SEC_DIGITS_MAX == 10,
+               "klog renders seconds from a uint32_t -- ten decimal digits");
+
 /* Room for a full 255-character entry plus its NUL. */
 #define TEST_KLOG_PROBE_CAP  260u
 

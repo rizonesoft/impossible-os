@@ -180,6 +180,26 @@ void klog_receipted(log_level_t level, const char *subsystem,
  * that tag storage that outlives every entry logged under it. */
 #define KLOG_SUBSYSTEM_MAX 16
 
+/* Decimal digits in the widest value an unsigned type of `bytes` bytes can
+ * hold. `(bytes * 5 + 1) / 2` is exact at every width that occurs here: 3
+ * for a 1-byte type (255), 5 for 2 (65535), 10 for 4 (4294967295) and 20
+ * for 8 (18446744073709551615). It is stated as a formula rather than a
+ * literal so that widening the value being rendered moves the bound with
+ * it instead of leaving a buffer sized for the old type. */
+#define KLOG_DEC_DIGITS_MAX(bytes) (((bytes) * 5u + 1u) / 2u)
+
+/* Widest whole-seconds field the serial renderer can emit.
+ *
+ * The renderer derives seconds as a uint32_t (klog.c's klog_emit()), so the
+ * worst case is 4294967295 -- ten digits, reached after ~136 years of
+ * uptime. The digit buffer there is sized from THIS macro and pins itself
+ * against it with a _Static_assert, and consumers that bound the wire cost
+ * of a rendered klog line (test_usermode.c's KLOG_WIRE_TIMESTAMP_MAX)
+ * derive from it too. Restating the digit count at either site is what let
+ * the two drift apart before: the buffer held 8 digits while the wire model
+ * assumed 5, and neither knew the other's number. */
+#define KLOG_TIMESTAMP_SEC_DIGITS_MAX KLOG_DEC_DIGITS_MAX(sizeof(uint32_t))
+
 /* Render `tag` as `alias` on the DISK sink only, leaving serial unchanged.
  *
  * Exists for one caller class: a subsystem tag that AUTHENTICATES its

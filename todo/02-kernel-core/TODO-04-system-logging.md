@@ -72,7 +72,7 @@ title: "TODO-04 -- System Logging"
 | 💎  |  11   | ETW provider registration + filtering                               | §7, T12 §5       |  [/]   |
 | 💎  |  12   | ETW advanced capture (stack/autologger/schema)                      | §11, T23, T18 §4 |  [/]   |
 | 💎  |  13   | Rotated-log compression (LZ4)                                       | §4, T03 §3       |  [x]   |
-| ⭐  |  14   | Serial timestamp render bound                                       | §1               |  [ ]   |
+| ⭐  |  14   | Serial timestamp render bound                                       | §1               |  [/]   |
 | ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
 | 💎  |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
 | ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [ ]   |
@@ -451,8 +451,27 @@ The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no s
 
 Discovered 2026-07-29 during a `00-infrastructure/TODO-04-usermode-test-framework.md` §29 re-adversarial review (a wire-cost derivation elsewhere needed to bound the timestamp field's worst-case byte count, which surfaced this). The serial-line renderer's timestamp digit loop (`src/kernel/klog.c` around the function documented at `klog.c:1240-1341`) writes decimal digits of `uint32_t sec` into a fixed local buffer with no bound on digit count: `char tmp[8]; ... while (v > 0) { tmp[n++] = ...; v /= 10; }`. `sec` is a `uint32_t` (max value 4,294,967,295, 10 decimal digits), but `tmp` holds only 8 bytes -- a boot whose uptime reaches 100,000,000 seconds (~3.17 years of continuous uptime) writes past the end of `tmp` on the stack. No test, panic path, or bare-metal gate currently catches this because reaching it requires uptime far beyond any real boot-test cycle or realistic continuous-uptime deployment; it is a latent stack buffer overflow, not a live one.
 
-- [ ] Bound the timestamp digit loop in klog.c's serial renderer so it cannot write past its fixed stack buffer regardless of uptime seconds
-      Size `tmp` to the true `uint32_t` worst case (10 digits) or cap the loop at 8 iterations and saturate/wrap once `sec` exceeds what the buffer holds, with a `_Static_assert` pinning the bound against `sizeof(tmp)`. Add a unit test driving the renderer at 7/8/9/10-digit `sec` values confirming no write past the declared size (canary byte after `tmp`, or refactor the digit-count logic into a testable pure function). Consumer: `00-infrastructure/TODO-04-usermode-test-framework.md` §29's `UTEST_RECORD_WIRE_MAX`, which must widen `KLOG_WIRE_TIMESTAMP_MAX` again if the fix changes the max digit count the renderer can safely emit.
+- [x] Bounded the timestamp digit loop in `klog.c`'s serial renderer against the width of the value it renders, so it cannot write past its stack buffer at any uptime
+      - `include/kernel/klog.h`: `KLOG_DEC_DIGITS_MAX(bytes)` = `((bytes) * 5 + 1) / 2`, the decimal-digit count of an N-byte unsigned type, and `KLOG_TIMESTAMP_SEC_DIGITS_MAX` = that applied to `sizeof(uint32_t)` = 10. Stated as a formula so widening the rendered value moves the bound with it rather than leaving a buffer sized for the old type.
+      - `src/kernel/klog.c`: the buffer is `char tmp[KLOG_TIMESTAMP_SEC_DIGITS_MAX]` (was a literal `char tmp[8]`, which any `sec >= 100,000,000` overran), pinned by `_Static_assert(sizeof(tmp) >= KLOG_DEC_DIGITS_MAX(sizeof(sec)))`. Verified in BOTH directions: narrowing the buffer by one fails the build with that exact message, and reverting restores `=== BUILD OK ===`.
+      - `src/kernel/test/test_usermode.c`: `KLOG_WIRE_TIMESTAMP_MAX` now DERIVES from `KLOG_TIMESTAMP_SEC_DIGITS_MAX` (15 -> 17) instead of restating a digit count. Restating is what let the two drift twice: 12 assumed 5 digits, then 15 modelled the 8-byte buffer. `UTEST_SKIP_RECORD_BUDGET` moves 517 -> 514, still above `TASK_UTEST_REPORT_SKIP_MAX` (256); every dependent `_Static_assert` holds.
+      - `src/kernel/test/test_klog.c`: five compile-time asserts pin the formula against the four widths it can receive (3/5/10/20 digits for 1/2/4/8 bytes) plus the resolved value 10, so a "simplification" that breaks the identity fails the build rather than silently narrowing the buffer.
+      - Zero image cost, measured: `__kernel_end` is `0x7fead5` and the `.text` budget is 15 bytes both before and after.
+- [/] Add the RUNTIME regression test driving the renderer at 7/8/9/10-digit `sec` values with guard bytes. PARKED on the kernel image ceiling. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7.
+      - It needs the digit loop extracted into a bounded pure helper first, which is the part that does not fit.
+      - Written, then reverted with the tree green; preserved verbatim at `.claude/state/deferred-TODO-04-s14-renderer-test.patch` (gitignored, survives a rollover but not a fresh clone). Apply it, do not rewrite.
+      - It is `klog_render_dec_u32(out, out_cap, v)` in `klog.c` (declared in `klog.h`, refuses to write past the cap) plus `test_klog_render_dec_u32_bounds` covering 0/9/999/7/8/9/10-digit values with `0x5A` guards on both sides of the destination, a cap-honoured case that fails a renderer ignoring `out_cap`, and NULL/zero-cap refusals.
+      - MEASURED 2026-09-03 on this tree, both legs. The guard compares the PAGE-ALIGNED `__kernel_end` (`scripts/build.sh` takes the highest `b`/`B` symbol in `build/kernel.map`), which sits at `0x7ff000` today; `0x7fead5` is the raw allocated end `bss-headroom.py` reports separately. The helper extraction ALONE moves the raw end to `0x7ffad5`, page-aligning `__kernel_end` to `0x800000` = `USER_BASE`, and the link is refused; helper plus test overshoots further. The budget is 15 `.text` bytes (`scripts/overnight/bss-headroom.py`, `precision: section-exact`), and a non-inlined function costs more than that, so no amount of trimming the test fits. The compile-time asserts that DID ship are the part that costs nothing.
+
+**Notes:**
+
+- Shipped: the renderer's seconds buffer is sized from the width of the value it renders, not a literal, and pinned there by a `_Static_assert` that was verified to fire.
+- Integrates by making `KLOG_TIMESTAMP_SEC_DIGITS_MAX` the single place the digit count lives: `klog.c` sizes its buffer from it and `test_usermode.c` derives its wire cost from it, so the two can no longer disagree.
+- Downstream: `KLOG_WIRE_TIMESTAMP_MAX` 15 -> 17 and `UTEST_SKIP_RECORD_BUDGET` 517 -> 514; the budget stays above `TASK_UTEST_REPORT_SKIP_MAX` and no dependent assert moved.
+- Canonical doc: the macro comments in `include/kernel/klog.h` carry the derivation and why it is a formula.
+- Scope boundary: this section bounds the SECONDS field only. The fractional digits are three fixed `LP()` writes and the line buffer is bounded by `KLOG_LINE_USABLE`, both unchanged.
+
+> **Deferred:** [M] 2026-09-03 -- the section's BOUND shipped and is compile-time verified; only its RUNTIME test is parked, on the kernel image ceiling, with the code written and preserved rather than merely designed. MEASURED on this tree: the bounded-helper extraction the test needs moves the raw allocated end `0x7fead5` -> `0x7ffad5`, which page-aligns `__kernel_end` from `0x7ff000` to `0x800000` = `USER_BASE` and fails the guard, against a 15-byte `.text` budget (`scripts/overnight/bss-headroom.py`, `precision: section-exact`). -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-04` §14's runtime renderer test once the guard is gone").
 
 ---
 

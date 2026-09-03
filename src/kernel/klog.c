@@ -1704,8 +1704,34 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
 
         LP('[');
         {
-            char tmp[8]; int n = 0;
+            char tmp[KLOG_TIMESTAMP_SEC_DIGITS_MAX]; int n = 0;
             uint32_t v = sec;
+            /* Layer 1 of the bound: the loop below writes one byte per
+             * decimal digit of `v` with no per-iteration cap, so the ONLY
+             * thing keeping it inside `tmp` is that `tmp` is wide enough for
+             * every value the type can hold. Pinned against `sec`'s own
+             * width rather than a literal, so redeclaring `sec` wider fails
+             * the build here instead of overflowing the stack at ~136 years
+             * of uptime. Note the assert's exact scope: it tracks `sec`,
+             * NOT `snapshot.timestamp`. Widening the stored field alone
+             * leaves the explicit (uint32_t) cast below in place, so `sec`
+             * stays 32 bits and this assert correctly does not fire.
+             *
+             * The loop stays INLINE rather than moving to the bounded pure
+             * helper a 2026-09-03 review asked for. Measured that day, the
+             * extraction alone moves the raw allocated-image end from
+             * 0x7fead5 to 0x7ffad5, which page-aligns __kernel_end from
+             * 0x7ff000 up to 0x800000 -- and that IS USER_BASE, so
+             * build.sh's BSS guard refuses the link. The guard compares the
+             * PAGE-ALIGNED symbol (scripts/build.sh takes the highest b/B
+             * symbol in kernel.map, which is __kernel_end); the unaligned
+             * figure is what bss-headroom.py reports separately, and the
+             * .text budget between them is 15 bytes. Parked together with
+             * the runtime test it would have made reachable (this
+             * section's follow-up item). */
+            _Static_assert(sizeof(tmp) >= KLOG_DEC_DIGITS_MAX(sizeof(sec)),
+                           "klog timestamp digit buffer must hold every "
+                           "decimal digit of sec");
             if (v == 0) { tmp[n++] = '0'; }
             else { while (v > 0) { tmp[n++] = '0' + (char)(v % 10); v /= 10; } }
             int pad = 3 - n;

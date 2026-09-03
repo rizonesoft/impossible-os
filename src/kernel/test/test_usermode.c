@@ -2569,21 +2569,21 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
  * would under-count the real burst by roughly a third, which is the error
  * that makes a "derived" number no better than a picked one. Components are
  * read off klog's serial emit path (src/kernel/klog.c:1240-1341). */
-/* "[NNNNNNNN.mmm] " -- klog's serial renderer buffers the seconds field's
- * decimal digits in a local `char tmp[8]` (klog.c, same function) with no
- * bound on the digit COUNT it writes there beyond `sizeof(tmp)`; `sec` is a
- * uint32_t, so digit counts beyond 8 (sec >= 100,000,000, ~3.17 years of
- * continuous uptime) write past `tmp` -- a latent, practically-unreachable
- * stack overflow tracked as its own item (02-kernel-core/TODO-04-system-
- * logging.md item: "Bound the timestamp digit loop in klog.c's serial
- * renderer so it cannot write past its fixed stack buffer regardless of
- * uptime seconds"), out of THIS section's scope. What this macro must do is
- * bound the WIRE cost within klog's actual defined behavior, which caps at
- * 8 digits: '[' + 8 digits + '.' + 3 fractional digits + ']' + ' ' = 15. A
- * post-ship review (2026-07-29) found the prior value (12, assuming <= 5
- * digits) undercounts every timestamp past 99,999 seconds (~27.8h uptime),
- * which a long boot-test session can reach. */
-#define KLOG_WIRE_TIMESTAMP_MAX 15u
+/* "[NNNNNNNNNN.mmm] " -- the '[', klog's whole-seconds field, the '.', its
+ * three fractional digits, the ']' and the trailing space.
+ *
+ * The seconds field is bounded by KLOG_TIMESTAMP_SEC_DIGITS_MAX, which is
+ * the SAME macro that sizes the renderer's own digit buffer (klog.c's
+ * klog_emit(), pinned there by a _Static_assert against sizeof(sec)). That
+ * shared derivation is the point. This value was wrong twice while it was a
+ * literal: 12 assumed <= 5 digits and undercounted every timestamp past
+ * 99,999 seconds (~27.8h uptime), and the 15 that replaced it modelled the
+ * renderer's then-8-byte `char tmp[8]` -- itself narrower than the uint32_t
+ * being rendered, which 02-kernel-core/TODO-04-system-logging.md section 14
+ * fixed on 2026-09-03. Deriving means a future widening of the timestamp
+ * moves the buffer, the assert and this wire bound together. */
+#define KLOG_WIRE_TIMESTAMP_MAX \
+    (1u + KLOG_TIMESTAMP_SEC_DIGITS_MAX + 1u + 3u + 1u + 1u)
 #define KLOG_WIRE_CPUTAG_MAX     9u  /* "[cpu:NN] " on SMP                 */
 #define KLOG_WIRE_LEVEL_ANSI_MAX 7u  /* longest level_ansi[] entry         */
 #define KLOG_WIRE_LEVEL_PREFIX   7u  /* "[CRIT] " -- every badge is 7      */
