@@ -82,7 +82,7 @@ title: "TODO-14 -- Registry System Completion"
 | ⭐  |  13   | Schema-validated registry keys                    | §3, §4                    |  [/]   |
 | 💎  |  14   | Registry SMP synchronization                      | TODO-12 §14               |  [/]   |
 | 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)   | §1, §14                   |  [/]   |
-| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --                        |  [ ]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --                        |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -697,9 +697,13 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 2:
-- [ ] `RegSaveKey`/`RegRestoreKey` hive I/O bodies -- probe/copy lpFile into a bounded kernel buffer (no TOCTOU), drive `hive_save`; restore stages into a scratch tree + atomic swap (removes stale entries, preserves original on failure)
+- [/] `RegSaveKey`/`RegRestoreKey` hive I/O bodies -- BLOCKED, design ready (see design-of-record), Codex review pipeline unavailable -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+  - Design of record (both `hive_save`/`hive_load` already exist and work, called elsewhere at `registry.c:4111`): `RegSaveKey` (`registry.c:2282`) bound-copies `lpFile` into a stack `char[VFS_MAX_PATH]` (no TOCTOU on the caller pointer), calls `hive_save(key, kpath)`, maps failure to the existing `ERROR_REGISTRY_IO_FAILED`. `RegRestoreKey` (`registry.c:2308`) does the same bounded copy, then stages into a scratch `reg_key_t` LOCAL STACK variable (zeroed, name copied from the live key -- not pool-allocated itself since nothing links to it yet) and calls `hive_load(kpath, &scratch)`, which pool-allocates descendants via the existing `reg_create_child`/`reg_alloc_key` path (already capacity-checked against `REG_KEY_POOL_SIZE`/`REG_VALUE_POOL_SIZE` before parsing, `registry.c:3977-3981`). On success: tombstone-free the live key's OLD children via the existing `reg_delete_subtree` (same non-reclaiming pool semantics as every other delete path -- `reg_key_pool` is a monotonic bump allocator) plus `reg_free_values(key)`, swap in `scratch.children[]`/`child_count`/`values`/`value_count`, then RE-PARENT every direct child (`c->parent = key`) since `hive_load` pointed them at `&scratch`, which is about to go out of scope as a dangling pointer if left unfixed. On failure: return `ERROR_FILE_NOT_FOUND`, original subtree untouched; any pool slots the scratch parse already consumed before hitting the failure are abandoned, matching the existing non-reclaim characteristic of every delete path (not a new problem). `dwFlags` (`REG_FORCE_RESTORE`) is unmodeled -- this always does a full atomic replace, which is a superset of the flag's semantics, so silently accepting it either way should be safe; not independently verified by Codex due to the outage below.
+  - Blocked 2026-09-03 ~16:53-16:57: 5 consecutive Codex design-review dispatches for this design all failed identically with `unexpected status 404 Not Found` from `chatgpt.com/backend-api/codex/responses` (external outage, not a local config problem -- `codex-companion.mjs setup --json` confirmed CLI/auth/node/npm all ready). The design above is UNREVIEWED; treat it as a starting point for the redo, not as accepted.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Deferred:** [M] the item's design is written and ready (see the item text) but the mandatory Codex design-review gate could not run -- an external Codex backend outage (`404 Not Found` from `chatgpt.com/backend-api/codex/responses`) hit 5 consecutive dispatch attempts over ~4 minutes, confirmed not a local config issue. Shipping unreviewed code against real registry data would be worse than parking a ready design. No source changed this pass. -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (re-attempt once Codex is confirmed healthy again)
 
 ---
 
