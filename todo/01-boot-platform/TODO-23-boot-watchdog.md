@@ -50,7 +50,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | 💎  |   4   | Watchdog-triggered reboot with diagnostics              | §3, T21 §4                                |  [/]   |
 | 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                        |  [x]   |
 | ⭐  |   6   | Watchdog status in VPD display                          | §1-§5                                     |  [/]   |
-| ⭐  |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [ ]   |
+| ⭐  |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [/]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.
@@ -195,27 +195,46 @@ Show watchdog countdown in the VPD display during boot.
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 5:
-- [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (PCH-generation chipset allowlist, LPC/PMC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm)
-- [ ] DEFERRED follow-up: MEM-space GAS support -- validate the firmware register address against the memory map (reject RAM) + cache a UC mapping at init (no per-pet remap); first cut is I/O-space only
+- [/] DEFERRED follow-up: direct Intel iTCO PCI fallback (chipset allowlist, LPC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm) -- WRITTEN and design-reviewed, parked on the kernel image ceiling
+      - Implemented against the primary Intel datasheets ([ICH9] 316972-004, [ICH10] 319973) rather than a driver, because Linux `iTCO_wdt` is GPL-2.0-only and unusable here: TCOBASE is PMBASE+0x60, GCS NO_REBOOT is RCBA+0x3410 bit 5, TCO_LOCK is TCO1_CNT bit 12, and the reset lands on the SECOND expiry.
+      - Allowlist is deliberately ICH9 + ICH10 only, the two generations whose layout a datasheet in hand pins; later PCHs moved TCOBASE to an SMBus-function register and NO_REBOOT out of GCS, so an unverified entry would program the wrong hardware. An unrecognised bridge yields `HW_WD_NONE`, which is today's behaviour.
+      - Blocker is size, not correctness: `scripts/overnight/bss-headroom.py` at `c6b8af000` reports `__kernel_end` `0x7fead5` with **47 bytes** of `.text` growth before `USER_BASE` `0x800000`; the driver plus its fixtures is ~11 KiB, so this is unreachable by orders of magnitude rather than trimmable. The measured build failed on the BSS-collision guard at `0x803000`.
+      - Preserved at `.claude/state/deferred-todo23-s7.patch` (gitignored: survives a rollover, NOT a fresh clone). Apply, do not rewrite -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
+- [/] DEFERRED follow-up: MEM-space GAS support -- positive MMIO authorisation against the memory map + one cached UC mapping per register page at init -- WRITTEN, parked on the same ceiling
+      - Shipped shape in the patch is stricter than the item asked for, on the design review's [high] finding: a NEGATIVE "not usable RAM" test still admits ACPI reclaim, ACPI NVS, firmware runtime and persistent memory, because `src/kernel/mm/pmm.c:172` counts only conventional/loader/boot-services as usable. The register must instead be wholly inside ONE `EfiMemoryMappedIO`/`EfiMemoryMappedIOPortSpace` descriptor.
+      - The same review found a live defect in the SHIPPED I/O path that the patch also fixes: `gas_usable` reads neither `access_size` nor `bit_offset` (`include/kernel/acpi.h:59`), while `gas_read`/`gas_write` pick the transaction width from `bit_width` alone, so a table asking for a dword transaction over a byte field is accessed at the wrong width. That fix is parked with the rest of the patch.
+      - Mappings are bounded at 4 distinct pages and taken only after every range validates, because `vmm_unmap_mmio` (`src/kernel/mm/vmm.c:1598`) clears PTEs without reclaiming virtual address space.
+      - Same blocker and same patch as the item above -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
 
 From TODO-04 section 58's re-adversarial review (2026-08-02), filed here because section 1 owns the mechanism and is parked:
-- [ ] The usermode-test launcher needs a preemption source the dead TIMER cannot take with it
+- [/] The usermode-test launcher needs a preemption source the dead TIMER cannot take with it -- blocked on this file's §1, which owns the LAPIC NMI watchdog and is itself parked
       - Section 58 gave every launcher wait a TSC watchdog, which escapes any stall where the launcher still gets CPU back -- the mono-epoch and clock-derivation failures, and every wait that yields to a cooperative or absent peer. It cannot escape the one mode where the periodic TICK ITSELF is dead AND the launcher has yielded to a non-cooperative ring-3 child: preemption dies with the clock, so the launcher never runs again to sample its own watchdog. No user-mode-visible mechanism closes that; it needs the LAPIC NMI timer this file's section 1 owns, or an equivalent source unaffected by the failed timer path.
       - Acceptance: with the periodic tick disabled and a spinning ring-3 child, the launcher regains control and reports the stall. Synthetic ops cannot prove this -- a callback that returns is exactly the assumption under test -- so it needs the end-to-end fixture.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §58 (item: "Give every launcher wait a clock-independent escape, not just a deadline")
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
+> **Notes:**
+> - Written this pass but NOT shipped: a direct Intel iTCO fallback and memory-space GAS support for the WDAT driver, both in `src/kernel/drivers/watchdog.c` / `include/kernel/drivers/watchdog.h`, with 10 new pure-validator tests in `src/kernel/test/test_watchdog.c`.
+> - Register semantics come from the primary Intel ICH9/ICH10 datasheets, never from `iTCO_wdt` (GPL-2.0-only, license-incompatible with this GPL-3.0-only tree); the LPC device IDs come from FreeBSD's BSD-2-Clause `sys/dev/ichwd/ichwd.h` because the datasheets defer the concrete ID to the Specification Update.
+> - Safety posture is fail-closed throughout: halt-then-verify before programming, refuse on a strap-forced NO_REBOOT, a firmware TCO_LOCK, or an SMI_EN.TCO_EN that will not clear, and never fall through to iTCO once the WDAT path has written a register.
+> - Downstream effect: none today, because nothing landed in the tree; `hw_watchdog_kind()` still returns `HW_WD_NONE` on every platform without a usable WDAT.
+> - Canonical doc: [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the `USER_BASE` ceiling that parks this section.
+> - Scope boundary: the third item is not ceiling-blocked at all -- it needs this file's §1 LAPIC NMI watchdog, which is independently parked.
+
+> **Verified:** 2026-09-03 | 0/3 items (deferred) | build FAILED on the BSS-collision guard (`__kernel_end` 0x803000 >= `USER_BASE` 0x800000), tree reverted green | design review 20260903-071737 received, 7 findings, all fixed in the parked patch
+> **Deferred:** [H] the kernel image admits 47 bytes of `.text` growth and this section costs ~11 KiB, so items 1-2 are blocked by size alone rather than by any missing capability or unresolved design question; item 3 is blocked instead on this file's own §1 -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
+
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                  | 🪟 Win11            | 🐧 Linux               | 🚀 Impossible OS                      |
-| --- | ------------------------ | ------------------- | ---------------------- | ------------------------------------- |
-| 💎  | Boot hang detection      | ✅ Boot watchdog    | ✅ systemd watchdog    | ⚠️ §5 WDAT coarse; §1-§3 NMI deferred |
-| 💎  | Hardware watchdog        | ✅ ACPI WDT driver  | ✅ iTCO_wdt driver     | ✅ §5 WDAT (I/O, fail-closed disarm)  |
-| 💎  | Hang → rollback          | ✅ Automatic Repair | ⚠️ Manual intervention | ⚠️ T21 try-consume; §4 diag deferred  |
-| ⭐  | Watchdog in boot display | ❌ Hidden           | ❌ Hidden              | ⬜ §6 (deferred)                      |
+| ⭐  | Feature                  | 🪟 Win11            | 🐧 Linux               | 🚀 Impossible OS                                                   |
+| --- | ------------------------ | ------------------- | ---------------------- | ------------------------------------------------------------------ |
+| 💎  | Boot hang detection      | ✅ Boot watchdog    | ✅ systemd watchdog    | ⚠️ §5 WDAT coarse; §1-§3 NMI deferred                              |
+| 💎  | Hardware watchdog        | ✅ ACPI WDT driver  | ✅ iTCO_wdt driver     | ⚠️ §5 WDAT I/O only; §7 iTCO + MEM-GAS parked on the image ceiling |
+| 💎  | Hang → rollback          | ✅ Automatic Repair | ⚠️ Manual intervention | ⚠️ T21 try-consume; §4 diag deferred                               |
+| ⭐  | Watchdog in boot display | ❌ Hidden           | ❌ Hidden              | ⬜ §6 (deferred)                                                   |
 
 ---
 
