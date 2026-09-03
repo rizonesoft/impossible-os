@@ -61,17 +61,19 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 
 Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disabled.
 
-- [ ] Configure LAPIC LVT Timer in NMI mode (not periodic) with a one-shot countdown
-- [ ] NMI fires when countdown expires → NMI handler logs current RIP, phase, last POST code
-- [ ] After logging: trigger ACPI reboot (`acpi_reboot()`)
-- [ ] NMI handler is minimal: write to serial, set NVRAM "watchdog_triggered" flag, reboot
-- [ ] If LAPIC not available: fall back to PIT-based software watchdog (less reliable, maskable)
-- [ ] Nested-NMI safety prerequisite: per-CPU latch/replay (or drop) so a watchdog NMI during an existing NMI/MCE path cannot corrupt the shared IST2 stack (Linux `repeat_nmi` model); must land before enabling the watchdog NMI. → XREF: `D01 T10 §2`
-- [ ] AP-IST safety: arm the LAPIC NMI watchdog on the BSP ONLY until per-CPU AP TSS/IST lands -- the IST is BSP-only today, so a watchdog NMI reaching an AP post-SMP corrupts the shared IST. Add an AP-NMI boot test when it lands. → XREF: `T09 §10`
-- [ ] When this lands, close the NMI return-tail residual it makes reachable and re-weigh the depth-marker cost.
+- [/] Configure LAPIC LVT Timer in NMI mode (not periodic) with a one-shot countdown -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] NMI fires when countdown expires → NMI handler logs current RIP, phase, last POST code -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] After logging: trigger ACPI reboot (`acpi_reboot()`) -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] NMI handler is minimal: write to serial, set NVRAM "watchdog_triggered" flag, reboot -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] If LAPIC not available: fall back to PIT-based software watchdog (less reliable, maskable) -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] Nested-NMI safety prerequisite: per-CPU latch/replay (or drop) so a watchdog NMI during an existing NMI/MCE path cannot corrupt the shared IST2 stack (Linux `repeat_nmi` model); must land before enabling the watchdog NMI. → XREF: `D01 T10 §2`
+      - BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] AP-IST safety: arm the LAPIC NMI watchdog on the BSP ONLY until per-CPU AP TSS/IST lands -- the IST is BSP-only today, so a watchdog NMI reaching an AP post-SMP corrupts the shared IST. Add an AP-NMI boot test when it lands. → XREF: `T09 §10`
+      - BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
+- [/] When this lands, close the NMI return-tail residual it makes reachable and re-weigh the depth-marker cost. -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
   - A returning watchdog NMI is the first handler to execute the vector-2 epilogue, where one register restore, the CS test, the conditional VERW block, the `swapgs` and `IRETQ` all run with the NMI depth already lowered.
   - Also re-weigh two costs that are nil for a terminal NMI: a serializing CPUID and a `lock`-prefixed RMW on each of the raise and the lower. At ~1 Hz they are unmeasurable; confirm that before relying on it -> XREF: `01-boot-platform/TODO-10 §22` (item: "PARKED, blocked on a returning NMI handler existing")
-- [ ] Commit: `"boot: software watchdog via LAPIC NMI -- detect hung boot phases"`
+- [/] Commit: `"boot: software watchdog via LAPIC NMI -- detect hung boot phases"` -- BLOCKED on nested-NMI latch/replay + per-CPU AP TSS/IST -> XREF: `01-boot-platform/TODO-10` §2 + `01-boot-platform/TODO-09` §10
 
 **Test checkpoint:** Add `for(;;){}` in boot_phase2 (debug build only). Watchdog fires → serial shows `"WATCHDOG: boot hung at POST 0xNNNN, RIP=0xNNNN"` → system reboots.
 
@@ -93,12 +95,12 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 
 Each boot phase gets a maximum allowed duration.
 
-- [ ] Phase 0 (early init): 2 seconds (CPU, memory, serial -- should complete in <500ms)
-- [ ] Phase 1 (interrupts, timer): 5 seconds (LAPIC calibration can take 1–2s on some hardware)
-- [ ] Phase 2 (storage, VFS, SMP): 30 seconds (AHCI spin-up, USB enumeration, filesystem mount)
-- [ ] Phase 3 (scheduler, desktop): 60 seconds (font loading, icon store, wallpaper decode)
-- [ ] Timeouts stored in `boot_watchdog_timeouts[]` -- configurable via boot.conf `watchdog_timeout=`
-- [ ] Commit: `"boot: per-phase watchdog timeouts -- 2s/5s/30s/60s defaults"`
+- [/] Phase 0 (early init): 2 seconds (CPU, memory, serial -- should complete in <500ms) -- BLOCKED on this file's §1 (a per-phase-reloadable LAPIC NMI timer)
+- [/] Phase 1 (interrupts, timer): 5 seconds (LAPIC calibration can take 1–2s on some hardware) -- BLOCKED on this file's §1 (a per-phase-reloadable LAPIC NMI timer)
+- [/] Phase 2 (storage, VFS, SMP): 30 seconds (AHCI spin-up, USB enumeration, filesystem mount) -- BLOCKED on this file's §1 (a per-phase-reloadable LAPIC NMI timer)
+- [/] Phase 3 (scheduler, desktop): 60 seconds (font loading, icon store, wallpaper decode) -- BLOCKED on this file's §1 (a per-phase-reloadable LAPIC NMI timer)
+- [/] Timeouts stored in `boot_watchdog_timeouts[]` -- configurable via boot.conf `watchdog_timeout=` -- BLOCKED on this file's §1 (a per-phase-reloadable LAPIC NMI timer)
+- [/] Commit: `"boot: per-phase watchdog timeouts -- 2s/5s/30s/60s defaults"` -- BLOCKED on this file's §1 (a per-phase-reloadable LAPIC NMI timer)
 
 **Test checkpoint:** Normal boot completes well within all timeouts. Serial shows `"Watchdog: Phase 2 timeout=30s"` at phase entry.
 
@@ -111,11 +113,11 @@ Each boot phase gets a maximum allowed duration.
 
 Every `boot_progress()` / `POST16()` call resets the watchdog countdown.
 
-- [ ] `watchdog_pet()` -- reload LAPIC NMI timer with current phase's timeout
-- [ ] Called automatically from `boot_progress()` macro
-- [ ] If a subsystem hangs between two progress calls: watchdog fires
-- [ ] The more granular the POST codes, the faster hangs are detected
-- [ ] Commit: `"boot: watchdog pet at every boot_progress -- reset countdown on progress"`
+- [/] `watchdog_pet()` -- reload LAPIC NMI timer with current phase's timeout -- BLOCKED on this file's §1 (the LAPIC NMI timer this pet reloads)
+- [/] Called automatically from `boot_progress()` macro -- BLOCKED on this file's §1 (the LAPIC NMI timer this pet reloads)
+- [/] If a subsystem hangs between two progress calls: watchdog fires -- BLOCKED on this file's §1 (the LAPIC NMI timer this pet reloads)
+- [/] The more granular the POST codes, the faster hangs are detected -- BLOCKED on this file's §1 (the LAPIC NMI timer this pet reloads)
+- [/] Commit: `"boot: watchdog pet at every boot_progress -- reset countdown on progress"` -- BLOCKED on this file's §1 (the LAPIC NMI timer this pet reloads)
 
 **Test checkpoint:** Add POST codes around a slow operation. Watchdog doesn't fire (pet keeps resetting it).
 
@@ -128,13 +130,14 @@ Every `boot_progress()` / `POST16()` call resets the watchdog countdown.
 
 When watchdog fires, produce useful diagnostics before rebooting.
 
-- [ ] NMI handler writes to serial: phase, last POST code, RIP, RSP, last 5 boot_progress entries
-- [ ] Set NVRAM flag: `watchdog_triggered = 1`, `watchdog_post = <last POST code>`
-- [ ] On next boot: bootloader reads NVRAM flag → `"[WARN] Previous boot hung at POST 0xNNNN"` on serial
-- [ ] Do NOT write A/B metadata from the NMI path: TODO-21 §4 already increments tries pre-EBS + resets on mark-good, so a hung boot consumed its try and rollback follows; a watchdog-side increment double-counts. -> XREF: TODO-21 §4
-- [ ] Optional Windows-style consecutive-boot-failure counter is boot-status TELEMETRY (NVRAM `watchdog_fail_count`, cleared on a marked-good boot), never a second A/B try write
-- [ ] Boot failure screen (→ XREF: TODO-03 §2) shows hang location if available
-- [ ] Commit: `"boot: watchdog reboot with diagnostics -- POST code, RIP, NVRAM flag"`
+- [/] NMI handler writes to serial: phase, last POST code, RIP, RSP, last 5 boot_progress entries -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+- [/] Set NVRAM flag: `watchdog_triggered = 1`, `watchdog_post = <last POST code>` -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+- [/] On next boot: bootloader reads NVRAM flag → `"[WARN] Previous boot hung at POST 0xNNNN"` on serial -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+- [/] Do NOT write A/B metadata from the NMI path: TODO-21 §4 already increments tries pre-EBS + resets on mark-good, so a hung boot consumed its try and rollback follows; a watchdog-side increment double-counts. -> XREF: TODO-21 §4
+      - BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+- [/] Optional Windows-style consecutive-boot-failure counter is boot-status TELEMETRY (NVRAM `watchdog_fail_count`, cleared on a marked-good boot), never a second A/B try write -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+- [/] Boot failure screen (→ XREF: TODO-03 §2) shows hang location if available -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+- [/] Commit: `"boot: watchdog reboot with diagnostics -- POST code, RIP, NVRAM flag"` -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
 
 **Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location; the slot's pre-EBS try (TODO-21) is already consumed, so 3 hung boots roll back without any watchdog-side A/B write.
 
@@ -158,18 +161,18 @@ A hardware watchdog reboots the board even on a total CPU lockup. §5 is STANDAL
 
 **Test checkpoint:** `test_watchdog.c` (TEST_CAT_BOOT, 16 cases / 17 assertions) validates the pure WDAT validator on crafted tables (valid 5-action I/O table + every guard: NULL, size, header_length, zero timer_period, min>max, entry overflow, zero entries, bad GAS, missing action, unknown instruction, wrong-instruction-class for GET_RUNNING_STATE / SET_COUNTDOWN / RESET, and a mixed-class rejection). QEMU smoke: `hw_watchdog_init` logs `"HW watchdog: none (no ACPI WDAT)"` and boot completes (~2.06s) -- the init/pet/handoff wiring is a clean no-op without firmware WDAT. Bare-metal arm/pet/disarm validated on Intel hardware via serial.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | WDAT validator 16 cases; boot suite 2794 kernel + 16 user-mode PASS, 0 failures; smoke PASS (KVM ~2.06s, "HW watchdog: none")
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | WDAT validator 16 cases / 17 assertions (unchanged); boot suite re-run 2026-09-03: 5299 kernel + 17 user-mode PASS, 0 failures (was 2794 + 16 on 2026-06-16); smoke PASS 2026-09-03, boot complete in 2.740s, serial carries `watchdog: HW watchdog: none (no ACPI WDAT)`
 
 > **Notes:**
 > - **What shipped:** `src/kernel/drivers/watchdog.c` + `watchdog.h` (WDAT ABI structs with `_Static_assert`s; `hw_watchdog_init/pet/boot_handoff/kind` + `hw_watchdog_wdat_validate`) + `test_watchdog.c` (16 cases). Validator enforces per-action instruction class (SET writes, SET_COUNTDOWN writes the countdown, GET reads) + WDAT read-compare semantics.
 > - **How it runs:** `hw_watchdog_init()` after `acpi_init` (Phase 1) discovers/validates/arms; `hw_watchdog_pet()` from `boot_progress()`; `hw_watchdog_boot_handoff()` disarms (fail-closed -> `boot_halt`) before the scheduler. No-op on QEMU.
 > - **Safety:** I/O-space GAS only (no firmware RAM map / per-pet leak); validate-before-access; arm refused below a 60s timeout floor; readback-verified fail-closed disarm. Codex adoptions in commit message.
-> - **Scope boundary:** §5 owns the WDAT-I/O hardware watchdog; direct-iTCO PCI + MEM-space GAS + boot_info boot-status persistence are deferred follow-ups (this section). §1-§4 (LAPIC NMI) blocked on nested-NMI + AP IST.
+> - **Scope boundary:** §5 owns the WDAT-I/O hardware watchdog; all three follow-ups it spawned (direct-iTCO PCI, MEM-space GAS, boot_info boot-status persistence) are owned by §7. §1-§4 (LAPIC NMI) blocked on nested-NMI + AP IST.
 > - **Canonical doc:** `src/kernel/drivers/watchdog.c` header + the WDAT ABI in `include/kernel/drivers/watchdog.h`.
 
 **Regression risk:** HIGH -- a HW watchdog that fails to disarm at boot-handoff would reboot mid-desktop; mitigated by the readback-verified, fail-closed handoff (`boot_halt` rather than enter the desktop armed).
 
-> **Verified:** 2026-06-16 | 7/9 items (2 deferred follow-ups) | build OK | tests 2794/2794 PASS, smoke PASS (KVM ~2.06s, "HW watchdog: none")
+> **Verified:** 2026-06-16 | 7/9 items (3 deferred follow-ups) | build OK | counts refreshed 2026-09-03: boot suite 5299 kernel + 17 user-mode PASS, smoke PASS (boot complete 2.740s, "HW watchdog: none (no ACPI WDAT)")
 > **Quality reviewed:** 2026-06-16 | Codex 8x (design, adversarial, re-adversarial, consistency, perf) | 4H+1M+1L fixed | scope: kernel-code-quality
 
 ---
@@ -178,10 +181,10 @@ A hardware watchdog reboots the board even on a total CPU lockup. §5 is STANDAL
 
 Show watchdog countdown in the VPD display during boot.
 
-- [ ] VPD shows remaining watchdog time for current phase: `"Phase 2: 28s remaining"`
-- [ ] If previous boot was watchdog-triggered: `"⚠ Previous boot hung at POST 0xNNNN"`
-- [ ] Countdown updates every second (from LAPIC timer tick)
-- [ ] Commit: `"boot: watchdog countdown in VPD display"`
+- [/] VPD shows remaining watchdog time for current phase: `"Phase 2: 28s remaining"` -- BLOCKED on this file's §1-§4 (per-phase model + per-second NMI tick)
+- [/] If previous boot was watchdog-triggered: `"⚠ Previous boot hung at POST 0xNNNN"` -- BLOCKED on this file's §1-§4 (per-phase model + per-second NMI tick)
+- [/] Countdown updates every second (from LAPIC timer tick) -- BLOCKED on this file's §1-§4 (per-phase model + per-second NMI tick)
+- [/] Commit: `"boot: watchdog countdown in VPD display"` -- BLOCKED on this file's §1-§4 (per-phase model + per-second NMI tick)
 
 **Test checkpoint:** Boot with `postbars=2` (diagnostic mode) -- watchdog countdown visible.
 
@@ -205,6 +208,11 @@ From the stamped section 5:
       - The same review found a live defect in the SHIPPED I/O path that the patch also fixes: `gas_usable` reads neither `access_size` nor `bit_offset` (`include/kernel/acpi.h:59`), while `gas_read`/`gas_write` pick the transaction width from `bit_width` alone, so a table asking for a dword transaction over a byte field is accessed at the wrong width. That fix is parked with the rest of the patch.
       - Mappings are bounded at 4 distinct pages and taken only after every range validates, because `vmm_unmap_mmio` (`src/kernel/mm/vmm.c:1598`) clears PTEs without reclaiming virtual address space.
       - Same blocker and same patch as the item above -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
+
+- [/] DEFERRED follow-up: persist the WDAT boot-status (was-this-boot-a-watchdog-reset) through `boot_info` instead of only logging it -- BLOCKED on the kernel image ceiling and on a protocol bump with a consumer
+      - Ownerless until now, and the reason is worth recording: §5's Notes named it a follow-up "(this section)", §7 took only the other two, and `01-boot-platform/TODO-01`:44 pointed at this file's §6 for it -- but §6 is the VPD countdown display and never covers `boot_info` persistence. Nothing in `include/kernel/boot_info.h` carries it; `sticky_watchdog_rollback_request` at `boot_info.h:2064` is TODO-21 A/B rollback plumbing, a different signal.
+      - `hw_watchdog_init()` already READS and clears the WDAT status and logs "previous boot was watchdog-reset"; what is missing is a `boot_info` field plus a post-boot consumer, which is a `BOOT_INFO_VERSION` bump in both headers and therefore should land beside other protocol work rather than alone.
+      - Same image-ceiling blocker as the two items above -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
 
 From TODO-04 section 58's re-adversarial review (2026-08-02), filed here because section 1 owns the mechanism and is parked:
 - [/] The usermode-test launcher needs a preemption source the dead TIMER cannot take with it -- blocked on this file's §1, which owns the LAPIC NMI watchdog and is itself parked
@@ -243,27 +251,32 @@ From TODO-04 section 58's re-adversarial review (2026-08-02), filed here because
 > Wire into `test_runner_init()` via `test_register_watchdog()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
 > Watchdog trigger tests use `scripts/test-smoke.sh` with intentional hang builds.
 
-- [ ] Create `src/kernel/test/test_watchdog.c` with:
-  - Per-phase timeout lookup: Phase 0 returns 2s, Phase 1 returns 5s, Phase 2 returns 30s, Phase 3 returns 60s
-  - `watchdog_pet()` resets countdown without firing (call pet, verify timer reloaded)
-  - Timeout configuration: `boot_watchdog_timeouts[]` values are all > 0 and within sane range (1s-300s)
-  - HW watchdog detection: `hw_watchdog_kind()` returns NONE on QEMU (no WDAT/TCO emulation); WDAT parse rejects a bad `ACPI_SIG_WDAT` signature
-  - NVRAM flag read: `watchdog_triggered` flag readable from boot_info (0 on clean boot)
-- [ ] Register in `test_runner_init()`: `test_register_watchdog()`
-- [ ] Create `scripts/test-boot-watchdog.sh`:
+- [/] Create `src/kernel/test/test_watchdog.c` with: -- the FILE exists (16 cases / 17 assertions, TEST_CAT_BOOT), but four of the five described behaviours do not, and each is blocked on a deferred section
+  - Per-phase timeout lookup: Phase 0 returns 2s, Phase 1 returns 5s, Phase 2 returns 30s, Phase 3 returns 60s -- BLOCKED on §2; no per-phase lookup exists to test
+  - `watchdog_pet()` resets countdown without firing (call pet, verify timer reloaded) -- BLOCKED on §1; the shipped `hw_watchdog_pet()` is a WDAT register write with no unit-testable surface
+  - Timeout configuration: `boot_watchdog_timeouts[]` values are all > 0 and within sane range (1s-300s) -- BLOCKED on §2; `boot_watchdog_timeouts[]` does not exist anywhere in `src/kernel`
+  - HW watchdog detection: `hw_watchdog_kind()` returns NONE on QEMU (no WDAT/TCO emulation) -- SHIPPED as `test_wdat_kind_none_before_init`; the paired bad-`ACPI_SIG_WDAT`-signature case is not testable through `hw_watchdog_wdat_validate()`, which never inspects the signature (`acpi_get_raw_table` matched it already)
+  - NVRAM flag read: `watchdog_triggered` flag readable from boot_info (0 on clean boot) -- BLOCKED on the §7 boot-status-persistence item; no such `boot_info` field exists
+- [x] Register in `test_runner_init()`: `test_register_watchdog()` -- shipped with §5; declared at `src/kernel/test/test_runner.c:1010` and called at `:1052`
+- [/] Create `scripts/test-boot-watchdog.sh`: -- BLOCKED on §1 and §4; every assertion below is about NMI-handler output that does not exist yet
   - Build a debug kernel with `WATCHDOG_TEST_HANG=1` (intentional `for(;;){}` in Phase 2)
   - Boot QEMU headless with 45s timeout
   - Assert serial contains `"WATCHDOG: boot hung at POST"` (§4 -- NMI fired with diagnostics)
   - Assert QEMU exits (reboot triggered, `-no-reboot` causes shutdown)
-- [ ] Add smoke test pattern to `scripts/test-smoke.sh`: absence of `"WATCHDOG"` on normal boot (no false triggers)
-- [ ] Commit: `"test: add boot watchdog test suite with intentional-hang smoke test"`
+- [/] Add smoke test pattern to `scripts/test-smoke.sh`: absence of `"WATCHDOG"` on normal boot (no false triggers) -- BLOCKED on §4
+      - §4 owns the only code that can emit that string. Until it lands, asserting the absence of a string nothing can print is a tautological test, which the test policy forbids.
+- [/] Commit: `"test: add boot watchdog test suite with intentional-hang smoke test"` -- the test-suite half shipped with §5; the intentional-hang half is blocked on §1 and §4
 
 ---
 
 ## Verification
 
-- [ ] **Hang detection**: intentional infinite loop in Phase 2 → watchdog fires, system reboots.
-- [ ] **Normal boot**: all phases complete within timeouts, no false watchdog triggers.
-- [ ] **Hang + rollback**: 3 watchdog reboots → A/B rollback to working slot.
-- [ ] **TCO test**: Intel bare metal -- TCO watchdog detected and configured.
-- [ ] Commit: `"boot: watchdog system complete -- no more infinite hangs"`
+- [ ] **Hang detection**: intentional infinite loop in Phase 2 → watchdog fires, system reboots. (manual -- bare metal with a usable ACPI WDAT)
+      - Does NOT wait for §1: the shipped §5 WDAT reboots the board by itself, with no handler needed. QEMU publishes no WDAT and arms nothing, so this is unreachable from any emulator here.
+- [ ] **Normal boot**: all phases complete within timeouts, no false watchdog triggers. (manual -- bare metal with a usable ACPI WDAT)
+      - A QEMU smoke pass does NOT demonstrate this: with no WDAT the watchdog arms nothing, so "no false trigger" is vacuously true.
+      - Measured 2026-09-03 on QEMU for what it DOES prove: the init/pet/handoff wiring is a clean no-op and boot completes in 2.740s.
+- [ ] **Hang + rollback**: 3 watchdog reboots → A/B rollback to working slot. (manual -- bare metal with a usable ACPI WDAT)
+      - Does NOT wait for §1 either: per §4's Notes the slot's pre-EBS try is consumed by TODO-21 before the hang, so no watchdog-side A/B write is needed.
+- [ ] **TCO test**: Intel bare metal -- TCO watchdog detected and configured. (manual -- Intel bare metal, AND blocked on §7's direct-iTCO fallback, which is parked on the kernel image ceiling)
+- [ ] Commit: `"boot: watchdog system complete -- no more infinite hangs"` (blocked -- §1-§4, §6 and §7 all remain deferred, so the file's promise is not yet met)

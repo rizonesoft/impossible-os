@@ -41,7 +41,7 @@ title: "TODO-01 -- Boot Protocol ABI & Handoff Contract"
 - -> XREF: `T07 §1` -- boot entry store + menu policy writes the selected entry id and selection reason into `boot_info`
 - -> XREF: `T08 §3,§4` -- alternate boot protocols must adapt into the canonical `boot_info` contract and explicit degraded-capability flags
 - -> XREF: `T21 §3` -- A/B boot rollback adds `boot_info.active_slot` ('A' / 'B') that the kernel reads during mark-success
-- -> XREF: `T23 §6` -- boot watchdog surfaces `watchdog_triggered` via `boot_info` for post-boot diagnostic consumers
+- -> XREF: `T23 §7` -- boot watchdog surfaces `watchdog_triggered` via `boot_info` for post-boot diagnostic consumers (corrected 2026-09-03: this pointed at §6, which is the VPD countdown display and never covered `boot_info` persistence; §7 owns it)
 - -> XREF: `T27 §4` -- advanced UEFI adds `boot_info.gop_handles[]` for multi-GPU / multi-head display enumeration
 
 ## Outcome
