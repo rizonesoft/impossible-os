@@ -83,7 +83,7 @@ implements_after: TODO-04
 | ⭐  |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
 | 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
 | 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [/]   |
-| 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [ ]   |
+| 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [/]   |
 | 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [ ]   |
 
 ---
@@ -269,6 +269,8 @@ Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase bef
 - [ ] Immutable face-bundle publish in `gfx_text.c`: each face = immutable bundle (fontinfo/metrics/glyph-cache/atlases/ascent), built off-side, published via release-store + acquire-load in the draw path; remove `ttf_get` per-call pixel_size/scale mutation.
 - [ ] Boot-atlas fallback adapter: expose the Phase-1 18px ASCII atlas through the normal measure/draw API (first paint keeps titles/controls/labels); placeholders for bold/mono/non-ASCII + `icon_get`/`icon_draw_scaled` until each family publishes.
 - [ ] On each face/icon-family publish, invalidate + redraw the affected compositor surfaces (atomic swap visible, no torn glyph reads).
+- [ ] Once the post-`DESKTOP_READY` tick mechanism exists, move `boot_trend_publish_json()` onto it. -> XREF: this file §20 (item: "Move `boot_trend_publish_json()`").
+  - It is still inline at `src/kernel/main/boot_desktop.c:819`, before `task_create(cmd.exe)`, so its cJSON round trip and synchronous VFS I/O delay the real userland handoff.
 - [ ] Commit: `"desktop: async font + icon load (1.3s -> <50ms blocking)"`
 
 **Test checkpoint:** `DESKTOP_READY` fires within 50ms of `boot_phase3()` start; first paint renders fallback text (boot atlas) + icon placeholders (no blank labels); each TTF/icon family publishes within 2s post-desktop-ready via the compositor-polled loader (no kthread) and swaps in atomically with a surface redraw; no torn-glyph glitch. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -476,6 +478,11 @@ Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX le
   - The targets are wall-clock and WHPX boots roughly an order of magnitude slower than KVM (~141s against ~2s), so every WHPX run reports a red `[FAIL]` that names a phase nothing regressed. That trains a reader to skim the one signal the leg exists to produce.
   - Not a regression and not muted: the finding is that the reporter states a platform-relative fact in absolute terms. The provenance is the header line above; this section owns the budget reporter, and the TPM work that happened to observe it has no dependency on the fix.
 
+- [/] The total-budget line names the wrong window: `boot_perf_total_check()` prints "first-step to DESKTOP_READY wall clock" but the measured span ends at `DEFERRED`.
+  - `src/kernel/boot_perf_budget.c:161` prints it and `include/kernel/boot_perf_budget.h:31` calls `DESKTOP_READY` the last recorded step; `boot_run_deferred()` records `DEFERRED` after it (`src/kernel/main/boot_init.c:213`).
+  - Live evidence: `DESKTOP_READY` at `+2992ms` then `DEFERRED` at `+3120ms`, `build/smoke-test.stripped.log:664-665`. The reported total silently includes the deferred-init work the name excludes.
+  - Found 2026-09-03 while verifying a §20 claim that rested on the same wrong premise. NOT itself blocked by the image ceiling -- the repair is string text in `.rodata`, which has budget -- but it shares this section's park because it is the same reporter. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 > **Deferred:** [M] 2026-09-03 -- code COMPLETE and design-reviewed, reverted on the kernel image ceiling; the tree was left green. MEASURED at `a0a78bde1`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **47 bytes** of `.text` slack, and this section costs **+2,448 bytes** of `.text`, which landed `__kernel_end` exactly on `0x800000` and tripped the `scripts/build.sh` BSS guard. Trimming cannot rescue it: 47 bytes does not admit a format string. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
@@ -496,14 +503,34 @@ Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX le
 
 > **Spawned-by:** §19 (split)
 
-The three follow-ups the §3 review left behind, all in `src/kernel/main/boot_trend.c`: the publisher runs a cJSON read-modify-write plus synchronous VFS I/O inside measured boot time, its traversal is indexed rather than linear, and its output path has no `C:\` fallback when BlackBox is absent. They share one file and one call site, so they are one unit of work rather than three.
+The three follow-ups the §3 review left behind, all in `src/kernel/main/boot_trend.c`. The framing of the first one was WRONG when it was filed and is corrected here: the publisher's cJSON read-modify-write and synchronous VFS I/O do not fall inside the measured window at all, because `boot_perf_dump()` and `boot_perf_total_check()` run before it and the last recorded timing step is `DEFERRED`, not `DESKTOP_READY`. What is real is narrower and worse-shaped: the work is synchronous ahead of the userland handoff, so it delays `task_create(cmd.exe)` while appearing in no reported total. The other two are as filed -- an indexed rather than linear traversal, and no `C:\` fallback when BlackBox is absent. All three share one file and one call site, so they are one unit of work rather than three.
 
 From the stamped section 3:
-- [ ] Defer `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) to a post-DESKTOP_READY work item; record only fixed-size durations during boot -- takes the trend layer's own cost out of measured boot time
-- [ ] Linearize `boot_trend_publish_json()` traversal (`boot_trend.c:317`): replace indexed `json_array_get` (O(N^2) loop on dense/malformed file) with `json_array_first`/`json_array_next`; quarantine over-long `boots` arrays. (TODO-24 §6)
-- [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline, or gate BlackBox-only + document no fallback. (TODO-24 §6)
+- [/] Move `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) off the synchronous pre-userland path onto a post-handoff work item.
+  - Filed as "takes the cost out of measured boot time"; that half never needed doing, and the item is restated around the half that does.
+  - The MEASUREMENT half already holds and is not what remains. `boot_desktop.c:534` records `DESKTOP_READY`; `boot_run_deferred()` at `:540` then records `DEFERRED` (`src/kernel/main/boot_init.c:213`), which is the LAST timing step; `boot_perf_dump()` at `:597` closes the reporting; the publish at `:819` runs after all of it. Every anchor here is a code site on purpose -- the earlier draft cited serial-log line numbers, and the log is regenerated by every smoke run, so that evidence went stale within the hour.
+  - What remains is the DEFERRAL half. The writer is still inline before `task_create(cmd.exe)` and `scheduler_enable()`, so its cJSON round trip and synchronous VFS I/O delay the real userland handoff while appearing nowhere in the reported total. BLOCKED on there being no post-handoff work mechanism to move it to. -> XREF: this file §7 (item: "Compositor-polled incremental loader: state machine ticked once per presented frame after `DESKTOP_READY`"), which owns exactly that mechanism and is itself deferred.
+- [x] Linearize `boot_trend_publish_json()` traversal: the indexed `json_array_get` loop became a `json_array_first`/`json_array_next` walk. (TODO-24 §6)
+  - `json_array_get` is O(N) under cJSON's linked-list children, so the old loop was O(N^2) on a dense or malformed file.
+  - The scan bound and its whole decision table moved to `boot_trend_scan_action()` in `include/kernel/boot_trend.h`, so the shipped policy is testable off-image.
+  - A full ring COUNTS rather than terminating, or an oversized array with a valid prefix would be truncated silently.
+  - Over-long arrays are CANONICALIZED with a WARN rather than quarantined: the file parsed and its schema checked out, so the atomic rewrite repairs it and the history survives.
+- [/] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline. (TODO-24 §6)
+  - SHIPPED half: `boot_trend_publish_json()` now refuses up front when BlackBox is absent (`src/kernel/main/boot_trend.c:268`) instead of allocating two 16 KiB buffers, parsing and rebuilding the document, and only then failing at `vfs_open` with a warning that read like an I/O error. No artifact was produced on that path before or after, so this states the limitation rather than adding one.
+  - PARKED half: the actual parity fix. `boot-profile` and `boot-timeline` DO fall back to `klog_dir` on C: (`src/kernel/main/boot_progress.c:387`); matching them means building three paths at runtime across five call sites, which does not fit. MEASURED 2026-09-03: 47 bytes of `.text` slack. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
 
 **Test checkpoint:** per moved item; each carries its original acceptance text from §3.
+
+> **Test runner:** `bash tools/boot-trend-scan-tests/run.sh` | 40 fixture checks + 4 source-gate checks, 0 failures (also via `scripts/test-tooling.sh`); kernel side `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot), unchanged
+>
+> **Note:** the scan policy is pinned host-side, not in `TEST_CAT_BOOT`. `boot_trend_publish_json()` is not on the Test Code Policy's forbidden-call list -- the obstacles are its live VFS and PMM side effects and, decisively, the kernel image ceiling: the change left 15 bytes of `.text` headroom, which a kernel test function and its assertion strings exceed by orders of magnitude. `tools/boot-trend-scan-tests/` (wired into `scripts/test-tooling.sh`) exercises the SHIPPED `boot_trend_scan_action()` from `include/kernel/boot_trend.h`, and its CONTROL case replays the rejected full-ring-stops policy and asserts it does NOT warn. Because those fixtures drive a SIMULATOR of the loop rather than the publisher itself, `check_production_loop.py` binds them to the shipped loop from the source side -- no ring-full term in the walk's `for` header, every node routed through the helper -- and carries its own control that mutates the exit back in and requires a refusal.
+>
+> **Notes:**
+> - Traversal linearized in `src/kernel/main/boot_trend.c`: `json_array_first`/`json_array_next` replace the indexed `json_array_get` loop, which was O(N^2) under cJSON's linked-list children; the decision table lives in `boot_trend_scan_action()` (`include/kernel/boot_trend.h`).
+> - The scan is bounded separately from what it keeps and keeps COUNTING past a full ring, so an oversized array whose leading entries happen to be valid still reports; hitting the bound canonicalizes with a WARN, and quarantine stays reserved for documents that do not parse or fail the schema check.
+> - A BlackBox-absent boot now returns before either 16 KiB `pmm_alloc_contiguous`, replacing a misleading `vfs_open` failure warning with an explicit statement that there is no C: fallback yet.
+> - MEASURED against a 47-byte `.text` ceiling: the linearization FREES 128 bytes, the BlackBox gate and bounded scan spend that, and the testable-seam extraction costs 32 more, leaving 15 bytes. The host-side test costs the image nothing.
+> - Scope boundary: two halves are parked and named above -- moving publication behind a real post-handoff mechanism (§7) and the runtime C: path construction (`02-kernel-core/TODO-33` §7).
 
 ---
 
@@ -527,7 +554,7 @@ From the stamped section 2 (filed 2026-08-14 by the `01-boot-platform/TODO-10 §
 | --- | -------------------------------- | ----------------------------- | --------------------------------- | ---------------------------------- |
 | 💎  | Per-phase boot perf budgets      | ⚠️ ETW boot trace (post-hoc)  | ⚠️ systemd-analyze (post-hoc)     | ⬜ §1 boot-time alarms             |
 | ⭐  | Consolidated boot health JSON    | ⚠️ msinfo32 + Event Viewer    | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
-| ⭐  | Boot perf trend regression alarm | ❌ no built-in                | ❌ no built-in                    | ⚠️ §3 trend+WARN; gate=T28 §9      |
+| ⭐  | Boot perf trend regression alarm | ❌ no built-in                | ❌ no built-in                    | ⚠️ §3 trend+WARN; §20 linear scan  |
 | 💎  | SMBIOS init speed                | ⚠️ NT HAL parses lazily       | ⚠️ dmidecode-driven, scattered    | ✅ §4 51ms (was 1342ms; RAM copy)  |
 | ⭐  | MAT W^X root-cause attribution   | ❌ unsupported                | ⚠️ /sys/firmware/efi/* raw        | ✅ §5 per-violation phys+attr      |
 | 💎  | PS/2 mouse init speed            | ⚠️ HAL probes serially        | ⚠️ atkbd serial probe             | ✅ §6 100ms (was 1149ms; split TO) |

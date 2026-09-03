@@ -1455,6 +1455,19 @@ assert_exit_zero "boot pure-header gate: Authenticode hash + TCG event-log walk"
 assert_exit_zero "boot-entries parser gate: poison-proof CRC table + reset" \
     bash "$REPO_ROOT/tools/boot-entries-parser-tests/run.sh"
 
+# --- boot-trend scan-policy gate --------------------------------------------
+# boot_trend_publish_json() keeps at most BOOT_TREND_RING_DEPTH entries while
+# examining at most BOOT_TREND_MAX_SCAN. The first version of that loop stopped
+# once the ring was full, so an oversized array whose leading entries happened
+# to be valid was truncated and rewritten with NO warning -- the exact input the
+# bound exists to report. Host-side for the same reason as the gate above: the
+# change under test left 15 bytes of .text headroom, and a kernel-side case does
+# not fit. The suite carries a CONTROL that replays the OLD policy and asserts it
+# does NOT warn, so a vacuous pass is detectable.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[boot_trend_scan_gate]${NC}"
+assert_exit_zero "boot-trend scan gate: full ring counts, 65th entry warns" \
+    bash "$REPO_ROOT/tools/boot-trend-scan-tests/run.sh"
+
 # --- atomic-claim gate (generated object) ------------------------------------
 # The panic path's ownership transitions each claim a resource AND record who
 # owns it in ONE compare-exchange, so that an abort at any instruction boundary

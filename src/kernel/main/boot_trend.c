@@ -238,6 +238,29 @@ static int trend_emit_existing_entry(struct json_builder *jb,
 
 void boot_trend_publish_json(void)
 {
+    /* Every path below is hardcoded to X:\\Perf\\ (BOOT_TREND_PATH and its two
+     * siblings). Without BlackBox mounted, X: does not exist, so the writer
+     * allocated two 16 KiB buffers, parsed and rebuilt the whole document,
+     * and only then failed at vfs_open with a warning that reads like an I/O
+     * error rather than "this system has no BlackBox". Refuse up front
+     * instead: no artifact is produced either way, and this states the
+     * limitation rather than discovering it at the end.
+     *
+     * boot-profile and boot-timeline DO fall back to klog_dir on C: (see
+     * boot_progress.c:387). Matching them means building three paths at
+     * runtime, which the current kernel image ceiling has no room for; that
+     * half is parked in this TODO's section 20. This gate is not the parity
+     * fix and does not replace it -- it only stops paying for an outcome
+     * that is already known. */
+    {
+        extern int klog_using_blackbox;
+        if (!klog_using_blackbox) {
+            klog(LOG_INFO, "boot_trend",
+                 "BlackBox not mounted; no trend file (no C: fallback yet)");
+            return;
+        }
+    }
+
     /* Separate input + output buffers, each at full BOOT_TREND_BUF_SIZE.
      * Splitting one allocation into halves caps each at 8 KiB and
      * silently truncates once the 16-boot ring fills up. */
@@ -313,15 +336,39 @@ void boot_trend_publish_json(void)
 
     uint32_t kept = 1;
     if (existing_valid && boots_arr) {
-        uint32_t existing_n = json_array_size(boots_arr);
-        for (uint32_t i = 0; i < existing_n && kept < BOOT_TREND_RING_DEPTH;
-             i++) {
-            struct cJSON *e = json_array_get(boots_arr, i);
-            if (!e || !trend_entry_is_valid(e)) continue;
+        /* Linear walk over cJSON's child list. The previous indexed form
+         * called json_array_get once per iteration, and that is itself an
+         * O(N) walk under a linked list of children, so the loop was O(N^2)
+         * on a dense or malformed file.
+         *
+         * The scan is bounded SEPARATELY from what it keeps: a file holding
+         * thousands of entries that all fail trend_entry_is_valid would
+         * otherwise be walked in full to keep nothing. Hitting the bound is
+         * NOT corruption -- the document parsed and its top-level schema
+         * checked out -- so it is canonicalized rather than quarantined:
+         * warn, keep the valid prefix, and let the atomic rewrite below
+         * bring the file back to at most BOOT_TREND_RING_DEPTH entries.
+         * Quarantine stays reserved for a document that does not parse or
+         * fails the schema check, which is the only case where the bytes on
+         * disk cannot be repaired by rewriting them. Quarantining a merely
+         * oversized file would throw away the whole history and suppress
+         * regression comparison until enough boots accumulate again. */
+        uint32_t seen = 0;
+        struct cJSON *e = json_array_first(boots_arr);
+        for (; e; e = json_array_next(e)) {
+            enum boot_trend_scan_action act =
+                boot_trend_scan_action(++seen, kept);
+            if (act == BOOT_TREND_SCAN_STOP) break;
+            if (act == BOOT_TREND_SCAN_COUNT_ONLY) continue;
+            if (!trend_entry_is_valid(e)) continue;
             jb_putc(&jb, ',');
             (void)trend_emit_existing_entry(&jb, e);
             kept++;
         }
+        if (seen > BOOT_TREND_MAX_SCAN)
+            klog(LOG_WARN, "boot_trend",
+                 "existing boots array over %u entries; kept the valid prefix",
+                 (uint64_t)BOOT_TREND_MAX_SCAN);
     }
     jb_puts(&jb, "]}");
 
