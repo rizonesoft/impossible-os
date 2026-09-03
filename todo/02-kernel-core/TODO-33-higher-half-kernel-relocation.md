@@ -595,6 +595,8 @@ MEASURED 2026-09-03 at `56e11533e`: `__kernel_end` page-aligns to `0x7ff000`, on
 
 Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 38208, `ports` 37632, `s_bls_fixture` 36992, `glyph_cache` 36480, `s_iocp_pool` 33152.
 
+> **Complexity verdict, recorded at filing time so it is not re-derived:** `section-manifest.py` returns `SPLIT-RECOMMENDED` (7 work items, 5 subsystems) with a waiver required. That is a signal, not a verdict on the shape: §12 shipped as ONE section with the same profile, because the items are a single conversion plus the assessment and acceptance evidence that make it reviewable, not five independent pieces of work. Re-run the check before implementing and make the call then; if it still recommends a split, the natural seam is assessment-and-measurement first, conversion second.
+
 - [ ] Re-measure the reserve against the CURRENT `build/kernel.map` before choosing, rather than acting on the 2026-08-18 sizes above
   - The table is a starting point, not evidence. §12's own lesson is that roughly 1.27 MiB was reabsorbed in the month after §10, so both the sizes and the ranking move.
 - [ ] Assess the chosen candidate against the §10 bar and record the reasons here, whether it passes or fails
