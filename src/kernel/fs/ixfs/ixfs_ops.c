@@ -406,12 +406,20 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
             uint32_t disk_block = ixfs_get_block(vol, &v->inode, blk_idx);
             struct ixfs_dir_entry *de;
             struct ixfs_vnode *found;
+            uint32_t d_ino;
 
             if (disk_block != 0 &&
                 ixfs_read_block(vol, disk_block, data_buf) == 0) {
                 de = (struct ixfs_dir_entry *)(data_buf + blk_off);
+                /* `de` aliases data_buf, so the inode number must be read
+                 * BEFORE the free -- reading it after is a use-after-free
+                 * whose value is deterministically 0 under
+                 * HEAP_ZERO_ON_FREE (heap.c scrubs the whole payload), and
+                 * ixfs_get_vnode(vol, 0) then fabricates a zero-size inode-0
+                 * vnode that is returned as if it were the file. */
+                d_ino = de->d_inode;
                 kfree(data_buf);
-                found = ixfs_get_vnode(vol, de->d_inode);
+                found = ixfs_get_vnode(vol, d_ino);
                 if (!found) return (struct vfs_node *)0;
                 ixfs_strcpy(found->node.name, name, VFS_MAX_NAME);
                 return &found->node;
@@ -440,9 +448,11 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
 
         if (de->d_inode != 0 && ixfs_strcmp(de->d_name, name)) {
             struct ixfs_vnode *found;
+            /* Same aliasing rule as the hash branch above: read before free. */
+            uint32_t d_ino = de->d_inode;
 
             kfree(data_buf);
-            found = ixfs_get_vnode(vol, de->d_inode);
+            found = ixfs_get_vnode(vol, d_ino);
             if (!found) return (struct vfs_node *)0;
 
             ixfs_strcpy(found->node.name, name, VFS_MAX_NAME);

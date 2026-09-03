@@ -95,7 +95,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
 | 💎  |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
 | 💎  |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [/]   |
-| 💎  |  32   | Post-ship follow-up backfill (2026-07-31 cohort)                | --                         |  [ ]   |
+| 💎  |  32   | Post-ship follow-up backfill (2026-07-31 cohort)                | --                         |  [x]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -138,13 +138,18 @@ title: "TODO-10 -- Kernel Security Hardening"
 - [x] Called on BSP via `cpu_harden_post_pagetable()` after `vmm_apply_nx_policy()` and on each AP in `ap_entry()` after the same policy pass
 - [x] `stac()`/`clac()` inlines + `KERNEL_ACCESS_USER_BEGIN()`/`KERNEL_ACCESS_USER_END()` macros in `cpu_security.h`; no-op if `!cpu_has(CPU_FEATURE_SMAP)`
 - [x] `copy_from_user()` / `copy_to_user()` added in `cpu_security.c` with SMAP brackets
-- [ ] Migrate existing syscall argument dereferences to use `copy_from_user`; deferred to **T12** `TODO-12-native-api-ssdt.md` (syscall / INT paths) when those sections implement user-buffer rules
-- [ ] Harden the user-copy path to reject supervisor destinations (per-process User-PTE check), not just range-check below `MM_USER_PROBE_ADDRESS`; needs §2 User-bit drop + §3-§6 KPTI. -> XREF: `TODO-03-kernel-libraries.md` §5
-- [ ] `ProbeForRead` / `ProbeForWrite`; deferred to T23 (SEH)
-- [ ] Re-introduce `clac` at the top of `isr_common_stub` when SMAP is enabled for real (today removed: comment at `src/kernel/isr_stubs.asm` ~line 23; must be CPUID-gated or alternative-slots like Linux `FENCE_SWAPGS_*`, not an unconditional opcode)
-- [ ] `KERNEL_ACCESS_USER_BEGIN/END` gate on BSP-global `cpu_has(CPU_FEATURE_SMAP)` -- STAC/CLAC #UD on a feature-skewed AP without SMAP. Gate on per-CPU live CR4.SMAP (header predicate) -- affects copy_*_user + `TODO-23 §13` try_copy_*/ProbeForWrite
-- [ ] CR4.LASS (Linear Address Space Separation): when `CPUID.(7,1):EAX[6]` set (detected by `D02 T09 §15`), enable CR4.LASS to fault user/kernel address crossings in hardware; same clean-kernel-PML4 prereq as SMEP/SMAP (-> XREF: `D02 T09 §15`)
-- [ ] Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path` (partial: helpers landed; CR4 + IDT still open)
+- [/] Migrate existing syscall argument dereferences to use `copy_from_user`; deferred to **T12** `TODO-12-native-api-ssdt.md` (syscall / INT paths) when those sections implement user-buffer rules
+  - Parked:kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
+- [/] Harden the user-copy path to reject supervisor destinations (per-process User-PTE check), not just range-check below `MM_USER_PROBE_ADDRESS`; needs §2 User-bit drop + §3-§6 KPTI. -> XREF: `TODO-03-kernel-libraries.md` §5
+  - Parked:kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
+- [/] `ProbeForRead` / `ProbeForWrite`; deferred to T23 (SEH) -- parked: kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
+- [/] Re-introduce `clac` at the top of `isr_common_stub` when SMAP is enabled for real (today removed: comment at `src/kernel/isr_stubs.asm` ~line 23; must be CPUID-gated or alternative-slots like Linux `FENCE_SWAPGS_*`, not an unconditional opcode)
+  - Parked:kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
+- [/] `KERNEL_ACCESS_USER_BEGIN/END` gate on BSP-global `cpu_has(CPU_FEATURE_SMAP)` -- STAC/CLAC #UD on a feature-skewed AP without SMAP. Gate on per-CPU live CR4.SMAP (header predicate) -- affects copy_*_user + `TODO-23 §13` try_copy_*/ProbeForWrite
+  - Parked:kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
+- [/] CR4.LASS (Linear Address Space Separation): when `CPUID.(7,1):EAX[6]` set (detected by `D02 T09 §15`), enable CR4.LASS to fault user/kernel address crossings in hardware; same clean-kernel-PML4 prereq as SMEP/SMAP (-> XREF: `D02 T09 §15`)
+  - Parked:kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
+- [/] Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path` (partial: helpers landed; CR4 + IDT still open) -- parked: kernel PML4 has User on all pages -> XREF: `01-boot-platform/TODO-10` §9
 
 **Test checkpoint:** When `hv_supports_cr4_smep_smap()` returns non-zero after kernel PTE U/S is fixed: `CR4.SMEP` and `CR4.SMAP` read back set on KVM/VBox/bare metal; WHPX may still skip per hypervisor policy. Until then, expect klog "SMEP: skipped" / "SMAP: skipped". `copy_from_user`/`copy_to_user` succeed on valid user buffers. After `clac` returns to `isr_common_stub`, entry path leaves AC cleared for SMAP-on configs. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -186,12 +191,13 @@ Design and allocate the shared trampoline infrastructure that all KPTI ring tran
 
 Wire the SYSCALL entry/exit path to swap CR3 via the trampoline page. LSTAR is redirected from `syscall_entry` to the trampoline's syscall stub. The stub loads `kernel_cr3` from per-CPU data, writes CR3, then jumps to the real `syscall_entry`. On SYSRET, the return path loads `user_cr3` and writes CR3 before executing SYSRETQ.
 
-- [ ] Redirect LSTAR to `kpti_syscall_entry` in the trampoline page (-> XREF `src/kernel/sched/syscall_entry.asm`)
-- [ ] Trampoline `kpti_syscall_entry`: SWAPGS, `mov rax, [gs:pcpu_kernel_cr3]`, `mov cr3, rax`, JMP to original `syscall_entry` (which skips its own SWAPGS since trampoline already did it)
-- [ ] Trampoline `kpti_syscall_return`: `mov rax, [gs:pcpu_user_cr3]`, `mov cr3, rax`, SWAPGS, SYSRETQ
-- [ ] Modify `syscall_entry.asm` to JMP to `kpti_syscall_return` instead of inline SWAPGS + SYSRET
-- [ ] Gate: only activate when KPTI is enabled (boot flag `kpti=1` in boot.conf, default on for bare metal, off for hypervisors with EPT that already mitigate Meltdown)
-- [ ] Commit: `"kernel/security: KPTI SYSCALL CR3 swap via trampoline"`
+- [/] Redirect LSTAR to `kpti_syscall_entry` in the trampoline page (-> XREF `src/kernel/sched/syscall_entry.asm`) -- parked: needs the higher-half clean PML4 -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Trampoline `kpti_syscall_entry`: SWAPGS, `mov rax, [gs:pcpu_kernel_cr3]`, `mov cr3, rax`, JMP to original `syscall_entry` (which skips its own SWAPGS since trampoline already did it)
+  - Parked:needs the higher-half clean PML4 -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Trampoline `kpti_syscall_return`: `mov rax, [gs:pcpu_user_cr3]`, `mov cr3, rax`, SWAPGS, SYSRETQ -- parked: needs the higher-half clean PML4 -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Modify `syscall_entry.asm` to JMP to `kpti_syscall_return` instead of inline SWAPGS + SYSRET -- parked: needs the higher-half clean PML4 -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Gate: only activate when KPTI is enabled (boot flag `kpti=1` in boot.conf, default on for bare metal, off for hypervisors with EPT that already mitigate Meltdown) -- parked: needs the higher-half clean PML4 -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Commit: `"kernel/security: KPTI SYSCALL CR3 swap via trampoline"` -- parked: needs the higher-half clean PML4 -> XREF: `02-kernel-core/TODO-33` §6
 
 **Test checkpoint:** Syscall from ring 3 works with CR3 swap active. Serial shows `[KPTI] SYSCALL path active`. A syscall with user_cr3 = kernel_cr3 (no isolation yet) doesn't regress. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
@@ -203,13 +209,15 @@ Wire the SYSCALL entry/exit path to swap CR3 via the trampoline page. LSTAR is r
 
 Wire all interrupt/exception entry stubs to swap CR3 via the trampoline. Unlike SYSCALL (which doesn't change stack), IDT delivery pushes the exception frame onto TSS RSP0/IST stacks while user_cr3 is active -- so those stacks must be mapped in user_cr3 (supervisor-only).
 
-- [ ] Map RSP0 and IST stack pages (DF/NMI/MCE) into every user_cr3 with Present + Writable + NX (supervisor-only, no User bit)
-- [ ] Trampoline `kpti_isr_entry`: read saved CS from exception frame to check if ring 3 entry; if yes: `mov rax, [gs:pcpu_kernel_cr3]`, `mov cr3, rax`; then JMP to `isr_common_stub` (which skips its own SWAPGS since trampoline handled the ring check)
-- [ ] Trampoline `kpti_isr_return`: before IRETQ from ring-3 return: `mov rax, [gs:pcpu_user_cr3]`, `mov cr3, rax`
-- [ ] Redirect all 256 IDT entries from current stubs to `kpti_isr_entry` in the trampoline page
-- [ ] Special handling: NMI and #DF use IST stacks and can nest -- CR3 swap must not clobber the IST stack or re-enter; use a dedicated IST trampoline stub that checks if CR3 is already kernel_cr3
-- [ ] Gate: same `kpti=1` flag as S4
-- [ ] Commit: `"kernel/security: KPTI IDT CR3 swap for all 256 vectors"`
+- [/] Map RSP0 and IST stack pages (DF/NMI/MCE) into every user_cr3 with Present + Writable + NX (supervisor-only, no User bit) -- parked with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Trampoline `kpti_isr_entry`: check saved CS for ring 3; if so load kernel CR3, then JMP to `isr_common_stub` -- parked with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
+  - `mov rax, [gs:pcpu_kernel_cr3]`, `mov cr3, rax`; `isr_common_stub` skips its own SWAPGS since the trampoline handled the ring check.
+- [/] Trampoline `kpti_isr_return`: before IRETQ from ring-3 return: `mov rax, [gs:pcpu_user_cr3]`, `mov cr3, rax` -- parked with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Redirect all 256 IDT entries from current stubs to `kpti_isr_entry` in the trampoline page -- parked with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Special handling: NMI and #DF use IST stacks and can nest -- CR3 swap must not clobber the IST stack or re-enter; use a dedicated IST trampoline stub that checks if CR3 is already kernel_cr3
+  - Parked:with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Gate: same `kpti=1` flag as S4 -- parked with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Commit: `"kernel/security: KPTI IDT CR3 swap for all 256 vectors"` -- parked with §4: needs the dual-CR3 model -> XREF: `02-kernel-core/TODO-33` §6
 
 **Test checkpoint:** Timer IRQ from ring 3 works with CR3 swap. Page fault from ring 3 works. NMI during syscall doesn't double-swap. #DF handler survives. Test on: QEMU WHPX, QEMU TCG; bare metal is critical (IST behavior differs under EPT vs native paging).
 
@@ -221,12 +229,14 @@ Wire all interrupt/exception entry stubs to swap CR3 via the trampoline. Unlike 
 
 With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse user_cr3 per process and activate Meltdown isolation.
 
-- [ ] `vmm_create_user_cr3(task)`: allocate fresh PML4, copy only user-half PML4 entries (PML4[0..255]) from kernel PML4, plus the trampoline page, RSP0/IST stacks, GDT/TSS, per-CPU data page in the upper half (supervisor-only); all other kernel PML4 entries absent
-- [ ] `vmm_sync_user_cr3(task)`: called on user page map/unmap; syncs the affected PML4 entry in user_cr3
-- [ ] `vmm_destroy_user_cr3(task)`: frees the sparse PML4 and any intermediate page tables allocated for it
-- [ ] Context switch (`task_switch`): update `smp_this_cpu()->user_cr3 = next_task->user_cr3`; `smp_this_cpu()->kernel_cr3 = next_task->kernel_cr3` (or the shared boot CR3 for kernel threads)
-- [ ] Kernel threads (no user_cr3): set `user_cr3 = kernel_cr3` so the CR3 swap is a no-op
-- [ ] Commit: `"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active"`
+- [/] `vmm_create_user_cr3(task)`: allocate a fresh PML4 with only user-half + trampoline/stacks/GDT-TSS/per-CPU entries -- parked: only meaningful once the kernel is upper-half -> XREF: `02-kernel-core/TODO-33` §6
+  - Copy only user-half PML4 entries (PML4[0..255]) from the kernel PML4, plus the trampoline page, RSP0/IST stacks, GDT/TSS, per-CPU data page in the upper half (supervisor-only); all other kernel PML4 entries absent.
+- [/] `vmm_sync_user_cr3(task)`: called on user page map/unmap; syncs the affected PML4 entry in user_cr3 -- parked: only meaningful once the kernel is upper-half -> XREF: `02-kernel-core/TODO-33` §6
+- [/] `vmm_destroy_user_cr3(task)`: frees the sparse PML4 and any intermediate page tables allocated for it -- parked: only meaningful once the kernel is upper-half -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Context switch (`task_switch`): update `smp_this_cpu()->user_cr3 = next_task->user_cr3`; `smp_this_cpu()->kernel_cr3 = next_task->kernel_cr3` (or the shared boot CR3 for kernel threads)
+  - Parked:only meaningful once the kernel is upper-half -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Kernel threads (no user_cr3): set `user_cr3 = kernel_cr3` so the CR3 swap is a no-op -- parked: only meaningful once the kernel is upper-half -> XREF: `02-kernel-core/TODO-33` §6
+- [/] Commit: `"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active"` -- parked: only meaningful once the kernel is upper-half -> XREF: `02-kernel-core/TODO-33` §6
 
 **Test checkpoint:** `vmm_create_user_cr3()` returns valid PML4; user CR3 has no kernel text VA (`PML4[256..511]` entries absent except trampoline/stacks); Meltdown probe read of kernel VA from ring 3 faults. Context switch updates per-CPU CR3 pair. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -240,23 +250,25 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §5` -- the bare `CR4.PCIDE` bit is ALREADY set there (BSP `boot_phase1` + AP `ap_cpu_harden()`, via `cpu_pcid_enable()`). This section adds per-process PCID tagging + NOFLUSH CR3 on top of the already-active feature; it must NOT re-enable or duplicate the CR4 activation.
 
 - [x] `CR4.PCIDE (bit 17)` activation -- DONE in `01-boot-platform/TODO-09 §5` via `cpu_pcid_enable()` (BSP + AP). This section consumes the already-set bit and adds tagging; do NOT re-enable it here
-- [ ] Assign a 12-bit PCID to each process; stored in `task->pcid`:
+- [/] Assign a 12-bit PCID to each process; stored in `task->pcid`:
+  - Parked:needs the KPTI dual-CR3 ping-pong from this file §6
   - PCID 0 = reserved for initial boot / no-PCID fallback
   - PCID 1..4094 = per-process; allocated from a monotone counter with wrap; on wrap, issue a global `INVPCID` (type 2 = global) to flush all stale TLB entries
   - `user_cr3` physical address gets `PCID` in bits [11:0]: `cr3_val = task->user_cr3_phys | task->pcid`
   - `kernel_cr3` uses `PCID + 0x800` convention (top bit set = kernel tag)
 
-- [ ] When `CR4.PCIDE=1`, writing CR3 with bit 63 set (`NOFLUSH=1`) skips the TLB invalidation for that PCID; only entries with a different PCID are retained:
+- [/] When `CR4.PCIDE=1`, writing CR3 with bit 63 set (`NOFLUSH=1`) skips the TLB invalidation for that PCID; only entries with a different PCID are retained:
+  - Parked:needs the KPTI dual-CR3 ping-pong from this file §6
   ```asm
   ; Switch to kernel CR3 with NOFLUSH (bit 63 set in the value)
   mov rax, [gs:pcpu_kernel_cr3]
   bts rax, 63                     ; set NOFLUSH bit
   mov cr3, rax
   ```
-- [ ] Use NOFLUSH on all hot-path CR3 writes (syscall entry/return, timer interrupt); use full-flush CR3 write only when `INVPCID` is needed (e.g., on `munmap` of a user page)
-- [ ] `INVPCID` type 1 (`INVPCID_ADDR`) for single-VA invalidation: `invpcid [pcid, va]` in `vmm_flush_tlb(va)` when PCID is active
+- [/] Use NOFLUSH on all hot-path CR3 writes (syscall entry/return, timer interrupt); use full-flush CR3 write only when `INVPCID` is needed (e.g., on `munmap` of a user page) -- parked: needs the KPTI dual-CR3 ping-pong from this file §6
+- [/] `INVPCID` type 1 (`INVPCID_ADDR`) for single-VA invalidation: `invpcid [pcid, va]` in `vmm_flush_tlb(va)` when PCID is active -- parked: needs the KPTI dual-CR3 ping-pong from this file §6
 
-- [ ] Commit: `"kernel/security: PCID TLB tagging, NOFLUSH CR3 writes, INVPCID for targeted flush"`
+- [/] Commit: `"kernel/security: PCID TLB tagging, NOFLUSH CR3 writes, INVPCID for targeted flush"` -- parked: needs the KPTI dual-CR3 ping-pong from this file §6
 
 **Test checkpoint:** `CR4.PCIDE` set when supported; `cr3` writes use bit 63 NOFLUSH on hot path; `invpcid` path exercised on unmap; no stray global flush on syscall ping-pong. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -307,12 +319,15 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > Design review also corrected the draft below: the supervisor shadow-stack PTE marker is **Dirty (bit 6, `VMM_FLAG_DIRTY`) with Write=0**, NOT "bit 5" (bit 5 is `VMM_FLAG_ACCESSED`); and CET state must be saved as **per-thread `PL0_SSP` on every context switch, NOT via `IA32_XSS`/`XSAVES`** -- `xsave_area`/`fpu_used` are per-*task* and lazy, so XSS-backed CET state would corrupt SSP across same-process thread switches. XSS deferred until XSAVE ownership moves to `struct thread`.
 
 - [x] Structured `#CP` (vector 21) handling -> XREF: `TODO-23 §3` (SHIPPED; CET-gated handler: user-mode routes through `ki_dispatch_exception()`, kernel-mode `KeBugCheckEx()` directly)
-- [ ] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`. Until this + the enable trampoline land, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
+- [/] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`. Until this + the enable trampoline land, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
 - [x] FIXED (TODO-23 §3 review): `cpuid.c` probed `CPU_FEATURE_CET_SS` from EDX[7]; CET SHSTK is CPUID.(07H,0):ECX[7] per Intel SDM (EDX[7] reserved). Moved to the ECX block so `cpu_has(CET_SS)` is accurate on CET hardware (2 reviewers confirmed)
-- [ ] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline)
+- [/] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline) -- parked: AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
   - Seed the active call chain's SSP via the architectural save/restore-token sequence before any normal `RET`, else the first return after `CR4.CET` faults #CP on an empty shadow stack during bring-up
-- [ ] Add `CPU_FEATURE_CET_SS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so per-AP enable gates on each AP's own `cpu_feature_local()` (CET may be P/E-core skewed), mirroring the §8 `SPEC_CTRL` AP-probe pattern
-- [ ] MSR definitions:
+- [/] Add `CPU_FEATURE_CET_SS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so per-AP enable gates on each AP's own `cpu_feature_local()` (CET may be P/E-core skewed), mirroring the §8 `SPEC_CTRL` AP-probe pattern
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
+- [/] MSR definitions:
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
   ```c
   #define MSR_IA32_S_CET           0x6A2   /* supervisor shadow stack control */
   #define MSR_IA32_PL0_SSP         0x6A4   /* ring-0 shadow stack pointer */
@@ -321,23 +336,29 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
   #define S_CET_WR_SHSTK_EN        (1ULL << 1)  /* WRSS instruction enable */
   #define S_CET_ENDBR_EN           (1ULL << 2)  /* IBT control (§10) */
   ```
-- [ ] `cpu_enable_cet_ss()`:
+- [/] `cpu_enable_cet_ss()`:
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
   1. `cpu_set_cr4_bit(CR4_CET)`: enable CET in CR4
   2. `wrmsr(MSR_IA32_S_CET, S_CET_SH_STK_EN | S_CET_WR_SHSTK_EN)`
   3. Ensure `MSR_IA32_PL0_SSP` is set to the initial kernel shadow stack page's last 8 bytes (top of the shadow stack)
 
-- [ ] **(deferred -- do NOT ship in MVP)** CET xstate reservation: set `IA32_XSS` bits 11/12 (CET_U/CET_S) for `XSAVES`/`XRSTORS` -- SUPERVISOR state via `IA32_XSS`, NOT `XCR0`. Owns the CET xstate window deferred from `01-boot-platform/TODO-09 §5`
+- [/] **(deferred -- do NOT ship in MVP)** CET xstate reservation: set `IA32_XSS` bits 11/12 (CET_U/CET_S) for `XSAVES`/`XRSTORS` -- SUPERVISOR state via `IA32_XSS`, NOT `XCR0`. Owns the CET xstate window deferred from `01-boot-platform/TODO-09 §5`
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
   - Blocked: `xsave_area`/`fpu_used` are per-*task* and lazy (`struct task`); XSS-backed CET state corrupts SSP across same-process thread switches. Move XSAVE ownership to `struct thread` first, then convert the scheduler to `XSAVES`/`XRSTORS` with XSS-aware masks/sizing. MVP saves `PL0_SSP` per-thread directly instead (see Context switch item) The `struct thread` move now has an owner -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §16 (item: "Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`").
-- [ ] Each kernel thread needs a shadow stack: one 4 KiB page per thread, marked `PTE_USER=0`, `PTE_NX=1`, and the special **supervisor shadow stack token** format (bit 1 of the 8-byte token set indicates this is the bottom of the shadow stack)
-- [ ] `cet_alloc_shadow_stack(thread)`: `pmm_alloc_contiguous(1)`; write token at page end; map via a new `VMM_FLAG_SHADOW_STACK` encoding; add a VMM encoding unit test before any `CR4.CET` enable
+- [/] Each kernel thread needs a shadow stack: one 4 KiB page per thread, marked `PTE_USER=0`, `PTE_NX=1`, and the special **supervisor shadow stack token** format (bit 1 of the 8-byte token set indicates this is the bottom of the shadow stack)
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
+- [/] `cet_alloc_shadow_stack(thread)`: `pmm_alloc_contiguous(1)`; write token at page end; map via a new `VMM_FLAG_SHADOW_STACK` encoding; add a VMM encoding unit test before any `CR4.CET` enable
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
   - Encoding = **`VMM_FLAG_DIRTY` (bit 6) set + Write (bit 1) clear + `VMM_FLAG_NX`** (Intel SDM supervisor-SHSTK marker). The draft's "bit 5" was wrong -- bit 5 is `VMM_FLAG_ACCESSED`. Processor then enforces SHSTK semantics (only `RSTORSSP`/`SAVEPREVSSP`/`WRSS` write)
-- [ ] On kernel thread creation in `src/kernel/sched/task.c` (`task_create()`): allocate shadow stack; set `task->shadow_stack_top`
-- [ ] Context switch: save/restore `MSR_IA32_PL0_SSP` per thread
+- [/] On kernel thread creation in `src/kernel/sched/task.c` (`task_create()`): allocate shadow stack; set `task->shadow_stack_top` -- parked: AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
+- [/] Context switch: save/restore `MSR_IA32_PL0_SSP` per thread -- parked: AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
 
-- [ ] Windows uses IST entries in the TSS for critical exceptions (#DF, #PF, NMI); each IST entry must also get a shadow stack in the `MSR_IA32_INTERRUPT_SSP_TABLE` (8-entry table, one VA per IST slot)
-- [ ] `cet_init_interrupt_ssp_table()`: allocate 8 shadow stack pages; write their top VAs into the 64-byte `INTERRUPT_SSP_TABLE` structure; write the table physical address to `MSR_IA32_INTERRUPT_SSP_TABLE`
+- [/] Windows uses IST entries in the TSS for critical exceptions (#DF, #PF, NMI); each IST entry must also get a shadow stack in the `MSR_IA32_INTERRUPT_SSP_TABLE` (8-entry table, one VA per IST slot)
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
+- [/] `cet_init_interrupt_ssp_table()`: allocate 8 shadow stack pages; write their top VAs into the 64-byte `INTERRUPT_SSP_TABLE` structure; write the table physical address to `MSR_IA32_INTERRUPT_SSP_TABLE`
+  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
 
-- [ ] Commit: `"kernel/security: CET shadow stack: CR4.CET, S_CET MSR, per-thread SSP allocation"`
+- [/] Commit: `"kernel/security: CET shadow stack: CR4.CET, S_CET MSR, per-thread SSP allocation"` -- parked: AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
 
 **Test checkpoint:** `CR4.CET` set; `MSR_IA32_PL0_SSP` tracks per-thread shadow stack; forged return triggers `#CP` not hijacked RIP. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal (CET-capable CPU).
 
@@ -357,16 +378,19 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > [!WARNING]
 > **Deferred -- inherits §9's CET-enable blockers (Codex design review 2026-06-28).** IBT enforcement (`S_CET.ENDBR_EN`) rides the same `CR4.CET` enable that §9 defers, and an indirect branch to a target lacking `ENDBR64` raises `#CP` -- so IBT cannot be enabled until §9's CET enable path lands (this section's `cpu_enable_cet_ibt()` ORs `ENDBR_EN` into the §9 `S_CET` write). The former `#CP` routing prereq is now SHIPPED in `02-kernel-core/TODO-23 §3` (CET-gated handler; user-mode via `ki_dispatch_exception()`, kernel-mode `KeBugCheckEx()` directly). The `-fcf-protection=branch` ENDBR64 emission + asm-stub `ENDBR64` audit (`ap_trampoline.asm`, ISR/IDT stubs) is harmless-when-off instrumentation but is held with the enable to avoid shipping dead, unenforced landing pads.
 
-- [ ] Add `-fcf-protection=branch` to kernel `CFLAGS` (Clang 19 supports this); the compiler emits `ENDBR64` at the start of every function and every valid indirect call/jump target
-- [ ] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l`; must be > 0 (non-zero); count should match approximate function count
-- [ ] Assembly files (`src/kernel/smp/ap_trampoline.asm`, ISR stubs, IDT stubs): manually add `endbr64` at each entry point that is reached via an indirect branch; NASM opcode: `db 0xF3, 0x0F, 0x1E, 0xFA`
+- [/] Add `-fcf-protection=branch` to kernel `CFLAGS` (Clang 19 supports this); the compiler emits `ENDBR64` at the start of every function and every valid indirect call/jump target -- parked: inherits the `CR4.CET` enable blocker from this file §9
+- [/] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l`; must be > 0 (non-zero); count should match approximate function count -- parked: inherits the `CR4.CET` enable blocker from this file §9
+- [/] Assembly files (`src/kernel/smp/ap_trampoline.asm`, ISR stubs, IDT stubs): manually add `endbr64` at each entry point that is reached via an indirect branch; NASM opcode: `db 0xF3, 0x0F, 0x1E, 0xFA`
+  - Parked:inherits the `CR4.CET` enable blocker from this file §9
 
-- [ ] `cpu_enable_cet_ibt()`: add to `cpu_enable_cet_ss()` call sequence: `wrmsr(MSR_IA32_S_CET, rdmsr(MSR_IA32_S_CET) | S_CET_ENDBR_EN)`
-- [ ] Legacy code mode: if a code region is loaded that does not have `ENDBR64` instructions (e.g., a legacy driver), temporarily disable IBT via `MSR_IA32_S_CET.NO_TRACK_EN` for that execution context; re-enable after (requires driver annotation `MODULE_FLAG_NO_IBT`)
-- [ ] `ENDBR_EN` should be enabled after all kernel code is loaded and verified; setting it before loading a module without ENDBR64 would immediately fault
-- [ ] Ring-3/per-process CET: consume per-binary CET flags (EIF `EIF_FLAG_CET_IBT`/`EIF_FLAG_CET_SHSTK`, PE CET_COMPAT, ELF `.note.gnu.property`) to program per-process `U_CET`/`PL3_SSP` once user CET lands -> XREF: `TODO-20 §10`
+- [/] `cpu_enable_cet_ibt()`: add to `cpu_enable_cet_ss()` call sequence: `wrmsr(MSR_IA32_S_CET, rdmsr(MSR_IA32_S_CET) | S_CET_ENDBR_EN)` -- parked: inherits the `CR4.CET` enable blocker from this file §9
+- [/] Legacy code mode: a region without `ENDBR64` (e.g. a legacy driver) temporarily disables IBT via `MSR_IA32_S_CET.NO_TRACK_EN`, re-enabled after (needs driver annotation `MODULE_FLAG_NO_IBT`)
+  - Parked:inherits the `CR4.CET` enable blocker from this file §9
+- [/] `ENDBR_EN` should be enabled after all kernel code is loaded and verified; setting it before loading a module without ENDBR64 would immediately fault -- parked: inherits the `CR4.CET` enable blocker from this file §9
+- [/] Ring-3/per-process CET: consume per-binary CET flags (EIF `EIF_FLAG_CET_IBT`/`EIF_FLAG_CET_SHSTK`, PE CET_COMPAT, ELF `.note.gnu.property`) to program per-process `U_CET`/`PL3_SSP` once user CET lands -> XREF: `TODO-20 §10`
+  - Parked:inherits the `CR4.CET` enable blocker from this file §9
 
-- [ ] Commit: `"kernel/security: CET IBT: ENDBR64 in kernel build, S_CET.ENDBR_EN activation"`
+- [/] Commit: `"kernel/security: CET IBT: ENDBR64 in kernel build, S_CET.ENDBR_EN activation"` -- parked: inherits the `CR4.CET` enable blocker from this file §9
 
 **Test checkpoint:** `objdump` shows `endbr64` prologues; indirect jump to target without `ENDBR64` faults when IBT on; `S_CET_ENDBR_EN` set only after stub audit. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -393,7 +417,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [x] `kmalloc_zeroed(size)`: always zeroes the user region (token / security-descriptor structs)
 - [x] `kmalloc_tagged(size, tag)` + `kfree_tagged(ptr, tag)`: 4-byte pool tag in the header; tag mismatch on free -> BugCheck (mixed-pool UAF). Tag field always present; plain `kmalloc` tags 0
 - [x] `init_on_alloc` default-on (`HEAP_INIT_ON_ALLOC`, Linux `INIT_ON_ALLOC` parity): zeroes every `kmalloc` user region; compile-time knob to disable
-- [/] zero-on-free (`HEAP_ZERO_ON_FREE`): scrubs freed user data; coded but DEFAULT-OFF -- enabling it surfaces a pre-existing FS use-after-free (next item) that zeros a still-referenced `i_size`
+- [/] zero-on-free (`HEAP_ZERO_ON_FREE`): scrubs freed user data; coded but DEFAULT-OFF -- BLOCKED on the kernel image ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
+  - CORRECTED 2026-09-03: the FS use-after-free this surfaced is now FIXED (§32); the sole remaining blocker is kernel image headroom.
 - [x] Scope boundary: SLUB-style freelist hardening (pointer encoding, randomization, quarantine, per-CPU freelists) is owned elsewhere -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md`; §11 owns the kmalloc cookie/redzone/zeroing tier
 
 - [x] Commit: `"kernel/mm: kmalloc cookie + redzone + irqsave lock hardening, kmalloc_zeroed/tagged, init_on_alloc"`
@@ -405,7 +430,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > **Notes:**
 > - Shipped `src/kernel/mm/heap.c` hardening: 48-byte combined header (cookie + redzones), irqsave `s_heap_lock`, `heap_classify` validation -> `BUGCHECK_IOS_HEAP_CORRUPTION`, `kmalloc_zeroed`/`_tagged`, init-on-alloc, overflow + wild-pointer guards.
 > - Design review (2 passes) adoptions: combined header, irqsave lock (heap was lockless), 16-align pinned by `_Static_assert`, `s_heap_poisoned` set-under-lock closing the unlock->BugCheck race; evidence in the commit message.
-> - zero-on-free behind `HEAP_ZERO_ON_FREE` (default off): enabling it surfaced a pre-existing IXFS/vfs use-after-free (tracked as the open item above); the scrub is correct, the FS UAF must be fixed first.
+> - zero-on-free behind `HEAP_ZERO_ON_FREE` (default off): CORRECTED 2026-09-03 -- the use-after-free it surfaced was in `ixfs_finddir` (a scratch-buffer alias read after `kfree`, not an `i_size` read as originally described) and is fixed (§32); the scrub itself was always correct. The sole remaining blocker is kernel image headroom -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
 > - Scope boundary: SLUB-style per-CPU freelist hardening owned by `03-memory-concurrency/TODO-03-advanced-allocator.md`.
 >
 > **Verified:** 2026-06-28 | commit `1a501a61` (+ review fixes) | 8/10 items | build OK | tests 139/139 + smoke PASS
@@ -454,29 +479,31 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [/] On `#PF` in a guard VA, `page_fault_handler` (`vmm.c`) checks `guard_page_lookup(cr2)` FIRST and renders a descriptive labeled BSOD via `panic_screen` (distinguishes stack overflow from a generic fault)
   - The SPECIFIC NT stop code `BUGCHECK_KERNEL_STACK_INPAGE_ERROR` (0x77) is NOT yet recorded -- `panic_screen` stores `bugcheck_code=0` for framed faults and keys the stop code off `frame->int_no`; needs the frame-aware bugcheck path below
 - [x] Each IST stack (`#DF`/`NMI`/`MCE`) has a guard page below it via the same helper (`gdt.c:97`); prevents a nested-exception stack overflow from silently corrupting memory
-- [ ] **(design review)** Frame-aware guard bugcheck: a guard `#PF` records the explicit NT stop code, not the PF err-code -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §5`
+- [/] **(design review)** Frame-aware guard bugcheck: a guard `#PF` records the explicit NT stop code, not the PF err-code -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §5`
+  - Parked:on this section's own NT-bugcheck and guard-table-capacity blockers
   - Add `vmm_install_guard_page_ex(virt, label, BUGCHECK_CODE)` + a `bugcheck` field on the guard entry; route the fault to a frame-aware bugcheck entry that stores `g_last_bugcheck` + renders it (stacks/IST/AP -> `KERNEL_STACK_INPAGE_ERROR` 0x77, heap -> `IOS_HEAP_CORRUPTION`), keeping CR2 + PF err-code as evidence. No label-substring classification
-- [ ] PID 0 runs permanently on the loader-owned boot stack; give it its own sized, guarded runtime stack -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` §32 (item: "DECIDED: the switch happens in the BOOTLOADER, not at the kernel entry")
+- [/] PID 0 runs permanently on the loader-owned boot stack; give it its own sized, guarded runtime stack -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` §32 (item: "DECIDED: the switch happens in the BOOTLOADER, not at the kernel entry")
+  - Parked:on this section's own NT-bugcheck and guard-table-capacity blockers
   - `task_init` sets `tasks[0].stack_base = 0` ("boot stack, don't free") at `src/kernel/sched/task.c:596` and `:608`, so PID 0 never migrates off the run the bootloader handed the kernel. It then enters `compositor_run()` (`src/kernel/main/boot_desktop.c:903`), which never returns.
   - Consequence: a run sized and named for early boot is really a permanent thread stack. Measured on that run 2026-08-28: 9,528 bytes at end of Phase 1, 38,368 in compositor steady state, 99,472 cumulative on a `test=1` boot. TODO-10 §32 sized the allocation for that lifetime (256 KiB, one-page guard) and instruments it, which makes the situation safe and visible but does not change who owns the stack.
   - The work here is the migration itself: allocate PID 0 a dedicated N+1-page guarded kernel stack like every other thread gets (`task.c:447`), switch to it before steady state, and let the loader-owned run become genuinely boot-only. That is a scheduler-side change to the running thread's stack and does not belong to the boot-protocol section that found it.
-- [ ] **(design review, latent bug)** Guard-table capacity + fail-fast registration
+- [/] **(design review, latent bug)** Guard-table capacity + fail-fast registration -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
   - `MAX_GUARD_PAGES=32` (`vmm.c:530`) is undersized vs `TASK_MAX(32)` + APs + IST + heap, and `guard_page_register` is void + silently drops when full -> an untracked unmapped guard reports a generic fault + uninstall no-ops. Size to worst-case; register returns status; `vmm_install_guard_page` rolls back the unmap on failure; critical stack-guard install failure is fatal
-- [ ] **(design review, latent bug)** SMP-safe guard table
+- [/] **(design review, latent bug)** SMP-safe guard table -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
   - The table is mutated at RUNTIME (task create/exec/uthread install + cleanup uninstall, `task.c`/`smp.c`) and read lock-free by the `#PF` handler on any CPU; compact-on-delete can race the lookup. Use a preallocated/append-only table + atomic active flags + release/acquire so a fault lookup never sees a partially-moved entry
-- [ ] **(class audit)** `task_create_user` and `task_fork` leave the ring-0 entry stack unguarded, so the first `[x]` item above overclaims
+- [/] **(class audit)** `task_create_user` and `task_fork` leave the ring-0 entry stack unguarded, so the first `[x]` item above overclaims -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
   - Filed by the section-31 stack-class audit -> XREF: `01-boot-platform/TODO-10 §31` (item: "Do the same audit for any other stack that is a bare array rather than a guarded allocation, so this is closed as a class rather than one instance.")
   - VERIFIED 2026-08-28 by the section-31 stack-class audit. Guarded: `task_create` (`task.c:906,915`), `thread_create` (`task.c:3732,3738`), uthread (`task.c:5584`), APs (`smp.c:493,509`), IST (`gdt.c:106`), heap end, and the BSP ring-0 entry stack as of section 31. UNGUARDED: `task.c:1222` and `task.c:2776`.
   - These are the HIGHEST-exposure stacks in the set, not the lowest: they are the ring-0 stacks a user process lands on at every syscall and interrupt, which is exactly the traffic the guarded kernel-task stacks never see. `task.c:3429` already records the shape in a comment ("task_create_user: kmalloc(TASK_STACK_SIZE) -- in heap"), so the gap was known and simply had no owner.
   - Also an allocator-contract break independent of the guard: CLAUDE.md caps `kmalloc()` at 4 KiB and `TASK_STACK_SIZE` is 8 KiB, so the fix is the same move section 31 made -- `pmm_alloc_contiguous(pages + 1)` plus `vmm_install_guard_page`, with the failure split (VA_UNSAFE fatal, UNAVAILABLE degraded) the VMM contract requires.
 
-- [ ] **(class audit, stack-clash)** the kernel is not built with `-fstack-clash-protection`, so a frame larger than the 4 KiB guard steps over it
+- [/] **(class audit, stack-clash)** the kernel is not built with `-fstack-clash-protection`, so a frame larger than the 4 KiB guard steps over it -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
   - Filed by the section-31 review -> XREF: `01-boot-platform/TODO-10 §31` (item: "Page-align the BSP boot stack and install a guard page below it, so an overflow faults with a label instead of corrupting BSS.")
   - VERIFIED 2026-08-28 during the section-31 review: the kernel `CFLAGS` in `Makefile` carry `-fstack-protector-strong` (canaries, a different mechanism) and no clash protection. A single `sub rsp, N` with N > 4096 therefore moves RSP past the whole guard page before any access, and the access lands on whatever is mapped below -- possibly without faulting at all, which is silent corruption rather than a labelled halt.
   - This bounds EVERY guard page in the kernel, not one stack: the guarded task, thread, AP, IST and BSP-entry stacks all catch recursion and ordinary frame growth and all miss this shape. `include/kernel/mm/vmm.h` states the limitation on `vmm_guard_page_label`, and `01-boot-platform/TODO-10 §31`'s checkpoint was narrowed to match rather than claiming coverage it does not have.
   - The fix is a build-input change (`Makefile` kernel `CFLAGS`) plus a destructive acceptance test proving an oversized frame now faults on the guard, so it belongs here with the guard mechanism rather than in any one stack's section.
 
-- [ ] Commit: `"kernel/security: guard pages below kernel stacks and IST stacks"`
+- [/] Commit: `"kernel/security: guard pages below kernel stacks and IST stacks"` -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
 
 **Test checkpoint:** kernel/AP/IST stack guards installed (guard VA `#PF` -> labeled BSOD via `guard_page_lookup`, validated on bare metal -- it halts). The NT 0x77 stop-code + the capacity/SMP-safe table land with the `[ ]` items above. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -496,22 +523,28 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > [!WARNING]
 > BLOCKED on `02-kernel-core/TODO-33-higher-half-kernel-relocation` -- per its Goal, higher-half relocation "is the foundation that unblocks KASLR". The kernel currently links/loads in low memory; sliding that layout would mix relocation, address-space migration, and KASLR in the wrong owner and risks a non-bootable image. The base-slide *mechanics* (ELF relocation, `-fPIE`, bootloader `R_X86_64_64` apply) belong to TODO-33; this section owns KASLR *policy* (entropy, `kaslr_slide` in boot_info, slide-in-dump, tests) on that foundation.
 
-- [ ] Module/driver load-address ASLR is a separate entropy domain owned by the module loaders -> XREF: `02-kernel-core/TODO-05-kernel-module-system.md` (kernel `.kmod`) + `10-platform-services/TODO-07-win32-pe-loader.md` (PE drivers)
-- [ ] The bootloader (`src/boot/uefi/bootx64.c`) currently loads the kernel ELF at its linked virtual base. For KASLR (mechanics gated on TODO-33 higher-half relocation):
+- [/] Module/driver load-address ASLR is a separate entropy domain owned by the module loaders -> XREF: `02-kernel-core/TODO-05-kernel-module-system.md` (kernel `.kmod`) + `10-platform-services/TODO-07-win32-pe-loader.md` (PE drivers)
+  - Parked:sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
+- [/] The bootloader (`src/boot/uefi/bootx64.c`) currently loads the kernel ELF at its linked virtual base. For KASLR (mechanics gated on TODO-33 higher-half relocation):
+  - Parked:sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
   1. Use UEFI `GetRNG` protocol (or `RDRAND` instruction) to generate a random 9-bit slide value `s` in `[0, 511]`
   2. Add `s * 2 MiB` to the kernel's linked virtual base: `kernel_slide = s * 0x200000`
   3. Load kernel ELF sections at `linked_va + kernel_slide` instead of `linked_va`
   4. Pass `kernel_slide` to the kernel in `boot_info.kaslr_slide`
 
-- [ ] The kernel ELF must be built as a position-independent executable or carry a `.rela.text` / `.rela.data` relocation table
-- [ ] Build flag: add `-pie -fPIE` to kernel CFLAGS, or use `-mcmodel=kernel` with explicit relocation entries; verify with `readelf -r build/kernel.elf` that `R_X86_64_64` entries are present
-- [ ] Bootloader applies relocations: for each `R_X86_64_64` entry, add `kernel_slide` to the stored address at the given offset
-- [ ] Linker map (`kernel.map`): add `kernel_slide` to all symbol addresses before writing `kernel.sym` (-> XREF `TODO-27-crash-dump-generation.md §3`) so `symtab_resolve` remains accurate after KASLR
+- [/] The kernel ELF must be built as a position-independent executable or carry a `.rela.text` / `.rela.data` relocation table -- parked: sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
+- [/] Build flag: add `-pie -fPIE` to kernel CFLAGS, or use `-mcmodel=kernel` with explicit relocation entries; verify with `readelf -r build/kernel.elf` that `R_X86_64_64` entries are present
+  - Parked:sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
+- [/] Bootloader applies relocations: for each `R_X86_64_64` entry, add `kernel_slide` to the stored address at the given offset -- parked: sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
+- [/] Linker map (`kernel.map`): add `kernel_slide` to all symbol addresses before writing `kernel.sym` (-> XREF `TODO-27-crash-dump-generation.md §3`) so `symtab_resolve` remains accurate after KASLR
+  - Parked:sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
 
-- [ ] In `kernel_main()`: read `boot_info.kaslr_slide`; store in `g_kaslr_slide`; make it available to the module registry (T27 §3) and the crash dump writer (-> XREF `TODO-27-crash-dump-generation.md §4`) so dumps carry the slide value for post-mortem analysis
-- [ ] `KASLR_BASE = __kernel_text_start + g_kaslr_slide`; all linker-symbol references throughout the kernel must add `g_kaslr_slide` when used as runtime addresses (or be recalculated from runtime `RIP`)
+- [/] In `kernel_main()`: read `boot_info.kaslr_slide` into `g_kaslr_slide`, available to the module registry (T27 §3) and crash dump writer (-> XREF `TODO-27-crash-dump-generation.md §4`)
+  - Parked:sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
+- [/] `KASLR_BASE = __kernel_text_start + g_kaslr_slide`; all linker-symbol references throughout the kernel must add `g_kaslr_slide` when used as runtime addresses (or be recalculated from runtime `RIP`)
+  - Parked:sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
 
-- [ ] Commit: `"kernel/security: KASLR: bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info"`
+- [/] Commit: `"kernel/security: KASLR: bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info"` -- parked: sliding a low-linked image needs the relocation first -> XREF: `02-kernel-core/TODO-33` §3
 
 **Test checkpoint:** Two boots produce different `boot_info.kaslr_slide`; `kernel.sym` / module bases match slide; dump shows slide in vendor stream. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -523,16 +556,18 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 Register VBS/SGX enclave management and code signing verification syscalls in the SSDT. (-> XREF `TODO-12-native-api-ssdt.md §5`)
 
-- [ ] `NtCreateEnclave(ProcessHandle, BaseAddress, ZeroBits, Size, InitialCommitment, EnclaveType, EnclaveInformation, InformationLength, EnclaveError)` -> SSDT 0x01F0
-- [ ] `NtLoadEnclaveData(ProcessHandle, BaseAddress, Buffer, BufferSize, Protect, PageInformation, InformationLength, NumberOfBytesWritten, EnclaveError)` -> SSDT 0x01F1
-- [ ] `NtInitializeEnclave(ProcessHandle, BaseAddress, EnclaveInformation, InformationLength, EnclaveError)` -> SSDT 0x01F2
-- [ ] `NtTerminateEnclave(BaseAddress, WaitForThread)` -> SSDT 0x01F3
-- [ ] `NtCallEnclave(EnclaveRoutine, WaitForThread, EnclaveRoutineReturn)` -> SSDT 0x01F4
-- [ ] `NtSetCachedSigningLevel(Flags, InputSigningLevel, SourceFiles, SourceFileCount, TargetFile)` -> SSDT 0x02A2
-- [ ] `NtGetCachedSigningLevel(File, Flags, SigningLevel, Thumbprint, ThumbprintSize, ThumbprintAlgorithm)` -> SSDT 0x02A3
-- [ ] `NtCompareSigningLevels(FirstSigningLevel, SecondSigningLevel)` -> SSDT 0x02A4
-- [ ] All functions return `NTSTATUS`
-- [ ] Commit: `"kernel/security: wire Enclave and code signing syscalls to SSDT"`
+- [/] `NtCreateEnclave(ProcessHandle, BaseAddress, ZeroBits, Size, InitialCommitment, EnclaveType, EnclaveInformation, InformationLength, EnclaveError)` -> SSDT 0x01F0
+  - Parked:needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtLoadEnclaveData(ProcessHandle, BaseAddress, Buffer, BufferSize, Protect, PageInformation, InformationLength, NumberOfBytesWritten, EnclaveError)` -> SSDT 0x01F1
+  - Parked:needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtInitializeEnclave(ProcessHandle, BaseAddress, EnclaveInformation, InformationLength, EnclaveError)` -> SSDT 0x01F2 -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtTerminateEnclave(BaseAddress, WaitForThread)` -> SSDT 0x01F3 -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtCallEnclave(EnclaveRoutine, WaitForThread, EnclaveRoutineReturn)` -> SSDT 0x01F4 -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtSetCachedSigningLevel(Flags, InputSigningLevel, SourceFiles, SourceFileCount, TargetFile)` -> SSDT 0x02A2 -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtGetCachedSigningLevel(File, Flags, SigningLevel, Thumbprint, ThumbprintSize, ThumbprintAlgorithm)` -> SSDT 0x02A3 -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] `NtCompareSigningLevels(FirstSigningLevel, SecondSigningLevel)` -> SSDT 0x02A4 -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] All functions return `NTSTATUS` -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
+- [/] Commit: `"kernel/security: wire Enclave and code signing syscalls to SSDT"` -- parked: needs the code-integrity trust-policy engine -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md`
 
 **Test checkpoint:** `NtCreateEnclave` allocates enclave region. `NtSetCachedSigningLevel` stores signing level on file. `NtGetCachedSigningLevel` retrieves it. `NtCompareSigningLevels` returns correct ordering. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -551,17 +586,20 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 > - **Blocked (no infrastructure to gate):** "disable unsigned `.kmod` load + raw user MSR/IO-port writes" has no module loader (-> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`) and no user MSR/IO write syscall to gate; "wire audit-log to PE-loader verification call sites" has no PE signature-verification call site (`pe.c` does only structural validation -> XREF: `10-platform-services/TODO-07-win32-pe-loader.md`).
 > - **Design-review requirements for the implementable half:** (1) lockdown source-of-truth -- the `policy.lockdown` ratchet ALREADY seeds INTEGRITY on `secure_boot_enabled` (`policy_lock.c:440`); the `secure_boot_enforce` knob must gate THAT seed (or future gates read the level while the knob is off), and future gates consume `kernel_lockdown_level_get()`, NOT a parallel `g_system_state` bit. (2) drift fail-open -- the drift case is SB 1->0, so `kernel_lockdown_engage` from the drift edge must gate on the BOOT-SNAPSHOT SB + `secure_boot_enforce`, NOT live `uefi_secureboot_enabled()` (which is now 0). (3) var-guard scope -- refuse only DESTRUCTIVE PK/KEK/db/dbx clears (empty/delete) in `deployed_mode==1`, not all writes, so authenticated db/dbx revocations + key rotation still flow to firmware.
 
-- [ ] `secure_boot_enforce` `boot.conf` key (snake_case) gating the lockdown seed (single source of truth)
+- [/] `secure_boot_enforce` `boot.conf` key (snake_case) gating the lockdown seed (single source of truth) -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
   - Add to `struct boot_config` + mirror (`_reserved` byte, no `BOOT_INFO_VERSION` bump) + `bootx64.c` parse (clone the `firmware_rng` block); gate the `policy.lockdown=INTEGRITY` seed in `policy_lock.c:440` on it
-- [ ] `kernel_lockdown_engage(reason)` DRIVES the existing `policy.lockdown` ratchet (not a parallel scalar)
+- [/] `kernel_lockdown_engage(reason)` DRIVES the existing `policy.lockdown` ratchet (not a parallel scalar) -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
   - `kernel_policy_set(KERNEL_LOCKDOWN_INTEGRITY, POLICY_CALLER_KERNEL)` (RATCHET, sticky-upward, idempotent); gated on (boot-snapshot SB authoritative) + `config.secure_boot_enforce`
-- [ ] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` one-line accessors over `s_sb_deployed_mode` / `s_sb_audit_mode` (`uefi_runtime.c:1076`)
-- [ ] DeployedMode write-protection in `uefi_var_set()` (`uefi_vars.c:33`), scoped to destructive clears
+- [/] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` one-line accessors over `s_sb_deployed_mode` / `s_sb_audit_mode` (`uefi_runtime.c:1076`)
+  - Parked:the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [/] DeployedMode write-protection in `uefi_var_set()` (`uefi_vars.c:33`), scoped to destructive clears -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
   - Refuse a DESTRUCTIVE clear (size==0 / delete) of PK/KEK/db/dbx when `deployed_mode==1` -> `STATUS_ACCESS_DENIED`, matching `s_sb_vars[]` name/GUID (`tpm_sb_reconcile.c:121`; `efi_guid_t` == `struct boot_uefi_guid`). Authenticated updates still pass to firmware
-- [ ] Drift-triggered lockdown: from the revalidation worker drift 0->1 edge (`uefi_runtime.c:1882`), call `kernel_lockdown_engage("drift")` -- gated on the BOOT-SNAPSHOT SB, not live SB
-- [ ] AuditLog infra: a `uefi_secureboot_audit_log(event)` API + `HKLM\SYSTEM\SecureBoot\AuditLog` registry writer (clone the `Vars` writer `uefi_runtime.c:1983`); ready for the PE-verification call sites when they exist
-- [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u`
-- [ ] Commit: `"kernel/security: Secure Boot lockdown enforcement consuming canonical state"`
+- [/] Drift-triggered lockdown: from the revalidation worker drift 0->1 edge (`uefi_runtime.c:1882`), call `kernel_lockdown_engage("drift")` -- gated on the BOOT-SNAPSHOT SB, not live SB
+  - Parked:the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [/] AuditLog infra: a `uefi_secureboot_audit_log(event)` API + `HKLM\SYSTEM\SecureBoot\AuditLog` registry writer (clone the `Vars` writer `uefi_runtime.c:1983`); ready for the PE-verification call sites when they exist
+  - Parked:the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [/] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u` -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [/] Commit: `"kernel/security: Secure Boot lockdown enforcement consuming canonical state"` -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
 
 **Test checkpoint:** Setup Mode (`deployed_mode==0`): no write-protection. Enrolled PK + DeployedMode: `uefi_var_set(PK, empty)` -> `STATUS_ACCESS_DENIED`; an authenticated db update still passes. `secure_boot_enforce=1` + SB active: `kernel_lockdown_engage` raises `kernel_lockdown_level_get()` to INTEGRITY; serial shows the policy line. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -585,7 +623,8 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 - [x] `.text` patch-site audit: none exist (`idt.c:261` is a comment; KPTI/AP trampolines are in separately-allocated pages outside `__text_start..__text_end`); the CR0.WP-toggle bracket for a future live-patch path is documented in `wx.c`
 - [x] Serial log: `[wx] kernel image: .text RO (%lu KiB)` + `.rodata RO (%lu KiB)`
 - [/] `.rodata` RO-after-init `__ro_after_init` class: plain const `.rodata` is RO now; the init-mutable-then-RO class is deferred (next item)
-- [ ] **(deferred)** `__ro_after_init` section convention: a `.init.data` output section + `__attribute__((section))` macro + `__init_end` so init-mutable globals go RO after boot. No such convention exists today -> XREF: this section
+- [/] **(deferred)** `__ro_after_init` section convention: a `.init.data` output section + `__attribute__((section))` macro + `__init_end` so init-mutable globals go RO after boot. No such convention exists today -> XREF: this section
+  - Parked:needs a `.init.data` section + `__ro_after_init` attribute macro that the tree lacks
 - [x] Commit: `"kernel/mm: STRICT_KERNEL_RWX -- .text RO, .rodata RO-after-init, W^X on the kernel image"`
 
 **Test checkpoint:** `vmm_query_flags(__text_start)` shows WRITABLE clear + NX clear (executable); `vmm_query_flags(__rodata_start)`, a string-literal address, and `&firmware_capsule_refusal_sentinel` all show WRITABLE clear (orphan + immutable alloc sections covered); `[wx]` serial lines show non-zero RO counts; `.text`/`.rodata` write faults are bare-metal-validated (they #PF). Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
@@ -666,12 +705,17 @@ Clang kCFI (`-fsanitize=kcfi`, Linux `CONFIG_CFI_CLANG`) enforces that every ind
 > [!NOTE]
 > Design validated + prototyped (2026-06-28), then reverted to keep `main` buildable -- the flag flip false-faults at the kernel->firmware ABI boundary and the exemption sweep is multi-iteration (see Deferred). The proven approach is baked into the items below.
 
-- [ ] `__nocfi` macro: `#define __nocfi __attribute__((no_sanitize("kcfi")))` in a new `include/kernel/compiler.h` (function-scoped; keeps the type-id prologue, exempts only that function's indirect calls)
-- [ ] kCFI trap detection via the `.kcfi_traps` section: linker.ld bounds + `kcfi_is_trap(rip)` in `idt.c`; the #UD path routes a trap-RIP to a `KERNEL_SECURITY_CHECK_FAILURE` bugcheck -> XREF `TODO-27-crash-dump-generation.md §1`
-- [ ] `__nocfi` on `ssdt_dispatch` (the one genuine type-erased call: ~187 `NtXxx` cast to a uniform `SSDT_HANDLER`); IRQ/DPC/blkdev/test dispatch are already correctly typed
-- [ ] FIRMWARE-ABI BOUNDARY SWEEP (blocker): exempt each TU calling a non-kCFI firmware pointer (`uefi_runtime.c`, `uefi_vars.c`, +ACPI/GOP/TPM) via a per-TU `filter-out -fsanitize=kcfi` Makefile rule; enumerate via smoke + addr2line
-- [ ] Add `-fsanitize=kcfi` to kernel `CFLAGS` (Clang 19; NOT the UEFI bootloader sub-make); coexists with retpoline (§8) + stack-protector; `objdump` shows the prologues + a non-empty `.kcfi_traps`
-- [ ] Commit: `"kernel/security: kCFI -- Clang type-id indirect-call enforcement + bugcheck on mismatch"`
+- [/] `__nocfi` macro: `#define __nocfi __attribute__((no_sanitize("kcfi")))` in a new `include/kernel/compiler.h` (function-scoped; keeps the type-id prologue, exempts only that function's indirect calls)
+  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+- [/] kCFI trap detection via the `.kcfi_traps` section: linker.ld bounds + `kcfi_is_trap(rip)` in `idt.c`; the #UD path routes a trap-RIP to a `KERNEL_SECURITY_CHECK_FAILURE` bugcheck -> XREF `TODO-27-crash-dump-generation.md §1`
+  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+- [/] `__nocfi` on `ssdt_dispatch` (the one genuine type-erased call: ~187 `NtXxx` cast to a uniform `SSDT_HANDLER`); IRQ/DPC/blkdev/test dispatch are already correctly typed
+  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+- [/] FIRMWARE-ABI BOUNDARY SWEEP (blocker): exempt each TU calling a non-kCFI firmware pointer (`uefi_runtime.c`, `uefi_vars.c`, +ACPI/GOP/TPM) via a per-TU `filter-out -fsanitize=kcfi` Makefile rule; enumerate via smoke + addr2line
+  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+- [/] Add `-fsanitize=kcfi` to kernel `CFLAGS` (Clang 19; NOT the UEFI bootloader sub-make); coexists with retpoline (§8) + stack-protector; `objdump` shows the prologues + a non-empty `.kcfi_traps`
+  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+- [/] Commit: `"kernel/security: kCFI -- Clang type-id indirect-call enforcement + bugcheck on mismatch"` -- parked: needs the firmware-ABI-boundary exemption sweep first (this section)
 
 **Test checkpoint:** `kcfi_is_trap()` identifies a real `.kcfi_traps` entry RIP and rejects a non-trap address (unit-testable without a bugcheck); boot reaches `C:\>` (smoke) with kCFI live, proving the firmware-boundary sweep is complete; `objdump` shows kCFI prologues. Test on: QEMU WHPX, TCG, bare metal.
 
@@ -686,11 +730,14 @@ Compile + runtime bounds checking on the `memcpy`/`strcpy`/`strcat`/`snprintf` f
 > [!NOTE]
 > Scope corrected by a compile probe (2026-06-28): `clang-19 --target=x86_64-elf -ffreestanding -nostdinc -D_FORTIFY_SOURCE=2 -O2` does NOT auto-emit `_chk` calls -- it emits plain `memcpy`/`strcpy`. FORTIFY_SOURCE is a libc-HEADER feature (glibc/Bionic/musl implement it as `pass_object_size` inline wrappers in `string.h`), NOT a pure compiler flag. So this needs header machinery, not a flag flip (see Deferred).
 
-- [ ] Fortify header machinery in `include/libc/string.h`: `__pass_object_size__` + `__overloadable__` inline wrappers for the mem/str/snprintf family that `__builtin_object_size`-dispatch to the real fn or `__chk_fail`
-- [ ] `_chk` slow paths in `src/libc/string.c` (glibc-ABI arg order): `__memcpy_chk`/`__memset_chk`/`__strcpy_chk`/`__strcat_chk`/`__snprintf_chk`/`__vsnprintf_chk` etc. -- compare op length to `dstlen`, tail-call real fn or `__chk_fail`
-- [ ] `__chk_fail()` (noreturn) -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, STATUS_*_BUFFER_OVERRUN, ...)` mirroring `stack_canary.c:154`
-- [ ] Latent-overflow handling (the risk): FS-mount name code (`fs/fat32`/`fs/ixfs`/`fs/ntfs` raw strcpy/strcat of disk names into fixed buffers) is the firing surface; stage `__chk_fail`->klog+continue to surface sites, audit/fix, then hard bugcheck
-- [ ] Commit: `"kernel/libc: FORTIFY_SOURCE -- _chk string/memory builtins, bugcheck on overflow"`
+- [/] Fortify header machinery in `include/libc/string.h`: `__pass_object_size__` + `__overloadable__` inline wrappers for the mem/str/snprintf family that `__builtin_object_size`-dispatch to the real fn or `__chk_fail`
+  - Parked:needs the freestanding fortify-header machinery (this section)
+- [/] `_chk` slow paths in `src/libc/string.c` (glibc-ABI arg order): `__memcpy_chk`/`__memset_chk`/`__strcpy_chk`/`__strcat_chk`/`__snprintf_chk`/`__vsnprintf_chk` etc. -- compare op length to `dstlen`, tail-call real fn or `__chk_fail`
+  - Parked:needs the freestanding fortify-header machinery (this section)
+- [/] `__chk_fail()` (noreturn) -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, STATUS_*_BUFFER_OVERRUN, ...)` mirroring `stack_canary.c:154` -- parked: needs the freestanding fortify-header machinery (this section)
+- [/] Latent-overflow handling (the risk): FS-mount name code (`fs/fat32`/`fs/ixfs`/`fs/ntfs` raw strcpy/strcat of disk names into fixed buffers) is the firing surface; stage `__chk_fail`->klog+continue to surface sites, audit/fix, then hard bugcheck
+  - Parked:needs the freestanding fortify-header machinery (this section)
+- [/] Commit: `"kernel/libc: FORTIFY_SOURCE -- _chk string/memory builtins, bugcheck on overflow"` -- parked: needs the freestanding fortify-header machinery (this section)
 
 **Test checkpoint:** the `_chk` slow paths pass correctly-sized ops through unchanged (positive path, unit-testable in `TEST_CAT_SECURITY`); a `memcpy` into an undersized fixed buffer triggers `__memcpy_chk` -> bugcheck (manual/bare-metal -- it halts, not unit-testable); boot reaches `C:\>` with FORTIFY live (no latent FS-mount overflow firing). Test on: QEMU WHPX, TCG, bare metal.
 
@@ -705,11 +752,14 @@ Zero the used portion of the kernel stack on every syscall/interrupt return to u
 > [!NOTE]
 > Toolchain check (2026-06-28): clang-19 has NO stackleak instrumentation (only `-fstack-protector*` / `-fstack-clash-protection`; Linux stackleak is a GCC plugin). So the "Clang stackleak instrumentation if available" alternative is OFF the table -- use the manual poison-scan-watermark path below. Still implementable; not blocked.
 
-- [ ] Coherent erase model (design): on return-to-user POISON-fill (sentinel, NOT zero) the used span -- clears secrets AND keeps the scan invariant for the next return; deepest-use = scan up to the first non-poison byte (Linux KSTACK_ERASE)
-- [ ] Hook placement (design): the erase runs while RSP still points at the KERNEL frame (BEFORE the exit restores user RSP) -- NOT the §19 VERW spot, which is post-pop-rsp; an asm wrapper passes explicit kernel stack top/bounds
-- [ ] Stack inventory (design): poison + carry `stack_low`/`stack_high` for EVERY ring-3-return-capable kernel stack incl. the kmalloc'd `task_create_user()` stack (`task.c:563`); stackleak refuses unknown/unpoisoned stacks
-- [ ] Cap + resume: bound scan+poison work per return (Linux STACKLEAK_SEARCH_DEPTH) with a defined partial-erase resume policy; build knob to disable for perf
-- [ ] Commit: `"kernel/security: stackleak -- erase used kernel stack span on return to user"`
+- [/] Coherent erase model (design): on return-to-user POISON-fill (sentinel, NOT zero) the used span -- clears secrets AND keeps the scan invariant for the next return; deepest-use = scan up to the first non-poison byte (Linux KSTACK_ERASE)
+  - Parked:needs the re-planned poison-fill hot-path design (this section)
+- [/] Hook placement (design): the erase runs while RSP still points at the KERNEL frame (BEFORE the exit restores user RSP) -- NOT the §19 VERW spot, which is post-pop-rsp; an asm wrapper passes explicit kernel stack top/bounds
+  - Parked:needs the re-planned poison-fill hot-path design (this section)
+- [/] Stack inventory (design): poison + carry `stack_low`/`stack_high` for EVERY ring-3-return-capable kernel stack incl. the kmalloc'd `task_create_user()` stack (`task.c:563`); stackleak refuses unknown/unpoisoned stacks
+  - Parked:needs the re-planned poison-fill hot-path design (this section)
+- [/] Cap + resume: bound scan+poison work per return (Linux STACKLEAK_SEARCH_DEPTH) with a defined partial-erase resume policy; build knob to disable for perf -- parked: needs the re-planned poison-fill hot-path design (this section)
+- [/] Commit: `"kernel/security: stackleak -- erase used kernel stack span on return to user"` -- parked: needs the re-planned poison-fill hot-path design (this section)
 
 **Test checkpoint:** After a syscall that writes a sentinel deep on the kernel stack, a following syscall reads POISON (not the sentinel) at that offset (span re-poisoned); the erase is bounded by the watermark/cap (no over-write into the guard page); boot reaches `C:\>` with stackleak live. Test on: QEMU WHPX, TCG, bare metal.
 
@@ -724,12 +774,14 @@ A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placi
 > [!NOTE]
 > Explored + design-reviewed (2026-06-28): self-contained `src/kernel/mm/kfence.c` + `kfence.h`; 3 hook sites (`kmalloc`/`kfree` heap.c, `page_fault_handler` vmm.c:565 BEFORE the 32-slot guard table); pool from `pmm_alloc_contiguous` + `vmm_unmap_page(virt,0)` guards (split the 2 MiB huge page first); init after `heap_init()` (boot_hw.c:529) gated on `kfence_ready`; own freelist spinlock, boot-init read-only range check (lock-free in #PF); tunables via `kernel_tunable_register`; terminal = report + `KeBugCheckEx` (new STOP code -- no SEH/RIP-advance exists, fatal is the only safe terminal). Two design findings folded into items 1-2 below.
 
-- [ ] Sample 1/sample_rate via a SHARED helper covering `kmalloc`/`kmalloc_zeroed`/`kmalloc_tagged` (design: all 3 variants, not just kmalloc); `kfree` AND `kfree_tagged` dispatch `kfence_owns(ptr)` -> `kfence_free`
-- [ ] Each object at a per-slot-randomized page side (design: left OR right, so under- AND over-flow cross a guard page) by an unmapped guard page; `kfence_handle_fault` classifies OOB-side vs UAF from `cr2` + slot state + side
-- [ ] On free, unmap (or quarantine) the slot so a UAF access faults; recycle after a quarantine delay
-- [ ] `kfence_report()` on a guarded fault: classify OOB vs UAF, log the object's alloc/free context; wire to the page-fault handler's guard-table path
-- [ ] Sample rate + pool size are `boot.conf` tunables; disabled adds near-zero overhead
-- [ ] Commit: `"kernel/mm: KFENCE -- sampling guard-page UAF/OOB detector"`
+- [/] Sample 1/sample_rate via a SHARED helper covering `kmalloc`/`kmalloc_zeroed`/`kmalloc_tagged` (design: all 3 variants, not just kmalloc); `kfree` AND `kfree_tagged` dispatch `kfence_owns(ptr)` -> `kfence_free`
+  - Parked:prototyped but not landed; see this section's stamp
+- [/] Each object at a per-slot-randomized page side (design: left OR right, so under- AND over-flow cross a guard page) by an unmapped guard page; `kfence_handle_fault` classifies OOB-side vs UAF from `cr2` + slot state + side
+  - Parked:prototyped but not landed; see this section's stamp
+- [/] On free, unmap (or quarantine) the slot so a UAF access faults; recycle after a quarantine delay -- parked: prototyped but not landed; see this section's stamp
+- [/] `kfence_report()` on a guarded fault: classify OOB vs UAF, log the object's alloc/free context; wire to the page-fault handler's guard-table path -- parked: prototyped but not landed; see this section's stamp
+- [/] Sample rate + pool size are `boot.conf` tunables; disabled adds near-zero overhead -- parked: prototyped but not landed; see this section's stamp
+- [/] Commit: `"kernel/mm: KFENCE -- sampling guard-page UAF/OOB detector"` -- parked: prototyped but not landed; see this section's stamp
 
 **Test checkpoint:** A test allocation forced onto the pool: an OOB write faults and `kfence_report` logs OOB; a UAF read after free faults and logs UAF; sampling off = normal kmalloc, no pool faults. Test on: QEMU WHPX, TCG, bare metal.
 
@@ -741,11 +793,11 @@ A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placi
 
 Expose which CPU/kernel mitigations are active as structured queryable data. Linux scatters this across `/sys/devices/system/cpu/vulnerabilities/*`; Win11 hides it behind WMI/registry. Neither does it cleanly -- a single coherent posture report for operators, certification, and post-incident triage is an exclusive edge.
 
-- [ ] `kernel_security_posture_t`: enumerate every mitigation in this TODO with state {active, unsupported, disabled, n/a}
-- [ ] Each mitigation section registers its final state into the posture struct at init (single source of truth; no re-probing)
-- [ ] `[secpost]` boot serial dump of the full posture after Phase 3 security init
-- [ ] Query surface: an `NtQuerySystemInformation` class (or a `\Device`-style virtual file) returning the posture struct to user mode
-- [ ] Commit: `"kernel/security: queryable mitigation posture -- [secpost] dump + NtQuerySystemInformation class"`
+- [/] `kernel_security_posture_t`: enumerate every mitigation in this TODO with state {active, unsupported, disabled, n/a} -- parked: the mitigations it would report must exist first (this file §20, §25)
+- [/] Each mitigation section registers its final state into the posture struct at init (single source of truth; no re-probing) -- parked: the mitigations it would report must exist first (this file §20, §25)
+- [/] `[secpost]` boot serial dump of the full posture after Phase 3 security init -- parked: the mitigations it would report must exist first (this file §20, §25)
+- [/] Query surface: an `NtQuerySystemInformation` class (or a `\Device`-style virtual file) returning the posture struct to user mode -- parked: the mitigations it would report must exist first (this file §20, §25)
+- [/] Commit: `"kernel/security: queryable mitigation posture -- [secpost] dump + NtQuerySystemInformation class"` -- parked: the mitigations it would report must exist first (this file §20, §25)
 
 **Test checkpoint:** The `[secpost]` line lists every mitigation with a concrete state matching the host CPUID; the query class returns the same struct to a user-mode test. Test on: QEMU WHPX, TCG, bare metal.
 
@@ -760,16 +812,22 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 
 The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and Linux apply. NOT one SPEC_CTRL-replay problem (design review): each has a distinct control path, so each item names its real mechanism and is tested against THAT path, not only an `IA32_SPEC_CTRL` readback. Needs the 128-bit feature surface from §18. (Split from the original combined §18.) -> XREF: §18 (feature bits), §8 (IBRS/IBPB/retpoline core), `D02 T09 §11` (MSR-profile AP replay).
 
-- [ ] New feature bits (need §18): `CPU_FEATURE_SSBD` (Intel SPEC_CTRL), `CPU_FEATURE_SSBD_AMD` (LS_CFG), `CPU_FEATURE_BHI_CTRL`; plus `ARCH_CAP_*` decode for RRSBA / BHI_NO / RFDS / ITS_NO in `msr.h`
-- [ ] STIBP (cross-HT, `IA32_SPEC_CTRL` bit 1): set alongside IBRS when SMT is active + `CPU_FEATURE_STIBP`; joins the `s_bsp_msr_profile[]` SPEC_CTRL entry (AP replay)
-- [ ] Intel SSBD (Spectre v4, `IA32_SPEC_CTRL` bit 2): gated on `CPU_FEATURE_SSBD`; joins the SPEC_CTRL profile; exposed as a tunable
-- [ ] AMD SSBD (NON-SPEC_CTRL): `MSR_AMD64_LS_CFG` vendor path gated on `CPU_FEATURE_SSBD_AMD` -- its own profile entry + AP replay arm, separate from the SPEC_CTRL bit
-- [ ] BHI_DIS_S (CVE-2024-2201) when advertised (`CPUID.(7,2):EDX[18]`): SPEC_CTRL.BHI_DIS_S, joins the profile; FALLBACK when absent: a short BHB-clearing loop on kernel entry (affected-model gated)
-- [ ] RSB stuffing on cross-domain switch: standalone audited asm behind a probed per-CPU `s_rsb_fill_active` latch (mirrors `s_ibpb_active`), invoked from `sched_cross_domain_ibpb`; counter test proves it fires only on affected CPUs
-- [ ] ITS (CVE-2024-28956): microcode + affected-model + alignment policy (NOT a SPEC_CTRL bit); detect via `IA32_ARCH_CAPABILITIES` + model table; log posture
-- [ ] Retbleed (AMD Zen1/2, Intel): vendor/model-gated `unret` or IBPB-on-kernel-entry (NOT a SPEC_CTRL bit)
-- [ ] Tests assert each mitigation's REAL control path (LS_CFG for AMD SSBD, RSB-fill counter, model-gate for ITS/Retbleed), not only an `IA32_SPEC_CTRL` readback; APs match BSP; a CPU lacking a feature takes no MSR write (no #GP)
-- [ ] Commit: `"kernel/security: SSBD (Intel+AMD), STIBP, RSB stuffing, BHI_DIS_S, ITS, Retbleed predictor policy"`
+- [/] New feature bits (need §18): `CPU_FEATURE_SSBD` (Intel SPEC_CTRL), `CPU_FEATURE_SSBD_AMD` (LS_CFG), `CPU_FEATURE_BHI_CTRL`; plus `ARCH_CAP_*` decode for RRSBA / BHI_NO / RFDS / ITS_NO in `msr.h`
+  - Parked:7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] STIBP (cross-HT, `IA32_SPEC_CTRL` bit 1): set alongside IBRS when SMT is active + `CPU_FEATURE_STIBP`; joins the `s_bsp_msr_profile[]` SPEC_CTRL entry (AP replay)
+  - Parked:7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] Intel SSBD (Spectre v4, `IA32_SPEC_CTRL` bit 2): gated on `CPU_FEATURE_SSBD`; joins the SPEC_CTRL profile; exposed as a tunable -- parked: 7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] AMD SSBD (NON-SPEC_CTRL): `MSR_AMD64_LS_CFG` vendor path gated on `CPU_FEATURE_SSBD_AMD` -- its own profile entry + AP replay arm, separate from the SPEC_CTRL bit
+  - Parked:7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] BHI_DIS_S (CVE-2024-2201) when advertised (`CPUID.(7,2):EDX[18]`): SPEC_CTRL.BHI_DIS_S, joins the profile; FALLBACK when absent: a short BHB-clearing loop on kernel entry (affected-model gated)
+  - Parked:7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] RSB stuffing on cross-domain switch: standalone audited asm behind a probed per-CPU `s_rsb_fill_active` latch (mirrors `s_ibpb_active`), invoked from `sched_cross_domain_ibpb`; counter test proves it fires only on affected CPUs
+  - Parked:7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] ITS (CVE-2024-28956): microcode + affected-model + alignment policy (NOT a SPEC_CTRL bit); detect via `IA32_ARCH_CAPABILITIES` + model table; log posture -- parked: 7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] Retbleed (AMD Zen1/2, Intel): vendor/model-gated `unret` or IBPB-on-kernel-entry (NOT a SPEC_CTRL bit) -- parked: 7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] Tests assert each mitigation's REAL control path (LS_CFG for AMD SSBD, RSB-fill counter, model-gate for ITS/Retbleed), not only an `IA32_SPEC_CTRL` readback; APs match BSP; a CPU lacking a feature takes no MSR write (no #GP)
+  - Parked:7 distinct mechanisms, each needing its own gate -> XREF: this file §18
+- [/] Commit: `"kernel/security: SSBD (Intel+AMD), STIBP, RSB stuffing, BHI_DIS_S, ITS, Retbleed predictor policy"` -- parked: 7 distinct mechanisms, each needing its own gate -> XREF: this file §18
 
 **Test checkpoint:** Each mitigation verified via its REAL path: SPEC_CTRL bits for STIBP / Intel SSBD / BHI_DIS_S read back set; AMD SSBD reflected in `LS_CFG`; the RSB-fill counter increments on cross-domain switch; ITS/Retbleed posture matches the affected-model gate. APs match BSP. A CPU lacking a feature takes no MSR write (no #GP). Test on: QEMU WHPX (`-cpu` with spec flags), TCG, bare metal.
 
@@ -923,7 +981,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 - [/] F9: include the per-flag `compile_commands.json` fingerprint in the attestation so a covered TU compiled with drifted flags (not just a missing TU) trips the gate -> XREF: §27 F9 + §29
 - [/] Perf: `build-image.sh` validates the signed attestation (kernel sha + fingerprint match) to skip the full ~678-compile recompute when valid, else full recompute (validate-not-recompute) -> XREF: §27 accepted [M] perf residual
 - [/] Operator decision: choose the signing mechanism (cosign keyless OIDC vs keyed identity) and accept the new tool dependency
-- [ ] Commit: `"kernel/security: signed CI attestation for the release-flavor gate"`
+- [/] Commit: `"kernel/security: signed CI attestation for the release-flavor gate"` -- parked, operator-gated: signing infrastructure is an operator decision
 
 **Test checkpoint:** the release gate rejects a tampered `kernel.link-trace.txt` even when its in-tree sha record is rewritten to match; a `build-image.sh` re-run over an unchanged, attested kernel validates without recompiling; a covered TU rebuilt with a changed flag fails the fingerprint check. Test on: a CI dry-run + local `build-image.sh`.
 
@@ -965,10 +1023,27 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 11:
-- [ ] **(blocks zero-on-free)** Fix the IXFS/vfs use-after-free that `HEAP_ZERO_ON_FREE=1` surfaces, then flip the knob on
-  - A vnode/inode `i_size` is read after free; the scrub zeros it -> `file->size`=0 -> `cmd.exe` load + mmap content break. Trace the node lifecycle in `src/kernel/fs/ixfs/ixfs_ops.c` + `src/kernel/fs/vfs.c`
+- [x] Fix the IXFS use-after-free that `HEAP_ZERO_ON_FREE=1` surfaces
+  - CORRECTED as filed: the original text blamed a vnode/inode `i_size` read after free. False -- no vnode or inode struct is ever `kfree()`'d in `ixfs_ops.c`; both branches of `ixfs_finddir` (`:412-414` hash-index, `:444-445` linear-scan) held a `struct ixfs_dir_entry *` aliasing a `kmalloc`'d scratch block, called `kfree`, then read `d_inode` through the dangling pointer. Under the scrub that read is deterministically 0, and `ixfs_get_vnode(vol, 0)` matched a retired cache slot from a prior `ixfs_unlink` (`.ino = 0`, never cleared), so the file that opened was a stale, wrong-identity vnode -- `size == 0` is the visible symptom, not the mechanism.
+  - Fixed by reading `d_inode` into a local before the `kfree` in both branches (`src/kernel/fs/ixfs/ixfs_ops.c`).
+  - Hardened `ixfs_get_vnode` to reject `ino < IXFS_ROOT_INODE` (closes the retired-slot collision at its cache-lookup end, independent of the allocator fix) and centralized inode-number range validation as `ixfs_ino_in_table()`, called from inside both `ixfs_read_inode` and `ixfs_write_inode` (`src/kernel/fs/ixfs/ixfs_inode.c`) so every caller is covered, not only the vnode-cache path -- several callers (`ixfs_unlink`'s `target_ino`, the `ixfs_fsck` walks, `ixfs_cow`'s cache refresh) reach inode I/O directly from an on-disk directory entry without going through `ixfs_get_vnode`. The bound arithmetic is 64-bit throughout and clamps an inflated on-disk `s_total_inodes` to what `s_inode_blocks` physically holds, closing an overflow a crafted volume could otherwise use to under-restrict the check.
+  - Three Codex adversarial rounds (converged): round 1 found the aliasing bug fixed above; round 2 found the initial guard was fail-open on a zero `s_total_inodes` and placed only in the cache path, not the I/O boundary -- both fixed by centralizing at `ixfs_read_inode`/`ixfs_write_inode`; round 3 found a 32-bit multiplication overflow in the new bound check -- fixed by widening to 64-bit. The mandatory kernel-quality-auditor + consistency review passes over the converged diff then found four MORE genuine, pre-existing defects this fix touches but cannot fix in scope: mount-time superblock fields are never structurally validated, snapshot restore AND snapshot create both bypass the new inode validation with unchecked I/O, `ixfs_unlink` ignores an inode-write failure (a pattern shared by every other `ixfs_write_inode` call site), and the whole vnode cache (`ixfs_get_vnode` et al.) is reachable from post-boot syscalls on any CPU with no lock -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md` §16 (all six items).
+  - **Unit tests for the new invariant were also implemented and measured, then deferred on the SAME ceiling.** Six `TEST_CAT_FS` cases (bounds rejection for inode 0, out-of-range, zero-count fail-closed, inflated-count clamp, the write-side sharing the same boundary, and the retired-slot collision in `ixfs_get_vnode`) built clean and pass in isolation, but the test file counts against the same kernel image budget as production code (`KERNEL_TESTS=on` is the default flavor) and the six new functions' string literals push `__kernel_end` past `USER_BASE` on top of the code fix alone. Preserved at `.claude/state/deferred-TODO-10-kernel-security-hardening-s32-tests.patch`; re-apply once `TODO-33` §13 reports headroom. This is itself a new, worth-recording observation: on this repo's current image, TEST coverage for a kernel security fix can be blocked by the same ceiling as the fix's own code, not merely by review or design work.
+The `HEAP_ZERO_ON_FREE` flip itself is not a checklist item of this section: it is no longer FS-blocked (the UAF above is fixed) but is fully blocked on kernel image headroom, MEASURED 2026-09-03 -- flipping the knob alone makes `heap_secure_zero` reachable (it is `__attribute__((unused))` and elided today) and moves `__kernel_end` onto `USER_BASE` exactly, and `scripts/build.sh` refuses with `BSS COLLISION`. Tracked at the real owner -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT" -- names this section by number).
 
-**Test checkpoint:** per moved item; each carries its original acceptance text.
+**Test checkpoint:** per moved item; each carries its original acceptance text. The UAF fix additionally passed `bash scripts/test.sh` (32845 kernel + 17 user-mode, exit 0) after each of the three Codex rounds and a control+treatment `scripts/build.sh` pair proving both `=== BUILD OK ===` and the measured BSS-collision boundary for the knob flip.
+
+> **Notes:**
+> - **What shipped** -- the `ixfs_finddir` use-after-free (aliased scratch-buffer read after `kfree`), plus inode-number range validation centralized at the `ixfs_read_inode`/`ixfs_write_inode` I/O boundary.
+> - **How it integrates** -- every inode-I/O caller (`ixfs_get_vnode`, `ixfs_unlink`, `ixfs_fsck`, `ixfs_cow`) routes through the two guarded functions, not only the vnode-cache path the bug was found through.
+> - **Downstream effects** -- `HEAP_ZERO_ON_FREE` (§11) is no longer FS-blocked, only ceiling-blocked, same as this item's own knob-flip and test coverage; six adjacent IXFS defects the review found are filed at `TODO-07` §16.
+> - **Canonical doc:** none dedicated; recorded in this item, `TODO-07` §16, and `heap.c`'s `HEAP_ZERO_ON_FREE` comment.
+> - **Scope boundary** -- fixes the aliasing bug and hardens the two functions it touches; does not add mount validation, snapshot/unlink atomicity, or vnode-cache locking (filed to `TODO-07` §16).
+> **Verified:** 2026-09-03 | commit pending | 1/1 items `[x]` | build OK (control + treatment) | 32845 kernel + 17 user-mode tests PASS
+> **Deferred:** [H] `HEAP_ZERO_ON_FREE` flip -- crosses the kernel image ceiling on its own (headroom 95 -> BSS COLLISION), no filesystem blocker remains -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT" -- names this section by number)
+> **Deferred:** [M] six new `TEST_CAT_FS` regression cases for the inode-bounds invariant were implemented and measured, then reverted -- the test file counts against the same image budget as production code and pushes past the ceiling on top of the code fix alone -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT" -- names this section by number)
+> **Accepted:** [H] mount-time superblock structural validation, snapshot restore/create atomicity, unlink failure-atomicity, and vnode-cache SMP locking -- six defects found by the review passes over this diff, none caused by it, all requiring section-class remediation in files this item does not own -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md` §16 (items: "Mount-time superblock structural validation", "Snapshot restore bypasses inode validation and ignores I/O failure", "`ixfs_snapshot_create` writes an unbounded, unreserved inode-table range", "`ixfs_unlink` ignores `ixfs_write_inode`'s return", "`ixfs_get_vnode`/`ixfs_finddir`/`ixfs_read_inode`/`ixfs_write_inode` mutate the shared vnode cache with no lock")
+> **Quality reviewed:** 2026-09-03 | Codex 6x (adversarial x3 converged, re-adversarial, consistency, perf) + kernel-quality-auditor | 1H aliasing + 2H fail-open/overflow + 1M sentinel-value fixed in scope, 6H filed out-of-scope with XREF, 0 open in scope | scope: kernel-code-quality (SMP N/A to the fix itself -- IXFS's pre-existing lack of locking is the filed finding, not a regression this diff introduces)
 
 ---
 

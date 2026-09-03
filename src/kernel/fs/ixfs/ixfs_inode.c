@@ -7,14 +7,78 @@
 /* --- Internal: inode I/O --- */
 
 /* Read an inode from disk */
+/* THE inode-number boundary for this filesystem. It lives here, beside the
+ * block arithmetic it guards, because that arithmetic is what goes wrong:
+ * `s_inode_start + ino / inodes_per_block` is computed from `ino` with no
+ * validation, so an out-of-table number selects an arbitrary volume block --
+ * which a read then interprets as an inode, and a write then OVERWRITES.
+ *
+ * A caller-side check is NOT enough, and placing one in `ixfs_get_vnode` was
+ * the weaker first attempt: several callers reach this I/O with an inode
+ * number taken straight from an on-disk directory entry without passing
+ * through the vnode cache at all (`ixfs_unlink`'s `target_ino`, the
+ * `ixfs_fsck` walks, `ixfs_cow`'s cache refresh), so a crafted directory
+ * entry bypasses any guard placed only in that path.
+ *
+ * FAILS CLOSED on a zero or absent count. `s_total_inodes` is on-disk data and
+ * therefore attacker-controlled, so it is also clamped to what the inode table
+ * can physically hold: an inflated superblock count must not authorize a read
+ * past the table it claims to describe. There is one formatter and it always
+ * writes IXFS_DEFAULT_INODES, so a zero count is a corrupt volume rather than
+ * a legacy shape needing tolerance. */
+static int ixfs_ino_in_table(const struct ixfs_volume *vol, uint32_t ino)
+{
+    uint32_t per_block = IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode);
+    /* 64-bit throughout: `s_inode_blocks` and `s_inode_start` are RAW on-disk
+     * superblock fields with no mount-time structural validation anywhere in
+     * this filesystem (a pre-existing gap, filed separately -- see the TODO
+     * XREF at this function). A 32-bit `s_inode_blocks * per_block` can wrap
+     * on a crafted volume and read back SMALLER than the true table, which
+     * would UNDER-restrict rather than over-restrict -- the opposite of what
+     * a bounds check is for. Doing the arithmetic in 64 bits and clamping the
+     * final block address is what keeps THIS function honest even though it
+     * cannot fix the missing validation one layer up (mount time). */
+    uint64_t cap       = vol->sb.s_total_inodes;
+    uint64_t phys_cap  = (uint64_t)vol->sb.s_inode_blocks * per_block;
+    uint64_t block64;
+
+    if (ino < IXFS_ROOT_INODE)
+        return 0;                  /* inode 0 is never a file */
+    if (cap == 0 || phys_cap == 0)
+        return 0;                  /* fail closed, never fail open */
+    if (cap > phys_cap)
+        cap = phys_cap;            /* an inflated on-disk count cannot widen the table */
+    if ((uint64_t)ino >= cap)
+        return 0;
+
+    /* The block address this ino resolves to must also not wrap past
+     * UINT32_MAX -- a near-max `s_inode_start` could otherwise wrap the
+     * caller's 32-bit addition back into a low, plausible-looking block.
+     * STRICT less-than, not <=: `struct ixfs_cache_entry.block == 0xFFFFFFFF`
+     * is the cache's reserved EMPTY-ENTRY sentinel (ixfs_internal.h,
+     * ixfs_core.c). Admitting that exact value here would let
+     * ixfs_read_block treat a genuine inode-table block as an empty cache
+     * slot (false cache hit, stale/zeroed contents, no disk I/O) and let
+     * ixfs_write_block mark a sentinel entry dirty while flush deliberately
+     * skips it -- a write that silently vanishes. */
+    block64 = (uint64_t)vol->sb.s_inode_start + (uint64_t)ino / per_block;
+    return block64 < 0xFFFFFFFFULL;
+}
+
 int ixfs_read_inode(struct ixfs_volume *vol, uint32_t ino, struct ixfs_inode *inode)
 {
     uint32_t inodes_per_block = IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode);
-    uint32_t block = vol->sb.s_inode_start + (ino / inodes_per_block);
-    uint32_t offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
+    uint32_t block;
+    uint32_t offset;
     uint32_t i;
     uint8_t *dst;
     uint8_t *tmp_buf;
+
+    if (!ixfs_ino_in_table(vol, ino))
+        return -1;
+
+    block  = vol->sb.s_inode_start + (ino / inodes_per_block);
+    offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
 
     tmp_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
     if (!tmp_buf) return -1;
@@ -36,11 +100,19 @@ int ixfs_read_inode(struct ixfs_volume *vol, uint32_t ino, struct ixfs_inode *in
 int ixfs_write_inode(struct ixfs_volume *vol, uint32_t ino, const struct ixfs_inode *inode)
 {
     uint32_t inodes_per_block = IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode);
-    uint32_t block = vol->sb.s_inode_start + (ino / inodes_per_block);
-    uint32_t offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
+    uint32_t block;
+    uint32_t offset;
     uint32_t i;
     const uint8_t *src;
     uint8_t *tmp_buf;
+
+    /* Same boundary as ixfs_read_inode: an out-of-table `ino` here does not
+     * merely misread, it OVERWRITES an arbitrary volume block. */
+    if (!ixfs_ino_in_table(vol, ino))
+        return -1;
+
+    block  = vol->sb.s_inode_start + (ino / inodes_per_block);
+    offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
 
     tmp_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
     if (!tmp_buf) return -1;
@@ -199,6 +271,17 @@ struct ixfs_vnode *ixfs_get_vnode(struct ixfs_volume *vol, uint32_t ino)
 {
     uint32_t i;
     struct ixfs_vnode *v;
+
+    /* Reject before the CACHE SCAN, which is the part `ixfs_read_inode`'s
+     * boundary cannot cover: `ixfs_unlink` retires a slot by writing
+     * `vol->vnodes[j].ino = 0`, so a lookup for inode 0 MATCHES that retired
+     * slot and returns a deleted file's stale node fields without ever
+     * reaching disk. The range half of this check is deliberately NOT repeated
+     * here -- it belongs to `ixfs_ino_in_table` at the I/O boundary, and the
+     * failing `ixfs_read_inode` below rejects an out-of-table number for every
+     * caller rather than only this one. */
+    if (ino < IXFS_ROOT_INODE)
+        return (struct ixfs_vnode *)0;
 
     /* Check if already cached */
     for (i = 0; i < vol->vnode_count; i++) {

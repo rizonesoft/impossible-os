@@ -62,6 +62,7 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 | ⭐  |  13   | §13 Storage tiering -- multi-device superblock, promote/demote thread, Disk Manager panel | §6 (defrag migration is the same block-copy mechanism)           |  [ ]   |
 | ⭐  |  14   | §14 Volume health dashboard -- Disk Manager panel, stats, one-click actions               | §1–13 all complete (all stats sources must exist)                |  [ ]   |
 | ⭐  |  15   | §15 Comprehensive test suite -- all features, journal recovery, QEMU clean run            | §1–14 all complete                                               |  [ ]   |
+| 🔥  |  16   | §16 Inode-table + on-disk-layout hardening: mount validation, restore/unlink atomicity     | --                                                                 |  [ ]   |
 
 > Sections §1–§13 are all `⭐` exclusive or represent clear superior positioning: no single general-purpose filesystem ships transparent per-file compression + inline dedup + reflinks + AES-256-XTS encryption + filesystem-native tiering + USN journal + self-healing all in one volume. NTFS has compression and EFS but not dedup/reflinks/tiering. Btrfs has compression/dedup/snapshots but not per-file encryption or tiering. ZFS has most features but requires a pool layer and 300 MB RAM overhead. IXFS delivers all of them at the block driver abstraction level with CoW-reuse for near-zero dedup RAM cost.
 
@@ -321,6 +322,44 @@ Extend `ixfs_test.c` to cover every feature from TODO-06 and TODO-07. Journal re
 - [ ] Commit: `"test: IXFS comprehensive test suite -- all features covered, journal recovery, QEMU verified"`
 
 ---
+
+## 16. Inode-Table + On-Disk-Layout Hardening
+
+> **Spawned-by:** §32 (review) -- Codex adversarial round 3 of `02-kernel-core/TODO-10-kernel-security-hardening.md` §32's `ixfs_finddir` use-after-free fix; findings 5-6 (vnode-cache locking, snapshot create) added by the kernel-quality-auditor and consistency legs of that same review
+> **User impact:** a crafted or corrupted IXFS volume (a malicious USB drive, a bit-flipped image, a partially-written snapshot) can make the kernel read or overwrite blocks outside the inode table, and a failed inode write during unlink can leave freed blocks still referenced by a live on-disk inode -- both are silent corruption paths reachable without any code bug beyond mounting the volume.
+
+Six findings verified at file:line while fixing the unrelated `ixfs_finddir` UAF (`TODO-10` §32; the fifth and sixth found by the mandatory kernel-quality-auditor and consistency review passes over that fix's own diff, same root cause); none is caused by that fix and none is fixable within its scope, because each touches a different file or a pre-existing failure path that fix never introduced.
+
+- [ ] **Mount-time superblock structural validation.** `ixfs_mount` trusts every layout field as-read
+  - It checks magic/version and warns on a checksum mismatch but validates NO layout field: `s_inode_start`, `s_inode_blocks`, `s_total_inodes`, `s_data_start` and friends are trusted as-read.
+  - `ixfs_ino_in_table()` (`src/kernel/fs/ixfs/ixfs_inode.c`, added by `TODO-10` §32) does 64-bit-safe arithmetic on `s_inode_blocks`/`s_total_inodes`, but it can only be as honest as those fields -- nothing rejects an inode-table extent that overlaps the journal, refcount, snapshot or data regions, or that runs past the device.
+  - Reject at mount: overflow in any derived offset/size; an inode-table extent overlapping any other named region; `s_inode_start`/`s_data_start`/etc. extending past `s_total_blocks`; `s_total_inodes` exceeding what `s_inode_blocks` physically holds (the 64-bit-safe clamp in `ixfs_ino_in_table` is a runtime backstop, not a substitute for rejecting the volume up front)
+- [ ] **Snapshot restore bypasses inode validation and ignores I/O failure.** `ixfs_snapshot_restore` (`src/kernel/fs/ixfs/ixfs_cow.c:377-395`)
+  - Copies `se_inode_blocks` raw blocks directly from the snapshot to `s_inode_start`, ignoring both the read and write result, then reloads every cached vnode via `ixfs_read_inode` while ALSO ignoring that call's result -- and logs success regardless.
+  - A corrupt snapshot's block count bypasses `ixfs_ino_in_table` entirely (it operates on raw blocks, not inode numbers), and a partial restore leaves some vnodes describing the pre-restore table against post-restore disk state.
+  - Validate the full source and destination table ranges before copying a single block; check every `ixfs_read_block`/`ixfs_write_block` result; stage all vnode reloads before publishing any of them, or invalidate the whole vnode cache on any failure; return failure rather than log success over a partial copy
+  - The unchecked `ixfs_read_inode` reload (`ixfs_cow.c:390`) has a sharper failure mode than "stale" as of `TODO-10` §32: that section's `ixfs_ino_in_table` now REJECTS a retired vnode-cache slot's `ino == 0` (`ixfs_unlink` sets `.ino = 0` without clearing the rest of the slot -- see `TODO-10` §32's item), so `ixfs_read_inode` returns -1 immediately and `inode.i_size` is read on the next line UNTOUCHED -- silently wrong with no `klog`, where before §32 the same call at least read back inode 0's real (harmless) on-disk record. Restoring this loop must check the return and either skip publishing that vnode's `node.size` or invalidate the slot, not merely read whatever was there before
+- [ ] **`ixfs_snapshot_create` writes an unbounded, unreserved inode-table range.** `ixfs_snapshot_create` (`src/kernel/fs/ixfs/ixfs_cow.c:270-289`)
+  - Allocates only ONE destination block, then copies `s_inode_blocks` blocks (a normal volume has 8) from `s_inode_start + i` to `saved_block + i` with no range validation and no write-result check.
+  - Blocks `saved_block+1 .. saved_block+7` are never reserved -- they may already hold live data, or stay marked free and get allocated to something else, silently overwriting the snapshot; `ixfs_snapshot_delete` then frees this same unreserved range, compounding the corruption.
+  - Reserve the COMPLETE destination range (or use explicit extents) before copying a single block; validate source and destination ranges in 64-bit; check every block I/O result; roll back the reservation on failure
+- [ ] **The vnode cache (`ixfs_get_vnode` and callers) mutates shared state with no lock.** `src/kernel/fs/ixfs/ixfs_inode.c`
+  - `ixfs_get_vnode` reads then writes `vol->vnode_count` and indexes `vol->vnodes[vol->vnode_count]` unsynchronized. The only concurrency comment in the tree (`ixfs_format.c:16-19`) scopes "boot-serialized, no lock" to volume-TABLE allocation at mount, not to steady-state file operations.
+  - `ixfs_get_vnode`/`ixfs_finddir`/`ixfs_read_inode`/`ixfs_write_inode` ARE reachable from ordinary post-boot syscalls (`sys_read`/`sys_write`/`sys_readfile` -> VFS) on any CPU. Two threads opening different new files concurrently can collide on the same `vol->vnodes[]` slot or lose an increment of `vol->vnode_count`.
+  - Serialize the vnode-cache read-modify-write (a per-volume spinlock is the natural fit, matching the pattern `src/kernel/mm/heap.c` §11 already established for `kmalloc`/`kfree`); audit whether `ixfs_unlink`'s slot-retire (`.ino = 0`) needs the same lock against a concurrent `ixfs_get_vnode` scan
+  - This is IXFS's first documented SMP gap in its live (post-mount) path; the existing "boot-serialized" comment describes only the table-allocation step and should be corrected to say so explicitly once this item ships, so a future reader does not read it as covering the whole file
+- [ ] **`ixfs_unlink` ignores `ixfs_write_inode`'s return.** `src/kernel/fs/ixfs/ixfs_ops.c:720`
+  - Frees the inode's extents, zeroes it in memory, then calls `ixfs_write_inode(vol, target_ino, &target)` without checking the result before incrementing `s_free_inodes` and clearing the directory entry.
+  - If that write fails (allocation failure, a read-block failure, or now also `ixfs_ino_in_table` rejecting `target_ino`), the on-disk inode still references the just-freed blocks while the filesystem believes them free and reusable -- a cross-link corruption path once another file claims the same block.
+  - The same unchecked-return pattern recurs at every other `ixfs_write_inode` call site in `ixfs_ops.c` (`:43, 91, 125, 193, 270, 558, 623, 801, 908, 937, 960`); this item's fix should establish the pattern the others then follow, not merely patch `ixfs_unlink` alone.
+  - Make unlink failure-atomic: do not publish the free-inode count or the directory-entry clear unless the zeroed inode durably wrote; roll back the extent frees on failure, ideally inside the existing journal transaction mechanism rather than as a separate patch
+- [ ] Add hostile-volume, failure-injection and concurrency tests for the six findings above
+  - Mount rejects an inode-table extent overlapping the journal/refcount/data regions, and rejects an inflated `s_total_inodes`.
+  - Snapshot restore with an injected block-write failure leaves the vnode cache and disk state consistent (not merely non-crashing); snapshot create on a fragmented volume does not corrupt live data in the unreserved range.
+  - Unlink with an injected `ixfs_write_inode` failure leaves no block both marked free and still referenced; concurrent opens of two different new files do not collide on `vol->vnode_count`.
+- [ ] Commit: `"ixfs: mount-time layout validation + failure-atomic snapshot restore and unlink"`
+
+**Test checkpoint:** the six hostile-volume/failure-injection/concurrency cases above all pass; existing `ixfs` and `vfs` suites stay green; `bash scripts/test-smoke.sh` boots to `C:\>` on an ordinary, non-crafted volume (a validation gate that rejects a legitimate volume is a regression, not hardening). Scope: this section owns validation, failure-atomicity, and vnode-cache locking for the paths named above; it does not re-open `TODO-10` §32's `ixfs_finddir` fix or build new snapshot/journal features (`TODO-07` §6-§9 own those). Platforms: QEMU KVM + TCG.
 
 ## OS Comparison
 

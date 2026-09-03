@@ -87,12 +87,32 @@ _Static_assert(__builtin_offsetof(struct block_header, next) == 8,
 #define HEAP_INIT_ON_ALLOC 1
 #endif
 
-/* Scrub freed user data before returning a block to the pool (so freed
- * secrets do not linger). DEFAULT OFF: enabling it surfaces a pre-existing
- * use-after-free in the filesystem layer (a vnode/inode carrying i_size is
- * read after free; the scrub zeros it, so file size reads 0 and cmd.exe
- * load + mmap content break). The scrub is correct; the FS UAF must be
- * fixed first, then this flips on. */
+/* Scrub freed user data before returning a block to the pool, so freed
+ * secrets do not linger.
+ *
+ * STILL DEFAULT OFF, but for a DIFFERENT reason than before, and the change
+ * of reason is the point: the filesystem use-after-free that used to block
+ * this knob was FIXED on 2026-09-03. Turning the scrub on is now blocked only
+ * by the kernel image ceiling -- `heap_secure_zero` is `__attribute__((unused))`
+ * and elided today, so flipping this to 1 makes it reachable and pushes
+ * `__kernel_end` onto `USER_BASE` (measured: headroom 79 bytes -> BSS COLLISION).
+ * Flip it when there is image headroom; nothing in the FS blocks it.
+ *
+ * The bug it used to surface, kept because the scrub is what made it
+ * DETERMINISTIC rather than a rare misread: both branches of `ixfs_finddir`
+ * held a `struct ixfs_dir_entry *` aliasing into a freed block and read
+ * `d_inode` through it AFTER the free. With the scrub on, that read is
+ * reliably 0, and a lookup for inode 0 then resolved to a retired vnode-cache
+ * slot, so cmd.exe loaded as an empty file. Fixed in
+ * `src/kernel/fs/ixfs/ixfs_ops.c` (read the inode number before the free) and
+ * `src/kernel/fs/ixfs/ixfs_inode.c` (reject inode 0 and out-of-range inodes).
+ *
+ * The earlier version of this comment blamed "a vnode/inode carrying i_size
+ * read after free". That was wrong twice over: no vnode or inode struct is
+ * ever freed on that path, and the field read through the dangling pointer
+ * was `d_inode`, not `i_size`. Recorded rather than quietly deleted, because
+ * the misdescription is a large part of why the bug survived -- it sent
+ * readers to the vnode cache lifetime instead of a local scratch buffer. */
 #ifndef HEAP_ZERO_ON_FREE
 #define HEAP_ZERO_ON_FREE 0
 #endif
@@ -775,8 +795,8 @@ static void kfree_locked(void *ptr, uint32_t want_tag, int check_tag,
 
 #if HEAP_ZERO_ON_FREE
     /* Scrub the user payload so freed secrets do not linger in the pool.
-     * Gated OFF by default pending the FS use-after-free fix (see the
-     * HEAP_ZERO_ON_FREE knob comment). */
+     * Gated OFF by default: the FS use-after-free is fixed, so only image
+     * headroom holds the knob down now (see the HEAP_ZERO_ON_FREE comment). */
     heap_secure_zero((uint8_t *)block + HEADER_SIZE, block->req_size);
 #endif
     block->cookie  = 0;
