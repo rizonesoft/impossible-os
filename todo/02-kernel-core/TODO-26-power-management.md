@@ -14,7 +14,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 > **Goal:** Implement the complete ACPI power management stack beyond the S5 shutdown that already works. This covers S1 CPU-halt idle, S3 suspend-to-RAM, S4 hibernate-to-disk, fast startup (hybrid shutdown / hiberboot), PCI/device D-states (D0--D3cold), runtime device idle management, the ACPI Embedded Controller (EC) driver required for every laptop, battery and AC adapter status (`_BIF`/`_BIX`/`_BST`), power button and lid-close event handling, driver power callbacks with query/veto and correct resume ordering, ACPI thermal zone management (`_TMP`/`_CRT`/`_HOT`/`_PSV`/`_ACx`) with passive and active cooling, CPU idle governor framework (C-states via `_CST`/`MWAIT`), CPU frequency scaling governor framework (HWP/CPPC/`_PSS`), connected standby (S0ix / Modern Standby), power request tracking, wake source management, and the power-plan UI. Without this, Impossible OS has no viable story on laptops or any real hardware that expects ACPI power events.
 
 > [!IMPORTANT]
-> **Current state:** `src/kernel/acpi.c` implements RSDP through XSDT walk, FADT (PM1a control, PM timer), MADT, `acpi_shutdown()` / `acpi_reboot()`, and **`acpi_power_init()`** which parses `\_S1_`, `\_S3_`, and `\_S4_` from the DSDT via **`parse_sleep_type()`**, plus **`acpi_sleep_supported()`** / **`acpi_get_slp_typa()`** and the `Sleep states: S1=...` klog line. **`acpi_enter_sleep_state()`** performs the ACPI PM1a/b SLP_TYP+SLP_EN sequence then `sti; hlt` (S1-style wake only today; S3/S4 still need §3/§4 state save, FACS vector, and firmware resume). **`acpi_enable_fixed_events()`** and **`acpi_register_sci()`** / **`acpi_sci_handler()`** enable PM1 fixed-event SCI path (logs today; §7 owns user-visible dispatch). Phase 2 **`boot_storage.c`** wires `acpi_power_init()`, `acpi_enable_fixed_events()`, and `acpi_register_sci()` after timer init. **`src/kernel/test/test_acpi_power.c`** covers §1 discovery and unsupported-state rejection. **Still greenfield:** EC (§5), battery (§6), S3/S4 (§3/§4), scheduler S1 idle (§2), PCI D-states (§8), governors and `powercfg` (§15+), power syscalls (§20), Linux sysfs parity doc (§21).
+> **Current state:** `src/kernel/acpi.c` implements RSDP through XSDT walk, FADT (PM1a control, PM timer), MADT, `acpi_shutdown()` / `acpi_reboot()`, and **`acpi_power_init()`** which parses `\_S1_`, `\_S3_`, and `\_S4_` from the DSDT via **`parse_sleep_type()`**, plus **`acpi_sleep_supported()`** / **`acpi_get_slp_typa()`** and the `Sleep states: S1=...` klog line. **`acpi_enter_sleep_state()`** performs the ACPI PM1a/b SLP_TYP+SLP_EN sequence then `sti; hlt` (S1-style wake only today; S3/S4 still need §3/§4 state save, FACS vector, and firmware resume). **`acpi_enable_fixed_events()`** and **`acpi_register_sci()`** / **`acpi_sci_process()`** enable the PM1a+PM1b fixed-event SCI path; the ISR acknowledges the hardware and records event counts only (it must not log -- `klog()` reaches disk I/O), and §7 owns the deferred user-visible dispatch. Phase 2 **`boot_storage.c`** wires `acpi_power_init()`, `acpi_enable_fixed_events()`, and `acpi_register_sci()` after timer init. **`src/kernel/test/test_acpi_power.c`** covers §1 discovery and unsupported-state rejection. **Still greenfield:** EC (§5), battery (§6), S3/S4 (§3/§4), scheduler S1 idle (§2), PCI D-states (§8), governors and `powercfg` (§15+), power syscalls (§20), Linux sysfs parity doc (§21).
 
 > [!CAUTION]
 > **Memory rule:** Hibernation image buffers can be multi-gigabyte: always use `pmm_alloc_contiguous()` for hibernation scratch pages. Never `kmalloc` anything > 4 KiB in the suspend/hibernate paths.
@@ -104,6 +104,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  21   | §21 Linux `/sys/power` suspend variant parity       | §1, §10                    |  [ ]   |
 | 💎  |  22   | §22 User-interaction-aware QoS throttling           | §15, §19, §20              |  [ ]   |
 | 💎  |  23   | §23 PCIe ASPM and L1 substates                      | §8, §9, §12                |  [ ]   |
+| 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks         | §1, §5, §7                 |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -114,7 +115,12 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 ## 1. ACPI Sleep Object Parsing & PM1 State Machine
 
 - [x] `acpi_power_init()` added (Phase 2): parses `\_S1_`, `\_S3_`, `\_S4_` from DSDT using generalized `parse_sleep_type()` (refactored from `parse_s5_from_dsdt`)
-- [x] `slp_typa_s1/s3/s4` with `ACPI_SLP_TYPE_INVALID = 0xFFFF` sentinel
+- [x] `slp_typa_s1/s3/s4` with `ACPI_SLP_TYPE_INVALID = 0xFFFF` sentinel -- and a matching `slp_typb_*` per state, since ACPI 6.5 section 7.4.2 makes SLP_TYPa and SLP_TYPb independent per-register values
+- [x] `acpi_table_valid()` gates the DSDT before any AML scan trusts its length
+  - Signature, a length bounded by `ACPI_MAX_TABLE_LENGTH` (16 MiB), containment in one UEFI memory-map descriptor of an ACPI-bearing class, then the checksum.
+  - The header's own containment is proven BEFORE `sig_match()` or the length field are read: both are dereferences, so checking after them is checking too late.
+  - The DSDT is reached through the FADT's `dsdt` field and so never passed through `find_table_*()`'s checksum.
+- [x] `aml_read_integer()` decodes ZeroOp/OneOp/OnesOp/Byte/Word/DWord/QWord prefixes (ACPI 6.5 section 20.2.3); values above 7 are rejected as malformed since SLP_TYP is a 3-bit PM1_CNT field
 - [x] `acpi_sleep_supported(n)` -- returns 1 if sleep state N has a valid SLP_TYPa
 - [x] `acpi_get_slp_typa(n)` -- returns the SLP_TYPa value for sleep state N
 - [x] Wired into Phase 2 boot (`boot_storage.c`) after time subsystem init
@@ -122,22 +128,45 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [x] `acpi_enter_sleep_state(uint8_t state)` -- generic sleep entry:
   1. Validates state support via `acpi_get_slp_typa()`
   2. `cli` -- disables interrupts
-  3. Clears `SLP_EN` bit in PM1a_CNT (ACPI spec requirement before write)
-  4. Writes `(SLP_TYPa << 10) | SLP_EN` to PM1a_CNT; repeats for PM1b_CNT if present
-  5. `sti; hlt` -- CPU halts; S1 resumes on wakeup interrupt; S3/S4 require wakeup vector (§3/§4)
-- [x] `acpi_enable_fixed_events()`: enables PWRBTN_EN (bit 8) + SLPBTN_EN (bit 9) in PM1a_EN; clears pending status
-- [x] `acpi_register_sci()`: registers SCI ISR on vector 32+sci_interrupt (typically IRQ 9 = vec 41)
-- [x] `acpi_sci_handler()`: reads PM1a_STS, dispatches PWRBTN_STS/SLPBTN_STS/WAK_STS, clears status bits, EOI
+  3. Clears a stale `WAK_STS` in both status blocks so the post-halt check can tell a real resume from any interrupt that merely released the halt
+  4. Writes SLP_TYP + SLP_EN into PM1a_CNT as a read-modify-write that PRESERVES the rest of the register (ACPI 6.5 section 4.8.3.2: PM1_CNT also carries SCI_EN bit 0 and BM_RLD bit 1; a wholesale write dropped the machine out of ACPI mode at the moment it was asked to sleep). PM1b_CNT gets its own SLP_TYPb when present
+  5. `sti; hlt`, then confirms the wake through `WAK_STS` rather than assuming it -- returns -1 if the halt was released without a sleep-state exit
+  6. S3/S4 are REFUSED (return -1): they are discovered by this section but entering either loses processor or DRAM state with no AP shutdown, device quiesce, cache flush, waking vector, or hibernation image in place. QEMU reports both supported, so without the refusal a caller gets a hung or reset machine instead of an error. -> XREF: `02-kernel-core/TODO-26-power-management.md` §3 (S3 suspend to RAM), §4 (S4 hibernate to disk)
+  7. S5 is REFUSED: soft-off must go through `acpi_shutdown()`, which runs the storage durability barrier first and never returns
+- [x] `acpi_enable_fixed_events()`: PWRBTN_EN + SLPBTN_EN in BOTH PM1a_EN and PM1b_EN
+  - Clears pending status in each block and validates `PM1_EVT_LEN >= 4` before deriving either enable-register offset.
+  - ACPI 6.5 section 4.8.3.1 lets a fixed-event bit live in either block, so a PM1a-only driver leaves a PM1b-implemented power button both disabled and unacknowledged.
+  - Enables EXACTLY the bits the ISR services: an OR-update would preserve firmware-set TMR/GBL/RTC/PCIEXP_WAKE enables that nothing acknowledges, holding a level-triggered SCI asserted.
+- [x] `acpi_register_sci()`: GSI routing on IOAPIC systems, ISA vector on PIC-only
+  - IOAPIC: `irq_request_gsi_ex()`, translating an ISA `SCI_INT < 16` to its GSI through the MADT overrides, level-triggered active-low.
+  - PIC-only: `isa_irq_to_vector()` + `idt_register_handler()` + `pic_unmask_irq()`, and it REFUSES rather than stealing a vector another driver already owns.
+  - The vector is assigned dynamically, not `32 + sci_interrupt`: ISA IRQ 9 delivers at 0x71 after the slave-PIC remap, and the old fixed install received nothing on IOAPIC systems.
+  - Idempotent -- a repeat call is refused instead of appending a second handler to the shared GSI chain.
+- [x] `acpi_sci_process()`: acknowledges both PM1 blocks in ONE write-1-to-clear each, and does NOT log
+  - ORs PM1a_STS with PM1b_STS, then clears every serviced bit per block in a single write; clearing bit by bit left the line asserted for the duration of the work between writes.
+  - `klog()` reaches `klog_disk_flush()` -> `vfs_open`/`vfs_write` whenever live disk logging is armed (`klog.c:1881`), and `klog_disk_enable()` runs at `boot_storage.c:940`, BEFORE `acpi_register_sci()` at `:1151`.
+  - So the first SCI could perform disk I/O in hard-IRQ context and deadlock against the storage completion interrupt the write waits on.
+  - `acpi_power_button_count()` / `acpi_sleep_button_count()` / `acpi_wake_event_count()` are the thread-level readers; policy dispatch belongs to the power-button section.
 - [x] Wired into Phase 2 boot after `acpi_power_init()`
 - [x] Commit: `"kernel/acpi: S1/S3/S4 sleep type parsing, PM1 state machine, fixed-event ISR"`
 
-**Test checkpoint:** `acpi_sleep_supported(5)` returns 1. `acpi_get_slp_typa(S5)` != 0xFFFF. `acpi_enter_sleep_state(2)` returns -1 (unsupported). `acpi_enter_sleep_state(6)` returns -1 (invalid). 7 tests in `test_acpi_power.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `acpi_sleep_supported(5)` agrees with `acpi_get_slp_typa(5)` (both reflect whether `\_S5` actually parsed -- no fabricated type 0). `acpi_enter_sleep_state(2)` returns -1 (unsupported); `(6)` returns -1 (invalid); `(3)`/`(4)`/`(5)` return -1 (refused). Synthetic-DSDT tests cover Byte/Word prefix and ZeroOp/OneOp decoding, an independent SLP_TYPb, out-of-range rejection, a truncated package, an absent object, and the table validator's bad-checksum / oversized-length / short-length / wrong-signature refusals. 28 tests / 50 assertions in `test_acpi_power.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Verified:** 2026-09-03 | 14/14 items | build OK | 32902 kernel + 17 user-mode tests, 0 failures | smoke matrix 4/4 (TCG+KVM x 1+2 CPU) | boot log: `Sleep states: S1=no S3=yes S4=yes S5=yes`, `ACPI mode established (SCI_EN set)`, `SCI registered (SCI_INT 9, GSI 9, vec 0x32)`
+> **Accepted:** [H] GPE-raised SCIs are never serviced or acknowledged, so a level-triggered SCI stays asserted and the shared-IRQ layer quarantines the GSI after 1000 all-NONE dispatches (`irq.c:511-513`) -> XREF: 02-kernel-core/TODO-26 §24 (item: "`acpi_gpe_init()` -- split each block into its status and enable halves" at line 886)
+> **Accepted:** [H] `\_Sx` byte scan misses SSDT-defined, Method-defined, reference-element and conditionally-defined objects that a real AML evaluator resolves -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "Resolve `\_Sx` through the namespace evaluator, not a byte scan" at line 103)
+> **Accepted:** [M] `_PTS`/`_GTS` before the sleep write and `_WAK` on resume are never evaluated; skipping them is a known cause of laptops that appear to enter S3 but fail to power peripherals down -> XREF: 02-kernel-core/TODO-26 §3 (item: "Evaluate `_PTS(3)` BEFORE the PM1 SLP_TYP+SLP_EN write" at line 210)
+> **Accepted:** [M] FADT extended GAS register fields (`X_PM1a_EVT_BLK`, `X_PM1a_CNT_BLK`) are still unread, so firmware publishing only those loses the SCI silently -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "Prefer the FADT extended GAS register fields over their 32-bit counterparts" at line 104)
+> **Accepted:** [M] `klog_disk_append` mutates the shared FAT32 staging buffer with a non-atomic position increment from any CPU and from interrupt context -> XREF: 02-kernel-core/TODO-04-system-logging §15 (item: "`klog_disk_append` mutates the shared FAT32 staging buffer with no lock" at line 513)
+> **Accepted:** [M] ACPI Global Lock (`GBL_EN` + the FACS lock word) arbitrates OS-versus-SMM access and is required by the OSL contract once ACPICA drives the hardware -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "ACPI Global Lock support in the OSL" at line 105)
+> **Deferred:** [H] S1 is entered with every AP still running behind only a local `cli`; no AP park/rendezvous facility exists to fix it with -> XREF: 02-kernel-core/TODO-26 §2 (item: "Quiesce the APs before any SLP_EN write" at line 175)
+> **Deferred:** [M] PM1b-only platforms are refused rather than half-supported: the control path handles them but the event and SCI paths remain PM1a-dependent -> XREF: 02-kernel-core/TODO-26 §24 (item: "PM1b-only platform support, END TO END" at line 893)
+> **Quality reviewed:** 2026-09-03 | Codex 10x (adversarial, consistency, perf, re-adversarial x7) | 16H+9M+2L fixed, 1 rejected, 8 accepted/deferred | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst
 > **Notes:**
 > - **What shipped:** `acpi_power_init()`/`acpi_sleep_supported()`/`acpi_enable_fixed_events()`/`acpi_register_sci()`/`acpi_enter_sleep_state()` (`src/kernel/acpi.c:681-925`) -- PM1 sleep-type parsing + fixed-event SCI dispatch.
 > - **How it integrates:** wired into Phase 2 boot in `boot_storage.c` after timer init, ahead of every §2+ consumer in this file.
 > - **Downstream effects:** §2-§21 build on `acpi_sleep_supported()`/`acpi_enter_sleep_state()`; S3/S4 still need their own state-save/wakeup-vector work (§3/§4).
-> - **Canonical doc:** `include/kernel/acpi.h`; `src/kernel/test/test_acpi_power.c` (11 assertions, `TEST_CAT_BOOT`).
+> - **Canonical doc:** `include/kernel/acpi.h`; `src/kernel/test/test_acpi_power.c` (28 tests / 50 assertions, `TEST_CAT_BOOT`; run via `scripts/debug/kernel/run-boot-tests.bat`).
 > - **Scope boundary:** §1 owns discovery + the PM1 register sequence only; S3/S4 resume, EC, battery, governors are the sections below.
 
 ---
@@ -166,6 +195,14 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [ ] Commit: `"kernel/acpi: S1 CPU halt, idle thread power-saving integration"`
 
 **Test checkpoint:** `acpi_enter_s1()` halts CPU; resumes on next interrupt. `sched_idle_cpu()` uses S1 when available, falls back to `HLT`. `pm_deep_idle_allowed()` returns false when DPCs pending. Per-CPU `idle_tsc_cycles` counter increments during idle. Test on: QEMU TCG + WHPX.
+
+- [/] Quiesce the APs before any SLP_EN write. BLOCKED: no AP park/rendezvous facility exists
+  - `acpi_enter_sleep_state()` disables interrupts on the CALLING CPU only, so every other processor keeps taking interrupts and driving devices across the transition.
+  - `include/kernel/smp.h` has only the test-only `smp_test_park_cpu`. -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` (live CPU online lifecycle / park)
+  - The function's own refusal block cites "no APs are stopped" as a blocker for S3/S4, and S1 falls straight through it carrying the identical deficiency.
+  - Harmless today only because no production caller exists. Found by `kernel-quality-auditor` during the section-1 review, 2026-09-03.
+  - The function's own refusal block cites "no APs are stopped" as a blocker for S3/S4, and S1 falls straight through it carrying the identical deficiency. Harmless today only because no production caller exists.
+  - Found by `kernel-quality-auditor` during the §1 review, 2026-09-03.
 
 > **Deferred:** [M] not started this pass -- `.text` budget is 95 bytes at this HEAD (`scripts/overnight/bss-headroom.py`, measured repeatedly today across 5 other sections, unchanged all session); any new kernel code is expected to fail the link identically. Also `SPLIT-RECOMMENDED` (7 work items) per `section-manifest.py`, so a split or a structured waiver is owed before implementation regardless. No source changed. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13
 
@@ -198,6 +235,14 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [ ] Power button physical press -> PM1 fixed event (§1) generates SCI; firmware raises the CPU from S3
 - [ ] RTC alarm: `acpi_set_wakeup_alarm(seconds)` -- programs CMOS RTC alarm registers (port 0x70/0x71), sets `RTC_EN` in PM1a_EN; used for timed wake (-> `Task Scheduler` integration, future)
 - [ ] USB device activity: `XHCI_S3_WAKEUP_EN` -- xHCI remote-wakeup enable bit in the USB port status register (→ XREF: `04-drivers-hardware/TODO-10-usb-stack.md`)
+- [ ] Evaluate `_PTS(3)`/`_GTS` before the PM1 sleep write and `_WAK(3)` on resume
+  - Linux does this in `drivers/acpi/sleep.c` (`acpi_pm_prepare` / `acpi_pm_finish`); Windows evaluates them from `ACPI.sys`. `_GTS` is deprecated but still evaluated by both.
+  - Skipping them is a well-known cause of laptops that appear to enter S3 but never power peripherals down, or that hang or corrupt state on wake.
+  - Needs the AML evaluator. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`")
+- [ ] Flush the CPU caches before the SLP_EN write for any state below S4
+  - ACPI 6.5; ACPICA does it in `hwsleep.c` via `ACPI_FLUSH_CPU_CACHE`.
+  - Invisible under every emulator -- the same cross-boot durability class as the bare-metal gotchas doc.
+  - Becomes a precondition the moment the S3 refusal in `acpi_enter_sleep_state()` is lifted.
 - [ ] Commit: `"kernel/acpi: S3 suspend-to-RAM, wakeup vector, CPU state save/restore, AP re-init"`
 
 **Test checkpoint:** `struct s3_cpu_state` saves/restores all GPRs + CR0/CR3/CR4/EFER. `FACS->FirmwareWakingVector` set to `pm_s3_wakeup_entry` physical address. AP re-init SIPI sequence completes. TSC recalibrated after wake. `ke_suspend_bias_update()` adjusts `InterruptTimeBias`. Test on: QEMU TCG (`-machine q35,acpi=on`).
@@ -239,6 +284,9 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   4. Jump to resume RIP -- execution resumes from inside `pm_hibernate_write()` as if `acpi_enter_sleep_state(4)` just returned
   5. Run §3 resume steps 4--7 (recalibrate TSC, notify drivers, unfreeze scheduler)
 - [ ] If `kernel_version` mismatches (updated kernel after hibernate): discard the image; cold boot; log `[HIBER] image version mismatch`
+- [ ] Evaluate `_PTS(4)` before the S4 PM1 write and `_WAK(4)` on resume
+  - Same contract as the S3 path and for the same reason. Needs the AML evaluator.
+  - -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`")
 - [ ] Commit: `"kernel/acpi: S4 hibernation image write/resume, LZ4 compression, version guard"`
 
 **Test checkpoint:** `sizeof(HIBR_HEADER)` == 4096. `HIBR_HEADER.magic == HIBER_MAGIC`. LZ4 compress/decompress round-trips test page. CRC32C mismatch triggers `KERNEL_HIBERNATE_CORRUPT`. Version mismatch discards image and cold boots. Test on: QEMU TCG (with hibernation partition).
@@ -865,11 +913,55 @@ Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe
 
 ---
 
+## 24. ACPI General-Purpose Event (GPE) Blocks
+
+> **Spawned-by:** §1 (review)
+> **User impact:** On real hardware most of what raises the SCI is a GPE, not one of the PM1 fixed events §1 services. Every GPE-raised SCI is therefore never acknowledged, and because the line is level-triggered it stays asserted: on the IOAPIC path `irq_shared_dispatch_wrapper` quarantines and permanently masks the GSI after `IRQ_STORM_ALLNONE_LIMIT` (1000) consecutive all-NONE dispatches (`src/kernel/irq.c:92`, `:511-513`), so the power button, lid switch and every EC event die for the rest of that boot; on a PIC-only machine there is no storm protection at the IDT layer at all and the CPU livelocks. QEMU/OVMF raise no GPEs, so none of this is visible under emulation.
+
+- [ ] Extend `struct acpi_fadt` with the GPE fields, offsets pinned by `_Static_assert` as `x_dsdt` already is
+  - `gpe0_block` / `gpe0_block_length` / `gpe0_base`, `gpe1_block` / `gpe1_block_length` / `gpe1_base`, plus the `X_GPE0_BLK` / `X_GPE1_BLK` GAS forms.
+- [ ] `acpi_gpe_init()` -- split each block into its status and enable halves
+  - `block_length / 2` bytes each, one bit per GPE.
+  - Reject a length that cannot be halved, the way `pm1_en_port()` already rejects `PM1_EVT_LEN < 4`, and clear every status bit before enabling anything.
+- [ ] Byte-wide register accessors: a GPE block is an array of bytes, not the 16-bit words PM1 uses, so `inw_acpi` / `outw_acpi` do not apply
+- [ ] Service GPEs in `acpi_sci_process()` alongside the PM1 fixed events
+  - Read both status halves, acknowledge every asserted-AND-enabled bit, and count them per GPE number.
+  - The ISR stays free of logging and AML evaluation for the reason that function already documents.
+- [ ] Acknowledge a GPE that has no handler yet rather than leaving the line asserted
+  - This is the whole point of splitting the hardware layer from the AML layer: it keeps the storm quarantine from firing while the dispatch half is still unbuilt.
+- [ ] Deferred `_Lxx` (level) / `_Exx` (edge) method dispatch at thread level, keyed by GPE number
+  - Needs the AML evaluator. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`")
+- [ ] `acpi_gpe_enable(n)` / `acpi_gpe_disable(n)` so a driver arms only the events it services -- the same "never enable what you will not acknowledge" rule `acpi_enable_fixed_events()` now follows for PM1
+- [ ] Wake-source attribution: record WHICH GPE resumed the machine, so wake reporting has a real source instead of the bare `PM_WAKE_GPE` tag §13 carries today. -> XREF: `02-kernel-core/TODO-26-power-management.md` §13
+- [ ] PM1b-only platform support, END TO END
+  - `acpi_pm1_control_owned()` already reads SCI_EN from both control blocks ORed (matching `AcpiHwReadMultiple`).
+  - But `acpi_enable_fixed_events()` returns early without a PM1a EVENT block and `acpi_sci_process()` returns without a PM1a status port.
+  - So such a machine could enter S1 and then never acknowledge or count its wake -- a false resume failure with the level-triggered SCI left asserted. `acpi_enter_sleep_state()` therefore REQUIRES PM1a today, deliberately.
+  - Work: initialise and service either event block independently, require at least one valid event block rather than PM1a specifically, and drop the PM1a-only early return from the SCI path.
+  - Filed from the section-1 review (round 7), 2026-09-03: it is a feature, not a review fix, and half-supporting it is worse than requiring PM1a.
+  - Work: initialise and service either event block independently, require at least one valid event block rather than PM1a specifically, and drop the PM1a-only early return from the SCI path.
+  - Filed from the §1 review (round 7), 2026-09-03: it is a feature, not a review fix, and half-supporting it is worse than requiring PM1a.
+- [ ] Unit tests over synthetic GPE block images through a test-only entry point
+  - Same shape as `acpi_parse_sleep_type_test`.
+  - Cover the status/enable split, an asserted-but-unenabled bit left alone, an unhandled GPE still acknowledged, and a block length that cannot be halved.
+- [ ] Commit: `"kernel/acpi: GPE block enable, dispatch, and wake-source attribution"`
+
+**Test checkpoint:** a GPE block splits into equal status/enable halves and a non-halvable length is refused; an asserted-and-enabled GPE bit is acknowledged exactly once; an asserted-but-disabled bit is untouched; a GPE with no registered handler is still acknowledged so the SCI line drops. Test on: QEMU TCG (raises no GPEs -- structural tests only), bare metal (the only place the real path is exercised).
+
+> **Notes:**
+> - **Why this is a new section rather than an item somewhere:** `grep -rn GPE todo/` finds two passing mentions and no owner -- §7 assumes "ACPI GPE fires when lid state changes" and §13 carries a bare `PM_WAKE_GPE` enum tag -- and `04-drivers-hardware/TODO-03` has no GPE mention at all across its ten sections. Nothing owns block discovery, enable, or acknowledgement, so this is ownerless work, not a duplicate of existing coverage.
+> - **How it was found:** independently by `kernel-quality-auditor` (which traced the storm-quarantine consequence to `irq.c:511-513`) and `parity-research-analyst` (which identified GPEs as the channel Linux and Windows actually use for EC, lid, dock and wake) during §1's post-ship review, 2026-09-03.
+> - **Scope boundary:** this section owns the GPE HARDWARE layer only -- block discovery, the status/enable registers, acknowledgement, and per-GPE counts. The `_Lxx`/`_Exx` AML evaluation layered on top belongs to the ACPICA integration. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                         | 🪟 Win11       | 🐧 Linux       | 🚀 Impossible OS |
 | --- | ------------------------------- | -------------- | -------------- | ---------------- |
 | 💎  | S5 ACPI shutdown                | ✅ Full        | ✅ Full        | ✅ Done §1       |
+| 💎  | ACPI S-state discovery          | ✅ ACPI.sys    | ✅ acpi_sleep  | ✅ Done §1       |
+| 💎  | PM1 fixed-event SCI             | ✅ ACPI.sys    | ✅ acpi_sci    | ✅ Done §1       |
 | 💎  | S1 idle / HLT                   | ✅ Full        | ✅ cpuidle     | ⬜ §2            |
 | 💎  | S3 suspend RAM                  | ✅ Full        | ✅ sleep       | ⬜ §3            |
 | 💎  | S4 hibernate disk               | ✅ Full        | ✅ swsusp      | ⬜ §4            |
@@ -909,6 +1001,7 @@ Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe
 | 💎  | Energy Saver adaptive           | ✅ Win11       | ⚠️ profiles    | ⬜ §18           |
 | ⭐  | Human presence HPD wake         | ✅ Platform    | ❌ None        | ⬜ §7            |
 | 💎  | HID-idle QoS throttle (fg-only) | ✅ 25H2        | ❌ None        | ⬜ §22           |
+| 💎  | ACPI GPE block dispatch         | ✅ ACPI.sys    | ✅ acpi_ev_gpe | ⬜ §24           |
 
 After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 

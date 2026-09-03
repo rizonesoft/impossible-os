@@ -29,6 +29,7 @@
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
+#include "kernel/smp.h"
 
 /* ---- I/O helpers ---- */
 
@@ -49,6 +50,25 @@ static inline __attribute__((unused)) uint16_t inw_acpi(uint16_t port)
     return ret;
 }
 
+/* A legacy ACPI System-I/O address is a 16-bit port. Firmware fields carrying
+ * one are 32 bits wide, so a malformed value survives a nonzero test and then
+ * NARROWS to something else entirely -- 0x10000 becomes port 0. Return 0 for
+ * anything that does not fit, so "nonzero" and "usable" mean the same thing
+ * everywhere downstream. */
+static uint16_t acpi_io_port(uint32_t addr)
+{
+    if (!addr || addr > 0xFFFFu)
+        return 0;
+    return (uint16_t)addr;
+}
+
+static inline uint32_t inl_acpi(uint16_t port)
+{
+    uint32_t ret;
+    __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
 static inline uint8_t inb_acpi(uint16_t port)
 {
     uint8_t ret;
@@ -60,14 +80,25 @@ static inline uint8_t inb_acpi(uint16_t port)
 
 static const struct acpi_fadt *fadt_ptr = (const struct acpi_fadt *)0;
 static uint16_t pm1a_cnt_port = 0;
-static uint16_t slp_typa = 0;       /* S5 sleep type value */
+
+/* Sleep type values parsed from the DSDT \_Sx_ objects. INVALID means the
+ * object was absent or did not decode -- it is never a usable SLP_TYP. S5 in
+ * particular must NOT fall back to an invented type 0: acpi_poweroff_now()
+ * runs after storage is quiesced, so writing an arbitrary sleep type there
+ * can request a state that is not soft-off. ACPI 6.5 section 7.4.2 makes
+ * SLP_TYPa and SLP_TYPb independent per-register values, so each state
+ * carries both. */
+#define ACPI_SLP_TYPE_INVALID 0xFFFF
+static uint16_t slp_typa = ACPI_SLP_TYPE_INVALID;    /* S5 SLP_TYPa */
+static uint16_t slp_typb = ACPI_SLP_TYPE_INVALID;    /* S5 SLP_TYPb */
 static uint8_t  acpi_ready = 0;
 
-/* Sleep type values for S1-S4 (parsed from DSDT \_Sx_ objects) */
-#define ACPI_SLP_TYPE_INVALID 0xFFFF
 static uint16_t slp_typa_s1 = ACPI_SLP_TYPE_INVALID;
+static uint16_t slp_typb_s1 = ACPI_SLP_TYPE_INVALID;
 static uint16_t slp_typa_s3 = ACPI_SLP_TYPE_INVALID;
+static uint16_t slp_typb_s3 = ACPI_SLP_TYPE_INVALID;
 static uint16_t slp_typa_s4 = ACPI_SLP_TYPE_INVALID;
+static uint16_t slp_typb_s4 = ACPI_SLP_TYPE_INVALID;
 static const struct acpi_sdt_header *s_dsdt_hdr;  /* cached for acpi_power_init */
 static uint8_t  pcat_compat = 1;    /* MADT bit 0: 1=legacy PIC present, 0=APIC-only */
 
@@ -176,70 +207,369 @@ static const struct acpi_sdt_header *find_acpi_table(
     return find_table_rsdt(rsdt, sig);
 }
 
-/* Parse \_Sx_ object from the DSDT to extract SLP_TYPa.
+/* Upper bound on a firmware-declared ACPI table length. An ACPI header's
+ * checksum does not bound its own `length` field, so a forged or corrupt
+ * length would otherwise drive every table walk past the mapped extent.
+ * 16 MiB is far above any real DSDT (tens of KB) and small enough that the
+ * `i + 3` reach of the scanners below provably cannot wrap uint32_t. */
+#define ACPI_MAX_TABLE_LENGTH (16u * 1024u * 1024u)
+
+/* Validate a firmware-supplied table BEFORE any code trusts its length:
+ * non-NULL, expected signature, a length that covers at least the header and
+ * at most ACPI_MAX_TABLE_LENGTH, and a correct checksum over exactly that
+ * length. find_table_rsdt()/find_table_xsdt() already apply the checksum half
+ * to tables they return; the DSDT is reached through the FADT's `dsdt` field
+ * instead and so was never checked at all. */
+/* Is [phys, phys + len) contained in a SINGLE firmware memory-map descriptor of
+ * a type that can hold an ACPI table?
  *
- * The \_Sx_ object in the DSDT AML bytecode contains the sleep type values.
- * We search for the byte pattern:  '_' 'S' <digit> '_' followed by a package
- * encoding. Works on QEMU, Bochs, VirtualBox, and most real firmware.
+ * The numeric length cap prevents unsigned wrap but proves nothing about
+ * mapping: a corrupt-but-sub-cap length can still run off the end of its
+ * descriptor into reclaimed memory, MMIO, or a hole, and acpi_checksum()
+ * dereferences the WHOLE declared span before anything can reject it. So the
+ * extent is checked against the UEFI map the loader handed us BEFORE the first
+ * read of the table body.
+ *
+ * Returns 1 when contained, and also 1 when the map cannot answer -- a
+ * truncated or absent map is missing evidence, and refusing on it would drop
+ * sleep-state support on machines whose firmware simply has more descriptors
+ * than the handoff carries. */
+static int acpi_extent_mapped(uint64_t phys, uint64_t len)
+{
+    uint32_t i;
+
+    /* ALWAYS scan the descriptors we were given. A truncated map still holds
+     * usable ones, and skipping the scan outright turned validation into
+     * unconditional approval on exactly the machines with the most complex
+     * memory layouts. */
+    for (i = 0; i < g_boot_info.mmap_count && i < BOOT_MMAP_MAX_ENTRIES; i++) {
+        const struct boot_mmap_entry *e = &g_boot_info.mmap[i];
+
+        /* Admit only classes that are readable RAM holding firmware tables. The
+         * SIMPLIFIED type is not enough: the loader folds EfiMemoryMappedIO,
+         * EfiMemoryMappedIOPortSpace and other reserved classes into type 2, and
+         * checksumming a "table" in one of those performs device-register reads.
+         * The original UEFI type is carried per descriptor for this reason. */
+        /* Does the extent lie in THIS descriptor at all? Established before the
+         * type test, so a hit on a rejected class is recorded as a rejection
+         * rather than silently skipped. */
+        if (phys < e->base_addr)
+            continue;
+        if (len > e->length)
+            continue;
+        if (phys - e->base_addr > e->length - len)
+            continue;              /* runs past this descriptor's end */
+
+        /* Admit ONLY the classes an ACPI table actually lives in. Conventional,
+         * loader and boot-services memory are excluded deliberately: pmm_init
+         * returns those to the allocator, so a table "validated" there can be
+         * overwritten afterwards. MMIO classes are excluded because
+         * checksumming across them performs device-register reads. */
+        switch (e->uefi_memory_type) {
+        case UEFI_MMAP_ACPI_RECLAIM:
+        case UEFI_MMAP_ACPI_NVS:
+        case UEFI_MMAP_RESERVED:
+            return 1;
+        default:
+            /* Contained, but in a class a table must not be in. This is
+             * POSITIVE evidence the pointer is wrong, so it outranks the
+             * truncated-map benefit of the doubt below. */
+            klog(LOG_WARN, "acpi",
+                 "table extent lies in unusable memory class %u -- rejected",
+                 (uint64_t)e->uefi_memory_type);
+            return 0;
+        }
+    }
+
+    /* Outside every descriptor we were given. Only a map we KNOW is incomplete
+     * earns the benefit of the doubt; a complete map that does not contain the
+     * table is positive evidence the extent is wrong. */
+    if (!g_boot_info.mmap_count || g_boot_info.mmap_truncated) {
+        klog(LOG_WARN, "acpi",
+             "table extent unprovable (memory map absent or truncated)");
+        return 1;
+    }
+
+    return 0;
+}
+
+/* STRUCTURAL validity: signature, a length that covers the header and stays
+ * under the cap, and a correct checksum over exactly that length. Split out
+ * from the containment policy below so it can be exercised against synthetic
+ * tables -- a unit test's table lives in ordinary test memory, which is
+ * correctly NOT an ACPI-class descriptor, so a combined function could only
+ * ever be tested by refusing it, and every structural case would then pass for
+ * the wrong reason. Assumes hdr's declared extent is already known readable. */
+static int acpi_table_struct_valid(const struct acpi_sdt_header *hdr,
+                                   const char *sig)
+{
+    if (!hdr || !sig_match(hdr->signature, sig))
+        return 0;
+    if (hdr->length < sizeof(struct acpi_sdt_header) ||
+        hdr->length > ACPI_MAX_TABLE_LENGTH)
+        return 0;
+    return acpi_checksum(hdr, hdr->length);
+}
+
+static int acpi_table_valid(const struct acpi_sdt_header *hdr, const char *sig)
+{
+    if (!hdr)
+        return 0;
+
+    /* The HEADER must be proven mapped before it is read at all: sig_match()
+     * and the length field are themselves dereferences, so checking containment
+     * after them would let a corrupt pointer into an unmapped hole or a device
+     * register fault first. Header containment, THEN the structural read, THEN
+     * full-extent containment before the checksum walks the whole span. */
+    if (!acpi_extent_mapped((uint64_t)(uintptr_t)hdr,
+                            (uint64_t)sizeof(struct acpi_sdt_header)))
+        return 0;
+
+    if (!sig_match(hdr->signature, sig))
+        return 0;
+    if (hdr->length < sizeof(struct acpi_sdt_header) ||
+        hdr->length > ACPI_MAX_TABLE_LENGTH)
+        return 0;
+
+    if (!acpi_extent_mapped((uint64_t)(uintptr_t)hdr, (uint64_t)hdr->length))
+        return 0;
+
+    return acpi_table_struct_valid(hdr, sig);
+}
+
+/* Decode one AML integer data object at data[*i], bounded by `length`.
+ * On success advances *i past the term and returns 1; on a malformed or
+ * unsupported encoding returns 0 and leaves *i untouched.
+ *
+ * ACPI 6.5 section 20.2.3 (Data Objects). This exists because the previous
+ * decoder understood only BytePrefix and returned every OTHER opcode byte AS
+ * the value -- a WordPrefix-encoded sleep type yielded 0x0B rather than the
+ * type it encodes.
+ */
+static int aml_read_integer(const uint8_t *data, uint32_t length,
+                            uint32_t *i, uint64_t *out)
+{
+    uint32_t p = *i;
+    uint32_t n;
+    uint32_t k;
+    uint64_t v = 0;
+
+    if (p >= length)
+        return 0;
+
+    switch (data[p]) {
+    case 0x00: *out = 0;              *i = p + 1; return 1;  /* ZeroOp  */
+    case 0x01: *out = 1;              *i = p + 1; return 1;  /* OneOp   */
+    case 0xFF: *out = 0xFFFFFFFFFFFFFFFFull; *i = p + 1; return 1; /* OnesOp */
+    case 0x0A: n = 1; break;   /* BytePrefix  */
+    case 0x0B: n = 2; break;   /* WordPrefix  */
+    case 0x0C: n = 4; break;   /* DWordPrefix */
+    case 0x0E: n = 8; break;   /* QWordPrefix */
+    default:   return 0;
+    }
+
+    p++;
+    if (n > length - p)        /* p <= length here, so this cannot wrap */
+        return 0;
+
+    for (k = 0; k < n; k++)
+        v |= (uint64_t)data[p + k] << (8u * k);
+
+    *out = v;
+    *i = p + n;
+    return 1;
+}
+
+/* Decode an AML PkgLength at data[*i] (ACPI 6.5 section 20.2.4). The top two bits
+ * of the lead byte give the count of following bytes; with none, the low SIX
+ * bits are the length, otherwise the low FOUR bits are its least-significant
+ * nibble. The encoded length INCLUDES the encoding itself, so the package ends
+ * at (lead position + length). Advances *i past the encoding and writes the
+ * package end offset to *pkg_end; returns 0 if the encoding or the resulting
+ * extent runs past `length`.
+ *
+ * Skipping this -- advancing over the encoding without decoding it -- let the
+ * second package element be read from whatever AML happened to follow a SHORT
+ * package whose NumElements over-claimed: in bounds for the table, but not the
+ * value firmware published. */
+static int aml_read_pkglength(const uint8_t *data, uint32_t length,
+                              uint32_t *i, uint32_t *pkg_end)
+{
+    uint32_t p = *i;
+    uint32_t lead_pos = p;
+    uint32_t n;
+    uint32_t v;
+    uint32_t k;
+
+    if (p >= length)
+        return 0;
+
+    n = (uint32_t)((data[p] >> 6) & 0x03);
+    if (n == 0) {
+        v = (uint32_t)(data[p] & 0x3F);
+    } else {
+        v = (uint32_t)(data[p] & 0x0F);
+        if (n > length - p - 1u)
+            return 0;
+        for (k = 0; k < n; k++)
+            v |= (uint32_t)data[p + 1u + k] << (4u + 8u * k);
+    }
+
+    p += 1u + n;
+    if (v < 1u + n || v > length - lead_pos)
+        return 0;          /* length shorter than its own encoding, or overruns */
+
+    *pkg_end = lead_pos + v;
+    *i = p;
+    return 1;
+}
+
+/* Parse a \_Sx_ package from the DSDT and extract SLP_TYPa + SLP_TYPb.
+ *
+ * The object is located by scanning the AML byte stream for the NameString
+ * '_' 'S' <digit> '_' followed by a PackageOp. Works on QEMU, Bochs,
+ * VirtualBox, and most real firmware.
  *
  * AML encoding of \_Sx_:
  *   NameOp (0x08) + '_Sx_' + PackageOp (0x12) + PkgLength + NumElements
- *   + BytePrefix (0x0A) + SLP_TYPa + ...
+ *   + <integer SLP_TYPa> + <integer SLP_TYPb> + ...
  *
- * Returns SLP_TYPa value, or ACPI_SLP_TYPE_INVALID if not found.
+ * ACPI 6.5 section 7.4.2: SLP_TYPa and SLP_TYPb are INDEPENDENT values written
+ * to PM1a_CNT and PM1b_CNT; firmware is not required to make them equal, so
+ * the PM1b write cannot reuse SLP_TYPa.
+ *
+ * `dsdt` MUST already have passed acpi_table_valid() -- this function trusts
+ * dsdt->length as the mapped extent of the table.
+ *
+ * Returns 1 with *out_typa set on success; *out_typb is set only when the
+ * package actually carries a valid second element. Returns 0 (leaving both
+ * INVALID) when the object is absent or does not decode.
  */
-static uint16_t parse_sleep_type(const struct acpi_sdt_header *dsdt,
-                                  char state_digit)
+static int parse_sleep_type(const struct acpi_sdt_header *dsdt,
+                            char state_digit,
+                            uint16_t *out_typa, uint16_t *out_typb)
 {
     const uint8_t *data = (const uint8_t *)dsdt;
     uint32_t length = dsdt->length;
     uint32_t i;
 
-    for (i = sizeof(struct acpi_sdt_header); i + 4 < length; i++) {
-        if (data[i] == '_' && data[i + 1] == 'S' &&
-            data[i + 2] == (uint8_t)state_digit && data[i + 3] == '_') {
+    *out_typa = ACPI_SLP_TYPE_INVALID;
+    *out_typb = ACPI_SLP_TYPE_INVALID;
 
-            i += 4;
+    if (length < sizeof(struct acpi_sdt_header) + 4u)
+        return 0;
 
-            /* Expect PackageOp (0x12) */
-            if (i >= length || data[i] != 0x12)
+    /* Bound written as a subtraction rather than `i + 4 < length`: the old
+     * form wraps for a length near UINT32_MAX and turns the loop bound into a
+     * constant true. acpi_table_valid() already caps length, so this is belt
+     * and braces -- but it is the form that stays correct if the cap moves. */
+    for (i = sizeof(struct acpi_sdt_header); i <= length - 4u; i++) {
+        uint32_t p;
+        uint32_t pkg_end;
+        uint8_t num_elements;
+        uint64_t v;
+        uint16_t ta;
+        uint16_t tb;
+
+        if (data[i] != '_' || data[i + 1] != 'S' ||
+            data[i + 2] != (uint8_t)state_digit || data[i + 3] != '_')
+            continue;
+
+        p = i + 4u;
+
+        /* PackageOp */
+        if (p >= length || data[p] != 0x12)
+            continue;
+        p++;
+
+        /* PkgLength -- DECODED, not merely skipped, so both element reads are
+         * bounded by the PACKAGE and not just by the table. */
+        if (!aml_read_pkglength(data, length, &p, &pkg_end))
+            continue;
+
+        /* NumElements */
+        if (p >= pkg_end)
+            continue;
+        num_elements = data[p];
+        p++;
+
+        if (num_elements < 1)
+            continue;
+
+        /* Both shapes below mirror AcpiGetSleepTypeData()
+         * (src/kernel/acpica/components/hardware/hwxface.c), the reference
+         * implementation vendored in this tree. Decode into LOCALS and publish
+         * only once every element has validated: publishing SLP_TYPa and then
+         * failing on the second element would advertise a state whose PM1b half
+         * is silently skipped, which on a dual-PM1 platform programs half a
+         * transition. */
+        if (num_elements >= 2) {
+            uint64_t vb;
+
+            /* ACPICA's `case 2: default:` fails the WHOLE call unless both
+             * elements are integers, then takes `(UINT8) Integer.Value` of each.
+             * It does NOT reject values above 7 -- the register writer masks to
+             * the 3-bit field instead, which pm1_write_sleep() also does. An
+             * extra range rejection here would report a state UNSUPPORTED that
+             * the reference implementation accepts, which on S5 means a machine
+             * that cannot power off through ACPI at all. */
+            if (!aml_read_integer(data, pkg_end, &p, &v))
                 continue;
-            i++;
-
-            /* Skip PkgLength (variable-length encoding) */
-            if (i >= length)
+            if (!aml_read_integer(data, pkg_end, &p, &vb))
                 continue;
-            uint8_t pkg_lead = data[i];
-            uint8_t pkg_len_bytes = (uint8_t)((pkg_lead >> 6) & 0x03);
-            i += 1 + pkg_len_bytes;
-
-            /* Skip NumElements byte */
-            if (i >= length)
+            ta = (uint16_t)(v & 0xFFu);
+            tb = (uint16_t)(vb & 0xFFu);
+        } else {
+            /* A ONE-element package is legal and is not a truncated two-element
+             * one: the single integer PACKS both types. ACPICA's `case 1:` takes
+             * `(UINT8) value` and `(UINT8)(value >> 8)` -- it MASKS to the two
+             * low bytes and ignores everything above bit 15, so a value like
+             * 0x00010102 is valid there and must be valid here. */
+            if (!aml_read_integer(data, pkg_end, &p, &v))
                 continue;
-            i++;
-
-            /* First element: SLP_TYPa */
-            if (i >= length)
-                continue;
-
-            if (data[i] == 0x0A) {
-                i++;
-                if (i >= length) continue;
-                return (uint16_t)data[i];
-            } else {
-                return (uint16_t)data[i];
-            }
+            ta = (uint16_t)(v & 0xFFu);
+            tb = (uint16_t)((v >> 8) & 0xFFu);
         }
+
+        *out_typa = ta;
+        *out_typb = tb;
+        return 1;
     }
 
-    return ACPI_SLP_TYPE_INVALID;
+    return 0;
 }
 
-/* Legacy wrapper for S5 -- returns 0 as default (QEMU compatible) */
-static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
+/* S5 (soft-off) discovery. A parse failure is PRESERVED as INVALID so callers
+ * can distinguish "firmware never published \_S5" from "\_S5 is type 0" --
+ * type 0 is QEMU's real, parsed value, which is why inventing 0 on failure
+ * looked correct for so long. It made acpi_sleep_supported(5) claim support
+ * unconditionally and handed acpi_poweroff_now() a fabricated sleep type. */
+static void parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
 {
-    uint16_t val = parse_sleep_type(dsdt, '5');
-    return (val == ACPI_SLP_TYPE_INVALID) ? 0 : val;
+    (void)parse_sleep_type(dsdt, '5', &slp_typa, &slp_typb);
+}
+
+/* Test-only entry points into the two firmware-input guards above. The unit
+ * tests build synthetic (and deliberately malformed) table images in their own
+ * memory and run them through the REAL parser and the REAL validator -- the
+ * bounds and AML-decoding behaviour cannot otherwise be exercised, because live
+ * firmware supplies exactly one well-formed DSDT. No live state is touched. */
+int acpi_parse_sleep_type_test(const void *table, char state_digit,
+                               uint16_t *out_typa, uint16_t *out_typb)
+{
+    return parse_sleep_type((const struct acpi_sdt_header *)table,
+                            state_digit, out_typa, out_typb);
+}
+
+int acpi_table_valid_test(const void *table, const char *sig)
+{
+    /* The STRUCTURAL half only. The memory-map containment policy cannot be
+     * exercised from a unit test -- a synthetic table necessarily sits in
+     * ordinary kernel memory, which acpi_extent_mapped() correctly refuses --
+     * so testing the combined function would assert nothing about signature,
+     * length or checksum handling. Containment is exercised on every real boot
+     * instead: the smoke log carries a diagnostic whenever it refuses. */
+    return acpi_table_struct_valid((const struct acpi_sdt_header *)table, sig);
 }
 
 /* ---- MADT parsing ---- */
@@ -627,14 +957,24 @@ int acpi_init(void)
     fadt = (const struct acpi_fadt *)fadt_hdr;
     fadt_ptr = fadt;
 
-    /* Extract PM1a control block port */
-    pm1a_cnt_port = (uint16_t)fadt->pm1a_control_block;
+    /* Extract PM1a control block port. A legacy System-I/O address must fit in
+     * 16 bits: narrowing a malformed value such as 0x10000 to uint16_t yields
+     * port 0, which passes every later nonzero check and then does inw/outw on
+     * unrelated legacy hardware. Reject rather than narrow. */
+    pm1a_cnt_port = acpi_io_port(fadt->pm1a_control_block);
 
-    /* Parse DSDT for \_S5 sleep type */
+    /* Parse DSDT for \_S5 sleep type. The DSDT is firmware-supplied and its
+     * declared length drives every AML scan in this file, so validate it ONCE
+     * here (signature + bounded length + checksum) and cache ONLY a table that
+     * passed -- acpi_power_init() then inherits the same guarantee. Unlike the
+     * RSDT/XSDT tables, the DSDT is reached through the FADT's `dsdt` field and
+     * so never went through find_table_*()'s checksum. */
     dsdt_hdr = (const struct acpi_sdt_header *)(uintptr_t)fadt->dsdt;
-    s_dsdt_hdr = dsdt_hdr;  /* cache for acpi_power_init() */
-    if (dsdt_hdr && sig_match(dsdt_hdr->signature, "DSDT")) {
-        slp_typa = parse_s5_from_dsdt(dsdt_hdr);
+    if (acpi_table_valid(dsdt_hdr, "DSDT")) {
+        s_dsdt_hdr = dsdt_hdr;  /* cache for acpi_power_init() */
+        parse_s5_from_dsdt(dsdt_hdr);
+    } else if (dsdt_hdr) {
+        printk("[ACPI] DSDT failed validation -- sleep states unavailable\n");
     }
 
     acpi_ready = 1;
@@ -680,14 +1020,16 @@ int acpi_init(void)
 
 void acpi_power_init(void)
 {
-    if (!s_dsdt_hdr || !sig_match(s_dsdt_hdr->signature, "DSDT")) {
-        klog(LOG_WARN, "acpi", "ACPI power: no DSDT -- S1/S3/S4 unavailable");
+    /* s_dsdt_hdr is set only after acpi_table_valid() passed in acpi_init(),
+     * so its length is already bounded and checksum-verified here. */
+    if (!s_dsdt_hdr) {
+        klog(LOG_WARN, "acpi", "ACPI power: no valid DSDT -- S1/S3/S4 unavailable");
         return;
     }
 
-    slp_typa_s1 = parse_sleep_type(s_dsdt_hdr, '1');
-    slp_typa_s3 = parse_sleep_type(s_dsdt_hdr, '3');
-    slp_typa_s4 = parse_sleep_type(s_dsdt_hdr, '4');
+    (void)parse_sleep_type(s_dsdt_hdr, '1', &slp_typa_s1, &slp_typb_s1);
+    (void)parse_sleep_type(s_dsdt_hdr, '3', &slp_typa_s3, &slp_typb_s3);
+    (void)parse_sleep_type(s_dsdt_hdr, '4', &slp_typa_s4, &slp_typb_s4);
 
     klog(LOG_INFO, "acpi", "Sleep states: S1=%s S3=%s S4=%s S5=yes",
          slp_typa_s1 != ACPI_SLP_TYPE_INVALID ? "yes" : "no",
@@ -705,7 +1047,10 @@ int acpi_sleep_supported(uint8_t state)
     case 1: return slp_typa_s1 != ACPI_SLP_TYPE_INVALID;
     case 3: return slp_typa_s3 != ACPI_SLP_TYPE_INVALID;
     case 4: return slp_typa_s4 != ACPI_SLP_TYPE_INVALID;
-    case 5: return 1;  /* S5 always supported (shutdown) */
+    /* S5 is reported supported only when \_S5 actually parsed. Returning 1
+     * unconditionally made this API disagree with acpi_get_slp_typa(5), which
+     * hands back INVALID on firmware that never published the object. */
+    case 5: return slp_typa != ACPI_SLP_TYPE_INVALID;
     default: return 0;
     }
 }
@@ -725,6 +1070,199 @@ uint16_t acpi_get_slp_typa(uint8_t state)
 
 static uint16_t s_pm1a_sts_port;   /* PM1a_EVT status register */
 static uint16_t s_pm1a_en_port;    /* PM1a_EVT enable register */
+static uint16_t s_pm1b_sts_port;   /* PM1b_EVT status register (optional) */
+static uint16_t s_pm1b_en_port;    /* PM1b_EVT enable register (optional) */
+
+/* Bits this driver enables and services in the PM1 event registers. */
+#define PM1_STS_PWRBTN  (1u << 8)
+#define PM1_STS_SLPBTN  (1u << 9)
+#define PM1_STS_WAK     (1u << 15)
+#define PM1_SERVICED    (PM1_STS_PWRBTN | PM1_STS_SLPBTN | PM1_STS_WAK)
+
+/* Fixed-event counts, published from the SCI ISR and read at thread level.
+ * The ISR must not log (see acpi_sci_process), so these ARE the record of what
+ * the interrupt saw until a deferred dispatcher consumes them. */
+static volatile uint32_t s_pwrbtn_events;
+static volatile uint32_t s_slpbtn_events;
+static volatile uint32_t s_wake_events;
+
+/* Compute the enable-register port for one PM1 event block. ACPI 6.5 section
+ * 4.8.3.1: the block is PM1_EVT_LEN bytes, split into equal status and enable
+ * halves, so PM1_EVT_LEN must be at least 4 (two 16-bit halves) for the
+ * derived offset to mean anything. Returns 0 when the block is absent or the
+ * declared length is unusable. */
+static uint16_t pm1_en_port(uint32_t block)
+{
+    if (!block || fadt_ptr->pm1_event_length < 4)
+        return 0;
+    /* Validate the RAW block first, then widen before adding: block + half is a
+     * uint32_t expression, so 0xFFFFFFFF + 2 wraps to 1 and would validate as a
+     * perfectly good low port. Compute in 64 bits and reject anything that
+     * leaves the legacy I/O range. */
+    {
+        uint64_t derived;
+
+        if (!acpi_io_port(block))
+            return 0;
+        derived = (uint64_t)block + (uint64_t)(fadt_ptr->pm1_event_length / 2);
+        if (derived > 0xFFFFu)
+            return 0;
+        return acpi_io_port((uint32_t)derived);
+    }
+}
+
+/* Read PM1_CNT as ONE logical register. ACPI 6.5 section 4.8.3 groups PM1a and
+ * PM1b: a bit may be implemented in either block, and an unimplemented bit
+ * reads zero, so the effective value is the OR of both. The vendored reference
+ * does exactly this -- AcpiHwRegisterRead reaches PM1_CONTROL through
+ * AcpiHwReadMultiple(&Value, &XPm1aControlBlock, &XPm1bControlBlock)
+ * (src/kernel/acpica/components/hardware/hwregs.c). Reading only PM1a would
+ * misread SCI_EN as clear on hardware that implements it in PM1b. */
+static uint16_t pm1_control_read_merged(void)
+{
+    uint16_t v = 0;
+
+    uint16_t pm1b = fadt_ptr ? acpi_io_port(fadt_ptr->pm1b_control_block) : 0;
+
+    if (pm1a_cnt_port)
+        v |= inw_acpi(pm1a_cnt_port);
+    if (pm1b)
+        v |= inw_acpi(pm1b);
+    return v;
+}
+
+/* ACPI PM timer frequency, fixed by the spec at 3.579545 MHz. */
+#define ACPI_PMTMR_HZ 3579545u
+
+/* One in-flight mode change at a time (see acpi_pm1_control_owned). */
+static volatile uint32_t s_mode_change_inflight;
+
+/* Wait for SCI_EN with a real ~3-second deadline rather than a spin count.
+ *
+ * The budget is the vendored reference's: AcpiHwSetMode
+ * (src/kernel/acpica/components/hardware/hwacpi.c) polls with `Retry = 3000`
+ * and a 1 ms stall each pass, and its own comment says real firmware may
+ * transition slowly. An uncalibrated spin count expires in whatever time the
+ * host happens to take, which on a fast machine can be milliseconds -- and a
+ * premature give-up here means acpi_poweroff_now() skips S5 and halts.
+ *
+ * The ACPI PM timer is the clock because it is a port read: no interrupts, no
+ * calibration, and usable on the interrupts-disabled recovery path. Deltas are
+ * accumulated under the counter's own width so a wrap (every ~4.7 s at 24 bits)
+ * cannot end the wait early. */
+static int pm1_wait_for_sci_en(void)
+{
+    uint16_t tmr_port = acpi_get_pmtimer_port();
+    uint32_t mask;
+    uint32_t prev;
+    uint32_t iters = 0;
+    uint64_t elapsed = 0;
+    const uint64_t limit = (uint64_t)ACPI_PMTMR_HZ * 3u;
+
+    if (!tmr_port) {
+        /* No PM timer to measure with. Spin long rather than short: the cost of
+         * over-waiting on a machine that will never answer is a slow boot, and
+         * the cost of under-waiting is a machine that cannot power off. */
+        uint32_t i;
+        for (i = 0; i < 50000000u; i++) {
+            if (pm1_control_read_merged() & 1u)
+                return 1;
+        }
+        return 0;
+    }
+
+    mask = acpi_pmtimer_is_32bit() ? 0xFFFFFFFFu : 0x00FFFFFFu;
+    prev = inl_acpi(tmr_port) & mask;
+
+    /* An INDEPENDENT iteration ceiling, because the deadline is only as good as
+     * the clock behind it: a PM timer that reads a constant (stopped, or a port
+     * that answers 0xFF..) never advances `elapsed`, and the loop would spin
+     * forever waiting for a deadline that cannot arrive. The ceiling is far
+     * above the iteration count 3 s of real polling needs, so it never ends a
+     * legitimate wait -- it only bounds a broken one. */
+    while (elapsed < limit && iters < 100000000u) {
+        uint32_t now;
+
+        if (pm1_control_read_merged() & 1u)
+            return 1;
+
+        now = inl_acpi(tmr_port) & mask;
+        elapsed += (uint64_t)((now - prev) & mask);
+        prev = now;
+        iters++;
+    }
+
+    return 0;
+}
+
+/* Is PM1_CNT ours to write -- and if not, TAKE it.
+ *
+ * SCI_EN (PM1_CNT bit 0) is the ownership bit: while it is clear the PM1
+ * registers belong to firmware and SMI. ACPI 6.5 section 4.8.3.2 / 5.2.9 gives
+ * OSPM exactly one way to claim them -- write FADT.ACPI_ENABLE to FADT.SMI_CMD
+ * and poll SCI_EN until firmware sets it. OSPM never writes SCI_EN directly.
+ *
+ * This both ESTABLISHES and REPORTS ownership, deliberately, because splitting
+ * the two produced a shutdown regression twice over: a cached "handshake
+ * failed" flag defaults to permit on every path that never ran the handshake,
+ * while a report-only live read REFUSES on every path that runs before it --
+ * and `boot_storage.c:587-590` reaches boot_recovery_act() -> acpi_poweroff_now()
+ * during Phase 2, long before the handoff at :1154. A machine that boots with
+ * SCI_EN clear would then have been denied the S5 write it previously got. With
+ * establish-and-report there is no path that can refuse without having tried.
+ *
+ * Everything here is port I/O with a bounded poll, so it is safe on the
+ * interrupts-disabled recovery path acpi_poweroff_now() documents. */
+static int acpi_pm1_control_owned(void)
+{
+    uint16_t smi_port;
+    int owned;
+
+    /* No PM1 control block in EITHER position: nothing to own and nothing to
+     * write. Not the hardware-reduced case -- that platform has no PM1 fixed
+     * registers at all and never reaches the callers of this. */
+    if (!pm1a_cnt_port && !(fadt_ptr && acpi_io_port(fadt_ptr->pm1b_control_block)))
+        return 0;
+
+    if (pm1_control_read_merged() & 1u)      /* SCI_EN already set */
+        return 1;
+
+    smi_port = fadt_ptr ? acpi_io_port(fadt_ptr->smi_commandport) : 0;
+    if (!smi_port || !fadt_ptr->acpi_enable)
+        return 0;                            /* no way to ask for ownership */
+
+    /* Do not re-issue ACPI_ENABLE while a previous transition may still be in
+     * flight -- firmware can take seconds, and a second write during the
+     * transition is not a retry, it is a second request. */
+    if (__atomic_exchange_n(&s_mode_change_inflight, 1u, __ATOMIC_ACQUIRE)) {
+        /* Someone else already asked. JOIN their transition with the same
+         * bounded wait rather than sampling SCI_EN once -- firmware may set it
+         * moments later, and a single sample would report "firmware owns it" to
+         * a caller that is about to skip the PM1 shutdown path over it. */
+        return pm1_wait_for_sci_en();
+    }
+
+    outb_acpi(smi_port, fadt_ptr->acpi_enable);
+    owned = pm1_wait_for_sci_en();
+    __atomic_store_n(&s_mode_change_inflight, 0u, __ATOMIC_RELEASE);
+    return owned;
+}
+
+/* Init-time wrapper: same handshake, but it says what happened. Kept separate
+ * only so the boot log carries one line about ACPI mode rather than one per
+ * later poweroff attempt. */
+static int acpi_enter_acpi_mode(void)
+{
+    if (acpi_pm1_control_owned()) {
+        klog(LOG_INFO, "acpi", "ACPI mode established (SCI_EN set)");
+        return 1;
+    }
+
+    klog(LOG_WARN, "acpi",
+         "SCI_EN clear and the SMI_CMD handshake did not take -- "
+         "PM1 registers remain firmware-owned");
+    return 0;
+}
 
 void acpi_enable_fixed_events(void)
 {
@@ -736,56 +1274,135 @@ void acpi_enable_fixed_events(void)
     }
 
     /* PM1a_STS is at pm1a_event_block, PM1a_EN is at pm1a_event_block + half */
-    s_pm1a_sts_port = (uint16_t)fadt_ptr->pm1a_event_block;
-    s_pm1a_en_port  = (uint16_t)(fadt_ptr->pm1a_event_block
-                                 + fadt_ptr->pm1_event_length / 2);
+    s_pm1a_sts_port = acpi_io_port(fadt_ptr->pm1a_event_block);
+    s_pm1a_en_port  = pm1_en_port(fadt_ptr->pm1a_event_block);
+    if (!s_pm1a_en_port) {
+        s_pm1a_sts_port = 0;
+        klog(LOG_WARN, "acpi", "PM1_EVT_LEN %u unusable -- fixed events disabled",
+             (uint64_t)fadt_ptr->pm1_event_length);
+        return;
+    }
 
-    /* Clear any pending status bits first */
-    outw_acpi(s_pm1a_sts_port, 0xFFFF);
+    /* PM1b is OPTIONAL but not decorative: ACPI 6.5 section 4.8.3.1 permits
+     * fixed-event bits to be implemented in EITHER block, so hardware that puts
+     * the power button in PM1b would leave it disabled and, worse, never
+     * acknowledged -- a level-triggered SCI that nothing clears. */
+    s_pm1b_sts_port = acpi_io_port(fadt_ptr->pm1b_event_block);
+    s_pm1b_en_port  = pm1_en_port(fadt_ptr->pm1b_event_block);
+    if (!s_pm1b_en_port)
+        s_pm1b_sts_port = 0;
 
-    /* Enable power button (bit 8) and sleep button (bit 9) events */
-    en = inw_acpi(s_pm1a_en_port);
-    en |= (1u << 8) | (1u << 9);  /* PWRBTN_EN | SLPBTN_EN */
+    /* SCI_EN is an OWNERSHIP bit, not a preference: while it is clear the PM1
+     * registers belong to SMI, so programming them would write under firmware
+     * and leave power/sleep events routed away from the handler we are about to
+     * install. Abort instead, and clear the cached ports so acpi_sci_process()
+     * (which returns early on a zero status port) and acpi_register_sci() both
+     * see an unavailable subsystem rather than a half-configured one. */
+    if (!acpi_enter_acpi_mode()) {
+        s_pm1a_sts_port = 0;
+        s_pm1a_en_port  = 0;
+        s_pm1b_sts_port = 0;
+        s_pm1b_en_port  = 0;
+        klog(LOG_WARN, "acpi",
+             "ACPI mode not established -- fixed events unavailable");
+        return;
+    }
+
+    /* Clear pending status for the bits we service. The previous 0xFFFF wrote
+     * a 1 into bits ACPI 6.5 defines as reserved -- harmless today, but it
+     * would blind-clear a bit that later gains a meaning, and it contradicts
+     * the careful masking the ISR's write-1-to-clear does. */
+    outw_acpi(s_pm1a_sts_port, PM1_SERVICED);
+    if (s_pm1b_sts_port)
+        outw_acpi(s_pm1b_sts_port, PM1_SERVICED);
+
+    /* Enable EXACTLY the events this driver services, and no others. An OR
+     * against the current register would preserve whatever firmware left
+     * enabled -- TMR_EN, GBL_EN, RTC_EN, PCIEXP_WAKE_EN -- none of which
+     * acpi_sci_process() acknowledges. On a level-triggered SCI an enabled but
+     * never-acknowledged event holds the line asserted forever, which the
+     * shared-IRQ layer eventually answers by quarantining the GSI. Enabling
+     * less is the safe direction: an event we do not service is an event we
+     * must not ask for. */
+    en = PM1_STS_PWRBTN | PM1_STS_SLPBTN;  /* PWRBTN_EN | SLPBTN_EN */
     outw_acpi(s_pm1a_en_port, en);
+    if (s_pm1b_en_port)
+        outw_acpi(s_pm1b_en_port, en);
 
-    klog(LOG_INFO, "acpi", "Fixed events: PWRBTN_EN + SLPBTN_EN on PM1a 0x%x/0x%x",
-         (uint64_t)s_pm1a_sts_port, (uint64_t)s_pm1a_en_port);
+    klog(LOG_INFO, "acpi",
+         "Fixed events: PWRBTN_EN + SLPBTN_EN on PM1a 0x%x/0x%x PM1b 0x%x/0x%x",
+         (uint64_t)s_pm1a_sts_port, (uint64_t)s_pm1a_en_port,
+         (uint64_t)s_pm1b_sts_port, (uint64_t)s_pm1b_en_port);
 }
 
-/* SCI body -- services PM1a fixed events and reports whether THIS
- * controller raised the interrupt (the SCI line may be shared) */
+/* SCI body -- services the PM1a/PM1b fixed events and reports whether THIS
+ * controller raised the interrupt (the SCI line may be shared).
+ *
+ * HARD-IRQ CONTEXT. This function must NOT log. klog() reaches
+ * klog_disk_flush() whenever live disk logging is armed (klog.c:1881), which
+ * performs vfs_create/vfs_open/vfs_write (klog_disk.c:1267-1299) -- and
+ * klog_disk_enable() runs at boot_storage.c:940, BEFORE acpi_register_sci() at
+ * :1151, so the very first SCI can already take that path. Blocking there
+ * strands a level-triggered SCI before its EOI and can deadlock against the
+ * storage completion interrupt the write is waiting on. So the ISR does the
+ * two things an ISR must do -- acknowledge the source and record what it saw --
+ * and leaves logging plus policy dispatch to a thread-level consumer.
+ * -> XREF: the power-button/lid-close event section of
+ * todo/02-kernel-core/TODO-26-power-management.md (item:
+ * "acpi_power_button_event()").
+ */
 static int acpi_sci_process(void)
 {
-    uint16_t sts;
-    int handled = 0;
+    uint16_t sts = 0;
+    uint16_t sts_b = 0;
+    uint16_t asserted;
+    uint16_t ack;
 
     if (!s_pm1a_sts_port) return 0;
 
+    /* ACPI 6.5 section 4.8.3.1.1: a fixed-event bit may be implemented in
+     * either block, so the effective status is the OR of both. */
     sts = inw_acpi(s_pm1a_sts_port);
+    if (s_pm1b_sts_port)
+        sts_b = inw_acpi(s_pm1b_sts_port);
+    asserted = (uint16_t)((sts | sts_b) & PM1_SERVICED);
 
-    if (sts & (1u << 8)) {
-        /* Power button pressed */
-        outw_acpi(s_pm1a_sts_port, (1u << 8));  /* clear PWRBTN_STS */
-        klog(LOG_INFO, "acpi", "Power button pressed (SCI)");
-        /* Power button handler dispatch pending -- see power management roadmap. */
-        handled = 1;
-    }
+    if (!asserted)
+        return 0;
 
-    if (sts & (1u << 9)) {
-        /* Sleep button pressed */
-        outw_acpi(s_pm1a_sts_port, (1u << 9));  /* clear SLPBTN_STS */
-        klog(LOG_INFO, "acpi", "Sleep button pressed (SCI)");
-        handled = 1;
-    }
+    /* Acknowledge every serviced bit in ONE write-1-to-clear per block, before
+     * any bookkeeping. Clearing bit by bit left the line asserted for as long
+     * as the work between the writes took. Each block is cleared only for the
+     * bits IT actually asserted -- writing a 1 to a bit a block never raised is
+     * harmless but pointless, and masking keeps the two blocks independent. */
+    ack = (uint16_t)(sts & PM1_SERVICED);
+    if (ack)
+        outw_acpi(s_pm1a_sts_port, ack);
+    ack = (uint16_t)(sts_b & PM1_SERVICED);
+    if (ack && s_pm1b_sts_port)
+        outw_acpi(s_pm1b_sts_port, ack);
 
-    if (sts & (1u << 15)) {
-        /* WAK_STS -- system just woke from sleep */
-        outw_acpi(s_pm1a_sts_port, (1u << 15));  /* clear WAK_STS */
-        klog(LOG_INFO, "acpi", "Wake event detected (WAK_STS)");
-        handled = 1;
-    }
+    if (asserted & PM1_STS_PWRBTN)
+        __atomic_fetch_add(&s_pwrbtn_events, 1u, __ATOMIC_RELAXED);
+    if (asserted & PM1_STS_SLPBTN)
+        __atomic_fetch_add(&s_slpbtn_events, 1u, __ATOMIC_RELAXED);
+    if (asserted & PM1_STS_WAK)
+        __atomic_fetch_add(&s_wake_events, 1u, __ATOMIC_RELAXED);
 
-    return handled;
+    return 1;
+}
+
+/* Thread-level readers of what the SCI ISR recorded. These are the deferred
+ * half of the split above: the ISR counts, a thread-level consumer reports and
+ * acts. Counts are monotonic and never cleared here. */
+uint32_t acpi_power_button_count(void) {
+    return __atomic_load_n(&s_pwrbtn_events, __ATOMIC_RELAXED);
+}
+uint32_t acpi_sleep_button_count(void) {
+    return __atomic_load_n(&s_slpbtn_events, __ATOMIC_RELAXED);
+}
+uint32_t acpi_wake_event_count(void) {
+    return __atomic_load_n(&s_wake_events, __ATOMIC_RELAXED);
 }
 
 /* Shared-chain registrant for the IOAPIC GSI path (EOI owned by the
@@ -807,9 +1424,18 @@ static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
 
 void acpi_register_sci(void)
 {
+    static uint8_t registered;
     uint8_t sci_vec;
 
     if (!fadt_ptr) return;
+
+    /* A second call would append a SECOND acpi_sci_shared node to the same GSI
+     * chain (irq_request_gsi_ex does not de-duplicate on handler+ctx), running
+     * the handler twice per interrupt and double-counting every event. */
+    if (registered) {
+        klog(LOG_WARN, "acpi", "SCI already registered -- ignoring repeat call");
+        return;
+    }
 
     if (ioapic_available()) {
         /* FADT SCI_INT below 16 is an ISA IRQ (translate through MADT
@@ -834,6 +1460,7 @@ void acpi_register_sci(void)
                  (uint64_t)gsi);
             return;
         }
+        registered = 1;
         klog(LOG_INFO, "acpi", "SCI registered (SCI_INT %u, GSI %u, vec 0x%x)",
              (uint64_t)fadt_ptr->sci_interrupt, (uint64_t)gsi,
              (uint64_t)sci_vec);
@@ -854,8 +1481,24 @@ void acpi_register_sci(void)
              (uint64_t)fadt_ptr->sci_interrupt);
         return;
     }
+    /* Refuse rather than steal the vector. idt_register_handler() only WARNs
+     * and then overwrites, and the SCI is typically the shared ISA IRQ 9, so a
+     * silent overwrite would unhook whatever already owns that line (or be
+     * unhooked by it later). This path deliberately does NOT go through
+     * irq_register(): that dispatcher EOIs BEFORE calling the handler, which is
+     * wrong for a level-triggered SCI -- the line is still asserted at EOI time
+     * and the interrupt re-fires immediately. acpi_sci_handler() EOIs after
+     * servicing, which is the correct order here. */
+    if (idt_get_handler(sci_vec)) {
+        klog(LOG_ERROR, "acpi",
+             "vector 0x%x already claimed -- SCI not registered",
+             (uint64_t)sci_vec);
+        return;
+    }
+
     idt_register_handler(sci_vec, acpi_sci_handler);
     pic_unmask_irq((uint8_t)fadt_ptr->sci_interrupt);
+    registered = 1;
 
     klog(LOG_INFO, "acpi", "SCI handler registered (ISA IRQ %u, vec 0x%x, PIC)",
          (uint64_t)fadt_ptr->sci_interrupt, (uint64_t)sci_vec);
@@ -863,10 +1506,49 @@ void acpi_register_sci(void)
 
 /* ---- Generic sleep state entry ------------------------------------------ */
 
+/* Get the SLP_TYPb companion of acpi_get_slp_typa(). Internal: PM1b is a
+ * register-level detail, not part of the public S-state query surface. */
+static uint16_t acpi_get_slp_typb(uint8_t state)
+{
+    switch (state) {
+    case 1: return slp_typb_s1;
+    case 3: return slp_typb_s3;
+    case 4: return slp_typb_s4;
+    case 5: return slp_typb;
+    default: return ACPI_SLP_TYPE_INVALID;
+    }
+}
+
+/* Write SLP_TYP + SLP_EN into one PM1 control register WITHOUT disturbing the
+ * rest of it. ACPI 6.5 section 4.8.3.2: PM1_CNT also carries SCI_EN (bit 0) and
+ * BM_RLD (bit 1); the previous code wrote the register wholesale as
+ * (SLP_TYP << 10) | SLP_EN, which cleared SCI_EN and dropped the machine out of
+ * ACPI mode at the exact moment it was asked to sleep. */
+static void pm1_write_sleep(uint16_t port, uint16_t typ)
+{
+    uint16_t cur = inw_acpi(port);
+    uint16_t val = (uint16_t)((cur & (uint16_t)~((7u << 10) | (1u << 13)))
+                              | ((uint16_t)(typ & 7u) << 10)
+                              | (uint16_t)(1u << 13));
+    outw_acpi(port, val);
+}
+
+/* One sleep attempt at a time. The wake confirmation compares a GLOBAL event
+ * counter against a snapshot, so two concurrent attempts (or an attempt racing
+ * an unrelated wake) could let one validate the other's event. Single-flight
+ * makes the counter attempt-scoped by construction. */
+static volatile uint32_t s_sleep_inflight;
+
 int acpi_enter_sleep_state(uint8_t state)
 {
     uint16_t typa = acpi_get_slp_typa(state);
-    uint16_t val;
+    uint16_t typb = acpi_get_slp_typb(state);
+    uint16_t sts;
+    uint16_t pm1b_cnt = fadt_ptr ? acpi_io_port(fadt_ptr->pm1b_control_block) : 0;
+    uint32_t wake_before;
+    uint64_t saved_flags;
+    int woke = 0;
+    int spins;
 
     /* S5 (soft-off) is NOT a resumable sleep state: it must run the storage
      * durability barrier and then power off without ever returning. That is
@@ -879,44 +1561,138 @@ int acpi_enter_sleep_state(uint8_t state)
         return -1;
     }
 
+    /* S3/S4 are DISCOVERED by this section but not enterable by it. Entering
+     * either loses processor state (S3) or DRAM (S4), and none of the machinery
+     * that makes that survivable exists yet: no APs are stopped, no devices are
+     * quiesced, no caches are flushed, no firmware waking vector is installed,
+     * and no hibernation image is written. QEMU reports S3 and S4 supported, so
+     * without this refusal a caller gets a hung or reset machine rather than an
+     * error. The suspend/hibernate pipelines own the lift.
+     * -> XREF: the "S3: Suspend to RAM" and "S4: Hibernate to Disk" sections
+     * of todo/02-kernel-core/TODO-26-power-management.md. */
+    if (state == 3 || state == 4) {
+        klog(LOG_WARN, "acpi",
+             "S%u entry refused: suspend/resume machinery not implemented",
+             (uint64_t)state);
+        return -1;
+    }
+
     if (typa == ACPI_SLP_TYPE_INVALID) {
         klog(LOG_DEBUG, "acpi", "S%u not supported by firmware", (uint64_t)state);
         return -1;
     }
 
+    /* PM1a is REQUIRED, deliberately. A PM1b-only platform could reach the
+     * control write, but acpi_enable_fixed_events() returns early without a
+     * PM1a EVENT block and acpi_sci_process() returns without a PM1a status
+     * port, so such a machine could enter S1 and then never acknowledge or
+     * count its wake -- a false resume failure with the level-triggered SCI
+     * left asserted. Supporting PM1b-only END TO END is a feature, not a
+     * refusal to relax here.
+     * -> XREF: the "ACPI general-purpose event (GPE) blocks" section of
+     * todo/02-kernel-core/TODO-26-power-management.md carries the PM1b-only
+     * item alongside the other dual-block work. */
     if (!acpi_ready || !pm1a_cnt_port) {
         klog(LOG_ERROR, "acpi", "ACPI not ready -- cannot enter S%u",
              (uint64_t)state);
         return -1;
     }
 
-    klog(LOG_INFO, "acpi", "Entering S%u (SLP_TYPa=%u)...",
-         (uint64_t)state, (uint64_t)typa);
-
-    /* Step 1: Disable interrupts */
-    __asm__ volatile ("cli");
-
-    /* Step 2: Clear SLP_EN before writing SLP_TYP (ACPI spec requirement) */
-    {
-        uint16_t cur = inw_acpi(pm1a_cnt_port);
-        outw_acpi(pm1a_cnt_port, (uint16_t)(cur & ~(1u << 13)));
+    /* Clearing the cached EVENT ports is not enough on its own: PM1_CNT is a
+     * separate register with its own ownership bit. */
+    if (!acpi_pm1_control_owned()) {
+        klog(LOG_ERROR, "acpi",
+             "SCI_EN clear -- refusing to write firmware-owned PM1_CNT for S%u",
+             (uint64_t)state);
+        return -1;
     }
 
-    /* Step 3: Write (SLP_TYPa << 10) | SLP_EN to PM1a_CNT */
-    val = (uint16_t)(typa << 10) | (1u << 13);
-    outw_acpi(pm1a_cnt_port, val);
+    /* Sleep entry is a BSP operation. An AP calling this would halt itself
+     * while the BSP kept running, and its wake confirmation would be reading a
+     * counter another CPU's ISR is driving. */
+    if (smp_cpu_id() != 0) {
+        klog(LOG_ERROR, "acpi", "S%u entry attempted off the BSP (cpu %u)",
+             (uint64_t)state, (uint64_t)smp_cpu_id());
+        return -1;
+    }
 
-    /* Write PM1b_CNT if present */
-    if (fadt_ptr && fadt_ptr->pm1b_control_block)
-        outw_acpi((uint16_t)fadt_ptr->pm1b_control_block, val);
+    if (__atomic_exchange_n(&s_sleep_inflight, 1u, __ATOMIC_ACQUIRE)) {
+        klog(LOG_WARN, "acpi", "S%u entry already in flight", (uint64_t)state);
+        return -1;
+    }
 
-    /* Step 4: For S1, CPU halts here and resumes on wakeup interrupt.
-     * For S3/S4, CPU loses context -- resume is via wakeup vector (not
-     * implemented yet; requires CPU state save from the power-management
-     * sleep/resume roadmap). */
+    klog(LOG_INFO, "acpi", "Entering S%u (SLP_TYPa=%u SLP_TYPb=%u)...",
+         (uint64_t)state, (uint64_t)typa,
+         (uint64_t)(typb == ACPI_SLP_TYPE_INVALID ? 0xFFFFu : typb));
+
+    /* Step 1: Disable interrupts on this CPU, SAVING the caller's flags. A bare
+     * cli/sti pair hands every return path back with IF=1, silently re-enabling
+     * interrupts under a caller that had deliberately turned them off. */
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(saved_flags) : : "memory");
+
+    /* Step 2: Clear a stale WAK_STS, and snapshot the ISR's wake counter. The
+     * counter is what the confirmation below actually reads: the wake SCI is
+     * delivered at the `sti` further down, so acpi_sci_process() runs and
+     * write-1-to-clears WAK_STS BEFORE this function regains control. Polling
+     * the register directly would therefore report a genuine resume as a
+     * failure -- on a single CPU, every time. The ISR publishes the fact
+     * atomically precisely so a thread-level waiter need not win that race. */
+    if (s_pm1a_sts_port)
+        outw_acpi(s_pm1a_sts_port, PM1_STS_WAK);
+    if (s_pm1b_sts_port)
+        outw_acpi(s_pm1b_sts_port, PM1_STS_WAK);
+    wake_before = acpi_wake_event_count();
+
+    /* Step 3: Write SLP_TYP + SLP_EN, preserving the rest of PM1_CNT. PM1b gets
+     * its OWN sleep type: ACPI 6.5 section 7.4.2 does not require the two to match,
+     * and reusing SLP_TYPa there can select a different hardware state. */
+    /* Each block is written only if it EXISTS. pm1_write_sleep() does a
+     * read-modify-write, so calling it with a zero port would do inw/outw on
+     * I/O port 0 -- unrelated legacy hardware -- on a PM1b-only platform. */
+    if (pm1a_cnt_port)
+        pm1_write_sleep(pm1a_cnt_port, typa);
+    if (pm1b_cnt && typb != ACPI_SLP_TYPE_INVALID)
+        pm1_write_sleep(pm1b_cnt, typb);
+
+    /* Step 4: S1 keeps processor context, so the CPU resumes here on a wakeup
+     * interrupt. Any interrupt releases hlt, which is why the wake is confirmed
+     * through WAK_STS below rather than assumed from reaching this line. */
     __asm__ volatile ("sti; hlt");
 
-    /* If we reach here, we woke up from S1 (or S3 resume vector jumped here) */
+    /* Step 5: Confirm the wake. WAK_STS is set by hardware on a genuine
+     * sleep-state exit; a timer tick that merely broke the halt does not set it.
+     * Prefer the ISR's counter (it saw and consumed the bit); fall back to
+     * reading the register for the case where no SCI is routed at all, where
+     * nothing cleared it and the bit is still there to be read. */
+    for (spins = 0; spins < 1000 && !woke; spins++) {
+        if (acpi_wake_event_count() != wake_before) {
+            woke = 1;
+            break;
+        }
+        if (s_pm1a_sts_port) {
+            sts = inw_acpi(s_pm1a_sts_port);
+            if (sts & PM1_STS_WAK) woke = 1;
+        }
+        if (!woke && s_pm1b_sts_port) {
+            sts = inw_acpi(s_pm1b_sts_port);
+            if (sts & PM1_STS_WAK) woke = 1;
+        }
+    }
+
+    /* Restore the caller's interrupt state instead of leaving IF=1 from the
+     * `sti` above. Both exits below pass through here. */
+    if (!(saved_flags & (1ull << 9)))
+        __asm__ volatile ("cli" ::: "memory");
+
+    __atomic_store_n(&s_sleep_inflight, 0u, __ATOMIC_RELEASE);
+
+    if (!woke) {
+        klog(LOG_WARN, "acpi",
+             "S%u: halt released without a wake event -- sleep not entered",
+             (uint64_t)state);
+        return -1;
+    }
+
     klog(LOG_INFO, "acpi", "Resumed from S%u", (uint64_t)state);
     return 0;
 }
@@ -956,15 +1732,26 @@ void acpi_poweroff_now(void)
     /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
 
-    if (acpi_ready && pm1a_cnt_port) {
-        /* Write SLP_TYPa | SLP_EN (bit 13) to PM1a_CNT */
-        uint16_t val = (uint16_t)(slp_typa << 10) | (1 << 13);
-        outw_acpi(pm1a_cnt_port, val);
+    /* Only write PM1 when \_S5 actually parsed. On firmware that never
+     * published it, slp_typa is INVALID and writing a fabricated type here --
+     * after acpi_storage_quiesce() has already shut storage down -- could
+     * request a state that is not soft-off. The platform poweroff ports below
+     * are the correct fallback for exactly that case. */
+    if (acpi_ready && acpi_pm1_control_owned() &&
+        slp_typa != ACPI_SLP_TYPE_INVALID) {
+        uint16_t pm1b_cnt = fadt_ptr
+                                ? acpi_io_port(fadt_ptr->pm1b_control_block)
+                                : 0;
 
-        /* If PM1b exists, write there too */
-        if (fadt_ptr && fadt_ptr->pm1b_control_block) {
-            outw_acpi((uint16_t)fadt_ptr->pm1b_control_block, val);
-        }
+        if (pm1a_cnt_port)
+            pm1_write_sleep(pm1a_cnt_port, slp_typa);
+
+        /* PM1b gets its own SLP_TYPb (ACPI 6.5 section 7.4.2), and only when the
+         * address VALIDATED -- a raw-nonzero field such as 0x10000 resolves to
+         * port 0, and writing that here would hit unrelated legacy hardware
+         * after storage has already been quiesced. */
+        if (pm1b_cnt && slp_typb != ACPI_SLP_TYPE_INVALID)
+            pm1_write_sleep(pm1b_cnt, slp_typb);
     }
 
     /* Fallback: QEMU-specific ACPI power-off port */

@@ -109,7 +109,21 @@ struct acpi_fadt {
     uint8_t  reset_value;
     uint16_t arm_boot_arch;
     uint8_t  fadt_minor_version;
+    /* ACPI 2.0+ extended fields. OSPM must PREFER these over their 32-bit
+     * counterparts whenever they are non-zero (ACPI 6.5 section 5.2.9): a DSDT
+     * placed above 4 GiB is representable only here, and firmware that
+     * publishes only the extended field leaves the 32-bit `dsdt` at 0. Read
+     * them only after checking the FADT's declared length covers them. */
+    uint64_t x_firmware_ctrl;      /* FADT offset 132 */
+    uint64_t x_dsdt;               /* FADT offset 140 */
 } __attribute__((packed));
+
+/* The extended-field offsets are fixed by the spec, so pin them rather than
+ * trusting that every preceding field in this mirror carries the right width. */
+_Static_assert(__builtin_offsetof(struct acpi_fadt, x_firmware_ctrl) == 132,
+               "FADT X_FIRMWARE_CTRL must sit at offset 132 (ACPI 6.5 table 5.9)");
+_Static_assert(__builtin_offsetof(struct acpi_fadt, x_dsdt) == 140,
+               "FADT X_DSDT must sit at offset 140 (ACPI 6.5 table 5.9)");
 
 /* Minimum `header.length` a FADT must report before a given field may be read.
  * Firmware is free to publish a table shorter than the struct above (older
@@ -217,20 +231,51 @@ void acpi_power_init(void);
 void acpi_enable_fixed_events(void);
 
 /* Register SCI (System Control Interrupt) handler for ACPI events.
- * Call after IDT and IOAPIC are ready. */
+ * Call after IDT and IOAPIC are ready. Idempotent: a repeat call is ignored
+ * rather than appending a second handler to the shared GSI chain. */
 void acpi_register_sci(void);
 
-/* Enter a sleep state (S1-S5). Disables interrupts, writes PM1a/PM1b_CNT.
- * For S1: returns 0 on wake. For S3/S4: does not return (resume via wakeup
- * vector, not yet implemented). For S5: does not return (power off).
- * Returns -1 if the state is not supported or ACPI is not ready. */
+/* Enter a sleep state. TODAY THIS MEANS S1 ONLY.
+ *
+ * S1 keeps processor context: returns 0 once the wake is confirmed through
+ * WAK_STS, or -1 if the halt was released without a real sleep-state exit.
+ *
+ * Every other state returns -1 without touching the hardware:
+ *   - S3/S4 are discovered but not enterable -- entering either would lose
+ *     processor or DRAM state with no AP shutdown, device quiesce, waking
+ *     vector, or hibernation image in place. Those pipelines own the lift.
+ *   - S5 is soft-off and must go through acpi_shutdown(), which runs the
+ *     storage durability barrier first and never returns.
+ *   - an unsupported or invalid state number, or ACPI not ready.
+ *
+ * Also returns -1 if the firmware did not publish the state's \_Sx object. */
 int acpi_enter_sleep_state(uint8_t state);
 
-/* Returns 1 if sleep state N (1, 3, 4, or 5) is supported by the firmware. */
+/* Returns 1 if sleep state N (1, 3, 4, or 5) is supported by the firmware,
+ * meaning its \_Sx object parsed out of the DSDT. Support is a statement about
+ * FIRMWARE, not about acpi_enter_sleep_state() accepting the state: S3/S4/S5
+ * can report supported and still be refused by that call (see above). */
 int acpi_sleep_supported(uint8_t state);
 
-/* Get the SLP_TYPa value for a sleep state. Returns 0xFFFF if not supported. */
+/* Get the SLP_TYPa value for a sleep state. Returns 0xFFFF if the state's
+ * \_Sx object was absent or did not decode -- including for S5, which is NOT
+ * given a fabricated type 0 when the firmware never declared it. */
 uint16_t acpi_get_slp_typa(uint8_t state);
+
+/* Fixed-event counts recorded by the SCI ISR. The ISR cannot log or dispatch
+ * policy (it would reach disk I/O in hard-IRQ context), so it acknowledges the
+ * hardware and counts; these are how a thread-level consumer learns what
+ * happened. Monotonic, never reset. */
+/* Test-only: run a caller-supplied table image through the real \_Sx parser /
+ * the real table validator, so malformed-firmware handling is testable without
+ * live firmware. Returns the same values the internal functions do. */
+int acpi_parse_sleep_type_test(const void *table, char state_digit,
+                               uint16_t *out_typa, uint16_t *out_typb);
+int acpi_table_valid_test(const void *table, const char *sig);
+
+uint32_t acpi_power_button_count(void);
+uint32_t acpi_sleep_button_count(void);
+uint32_t acpi_wake_event_count(void);
 
 /* Power off the machine via ACPI S5 sleep state.
  * Falls back to QEMU-specific port if FADT is unavailable.

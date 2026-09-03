@@ -1146,9 +1146,15 @@ void boot_phase2(void)
         extern void acpi_power_init(void);
         extern void acpi_enable_fixed_events(void);
         extern void acpi_register_sci(void);
+        /* POST16 around the DSDT AML walk: it is the one step in this block
+         * that can fault or hang on malformed firmware, and it is exactly the
+         * walk the watchdog note below is about. Every other Phase 2 subsystem
+         * in this file carries a breadcrumb; this block had none. */
+        POST16(POST16_ACPI_PM);
         acpi_power_init();
         acpi_enable_fixed_events();
         acpi_register_sci();
+        POST16(POST16_ACPI_PM_OK);
     }
 
     /* Pet after the post-registry system-services tail (symtab, mmap, time,

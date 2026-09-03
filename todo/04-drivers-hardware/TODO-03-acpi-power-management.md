@@ -100,6 +100,18 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
   - Until then the global-lock algorithm is split into `src/kernel/acpi_global_lock.c` so at least that stays covered in the default build
 - [ ] Remove hand-rolled `acpi_find_table()`, `acpi_get_hpet_base()`, `acpi_get_mcfg()` -- replace with `AcpiGetTable("HPET", ...)`, `AcpiGetTable("MCFG", ...)`; keep the header API but back them with ACPICA
 - [ ] `acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject` for use by §5–§10
+- [ ] Resolve `\_Sx` through the namespace evaluator, not a byte scan
+  - `src/kernel/acpi.c` `parse_sleep_type()` scans the DSDT image for the literal bytes `_ S <digit> _` followed by a `PackageOp`.
+  - It therefore misses every shape a real interpreter handles: an `\_Sx` defined in an SSDT rather than the DSDT (common on OEM firmware -- the scan never reads SSDTs at all), one defined as a `Method` instead of a static `Name`+`Package`, a package element that is a reference rather than an inline integer, and an object gated behind an `If`/`_OSI` branch.
+  - Each of those reports the state UNSUPPORTED today. -> XREF: `02-kernel-core/TODO-26-power-management.md` §1
+- [ ] Prefer the FADT extended GAS register fields over their 32-bit counterparts when non-zero
+  - ACPI 6.5 section 5.2.9: `X_PM1a_EVT_BLK` (offset 148), `X_PM1a_CNT_BLK` (172) and their PM1b twins.
+  - `include/kernel/acpi.h` now declares and offset-asserts `X_FIRMWARE_CTRL`/`X_DSDT`, but the PM1 register accesses still take the 32-bit block fields only, so firmware publishing only the GAS forms loses the SCI silently.
+  - -> XREF: `02-kernel-core/TODO-26-power-management.md` §1
+- [ ] ACPI Global Lock support in the OSL
+  - `GBL_EN` (PM1_EN bit 5) and the FACS lock word arbitrate OS-versus-SMM access to shared ACPI/EC hardware.
+  - Currently inert because `acpi_enable_fixed_events()` deliberately enables only the bits it services, so `GBL_EN` is never set -- but the OSL contract requires it once ACPICA drives the hardware.
+  - `src/kernel/acpi_global_lock.c` already holds the algorithm.
 - [ ] TPM2 ACPI start method (2/8): retrofit `tpm_transport_init()` start-method dispatch to invoke the TPM2 table's AML start method (replaces degrade-with-WARN). -> XREF: `01-boot-platform/TODO-13` §2 (consumer)
 - [ ] Boot log: `[ACPI] ACPICA %s initialised; namespace: %u objects`
 - [ ] Commit: `"acpi: ACPICA AML interpreter -- OSL, AcpiInitializeSubsystem, namespace load"`
@@ -137,7 +149,10 @@ Configure the System Control Interrupt from FADT `SCI_INT`, route via IOAPIC as 
 - [ ] `acpi_sci_isr()`: read PM1a Status register (`PM1a_EVT_BLK + 0`); check bit 8 (`PWRBTN_STS`); clear by writing 1; if set: record `press_time = uptime_ns()`; queue `acpi_button_work`
 - [ ] `acpi_button_work`: if `uptime_ns() - press_time < 2_000_000_000` (2 s) → `system_shutdown(SHUTDOWN_POWEROFF)`; else → `acpi_poweroff()` immediately
 - [ ] Enable PM1a Enable register bit 8 (`PWRBTN_EN`) to unmask the button interrupt
-- [ ] Write `SCI_EN` bit in PM1a_CNT to enable ACPI mode if not already set by firmware
+- [ ] Enter ACPI mode the way the spec defines it: write `FADT.ACPI_ENABLE` to `FADT.SMI_CMD`, then POLL `PM1_CNT.SCI_EN`
+  - OSPM never writes `SCI_EN` directly (ACPI 6.5 section 4.8.3.2 / 5.2.9). The wording here previously named a direct `SCI_EN` write, which is the wrong mechanism.
+  - `src/kernel/acpi.c` `acpi_pm1_control_owned()` already implements the handshake for the pre-ACPICA path; this item is the ACPICA replacement (`AcpiEnableSubsystem` -> `acpi_hw_set_mode`).
+  - Corrected 2026-09-03 from the TODO-26 §1 review. -> XREF: `02-kernel-core/TODO-26-power-management.md` §1
 - [ ] Boot log: `[ACPI] Power button SCI: GSI %u, vector 0x%02X`
 - [ ] Commit: `"acpi: power button SCI -- FADT SCI_INT routing, PWRBTN_STS, shutdown trigger"`
 

@@ -277,6 +277,11 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_KNF_OK           0x20E1
 #define POST16_QUOTA            0x20F0
 #define POST16_QUOTA_OK         0x20F1
+/* Phase 2 ACPI power: the DSDT AML walk is the one step in that block that can
+ * fault or hang on malformed firmware. Distinct from POST16_ACPI (0x1020),
+ * which marks Phase 1's acpi_init table discovery. */
+#define POST16_ACPI_PM          0x20F2
+#define POST16_ACPI_PM_OK       0x20F3
 
 /* Phase 3 -- Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000
