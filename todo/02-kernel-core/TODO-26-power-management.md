@@ -86,7 +86,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)                | §1, §2, §26, §9, D04T03§1  |  [/]   |
 | 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec                 | (none)                     |  [x]   |
 | 💎  |   5   | §5 ACPI EC driver (discovery+transactions; GATED OFF, needs §24) | §1                         |  [/]   |
-| 💎  |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`)                   | §5, §24                    |  [ ]   |
+| 💎  |   6   | §6 Battery & AC adapter ACPI source layer (`_BIX`/`_BST`/`_PSR`) | §29, D04T03§1              |  [/]   |
 | 💎  |   7   | §7 Power button & lid-close events                               | §5                         |  [ ]   |
 | 💎  |   8   | §8 PCI device D-states (D0--D3cold)                              | §1                         |  [ ]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                     |  [ ]   |
@@ -109,6 +109,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep                      | §2                         |  [x]   |
 | 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap                | §26                        |  [ ]   |
 | 💎  |  28   | §28 S4 hibernation write path + resume consumer                  | §4, §3, §9, D02T27§7       |  [/]   |
+| 💎  |  29   | §29 Composite battery model, warn policy, registry publish       | (none)                     |  [ ]   |
+| 💎  |  30   | §30 Battery charge limiting and smart charging                   | §5, §24, §29               |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -436,37 +438,32 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ---
 
-## 6. Battery & AC Adapter
-- [ ] Evaluate `\_SB.BAT0._BIX` (Battery Information Extended, ACPI 4.0+) on init; fall back to `_BIF` (deprecated) if `_BIX` is not present:
+## 6. Battery & AC Adapter (ACPI Source Layer)
+
+> **Spawned-by:** root
+
+Evaluate the ACPI battery and AC-adapter objects and publish each one into the §29 composite model as a provider. This section owns ONLY the namespace-facing half. The provider-agnostic state model, warning policy and registry publication were split out to §29 (implementable without the namespace); charge limiting and smart charging were split out to §30 (blocked on the EC write gate instead).
+
+- [ ] Enumerate every `_HID "PNP0C0A"` battery device in the namespace, not a fixed `\_SB.BAT0` path -- dual-battery and docked systems carry a separate ACPI object per battery
+  - Codex gap-audit finding (2026-09-03): a single fixed-path read reports the wrong percentage and can trigger a critical-power action from the wrong source on multi-battery hardware. -> XREF: ACPI 6.6 §10 Power Source and Power Meter Devices.
+- [ ] Evaluate `_BIX` (Battery Information Extended, ACPI 4.0+) per device on init; fall back to `_BIF` (deprecated) when `_BIX` is absent:
   - `_BIX` returns: revision, power unit, design capacity, last full charge capacity, technology, design voltage, design capacity of warning, design capacity of low, cycle count, measurement accuracy, max sampling time, min sampling time, max/min average interval, battery capacity granularity, model number, serial number, battery type, OEM info
   - `_BIF` returns: design capacity, full charge capacity, technology, design voltage, warn capacity, low capacity, granularity, model, serial, chemistry
-- [ ] Evaluate `\_SB.BAT0._BST` (Battery Status) every 30 s or on EC event:
+  - Map the parsed result onto `bat_info_t` (§29) and hand it back from the provider's `get_info` hook; ACPI's `0xFFFFFFFF` unknown sentinel becomes `BAT_UNKNOWN`
+- [ ] Evaluate `_BST` (Battery Status) per device every 30 s or on an EC event, and drive `bat_update()` (§29) from it:
   - Returns: power state (discharging=1, charging=2, critical=4), present rate (mW), remaining capacity (mWh), present voltage (mV)
-- [ ] `bat_update()` -- reads `_BST`; computes `charge_pct = remaining / full * 100`; `time_remaining_min = remaining / rate * 60`; stores in `bat_state_t`
-- [ ] Battery cycle count and wear level: `wear_pct = (1 - last_full_cap / design_cap) * 100`; available from `_BIX.cycle_count` and capacity ratio
-- [ ] Evaluate `\_SB.ACAD._PSR` (AC Adapter Power Source): 0=offline, 1=online
-- [ ] Register Registry key `HKLM\SYSTEM\Battery\Status` (REG_BINARY) updated on each `bat_update()` call; apps can use `RegNotifyChangeKeyValue` to watch for power changes (→ XREF: `TODO-14-registry-completion.md §4`)
-- [ ] `pm_check_battery_warn()` -- called from `bat_update()`:
-  - `charge_pct <= warn_pct` (Registry `PowerWarnPercent`, default 10%): post `WM_POWERBROADCAST (PBT_APMBATTERYLOWAGE)` to all top-level windows
-  - `charge_pct <= critical_pct` (Registry `PowerCriticalPercent`, default 5%): trigger `pm_enter_s4()` (hibernate) or OS shutdown based on `PowerCriticalAction` Registry value
-- [ ] System tray icon: `[CHG]` charging, `[BAT] n%` discharging, `[AC]` AC plugged in
-- [ ] Tooltip: `"Battery: 73% -- 2h 14m remaining"` or `"Plugged in, charging"`
-- [ ] Click -> flyout with charge bar, current rate (W), temperature if `_BTP` supported, last full charge capacity vs. design capacity (battery wear indicator)
-- [ ] `bat_set_charge_limit(uint8_t pct)` -- refuses (`STATUS_NOT_SUPPORTED`) unless the platform is capability-matched; default 100% (no limit)
-  - Codex adversarial finding (2026-09-03): a raw `ec_write(EC_REG_CHARGE_END, pct)` at a vendor-guessed offset (0xB1 ThinkPad, 0xE4 Dell, 0xBD ASUS) is unsafe on an unmatched EC map -- the same offset can control unrelated firmware state on a different vendor's controller.
-  - Identify the platform (DMI/SMBIOS vendor+model string, or an ACPI `_DSM`/OEM method if the DSDT exposes one) and match against a per-model quirks table before any write; unmatched platforms stay refused, never a best-effort guess.
-  - Validate + read back after write (range-check `pct`, confirm the EC actually latched the value) before reporting success.
-- [ ] Registry `HKLM\SYSTEM\Battery\ChargeLimitPercent` (REG_DWORD, default 100); set to 80 for battery longevity
-- [ ] Smart Charging auto-mode: if laptop has been plugged in for > 4 hours continuously and battery > 80%, auto-hold at 80%; release limit when unplugged; Registry `SmartChargingEnabled` (default 1)
-- [ ] Tray tooltip addition: `"Charging limited to 80%"` when charge limit active
-- [ ] `powercfg /batteryreport` includes charge limit status and smart charging history
-- [ ] Enumerate every `_HID "PNP0C0A"` battery device in the namespace (not a fixed `\_SB.BAT0`) -- dual-battery and docked systems have separate ACPI objects per battery
-  - Codex gap-audit finding (2026-09-03): a single fixed-path read reports the wrong percentage and can trigger critical-power action from the wrong source on multi-battery hardware. -> XREF: ACPI 6.6 §10 Power Source and Power Meter Devices.
-- [ ] Track insertion/removal per battery device (ACPI device-check notify); a hot-removed battery drops out of the composite view rather than reporting stale data
-- [ ] `bat_composite_state()` -- aggregates all present batteries into one system-wide charge/time/critical state (Windows composite-battery model); tray/tooltip/flyout/warnings read the composite, not one battery
-- [ ] Commit: `"kernel/acpi: battery _BIF/_BST, AC adapter, smart charging, low-battery warnings, tray icon"`
+  - Normalise the `_BIX.power_unit` mA/mW distinction before publishing: a mA-reporting battery is converted with `present_voltage` so the composite model only ever sees mW/mWh
+- [ ] Evaluate `\_SB.ACAD._PSR` (AC Adapter Power Source, `_HID "ACPI0003"`): 0=offline, 1=online; publish through `bat_ac_set_online()` (§29)
+- [ ] Register each enumerated battery with `bat_register()` and drop it with `bat_unregister()` on removal, so the §29 composite view is the only aggregation point
+- [ ] Track insertion/removal per battery device (ACPI `Notify` device-check 0x81 / bus-check 0x00); a hot-removed battery leaves the composite view rather than reporting stale data
+- [ ] `_BTP` (Battery Trip Point) where the device exposes it, so a capacity crossing raises a notify instead of being found by the 30 s poll
+- [ ] Commit: `"kernel/acpi: battery _BIX/_BIF/_BST evaluation, AC adapter _PSR, per-device enumeration"`
 
-**Test checkpoint:** `bat_update()` computes `charge_pct` and `time_remaining_min`. `_BIX` parsed (or `_BIF` fallback). `_PSR` returns AC status. `bat_set_charge_limit(80)` writes EC register. Low-battery warning fires at `warn_pct`. Registry `Battery\Status` updated. Test on: QEMU TCG (skip battery tests if no `_BST`).
+**Test checkpoint:** every `PNP0C0A` device in the namespace is enumerated and registered as a §29 provider. `_BIX` is parsed, with `_BIF` fallback on a device that lacks it. `_PSR` drives the AC-online flag. A device-check notify adds/removes a provider and the composite state follows. Test on: QEMU TCG (skip when the namespace exposes no battery), then bare metal on a laptop.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the namespace blocker below clears
+
+> **Deferred:** [H] every item on this section evaluates an ACPI control method, and ACPI namespace evaluation does not run on this tree. ACPICA is vendored and linked, but `AcpiInitializeSubsystem()` / `AcpiLoadTables()` / `AcpiEnableSubsystem()` have ZERO call sites outside `src/kernel/acpica/` and no `acpi_evaluate()` wrapper exists (re-verified 2026-09-04 by grep over `src/` + `include/`), so `_BIX`, `_BIF`, `_BST` and `_PSR` are all unreachable. The provider-agnostic half was split into §29 and IS implementable now; the charge-limit half was split into §30. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "Initialisation sequence in `acpi_init()`"), `02-kernel-core/TODO-26` §29, `02-kernel-core/TODO-26` §30
 
 ---
 
@@ -1219,6 +1216,72 @@ Both residues are §26's own surface, filed here rather than parked into §26 be
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the blockers below clear
 
 > **Deferred:** every item needs a prerequisite owned elsewhere, all four verified against this tree on 2026-09-04. (1) The pre-suspend and resume orchestration is §3's, which is itself deferred: ACPICA is vendored and linked but its namespace is never initialized, so `_PTS`/`_WAK` cannot be evaluated. (2) The §9 driver power callbacks the freeze and thaw steps broadcast to do not exist. (3) There is no `blkdev_open_by_gpt_type()` and no GPT-scan helper in the tree; that helper is owned by the crash-dump sink. (4) Resume entry, image discovery, and integrity/anti-replay validation belong to the bootloader, whose sections are deferred and whose `BOOT_PAYLOAD_HIBERNATION_META` record is explicitly not populated. The format and codec half was split into §4 and is implementable now. -> XREF: `02-kernel-core/TODO-26` §4, `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`"), `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`"), `02-kernel-core/TODO-27-crash-dump-generation.md` §7 (item: "**Prerequisite:** no `blkdev_open_by_gpt_type` exists in tree today; implement `dump_sink_probe()`"), `01-boot-platform/TODO-26` §2-§5
+
+---
+
+## 29. Composite Battery State Model, Power Policy, and Registry Publication
+
+> **Spawned-by:** §6 (split)
+
+The provider-agnostic half of §6. Windows models a machine with N batteries as ONE composite battery (the class driver aggregates every miniport), and every consumer (tray, `powercfg`, `GetSystemPowerStatus`, the critical-power action) reads that composite rather than a device. This section owns the model, the aggregation, the warning policy and the registry publication; §6 supplies the ACPI-backed providers and §30 the charge-limit policy. It is implementable with no ACPI namespace because a provider is an ops table, not a control method.
+
+**Files:** `include/kernel/pm/battery.h` (new), `src/kernel/pm/battery.c` (new), `src/kernel/test/test_battery.c` (new)
+
+- [ ] `bat_info_t` / `bat_status_t`: the per-battery static description and live reading, in mW/mWh normalised units, with `BAT_UNKNOWN` (`0xFFFFFFFF`) as the single unknown sentinel every field uses
+- [ ] `bat_provider_ops_t { get_info, get_status }` plus `bat_register(name, ops, ctx, *handle)` / `bat_unregister(handle)`
+  - A provider is any source of battery readings, so the ACPI layer, a synthetic test source and a future EC-only source all attach the same way.
+- [ ] `bat_ac_set_online(int)` / `bat_ac_online()` for the AC-adapter side, which is a single machine-wide fact rather than a per-device one
+- [ ] `bat_update(void)` -- re-polls every registered provider under the table lock, caches each reading, and recomputes the composite in one pass so no consumer sees a torn mix of old and new readings
+- [ ] `bat_composite_state(bat_composite_t *out)` -- Windows composite-battery semantics over every present battery
+  - Capacities sum; `charge_pct = remaining_total * 100 / full_total`.
+  - The composite is CHARGING when any battery charges, and CRITICAL when the AGGREGATE crosses the critical threshold, not when one cell does.
+- [ ] `time_remaining_min = remaining_total * 60 / rate_total` on discharge only, `BAT_UNKNOWN` when the aggregate rate is zero or any contributing battery reports an unknown rate
+- [ ] `wear_pct = (design_total - last_full_total) * 100 / design_total`, `BAT_UNKNOWN` when design capacity is unknown or zero
+- [ ] All ratio math in `uint64_t` intermediates: `remaining_mwh` is a 32-bit field and `x * 100` overflows a `uint32_t` above ~42.9 M mWh, which a summed multi-battery total can reach
+- [ ] SMP: one spinlock covers the provider table and the cached composite
+  - `bat_register`/`bat_unregister` are safe against a concurrent `bat_update()`.
+  - A provider callback is NEVER invoked with the lock held: a real ACPI evaluation can sleep.
+- [ ] `pm_check_battery_warn()` -- reads `PowerWarnPercent` (default 10) and `PowerCriticalPercent` (default 5) from the registry
+  - Edge-triggered: a level is announced once per crossing, not on every poll.
+  - Returns the policy action rather than performing it, so the actuator stays owned by whoever can actually run it.
+- [ ] `PowerCriticalAction` (default hibernate) resolves to an action enum; the actuators are parked, not invented here -- hibernate is §28 and the `WM_POWERBROADCAST` fan-out needs a window manager
+- [ ] Registry publication on each `bat_update()`: `HKLM\SYSTEM\Battery\Status` (REG_BINARY, packed composite) and `HKLM\HARDWARE\Battery\Percentage` (REG_DWORD)
+  - The DWORD is the value the tray consumer already specifies it reads, so publishing only the packed record would leave that consumer broken.
+- [ ] Publication is best-effort: a registry failure degrades to a klog warning and never fails `bat_update()`, because the composite model is consumed in-kernel and must not depend on the hive
+- [ ] Unit tests over a synthetic provider: single battery, dual battery aggregation, one battery unknown-rate, hot-unregister mid-life, zero design capacity, the 32-bit overflow boundary, and each warn/critical edge fired exactly once
+- [/] Tray icon, tooltip and flyout (charge bar, current rate, wear indicator) -- owned by the system tray, not by kernel PM
+  - The tray section already specifies the `HKLM\HARDWARE\Battery\Percentage` read this section publishes -> XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` §4 (item: "`void systray_draw(gfx_surface_t *s, int32_t x, int32_t y, int32_t w)`")
+- [/] `WM_POWERBROADCAST` / `PBT_APMBATTERYLOW` fan-out to top-level windows on a warn crossing -- blocked, no in-kernel path to broadcast a window message exists
+  - `pm_check_battery_warn()` returns the action for a future broadcaster -> XREF: `02-kernel-core/TODO-26` §17 (item: "`IRP_MN_QUERY_POWER`")
+- [ ] Commit: `"kernel/pm: composite battery model, provider registration, warn policy, registry publication"`
+
+**Test checkpoint:** `bat_composite_state()` aggregates two synthetic providers into one charge percentage and one time estimate. An unknown rate yields `BAT_UNKNOWN` rather than a divide-by-zero. `bat_unregister()` drops a battery from the composite in the same update. The warn and critical edges each fire once per crossing. `HKLM\HARDWARE\Battery\Percentage` matches the composite percentage after `bat_update()`. Test on: QEMU TCG.
+
+---
+
+## 30. Battery Charge Limiting and Smart Charging
+
+> **Spawned-by:** §6 (split)
+
+> **User impact:** a laptop left plugged in charges to 100% and holds there, which is the single largest controllable contributor to lithium-ion wear; both Windows 11 (OEM smart charging) and Linux (`charge_control_end_threshold`) expose a limit.
+
+Charge limiting is a WRITE to the embedded controller at a vendor-specific register, so it is gated on different prerequisites from the rest of §6: the EC write path, and a platform match that says which register this machine actually uses.
+
+- [ ] `bat_set_charge_limit(uint8_t pct)` -- refuses with `STATUS_NOT_SUPPORTED` unless the platform is capability-matched; default 100 (no limit)
+  - Codex adversarial finding (2026-09-03): a raw `ec_write(EC_REG_CHARGE_END, pct)` at a vendor-guessed offset (0xB1 ThinkPad, 0xE4 Dell, 0xBD ASUS) is unsafe on an unmatched EC map -- the same offset can control unrelated firmware state on another vendor's controller.
+  - Identify the platform (DMI/SMBIOS vendor+model, or an ACPI `_DSM`/OEM method the DSDT exposes) and match a per-model quirks table before any write; an unmatched platform stays refused, never a best-effort guess.
+  - Range-check `pct` and read the register back after the write to confirm the EC latched it, before reporting success.
+- [ ] Registry `HKLM\SYSTEM\Battery\ChargeLimitPercent` (REG_DWORD, default 100); 80 is the longevity setting
+- [ ] Smart-charging auto mode: after > 4 h continuously on AC with charge > 80%, hold at 80%; release the limit when unplugged; `SmartChargingEnabled` (REG_DWORD, default 1)
+- [ ] Tray tooltip addition `"Charging limited to 80%"` while a limit is active -> XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` §4
+- [ ] `powercfg /batteryreport` reports charge-limit status and smart-charging history -> XREF: `02-kernel-core/TODO-26` §18
+- [ ] Commit: `"kernel/pm: platform-matched battery charge limiting and smart charging"`
+
+**Test checkpoint:** `bat_set_charge_limit()` refuses on an unmatched platform and never writes the EC. On a matched platform the write is range-checked and read back. The smart-charging hold engages after the AC dwell threshold and releases on unplug. Test on: QEMU TCG for the refusal path, bare metal on a matched laptop for the write path.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the EC write gate below clears
+
+> **Deferred:** [H] EC hardware access is gated off at the driver: §5 shipped the transactions but its own Deferred stamp records that readiness needs GPE acknowledgement and Global Lock arbitration, neither of which exists, so no `ec_write()` may run. [M] the platform quirks table also needs a DMI/SMBIOS vendor+model accessor that this tree does not expose to the PM layer (`src/kernel/firmware_tables.c` parses SMBIOS but publishes no vendor/model query). Both are prerequisites, not implementation choices: guessing the register is exactly the unsafe write the adversarial finding above rejects. -> XREF: `02-kernel-core/TODO-26` §24 (item: "Open the EC gate once GPE acknowledgement works" at line 1059), `02-kernel-core/TODO-26` §5
 
 ---
 

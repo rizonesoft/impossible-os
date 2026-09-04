@@ -131,6 +131,12 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
 - [ ] Keyboard layout click: `context_menu_show()` with layouts list; callback `kbd_set_layout()` stub
 - [ ] Dynamic icon updates: `systray_update_volume_icon()` called from `volume_set()`; `systray_update_net_icon()` from `net_on_state_change()` hook
 - [ ] **Padlock icon when `g_system_state.secure_boot` is 1** (filed 2026-05-01 from [`01-boot-platform/TODO-02-uefi-hardening-secureboot.md §5`](../01-boot-platform/TODO-02-uefi-hardening-secureboot.md#5-secure-boot-state-detection)): conditional tray icon mirroring the battery-icon pattern -- check `g_system_state.secure_boot` at `systray_init()` and on each state change; if 1, register a padlock `tray_icon_t` with tooltip "Secure Boot: ENABLED". Click handler shows a small popup with the live SecureBoot status fields (`uefi_secureboot_enabled` / `uefi_secureboot_setup_mode` / `uefi_secureboot_pk_present` / `uefi_secureboot_kek_present` accessors). When `uefi_secureboot_drift_detected()` returns 1 the icon switches to a red padlock variant + tooltip "Secure Boot: DRIFT DETECTED -- firmware tampering signal".
+- [ ] **Battery icon, tooltip and flyout** -- kernel PM publishes the composite state, the tray renders it
+  - Filed 2026-09-04 from [`02-kernel-core/TODO-26-power-management.md §29`](../02-kernel-core/TODO-26-power-management.md#29-composite-battery-state-model-power-policy-and-registry-publication).
+  - Icon variant + text from `HKLM\HARDWARE\Battery\Percentage` (REG_DWORD, published on every `bat_update()`): `[CHG]` charging, `[BAT] n%` discharging, `[AC]` on AC with no battery present.
+  - Tooltip `"Battery: 73% -- 2h 14m remaining"` on discharge, `"Plugged in, charging"` on AC; the minutes come from the composite time estimate and read "estimating" while it is `BAT_UNKNOWN`.
+  - Click flyout: charge bar, present rate in W, and last-full vs design capacity as a wear indicator; the packed composite is `HKLM\SYSTEM\Battery\Status` (REG_BINARY) so the flyout needs one read, not one per field.
+  - The composite is the ONLY source: never read a per-battery ACPI object directly, or a dual-battery machine shows one cell's percentage as the system's.
 - [ ] Commit: `"systray: tray icons -- volume/network/bell/keyboard flyouts, battery conditional, right-to-left draw"`
 
 ## 5. Toast Notifications `[Opus]`
