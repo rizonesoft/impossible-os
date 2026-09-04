@@ -1,6 +1,6 @@
 {
-  "total_suites": 3264,
-  "total_assertions": 14525,
+  "total_suites": 3282,
+  "total_assertions": 14680,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
@@ -47,6 +47,7 @@
     {"file": "test_firmware_tables.c", "suites": 41, "assertions": 72},
     {"file": "test_harness.c", "suites": 44, "assertions": 159},
     {"file": "test_heap.c", "suites": 16, "assertions": 42},
+    {"file": "test_hibernate_image.c", "suites": 18, "assertions": 155},
     {"file": "test_idt.c", "suites": 4, "assertions": 21},
     {"file": "test_ipc.c", "suites": 5, "assertions": 12},
     {"file": "test_irq_timer.c", "suites": 21, "assertions": 83},

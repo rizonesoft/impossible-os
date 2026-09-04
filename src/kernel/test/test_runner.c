@@ -1013,6 +1013,7 @@ extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
 extern void test_register_acpi_power(void);
 extern void test_register_pm_idle(void);
+extern void test_register_hibernate_image(void);
 extern void test_register_exec(void);
 extern void test_register_kimage(void);
 extern void test_register_usermode_launcher(void);
@@ -1183,6 +1184,7 @@ void test_runner_init(void)
     test_register_blackbox();
     test_register_acpi_power();
     test_register_pm_idle();
+    test_register_hibernate_image();
 
     /* Desktop UI */
     test_register_desktop();

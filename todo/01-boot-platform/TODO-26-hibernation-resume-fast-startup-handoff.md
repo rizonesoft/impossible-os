@@ -52,15 +52,16 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Include resume type: full hibernate, fast startup, crash-test image.
 - [ ] Include required PCR/Secure Boot state when measured boot is active.
 - [ ] Anti-replay `resume_generation`: a monotonic counter in the header written by the D02 T26 writer from a TPM-NV / NVRAM monotonic primitive; the bootloader rejects any image whose generation is not current/highest. -> XREF: T13 §7, T01 §13
-- [ ] Encryption metadata: AEAD cipher id + TPM-sealed key id + nonce/tag fields so the bootloader can require an encrypted image and refuse plaintext (debug-only opt-out); the writer owns encryption. -> XREF: D02T26 §4
-- [ ] Store metadata in a location readable before normal root mount; this header is the single authoritative on-disk format the D02 T26 §4 writer produces (supersedes the legacy `HIBR_HEADER`). -> XREF: D02T26 §4
+- [ ] Encryption metadata: AEAD cipher id + TPM-sealed key id + nonce/tag fields so the bootloader can require an encrypted image and refuse plaintext (debug-only opt-out); the writer owns encryption. -> XREF: D02T26 §28
+- [ ] Store metadata in a location readable before normal root mount; this header is the single authoritative on-disk format (supersedes the legacy `HIBR_HEADER`). -> XREF: D02T26 §4
+  - DEFINED and shipped 2026-09-04 as `include/kernel/pm/hibernate.h` by D02T26 §4, which also pins the canonical byte stream this parser must agree with; the D02T26 §28 writer produces it.
 - [ ] Commit: `"boot: hibernation image metadata format"`
 
 **Test checkpoint:** A fixture hibernation metadata header parses at known offsets (magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags, resume type); a bad-magic or truncated header is rejected. Verify on QEMU WHPX/TCG (fixture parse).
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -76,7 +77,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -92,7 +93,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -103,14 +104,14 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Validate compressed image algorithm support.
 - [ ] Bind to measured boot state where TPM is available.
 - [ ] Reject a valid-but-STALE image: compare the header `resume_generation` against the current TPM-NV/NVRAM monotonic value; a lower/non-current generation is rejected even when checksum/HMAC/state all match. -> XREF: T13 §7, T01 §13
-- [ ] Require an encrypted image: validate the AEAD metadata (cipher/key-id/nonce) and decrypt-verify with the TPM-sealed key; refuse a plaintext image outside an explicit debug path. -> XREF: D02T26 §4
+- [ ] Require an encrypted image: validate the AEAD metadata (cipher/key-id/nonce) and decrypt-verify with the TPM-sealed key; refuse a plaintext image outside an explicit debug path. -> XREF: D02T26 §28
 - [ ] Commit: `"boot: validate hibernation image integrity"`
 
 **Test checkpoint:** A correct checksum/HMAC over metadata + image passes; a single flipped byte is rejected; image physical-memory ranges outside the current memory map are rejected; an unsupported compression algorithm is rejected; TPM-bound state mismatch rejects when measured boot is active. Verify on QEMU WHPX/TCG (fixture).
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -126,7 +127,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -142,7 +143,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -158,7 +159,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -174,7 +175,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -193,7 +194,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
 
-> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §28 (image writer; the on-disk FORMAT shipped as D02T26 §4 on 2026-09-04), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 

@@ -84,7 +84,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | (none)                     |  [x]   |
 | 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting   | §1                         |  [x]   |
 | 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)   | §1, §2, §26, §9, D04T03§1  |  [/]   |
-| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec    | (none)                     |  [ ]   |
+| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec    | (none)                     |  [x]   |
 | 💎  |   5   | §5 ACPI Embedded Controller (EC) driver             | §1                         |  [ ]   |
 | 💎  |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`)      | §5                         |  [ ]   |
 | 💎  |   7   | §7 Power button & lid-close events                  | §5                         |  [ ]   |
@@ -302,27 +302,33 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 > [!NOTE] Ownership boundary (TODO-26 gap-audit 2026-06-17; SPLIT 2026-09-04): the bootloader (`01-boot-platform/TODO-26`) owns hibernation image DISCOVERY, eligibility policy (Secure Boot/db/topology/slot invalidation), anti-replay validation, integrity checking, and the boot_info handoff. This section owns the authoritative on-disk FORMAT and the pure codec that produces and verifies it. The S4 write path, AEAD encryption with a TPM-sealed key, and the kernel resume consumer were split out to §28 because each is blocked on a prerequisite owned elsewhere; keeping them here would have held the codec behind ACPI namespace bring-up. -> XREF: `02-kernel-core/TODO-26` §28, `01-boot-platform/TODO-26 §1,§2,§4,§5`.
 
-- [ ] Hibernation image header in `include/kernel/pm/hibernate.h`: 4 KiB fixed, `_Static_assert` on `sizeof` and on every field offset (a cross-component on-disk ABI, same discipline as `boot_info`)
-  - Fields follow the bootloader's authoritative list: magic, format version, kernel build id, `BOOT_INFO_VERSION`, root volume id, image size, saved page count, header CRC32C, payload CRC32C, flags, resume type (full hibernate / fast startup / crash-test image), `resume_generation` anti-replay counter, and the AEAD block (cipher id, sealed key id, nonce, tag).
-  - This supersedes the legacy `HIBR_HEADER` sketch this section carried before the split, which had no version, no volume identity, and no encryption metadata. -> XREF: `01-boot-platform/TODO-26` §1 (item: "Define header with magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags.")
-  - The AEAD fields are part of the ABI and are DEFINED here; POPULATING them is §28's blocked work, so the codec writes an explicit `HIBER_CIPHER_NONE` and the format states plaintext rather than implying it by omission.
-- [ ] Chunk framing: fixed 64-page (256 KiB) uncompressed chunks, each carrying a descriptor (uncompressed length, stored length, flags) so a chunk that does not shrink is stored verbatim instead of expanded
-  - Compression uses the codec already vendored in this tree: `lz4_compress()` / `lz4_decompress()` / `lz4_compress_bound()` in `include/libs/lz4.h`. No new compressor.
-- [ ] Streaming encoder in `src/kernel/pm/hibernate_image.c`: `hibernate_image_begin()`, `hibernate_image_append_chunk()`, `hibernate_image_finalize()`
-  - Payload CRC32C accumulates across chunks with `kcrc32c_cont()` (`include/kernel/kchecksum.h`); `finalize` writes the header fields and the header's own CRC last.
-- [ ] Decoder half: `hibernate_image_header_validate()` and `hibernate_image_read_chunk()`, both bounds-checked against attacker-chosen lengths rather than trusting the header
-  - `header_validate`: magic, format version, header CRC, and the declared image size / page count consistent with each other and within bounds.
-  - `read_chunk`: refuses a descriptor whose stored length exceeds the remaining input or whose uncompressed length exceeds the fixed chunk size; a decompressor that produces fewer bytes than declared is a failure, not a partial success.
-- [ ] Kernel-identity guard `hibernate_image_kernel_matches()`: a mismatched kernel build id or `BOOT_INFO_VERSION` returns a distinct reason code so the caller discards the image and cold-boots
-  - The caller logs `[HIBER] image version mismatch`; the guard itself stays pure and returns the reason.
-- [ ] The codec stays PURE -- no disk IO, no ACPI, no scheduler interaction -- so it is exercisable by unit tests on this tree, and shipping it is what unblocks the bootloader-side parser
-  - The bootloader's metadata-format section is deferred waiting for a writer to define the format ("gated on the kernel hibernation WRITER"), so this half of §4 is the piece that breaks that deadlock. -> XREF: `01-boot-platform/TODO-26` §1
-  - Do NOT wire the encoder to any disk sink until §28 lands AEAD encryption: an image on disk is confidential kernel memory. -> XREF: `02-kernel-core/TODO-26` §28 (item: "AEAD-encrypt the image")
-- [ ] Commit: `"kernel/pm: S4 hibernation image format + LZ4 chunk codec"`
+- [x] Hibernation image header in `include/kernel/pm/hibernate.h`: `hiber_header_t`, exactly 4 KiB, `_Static_assert` on `sizeof` and on all 19 field offsets (a cross-binary on-disk ABI, same discipline as `boot_info`)
+  - Fields: magic, format_version, header_bytes, image_bytes, page_count, chunk_count, resume_type, boot_info_version, flags, root_volume_id, resume_generation, `kernel_id[32]`, aead_cipher_id, aead_key_id, `aead_nonce[12]`, `aead_tag[16]`, payload_crc32c, header_crc32c, reserved. Supersedes the legacy `HIBR_HEADER` sketch, which had no version, no volume identity and no encryption metadata. -> XREF: `01-boot-platform/TODO-26` §1 (item: "Define header with magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags.")
+  - `kernel_id` is a 32-byte OPAQUE identity compared byte for byte, not a build number plus a short commit hash: the design review measured the latter at roughly 32 bits (`Makefile:197-198`), which two different kernel binaries can collide on. Producing a strong value is §28's. -> XREF: `02-kernel-core/TODO-26` §28
+  - The AEAD fields are part of the ABI and defined here; the codec writes `HIBER_CIPHER_NONE` so plaintext is a stated state rather than an omission.
+- [x] Canonical byte stream pinned in the header's normative comment and enforced by the decoder, not left to the struct layout alone
+  - Little-endian fixed-width fields; payload starting at exactly 4096; `image_bytes` counting the header; reserved bytes zero; `header_crc32c` over all 4096 bytes with its own field read as zero; unknown flag bits REJECTED; no trailing data.
+  - Pinned offsets alone do not define a byte stream: two mirrors can each satisfy their own `_Static_assert`s and still parse different bytes. This is the contract that makes a future UEFI mirror checkable.
+- [x] Chunk framing: `hiber_chunk_desc_t` (24 bytes) inline before each chunk, carrying `start_pfn`, `page_count` (1..64), `uncompressed_len`, `stored_len` and flags; a chunk that does not shrink is stored verbatim
+  - `start_pfn` makes the chunk sequence itself the DESTINATION MAP. A hibernation image restores sparse PMM-used pages, and lengths alone cannot say which frame a chunk belongs to; extents are strictly ascending, non-overlapping, and bounded by `HIBER_MAX_PFN` INCLUSIVE (that frame's page is fully addressable) so a PFN always converts to a byte address without wrapping. Both sides compare the LAST INCLUDED frame, because a bound the header calls inclusive and the code treats as exclusive is exactly the divergence a separately compiled mirror would inherit.
+  - Compression is the codec already vendored in the tree: `lz4_compress()` / `lz4_decompress()` / `lz4_compress_bound()` (`include/libs/lz4.h`). The compressor is capped one byte below its input, so "did not shrink" is a refusal from LZ4 itself and an incompressible image never grows.
+- [x] Streaming encoder in `src/kernel/pm/hibernate_image.c`: `hibernate_image_begin()`, `hibernate_image_append_chunk()`, `hibernate_image_finalize()`, plus `hibernate_image_encoded_bound()` for output sizing
+  - Payload CRC-32C accumulates across descriptors AND data with `kcrc32c_cont()` (`include/kernel/kchecksum.h`), so a tampered destination PFN is a CRC failure and not merely an ordering failure.
+  - No allocation and no scratch buffer: the encoder compresses straight into the caller's image buffer and falls back to a verbatim copy in place. Nothing is global, so two CPUs may encode two images at once.
+- [x] Decoder half: `hibernate_image_header_validate()`, `hibernate_image_decode_begin()`, `hibernate_image_read_chunk()` and the mandatory `hibernate_image_decode_finish()` completion gate
+  - `header_validate` returns a POINTER into the image rather than copying 4 KiB onto an 8 KiB kernel stack, and runs the header CRC before trusting any other field.
+  - `read_chunk` bounds-checks every descriptor against the remaining image, rejects unknown flags, requires `uncompressed_len == page_count * 4096`, and hands LZ4 the DECLARED output length as its capacity rather than the caller's buffer size, so a forged one-page descriptor carrying a multi-page block is refused before the extra bytes are written.
+  - `decode_finish` proves the declared chunk count, page count and encoded length were each exhausted exactly and that the payload CRC matches. Decoded bytes are documented PROVISIONAL until it returns `HIBER_OK`: without it a caller can decode every individually valid chunk and never establish whole-image integrity.
+- [x] Kernel-identity guard `hibernate_image_kernel_matches()` with distinct reason codes so a caller discards the image and cold-boots
+  - `HIBER_IDENT_KERNEL_ARTIFACT_MISMATCH`, `HIBER_IDENT_BOOT_INFO_ABI_MISMATCH`, `HIBER_IDENT_FORMAT_VERSION_MISMATCH` and `HIBER_IDENT_RESUME_TYPE_MISMATCH` stay separate: a different kernel binary and a changed handoff ABI are different operator-facing failures. A NULL argument refuses rather than defaulting to a match.
+- [x] The codec is PURE -- no disk IO, no ACPI, no scheduler interaction -- which is what makes it fully testable on this tree and what unblocks the bootloader-side parser
+  - The bootloader's metadata-format section is deferred waiting for a writer to define the format ("gated on the kernel hibernation WRITER"), so shipping this half is what breaks that deadlock. -> XREF: `01-boot-platform/TODO-26` §1
+  - The encoder is deliberately NOT wired to any disk sink: an image on disk is confidential kernel memory, and AEAD encryption is §28's. -> XREF: `02-kernel-core/TODO-26` §28 (item: "AEAD-encrypt the image (AES-GCM) with a TPM-sealed key")
+- [x] Commit: `"kernel/pm: S4 hibernation image format + LZ4 chunk codec"`
 
-**Test checkpoint:** `sizeof` of the header is 4096 and every pinned field offset asserts. Magic matches `HIBER_MAGIC`. A chunk round-trips compress -> decompress byte-identically, including an incompressible chunk that takes the stored-verbatim path. A flipped payload byte fails the CRC32C check. A truncated header, a bad magic, and a descriptor whose stored length runs past the buffer are each rejected. A kernel build id mismatch reports the discard reason. Test on: QEMU TCG.
+**Test checkpoint:** `sizeof(hiber_header_t)` is 4096 and all 19 field offsets assert at compile time. The ENCODED bytes carry magic at 0, format_version at 8, image_bytes at 16, page_count at 24, chunk_count at 32. A compressible chunk round-trips smaller than its raw pages; an incompressible chunk takes the stored-verbatim path and encodes to exactly one descriptor plus its pages. A flipped payload byte passes per-chunk decode and is caught only by the completion gate, as are an overstated page count and unconsumed trailing bytes. A truncated header, bad magic, flipped header byte, non-zero reserved byte, unknown flag, unknown resume type and unknown cipher id are each refused with their own code. A forged descriptor that over-expands, decodes short, or names a PFN past the addressable ceiling is refused, and nothing is written past the declared output. Sparse extents keep their destination PFNs; descending and overlapping extents are refused. A kernel id differing by one bit refuses the image. A buffer LARGER than the image decodes normally and its undeclared suffix is ignored, because `img_len` is a capacity and `image_bytes` is what says where the image ends. `bash scripts/test.sh SUITE=boot` green; `tail -1 build/build.log` is `=== BUILD OK ===`.
 
----
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `src/kernel/test/test_hibernate_image.c`, 18 suites, 0 failures
 
 ## 5. ACPI Embedded Controller (EC) Driver
 - [ ] The Embedded Controller is mandatory on all laptops; it mediates battery, thermal, lid, and hotkey events. Interface: two I/O ports
@@ -1118,6 +1124,10 @@ Both residues are §26's own surface, filed here rather than parked into §26 be
   - Corruption halt path. -> XREF: `TODO-27-crash-dump-generation.md` §1
 - [/] Evaluate `_PTS(4)` before the S4 PM1 write and `_WAK(4)` on resume, same contract as the S3 path
   - BLOCKED: `AcpiEvaluateObject` is compiled and linked (`src/kernel/acpica/components/namespace/nsxfeval.c:325`) but unreachable while the namespace is never loaded. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1
+- [/] Supply the §4 header's 32-byte `kernel_id` from an exact-artifact digest, so the identity guard compares something collision-resistant rather than something merely distinct
+  - The codec already compares all 32 bytes; nothing yet PRODUCES a strong value. The two routes are a linker `--build-id=sha256` note read at runtime (a `Makefile` change, which the unattended run may not make) or a loader-measured kernel digest carried in `boot_info`. Build id and short commit stay diagnostics either way. -> XREF: `01-boot-platform/TODO-26` §1 (item: "Define header with magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags.")
+- [/] Add a kernel-versus-UEFI manifest comparison gate for the hibernation header, in the shape `tools/boot-info-manifest/` already uses for `boot_info`
+  - §4 pins the canonical byte stream and every field offset on the kernel side, but no UEFI mirror exists yet to compare against (`src/boot/uefi/bootx64.c:18233` still reads "Resume metadata (S4 hibernation): not populated yet"), so the gate is built when the parser is. -> XREF: `01-boot-platform/TODO-26` §1
 - [/] Commit: `"kernel/pm: S4 hibernation write path + resume consumer"`
 
 **Test checkpoint:** `pm_hibernate_write()` produces an image the §4 decoder validates end to end; a resume with a mismatched kernel build id discards the image and cold-boots; a corrupted payload halts with `KERNEL_HIBERNATE_CORRUPT`; a plaintext image is refused when encryption is required. Test on: QEMU TCG (with a hibernation partition), then bare metal.
@@ -1139,7 +1149,8 @@ Both residues are §26's own surface, filed here rather than parked into §26 be
 | 💎  | S3 suspend RAM                  | ✅ Full         | ✅ sleep         | ⬜ §3            |
 | 💎  | Stop-the-world CPU rendezvous   | ✅ KeIpiGeneric | ✅ stop_machine  | ✅ Done §26      |
 | 💎  | Stop-the-world fault injection  | ✅ Internal     | ✅ ftrace stress | ⬜ §27           |
-| 💎  | S4 hibernate disk               | ✅ Full         | ✅ swsusp        | ⬜ §4            |
+| 💎  | Hibernation image format codec  | ✅ hiberfil.sys | ✅ swsusp image  | ✅ Done §4       |
+| 💎  | S4 hibernate disk               | ✅ Full         | ✅ swsusp        | ⬜ §28           |
 | 💎  | Fast startup hiberboot          | ✅ Default      | ❌ None          | ⬜ §11           |
 | 💎  | ACPI EC driver                  | ✅ Full         | ✅ acpi_ec       | ⬜ §5            |
 | 💎  | Battery `_BIX` / `_BST`         | ✅ Full         | ✅ upower        | ⬜ §6            |
@@ -1187,7 +1198,8 @@ After §1 through §21, Impossible OS reaches parity for laptop-grade power on r
 > Wire into `test_runner_init()` via `test_register_power()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`; same pattern as `TODO-11-peb-teb-user-abi.md` Unit Tests).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
-- [ ] Create `src/kernel/test/test_power.c` with:
+- [/] Create `src/kernel/test/test_power.c` with:
+  - §4 did NOT go here. Its 18 suites live in `src/kernel/test/test_hibernate_image.c` (`test_register_hibernate_image()`, `TEST_CAT_BOOT`), named after the source they cover per the repo convention against piggy-backing tests onto an unrelated file. The bullets below are the `pm_*` / `acpi_*` / `cpufreq_*` API surface of §5 through §25 and stay open. -> XREF: `02-kernel-core/TODO-26` §4
   - Linux parity: `pm_get_sleep_variants()` returns a comma list including at least one token matching `acpi_sleep_supported()` for S1/S3 when firmware advertises those states (or skip when none)
   - ACPI sleep type lookup: `acpi_get_slp_typa(5)` returns valid SLP_TYPa/b values
   - Power state query: `PoGetSystemPowerState()` returns `PowerSystemWorking` during boot
@@ -1213,7 +1225,7 @@ After §1 through §21, Impossible OS reaches parity for laptop-grade power on r
   - Energy Saver: `pm_energy_saver_auto()` enables below threshold; disables above
   - HPD: `hpd_register_sensor()` accepted (or skip if no HPD device)
   - Power query/veto: `pm_query_power_state(S3)` vetoed by test driver returning `STATUS_DEVICE_BUSY`
-- [ ] Register in `test_runner_init()`: `test_register_power()`
+- [x] Register in `test_runner_init()`: `test_register_power()` -- extern + call wired in `src/kernel/test/test_runner.c` beside `test_register_pm_idle()`
 - [ ] Commit: `"test: add power management test suite"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` reports every `test_power_*` (and existing `test_acpi_power_*`) case PASS once `test_power.c` lands; until then, `test_acpi_power.c` suite green; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
