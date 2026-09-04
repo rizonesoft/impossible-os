@@ -11,6 +11,7 @@
  *   FW_QUIRK_GOP_PITCH_LIES    -- GOP PixelsPerScanLine != actual stride
  *   FW_QUIRK_BOGUS_MAT         -- Memory Attributes Table is malformed
  *   FW_QUIRK_USB_HANDOFF_BLACKLIST -- skip BIOS->OS USB handover
+ *   FW_QUIRK_EC_ECDT_PORTS_SWAPPED -- ECDT names EC_CONTROL/EC_DATA swapped
  *
  * SMP: Built once on the BSP during Phase 1 (after smbios_init, before
  * firmware_tables_init). Read-only thereafter -- no locks required.

@@ -100,6 +100,7 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
   - Until then the global-lock algorithm is split into `src/kernel/acpi_global_lock.c` so at least that stays covered in the default build
 - [ ] Remove hand-rolled `acpi_find_table()`, `acpi_get_hpet_base()`, `acpi_get_mcfg()` -- replace with `AcpiGetTable("HPET", ...)`, `AcpiGetTable("MCFG", ...)`; keep the header API but back them with ACPICA
 - [ ] `acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject` for use by §5–§10
+  - Also unblocks EC discovery on machines with no ECDT: the `_HID "PNP0C09"` / `_CRS` walk needs an evaluable namespace, and that item is parked on this one. -> XREF: `02-kernel-core/TODO-26-power-management.md` §5 (item: "DSDT `_HID \"PNP0C09\"` / `_CRS` discovery fallback")
 - [ ] Resolve `\_Sx` through the namespace evaluator, not a byte scan
   - `src/kernel/acpi.c` `parse_sleep_type()` scans the DSDT image for the literal bytes `_ S <digit> _` followed by a `PackageOp`.
   - It therefore misses every shape a real interpreter handles: an `\_Sx` defined in an SSDT rather than the DSDT (common on OEM firmware -- the scan never reads SSDTs at all), one defined as a `Method` instead of a static `Name`+`Package`, a package element that is a reference rather than an inline integer, and an object gated behind an `If`/`_OSI` branch.

@@ -1012,6 +1012,7 @@ extern void test_register_watchdog(void);
 extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
 extern void test_register_acpi_power(void);
+extern void test_register_acpi_ec(void);
 extern void test_register_pm_idle(void);
 extern void test_register_hibernate_image(void);
 extern void test_register_exec(void);
@@ -1183,6 +1184,7 @@ void test_runner_init(void)
     test_register_usb_hid();
     test_register_blackbox();
     test_register_acpi_power();
+    test_register_acpi_ec();
     test_register_pm_idle();
     test_register_hibernate_image();
 

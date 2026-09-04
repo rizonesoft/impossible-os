@@ -1,8 +1,9 @@
 {
-  "total_suites": 3286,
-  "total_assertions": 14716,
+  "total_suites": 3325,
+  "total_assertions": 14873,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
+    {"file": "test_acpi_ec.c", "suites": 39, "assertions": 157},
     {"file": "test_acpi_global_lock.c", "suites": 7, "assertions": 20},
     {"file": "test_acpi_power.c", "suites": 28, "assertions": 50},
     {"file": "test_alpc.c", "suites": 65, "assertions": 270},

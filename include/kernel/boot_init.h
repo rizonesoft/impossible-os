@@ -282,6 +282,12 @@ _Static_assert(SUBSYS_COUNT <= 32,
  * which marks Phase 1's acpi_init table discovery. */
 #define POST16_ACPI_PM          0x20F2
 #define POST16_ACPI_PM_OK       0x20F3
+/* Phase 2 ACPI Embedded Controller discovery. Separate from POST16_ACPI_PM
+ * because the EC brings its own hang surface: an EC that never clears its
+ * output buffer is polled to a deadline, so a stall here is the EC and not the
+ * AML walk. */
+#define POST16_ACPI_EC          0x20F4
+#define POST16_ACPI_EC_OK       0x20F5
 
 /* Phase 3 -- Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000

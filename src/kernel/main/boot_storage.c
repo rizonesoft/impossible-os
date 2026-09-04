@@ -1164,6 +1164,18 @@ void boot_phase2(void)
         POST16(POST16_ACPI_PM_OK);
     }
 
+    /* --- ACPI Embedded Controller: ECDT discovery + polled transactions ---
+     * Phase 2, not inside acpi_init(), and the placement is load-bearing: every
+     * EC handshake wait bounds itself against mono_ns(), which reads 0 until
+     * mono_clock_init() above has run. Discovering the EC in Phase 1 would give
+     * each wait a meaningless deadline and let a wedged controller hang boot. */
+    {
+        extern void acpi_ec_init(void);
+        POST16(POST16_ACPI_EC);
+        acpi_ec_init();
+        POST16(POST16_ACPI_EC_OK);
+    }
+
     /* Pet after the post-registry system-services tail (symtab, mmap, time,
      * ACPI power/DSDT S-state parse) so the gap to Phase 3 does not leave the
      * watchdog unpetted across acpi_power_init's DSDT walk. */

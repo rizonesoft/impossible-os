@@ -35,6 +35,12 @@ static const struct quirk_match s_match_BAD_MADT_CHECKSUM     = { "TestVendor", 
 static const struct quirk_match s_match_GOP_PITCH_LIES        = { "TestVendor", "GopLies",    0 };
 static const struct quirk_match s_match_BOGUS_MAT             = { "TestVendor", "BogusMat",   0 };
 static const struct quirk_match s_match_USB_HANDOFF_BLACKLIST = { "TestVendor", "BadUsb",     0 };
+/* Some firmware publishes the ECDT with EC_CONTROL and EC_DATA transposed, so
+ * an OS trusting the table writes command bytes into the data register. The
+ * predicate stays synthetic per this table's stated convention: a real model
+ * string lands only once confirmed on that hardware, and a guessed one is
+ * either inert or transposes the ports on an innocent machine. */
+static const struct quirk_match s_match_EC_ECDT_PORTS_SWAPPED = { "TestVendor", "EcPortsSwapped", 0 };
 
 static const struct quirk_desc s_quirks[] = {
 #define FW_QUIRK_DEF(id, bit, name) \
