@@ -646,15 +646,46 @@ void smp_retract_cpu_online(struct per_cpu_data *pcpu);
  *
  * The window is an audited, lockless, non-blocking sequence. That is a
  * contract this kernel has no facility to enforce (there is no lock-depth or
- * IRQL query to assert on), which is exactly why it is stated here. */
+ * IRQL query to assert on), which is exactly why it is stated here.
+ *
+ * ---- THE STOPPED SET CAN BE A SUPERSET OF THE TARGET SET. ----
+ *
+ * park_step() parks on "a round is open", not on "I am targeted", so a barrier
+ * IPI left pending from a timed-out round and delivered after the next round
+ * has armed parks a CPU the new round does not target. That is deliberate and
+ * safe -- completion reads targeted slots only, so an extra parked CPU cannot
+ * complete a round early, and the owner takes no lock inside the window -- but
+ * it means "stopped" is at least the target set and may be larger. Anything
+ * reasoning about which CPUs are running during a round must use that bound,
+ * not the target mask. */
 
 /* Bit width of the rendezvous target mask. Same word as the online mask, and
  * pinned to it so the two can never disagree about how many slots exist. */
 #define SMP_RENDEZVOUS_MASK_BITS  SMP_ONLINE_MASK_BITS
 
-/* Default bound for a rendezvous that does not name its own. Long enough that
- * a CPU stalled in an SMI still answers, short enough that a wedged machine
- * fails closed instead of hanging. */
+/* Layer 1 for the width relation the whole protocol indexes through. The range
+ * guards inside arm()/set_targets() are written `if (MASK_BITS < 32 && ...)`,
+ * so widening the mask past a uint32_t would DELETE those checks silently
+ * while `1u << slot` became undefined for slots >= 32 and ack_gen[] outgrew
+ * the word that selects it. Runtime tests cover this relation; nothing pinned
+ * it at compile time until here. */
+_Static_assert(SMP_RENDEZVOUS_MASK_BITS <= 32u,
+    "target_mask is a uint32_t -- the rendezvous mask cannot exceed its width");
+_Static_assert(SMP_RENDEZVOUS_MASK_BITS == SMP_ONLINE_MASK_BITS,
+    "the rendezvous mask and the online mask must be the same word");
+
+/* Default bound for a rendezvous that does not name its own, in MILLISECONDS
+ * of the trusted TSC rate. Long enough that a CPU stalled in an SMI still
+ * answers.
+ *
+ * THE WORST CASE IS NOT 100 ms, and pretending otherwise would be the kind of
+ * claim this file exists to avoid. When mono_tsc_hz() reports no trusted rate
+ * -- which it does in three routine cases, including a drift-demoted TSC --
+ * the conversion falls back to MONO_TSC_HZ_MAX (100 GHz), so on a 3 GHz part
+ * this budget is roughly 3.3 SECONDS of wall clock spent with the owner and
+ * every target at IF=0. That is the correct DIRECTION (a bound that can only
+ * fire late never aborts a healthy round) but it is not a small number, and a
+ * caller choosing a timeout should size it knowing the real ceiling. */
 #define SMP_RENDEZVOUS_TIMEOUT_MS  100u
 
 /* Rendezvous state. Exposed so the PURE protocol helpers below can be driven
@@ -748,6 +779,17 @@ int smp_rendezvous_end(void);
 /* 1 while the kernel's own round is open. The online-publish path consults
  * this as a fail-closed backstop. */
 int smp_rendezvous_in_progress(void);
+
+/* How many times CPU `slot` has PARKED IN AND THEN LEFT the barrier. Bumped by
+ * the handler after its park loop exits, so an advance is positive evidence
+ * that the CPU resumed -- which nothing else in the system carries.
+ *
+ * The obvious alternative does NOT work and was tried: comparing the online
+ * mask before and after a round proves nothing, because the barrier never
+ * touches membership. A target that acknowledges and then never leaves its
+ * park loop stays marked online forever, so an equality check is blind to
+ * precisely the failure it appears to test. */
+uint32_t smp_rendezvous_resume_count(uint32_t slot);
 
 /* ---- Bringup arbitration (TODO-10 S27) ----
  *

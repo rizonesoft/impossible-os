@@ -509,10 +509,27 @@ static void test_rv_park_step_does_not_rewrite_the_same_generation(void)
  * DEADLOCK CONTRACT in smp.h, and a TEST_ASSERT inside the window would violate
  * it by reaching klog. So the window CAPTURES into locals and every assertion
  * runs after the world is running again. */
+/* RFLAGS.IF. The tree has no define for it and this test's entire subject is
+ * that bit, so naming it here beats three raw shifts. */
+#define TEST_RFLAGS_IF  (1u << 9)
+
+/* Bound for the post-release resume wait. Generous: the targets are resuming
+ * concurrently and only have to fall out of a spin loop, so exhausting this is
+ * a real failure rather than a slow machine. */
+#define TEST_RV_RESUME_SPINS  100000000u
+
 static void test_rv_live_begin_end_round_trip(void)
 {
+    uint32_t resumed_before[SMP_RENDEZVOUS_MASK_BITS];
     uint64_t flags_before, flags_inside = 0, flags_after;
+    uint32_t mask_before, mask_after, expected_targets, self, slot;
     int rc_begin, rc_end = 0, active_inside = 0;
+
+    self             = smp_cpu_id();
+    for (slot = 0; slot < SMP_RENDEZVOUS_MASK_BITS; slot++)
+        resumed_before[slot] = smp_rendezvous_resume_count(slot);
+    mask_before      = smp_online_mask();
+    expected_targets = mask_before & ~(1u << self);
 
     __asm__ volatile ("pushfq\n\t popq %0" : "=r"(flags_before));  /* ARCH: x86-64 */
 
@@ -526,9 +543,10 @@ static void test_rv_live_begin_end_round_trip(void)
     }
 
     __asm__ volatile ("pushfq\n\t popq %0" : "=r"(flags_after));  /* ARCH: x86-64 */
+    mask_after = smp_online_mask();
 
     /* The barrier is armed on BOTH the single-CPU and the SMP boot path, so a
-     * refusal here is a real wiring failure on either, not a configuration to
+     * refusal is a real wiring failure on either, not a configuration to
      * tolerate. Widening this to accept -1 would make the test verify nothing. */
     TEST_ASSERT_EQ(rc_begin, 0,
                    "the live rendezvous must stop the world from the BSP");
@@ -541,16 +559,52 @@ static void test_rv_live_begin_end_round_trip(void)
     /* The owner runs the window with interrupts MASKED (a preemptible owner
      * could be switched out with APs parked and never release them), and end()
      * must hand back exactly the state the caller had. */
-    TEST_ASSERT_EQ((uint32_t)((flags_inside >> 9) & 1u), 0u,
+    TEST_ASSERT_EQ((uint32_t)(flags_inside & TEST_RFLAGS_IF), 0u,
                    "interrupts must be masked while the world is stopped");
-    TEST_ASSERT_EQ((uint32_t)((flags_after >> 9) & 1u),
-                   (uint32_t)((flags_before >> 9) & 1u),
+    TEST_ASSERT_EQ((uint32_t)(flags_after & TEST_RFLAGS_IF),
+                   (uint32_t)(flags_before & TEST_RFLAGS_IF),
                    "end() must restore the caller's interrupt state exactly");
 
-    /* Every CPU that was online before is still online after: the APs resumed
-     * rather than being left parked or retracted. */
-    TEST_ASSERT(smp_cpu_count() >= 1u,
-                "at least the BSP must still be online after the round");
+    /* Membership is a necessary condition, not the resumption proof. The
+     * barrier never touches the online mask, so this catches a CPU the round
+     * RETRACTED but says nothing about one still spinning in its park loop. */
+    TEST_ASSERT_EQ(mask_after, mask_before,
+                   "every CPU online before the round must be online after it");
+
+    /* THE ACTUAL RESUMPTION PROOF. Each target bumps its resume counter after
+     * its park loop exits, so an advance is positive evidence that the CPU got
+     * out. Two earlier attempts at this assertion were both vacuous:
+     * `smp_cpu_count() >= 1` only said the BSP was still counted, and mask
+     * equality holds even when a target is permanently parked, because the
+     * barrier does not change membership. Bounded wait, because the targets
+     * resume concurrently with this code -- a failure here means a CPU never
+     * left the barrier, which is the worst outcome the primitive has. */
+    for (slot = 0; slot < SMP_RENDEZVOUS_MASK_BITS; slot++) {
+        uint32_t spins = 0;
+        if (!(expected_targets & (1u << slot)))
+            continue;
+        while (smp_rendezvous_resume_count(slot) == resumed_before[slot] &&
+               spins < TEST_RV_RESUME_SPINS) {
+            spins++;
+            __asm__ volatile("pause");  /* ARCH: x86-64 */
+        }
+        TEST_ASSERT(smp_rendezvous_resume_count(slot) != resumed_before[slot],
+                    "every targeted CPU must leave the barrier after release");
+    }
+
+    /* WITHOUT THIS THE TEST PASSES VACUOUSLY. With one online CPU the target
+     * set is empty, begin() returns 0 without sending a single IPI, and every
+     * assertion above still holds -- so on the 1-CPU boot-matrix legs this
+     * proves nothing about vector delivery or AP acknowledgement, and nothing
+     * in the output said so. Now the two runs are distinguishable: a machine
+     * with another online CPU MUST have had targets, and a uniprocessor run
+     * announces that it did not. */
+    if (expected_targets == 0u) {
+        TEST_SKIP("uniprocessor: no targets, so IPI delivery is not exercised");
+        return;
+    }
+    TEST_ASSERT(smp_cpu_count() > 1u,
+                "a non-empty target set implies more than one online CPU");
 }
 
 void test_register_smp_rendezvous(void)
