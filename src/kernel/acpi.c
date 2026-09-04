@@ -2442,6 +2442,34 @@ int acpi_hw_reduced(void)
     return acpi_fadt_hw_reduced(fadt_ptr);
 }
 
+/* FADT flags bit 21: LOW_POWER_S0 (ACPI 5.0+).
+ *
+ * The bit asserts only that S0 idle saves as much power as, or more than, S3
+ * on this platform. It does NOT assert that S3 is unavailable: a missing
+ * \_S3_ object is an OEM namespace fact, discovered by evaluating \_S3_, and
+ * must never be inferred from this flag. Firmware advertisement is also not
+ * sufficient on its own to enter connected standby -- a platform may set this
+ * bit without implementing the Intel LPS0 _DSM entry points, which this tree
+ * cannot evaluate yet. See todo/02-kernel-core/TODO-26-power-management.md
+ * sections 10 and 37.
+ *
+ * A short or absent table cannot advertise the capability, so both fall to 0:
+ * the conservative answer is "no S0ix", which costs power and never risks a
+ * transition the firmware never claimed to support. */
+int acpi_fadt_s0ix_capable(const struct acpi_fadt *fadt)
+{
+    if (!fadt)
+        return 0;
+    if (fadt->header.length < ACPI_FADT_LEN_FLAGS)
+        return 0;
+    return (fadt->flags & (1u << 21)) ? 1 : 0;
+}
+
+int acpi_s0ix_supported(void)
+{
+    return acpi_fadt_s0ix_capable(fadt_ptr);
+}
+
 /* ---- FADT IAPC_BOOT_ARCH flags (offset 109, 16-bit) ----
  * Bit 0: LEGACY_DEVICES -- 8042 required
  * Bit 1: 8042 -- i8042 controller present

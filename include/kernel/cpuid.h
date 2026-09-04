@@ -120,7 +120,12 @@ enum cpu_feature {
     /* Word 1 (bit >= 64) -- the 128-bit cpu_feature_mask_t surface. */
     CPU_FEATURE_MD_CLEAR  = 64,   /* MD_CLEAR: VERW clears CPU buffers (7.0:EDX[10]) */
 
-    CPU_FEATURE_COUNT     = 65    /* total features tracked */
+    /* Ring-0 MONITOR/MWAIT. This is a DIFFERENT instruction family from
+     * CPU_FEATURE_WAITPKG above (UMONITOR/UMWAIT/TPAUSE, ring 3, 7.0:ECX[5]);
+     * neither implies the other and MWAIT must be gated on THIS bit. */
+    CPU_FEATURE_MONITOR   = 65,   /* MONITOR/MWAIT (1:ECX[3]) */
+
+    CPU_FEATURE_COUNT     = 66    /* total features tracked */
 };
 
 /* --- 128-bit feature bitset ------------------------------------------------

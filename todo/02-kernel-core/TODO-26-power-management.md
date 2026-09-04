@@ -90,7 +90,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   7   | §7 Power & sleep button event dispatch                           | §1                          |  [x]   |
 | 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                   | §1                          |  [x]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [/]   |
-| ⭐  |  10   | §10 Connected standby S0ix detection + MWAIT C10 entry/exit      | §2, §9, D02T06§3            |  [ ]   |
+| ⭐  |  10   | §10 S0ix firmware advertisement + MWAIT capability layer         | §2                          |  [x]   |
 | 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                 |  [ ]   |
 | 💎  |  12   | §12 Runtime device idle management                               | §8, §9                      |  [ ]   |
 | 💎  |  13   | §13 Power request tracking & wake source management              | §9, §12                     |  [ ]   |
@@ -117,6 +117,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  34   | §34 PCI D3cold via ACPI `_PS0`/`_PS3` platform methods           | §8, §33, D04T03§1           |  [ ]   |
 | ⭐  |  35   | §35 Directed power (DFx) stack walk + DRIPS residency accounting | §9, §10, §12                |  [ ]   |
 | 💎  |  36   | §36 NIC wake offloads (ARP/NS reply, WoL, wake patterns, D0i3)   | §10, §12                    |  [ ]   |
+| ⭐  |  37   | §37 System connected standby entry (all-CPU S0ix transition)     | §10, §27, §9, §28           |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -663,26 +664,43 @@ The config-space-only half of the PCI D-state work: capability discovery and the
 
 ---
 
-## 10. Connected Standby (S0ix / Modern Standby)
+## 10. S0ix Firmware Advertisement and MWAIT Capability Layer
 
 > **Spawned-by:** §10 (split)
 
-- [ ] Check FADT `LOW_POWER_S0_IDLE_CAPABLE` flag (bit 21 of `Flags` field, ACPI 5.0+); if set: the platform supports connected standby and S3 may not be in the `\_Sx_` objects at all
-- [ ] `acpi_s0ix_supported()` -- returns true if `LOW_POWER_S0_IDLE_CAPABLE` and the `_DSM` with `{GUID: S0ix}` is present in the DSDT
-- [ ] On such platforms, `pm_enter_s3()` (§3) is replaced by `pm_enter_s0ix()` transparently; the sleep state entry point remains the same for the rest of the OS
-- [ ] `pm_enter_s0ix()`:
-  1. Move all CPUs to the lowest available Intel C-state (`MWAIT` with C7/C10 hint via `cpuid` extended topology leaf)
-  2. Gate DRAM self-refresh: set `MC_PM_STS` power gate bit in the Memory Controller MMIO space (Intel-specific; skip on AMD)
-  3. Notify platform firmware via `\_OSC` (OS Capabilities) ACPI method that the OS is entering S0ix
-  4. `__asm__ volatile ("mwait" : : "a"(MWAIT_HINT_C10) : "memory")` on each CPU; the hardware enters the deepest idle state; wakeup restores execution after `mwait`
-- [ ] Any interrupt or I/O wakes the CPU from `mwait`; execution resumes immediately after the `mwait` instruction; no page table or register restore needed (unlike S3)
-- [ ] Call `pm_notify_resume(PM_RESUME_S0IX)` (§9) to un-gate devices
-- [ ] TSC recalibration (→ XREF: `TODO-08-time-filetime-management.md §3`) may be needed if `mwait` C10 was held for > 1 second (TSC stops in deep C-states on some CPUs)
-- [ ] Commit: `"kernel/acpi: connected standby S0ix detection and MWAIT C10 entry/exit"`
+Scope was rewritten from the original "Connected Standby" draft after the pre-implementation design review, which found four of the draft's checklist items factually wrong and the system-entry half unimplementable on this tree. What ships here is the half that is real today and can be PROVEN today: firmware advertisement (does the platform claim S0ix) plus the MWAIT capability and hint-selection layer, all of it pure and unit-testable without MWAIT-capable hardware. Everything that actually EXECUTES `MWAIT` is §37, because it shares one unresolved guarantee: nothing in this tree stores to a monitored line when a CPU becomes non-idle, so the wake source for a monitored wait is not yet established.
 
-**Test checkpoint:** `acpi_s0ix_supported()` reads FADT `LOW_POWER_S0_IDLE_CAPABLE` flag and returns false when the bit is clear. MWAIT C10 hint gated on the CPUID MONITOR/MWAIT leaf before it is issued. `pm_enter_s0ix()` refuses on an unsupported platform rather than executing `mwait`. Test on: QEMU TCG (S0ix flag not set -- graceful skip expected).
+- [x] `acpi_fadt_s0ix_capable(fadt)` + `acpi_s0ix_supported()` -- FADT `Flags` bit 21 (`LOW_POWER_S0`, ACPI 5.0+), shipped at `src/kernel/acpi.c:2459` and `:2468`, declared `include/kernel/acpi.h:525-526`
+  - Length-gated on `header.length >= ACPI_FADT_LEN_FLAGS` before the dword is read; NULL and short tables both refuse. Same two-tier shape as `acpi_fadt_hw_reduced()`.
+  - The flag asserts only that S0 idle saves as much as or more than S3. It does NOT assert S3 is absent: a missing `\_S3_` is an OEM namespace fact found by evaluating `\_S3_`, never inferred from this bit. The original draft claimed otherwise and was wrong.
+- [x] `CPU_FEATURE_MONITOR` (CPUID.01H:ECX[3]) added to the feature enum and probed in the leaf-1 ECX block
+  - Shipped as enum value 65 (`include/kernel/cpuid.h:126`, `CPU_FEATURE_COUNT` 65 -> 66) probed at `src/kernel/cpuid.c:131`.
+  - This is the ring-0 `MONITOR`/`MWAIT` gate and is a DIFFERENT instruction family from the existing `CPU_FEATURE_WAITPKG` (`UMONITOR`/`UMWAIT`, ring 3). Neither implies the other; do not conflate them.
+- [x] CPUID leaf 5 capability constants at `include/kernel/pm.h:134-138`
+  - `PM_MWAIT_LEAF5_ECX_EXT` (`ECX[0]`, extended hints) and `PM_MWAIT_LEAF5_ECX_IRQ_BREAK` (`ECX[1]`, masked-interrupt break), plus `PM_MWAIT_ECX_IRQ_BREAK` for the MWAIT `ECX` operand itself.
+  - The EDX sub-state counts are consumed by `pm_mwait_deepest_hint()` rather than exposed as a separate probe: the layer takes the CPUID word as an ARGUMENT, which is what makes every case testable on a host reporting no leaf 5.
+- [x] `pm_mwait_hint_encode(cclass, substate)` -- the SDM Table 4-11 EAX encoding `((cclass - 1) << 4) | substate`, shipped at `src/kernel/pm_idle.c:156`
+  - MWAIT hint classes are processor-specific, not ACPI C-states, and leaf 5 enumerates only through C7, so a hardcoded `MWAIT_HINT_C10` has no architectural basis and is not used.
+- [x] `pm_mwait_deepest_hint(leaf5_edx, out_hint)` -- derives the deepest legal hint from the sub-state counts, shipped at `src/kernel/pm_idle.c:166`
+  - Class `n` = 1..7 with count `c` > 0 yields substates `0 <= s < c`, so the deepest index is `c - 1`. C0 is the running state and is never encoded.
+  - Returns failure when no class reports a non-zero count rather than inventing one: naming a state the CPU does not implement is how a monitored wait becomes unbounded.
+- [x] `pm_mwait_idle_allowed(if_flag, irq_break_supported)` -- the refusal predicate, shipped at `src/kernel/pm_idle.c:199`
+  - MWAIT with interrupts masked is permitted ONLY when the CPU reports masked-interrupt-break; otherwise the caller must not execute MWAIT, because it could wait indefinitely with no break event.
+- [x] Commit: `"kernel/pm: S0ix firmware advertisement, CPUID MONITOR gate, MWAIT capability layer"`
+
+**Test checkpoint:** `acpi_fadt_s0ix_capable()` returns 0 for NULL and for a FADT whose `length` is below `ACPI_FADT_LEN_FLAGS`, and reads bit 21 correctly for a synthetic FADT with the bit set and clear. `pm_mwait_hint_encode()` matches the SDM encoding for representative classes. `pm_mwait_deepest_hint()` picks the deepest non-zero class, returns failure on an all-zero `EDX`, and never encodes a substate past its class count. `pm_mwait_idle_allowed()` refuses `IF=0` without masked-interrupt-break and permits it with. Every one of these is a pure function over supplied inputs, so the suite proves them on any host regardless of what the CPU underneath reports. Test on: QEMU TCG.
 
 ---
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot` -- 11 new cases (8 `PM: MWAIT *` in `src/kernel/test/test_pm_idle.c`, 3 `ACPI: S0ix *` in `src/kernel/test/test_acpi_power.c`); suite green at 6112 kernel + 17 user-mode tests.
+
+> **Notes:**
+> - Ships the S0ix capability layer only: `acpi_fadt_s0ix_capable()`/`acpi_s0ix_supported()` (FADT flags bit 21, length-gated), `CPU_FEATURE_MONITOR`, the leaf-5 capability constants, and the three pure MWAIT hint/refusal functions.
+> - The MWAIT layer takes CPUID words as arguments instead of executing CPUID, so the suite proves the SDM Table 4-11 encoding and the refusal rules on hosts whose CPU reports no leaf 5 -- which is every CI host this repo runs on.
+> - Nothing here executes `MONITOR` or `MWAIT`; the instruction path and the all-CPU transition are §37, split out because no monitored line in this tree has an established writer.
+> - The pre-implementation design review found four of the original draft's items factually wrong (the mwait asm had no MONITOR and no ECX, `MWAIT_HINT_C10` is per-microarchitecture, `MC_PM_STS` has no public contract, and the one-second TSC heuristic is circular); the section text was corrected rather than implemented as written.
+> - Canonical doc: Intel SDM Vol. 2B (MWAIT, Table 4-11) and ACPI 5.0+ FADT `Flags` bit 21.
+> - Scope boundary: firmware advertisement plus capability selection. It does NOT claim the platform will enter S0ix, and `acpi_s0ix_supported()` is deliberately not sufficient on its own -- the LPS0 `_DSM` gate is §37.
 
 ## 11. Fast Startup (Hybrid Shutdown / Hiberboot)
 
@@ -1542,6 +1560,46 @@ D3cold removes VCC from the device, so it is not a PMCSR write at all: it is an 
 
 ---
 
+## 37. System Connected Standby Entry (All-CPU S0ix Transition)
+
+> **Spawned-by:** §10 (split)
+
+The system-entry half of the original §10 draft. §10 ships the firmware advertisement and a single-CPU MWAIT idle; this section owns actually putting the machine into connected standby. Split out rather than stubbed because the pre-implementation design review found each piece blocked on infrastructure that does not exist yet, and a stub would have claimed S0ix without residency, which the review named a correctness failure of the API rather than a power shortfall.
+
+- [/] All-CPU MWAIT transition driven through `smp_rendezvous_begin()`/`smp_rendezvous_end()` -- BLOCKED on §27
+  - The rendezvous has no production caller yet, and its AP handler spins on `pause` (`src/kernel/smp/smp.c:1096`), so making APs MWAIT is a protocol change to that handler, not a call into it.
+  - Needs, per the design review: a monitored generation/release handshake, BSP wake routing (a wake delivered only to a parked AP cannot release the BSP), an audited lockless window, and balanced `end()` on every abort and wake path.
+  - -> XREF: `02-kernel-core/TODO-26` §27 (item: "Strengthen the single live test to prove AP RESUMPTION and reusable IPI wiring, not just that the BSP survived" at line 1284)
+- [/] `pm_idle_mwait()` -- the single-CPU primitive that actually issues `MONITOR`/`MWAIT` -- BLOCKED on the same wake guarantee
+  - `pm_deep_idle_allowed()` reads the DPC depth, but a thread made runnable elsewhere stores nothing this CPU monitors, so the monitored line has no established writer.
+  - §10 ships the capability layer this needs, so what remains here is the instruction issue and its wake contract, not the gating.
+  - Must also settle whether `sti; mwait` inherits the STI interrupt shadow the way `sti; hlt` does; `pm_idle_c1()` depends on that shadow and the MWAIT path cannot assume it without evidence.
+  - -> XREF: `02-kernel-core/TODO-26` §10 (item: "`pm_mwait_idle_allowed(if_flag, irq_break_supported)`" -- shipped, provides the refusal predicate this item must call)
+- [/] Paired `pm_notify_sleep()` before the barrier and `pm_notify_resume()` after it -- BLOCKED on the transaction contract
+  - `pm_notify_resume()` refuses with `PM_CB_NO_TRANSACTION` unless the table is `PM_TXN_ASLEEP` (`src/kernel/pm/power_callback.c:417`), and both calls require PASSIVE_LEVEL with interrupts enabled, which the barrier has already masked.
+  - -> XREF: `02-kernel-core/TODO-26` §9 (item: "Each major driver registers in its `init()`" at line 637)
+- [/] Intel LPS0 `_DSM` evaluation -- BLOCKED on AML method evaluation
+  - GUID `c4eb40a0-6cd2-11e2-bcfd-0800200c9a66`, plus the Microsoft Modern Standby GUID `11e00d56-ce64-47ce-837b-1f898f9aa461`.
+  - This tree's ACPI parser is hand-rolled and the ACPICA namespace is not loaded, so no `_DSM` can be evaluated at all.
+  - Gating on BOTH the FADT bit and the `_DSM` is the documented-correct behaviour: a platform can set bit 21 without implementing the `_DSM` entry points.
+  - -> XREF: `04-drivers-hardware/TODO-03` §4 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`" at line 102)
+- [/] `_OSC` platform-capability negotiation -- BLOCKED on the same AML gap
+  - Note the draft's error: `_OSC` negotiates capabilities, it is NOT a generic "entering S0ix now" notification, and must not be substituted for the LPS0 `_DSM` protocol.
+  - -> XREF: `04-drivers-hardware/TODO-03` §4 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`" at line 102)
+- [-] Memory-controller `MC_PM_STS` DRAM self-refresh gating -- REJECTED, not deferred
+  - The register has no definition in this tree and no public per-generation contract (controller identification, offset, access width, writable mask, restoration sequence).
+  - "Intel-specific, skip on AMD" cannot authorise a blind MMIO write that could disturb live memory traffic. Admit it only under an exact supported-platform contract backed by its register specification.
+- [/] DRIPS residency measurement before any code claims S0ix was entered -- BLOCKED on the transition above existing at all
+  - -> XREF: `02-kernel-core/TODO-26` §35 (item: "DRIPS (Deepest Runtime Idle Platform State) tracking" at line 1528)
+- [ ] standing: re-check on each ACPICA namespace milestone whether the `_DSM`/`_OSC` blockers above have cleared, and re-open the parked items when they have
+
+**Test checkpoint:** No shippable checkpoint until the blockers clear. When they do: every AP's resume counter advances after a wake, the release handshake holds across every MONITOR/check/MWAIT interleaving, and measured package residency is non-zero before the API reports success. A QEMU graceful skip proves refusal behaviour only, never MWAIT liveness or S0ix residency.
+
+
+> **Deferred:** [High] 2026-09-05 -- created already-blocked, from the §10 pre-implementation design review, and stamped here rather than left open so a later pass does not spend a full pipeline re-deriving blockers this section already names at file:line. Three independent prerequisites, none of them ownable here: (1) AML method evaluation, which the LPS0 `_DSM` and `_OSC` items both need and which this tree's hand-rolled ACPI parser cannot do while the ACPICA namespace is unloaded -> XREF: `04-drivers-hardware/TODO-03` §4 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`" at line 102); (2) the rendezvous production-caller seam, since `rendezvous_ipi_handler()` spins on `pause` (`src/kernel/smp/smp.c:1096`) and driving APs into MWAIT is a change to that handler's contract, not a call into it -> XREF: `02-kernel-core/TODO-26` §27 (item: "Strengthen the single live test to prove AP RESUMPTION and reusable IPI wiring, not just that the BSP survived" at line 1284); (3) the sleep/resume transaction pairing, because `pm_notify_resume()` refuses with `PM_CB_NO_TRANSACTION` outside `PM_TXN_ASLEEP` (`src/kernel/pm/power_callback.c:417`) and both calls require PASSIVE_LEVEL with interrupts enabled, which the barrier has masked -> XREF: `02-kernel-core/TODO-26` §9 (item: "Each major driver registers in its `init()`" at line 637). The `MC_PM_STS` item is REJECTED outright rather than parked: it has no public per-generation register contract, so it has no re-open condition. Re-open when AML evaluation lands and §27 has established the rendezvous seam; the `standing:` item above is the recurring check.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                           | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
@@ -1574,7 +1632,9 @@ D3cold removes VCC from the device, so it is not a PMCSR write at all: it is an 
 | 💎  | Passive active cooling            | ✅ Full         | ✅ step_wise     | ⬜ §14           |
 | 💎  | CPU DVFS cpufreq                  | ✅ PPM HWP      | ✅ cpufreq       | ⬜ §15           |
 | 💎  | CPU idle C-states                 | ✅ PPM          | ✅ menu teo      | ⬜ §16           |
-| 💎  | Connected standby S0ix            | ✅ Modern       | ⚠️ Partial       | ⬜ §10           |
+| 💎  | Connected standby S0ix            | ✅ Modern       | ⚠️ Partial       | ⬜ §37           |
+| 💎  | S0ix firmware advertisement       | ✅ FADT DSM     | ✅ FADT DSM      | ✅ §10           |
+| 💎  | MWAIT C-state hint selection      | ✅ PPM          | ✅ intel_idle    | ⚠️ §10 §37       |
 | 💎  | mem_sleep s2idle deep             | ✅ S0 idle      | ✅ sysfs         | ⬜ §21           |
 | 💎  | powercfg CLI surface              | ✅ 50 cmds      | ⚠️ systemctl     | ⬜ §18           |
 | 💎  | Power Options GUI                 | ✅ powercpl     | ⚠️ GNOME basic   | ⬜ §18           |
@@ -1584,12 +1644,12 @@ D3cold removes VCC from the device, so it is not a PMCSR write at all: it is an 
 | ⭐  | energy audit trace                | ✅ Full         | ❌ None          | ⬜ §13           |
 | ⭐  | sleepstudy DRIPS report           | ✅ Full         | ❌ None          | ⬜ §18           |
 | 💎  | PoFx F-states components          | ✅ Per Fx       | ❌ Device only   | ⬜ §12           |
-| 💎  | Directed PoFx DRIPS               | ✅ PoFx v3      | ❌ None          | ⬜ §10           |
+| 💎  | Directed PoFx DRIPS               | ✅ PoFx v3      | ❌ None          | ⬜ §35           |
 | 💎  | USB suspend U1 U2 LPM             | ✅ Full         | ✅ autosuspend   | ⬜ §12           |
 | 💎  | NVMe APST idle states             | ✅ On           | ✅ sysfs         | ⬜ §12           |
 | 💎  | PCIe ASPM L1 substates            | ✅ Plans        | ✅ pcie_aspm     | ⬜ §23           |
 | 💎  | SATA ALPM link power              | ✅ HIPM         | ✅ sysfs         | ⬜ §12           |
-| 💎  | NIC ARP NS offload S0ix           | ✅ NDIS         | ⚠️ Firmware      | ⬜ §10           |
+| 💎  | NIC ARP NS offload S0ix           | ✅ NDIS         | ⚠️ Firmware      | ⬜ §36           |
 | 💎  | Smart charge 80 percent           | ✅ OEM          | ⚠️ TLP           | ⬜ §6            |
 | 💎  | RAPL power cap sysfs              | ✅ Internal     | ✅ powercap      | ⬜ §15           |
 | 💎  | AMD P-State EPP                   | ✅ Driver       | ✅ amd_pstate    | ⬜ §15           |

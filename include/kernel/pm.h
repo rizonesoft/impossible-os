@@ -92,6 +92,75 @@ uint64_t pm_idle_cycles(uint32_t cpu);
  * rejected sample costs one idle episode. Exposed so that guard is testable. */
 uint64_t pm_idle_delta(uint64_t t0, uint64_t t1);
 
+
+/* ---- MWAIT capability and hint selection -------------------------------
+ *
+ * The layer that decides WHETHER a monitored wait is legal on this CPU and
+ * WHICH hint would name the deepest state it implements. Nothing here issues
+ * MONITOR or MWAIT: the instruction path needs a monitored line with an
+ * established writer, and this tree has none yet (a thread made runnable on
+ * another CPU stores nothing this CPU monitors). That work is owned by
+ * todo/02-kernel-core/TODO-26-power-management.md section 37.
+ *
+ * Every function below is PURE -- it takes the CPUID words as arguments
+ * rather than executing CPUID -- so the suite proves the encoding and the
+ * refusal rules on any host, including one whose CPU reports no leaf 5 at
+ * all. That is deliberate: the platforms where this logic matters are
+ * exactly the ones CI does not run on.
+ *
+ * Reference: Intel SDM Vol. 2B, MWAIT, Table 4-11 (MWAIT Hints Register). */
+
+/* MWAIT EAX hint classes. Bits 7:4 hold the target C-state class encoded as
+ * (class - 1), so 0 names C1; bits 3:0 hold the sub-state within it. These
+ * are PROCESSOR-SPECIFIC states, not ACPI C-states, and CPUID leaf 5
+ * enumerates sub-state counts only through class C7 -- which is why no fixed
+ * "C10" constant exists here. Such a value is a per-microarchitecture datum
+ * with no architectural basis, and inventing one would name a state the CPU
+ * may not implement. */
+#define PM_MWAIT_CLASS_MIN      1u
+#define PM_MWAIT_CLASS_MAX      7u
+#define PM_MWAIT_SUBSTATE_MAX   15u
+
+/* Returned by pm_mwait_hint_encode() for any class/sub-state outside the
+ * encodable range. Chosen outside the 8-bit hint space so it can never
+ * collide with a legal encoding. */
+#define PM_MWAIT_HINT_INVALID   0xFFFFFFFFu
+
+/* MWAIT ECX bit 0: treat an interrupt as a break event even when it is masked
+ * (EFLAGS.IF == 0). Legal only when CPUID.05H:ECX[1] reports support; setting
+ * it otherwise is a reserved-bit write. Note the semantics: the interrupt
+ * BREAKS the wait but is NOT delivered while IF is clear, so control resumes
+ * after MWAIT with the interrupt still pending. */
+#define PM_MWAIT_ECX_IRQ_BREAK  (1u << 0)
+
+/* CPUID.05H:ECX capability bits. */
+#define PM_MWAIT_LEAF5_ECX_EXT       (1u << 0)  /* extended hints usable    */
+#define PM_MWAIT_LEAF5_ECX_IRQ_BREAK (1u << 1)  /* masked IRQ breaks MWAIT  */
+
+/* Encode an MWAIT EAX hint. Returns PM_MWAIT_HINT_INVALID when the class is
+ * outside C1..C7 or the sub-state exceeds the 4-bit field. */
+uint32_t pm_mwait_hint_encode(uint32_t cclass, uint32_t substate);
+
+/* Derive the deepest legal hint from a CPUID.05H EDX word, which packs one
+ * 4-bit sub-state count per class (class Cn at bits 4n+3:4n). Searches C7
+ * down to C1 and takes the deepest class reporting a non-zero count, whose
+ * deepest sub-state is count-1.
+ *
+ * Returns 1 and writes *out_hint on success; returns 0 and leaves *out_hint
+ * untouched when no class reports a non-zero count. A CPU that implements no
+ * MWAIT idle class gets a refusal, never a fabricated hint -- naming a state
+ * the CPU does not implement is how a monitored wait becomes unbounded. */
+int pm_mwait_deepest_hint(uint32_t leaf5_edx, uint32_t *out_hint);
+
+/* Whether MWAIT may be executed given the caller's interrupt state.
+ *
+ * With interrupts enabled, an arriving interrupt always breaks the wait, so
+ * the answer is yes. With interrupts MASKED, the only break event is a masked
+ * interrupt, which requires CPUID.05H:ECX[1] support paired with MWAIT
+ * ECX[0]; without it the CPU can wait with nothing left to wake it. Returns
+ * 1 when MWAIT is permitted, 0 when the caller must not execute it. */
+int pm_mwait_idle_allowed(int if_set, int irq_break_supported);
+
 #ifdef KERNEL_TESTS
 /* Test-only: override the cached PowerIdleEnable policy value, returning the
  * previous one, so the disabled path is testable without a registry write.

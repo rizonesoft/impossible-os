@@ -729,6 +729,66 @@ static void test_acpi_btn_cached_actions_in_range(void)
 
 /* ---- Registration ---- */
 
+/* ---- S0ix firmware advertisement (section 10) ---------------------------
+ *
+ * acpi_fadt_s0ix_capable() is the pure half of the pair, so it can be driven
+ * with synthetic tables. The wrapper acpi_s0ix_supported() reads the live
+ * fadt_ptr and is therefore whatever this machine's firmware says; it is not
+ * asserted to a fixed value here, only to agreeing with the pure function. */
+
+static void test_acpi_s0ix_null_and_short_refuse(void)
+{
+    struct acpi_fadt f = {0};
+
+    f.flags = (1u << 21);
+
+    /* No table cannot advertise a capability. */
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(0), 0, "null");
+
+    /* A table too short to contain the flags dword must refuse BEFORE
+     * reading it -- the bit being set in our synthetic struct is exactly the
+     * trap: a length-blind read would return 1 here off a table that does
+     * not actually carry the field. */
+    f.header.length = ACPI_FADT_LEN_FLAGS - 1;
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 0, "short");
+}
+
+static void test_acpi_s0ix_reads_bit21(void)
+{
+    struct acpi_fadt f = {0};
+
+    f.header.length = ACPI_FADT_LEN_FLAGS;
+
+    f.flags = 0;
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 0, "b21 clr");
+
+    f.flags = (1u << 21);
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 1, "b21 set");
+
+    /* Neighbouring bits must not be mistaken for it. Bit 20 is HW_REDUCED,
+     * a different capability entirely, and an off-by-one shift would read it
+     * instead. */
+    f.flags = (1u << 20);
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 0, "b20 no");
+    f.flags = (1u << 22);
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 0, "b22 no");
+
+    /* Set among unrelated bits it must still be found. */
+    f.flags = 0xFFFFFFFFu;
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 1, "all bits");
+}
+
+static void test_acpi_s0ix_wrapper_matches_pure(void)
+{
+    const struct acpi_fadt *live = acpi_get_fadt();
+
+    /* The wrapper must forward to its OWN evaluator over the live table --
+     * not to a different accessor, and not to a cached answer. */
+    TEST_ASSERT_EQ(acpi_s0ix_supported(), acpi_fadt_s0ix_capable(live),
+                   "wrapper");
+}
+
+
 void test_register_acpi_power(void)
 {
     test_suite_register_cat("ACPI: button in-range action preserved",
@@ -827,6 +887,12 @@ void test_register_acpi_power(void)
                             test_acpi_enter_s4_refused, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: S5 support flag matches parsed SLP_TYPa",
                             test_acpi_s5_query_self_consistent, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: S0ix null/short",
+                            test_acpi_s0ix_null_and_short_refuse, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: S0ix flags bit 21",
+                            test_acpi_s0ix_reads_bit21, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: S0ix wrapper",
+                            test_acpi_s0ix_wrapper_matches_pure, TEST_CAT_BOOT);
 }
 
 #else

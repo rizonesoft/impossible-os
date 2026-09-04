@@ -128,6 +128,7 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_PCID,    ecx, 17);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_TSC_DL,  ecx, 24);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_CX16,    ecx, 13);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_MONITOR, ecx,  3);
     }
 
     /* ---- Leaf 0x07 ECX=0: Extended features ---- */

@@ -522,6 +522,8 @@ int acpi_fadt_has_8042(const struct acpi_fadt *fadt);
 int acpi_fadt_has_cmos_rtc(const struct acpi_fadt *fadt);
 int acpi_fadt_msi_supported(const struct acpi_fadt *fadt);
 int acpi_fadt_has_vga(const struct acpi_fadt *fadt);
+int acpi_fadt_s0ix_capable(const struct acpi_fadt *fadt);
+int acpi_s0ix_supported(void);
 
 /* ---- Win32 GetSystemFirmwareTable / EnumSystemFirmwareTables surface ----
  *

@@ -145,6 +145,72 @@ int pm_deep_idle_probe_test(uint32_t *out_depth)
 }
 #endif
 
+
+/* ---- MWAIT capability and hint selection --------------------------------
+ *
+ * Pure logic only; see the contract in include/kernel/pm.h for why nothing
+ * here executes MONITOR or MWAIT. Taking the CPUID words as arguments rather
+ * than executing CPUID is what lets the suite prove these on a host whose CPU
+ * reports no leaf 5 -- which is every CI host this repo runs on. */
+
+uint32_t pm_mwait_hint_encode(uint32_t cclass, uint32_t substate)
+{
+    if (cclass < PM_MWAIT_CLASS_MIN || cclass > PM_MWAIT_CLASS_MAX)
+        return PM_MWAIT_HINT_INVALID;
+    if (substate > PM_MWAIT_SUBSTATE_MAX)
+        return PM_MWAIT_HINT_INVALID;
+    /* SDM Table 4-11: bits 7:4 are (class - 1), so 0 names C1. */
+    return ((cclass - 1u) << 4) | substate;
+}
+
+int pm_mwait_deepest_hint(uint32_t leaf5_edx, uint32_t *out_hint)
+{
+    uint32_t cclass;
+
+    if (!out_hint)
+        return 0;
+
+    /* CPUID.05H:EDX packs one 4-bit sub-state count per class, class Cn at
+     * bits 4n+3:4n. C0 (bits 3:0) is the running state, not an idle target,
+     * so the search stops at C1 and never encodes class 0.
+     *
+     * Descending order is the point: the DEEPEST implemented class wins, and
+     * a class whose count is zero is unimplemented and skipped rather than
+     * encoded with sub-state 0. Encoding an unimplemented class would name a
+     * state the CPU does not have. */
+    for (cclass = PM_MWAIT_CLASS_MAX; cclass >= PM_MWAIT_CLASS_MIN; cclass--) {
+        uint32_t count = (leaf5_edx >> (cclass * 4u)) & 0xFu;
+
+        if (count) {
+            /* count sub-states means valid indices 0..count-1, so the deepest
+             * is count-1. Off-by-one here would request a sub-state the class
+             * does not implement. */
+            uint32_t hint = pm_mwait_hint_encode(cclass, count - 1u);
+
+            if (hint == PM_MWAIT_HINT_INVALID)
+                return 0;
+            *out_hint = hint;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int pm_mwait_idle_allowed(int if_set, int irq_break_supported)
+{
+    /* Interrupts enabled: any arriving interrupt is a break event, so the
+     * wait is bounded by the same mechanism that bounds HLT. */
+    if (if_set)
+        return 1;
+
+    /* Interrupts masked: the ONLY break event is a masked interrupt, and that
+     * requires CPUID.05H:ECX[1] paired with MWAIT ECX[0]. Without it there is
+     * no guaranteed wake, so the caller must not execute MWAIT at all. This
+     * is a refusal, not a downgrade -- returning 1 here would trade a power
+     * saving for a machine that never wakes. */
+    return irq_break_supported ? 1 : 0;
+}
+
 int pm_idle_c1(void)
 {
     struct per_cpu_data *cpu;

@@ -274,6 +274,122 @@ static void test_pm_idle_cycles_offline_slot_zero(void)
 
 /* ---- Registration ---- */
 
+/* ---- MWAIT capability layer (section 10) --------------------------------
+ *
+ * These are pure functions over supplied CPUID words, so every case below is
+ * deterministic on any host -- including this one, whose emulated CPU reports
+ * no leaf 5 at all. That is the reason the layer takes arguments instead of
+ * executing CPUID: the platforms the logic exists for are not the platforms
+ * the suite runs on. */
+
+static void test_pm_mwait_hint_encode_sdm(void)
+{
+    /* SDM Table 4-11: bits 7:4 are (class - 1), so C1 encodes as 0. */
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(1, 0), 0x00u, "C1s0");
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(2, 0), 0x10u, "C2s0");
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(7, 0), 0x60u, "C7s0");
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(7, 15), 0x6Fu, "C7s15");
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(3, 2), 0x22u, "C3s2");
+}
+
+static void test_pm_mwait_hint_encode_rejects_out_of_range(void)
+{
+    /* Class 0 is C0, the running state, and is not an idle target. Class 8
+     * is past what leaf 5 can enumerate. Both must refuse rather than wrap
+     * into a neighbouring class's encoding. */
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(0, 0), PM_MWAIT_HINT_INVALID,
+                   "cls0");
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(8, 0), PM_MWAIT_HINT_INVALID,
+                   "cls8");
+    TEST_ASSERT_EQ(pm_mwait_hint_encode(1, 16), PM_MWAIT_HINT_INVALID,
+                   "sub16");
+}
+
+static void test_pm_mwait_deepest_picks_deepest_class(void)
+{
+    uint32_t hint = 0xDEADu;
+
+    /* One sub-state in C1 (bits 7:4) and two in C3 (bits 15:12). C3 is
+     * deeper, and its deepest sub-state is count-1 = 1, so 0x21. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x2010u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(hint, 0x21u, "C3s1 wins");
+
+    /* C1 alone must still WIN, which is the loop's last iteration. Without
+     * this, tightening the bound to cclass > PM_MWAIT_CLASS_MIN would pass
+     * every other case while rejecting a CPU that implements only C1.
+     * Note the hint is a legitimate 0x00: success is the return value, and a
+     * caller treating a zero hint as "none" would be wrong. */
+    hint = 0xDEADu;
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x10u, &hint), 1, "C1 ok");
+    TEST_ASSERT_EQ(hint, 0x00u, "C1s0 zero");
+}
+
+static void test_pm_mwait_deepest_skips_empty_classes(void)
+{
+    uint32_t hint = 0xDEADu;
+
+    /* C7 nibble (bits 31:28) is zero, so C7 is unimplemented and must be
+     * skipped rather than encoded as C7 sub0. C2 (bits 11:8) has one. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x0100u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(hint, 0x10u, "C2s0");
+}
+
+static void test_pm_mwait_deepest_ignores_c0(void)
+{
+    uint32_t hint = 0xDEADu;
+
+    /* Only the C0 nibble is set. C0 is the running state, never an idle
+     * target, so this must refuse -- not encode class 0. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x000Fu, &hint), 0, "C0 no");
+    TEST_ASSERT_EQ(hint, 0xDEADu, "untouched");
+}
+
+static void test_pm_mwait_deepest_refuses_all_zero(void)
+{
+    uint32_t hint = 0xDEADu;
+
+    /* What a CPU with no MWAIT idle classes reports, and what this emulated
+     * host reports. A fabricated hint here would name a state the CPU does
+     * not implement, which is how a monitored wait becomes unbounded. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0u, &hint), 0, "zero no");
+    TEST_ASSERT_EQ(hint, 0xDEADu, "untouched");
+
+    /* The NULL-output probe deliberately supplies an EDX that DOES name a
+     * class (C7, count 1). An all-zero EDX would return before reaching the
+     * store, so it would pass even with the NULL guard deleted -- proving
+     * nothing. This input reaches the store, so only the guard stops a
+     * kernel NULL write. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x10000000u, 0), 0, "null no");
+}
+
+static void test_pm_mwait_deepest_substate_within_count(void)
+{
+    uint32_t hint = 0xDEADu;
+
+    /* Max a 4-bit count field can report is 15 sub-states, whose deepest
+     * INDEX is 14 -- not 15. Requesting index 15 off a count of 15 would name
+     * a sub-state the class does not implement, so this asserts the count-1
+     * conversion rather than the field width. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0xF0000000u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(hint, 0x6Eu, "C7 n15");
+
+    /* A count of 1 is the boundary in the other direction: index 0. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x10000000u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(hint, 0x60u, "C7 n1");
+}
+
+static void test_pm_mwait_idle_allowed_rules(void)
+{
+    /* Interrupts on: an arriving interrupt always breaks the wait. */
+    TEST_ASSERT_EQ(pm_mwait_idle_allowed(1, 0), 1, "if1");
+    TEST_ASSERT_EQ(pm_mwait_idle_allowed(1, 1), 1, "if1 brk");
+    /* Interrupts masked: only a masked-interrupt break event can wake the
+     * CPU, so without CPUID.05H:ECX[1] this must refuse outright. */
+    TEST_ASSERT_EQ(pm_mwait_idle_allowed(0, 0), 0, "if0 no");
+    TEST_ASSERT_EQ(pm_mwait_idle_allowed(0, 1), 1, "if0 brk");
+}
+
+
 void test_register_pm_idle(void)
 {
     test_suite_register_cat("PM: deep idle allowed by default",
@@ -294,6 +410,22 @@ void test_register_pm_idle(void)
                             test_pm_idle_delta_rejects_backwards_tsc, TEST_CAT_BOOT);
     test_suite_register_cat("PM: offline CPU slot reports zero idle cycles",
                             test_pm_idle_cycles_offline_slot_zero, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT hint encoding",
+                            test_pm_mwait_hint_encode_sdm, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT hint range",
+                            test_pm_mwait_hint_encode_rejects_out_of_range, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT deepest class",
+                            test_pm_mwait_deepest_picks_deepest_class, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT skips empty",
+                            test_pm_mwait_deepest_skips_empty_classes, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT skips C0",
+                            test_pm_mwait_deepest_ignores_c0, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT no class",
+                            test_pm_mwait_deepest_refuses_all_zero, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT substate bound",
+                            test_pm_mwait_deepest_substate_within_count, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: MWAIT IF=0 rule",
+                            test_pm_mwait_idle_allowed_rules, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */
