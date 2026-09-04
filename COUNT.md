@@ -79,13 +79,13 @@
 | --------------------- | ------------: | ----------: | -------------------: |
 | **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,299,599 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                    1 |
-| **Time span**         |      33 years |    40 years | 6 month(s), 1 day(s) |
+| **Time span**         |      33 years |    40 years | 6 month(s), 2 day(s) |
 
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), the 685,876 lines
-> written here imply **138 developers** working for **6 month(s), 1 day(s)**.
+> written here imply **137 developers** working for **6 month(s), 2 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-09-04 17:07 · commit `88cc80fc6`*
+*Last updated: 2026-09-04 17:30 · commit `46c696a7c`*
