@@ -79,38 +79,40 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                      | Depends On                 | Status |
-| --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
-| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine                 | (none)                     |  [x]   |
-| 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting                | §1                         |  [x]   |
-| 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)                | §1, §2, §26, §9, D04T03§1  |  [/]   |
-| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec                 | (none)                     |  [x]   |
-| 💎  |   5   | §5 ACPI EC driver (discovery+transactions; GATED OFF, needs §24) | §1                         |  [/]   |
-| 💎  |   6   | §6 Battery & AC adapter ACPI source layer (`_BIX`/`_BST`/`_PSR`) | §29, D04T03§1              |  [/]   |
-| 💎  |   7   | §7 Power button & lid-close events                               | §5                         |  [ ]   |
-| 💎  |   8   | §8 PCI device D-states (D0--D3cold)                              | §1                         |  [ ]   |
-| 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                     |  [ ]   |
-| ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3           |  [ ]   |
-| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                |  [ ]   |
-| 💎  |  12   | §12 Runtime device idle management                               | §8, §9                     |  [ ]   |
-| 💎  |  13   | §13 Power request tracking & wake source management              | §9, §12                    |  [ ]   |
-| 💎  |  14   | §14 ACPI thermal zone management                                 | §5, §24, D04T03§4          |  [ ]   |
-| 💎  |  15   | §15 CPU frequency scaling governor framework                     | §2, D04T03§6, D03T06§9     |  [ ]   |
-| 💎  |  16   | §16 CPU idle governor framework                                  | §2, D04T03§8               |  [ ]   |
-| 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER)               | §9                         |  [ ]   |
-| 💎  |  18   | §18 Power plan UI & `powercfg`                                   | §6, §7, §13, §14, §15, §16 |  [ ]   |
-| ⭐  |  19   | §19 Energy-aware scheduling integration                          | §15, §16, D02T09§9         |  [ ]   |
-| 💎  |  20   | §20 Power syscalls wired to SSDT                                 | §2, §6, D02T12§4           |  [ ]   |
-| 💎  |  21   | §21 Linux `/sys/power` suspend variant parity                    | §1, §10                    |  [ ]   |
-| 💎  |  22   | §22 User-interaction-aware QoS throttling                        | §15, §19, §20              |  [ ]   |
-| 💎  |  23   | §23 PCIe ASPM and L1 substates                                   | §8, §9, §12                |  [ ]   |
-| 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks                      | §1, §5, §7                 |  [ ]   |
-| 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo                | §2                         |  [ ]   |
-| 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep                      | §2                         |  [x]   |
-| 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap                | §26                        |  [ ]   |
-| 💎  |  28   | §28 S4 hibernation write path + resume consumer                  | §4, §3, §9, D02T27§7       |  [/]   |
-| 💎  |  29   | §29 Composite battery model, warn policy, registry publish       | (none)                     |  [ ]   |
-| 💎  |  30   | §30 Battery charge limiting and smart charging                   | §5, §24, §29               |  [/]   |
+| ⭐  | Order | Deliverable                                                      | Depends On                  | Status |
+| --- | :---: | ---------------------------------------------------------------- | --------------------------- | :----: |
+| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine                 | (none)                      |  [x]   |
+| 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting                | §1                          |  [x]   |
+| 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)                | §1, §2, §26, §9, D04T03§1   |  [/]   |
+| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec                 | (none)                      |  [x]   |
+| 💎  |   5   | §5 ACPI EC driver (discovery+transactions; GATED OFF, needs §24) | §1                          |  [/]   |
+| 💎  |   6   | §6 Battery & AC adapter ACPI source layer (`_BIX`/`_BST`/`_PSR`) | §29, D04T03§1               |  [/]   |
+| 💎  |   7   | §7 Power & sleep button event dispatch                           | §1                          |  [ ]   |
+| 💎  |   8   | §8 PCI device D-states (D0--D3cold)                              | §1                          |  [ ]   |
+| 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [ ]   |
+| ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3            |  [ ]   |
+| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                 |  [ ]   |
+| 💎  |  12   | §12 Runtime device idle management                               | §8, §9                      |  [ ]   |
+| 💎  |  13   | §13 Power request tracking & wake source management              | §9, §12                     |  [ ]   |
+| 💎  |  14   | §14 ACPI thermal zone management                                 | §5, §24, D04T03§4           |  [ ]   |
+| 💎  |  15   | §15 CPU frequency scaling governor framework                     | §2, D04T03§6, D03T06§9      |  [ ]   |
+| 💎  |  16   | §16 CPU idle governor framework                                  | §2, D04T03§8                |  [ ]   |
+| 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER)               | §9                          |  [ ]   |
+| 💎  |  18   | §18 Power plan UI & `powercfg`                                   | §7, §13, §14, §15, §16, §29 |  [ ]   |
+| ⭐  |  19   | §19 Energy-aware scheduling integration                          | §15, §16, D02T09§9          |  [ ]   |
+| 💎  |  20   | §20 Power syscalls wired to SSDT                                 | §2, §6, D02T12§4            |  [ ]   |
+| 💎  |  21   | §21 Linux `/sys/power` suspend variant parity                    | §1, §10                     |  [ ]   |
+| 💎  |  22   | §22 User-interaction-aware QoS throttling                        | §15, §19, §20               |  [ ]   |
+| 💎  |  23   | §23 PCIe ASPM and L1 substates                                   | §8, §9, §12                 |  [ ]   |
+| 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks                      | §1, §5, §7                  |  [ ]   |
+| 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo                | §2                          |  [ ]   |
+| 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep                      | §2                          |  [x]   |
+| 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap                | §26                         |  [ ]   |
+| 💎  |  28   | §28 S4 hibernation write path + resume consumer                  | §4, §3, §9, D02T27§7        |  [/]   |
+| 💎  |  29   | §29 Composite battery model, warn policy, registry publish       | (none)                      |  [ ]   |
+| 💎  |  30   | §30 Battery charge limiting and smart charging                   | §5, §24, §29                |  [/]   |
+| 💎  |  31   | §31 Lid state and lid-close policy                               | §5, §7, §24, D04T03§1       |  [/]   |
+| ⭐  |  32   | §32 Human presence detection (wake on approach, lock on leave)   | §7, D04T03§1                |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -467,33 +469,34 @@ Evaluate the ACPI battery and AC-adapter objects and publish each one into the �
 
 ---
 
-## 7. Power Button & Lid-Close Events
-- [ ] PM1 fixed event (§1) fires SCI with `PWRBTN_STS` set
-- [ ] `acpi_power_button_event()` -- dispatch based on Registry `HKLM\SYSTEM\PowerControl\PowerButtonAction`:
-  - `0` = do nothing (ignore)
-  - `1` = sleep (S3)
-  - `2` = hibernate (S4)
-  - `3` = shutdown (S5) -- default
-  - `4` = lock screen
-- [ ] If an interactive user session is active: first post `WM_QUERYENDSESSION` to all windows (give apps a chance to save); wait up to 5 s; then execute the action regardless
-- [ ] `SLPBTN_STS` fixed event -> `acpi_sleep_button_event()`:
-  - Default action: S3 suspend (Registry `HKLM\SYSTEM\PowerControl\SleepButtonAction`, default `1`)
-- [ ] EC event (§5) or ACPI GPE fires when lid state changes; read `\_SB.LID0._LID`: 0=closed, 1=open
-- [ ] Lid close action (Registry `PowerLidCloseAction`, default `1`=sleep): same action table as power button
-- [ ] Lid open: if system is in S3/S4, trigger wakeup (the EC event itself causes the hardware to resume; software sees `WAKE_STS` in PM1a_STS -> §3 or §4 resume path)
-- [ ] Display-off on lid close before entering sleep: call `gfx_blank_display()` to cut video output immediately, reducing flicker during the sleep entry sequence
-- [ ] HPD sensor integration: detect compatible IR/ToF camera or Wi-Fi sensing via ACPI `_HID "INTC1070"` (Intel HPD) or `HID_DEVICE_SYSTEM_HUMAN_PRESENCE` (0x000D0011)
-  - Not the same signal as §22's user-interaction-aware QoS throttling: HPD needs presence-sensing hardware, QoS-based throttling is software-only and needs no sensor -> XREF: `02-kernel-core/TODO-26-power-management.md` §22
-- [ ] `hpd_register_sensor(dev, ops)` -- register HPD sensor driver with presence/absence callbacks
-- [ ] Wake on Approach: when display is off (idle timeout) and HPD reports `PRESENCE_DETECTED`, power on display and optionally unlock (biometric); Registry `HPDWakeOnApproach` (default 1)
-- [ ] Lock on Leave: when HPD reports `ABSENCE_DETECTED` for > `HPDAbsenceTimeout` seconds (default 30), trigger display-off + lock screen; Registry `HPDLockOnLeave` (default 1)
-- [ ] Attention-Aware Dimming: if HPD reports `GAZE_AWAY` (supported sensors only), dim backlight after 10 s; restore on `GAZE_DETECTED`
-- [ ] Boot log: `[HPD] Sensor: %s, wake-on-approach=%s, lock-on-leave=%s`
-- [ ] Commit: `"kernel/acpi: power button, sleep button, lid-close, HPD presence events"`
+## 7. Power & Sleep Button Event Dispatch
 
-**Test checkpoint:** Power button SCI dispatches `acpi_power_button_event()`. Registry `PowerButtonAction=3` triggers shutdown. `SLPBTN_STS` triggers sleep. Lid close reads `_LID` via EC. HPD sensor registration accepted (or skip if no HPD device). Test on: QEMU TCG (power button SCI testable; lid/HPD skip).
+> **Spawned-by:** root
+
+The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_sci_process()` acknowledges `PWRBTN_STS` / `SLPBTN_STS` and counts them in hard-IRQ context precisely because it may not log or act there (`src/kernel/acpi.c:1338-1355`), and it already XREFs `acpi_power_button_event()` as the missing half. Lid handling moved to §31 and human-presence detection to §32: both need prerequisites this half does not.
+
+**Files:** `src/kernel/acpi.c`, `include/kernel/acpi.h`, `src/kernel/test/test_acpi_power.c`
+
+- [ ] `acpi_power_button_event()` -- dispatch on registry `HKLM\SYSTEM\PowerControl\PowerButtonAction`:
+  - `0` = do nothing (ignore), `1` = sleep (S3), `2` = hibernate (S4), `3` = shutdown (S5, the default), `4` = lock screen
+- [ ] `acpi_sleep_button_event()` on `SLPBTN_STS`, same action table, registry `SleepButtonAction` (default `1` = sleep)
+- [ ] Resolve an unknown or out-of-range registry value to the DEFAULT action and log it once, never to "do nothing": a typo in the hive must not silently disable the power button
+- [ ] Drain by EDGE, not by level: the consumer compares the ISR's monotonic count against its own last-seen watermark, so a burst of presses collapses to one action and a missed poll cannot lose the event
+- [ ] The consumer runs at thread level, never in the SCI path; a wedged action can therefore not strand a level-triggered SCI before its EOI
+- [ ] Re-entrancy: an action already in flight suppresses a second dispatch, so holding the button does not stack two shutdown attempts
+- [ ] Actions route to the ONE actuator that exists on this tree, `acpi_enter_sleep_state()`, and each unavailable action degrades explicitly rather than silently:
+  - S5 shutdown is reachable today and is the default.
+  - S3 and S4 are refused with a logged reason while §3 and §28 are deferred; the refusal falls back to the default action rather than leaving the press unhandled.
+- [ ] Boot log line naming the resolved action for each button, so a machine that ignores its power button says why
+- [ ] Unit tests: each registry value maps to its action; an out-of-range value falls back to the default; the edge drain collapses a burst; a second press during an in-flight action is suppressed
+- [/] `WM_QUERYENDSESSION` to all windows with a 5 s grace before the action executes -- blocked, no in-kernel path exists to broadcast a window message to top-level windows -> XREF: `02-kernel-core/TODO-26` §17 (item: "`IRP_MN_QUERY_POWER`")
+- [/] `4` = lock screen: no lock screen or session state exists to lock; the action parses and resolves but falls back to the default until a session owner exists -> XREF: `09-desktop-shell/TODO-13-explorer-shell-host.md` §1
+- [ ] Commit: `"kernel/acpi: power and sleep button event dispatch with registry action policy"`
+
+**Test checkpoint:** a simulated `PWRBTN_STS` count increment dispatches `acpi_power_button_event()`. `PowerButtonAction=3` resolves to shutdown, `=0` to ignore, `=99` to the default with one log line. `SLPBTN_STS` resolves through `SleepButtonAction`. A burst of counts produces one action. Test on: QEMU TCG.
 
 ---
+
 
 ## 8. PCI Device D-States (D0--D3cold)
 - [ ] `pci_pmcap_find(dev)` -- walk PCI Capabilities linked list (cap ID `0x01` = Power Management) in config space; return cap offset or -1
@@ -876,7 +879,7 @@ Before changing system or device power state, query all affected drivers and all
   - `HibernateTimeout` (REG_DWORD): seconds to S4 after S3 (0=never)
   - `DisplayOffTimeout` (REG_DWORD): seconds to blank display
   - `PowerButtonAction` (REG_DWORD): same codes as §7
-  - `LidCloseAction` (REG_DWORD): same codes as §7
+  - `LidCloseAction` (REG_DWORD): same codes as §7 -> XREF: `02-kernel-core/TODO-26` §31
   - `CpuFreqGovernor` (REG_SZ): `"performance"`, `"balanced"`, `"powersave"`, `"schedutil"`
   - `IdleLatencyBudgetUs` (REG_DWORD): max C-state exit latency in microseconds
   - `MaxProcessorState` (REG_DWORD): 0--100% cap on CPU frequency (§15)
@@ -1071,7 +1074,7 @@ Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe
 **Test checkpoint:** a GPE block splits into equal status/enable halves and a non-halvable length is refused; an asserted-and-enabled GPE bit is acknowledged exactly once; an asserted-but-disabled bit is untouched; a GPE with no registered handler is still acknowledged so the SCI line drops. Test on: QEMU TCG (raises no GPEs -- structural tests only), bare metal (the only place the real path is exercised).
 
 > **Notes:**
-> - **Why this is a new section rather than an item somewhere:** `grep -rn GPE todo/` finds two passing mentions and no owner -- §7 assumes "ACPI GPE fires when lid state changes" and §13 carries a bare `PM_WAKE_GPE` enum tag -- and `04-drivers-hardware/TODO-03` has no GPE mention at all across its ten sections. Nothing owns block discovery, enable, or acknowledgement, so this is ownerless work, not a duplicate of existing coverage.
+> - **Why this is a new section rather than an item somewhere:** `grep -rn GPE todo/` finds two passing mentions and no owner -- §31 assumes "ACPI GPE fires when lid state changes" and §13 carries a bare `PM_WAKE_GPE` enum tag -- and `04-drivers-hardware/TODO-03` has no GPE mention at all across its ten sections. Nothing owns block discovery, enable, or acknowledgement, so this is ownerless work, not a duplicate of existing coverage.
 > - **How it was found:** independently by `kernel-quality-auditor` (which traced the storm-quarantine consequence to `irq.c:511-513`) and `parity-research-analyst` (which identified GPEs as the channel Linux and Windows actually use for EC, lid, dock and wake) during §1's post-ship review, 2026-09-03.
 > - **Scope boundary:** this section owns the GPE HARDWARE layer only -- block discovery, the status/enable registers, acknowledgement, and per-GPE counts. The `_Lxx`/`_Exx` AML evaluation layered on top belongs to the ACPICA integration. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1
 
@@ -1285,6 +1288,49 @@ Charge limiting is a WRITE to the embedded controller at a vendor-specific regis
 
 ---
 
+## 31. Lid State and Lid-Close Policy
+
+> **Spawned-by:** §7 (split)
+
+- [ ] An EC event (§5) or an ACPI GPE fires on a lid transition; read `\_SB.LID0._LID` (0=closed, 1=open)
+- [ ] Lid-close action from registry `PowerLidCloseAction` (default `1` = sleep), sharing the §7 action table rather than a second copy of it
+- [ ] Lid open while in S3/S4 resumes: the EC event resumes the hardware and software observes `WAKE_STS` in PM1a_STS -> §3 or §28 resume path
+- [ ] Display-off before the sleep entry sequence: `gfx_blank_display()` cuts video output immediately so the panel does not flicker through the transition
+- [ ] Docked/clamshell suppression: a lid close with an external display attached must not sleep the machine, which is the behaviour every laptop OS ships
+- [ ] Commit: `"kernel/acpi: lid state, lid-close policy, display blank on sleep entry"`
+
+**Test checkpoint:** a lid-close notify reads `_LID` and resolves `PowerLidCloseAction`. Closing with an external display attached suppresses the sleep. Lid open from S3 reaches the resume path. Test on: QEMU TCG for the policy table, bare metal on a laptop for the transition.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the blockers below clear
+
+> **Deferred:** [H] `_LID` is an ACPI control method and namespace evaluation does not run on this tree (`AcpiInitializeSubsystem`/`AcpiLoadTables`/`AcpiEnableSubsystem` have zero call sites outside `src/kernel/acpica/`, verified 2026-09-04). [H] the other event source, the EC, is gated off by §5's own Deferred stamp pending GPE acknowledgement. [M] the sleep and resume actions are §3 and §28, both deferred. Nothing here is a policy choice: there is no way to learn the lid state. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "Initialisation sequence in `acpi_init()`"), `02-kernel-core/TODO-26` §24 (item: "Open the EC gate once GPE acknowledgement works" at line 1059), `02-kernel-core/TODO-26` §7
+
+---
+
+## 32. Human Presence Detection (HPD)
+
+> **Spawned-by:** §7 (split)
+
+Wake-on-approach and lock-on-leave. This is presence-sensing HARDWARE, and deliberately not the same signal as §22's user-interaction-aware QoS throttling, which is software-only and needs no sensor -> XREF: `02-kernel-core/TODO-26` §22.
+
+- [ ] Detect a compatible IR/ToF camera or Wi-Fi sensing device via ACPI `_HID "INTC1070"` (Intel HPD) or HID usage `HID_DEVICE_SYSTEM_HUMAN_PRESENCE` (0x000D0011)
+- [ ] `hpd_register_sensor(dev, ops)` -- register an HPD sensor driver with presence and absence callbacks
+- [ ] Wake on Approach: with the display off from an idle timeout, `PRESENCE_DETECTED` powers the display on and optionally unlocks (biometric); registry `HPDWakeOnApproach` (default 1)
+- [ ] Lock on Leave: `ABSENCE_DETECTED` sustained beyond `HPDAbsenceTimeout` (default 30 s) blanks the display and locks; registry `HPDLockOnLeave` (default 1)
+- [ ] Attention-aware dimming: `GAZE_AWAY` dims the backlight after 10 s and `GAZE_DETECTED` restores it, on sensors that report gaze at all
+- [ ] Privacy: presence state is a sensor reading about a person, so it is never persisted and never leaves the kernel except as the display/lock action it causes
+- [ ] Boot log: `[HPD] Sensor: %s, wake-on-approach=%s, lock-on-leave=%s`
+- [ ] Commit: `"kernel/pm: human presence detection, wake on approach, lock on leave"`
+
+**Test checkpoint:** a synthetic sensor registers and its presence/absence callbacks drive the display and lock actions. Absence shorter than `HPDAbsenceTimeout` does not lock. No HPD device present skips cleanly rather than failing init. Test on: QEMU TCG with a synthetic sensor (no emulated HPD hardware exists).
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the blockers below clear
+
+> **Deferred:** [H] sensor discovery is an ACPI `_HID` namespace walk or a HID usage-page match, and neither exists on this tree: namespace evaluation does not run, and no HID class driver publishes usage pages to consumers. [H] every action the sensor drives (display power, backlight level, lock screen) has no owner in tree either. A synthetic-sensor-only implementation would be an interface with no producer and no consumer, which is why this is parked rather than half-shipped. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "Initialisation sequence in `acpi_init()`"), `09-desktop-shell/TODO-13-explorer-shell-host.md` §1
+
+---
+
+
 ## OS Comparison
 
 | ⭐  | Feature                          | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
@@ -1334,7 +1380,7 @@ Charge limiting is a WRITE to the embedded controller at a vendor-specific regis
 | 💎  | RAPL power cap sysfs             | ✅ Internal     | ✅ powercap      | ⬜ §15           |
 | 💎  | AMD P-State EPP                  | ✅ Driver       | ✅ amd_pstate    | ⬜ §15           |
 | 💎  | Energy Saver adaptive            | ✅ Win11        | ⚠️ profiles      | ⬜ §18           |
-| ⭐  | Human presence HPD wake          | ✅ Platform     | ❌ None          | ⬜ §7            |
+| ⭐  | Human presence HPD wake          | ✅ Platform     | ❌ None          | ⬜ §32           |
 | 💎  | HID-idle QoS throttle (fg-only)  | ✅ 25H2         | ❌ None          | ⬜ §22           |
 | 💎  | ACPI GPE block dispatch          | ✅ ACPI.sys     | ✅ acpi_ev_gpe   | ⬜ §24           |
 
