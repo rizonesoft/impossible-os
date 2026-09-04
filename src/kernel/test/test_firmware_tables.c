@@ -905,25 +905,37 @@ static void test_quirks_parse_disable_whitespace(void)
 
 static void test_quirks_name_each_bit(void)
 {
-    /* Exact canonical strings -- a typo in s_quirks[].name would
-     * silently break boot.conf override parity AND the JSON
-     * quirks_active[] output. */
-    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_BROKEN_FPDT),
-                              "broken_fpdt"),
-                "broken_fpdt canonical name");
-    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_BAD_MADT_CHECKSUM),
-                              "bad_madt_checksum"),
-                "bad_madt_checksum canonical name");
-    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_GOP_PITCH_LIES),
-                              "gop_pitch_lies"),
-                "gop_pitch_lies canonical name");
-    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_BOGUS_MAT),
-                              "bogus_mat"),
-                "bogus_mat canonical name");
-    TEST_ASSERT(str_eq_local(firmware_quirks_name(FW_QUIRK_USB_HANDOFF_BLACKLIST),
-                              "usb_handoff_blacklist"),
-                "usb_handoff_blacklist canonical name");
+    /* Exact canonical strings -- a typo in s_quirks[].name would silently
+     * break boot.conf override parity AND the JSON quirks_active[] output.
+     *
+     * Driven from the SAME X-macro the kernel descriptor table and the
+     * bootloader qmap are built from, rather than a hand-kept list. A manual
+     * list here silently stopped covering new quirks the moment one was added
+     * (measured: FW_QUIRK_EC_ECDT_PORTS_SWAPPED landed and neither this check
+     * nor the round-trip below noticed), which is precisely the drift these
+     * tests exist to catch. */
+    /* INDEPENDENT oracle. These literals are written out by hand ON PURPOSE:
+     * generating them from the same X-macro that feeds firmware_quirks_name()
+     * would move implementation and expectation together, so an accidental
+     * rename would break every boot.conf override token while every test
+     * stayed green. The generated loop below then guarantees this hand-written
+     * list is COMPLETE, which is the property a manual list cannot keep. */
+    static const struct { uint32_t bit; const char *name; } pinned[] = {
+        { FW_QUIRK_BROKEN_FPDT,           "broken_fpdt"           },
+        { FW_QUIRK_BAD_MADT_CHECKSUM,     "bad_madt_checksum"     },
+        { FW_QUIRK_GOP_PITCH_LIES,        "gop_pitch_lies"        },
+        { FW_QUIRK_BOGUS_MAT,             "bogus_mat"             },
+        { FW_QUIRK_USB_HANDOFF_BLACKLIST, "usb_handoff_blacklist" },
+        { FW_QUIRK_EC_ECDT_PORTS_SWAPPED, "ec_ecdt_ports_swapped" },
+    };
+    uint32_t i;
 
+    TEST_ASSERT_EQ((int)(sizeof(pinned) / sizeof(pinned[0])), FW_QUIRK_COUNT,
+                   "the pinned canonical-name list covers every defined quirk");
+    for (i = 0; i < sizeof(pinned) / sizeof(pinned[0]); i++)
+        TEST_ASSERT(str_eq_local(firmware_quirks_name(pinned[i].bit),
+                                 pinned[i].name),
+                    "canonical name matches the pinned ABI string");
 }
 
 /* Round-trip parse_disable(name(bit)) == bit for every defined quirk
@@ -932,13 +944,15 @@ static void test_quirks_name_each_bit(void)
  * bootloader silently drops the override token). */
 static void test_quirks_parse_round_trip_all_bits(void)
 {
+    /* Generated from the X-macro so "every defined quirk" stays true by
+     * construction instead of by remembering to append here. */
     static const uint32_t bits[] = {
-        FW_QUIRK_BROKEN_FPDT,
-        FW_QUIRK_BAD_MADT_CHECKSUM,
-        FW_QUIRK_GOP_PITCH_LIES,
-        FW_QUIRK_BOGUS_MAT,
-        FW_QUIRK_USB_HANDOFF_BLACKLIST,
+#define FW_QUIRK_DEF(id, bit, name) FW_QUIRK_##id,
+#include "kernel/firmware_quirks_table.inc"
+#undef FW_QUIRK_DEF
     };
+    TEST_ASSERT_EQ((int)(sizeof(bits) / sizeof(bits[0])), FW_QUIRK_COUNT,
+                   "the round-trip set covers every defined quirk");
     for (uint32_t i = 0; i < sizeof(bits)/sizeof(bits[0]); i++) {
         const char *n = firmware_quirks_name(bits[i]);
         TEST_ASSERT(n != 0, "name(bit) returns canonical string");

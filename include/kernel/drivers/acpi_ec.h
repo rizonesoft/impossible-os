@@ -116,6 +116,12 @@
  * frozen clock to seconds rather than forever. */
 #define ACPI_EC_WAIT_MAX_ITERS    2000000u
 
+/* How many status probes a wait performs between clock samples. mono_ns() can
+ * be several port reads on its own (the PMTMR source is a glitch-filtered
+ * three-read sequence), so sampling it every iteration would make the clock
+ * cost more than the thing being polled. */
+#define ACPI_EC_CLOCK_SAMPLE_EVERY  16u
+
 /* Bound on how many stale output bytes a flush will drain before declaring the
  * controller wedged. Firmware can leave OBF set at handoff; an EC that refuses
  * to drop OBF after this many reads is not going to. */
@@ -125,6 +131,52 @@
  * confirmed. More than one because the first can race the very acknowledgement
  * that sets BURST, and this is the last opportunity to send it. */
 #define ACPI_EC_BURST_ABORT_ATTEMPTS 2u
+
+/* The ports the i8042 keyboard controller owns unconditionally. An ECDT naming
+ * either describes the PS/2 controller, not an EC, and is refused. */
+#define EC_PORT_I8042_DATA  0x60u
+#define EC_PORT_I8042_CMD   0x64u
+
+/* Whole-operation budget for a multi-byte block read.
+ *
+ * The per-wait deadline alone is not a useful bound for a block: a 256-byte
+ * read is 256 transactions of three waits each, which permits 76.8 seconds
+ * with the transaction mutex held the entire time -- long enough that a second
+ * caller inherits the whole residual delay, and far past any interval a
+ * battery or thermal poller would use.
+ *
+ * The budget is checked at BYTE BOUNDARIES, not inside each wait, so it is a
+ * bound with a stated overshoot rather than a hard ceiling: a byte that starts
+ * just inside the budget can still spend its three per-wait deadlines, and the
+ * burst exit can spend one more. Worst case is therefore this value plus about
+ * four ACPI_EC_WAIT_TIMEOUT_NS. Propagating one shared deadline into every
+ * wait would remove the overshoot; it is not done here because the waits are
+ * shared with the single-byte paths, and the overshoot is small against the
+ * budget. On timeout the caller's buffer holds the bytes already read and the
+ * remainder is untouched. */
+#define ACPI_EC_BLOCK_TOTAL_TIMEOUT_NS  2000000000ull   /* 2 s */
+
+/* Clock-INDEPENDENT companion to the budget above, shared by every wait in one
+ * block operation. The per-wait iteration ceiling bounds a single wait and
+ * therefore does not bound an operation built from hundreds of them: with a
+ * stalled monotonic source every elapsed-time check reads zero, and a
+ * controller answering just under the per-wait ceiling each time would let a
+ * 256-byte read burn on the order of a billion port probes with the
+ * transaction mutex held.
+ *
+ * Sized to match the time budget rather than picked round: at roughly a
+ * microsecond per port probe, ACPI_EC_BLOCK_TOTAL_TIMEOUT_NS is about this
+ * many probes, so the clock-independent bound approximates the same amount of
+ * work the elapsed-time bound would have allowed. A healthy block needs a few
+ * probes per wait and is orders of magnitude below it. */
+#define ACPI_EC_BLOCK_TOTAL_PROBES  2000000u
+
+/* Cleanup gets a SEPARATE allowance rather than sharing the one above. Burst
+ * exit and burst abort are mandatory -- an EC left in burst is dedicated to a
+ * host that has walked away and stops serving the firmware's own events -- so
+ * they must still be able to run once the main budget is spent, while staying
+ * bounded themselves. */
+#define ACPI_EC_BLOCK_CLEANUP_PROBES  200000u
 
 /* ---- Status codes ------------------------------------------------------- */
 #define ACPI_EC_OK          0   /* transaction completed                     */
@@ -169,6 +221,36 @@ struct acpi_ec_io {
  * paths are testable without live firmware, matching the acpi.h convention. */
 int acpi_ec_parse_ecdt(const void *image, uint32_t length,
                        struct acpi_ec_ports *out);
+
+/* 1 when this port pair collides with the i8042 keyboard controller AND that
+ * controller may exist on this machine. Pure: the caller supplies the platform
+ * fact, so ECDT parsing stays free of platform state and this stays testable
+ * both ways.
+ *
+ * `i8042_present` is a CONSERVATIVE present-or-unknown flag, not a positive
+ * detection, and PRODUCTION PASSES 1 TODAY -- an unconditional refusal of any
+ * ECDT overlapping 0x60/0x64.
+ *
+ * Two authorities were tried and both are wrong. The FADT IAPC_BOOT_ARCH.8042
+ * bit is documented unreliable in this tree (keyboard.c:304-307: QEMU WHPX
+ * reports it clear for a working emulated i8042). HW_REDUCED_ACPI is not an
+ * absence proof either: it removes the Chapter 4 fixed-hardware requirements,
+ * while port-60/64 controller presence is the separate IA-PC boot-architecture
+ * field, so the implication does not hold. keyboard.c may use hardware-reduced
+ * to decide NOT to touch those ports, which is safe in the opposite direction;
+ * using it to decide the EC MAY touch them is not the same inference.
+ *
+ * So the parameter stays, because it is what a real detector will feed, and
+ * the interim policy is fail-closed. The cost is a hypothetical board that has
+ * no i8042 and chose its ports for an EC; the alternative cost is sending EC
+ * commands to a live keyboard controller.
+ *
+ * Deliberately NOT folded into acpi_ec_parse_ecdt(): the ECDT contract does
+ * not reserve 0x60/0x64, so on a hardware-reduced machine with no i8042 they
+ * are ordinary ports an EC may use, and refusing them unconditionally would
+ * lose EC discovery on exactly those platforms. */
+int acpi_ec_ports_conflict_i8042(const struct acpi_ec_ports *ports,
+                                 int i8042_present);
 
 /* Per-controller transaction state carried ACROSS calls.
  *
@@ -221,6 +303,8 @@ int acpi_ec_read_block_io(const struct acpi_ec_io *io,
 /* Drain output bytes the firmware left pending. Bounded by
  * ACPI_EC_FLUSH_MAX_BYTES; returns ACPI_EC_OK when OBF is clear on return,
  * ACPI_EC_PROTOCOL when it never cleared. */
+/* Returns ACPI_EC_OK, ACPI_EC_INVALID (unusable backend or port pair), or
+ * ACPI_EC_PROTOCOL when output never cleared. */
 int acpi_ec_flush_io(const struct acpi_ec_io *io,
                      const struct acpi_ec_ports *ports);
 
@@ -234,6 +318,7 @@ int acpi_ec_flush_io(const struct acpi_ec_io *io,
 int acpi_ec_quiesce_io(const struct acpi_ec_io *io,
                        const struct acpi_ec_ports *ports,
                        struct acpi_ec_state *st);
+/* Returns ACPI_EC_OK, ACPI_EC_INVALID, ACPI_EC_TIMEOUT or ACPI_EC_PROTOCOL. */
 
 /* Apply the swapped-ECDT firmware correction to a parsed port pair. Pure: the
  * caller supplies the decision, so the vendor matching stays in the firmware
@@ -249,11 +334,20 @@ void acpi_ec_apply_port_quirk(struct acpi_ec_ports *ports, int ports_swapped);
 
 /* ---- Public serialized API ---------------------------------------------- */
 
-/* Phase 2 init: discover and validate the ECDT, flush stale output, publish
- * readiness. Safe to call when no EC exists -- the EC simply stays
- * unavailable. Must run after mono_clock_init(): every deadline here is taken
- * from mono_ns(), which reads 0 until the monotonic clock is up, so an earlier
- * call would give every wait an already-expired or never-expiring deadline. */
+/* Phase 2 init: discover the ECDT, validate every field, apply the
+ * transposed-port firmware quirk, and publish. It performs NO EC I/O at all --
+ * not even a stale-output flush -- because the controller must not be touched
+ * while its GPE cannot be acknowledged; flushing happens at transaction entry
+ * instead. Safe to call when no EC exists: the EC simply stays unavailable.
+ *
+ * Ordering requirement: after firmware_quirks_init() (Phase 1), whose mask it
+ * reads, and after acpi_init() (Phase 1) for the table lookup. It does NOT
+ * depend on mono_clock_init(), because it takes no deadlines -- an earlier
+ * draft did flush here and that dependency was real then; it is not now.
+ *
+ * Not safe against concurrent callers: the discovery guard is an unlocked
+ * check of acpi_ec_discovered(). The single Phase 2 BSP call site is the
+ * contract, and a repeat call after a SUCCESSFUL discovery is a no-op. */
 void acpi_ec_init(void);
 
 /* 1 once a validated EC is present AND this kernel may safely drive it.
@@ -281,13 +375,35 @@ int acpi_ec_ready(void);
  * sections can tell "no EC on this machine" from "EC found, gated". */
 int acpi_ec_discovered(void);
 
-/* Serialized single-byte transactions against the discovered EC. Return
- * ACPI_EC_UNAVAIL when acpi_ec_ready() is 0. */
+/* ---- Serialized transactions ---------------------------------------------
+ *
+ * CONTEXT: these take a MUTEX, and mutex_lock() yields. They are PASSIVE-level
+ * only. Do not call them from a DPC, a timer callback, or any hard-IRQ path.
+ * The IRQL assertion inside mutex_lock currently only LOGS (hard traps are
+ * deferred, see irql.h), so a DISPATCH_LEVEL caller would yield anyway rather
+ * than being stopped -- which makes this a contract you must read, not one the
+ * kernel will enforce for you. A periodic battery poller is exactly the shape
+ * that gets this wrong, so it is stated here rather than left implied.
+ *
+ * ARGUMENT PRECEDENCE, in order: caller-argument validity is checked FIRST and
+ * returns ACPI_EC_INVALID (NULL destination, zero count, or a block range that
+ * would run past the one-byte EC address space) -- these are caller bugs on
+ * every machine and are reported as such whether or not an EC exists. Then
+ * readiness: ACPI_EC_UNAVAIL when acpi_ec_ready() is 0.
+ *
+ * RETURNS, exhaustively: ACPI_EC_OK; ACPI_EC_INVALID; ACPI_EC_UNAVAIL;
+ * ACPI_EC_TIMEOUT (a handshake wait, or the block's whole-operation budget,
+ * passed its deadline); ACPI_EC_PROTOCOL (the controller answered outside the
+ * protocol, e.g. output that will not drain); ACPI_EC_DESYNC (a previous
+ * transaction failed after issuing its command, so this controller is refused
+ * for the rest of the boot). */
 int acpi_ec_read(uint8_t addr, uint8_t *out_val);
 int acpi_ec_write(uint8_t addr, uint8_t val);
 
 /* Serialized burst-wrapped multi-byte read -- the path battery polling wants,
- * so a multi-field structure is not torn across unrelated EC traffic. */
+ * so a multi-field structure is not torn across unrelated EC traffic. Bounded
+ * as a whole by ACPI_EC_BLOCK_TOTAL_TIMEOUT_NS; on timeout the caller's buffer
+ * holds whatever was read before it and the rest is untouched. */
 int acpi_ec_read_block(uint8_t first_addr, uint8_t *out, uint32_t count);
 
 /* The discovered port pair, for diagnostics. Returns 0 and leaves *out

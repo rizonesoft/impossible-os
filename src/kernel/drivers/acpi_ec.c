@@ -43,16 +43,57 @@ _Static_assert(ECDT_OFF_ID == ECDT_OFF_GPE + 1u,
                "ECDT EC_ID must directly follow the 1-byte GPE_BIT");
 _Static_assert(ACPI_GAS_OFF_ADDRESS + 8u == ACPI_GAS_SIZE,
                "a generic address is a 4-byte prefix plus a 64-bit address");
-/* The parser dereferences through the last byte of the EC_DATA address, so the
- * minimum accepted length must cover it. Stating this as an assert rather than
- * a comment is the point: it is the bound that keeps a short firmware table
- * from being read past its end. */
-_Static_assert(ECDT_MIN_LENGTH >= ECDT_OFF_DATA + ACPI_GAS_SIZE,
-               "ECDT_MIN_LENGTH must cover every byte the GAS parser reads");
-/* The EC_SC bits must be distinct single bits in the documented layout. */
-_Static_assert((EC_SC_OBF | EC_SC_IBF | EC_SC_CMD | EC_SC_BURST |
-                EC_SC_SCI_EVT | EC_SC_SMI_EVT) == 0x7Bu,
-               "EC_SC bit layout: OBF|IBF|CMD|BURST|SCI_EVT|SMI_EVT, bit 2 reserved");
+
+/* The asserts above are all RELATIVE: they pin each offset against its
+ * neighbour and therefore hold under a uniform shift of the whole table. The
+ * anchor is what makes them absolute, and it is not a magic number -- the ECDT
+ * body starts immediately after the common ACPI table header. Without this,
+ * every assert here and every unit test (which builds its fixture from the
+ * same symbols) stays green while the parser reads the wrong bytes of real
+ * firmware. */
+_Static_assert(ECDT_OFF_CONTROL == sizeof(struct acpi_sdt_header),
+               "the ECDT body begins directly after the 36-byte ACPI header");
+
+/* This driver states the generic address structure as offsets because it
+ * parses a firmware image byte-wise, but the same ABI is also declared as a
+ * struct in acpi.h. Tie the two statements together so they cannot drift. */
+_Static_assert(ACPI_GAS_SIZE == sizeof(struct acpi_gas),
+               "the GAS offsets and struct acpi_gas describe the same 12 bytes");
+_Static_assert(ACPI_GAS_OFF_SPACE_ID == __builtin_offsetof(struct acpi_gas, address_space),
+               "GAS SpaceId offset matches struct acpi_gas");
+_Static_assert(ACPI_GAS_OFF_BIT_WIDTH == __builtin_offsetof(struct acpi_gas, bit_width),
+               "GAS BitWidth offset matches struct acpi_gas");
+_Static_assert(ACPI_GAS_OFF_BIT_OFFSET == __builtin_offsetof(struct acpi_gas, bit_offset),
+               "GAS BitOffset offset matches struct acpi_gas");
+_Static_assert(ACPI_GAS_OFF_ACCESS == __builtin_offsetof(struct acpi_gas, access_size),
+               "GAS AccessWidth offset matches struct acpi_gas");
+_Static_assert(ACPI_GAS_OFF_ADDRESS == __builtin_offsetof(struct acpi_gas, address),
+               "GAS Address offset matches struct acpi_gas");
+
+/* The bound that keeps a short firmware table from being read past its end.
+ * It must cover the LAST byte the parser dereferences, which is the GPE at
+ * offset 64 -- not the end of the EC_DATA address at 59. The weaker form
+ * (>= ECDT_OFF_DATA + ACPI_GAS_SIZE) passes at 60 and would let a 60-byte
+ * table through into a read of t[64]. */
+_Static_assert(ECDT_MIN_LENGTH > ECDT_OFF_GPE,
+               "ECDT_MIN_LENGTH must cover every byte the parser dereferences");
+
+/* Pin each EC_SC bit's VALUE, not just the set. The OR of the six bits is
+ * invariant under permutation -- transposing OBF and IBF leaves it 0x7B -- and
+ * the unit suite is symbolic throughout, so a transposed pair would pass Layer
+ * 1 and Layer 3 together and invert every handshake wait on real hardware. */
+_Static_assert(EC_SC_OBF     == 0x01u, "EC_SC OBF is bit 0");
+_Static_assert(EC_SC_IBF     == 0x02u, "EC_SC IBF is bit 1");
+_Static_assert(EC_SC_CMD     == 0x08u, "EC_SC CMD is bit 3 (bit 2 is reserved)");
+_Static_assert(EC_SC_BURST   == 0x10u, "EC_SC BURST is bit 4");
+_Static_assert(EC_SC_SCI_EVT == 0x20u, "EC_SC SCI_EVT is bit 5");
+_Static_assert(EC_SC_SMI_EVT == 0x40u, "EC_SC SMI_EVT is bit 6");
+_Static_assert(EC_CMD_READ   == 0x80u, "RD_EC is 0x80");
+_Static_assert(EC_CMD_WRITE  == 0x81u, "WR_EC is 0x81");
+_Static_assert(EC_CMD_BURST  == 0x82u, "BE_EC is 0x82");
+_Static_assert(EC_CMD_NBURST == 0x83u, "BD_EC is 0x83");
+_Static_assert(EC_CMD_QUERY  == 0x84u, "QR_EC is 0x84");
+_Static_assert(EC_BURST_ACK  == 0x90u, "the burst acknowledge byte is 0x90");
 
 /* ---- Production port I/O backend ---------------------------------------
  * File-local, mirroring every other driver under src/kernel/drivers/ (there is
@@ -116,6 +157,25 @@ static mutex_t              g_ec_lock = MUTEX_INIT("acpi_ec");
  * discovers the EC without ever talking to it. The GPE blocks section of
  * TODO-26 is what replaces this body. */
 static int ec_gpe_ack_supported(void)
+{
+    return 0;
+}
+
+/* Whether this kernel can honour the EC's ACPI Global Lock requirement.
+ *
+ * A SECOND, INDEPENDENT gate, deliberately not folded into the GPE predicate
+ * above. ACPI permits the EC interface to be shared with SMI firmware, and an
+ * EC that declares _GLK requires the FACS Global Lock to arbitrate every
+ * transaction; acpi_global_lock.c states that unarbitrated SMM/OS access
+ * corrupts EC state. Reading _GLK needs a namespace this kernel does not
+ * build, so the requirement cannot even be evaluated yet.
+ *
+ * Kept separate because the two blockers clear independently and the
+ * consequence of conflating them is concrete: the GPE section's activation
+ * item says to replace ec_gpe_ack_supported(), and if that were the ONLY gate,
+ * doing so would silently enable unarbitrated EC traffic on every machine
+ * whose EC declares _GLK. */
+static int ec_global_lock_satisfied(void)
 {
     return 0;
 }
@@ -195,6 +255,23 @@ int acpi_ec_parse_ecdt(const void *image, uint32_t length,
     return ACPI_EC_OK;
 }
 
+int acpi_ec_ports_conflict_i8042(const struct acpi_ec_ports *ports,
+                                 int i8042_present)
+{
+    if (!ports || !ports->valid || !i8042_present)
+        return 0;
+    /* Only a conflict when an i8042 actually exists. The ECDT contract does
+     * not reserve these addresses, and on a hardware-reduced platform with no
+     * i8042 they are ordinary I/O ports an EC may legitimately use -- refusing
+     * them unconditionally would lose EC discovery on exactly those machines.
+     * Where an i8042 IS present it owns the pair, and RD_EC (0x80) / WR_EC
+     * (0x81) written to 0x64 are i8042 CONTROLLER commands, not EC commands. */
+    return (ports->control == EC_PORT_I8042_DATA ||
+            ports->control == EC_PORT_I8042_CMD ||
+            ports->data    == EC_PORT_I8042_DATA ||
+            ports->data    == EC_PORT_I8042_CMD);
+}
+
 /* ---- Backend validation -------------------------------------------------
  * Rejecting a NULL vtable but not its members would turn a partially built
  * backend into a NULL function call in kernel context. */
@@ -212,22 +289,38 @@ static int ec_io_usable(const struct acpi_ec_io *io)
  * would otherwise spin here forever with the transaction lock held. */
 static int ec_wait_status(const struct acpi_ec_io *io,
                           const struct acpi_ec_ports *ports,
-                          uint8_t mask, uint8_t want)
+                          uint8_t mask, uint8_t want,
+                          uint32_t *shared_probes)
 {
-    uint64_t start = io->now_ns(io->ctx);
+    uint64_t start;
     uint64_t now;
     uint32_t iters = 0;
+    int      started = 0;
 
     for (;;) {
         if ((uint8_t)(io->inb(ports->control, io->ctx) & mask) == want)
             return ACPI_EC_OK;
 
-        now = io->now_ns(io->ctx);
-        if (now < start)
-            start = now;   /* re-anchor: a backward step must not read as a
-                            * huge elapsed time through unsigned subtraction */
-        else if (now - start >= ACPI_EC_WAIT_TIMEOUT_NS)
-            return ACPI_EC_TIMEOUT;
+        /* Sample the clock only every ACPI_EC_CLOCK_SAMPLE_EVERY probes, and
+         * never before the first probe. mono_ns() is not free: on a PMTMR
+         * source it performs a glitch-filtered three-port read, so a naive
+         * clock read per iteration turns one status probe into four port-I/O
+         * transactions and pays three of them even on a wait that is satisfied
+         * immediately. Batching costs at most one sample interval of deadline
+         * overshoot, which is immaterial against a 100 ms budget. */
+        if ((iters % ACPI_EC_CLOCK_SAMPLE_EVERY) == 0u) {
+            now = io->now_ns(io->ctx);
+            if (!started) {
+                start = now;
+                started = 1;
+            } else if (now < start) {
+                start = now;   /* re-anchor: a backward step must not read as a
+                                * huge elapsed time through unsigned
+                                * subtraction */
+            } else if (now - start >= ACPI_EC_WAIT_TIMEOUT_NS) {
+                return ACPI_EC_TIMEOUT;
+            }
+        }
 
         /* Clock-independent backstop. A stalled or absent monotonic source
          * makes the deadline above unreachable; this is what still terminates
@@ -235,21 +328,39 @@ static int ec_wait_status(const struct acpi_ec_io *io,
          * a working clock (see ACPI_EC_WAIT_MAX_ITERS). */
         if (++iters >= ACPI_EC_WAIT_MAX_ITERS)
             return ACPI_EC_TIMEOUT;
+
+        /* The per-wait ceiling above is per WAIT, so it does not bound an
+         * OPERATION made of many waits: with a stalled clock, a controller
+         * that answers just under the ceiling every time lets a 256-byte block
+         * burn hundreds of millions of probes while every elapsed-time check
+         * reads zero. This allowance is shared across the whole operation and
+         * is what actually bounds that case. */
+        if (shared_probes) {
+            if (*shared_probes == 0u)
+                return ACPI_EC_TIMEOUT;
+            (*shared_probes)--;
+        }
     }
 }
 
-/* Wait until the EC has consumed whatever the host last wrote. */
+/* Wait until the EC has consumed whatever the host last wrote.
+ *
+ * `probes` is an optional allowance shared across a multi-wait OPERATION; pass
+ * NULL on a single-byte path, where the per-wait ceiling is the whole bound. */
 static int ec_wait_input_free(const struct acpi_ec_io *io,
-                              const struct acpi_ec_ports *ports)
+                              const struct acpi_ec_ports *ports,
+                              uint32_t *probes)
 {
-    return ec_wait_status(io, ports, (uint8_t)EC_SC_IBF, 0u);
+    return ec_wait_status(io, ports, (uint8_t)EC_SC_IBF, 0u, probes);
 }
 
 /* Wait until the EC has produced a byte for the host. */
 static int ec_wait_output_ready(const struct acpi_ec_io *io,
-                                const struct acpi_ec_ports *ports)
+                                const struct acpi_ec_ports *ports,
+                                uint32_t *probes)
 {
-    return ec_wait_status(io, ports, (uint8_t)EC_SC_OBF, (uint8_t)EC_SC_OBF);
+    return ec_wait_status(io, ports, (uint8_t)EC_SC_OBF, (uint8_t)EC_SC_OBF,
+                          probes);
 }
 
 int acpi_ec_flush_io(const struct acpi_ec_io *io,
@@ -286,7 +397,7 @@ int acpi_ec_quiesce_io(const struct acpi_ec_io *io,
     /* WAIT for the input buffer rather than sampling it: the whole reason we
      * are here is that a response may still be in flight, and an instantaneous
      * check cannot tell "in flight" from "idle". */
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, (uint32_t *)0);
     if (rc != ACPI_EC_OK)
         return rc;
 
@@ -326,21 +437,22 @@ static int ec_begin(const struct acpi_ec_io *io,
 static int ec_read_locked(const struct acpi_ec_io *io,
                           const struct acpi_ec_ports *ports,
                           struct acpi_ec_state *st,
-                          uint8_t addr, uint8_t *out_val)
+                          uint8_t addr, uint8_t *out_val,
+                          uint32_t *probes)
 {
     int rc;
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, probes);
     if (rc != ACPI_EC_OK)
         return rc;              /* nothing issued yet -- still attributable */
     io->outb(ports->control, (uint8_t)EC_CMD_READ, io->ctx);
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, probes);
     if (rc != ACPI_EC_OK)
         goto desync;
     io->outb(ports->data, addr, io->ctx);
 
-    rc = ec_wait_output_ready(io, ports);
+    rc = ec_wait_output_ready(io, ports, probes);
     if (rc != ACPI_EC_OK)
         goto desync;
     *out_val = io->inb(ports->data, io->ctx);
@@ -367,7 +479,7 @@ int acpi_ec_read_io(const struct acpi_ec_io *io,
     if (rc != ACPI_EC_OK)
         return rc;
 
-    return ec_read_locked(io, ports, st, addr, out_val);
+    return ec_read_locked(io, ports, st, addr, out_val, (uint32_t *)0);
 }
 
 int acpi_ec_write_io(const struct acpi_ec_io *io,
@@ -386,23 +498,23 @@ int acpi_ec_write_io(const struct acpi_ec_io *io,
     if (rc != ACPI_EC_OK)
         return rc;
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, (uint32_t *)0);
     if (rc != ACPI_EC_OK)
         return rc;              /* nothing issued yet -- still attributable */
     io->outb(ports->control, (uint8_t)EC_CMD_WRITE, io->ctx);
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, (uint32_t *)0);
     if (rc != ACPI_EC_OK)
         goto desync;
     io->outb(ports->data, addr, io->ctx);
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, (uint32_t *)0);
     if (rc != ACPI_EC_OK)
         goto desync;
     io->outb(ports->data, val, io->ctx);
 
     /* The write is not complete until the EC has taken the data byte. */
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, (uint32_t *)0);
     if (rc != ACPI_EC_OK)
         goto desync;
     return ACPI_EC_OK;
@@ -418,20 +530,20 @@ desync:
  * leaving it there dedicates the controller to a host that has moved on. */
 static int ec_burst_enter(const struct acpi_ec_io *io,
                           const struct acpi_ec_ports *ports,
-                          int *issued)
+                          int *issued, uint32_t *probes)
 {
     uint8_t ack;
     int rc;
 
     *issued = 0;
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, probes);
     if (rc != ACPI_EC_OK)
         return rc;
     io->outb(ports->control, (uint8_t)EC_CMD_BURST, io->ctx);
     *issued = 1;
 
-    rc = ec_wait_output_ready(io, ports);
+    rc = ec_wait_output_ready(io, ports, probes);
     if (rc != ACPI_EC_OK)
         return rc;
 
@@ -449,19 +561,20 @@ static int ec_burst_enter(const struct acpi_ec_io *io,
  * anything else means the controller's state is not what we believe, which the
  * caller records as a desync rather than reporting success. */
 static int ec_burst_exit(const struct acpi_ec_io *io,
-                         const struct acpi_ec_ports *ports)
+                         const struct acpi_ec_ports *ports,
+                         uint32_t *probes)
 {
     int rc;
 
     if ((io->inb(ports->control, io->ctx) & EC_SC_BURST) == 0u)
         return ACPI_EC_OK;      /* already out, which is allowed at any time */
 
-    rc = ec_wait_input_free(io, ports);
+    rc = ec_wait_input_free(io, ports, probes);
     if (rc != ACPI_EC_OK)
         return rc;
     io->outb(ports->control, (uint8_t)EC_CMD_NBURST, io->ctx);
 
-    return ec_wait_status(io, ports, (uint8_t)EC_SC_BURST, 0u);
+    return ec_wait_status(io, ports, (uint8_t)EC_SC_BURST, 0u, probes);
 }
 
 /* Abort a burst that was REQUESTED but never confirmed.
@@ -478,13 +591,14 @@ static int ec_burst_exit(const struct acpi_ec_io *io,
  * So BD_EC is sent unconditionally, and retried once, because the first may
  * race the very acknowledgement that sets BURST. */
 static int ec_burst_abort(const struct acpi_ec_io *io,
-                          const struct acpi_ec_ports *ports)
+                          const struct acpi_ec_ports *ports,
+                          uint32_t *probes)
 {
     uint32_t attempt;
     int rc = ACPI_EC_TIMEOUT;
 
     for (attempt = 0; attempt < ACPI_EC_BURST_ABORT_ATTEMPTS; attempt++) {
-        if (ec_wait_input_free(io, ports) != ACPI_EC_OK)
+        if (ec_wait_input_free(io, ports, probes) != ACPI_EC_OK)
             continue;
         io->outb(ports->control, (uint8_t)EC_CMD_NBURST, io->ctx);
 
@@ -498,7 +612,7 @@ static int ec_burst_abort(const struct acpi_ec_io *io,
          * the leftover byte blocks the output path for every later consumer,
          * including the firmware. Commands are consumed in order, so once
          * BD_EC is taken any earlier acknowledgement has already been emitted. */
-        if (ec_wait_input_free(io, ports) != ACPI_EC_OK)
+        if (ec_wait_input_free(io, ports, probes) != ACPI_EC_OK)
             continue;
 
         /* Then WAIT for the stranded response rather than sampling for it. The
@@ -507,10 +621,10 @@ static int ec_burst_abort(const struct acpi_ec_io *io,
          * been emitted yet -- both can be in flight at once. If one arrives it
          * gets drained here; if none does we pay a single deadline on an error
          * path and the buffer was already clean. */
-        if (ec_wait_output_ready(io, ports) == ACPI_EC_OK)
+        if (ec_wait_output_ready(io, ports, probes) == ACPI_EC_OK)
             (void)acpi_ec_flush_io(io, ports);
 
-        rc = ec_wait_status(io, ports, (uint8_t)EC_SC_BURST, 0u);
+        rc = ec_wait_status(io, ports, (uint8_t)EC_SC_BURST, 0u, probes);
         if (rc == ACPI_EC_OK)
             return ACPI_EC_OK;
     }
@@ -526,6 +640,14 @@ int acpi_ec_read_block_io(const struct acpi_ec_io *io,
     int      rc;
     int      issued = 0;
     int      bursting;
+    uint64_t started;
+    uint64_t now;
+    uint32_t probes = ACPI_EC_BLOCK_TOTAL_PROBES;
+    /* Cleanup gets its OWN bounded allowance rather than sharing the main one.
+     * Burst exit and abort are MANDATORY -- leaving an EC in burst dedicates it
+     * to a host that has walked away -- so they must still be able to run after
+     * the main budget is exhausted, and must themselves be bounded. */
+    uint32_t cleanup = ACPI_EC_BLOCK_CLEANUP_PROBES;
 
     if (!ec_io_usable(io) || !ports || !st || !out || count == 0u)
         return ACPI_EC_INVALID;
@@ -537,13 +659,17 @@ int acpi_ec_read_block_io(const struct acpi_ec_io *io,
     if (count > 0x100u - (uint32_t)first_addr)
         return ACPI_EC_INVALID;
 
+    /* Start the operation clock BEFORE any command is issued, so burst entry
+     * and the initial flush are inside the budget rather than free. */
+    started = io->now_ns(io->ctx);
+
     rc = ec_begin(io, ports, st);
     if (rc != ACPI_EC_OK)
         return rc;
 
     /* Burst is an optimization, not a requirement: an EC that declines it
      * still serves the reads correctly, just with a per-byte turnaround. */
-    rc = ec_burst_enter(io, ports, &issued);
+    rc = ec_burst_enter(io, ports, &issued, &probes);
     bursting = (rc == ACPI_EC_OK);
 
     if (issued && !bursting) {
@@ -566,31 +692,54 @@ int acpi_ec_read_block_io(const struct acpi_ec_io *io,
              * BEFORE refusing: this is the last chance to send BD_EC, since
              * terminal desync means no later transaction will. */
             st->desync = 1;
-            (void)ec_burst_abort(io, ports);
+            (void)ec_burst_abort(io, ports, &cleanup);
             return ACPI_EC_DESYNC;
         }
-        if (ec_burst_exit(io, ports) != ACPI_EC_OK) {
+        if (ec_burst_exit(io, ports, &cleanup) != ACPI_EC_OK) {
             st->desync = 1;
             return ACPI_EC_DESYNC;
         }
     }
 
     for (i = 0; i < count; i++) {
+        /* Bound the operation as a WHOLE, not just each wait inside it. Per-
+         * wait deadlines multiply: 256 bytes at three waits each permits over
+         * a minute with the transaction lock held. */
+        now = io->now_ns(io->ctx);
+        if (now < started)
+            started = now;      /* re-anchor on a backward clock step */
+        else if (now - started >= ACPI_EC_BLOCK_TOTAL_TIMEOUT_NS) {
+            if (bursting && ec_burst_exit(io, ports, &cleanup) != ACPI_EC_OK)
+                st->desync = 1;
+            return ACPI_EC_TIMEOUT;
+        }
+
         /* Sect 12.3.3 lets the EC leave burst at any time to service a
          * critical event. Recheck rather than assume the window survived, and
          * finish the remainder unburst if it did not. */
         if (bursting && (io->inb(ports->control, io->ctx) & EC_SC_BURST) == 0u)
             bursting = 0;
 
-        rc = ec_read_locked(io, ports, st, (uint8_t)(first_addr + i), &out[i]);
+        rc = ec_read_locked(io, ports, st, (uint8_t)(first_addr + i),
+                            &out[i], &probes);
         if (rc != ACPI_EC_OK) {
-            if (bursting && ec_burst_exit(io, ports) != ACPI_EC_OK)
+            if (bursting && ec_burst_exit(io, ports, &cleanup) != ACPI_EC_OK)
                 st->desync = 1;
             return rc;   /* the transaction error, never the unwind's */
         }
     }
 
-    if (bursting && ec_burst_exit(io, ports) != ACPI_EC_OK) {
+    /* Check once more before the exit sequence: the final byte's waits happen
+     * after the last in-loop check, so without this the budget could be
+     * overrun by a whole byte and never noticed. */
+    now = io->now_ns(io->ctx);
+    if (now >= started && now - started >= ACPI_EC_BLOCK_TOTAL_TIMEOUT_NS) {
+        if (bursting && ec_burst_exit(io, ports, &cleanup) != ACPI_EC_OK)
+            st->desync = 1;
+        return ACPI_EC_TIMEOUT;
+    }
+
+    if (bursting && ec_burst_exit(io, ports, &cleanup) != ACPI_EC_OK) {
         st->desync = 1;
         return ACPI_EC_DESYNC;
     }
@@ -649,7 +798,11 @@ int acpi_ec_read_block(uint8_t first_addr, uint8_t *out, uint32_t count)
 {
     int rc;
 
-    if (!out || count == 0u)
+    /* Every argument check runs BEFORE the readiness gate, including the range
+     * check. Leaving the range to the engine made one caller bug report
+     * UNAVAIL while gated and INVALID once open -- the same wrong call
+     * answering differently depending on a state the caller cannot see. */
+    if (!out || count == 0u || count > 0x100u - (uint32_t)first_addr)
         return ACPI_EC_INVALID;
     if (!acpi_ec_ready())
         return ACPI_EC_UNAVAIL;
@@ -672,9 +825,15 @@ void acpi_ec_init(void)
     uint32_t       size  = 0;
     struct acpi_ec_ports parsed;
     int rc;
+    int swapped;
 
+    /* A repeat call after a SUCCESSFUL discovery is a no-op. A repeat call on a
+     * machine with no ECDT re-walks the firmware tables, which is harmless and
+     * costs nothing that matters at Phase 2. This check is unlocked, so it is
+     * a guard against a second sequential call, NOT against concurrent ones --
+     * the single BSP call site is what makes that sufficient. */
     if (acpi_ec_discovered())
-        return;                 /* idempotent */
+        return;
 
     if (!acpi_is_ready()) {
         klog(LOG_INFO, "acpi_ec", "ACPI not ready -- EC unavailable");
@@ -700,25 +859,40 @@ void acpi_ec_init(void)
     /* Correct a transposed ECDT before anything can act on it. The vendor
      * matching lives in the firmware quirk database (initialized in Phase 1,
      * ahead of this Phase 2 caller); this driver only applies the decision. */
-    acpi_ec_apply_port_quirk(&parsed,
-                             firmware_quirks_is_active(FW_QUIRK_EC_ECDT_PORTS_SWAPPED));
-    if (firmware_quirks_is_active(FW_QUIRK_EC_ECDT_PORTS_SWAPPED))
+    swapped = firmware_quirks_is_active(FW_QUIRK_EC_ECDT_PORTS_SWAPPED);
+    acpi_ec_apply_port_quirk(&parsed, swapped);
+    if (swapped)
         klog(LOG_WARN, "acpi_ec",
              "firmware quirk: ECDT ports transposed, using cmd=0x%x data=0x%x",
              parsed.control, parsed.data);
+
+    /* Conflict check runs AFTER the swap, so it sees the final role
+     * assignment rather than the raw table's. */
+    /* FAIL CLOSED: pass 1, refusing any overlap with 0x60/0x64 unconditionally.
+     * No authority available here can prove those ports are free -- the FADT
+     * i8042 bit is documented unreliable in this tree, and HW_REDUCED_ACPI is
+     * a statement about fixed ACPI hardware, not about port-60/64 ownership.
+     * The predicate keeps taking the fact as a parameter so an authoritative
+     * detector can replace this constant without touching the policy. */
+    if (acpi_ec_ports_conflict_i8042(&parsed, 1)) {
+        klog(LOG_WARN, "acpi_ec",
+             "ECDT names an i8042 port (cmd=0x%x data=0x%x) on a machine that "
+             "has one -- EC unavailable", parsed.control, parsed.data);
+        return;
+    }
 
     g_ports  = parsed;
     g_state.desync = 0;
     __atomic_store_n(&g_discovered, 1, __ATOMIC_RELEASE);
 
-    if (!ec_gpe_ack_supported()) {
+    if (!ec_gpe_ack_supported() || !ec_global_lock_satisfied()) {
         /* Discovered and validated, but deliberately not driven. Stated at
          * WARN because on a laptop this is a real missing capability, not a
          * routine absence, and the operator should see why battery and lid
          * are quiet. */
         klog(LOG_WARN, "acpi_ec",
              "EC found (cmd=0x%x data=0x%x gpe=%u) but NOT enabled: "
-             "polled commands raise its GPE and no GPE acknowledgement exists",
+             "needs GPE acknowledgement and ACPI Global Lock arbitration",
              g_ports.control, g_ports.data, g_ports.gpe);
         return;
     }

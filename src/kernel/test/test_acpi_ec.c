@@ -26,15 +26,26 @@
 #define FAKE_CMD_PORT   0x66u
 #define FAKE_DATA_PORT  0x62u
 
-/* Every now_ns() call advances the simulated clock by this much, so a wait
- * that never satisfies its condition reaches ACPI_EC_WAIT_TIMEOUT_NS in a
- * bounded, predictable number of observations (100 ms / 1 ms = ~100). */
-#define FAKE_CLOCK_STEP_NS  1000000ull
+/* Every now_ns() call advances the simulated clock by this much.
+ *
+ * The driver samples its clock once per ACPI_EC_CLOCK_SAMPLE_EVERY status
+ * probes, so a wait reaches its 100 ms deadline after roughly
+ * (100 ms / step) x ACPI_EC_CLOCK_SAMPLE_EVERY probes. At 10 ms that is about
+ * 10 samples and 160 probes -- small enough to keep the suite fast, and the
+ * arithmetic is stated here because FAKE_AFTER_TIMEOUT below depends on it. */
+#define FAKE_CLOCK_STEP_NS  10000000ull
 
-/* Larger than the ~100 observations a wait makes before its deadline, so a
- * response scheduled this far out is guaranteed to land AFTER the wait that
- * asked for it has already given up. */
-#define FAKE_AFTER_TIMEOUT  150u
+/* Past the ~160 status probes a wait makes before its deadline (see
+ * FAKE_CLOCK_STEP_NS), so a response scheduled this far out lands AFTER the
+ * wait that asked for it gave up -- but still inside the following abort's own
+ * drain window, which is the realistic case: an EC that is late, not one that
+ * is silent for multiples of the deadline.
+ *
+ * An arbitrarily late response is NOT drainable by any bounded wait, and the
+ * driver does not pretend otherwise: that is exactly why a post-command
+ * failure also marks the controller terminally desynced rather than relying on
+ * the drain alone. */
+#define FAKE_AFTER_TIMEOUT  250u
 
 #define FAKE_STUCK  0xFFFFFFFFu   /* an IBF countdown that never reaches zero */
 
@@ -1172,6 +1183,104 @@ static void test_ec_block_read_address_extremes(void)
     TEST_ASSERT_EQ(buf[0], 0x93, "the last register returns its own value");
 }
 
+static void test_ec_i8042_conflict_depends_on_the_platform(void)
+{
+    struct acpi_ec_ports p = poisoned_ports();
+    struct acpi_ec_ports clean = fake_ports();
+    struct acpi_ec_ports unvalidated;
+
+    /* The ECDT parse itself stays PURE and structural: 0x60/0x64 are ordinary
+     * I/O ports as far as the table contract is concerned, so parsing must
+     * accept them and leave the platform question to the caller. */
+    ecdt_build_valid();
+    ecdt_put_gas(ECDT_OFF_CONTROL, ACPI_GAS_SPACE_SYSTEM_IO, 8u, 0u,
+                 ACPI_GAS_ACCESS_BYTE, EC_PORT_I8042_CMD);
+    TEST_ASSERT_EQ(acpi_ec_parse_ecdt(g_ecdt, ECDT_IMAGE_LEN, &p), ACPI_EC_OK,
+                   "the structural parse does not judge platform port ownership");
+
+    /* With an i8042 present it owns the pair, and RD_EC (0x80) written to 0x64
+     * is an i8042 controller command, not an EC command. */
+    TEST_ASSERT_EQ(acpi_ec_ports_conflict_i8042(&p, 1), 1,
+                   "a control port on the i8042 conflicts when one exists");
+
+    /* On a hardware-reduced machine with no i8042 the same table is fine --
+     * refusing it there would lose EC discovery on exactly those platforms. */
+    TEST_ASSERT_EQ(acpi_ec_ports_conflict_i8042(&p, 0), 0,
+                   "the same ports are usable when no i8042 exists");
+
+    ecdt_build_valid();
+    ecdt_put_gas(ECDT_OFF_DATA, ACPI_GAS_SPACE_SYSTEM_IO, 8u, 0u,
+                 ACPI_GAS_ACCESS_BYTE, EC_PORT_I8042_DATA);
+    p = poisoned_ports();
+    TEST_ASSERT_EQ(acpi_ec_parse_ecdt(g_ecdt, ECDT_IMAGE_LEN, &p), ACPI_EC_OK,
+                   "a data port on the i8042 also parses structurally");
+    TEST_ASSERT_EQ(acpi_ec_ports_conflict_i8042(&p, 1), 1,
+                   "a data port on the i8042 conflicts when one exists");
+
+    TEST_ASSERT_EQ(acpi_ec_ports_conflict_i8042(&clean, 1), 0,
+                   "the conventional 0x62/0x66 pair never conflicts");
+    TEST_ASSERT_EQ(acpi_ec_ports_conflict_i8042((void *)0, 1), 0,
+                   "a NULL pair is not a conflict");
+    unvalidated = clean;
+    unvalidated.valid = 0;
+    unvalidated.control = EC_PORT_I8042_CMD;
+    TEST_ASSERT_EQ(acpi_ec_ports_conflict_i8042(&unvalidated, 1), 0,
+                   "an unvalidated pair is not judged");
+}
+
+static void test_ec_block_read_bounded_when_the_clock_is_frozen(void)
+{
+    struct acpi_ec_ports p = fake_ports();
+    struct acpi_ec_state st = fresh_state();
+    static uint8_t buf[256];
+    uint32_t i;
+    int rc;
+
+    fake_reset();
+    for (i = 0; i < 256u; i++)
+        buf[i] = 0;
+    g_fake.freeze_clock = 1;
+    /* Every individual wait still SUCCEEDS, just slowly: the controller takes
+     * many observations to consume each byte. With the clock frozen no
+     * elapsed-time check can ever fire, and the per-wait iteration ceiling
+     * bounds one wait rather than the operation -- so the only thing that can
+     * stop a 256-byte read here is the shared per-operation probe allowance. */
+    /* Each wait succeeds, but only after many observations. Two waits per byte
+     * actually cost anything -- the input wait that OPENS a byte finds IBF
+     * already clear from the previous one -- so the cost is one input wait
+     * (after RD_EC) plus one output wait: 256 * (4200 + 4200) is about 2.15M
+     * against a 2M allowance, while every elapsed-time check still reads
+     * zero because the clock is frozen. */
+    g_fake.ibf_latency = 4200u;
+    g_fake.obf_latency = 4200u;
+    rc = acpi_ec_read_block_io(&g_fake_io, &p, &st, 0x00u, buf, 256u);
+    TEST_ASSERT_EQ(rc, ACPI_EC_TIMEOUT,
+                   "a frozen clock cannot remove the block operation's bound");
+}
+
+static void test_ec_block_read_has_a_whole_operation_budget(void)
+{
+    struct acpi_ec_ports p = fake_ports();
+    struct acpi_ec_state st = fresh_state();
+    static uint8_t buf[256];
+    uint32_t i;
+    int rc;
+
+    fake_reset();
+    for (i = 0; i < 256u; i++)
+        buf[i] = 0;
+    /* Every individual wait succeeds, so no per-wait deadline ever fires --
+     * yet the clock advances 1 ms per observation, so a 256-byte read walks
+     * far past the whole-operation budget. Without that budget this returns OK
+     * after what would be more than a minute of real time with the transaction
+     * lock held. */
+    rc = acpi_ec_read_block_io(&g_fake_io, &p, &st, 0x00u, buf, 256u);
+    TEST_ASSERT_EQ(rc, ACPI_EC_TIMEOUT,
+                   "a block read that outruns the whole-operation budget times out");
+    TEST_ASSERT(g_fake.now >= ACPI_EC_BLOCK_TOTAL_TIMEOUT_NS,
+                "the budget is measured in elapsed time, not byte count");
+}
+
 /* ---- Public gate tests --------------------------------------------------- */
 
 static void test_ec_public_api_gated_on_readiness(void)
@@ -1180,19 +1289,26 @@ static void test_ec_public_api_gated_on_readiness(void)
     uint8_t buf[2] = { 0, 0 };
 
     /* Readiness is deliberately withheld while the EC's GPE cannot be
-     * acknowledged, so on every platform this suite runs on the serialized
-     * entry points must refuse rather than touch the controller. */
-    if (!acpi_ec_ready()) {
-        TEST_ASSERT_EQ(acpi_ec_read(0x10u, &v), ACPI_EC_UNAVAIL,
-                       "reads refuse until the EC may be driven");
-        TEST_ASSERT_EQ(acpi_ec_write(0x10u, 0x01u), ACPI_EC_UNAVAIL,
-                       "writes refuse until the EC may be driven");
-        TEST_ASSERT_EQ(acpi_ec_read_block(0x10u, buf, 2u), ACPI_EC_UNAVAIL,
-                       "block reads refuse until the EC may be driven");
+     * acknowledged and the Global Lock requirement cannot be evaluated, so
+     * every serialized entry point must refuse rather than touch hardware.
+     *
+     * There is deliberately NO else-branch issuing a real transaction. An
+     * earlier version had one, and it would have driven the live controller at
+     * an arbitrary EC address from a unit test the moment the GPE section
+     * flipped the gate -- on whatever laptop happened to run the suite. A test
+     * that starts touching hardware because unrelated code shipped is not a
+     * test. If the gate ever opens, this case SKIPs and the live round trip
+     * belongs to the bare-metal checklist, not here. */
+    if (acpi_ec_ready()) {
+        TEST_SKIP("EC is enabled on this host; a live round trip is bare-metal work");
         return;
     }
-    TEST_ASSERT_EQ(acpi_ec_read(0x10u, &v), ACPI_EC_OK,
-                   "a ready EC serves a read through the serialized API");
+    TEST_ASSERT_EQ(acpi_ec_read(0x10u, &v), ACPI_EC_UNAVAIL,
+                   "reads refuse until the EC may be driven");
+    TEST_ASSERT_EQ(acpi_ec_write(0x10u, 0x01u), ACPI_EC_UNAVAIL,
+                   "writes refuse until the EC may be driven");
+    TEST_ASSERT_EQ(acpi_ec_read_block(0x10u, buf, 2u), ACPI_EC_UNAVAIL,
+                   "block reads refuse until the EC may be driven");
 }
 
 static void test_ec_readiness_implies_discovery(void)
@@ -1217,6 +1333,11 @@ static void test_ec_argument_checks_precede_readiness(void)
                    "a NULL block destination is invalid regardless of readiness");
     TEST_ASSERT_EQ(acpi_ec_read_block(0x10u, (void *)0, 0u), ACPI_EC_INVALID,
                    "a zero count is invalid regardless of readiness");
+    /* The RANGE check must also precede readiness, so the same bad call does
+     * not answer UNAVAIL while gated and INVALID once the gate opens. */
+    TEST_ASSERT_EQ(acpi_ec_read_block(0xFEu, (void *)&g_ecdt[0], 3u),
+                   ACPI_EC_INVALID,
+                   "an out-of-range block is invalid regardless of readiness");
 }
 
 static void test_ec_get_ports_matches_discovery(void)
@@ -1294,6 +1415,15 @@ void test_register_acpi_ec(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("ACPI EC: ECDT bad port addresses rejected",
                             test_ec_ecdt_rejects_bad_addresses, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI EC: i8042 conflict depends on the platform",
+                            test_ec_i8042_conflict_depends_on_the_platform,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI EC: block read bounded on a frozen clock",
+                            test_ec_block_read_bounded_when_the_clock_is_frozen,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI EC: block read whole-operation budget",
+                            test_ec_block_read_has_a_whole_operation_budget,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("ACPI EC: ECDT port extremes accepted",
                             test_ec_ecdt_accepts_port_extremes, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI EC: ECDT high address bytes honoured",

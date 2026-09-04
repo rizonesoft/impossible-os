@@ -79,36 +79,36 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                         | Depends On                 | Status |
-| --- | :---: | --------------------------------------------------- | -------------------------- | :----: |
-| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | (none)                     |  [x]   |
-| 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting   | §1                         |  [x]   |
-| 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)   | §1, §2, §26, §9, D04T03§1  |  [/]   |
-| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec    | (none)                     |  [x]   |
-| 💎  |   5   | §5 ACPI Embedded Controller (EC) driver             | §1                         |  [/]   |
-| 💎  |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`)      | §5, §24                    |  [ ]   |
-| 💎  |   7   | §7 Power button & lid-close events                  | §5                         |  [ ]   |
-| 💎  |   8   | §8 PCI device D-states (D0--D3cold)                 | §1                         |  [ ]   |
-| 💎  |   9   | §9 Driver power callbacks & resume ordering         | §3, §8                     |  [ ]   |
-| ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)       | §2, §9, D02T06§3           |  [ ]   |
-| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)      | §4, §9, §28                |  [ ]   |
-| 💎  |  12   | §12 Runtime device idle management                  | §8, §9                     |  [ ]   |
-| 💎  |  13   | §13 Power request tracking & wake source management | §9, §12                    |  [ ]   |
-| 💎  |  14   | §14 ACPI thermal zone management                    | §5, §24, D04T03§4          |  [ ]   |
-| 💎  |  15   | §15 CPU frequency scaling governor framework        | §2, D04T03§6, D03T06§9     |  [ ]   |
-| 💎  |  16   | §16 CPU idle governor framework                     | §2, D04T03§8               |  [ ]   |
-| 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER)  | §9                         |  [ ]   |
-| 💎  |  18   | §18 Power plan UI & `powercfg`                      | §6, §7, §13, §14, §15, §16 |  [ ]   |
-| ⭐  |  19   | §19 Energy-aware scheduling integration             | §15, §16, D02T09§9         |  [ ]   |
-| 💎  |  20   | §20 Power syscalls wired to SSDT                    | §2, §6, D02T12§4           |  [ ]   |
-| 💎  |  21   | §21 Linux `/sys/power` suspend variant parity       | §1, §10                    |  [ ]   |
-| 💎  |  22   | §22 User-interaction-aware QoS throttling           | §15, §19, §20              |  [ ]   |
-| 💎  |  23   | §23 PCIe ASPM and L1 substates                      | §8, §9, §12                |  [ ]   |
-| 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks         | §1, §5, §7                 |  [ ]   |
-| 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo   | §2                         |  [ ]   |
-| 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep         | §2                         |  [x]   |
-| 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap   | §26                        |  [ ]   |
-| 💎  |  28   | §28 S4 hibernation write path + resume consumer     | §4, §3, §9, D02T27§7       |  [/]   |
+| ⭐  | Order | Deliverable                                                      | Depends On                 | Status |
+| --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
+| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine                 | (none)                     |  [x]   |
+| 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting                | §1                         |  [x]   |
+| 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)                | §1, §2, §26, §9, D04T03§1  |  [/]   |
+| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec                 | (none)                     |  [x]   |
+| 💎  |   5   | §5 ACPI EC driver (discovery+transactions; GATED OFF, needs §24) | §1                         |  [/]   |
+| 💎  |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`)                   | §5, §24                    |  [ ]   |
+| 💎  |   7   | §7 Power button & lid-close events                               | §5                         |  [ ]   |
+| 💎  |   8   | §8 PCI device D-states (D0--D3cold)                              | §1                         |  [ ]   |
+| 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                     |  [ ]   |
+| ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3           |  [ ]   |
+| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                |  [ ]   |
+| 💎  |  12   | §12 Runtime device idle management                               | §8, §9                     |  [ ]   |
+| 💎  |  13   | §13 Power request tracking & wake source management              | §9, §12                    |  [ ]   |
+| 💎  |  14   | §14 ACPI thermal zone management                                 | §5, §24, D04T03§4          |  [ ]   |
+| 💎  |  15   | §15 CPU frequency scaling governor framework                     | §2, D04T03§6, D03T06§9     |  [ ]   |
+| 💎  |  16   | §16 CPU idle governor framework                                  | §2, D04T03§8               |  [ ]   |
+| 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER)               | §9                         |  [ ]   |
+| 💎  |  18   | §18 Power plan UI & `powercfg`                                   | §6, §7, §13, §14, §15, §16 |  [ ]   |
+| ⭐  |  19   | §19 Energy-aware scheduling integration                          | §15, §16, D02T09§9         |  [ ]   |
+| 💎  |  20   | §20 Power syscalls wired to SSDT                                 | §2, §6, D02T12§4           |  [ ]   |
+| 💎  |  21   | §21 Linux `/sys/power` suspend variant parity                    | §1, §10                    |  [ ]   |
+| 💎  |  22   | §22 User-interaction-aware QoS throttling                        | §15, §19, §20              |  [ ]   |
+| 💎  |  23   | §23 PCIe ASPM and L1 substates                                   | §8, §9, §12                |  [ ]   |
+| 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks                      | §1, §5, §7                 |  [ ]   |
+| 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo                | §2                         |  [ ]   |
+| 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep                      | §2                         |  [x]   |
+| 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap                | §26                        |  [ ]   |
+| 💎  |  28   | §28 S4 hibernation write path + resume consumer                  | §4, §3, §9, D02T27§7       |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -381,6 +381,20 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 - [x] `FW_QUIRK_EC_ECDT_PORTS_SWAPPED` added to the firmware-quirk database, applied by `acpi_ec_apply_port_quirk()` before the ports are published
   - Some firmware publishes the ECDT with EC_CONTROL and EC_DATA transposed, so an OS trusting the table writes command bytes into the data register.
   - The matching predicate stays synthetic, following that table's stated convention that real-world predicates land "as known-bad firmware combinations are confirmed"; every existing entry is synthetic too. The real model string is parked below.
+- [x] Firmware-ABI constants pinned by VALUE, not just by relation (review round: kernel-quality-auditor)
+  - The offset asserts were all relative, so a uniform shift of the ECDT anchor left every assert and every test green while the parser read the wrong bytes; the anchor is now pinned to `sizeof(struct acpi_sdt_header)` and the GAS macros are tied to `struct acpi_gas` by `__builtin_offsetof`.
+  - The old `OR == 0x7B` check on the EC_SC bits was permutation-invariant (transposing OBF and IBF passed it) and the unit suite is symbolic throughout, so a transposed pair would have passed Layer 1 and Layer 3 together and inverted every handshake on real hardware. Every bit and command value is now asserted individually.
+  - `ECDT_MIN_LENGTH` was asserted `>= ECDT_OFF_DATA + ACPI_GAS_SIZE` (60) while the parser dereferences the GPE at 64: correct only by coincidence. Now `> ECDT_OFF_GPE`.
+- [x] An ECDT overlapping the i8042 ports (0x60/0x64) is refused (review rounds 4-6)
+  - `acpi_ec_ports_conflict_i8042(ports, i8042_present)` is pure and applied AFTER the port-swap quirk, so it sees final roles; ECDT parsing stays structural and platform-free.
+  - Production fails closed (passes 1). Two authorities were tried and rejected with reasons recorded in the header: the FADT `IAPC_BOOT_ARCH.8042` bit is documented unreliable in this tree (`keyboard.c:304-307`, QEMU WHPX reports it clear for a working i8042), and `HW_REDUCED_ACPI` is a statement about fixed ACPI hardware rather than about port-60/64 ownership.
+- [x] Both readiness blockers are independent predicates, so clearing one cannot open the gate alone (review round 1)
+  - `ec_gpe_ack_supported()` and `ec_global_lock_satisfied()` are separate. Folding them would have meant §24 replacing the GPE predicate silently enabled unarbitrated EC traffic on every machine whose EC declares `_GLK`.
+- [x] A block read is bounded as a WHOLE operation, by elapsed time and by a clock-independent probe allowance (review rounds 5-6)
+  - Per-wait deadlines multiply: 256 bytes at three waits each permitted 76.8 seconds with the transaction mutex held. The time budget is checked at byte boundaries with the residual overshoot stated honestly in the header rather than claimed away.
+  - A stalled clock defeats any elapsed-time bound, and the per-wait iteration ceiling bounds one wait rather than an operation built from hundreds, so a shared probe allowance covers burst entry and every byte, with a separate bounded reserve for the mandatory burst exit and abort.
+- [x] Clock sampling is batched one per 16 status probes (review round: perf)
+  - `mono_ns()` on a PMTMR source is a glitch-filtered three-port read, so sampling per iteration turned one status probe into four port transactions and paid three even on a wait satisfied immediately.
 - [/] EC hardware access is GATED OFF. BLOCKED on GPE acknowledgement. -> XREF: `02-kernel-core/TODO-26-power-management.md` §24 (item: "Service GPEs in `acpi_sci_process()` alongside the PM1 fixed events")
   - `acpi_ec_ready()` returns 0 even on a machine with a valid ECDT, so every serialized entry point returns `ACPI_EC_UNAVAIL`.
   - This is the section's hardest constraint and it is not conservatism. RD_EC, WR_EC, BE_EC and BD_EC all raise the EC's GPE, not just the SCI_EVT event path, so a polled transaction on a machine whose firmware left that GPE enabled leaves a level-triggered SCI asserted with nothing able to clear it.
@@ -394,6 +408,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   - `acpi_ec_quiesce_io()` is the bounded idle proof that boundary will build on; it deliberately does not clear the flag and is not called from the transaction path.
 - [/] DSDT `_HID "PNP0C09"` / `_CRS` discovery fallback, for machines with no ECDT. BLOCKED on an evaluable ACPI namespace. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)`")
   - This kernel does not build a namespace: the vendored ACPICA is not wired into the boot path.
+  - Doing this work also ends the single-controller assumption, so it carries a refactor: ECDT-only discovery can describe exactly one EC, which is why the file-scope `g_ports`/`g_state`/`g_ec_lock` singleton is correct today, but a namespace walk can find several and needs them moved into a per-instance struct. Linux distinguishes a boot EC from namespace-discovered ones for exactly this reason.
 - [/] Confirmed per-model predicate for `FW_QUIRK_EC_ECDT_PORTS_SWAPPED`. `operator-gated`: confirming a model string needs the affected hardware.
   - The mechanism ships and is tested; only the SMBIOS match is missing, so the quirk is currently inert. Linux carries an exact Micro-Star match in its EC driver.
   - A guessed predicate either never matches or transposes the ports on an innocent machine, which is why this waits for hardware rather than being filled in speculatively.
@@ -401,7 +416,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` reports every `ACPI EC:` case PASS. The suite drives the transaction engine against a simulated controller, so it covers what a real EC cannot be made to do on demand: malformed ECDT fields, a stall at each individual handshake phase, an EC that never answers, a stale output byte, a controller that re-arms OBF forever, a frozen and a backward clock, a refused burst, a burst dropped mid-sequence, a burst that will not clear, and an acknowledgement arriving after its deadline. On a machine with no ECDT, or any machine at all while the GPE gate is closed, the serialized API returns `ACPI_EC_UNAVAIL`. Test on: QEMU TCG/KVM (no ECDT, structural coverage), bare metal (the only place a live round trip will happen, once §24 opens the gate).
 
-> **Test runner:** `bash scripts/test.sh SUITE=boot` -- 38 `ACPI EC:` cases, ~160 assertions, all PASS as part of 33,459 kernel tests.
+> **Test runner:** `bash scripts/test.sh SUITE=boot` -- 41 `ACPI EC:` cases, all PASS as part of the full kernel suite.
 
 > **Notes:**
 > - Shipped the POLLED half of the EC interface in `src/kernel/drivers/acpi_ec.c`: ECDT discovery and validation, RD_EC/WR_EC transactions, a burst-wrapped block read, a firmware-quirk port correction, and Phase 2 init.
@@ -409,9 +424,15 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 > - Transactions serialize on a mutex, never a spinlock: `src/kernel/sched/spinlock.c:93-95` documents a ~100 ns hold rule with interrupts disabled, and one EC transaction can poll for milliseconds.
 > - The engine takes its port I/O, clock, and cross-call state as explicit parameters rather than calling hardware directly, which is what makes every timeout, stale-output and burst-unwind path reachable from CI instead of only from a laptop.
 > - A post-command failure is terminal rather than auto-recovering: an idle observation cannot prove a late response will not arrive, so recovery would move the cross-delivery window rather than close it.
-> - Consumers cannot poll the EC yet; `§6` battery, `§7` lid and `§14` thermal all additionally need `§24`.
+> - This section ships NO live capability: `acpi_ec_ready()` is 0 on every machine, so nothing can observe an EC byte until `§24` opens the gate. `§6` battery and `§14` thermal additionally need an AML EC operation-region handler, filed in `04-drivers-hardware/TODO-03` §1.
 
-> **Deferred:** the GPE gate, the interrupt-driven query path, desync recovery, DSDT namespace discovery, and a confirmed swapped-port predicate are parked with named blockers and reciprocal XREFs above. The discovery and transaction code is complete and tested; what is missing is the GPE layer that makes driving the controller safe. -> XREF: `02-kernel-core/TODO-26-power-management.md` §24 (item: "Open the EC gate once GPE acknowledgement works: replace `ec_gpe_ack_supported()`")
+> **Verified:** 2026-09-04 | commit `4cbcc16ef` + review fixes | 14/22 items (8 parked with named blockers) | build OK | 33478 kernel + 17 user tests pass | smoke matrix 4/4 (KVM+TCG, 1+2 CPU)
+> **Deferred:** [H] EC hardware access is gated off: readiness needs GPE acknowledgement and ACPI Global Lock arbitration, neither of which exists (reason: polled commands raise the EC GPE; an unacked level-triggered SCI gets the shared GSI quarantined) -> XREF: `02-kernel-core/TODO-26-power-management.md` §24 (item: "Open the EC gate once GPE acknowledgement works" at line 1059)
+> **Deferred:** [M] Interrupt-driven QR_EC query dispatch (reason: same GPE blocker) -> XREF: `02-kernel-core/TODO-26-power-management.md` §24 (item: "Acknowledge a GPE that has no handler yet rather than leaving the line asserted" at line 1054)
+> **Deferred:** [M] Recovery from a desynchronized controller, and EC behaviour across S3/S4 resume (reason: both need a controller-reset boundary that does not exist) -> XREF: `02-kernel-core/TODO-26-power-management.md` §24 (item: "Open the EC gate once GPE acknowledgement works" at line 1059)
+> **Accepted:** [H] AML `OperationRegion(EmbeddedControl)` address-space handler, without which `_BST`/`_BIF`/`_TMP` cannot execute at all (reason: belongs to ACPICA integration, not to this driver) -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "Install the Embedded Controller address-space handler so AML `OperationRegion(EmbeddedControl)` accesses reach the EC driver" at line 104)
+> **Accepted:** [M] DSDT `_HID "PNP0C09"` / `_CRS` discovery for machines with no ECDT (reason: needs an evaluable ACPI namespace this kernel does not build) -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`" at line 102)
+> **Quality reviewed:** 2026-09-04 | Codex 9x (design, adversarial x4, test-coverage, consistency, perf, re-adversarial x4 -- converged round 6, zero findings) | 6H+11M+5L fixed, 0 open | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst
 
 ---
 
@@ -515,6 +536,9 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 ---
 
 ## 9. Driver Power Callbacks & Resume Ordering
+- [ ] EC-specific sleep/resume handling, registered like any other driver callback. -> XREF: `02-kernel-core/TODO-26-power-management.md` §5 (item: "`acpi_ec_init()` -- Phase 2")
+  - On resume the controller cannot be trusted until it is re-proven idle: flush stale output and re-run the bounded idle proof (`acpi_ec_quiesce_io()` already exists for this) before any transaction. Linux additionally disables and re-arms the EC GPE around suspend, switches to forced polling in the noirq window, and carries a clear-on-resume quirk for firmware that leaves output latched.
+  - Filed from the §5 parity pass, 2026-09-04: neither §3, §28 nor `04-drivers-hardware/TODO-03` §9 mentioned the EC at a sleep transition, so this was ownerless.
 - [ ] `pm_register_power_callback(priority, on_sleep, on_wake, ctx)`:
   - `priority`: `PM_PRI_STORAGE=0`, `PM_PRI_NETWORK=1`, `PM_PRI_USB=2`, `PM_PRI_INPUT=3`, `PM_PRI_GRAPHICS=4`, `PM_PRI_USER=5`
   - Static array of 64 callback slots; sorted by priority
@@ -1027,6 +1051,9 @@ Codex gap-audit finding (2026-09-03): §12 covers device D-states, USB LPM, NVMe
 - [ ] Deferred `_Lxx` (level) / `_Exx` (edge) method dispatch at thread level, keyed by GPE number
   - Needs the AML evaluator. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`")
 - [ ] `acpi_gpe_enable(n)` / `acpi_gpe_disable(n)` so a driver arms only the events it services -- the same "never enable what you will not acknowledge" rule `acpi_enable_fixed_events()` now follows for PM1
+- [ ] Give the EC driver a controller-reset boundary, then reconsider its terminal desync policy. -> XREF: `02-kernel-core/TODO-26-power-management.md` §5 (item: "Recovery from a desynchronized controller")
+  - §5 treats the first post-command timeout as fatal for the rest of the boot, because proving the controller idle at an instant cannot prove a late response will not arrive. Linux `ec_poll()` instead retries a stalled transaction up to five times with a fresh delay window before giving up.
+  - Terminal is the right default while nothing can recover the controller; once a reset exists, a bounded retry BEFORE declaring desync becomes answerable. Without it, one transient SMI or firmware-busy moment permanently kills battery, thermal and lid reporting for that boot.
 - [ ] Open the EC gate once GPE acknowledgement works. -> XREF: `02-kernel-core/TODO-26-power-management.md` §5 (item: "EC hardware access is GATED OFF")
   - Replace `ec_gpe_ack_supported()` in `src/kernel/drivers/acpi_ec.c` so `acpi_ec_ready()` can return true, and mask/ack the ECDT GPE around polled EC traffic.
   - §5 discovers and validates the EC and implements the full polled transaction engine, then deliberately refuses to drive it: RD_EC/WR_EC/BE_EC/BD_EC all raise the EC's GPE, so without acknowledgement the first transaction strands a level-triggered SCI and this section's own storm-quarantine consequence fires.
