@@ -191,6 +191,7 @@ Win+L: overlay (clock, blurred desktop behind, "Enter password"). Resume same se
 > Lock screen is different from login screen: it overlays the running desktop (blurs current back-buffer in place) and restores the same session on unlock -- no `desktop_stop()` call. `lock_screen_show()`: create full-screen overlay window with `z_order=32767`; `gfx_blur_rect(g_compositor_backbuf, 0, 0, screen_w, screen_h, 20)` → use as background; render clock (HH:MM, updates every second); username + avatar (circular); password textbox. Win+L hotkey: registered in global hotkey table (TODO-06 §8) → `lock_screen_show()`. On correct password (`auth_verify_password()`): `lock_screen_hide()` → desktop immediately visible (no reload). On failure: shake animation (reuse login_screen shake pattern). Auto-lock: `HKLM\SOFTWARE\Impossible\Screen\LockAfterSeconds` (default 300 s idle) → `lock_screen_show()` via scheduler task.
 
 - [ ] `void lock_screen_show(void)` -- overlay; blur current back-buffer; render clock + avatar + password field
+  - Also the actuator for power-button action `4` (lock), which resolves and is refused today because nothing can lock -> XREF: `02-kernel-core/TODO-26-power-management.md` §7 (item: "`4` = lock screen")
 - [ ] `void lock_screen_hide(void)` -- destroy overlay; compositor back-buffer restored
 - [ ] Win+L: global hotkey dispatch entry → `lock_screen_show()`
 - [ ] Clock update: `sched_task_add("lock_clock", lock_screen_update_clock, 1, 1)` while locked

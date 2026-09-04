@@ -265,7 +265,93 @@ uint16_t acpi_get_slp_typa(uint8_t state);
 /* Fixed-event counts recorded by the SCI ISR. The ISR cannot log or dispatch
  * policy (it would reach disk I/O in hard-IRQ context), so it acknowledges the
  * hardware and counts; these are how a thread-level consumer learns what
- * happened. Monotonic, never reset. */
+ * happened. Monotonic, never reset.
+ *
+ * 64-bit deliberately: the consumer drains by comparing these against its own
+ * watermark, and a 32-bit counter that wraps back onto a stale watermark loses
+ * the whole 2^32 interval. A stuck or repeatedly reasserted SCI is exactly the
+ * failure that reaches such a count, and it is the case where silently losing
+ * every button press is least acceptable. */
+uint64_t acpi_power_button_count(void);
+uint64_t acpi_sleep_button_count(void);
+uint64_t acpi_wake_event_count(void);
+
+/* ---- Power / sleep button action policy ---------------------------------- */
+
+/* Action codes stored in HKLM\SYSTEM\PowerControl\PowerButtonAction and
+ * SleepButtonAction, matching the Windows power-button action encoding. */
+#define ACPI_BTN_ACTION_IGNORE      0u
+#define ACPI_BTN_ACTION_SLEEP       1u   /* S3 suspend to RAM */
+#define ACPI_BTN_ACTION_HIBERNATE   2u   /* S4 suspend to disk */
+#define ACPI_BTN_ACTION_SHUTDOWN    3u   /* S5 soft off */
+#define ACPI_BTN_ACTION_LOCK        4u   /* lock the interactive session */
+#define ACPI_BTN_ACTION_MAX         ACPI_BTN_ACTION_LOCK
+
+/* Defaults, used ONLY when the stored value is absent, unreadable, or out of
+ * range. A value that is in range but currently unactionable is NOT redirected
+ * here: promoting a configured "sleep" to a shutdown would destroy the session
+ * the setting exists to preserve, and for the sleep button the redirect would
+ * be circular, since its own default is the S3 that was just refused. An
+ * unactionable action is refused with one log line and nothing else happens. */
+#define ACPI_BTN_DEFAULT_POWER      ACPI_BTN_ACTION_SHUTDOWN
+#define ACPI_BTN_DEFAULT_SLEEP      ACPI_BTN_ACTION_SLEEP
+
+/* Resolve a raw registry value to an action. `present` is zero when the value
+ * was absent or unreadable. Absent and out-of-range both resolve to `fallback`;
+ * every in-range value is returned unchanged. Pure. */
+uint32_t acpi_btn_resolve_action(uint32_t raw, int present, uint32_t fallback);
+
+/* Nonzero when `action` can actually be carried out on this tree. The single
+ * place that decision is made, so the consumer and its tests agree. Pure. */
+int acpi_btn_action_available(uint32_t action);
+
+/* Returned by acpi_btn_plan() for a button that had no unseen events. Outside
+ * the ACPI_BTN_ACTION_* range on purpose, so it can never be mistaken for one. */
+#define ACPI_BTN_ACTION_NONE        0xFFFFFFFFu
+
+/* One drain-and-decide pass over both buttons. Writes the action each button
+ * should perform into *out_pwr / *out_slp, or ACPI_BTN_ACTION_NONE when that
+ * button saw nothing, and advances both watermarks.
+ *
+ * This is the WHOLE dispatcher decision, including burst collapsing: the
+ * threaded DPC is this function plus the gate plus the actuator. Split out so
+ * the decision can be driven end to end from a test, which cannot raise a real
+ * PM1 event or run the real actuator. Pure apart from the watermark stores. */
+void acpi_btn_plan(uint64_t pwr_count, uint64_t slp_count,
+                   uint64_t *pwr_seen, uint64_t *slp_seen,
+                   uint32_t pwr_action, uint32_t slp_action,
+                   uint32_t *out_pwr, uint32_t *out_slp);
+
+/* Edge drain: returns how many events happened since *seen, and advances *seen
+ * to `count`. Unsigned arithmetic, so it stays correct across a 64-bit wrap.
+ * Pure apart from the *seen store. */
+uint64_t acpi_btn_drain(uint64_t count, uint64_t *seen);
+
+/* Single-entry gate. take() returns 1 exactly once until release() is called,
+ * so a second dispatch cannot stack on an action that is already running. */
+int  acpi_btn_gate_take(volatile uint32_t *gate);
+void acpi_btn_gate_release(volatile uint32_t *gate);
+
+/* The resolved actions, cached once at acpi_enable_fixed_events() time.
+ *
+ * They are cached rather than read per dispatch because the registry has no SMP
+ * lock (src/kernel/main/boot_storage.c records this, and RegSetValueEx publishes
+ * type, size and data through separate unsynchronized stores). A safety-critical
+ * decision must not be made through a value that can be read torn, so the policy
+ * is sampled once before the SCI is enabled and treated as immutable until a
+ * synchronized registry exists. */
+uint32_t acpi_power_button_action(void);
+uint32_t acpi_sleep_button_action(void);
+
+/* Carry out the configured action for one button press. PASSIVE_LEVEL only:
+ * these run from the threaded DPC the SCI ISR queues, never from the ISR.
+ * acpi_power_button_event() does not return when the action is shutdown. */
+void acpi_power_button_event(void);
+void acpi_sleep_button_event(void);
+
+/* Test/diagnostic: button dispatches that reached an action decision. */
+uint32_t acpi_btn_dispatch_count(void);
+
 /* Test-only: run a caller-supplied table image through the real \_Sx parser /
  * the real table validator, so malformed-firmware handling is testable without
  * live firmware. Returns the same values the internal functions do. */
@@ -273,9 +359,6 @@ int acpi_parse_sleep_type_test(const void *table, char state_digit,
                                uint16_t *out_typa, uint16_t *out_typb);
 int acpi_table_valid_test(const void *table, const char *sig);
 
-uint32_t acpi_power_button_count(void);
-uint32_t acpi_sleep_button_count(void);
-uint32_t acpi_wake_event_count(void);
 
 /* Power off the machine via ACPI S5 sleep state.
  * Falls back to QEMU-specific port if FADT is unavailable.

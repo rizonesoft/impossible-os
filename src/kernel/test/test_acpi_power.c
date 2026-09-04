@@ -10,6 +10,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/acpi.h"
+#include "registry.h"
 
 /* ---- S-state discovery ---- */
 
@@ -405,10 +406,320 @@ static void test_acpi_s5_query_self_consistent(void)
                 "S5 support flag agrees with its parsed SLP_TYPa");
 }
 
+/* ---- Button action policy (section 7) ----------------------------------- */
+
+/* Every in-range stored value survives resolution unchanged. The resolver must
+ * NOT be where an unavailable action gets rewritten -- that is
+ * acpi_btn_action_available()'s job, and conflating the two is exactly how a
+ * configured "sleep" would turn into a shutdown. */
+static void test_acpi_btn_resolve_in_range_preserved(void)
+{
+    uint32_t a;
+
+    for (a = ACPI_BTN_ACTION_IGNORE; a <= ACPI_BTN_ACTION_MAX; a++)
+        TEST_ASSERT_EQ(acpi_btn_resolve_action(a, 1, ACPI_BTN_DEFAULT_POWER), a,
+                       "in-range action resolves to itself");
+}
+
+/* An absent value takes the caller's default, and each button has its own. */
+static void test_acpi_btn_resolve_absent_uses_default(void)
+{
+    TEST_ASSERT_EQ(acpi_btn_resolve_action(0, 0, ACPI_BTN_DEFAULT_POWER),
+                   ACPI_BTN_ACTION_SHUTDOWN,
+                   "absent power-button value defaults to shutdown");
+    TEST_ASSERT_EQ(acpi_btn_resolve_action(0, 0, ACPI_BTN_DEFAULT_SLEEP),
+                   ACPI_BTN_ACTION_SLEEP,
+                   "absent sleep-button value defaults to sleep");
+    /* A present zero is the IGNORE action, not an absent value: the two must not
+     * collapse, or configuring "do nothing" would silently become the default. */
+    TEST_ASSERT_EQ(acpi_btn_resolve_action(0, 1, ACPI_BTN_DEFAULT_POWER),
+                   ACPI_BTN_ACTION_IGNORE,
+                   "present zero is the ignore action, not a missing value");
+}
+
+/* Out of range is malformed policy, so it takes the default rather than
+ * disabling the button. */
+static void test_acpi_btn_resolve_out_of_range_uses_default(void)
+{
+    TEST_ASSERT_EQ(acpi_btn_resolve_action(ACPI_BTN_ACTION_MAX + 1, 1,
+                                           ACPI_BTN_DEFAULT_POWER),
+                   ACPI_BTN_ACTION_SHUTDOWN,
+                   "just past the last action falls back to the default");
+    TEST_ASSERT_EQ(acpi_btn_resolve_action(0xFFFFFFFFu, 1,
+                                           ACPI_BTN_DEFAULT_POWER),
+                   ACPI_BTN_ACTION_SHUTDOWN,
+                   "a wildly out-of-range value falls back to the default");
+    /* The fallback must be the CALLER's, not a hard-coded shutdown: an
+     * implementation that honoured the caller default only for an absent value
+     * would pass every assertion above while turning a malformed
+     * SleepButtonAction into an unexpected shutdown. */
+    TEST_ASSERT_EQ(acpi_btn_resolve_action(ACPI_BTN_ACTION_MAX + 1, 1,
+                                           ACPI_BTN_DEFAULT_SLEEP),
+                   ACPI_BTN_ACTION_SLEEP,
+                   "out-of-range sleep-button value uses the sleep default");
+}
+
+/* Availability is a statement about THIS tree: ignore and shutdown can happen,
+ * S3/S4/lock cannot until their owning sections ship. */
+static void test_acpi_btn_availability(void)
+{
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_IGNORE), 1,
+                   "doing nothing is always available");
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_SHUTDOWN), 1,
+                   "shutdown is available");
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_SLEEP), 0,
+                   "S3 is not available: no suspend orchestration");
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_HIBERNATE), 0,
+                   "S4 is not available: no hibernate orchestration");
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_LOCK), 0,
+                   "lock is not available: no session to lock");
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_MAX + 1), 0,
+                   "an out-of-range action is never available");
+}
+
+/* The default power-button action must be one that can actually run, or the
+ * fallback path would resolve to a refusal and the button would do nothing on a
+ * machine with no stored policy. */
+static void test_acpi_btn_power_default_is_actionable(void)
+{
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_DEFAULT_POWER), 1,
+                   "the power-button default must be performable");
+}
+
+/* Edge drain: a burst collapses to one delta, and a second drain with no new
+ * events reports zero. */
+static void test_acpi_btn_drain_edges(void)
+{
+    uint64_t seen = 0;
+
+    TEST_ASSERT_EQ(acpi_btn_drain(0, &seen), 0ull,
+                   "no events yields no work");
+    TEST_ASSERT_EQ(acpi_btn_drain(5, &seen), 5ull,
+                   "five presses drain as five");
+    TEST_ASSERT_EQ(seen, 5ull, "watermark advanced to the count");
+    TEST_ASSERT_EQ(acpi_btn_drain(5, &seen), 0ull,
+                   "re-draining the same count yields nothing");
+}
+
+/* Full width, uncast: a regression that truncated the delta AND the stored
+ * watermark to 32 bits would pass every assertion above, then leave a
+ * high-count watermark stale and report phantom work on the next drain. */
+static void test_acpi_btn_drain_full_width(void)
+{
+    uint64_t seen = 0;
+
+    TEST_ASSERT_EQ(acpi_btn_drain(0x100000005ull, &seen), 0x100000005ull,
+                   "a delta above 2^32 is reported at full width");
+    TEST_ASSERT_EQ(seen, 0x100000005ull,
+                   "the watermark stores the full-width count");
+    TEST_ASSERT_EQ(acpi_btn_drain(0x100000005ull, &seen), 0ull,
+                   "re-draining a full-width count yields nothing");
+}
+
+/* The reason the counters were widened to 64 bits: the drain must survive a
+ * wrap. With a 32-bit counter this interval would have been lost entirely. */
+static void test_acpi_btn_drain_wrap(void)
+{
+    uint64_t seen = 0xFFFFFFFFFFFFFFFEull;
+
+    TEST_ASSERT_EQ(acpi_btn_drain(2, &seen), 4ull,
+                   "a wrapped counter still yields the true event count");
+    TEST_ASSERT_EQ(seen, 2ull, "watermark follows the wrapped count");
+}
+
+/* A NULL watermark is a programming error, not a crash. */
+static void test_acpi_btn_drain_null_seen(void)
+{
+    TEST_ASSERT_EQ(acpi_btn_drain(7, (uint64_t *)0), 0ull,
+                   "a NULL watermark drains nothing");
+}
+
+/* The gate admits exactly one holder, so a press arriving during a running
+ * action cannot stack a second one. */
+static void test_acpi_btn_gate_single_entry(void)
+{
+    volatile uint32_t gate = 0;
+
+    TEST_ASSERT_EQ(acpi_btn_gate_take(&gate), 1, "first take succeeds");
+    TEST_ASSERT_EQ(acpi_btn_gate_take(&gate), 0,
+                   "second take is refused while held");
+    acpi_btn_gate_release(&gate);
+    TEST_ASSERT_EQ(acpi_btn_gate_take(&gate), 1, "take succeeds after release");
+    acpi_btn_gate_release(&gate);
+    TEST_ASSERT_EQ((uint32_t)gate, 0u, "release clears the gate");
+    TEST_ASSERT_EQ(acpi_btn_gate_take((volatile uint32_t *)0), 0,
+                   "a NULL gate is never taken");
+}
+
+/* End-to-end over the dispatcher's whole decision: a burst of presses on one
+ * button collapses to exactly ONE action, the other button stays silent, and
+ * both watermarks advance. This is the same call the threaded DPC makes, so it
+ * covers the drain-and-decide pass rather than its pieces. */
+static void test_acpi_btn_plan_burst_collapses(void)
+{
+    uint64_t pwr_seen = 0;
+    uint64_t slp_seen = 0;
+    uint32_t pwr = 0;
+    uint32_t slp = 0;
+
+    acpi_btn_plan(4, 0, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_SLEEP, &pwr, &slp);
+    TEST_ASSERT_EQ(pwr, ACPI_BTN_ACTION_SHUTDOWN,
+                   "four power presses produce one shutdown action");
+    TEST_ASSERT_EQ(slp, ACPI_BTN_ACTION_NONE,
+                   "a silent sleep button produces no action");
+    TEST_ASSERT_EQ(pwr_seen, 4ull, "power watermark advanced past the burst");
+    TEST_ASSERT_EQ(slp_seen, 0ull, "sleep watermark did not move");
+}
+
+/* A second pass with no new events must decide nothing, which is what stops the
+ * DPC re-running an action every time it is woken. */
+static void test_acpi_btn_plan_idle_pass(void)
+{
+    uint64_t pwr_seen = 0;
+    uint64_t slp_seen = 0;
+    uint32_t pwr = 0;
+    uint32_t slp = 0;
+
+    acpi_btn_plan(2, 3, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_IGNORE, &pwr, &slp);
+    TEST_ASSERT_EQ(pwr, ACPI_BTN_ACTION_SHUTDOWN, "first pass acts on power");
+    TEST_ASSERT_EQ(slp, ACPI_BTN_ACTION_IGNORE, "first pass acts on sleep");
+
+    acpi_btn_plan(2, 3, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_IGNORE, &pwr, &slp);
+    TEST_ASSERT_EQ(pwr, ACPI_BTN_ACTION_NONE, "second pass decides nothing");
+    TEST_ASSERT_EQ(slp, ACPI_BTN_ACTION_NONE, "second pass decides nothing");
+}
+
+/* A press that lands DURING an action is recoverable exactly because the
+ * watermark is published before the action runs: the count is left ahead of the
+ * watermark, so the next pass still finds it. */
+static void test_acpi_btn_plan_press_during_action(void)
+{
+    uint64_t pwr_seen = 0;
+    uint64_t slp_seen = 0;
+    uint32_t pwr = 0;
+    uint32_t slp = 0;
+
+    acpi_btn_plan(1, 0, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_SLEEP, &pwr, &slp);
+    TEST_ASSERT_EQ(pwr_seen, 1ull, "watermark published before the action ran");
+
+    /* The ISR increments while the action is in flight. */
+    acpi_btn_plan(2, 0, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_SLEEP, &pwr, &slp);
+    TEST_ASSERT_EQ(pwr, ACPI_BTN_ACTION_SHUTDOWN,
+                   "a press during an action is found by the next pass");
+}
+
+/* Both buttons drain on every pass. Draining lazily would leave the sleep
+ * watermark behind and replay its presses later. */
+static void test_acpi_btn_plan_drains_both(void)
+{
+    uint64_t pwr_seen = 0;
+    uint64_t slp_seen = 0;
+    uint32_t pwr = 0;
+    uint32_t slp = 0;
+
+    acpi_btn_plan(3, 7, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_SLEEP, &pwr, &slp);
+    TEST_ASSERT_EQ(pwr_seen, 3ull, "power watermark drained");
+    TEST_ASSERT_EQ(slp_seen, 7ull, "sleep watermark drained on the same pass");
+}
+
+/* NULL outputs are a caller error, not a crash, and the watermarks still
+ * advance so no pass is silently repeated. */
+static void test_acpi_btn_plan_null_outputs(void)
+{
+    uint64_t pwr_seen = 0;
+    uint64_t slp_seen = 0;
+
+    acpi_btn_plan(1, 1, &pwr_seen, &slp_seen,
+                  ACPI_BTN_ACTION_SHUTDOWN, ACPI_BTN_ACTION_SLEEP,
+                  (uint32_t *)0, (uint32_t *)0);
+    TEST_ASSERT_EQ(pwr_seen, 1ull, "watermark advances with NULL outputs");
+    TEST_ASSERT_EQ(slp_seen, 1ull, "watermark advances with NULL outputs");
+}
+
+/* ACPI_BTN_ACTION_NONE must never collide with a real action code, or a
+ * no-events pass would be indistinguishable from a configured action. */
+static void test_acpi_btn_none_is_not_an_action(void)
+{
+    TEST_ASSERT_EQ(ACPI_BTN_ACTION_NONE > ACPI_BTN_ACTION_MAX, 1,
+                   "the no-action sentinel is outside the action range");
+    TEST_ASSERT_EQ(acpi_btn_action_available(ACPI_BTN_ACTION_NONE), 0,
+                   "the no-action sentinel is never performable");
+}
+
+/* The cached policy must be what the hive actually holds, not merely a valid
+ * code: a policy_init that never reached the registry would leave the static
+ * default in place and pass a range check alone. */
+static void test_acpi_btn_cached_matches_registry(void)
+{
+    HKEY hk;
+    uint32_t raw = 0;
+    int present = 0;
+
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\PowerControl", 0,
+                     KEY_READ, &hk) == ERROR_SUCCESS) {
+        present = (RegGetDword(hk, "PowerButtonAction", &raw) == ERROR_SUCCESS);
+        RegCloseKey(hk);
+    }
+    TEST_ASSERT_EQ(acpi_power_button_action(),
+                   acpi_btn_resolve_action(raw, present, ACPI_BTN_DEFAULT_POWER),
+                   "cached power action matches what the hive holds");
+}
+
+/* The cached actions are always resolved values, whatever the hive held. */
+static void test_acpi_btn_cached_actions_in_range(void)
+{
+    TEST_ASSERT_EQ(acpi_power_button_action() <= ACPI_BTN_ACTION_MAX, 1,
+                   "cached power-button action is a valid code");
+    TEST_ASSERT_EQ(acpi_sleep_button_action() <= ACPI_BTN_ACTION_MAX, 1,
+                   "cached sleep-button action is a valid code");
+}
+
 /* ---- Registration ---- */
 
 void test_register_acpi_power(void)
 {
+    test_suite_register_cat("ACPI: button in-range action preserved",
+                            test_acpi_btn_resolve_in_range_preserved, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button absent value uses default",
+                            test_acpi_btn_resolve_absent_uses_default, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button out-of-range uses default",
+                            test_acpi_btn_resolve_out_of_range_uses_default, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button action availability",
+                            test_acpi_btn_availability, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: power-button default is actionable",
+                            test_acpi_btn_power_default_is_actionable, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button edge drain collapses a burst",
+                            test_acpi_btn_drain_edges, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button drain is full width",
+                            test_acpi_btn_drain_full_width, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button plan collapses a burst",
+                            test_acpi_btn_plan_burst_collapses, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button plan idle pass decides nothing",
+                            test_acpi_btn_plan_idle_pass, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button press during action is not lost",
+                            test_acpi_btn_plan_press_during_action, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button plan drains both buttons",
+                            test_acpi_btn_plan_drains_both, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button plan tolerates NULL outputs",
+                            test_acpi_btn_plan_null_outputs, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: no-action sentinel is not an action",
+                            test_acpi_btn_none_is_not_an_action, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: cached button action matches the hive",
+                            test_acpi_btn_cached_matches_registry, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button drain survives counter wrap",
+                            test_acpi_btn_drain_wrap, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button drain rejects NULL watermark",
+                            test_acpi_btn_drain_null_seen, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button gate admits one holder",
+                            test_acpi_btn_gate_single_entry, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: cached button actions are valid codes",
+                            test_acpi_btn_cached_actions_in_range, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: S5 always supported",
                             test_acpi_s5_always_supported, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: S5 SLP_TYPa valid",

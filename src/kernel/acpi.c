@@ -30,6 +30,9 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/smp.h"
+#include "kernel/sched/dpc.h"
+#include "kernel/sched/spinlock.h"
+#include "registry.h"
 
 /* ---- I/O helpers ---- */
 
@@ -1081,10 +1084,60 @@ static uint16_t s_pm1b_en_port;    /* PM1b_EVT enable register (optional) */
 
 /* Fixed-event counts, published from the SCI ISR and read at thread level.
  * The ISR must not log (see acpi_sci_process), so these ARE the record of what
- * the interrupt saw until a deferred dispatcher consumes them. */
-static volatile uint32_t s_pwrbtn_events;
-static volatile uint32_t s_slpbtn_events;
-static volatile uint32_t s_wake_events;
+ * the interrupt saw until a deferred dispatcher consumes them.
+ *
+ * 64-bit, because the dispatcher drains by comparing them against its own
+ * watermark: a 32-bit counter that wraps lands back on a stale watermark and
+ * silently discards the entire interval. The count that reaches 2^32 is a stuck
+ * or repeatedly reasserted SCI, which is precisely when dropping every press is
+ * least acceptable. */
+static volatile uint64_t s_pwrbtn_events;
+static volatile uint64_t s_slpbtn_events;
+static volatile uint64_t s_wake_events;
+
+/* Serializes the WHOLE PM1 read / acknowledge / count / enqueue sequence.
+ *
+ * The SCI is a shared, level-triggered line and the shared IRQ path installs no
+ * KINTERRUPT wrapper (src/kernel/irq.c: KINTERRUPT binds exclusive vectors
+ * only), while irq_set_affinity() retargets the IOAPIC without masking and
+ * draining an in-flight dispatch. Two CPUs can therefore be inside this handler
+ * at once: without this lock they both read the same PM1 status before either
+ * write-1-to-clear, count the one event twice, and insert the SAME KDPC
+ * concurrently, which the DPC contract explicitly forbids. The lock covers the
+ * enqueue too, not just the counters, because the concurrent insert is the
+ * hazard with no other defence. */
+static spinlock_t s_pm1_evt_lock = SPINLOCK_INIT;
+
+/* The threaded DPC the ISR queues, and the dispatcher's own watermarks.
+ *
+ * THREADED (PASSIVE_LEVEL) rather than a normal DISPATCH_LEVEL DPC because the
+ * shutdown action runs acpi_storage_quiesce(), which sleeps. The single all-CPU
+ * threaded worker drains every CPU's threaded list, so the callback runs exactly
+ * once at a time regardless of which CPU took the interrupt. Watermarks are
+ * therefore single-consumer and need no lock of their own. */
+static KDPC s_button_dpc;
+static uint64_t s_pwrbtn_seen;
+static uint64_t s_slpbtn_seen;
+static volatile uint32_t s_button_gate;
+static volatile uint32_t s_btn_dispatches;
+
+/* Actions resolved once, before the SCI is enabled. See acpi.h for why these
+ * are cached instead of read per dispatch. */
+static uint32_t s_pwrbtn_action = ACPI_BTN_DEFAULT_POWER;
+static uint32_t s_slpbtn_action = ACPI_BTN_DEFAULT_SLEEP;
+
+/* Registry location of the button policy. */
+#define ACPI_BTN_REG_PATH   "SYSTEM\\PowerControl"
+
+/* Queue the button DPC on the BSP service list, matching ktimer's convention.
+ * Only the BSP DPC queue has a guaranteed drain trigger, and pinning also gives
+ * the dispatcher one deterministic queue rather than whichever CPU the SCI
+ * happened to land on. */
+#define ACPI_BTN_SERVICE_CPU  0u
+
+/* Defined with the rest of the dispatcher below; called from
+ * acpi_enable_fixed_events(), which appears earlier in this file. */
+static void acpi_button_policy_init(void);
 
 /* Compute the enable-register port for one PM1 event block. ACPI 6.5 section
  * 4.8.3.1: the block is PM1_EVT_LEN bytes, split into equal status and enable
@@ -1324,6 +1377,9 @@ void acpi_enable_fixed_events(void)
      * shared-IRQ layer eventually answers by quarantining the GSI. Enabling
      * less is the safe direction: an event we do not service is an event we
      * must not ask for. */
+    /* Arm the dispatcher BEFORE enabling the events it consumes. */
+    acpi_button_policy_init();
+
     en = PM1_STS_PWRBTN | PM1_STS_SLPBTN;  /* PWRBTN_EN | SLPBTN_EN */
     outw_acpi(s_pm1a_en_port, en);
     if (s_pm1b_en_port)
@@ -1357,8 +1413,14 @@ static int acpi_sci_process(void)
     uint16_t sts_b = 0;
     uint16_t asserted;
     uint16_t ack;
+    uint64_t irqf;
 
     if (!s_pm1a_sts_port) return 0;
+
+    /* Everything from the status read to the DPC enqueue is one critical
+     * section -- see s_pm1_evt_lock. irqsave because this is already hard-IRQ
+     * context and the same lock must never be taken with interrupts enabled. */
+    spin_lock_irqsave(&s_pm1_evt_lock, &irqf);
 
     /* ACPI 6.5 section 4.8.3.1.1: a fixed-event bit may be implemented in
      * either block, so the effective status is the OR of both. */
@@ -1367,8 +1429,10 @@ static int acpi_sci_process(void)
         sts_b = inw_acpi(s_pm1b_sts_port);
     asserted = (uint16_t)((sts | sts_b) & PM1_SERVICED);
 
-    if (!asserted)
+    if (!asserted) {
+        spin_unlock_irqrestore(&s_pm1_evt_lock, irqf);
         return 0;
+    }
 
     /* Acknowledge every serviced bit in ONE write-1-to-clear per block, before
      * any bookkeeping. Clearing bit by bit left the line asserted for as long
@@ -1383,26 +1447,287 @@ static int acpi_sci_process(void)
         outw_acpi(s_pm1b_sts_port, ack);
 
     if (asserted & PM1_STS_PWRBTN)
-        __atomic_fetch_add(&s_pwrbtn_events, 1u, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&s_pwrbtn_events, 1u, __ATOMIC_RELEASE);
     if (asserted & PM1_STS_SLPBTN)
-        __atomic_fetch_add(&s_slpbtn_events, 1u, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&s_slpbtn_events, 1u, __ATOMIC_RELEASE);
     if (asserted & PM1_STS_WAK)
-        __atomic_fetch_add(&s_wake_events, 1u, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&s_wake_events, 1u, __ATOMIC_RELEASE);
 
+    /* Wake the thread-level dispatcher. The counters above are the record; this
+     * is only the wake, so a coalesced insert (the DPC is already queued) loses
+     * nothing -- the dispatcher drains to the current count when it runs. The
+     * call is bounded, allocation-free and DIRQL-safe by contract, which is why
+     * it is the one thing this ISR may do besides acknowledge and count.
+     *
+     * Before dpc_start_threads() runs (boot_desktop.c, after this file's
+     * acpi_enable_fixed_events() in boot_storage.c) there is no worker yet: the
+     * DPC simply stays queued and is drained when the worker starts. No event is
+     * lost, because the counter, not the queue, is the record. */
+    if (asserted & (PM1_STS_PWRBTN | PM1_STS_SLPBTN))
+        KeInsertQueueDpcOnCpu(&s_button_dpc, ACPI_BTN_SERVICE_CPU,
+                              (void *)0, (void *)0, (int *)0);
+
+    spin_unlock_irqrestore(&s_pm1_evt_lock, irqf);
     return 1;
+}
+
+/* ---- Button action policy (the thread-level half of the SCI split) ------- */
+
+uint32_t acpi_btn_resolve_action(uint32_t raw, int present, uint32_t fallback)
+{
+    /* Absent, unreadable, or out of range all mean "no usable policy stored",
+     * and all resolve to the caller's default. An IN-RANGE value is returned
+     * unchanged even when it cannot currently be performed: whether an action is
+     * ACTIONABLE is a separate question, answered by acpi_btn_action_available()
+     * so that a temporarily unavailable action is refused rather than quietly
+     * rewritten into a different one. */
+    if (!present || raw > ACPI_BTN_ACTION_MAX)
+        return fallback;
+    return raw;
+}
+
+int acpi_btn_action_available(uint32_t action)
+{
+    switch (action) {
+    case ACPI_BTN_ACTION_IGNORE:
+        /* Doing nothing is always possible, and is a real configured choice. */
+        return 1;
+    case ACPI_BTN_ACTION_SHUTDOWN:
+        /* acpi_shutdown() exists and is the shutdown path the SYS_SHUTDOWN
+         * syscall and the desktop power menu already use. */
+        return 1;
+    case ACPI_BTN_ACTION_SLEEP:
+    case ACPI_BTN_ACTION_HIBERNATE:
+        /* S3 and S4 need the suspend and hibernate orchestration, which does not
+         * exist: acpi_enter_sleep_state() refuses both, and the sections that
+         * own them are blocked on ACPI namespace evaluation. */
+        return 0;
+    case ACPI_BTN_ACTION_LOCK:
+        /* No interactive session or lock screen exists to lock. */
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+uint64_t acpi_btn_drain(uint64_t count, uint64_t *seen)
+{
+    uint64_t delta;
+
+    if (!seen)
+        return 0;
+
+    /* Unsigned subtraction, so a wrapped counter still yields the true number of
+     * events in between rather than a huge or negative-looking value. */
+    delta = count - *seen;
+    *seen = count;
+    return delta;
+}
+
+void acpi_btn_plan(uint64_t pwr_count, uint64_t slp_count,
+                   uint64_t *pwr_seen, uint64_t *slp_seen,
+                   uint32_t pwr_action, uint32_t slp_action,
+                   uint32_t *out_pwr, uint32_t *out_slp)
+{
+    /* Drain BOTH buttons before deciding either. Draining lazily (skip the
+     * sleep button once the power button has an action) would leave the sleep
+     * watermark behind and replay its presses on the next pass. */
+    uint64_t pwr = acpi_btn_drain(pwr_count, pwr_seen);
+    uint64_t slp = acpi_btn_drain(slp_count, slp_seen);
+
+    /* Any number of presses since the last pass is ONE action: holding the
+     * power button must not queue several shutdowns. */
+    if (out_pwr)
+        *out_pwr = pwr ? pwr_action : ACPI_BTN_ACTION_NONE;
+    if (out_slp)
+        *out_slp = slp ? slp_action : ACPI_BTN_ACTION_NONE;
+}
+
+int acpi_btn_gate_take(volatile uint32_t *gate)
+{
+    uint32_t expected = 0;
+
+    if (!gate)
+        return 0;
+    return __atomic_compare_exchange_n(gate, &expected, 1u, 0,
+                                       __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)
+               ? 1
+               : 0;
+}
+
+void acpi_btn_gate_release(volatile uint32_t *gate)
+{
+    if (gate)
+        __atomic_store_n(gate, 0u, __ATOMIC_RELEASE);
+}
+
+uint32_t acpi_power_button_action(void) { return s_pwrbtn_action; }
+uint32_t acpi_sleep_button_action(void) { return s_slpbtn_action; }
+uint32_t acpi_btn_dispatch_count(void)
+{
+    return __atomic_load_n(&s_btn_dispatches, __ATOMIC_ACQUIRE);
+}
+
+/* Name an action for the log. Never returns NULL. */
+static const char *acpi_btn_action_name(uint32_t action)
+{
+    switch (action) {
+    case ACPI_BTN_ACTION_IGNORE:    return "ignore";
+    case ACPI_BTN_ACTION_SLEEP:     return "sleep (S3)";
+    case ACPI_BTN_ACTION_HIBERNATE: return "hibernate (S4)";
+    case ACPI_BTN_ACTION_SHUTDOWN:  return "shutdown (S5)";
+    case ACPI_BTN_ACTION_LOCK:      return "lock";
+    default:                        return "unknown";
+    }
+}
+
+/* Perform one resolved action. `which` names the button for the log. */
+static void acpi_btn_perform(uint32_t action, const char *which)
+{
+    __atomic_fetch_add(&s_btn_dispatches, 1u, __ATOMIC_RELEASE);
+
+    if (!acpi_btn_action_available(action)) {
+        /* Refuse, and do NOT substitute a different action. Promoting an
+         * unavailable "sleep" to the shutdown default would destroy the session
+         * the setting exists to preserve, and for the sleep button it would be
+         * circular, since S3 IS that button's default. The firmware long-press
+         * cutoff remains the emergency power-off path either way. */
+        klog(LOG_WARN, "acpi",
+             "%s button: %s is not available on this build -- press ignored",
+             which, acpi_btn_action_name(action));
+        return;
+    }
+
+    switch (action) {
+    case ACPI_BTN_ACTION_IGNORE:
+        klog(LOG_INFO, "acpi", "%s button: action is ignore -- press ignored",
+             which);
+        return;
+    case ACPI_BTN_ACTION_SHUTDOWN:
+        klog(LOG_INFO, "acpi", "%s button: shutting down", which);
+        /* Does not return. This is the same path SYS_SHUTDOWN and the desktop
+         * power menu take; it quiesces storage but does not park the other CPUs,
+         * which is a pre-existing property of the shutdown path owned by the
+         * rendezvous integration section, not something this consumer adds. */
+        acpi_shutdown();
+        return;
+    default:
+        /* Unreachable: acpi_btn_action_available() gates every other code. */
+        klog(LOG_ERROR, "acpi", "%s button: unhandled action %u",
+             which, (uint64_t)action);
+        return;
+    }
+}
+
+void acpi_power_button_event(void)
+{
+    acpi_btn_perform(s_pwrbtn_action, "power");
+}
+
+void acpi_sleep_button_event(void)
+{
+    acpi_btn_perform(s_slpbtn_action, "sleep");
+}
+
+/* Threaded-DPC dispatcher: PASSIVE_LEVEL, single all-CPU worker, so it never
+ * runs concurrently with itself and the watermarks below need no lock. */
+static void acpi_button_dpc_routine(KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    uint32_t pwr = ACPI_BTN_ACTION_NONE;
+    uint32_t slp = ACPI_BTN_ACTION_NONE;
+
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+
+    /* The gate keeps a press that lands during a long-running action (the
+     * shutdown quiesce takes seconds) from stacking a second one. Its counter
+     * increment is not lost: the count outlives the refusal, so the next drain
+     * still sees it. */
+    if (!acpi_btn_gate_take(&s_button_gate))
+        return;
+
+    /* Snapshot and PUBLISH the watermarks before acting. Publishing first is
+     * what makes a press that arrives mid-action recoverable: it leaves
+     * count != seen, and the ISR's own enqueue re-arms this DPC, so the next
+     * run drains it. Acting first and publishing afterwards would swallow that
+     * press into the same watermark advance. */
+    acpi_btn_plan(acpi_power_button_count(), acpi_sleep_button_count(),
+                  &s_pwrbtn_seen, &s_slpbtn_seen,
+                  s_pwrbtn_action, s_slpbtn_action, &pwr, &slp);
+
+    if (pwr != ACPI_BTN_ACTION_NONE)
+        acpi_power_button_event();
+    if (slp != ACPI_BTN_ACTION_NONE)
+        acpi_sleep_button_event();
+
+    acpi_btn_gate_release(&s_button_gate);
+}
+
+/* Sample the button policy and arm the dispatcher. Runs once, from
+ * acpi_enable_fixed_events(), BEFORE the PM1 enable bits are set -- so the
+ * watermarks and the DPC are in place before the first event can be raised, and
+ * the registry is read while no user-mode writer exists. */
+static void acpi_button_policy_init(void)
+{
+    HKEY hk;
+    uint32_t raw;
+    int present;
+
+    KeInitializeThreadedDpc(&s_button_dpc, acpi_button_dpc_routine, (void *)0);
+
+    /* Start level with whatever the counters already hold, so a pre-arm event
+     * cannot be replayed as a fresh press. */
+    s_pwrbtn_seen = acpi_power_button_count();
+    s_slpbtn_seen = acpi_sleep_button_count();
+
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, ACPI_BTN_REG_PATH, 0, KEY_READ, &hk)
+        == ERROR_SUCCESS) {
+        raw = 0;
+        present = (RegGetDword(hk, "PowerButtonAction", &raw) == ERROR_SUCCESS);
+        s_pwrbtn_action = acpi_btn_resolve_action(raw, present,
+                                                  ACPI_BTN_DEFAULT_POWER);
+        if (present && raw > ACPI_BTN_ACTION_MAX)
+            klog(LOG_WARN, "acpi",
+                 "PowerButtonAction %u out of range -- using default %s",
+                 (uint64_t)raw,
+                 acpi_btn_action_name(ACPI_BTN_DEFAULT_POWER));
+
+        raw = 0;
+        present = (RegGetDword(hk, "SleepButtonAction", &raw) == ERROR_SUCCESS);
+        s_slpbtn_action = acpi_btn_resolve_action(raw, present,
+                                                  ACPI_BTN_DEFAULT_SLEEP);
+        if (present && raw > ACPI_BTN_ACTION_MAX)
+            klog(LOG_WARN, "acpi",
+                 "SleepButtonAction %u out of range -- using default %s",
+                 (uint64_t)raw,
+                 acpi_btn_action_name(ACPI_BTN_DEFAULT_SLEEP));
+
+        RegCloseKey(hk);
+    } else {
+        /* No key: the defaults already in the statics stand. Say so, because a
+         * machine whose power button does something unexpected should be able
+         * to find out why from the boot log. */
+        klog(LOG_INFO, "acpi",
+             "No " ACPI_BTN_REG_PATH " key -- button actions default");
+    }
+
+    klog(LOG_INFO, "acpi", "Button actions: power=%s%s sleep=%s%s",
+         acpi_btn_action_name(s_pwrbtn_action),
+         acpi_btn_action_available(s_pwrbtn_action) ? "" : " (unavailable)",
+         acpi_btn_action_name(s_slpbtn_action),
+         acpi_btn_action_available(s_slpbtn_action) ? "" : " (unavailable)");
 }
 
 /* Thread-level readers of what the SCI ISR recorded. These are the deferred
  * half of the split above: the ISR counts, a thread-level consumer reports and
  * acts. Counts are monotonic and never cleared here. */
-uint32_t acpi_power_button_count(void) {
-    return __atomic_load_n(&s_pwrbtn_events, __ATOMIC_RELAXED);
+uint64_t acpi_power_button_count(void) {
+    return __atomic_load_n(&s_pwrbtn_events, __ATOMIC_ACQUIRE);
 }
-uint32_t acpi_sleep_button_count(void) {
-    return __atomic_load_n(&s_slpbtn_events, __ATOMIC_RELAXED);
+uint64_t acpi_sleep_button_count(void) {
+    return __atomic_load_n(&s_slpbtn_events, __ATOMIC_ACQUIRE);
 }
-uint32_t acpi_wake_event_count(void) {
-    return __atomic_load_n(&s_wake_events, __ATOMIC_RELAXED);
+uint64_t acpi_wake_event_count(void) {
+    return __atomic_load_n(&s_wake_events, __ATOMIC_ACQUIRE);
 }
 
 /* Shared-chain registrant for the IOAPIC GSI path (EOI owned by the
@@ -1545,7 +1870,7 @@ int acpi_enter_sleep_state(uint8_t state)
     uint16_t typb = acpi_get_slp_typb(state);
     uint16_t sts;
     uint16_t pm1b_cnt = fadt_ptr ? acpi_io_port(fadt_ptr->pm1b_control_block) : 0;
-    uint32_t wake_before;
+    uint64_t wake_before;
     uint64_t saved_flags;
     int woke = 0;
     int spins;
@@ -1641,6 +1966,14 @@ int acpi_enter_sleep_state(uint8_t state)
         outw_acpi(s_pm1a_sts_port, PM1_STS_WAK);
     if (s_pm1b_sts_port)
         outw_acpi(s_pm1b_sts_port, PM1_STS_WAK);
+    /* The snapshot MUST be as wide as the counter it is compared against. A
+     * narrower snapshot truncates the high half, so once the wake counter
+     * passes 2^32 the comparison below is unequal on every pass and any
+     * interrupt that merely releases the halt reads as a confirmed wake. That
+     * is exactly the failure the counter was widened to prevent, and it is
+     * invisible until a machine actually reaches that count. */
+    _Static_assert(sizeof(wake_before) == sizeof(acpi_wake_event_count()),
+                   "wake snapshot must match the wake-counter width");
     wake_before = acpi_wake_event_count();
 
     /* Step 3: Write SLP_TYP + SLP_EN, preserving the rest of PM1_CNT. PM1b gets
