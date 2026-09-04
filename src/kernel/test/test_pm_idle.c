@@ -17,17 +17,10 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/dpc.h"
 
-#define PM_TEST_RFLAGS_IF (1ull << 9)
 
 /* Interrupts must be ON for the halting path to be reachable at all; a test
  * running with them masked would exercise the refusal branch instead and its
  * assertion would be about the wrong thing. */
-static int pm_test_irqs_enabled(void)
-{
-    uint64_t flags;
-    __asm__ volatile ("pushfq\n\t popq %0" : "=r"(flags));
-    return (flags & PM_TEST_RFLAGS_IF) != 0;
-}
 
 /* Proving the HLT is actually emitted needs a DETERMINISTIC oracle, and three
  * plausible ones were tried and rejected before this one:
@@ -149,7 +142,7 @@ static void test_pm_idle_c1_halts_even_when_not_ready(void)
     uint32_t me;
     uint64_t before, after, hits_before, hits_after;
 
-    if (!pm_test_irqs_enabled()) {
+    if (!irqs_enabled()) {
         TEST_SKIP("interrupts masked in this context -- halting path unreachable");
         return;
     }
@@ -171,7 +164,7 @@ static void test_pm_idle_c1_halts_even_when_not_ready(void)
                    "a not-ready CPU REACHED the halt site -- it must never spin");
     TEST_ASSERT(after > before,
                 "the halt was accounted to this CPU");
-    TEST_ASSERT(pm_test_irqs_enabled(),
+    TEST_ASSERT(irqs_enabled(),
                 "the caller's interrupt flag is restored");
 }
 
@@ -187,7 +180,7 @@ static void test_pm_idle_c1_refuses_irqs_disabled(void)
      * local_irq_restore() would only prove the restore works, and would pass
      * even if pm_idle_c1() had wrongly executed `sti` and run an ISR inside
      * this masked region. */
-    if_left_clear = !pm_test_irqs_enabled();
+    if_left_clear = !irqs_enabled();
     local_irq_restore(flags);
     hits_after = pm_idle_halt_hits_test();
 
@@ -208,7 +201,7 @@ static void test_pm_idle_c1_accounts_cycles(void)
     uint64_t before, after, hits_before, hits_after;
     int ready, prev;
 
-    if (!pm_test_irqs_enabled()) {
+    if (!irqs_enabled()) {
         TEST_SKIP("interrupts masked in this context -- halting path unreachable");
         return;
     }
@@ -234,7 +227,7 @@ static void test_pm_idle_c1_accounts_cycles(void)
                    "the ready path REACHED the halt site exactly once");
     TEST_ASSERT(after > before,
                 "idle_tsc_cycles advanced across the halt");
-    TEST_ASSERT(pm_test_irqs_enabled(),
+    TEST_ASSERT(irqs_enabled(),
                 "the caller's interrupt flag is restored after the halt");
 }
 

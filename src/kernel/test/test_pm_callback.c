@@ -6,9 +6,10 @@
  *
  * EVERY test drives its OWN pm_cb_table_t. Not one of them touches the
  * production singleton, and that is a correctness requirement rather than a
- * preference: driver registration happens in Phase 1/2 boot and this runner
- * does not execute until Phase 3, so the singleton already holds real AHCI,
- * xHCI and EC callbacks by the time a test runs. Calling pm_notify_sleep()
+ * preference: driver registration happens during boot and this runner does not
+ * execute until Phase 3, so the singleton already holds whatever real driver
+ * callbacks have registered by then (today the EC; the other four are blocked
+ * on per-driver quiesce primitives). Calling pm_notify_sleep()
  * here would quiesce live hardware during an ordinary test boot, and filling
  * the singleton to capacity would permanently consume slots no unregister can
  * return. The table/singleton split in power_callback.h exists for this.
@@ -262,6 +263,10 @@ static void test_pm_transaction_span(void)
     TEST_ASSERT_EQ(pm_cb_table_notify_sleep(&t, 3u, &rep), PM_CB_OK,
                    "sleep opens the transaction");
     TEST_ASSERT_EQ(pm_cb_table_txn_state(&t), PM_TXN_ASLEEP, "now asleep");
+    /* A healthy ASLEEP table has a full wake_mask; the unrecovered observer
+     * must NOT report those pending slots as failed devices. */
+    TEST_ASSERT_EQ(pm_cb_table_unrecovered(&t), 0ull,
+                   "zero unless degraded");
 
     /* The window the transaction exists to close: a driver admitted here
      * would be woken by the resume walk having never been quiesced. */
@@ -363,14 +368,33 @@ static void test_pm_unwind_failure_degrades(void)
      * hardware nobody can account for. */
     TEST_ASSERT_EQ(pm_cb_table_register(&t, PM_PRI_USB, cb_sleep_ok,
                                         cb_wake_ok, (void *)0x1, "late"),
-                   PM_CB_BUSY, "registration refused while degraded");
-    TEST_ASSERT_EQ(pm_cb_table_notify_sleep(&t, 3u, &rep), PM_CB_BUSY,
+                   PM_CB_DEGRADED, "registration refused while degraded");
+    TEST_ASSERT_EQ(pm_cb_table_notify_sleep(&t, 3u, &rep), PM_CB_DEGRADED,
                    "new sleep refused while degraded");
     TEST_ASSERT_EQ(pm_cb_table_notify_resume(&t, 3u, &rep),
                    PM_CB_NO_TRANSACTION, "resume refused while degraded");
+    /* Refusals while degraded must be DISTINGUISHABLE from a transient busy,
+     * or a caller that retries on PM_CB_BUSY spins forever. */
+    TEST_ASSERT_EQ(pm_cb_table_register(&t, PM_PRI_USB, cb_sleep_ok,
+                                        cb_wake_ok, (void *)0x3, "late2"),
+                   PM_CB_DEGRADED, "degraded refusal is not plain BUSY");
+    TEST_ASSERT_EQ(pm_cb_table_unrecovered(&t), 1ull,
+                   "names the slot it could not recover");
+
+    /* The locked recovery path is the way out; production has no
+     * pm_cb_table_init() call on its singleton at all. */
+    TEST_ASSERT_EQ(pm_cb_table_recover(&t), PM_CB_OK, "recover clears degraded");
+    TEST_ASSERT_EQ(pm_cb_table_txn_state(&t), PM_TXN_IDLE, "back to idle");
+    TEST_ASSERT_EQ(pm_cb_table_unrecovered(&t), 0ull, "masks cleared");
+    TEST_ASSERT_EQ(pm_cb_table_count(&t), 2u, "registered callbacks survive");
+    TEST_ASSERT_EQ(pm_cb_table_recover(&t), PM_CB_NO_TRANSACTION,
+                   "recovering a healthy table is refused");
+    TEST_ASSERT_EQ(pm_cb_table_recover((pm_cb_table_t *)0), PM_CB_INVALID,
+                   "NULL table refused");
+
     pm_cb_table_init(&t);
     TEST_ASSERT_EQ(pm_cb_table_txn_state(&t), PM_TXN_IDLE,
-                   "re-init is the only way out");
+                   "construction also yields idle");
 }
 
 static void test_pm_resume_failure_policy(void)
@@ -429,7 +453,7 @@ static void test_pm_resume_failure_policy(void)
     TEST_ASSERT_EQ(t.wake_mask, 1ull, "wake mask retains the disk slot");
     TEST_ASSERT_EQ(pm_cb_table_register(&t, PM_PRI_USB, cb_sleep_ok,
                                         cb_wake_ok, (void *)0x2, "late"),
-                   PM_CB_BUSY, "no new registration after a failed resume");
+                   PM_CB_DEGRADED, "no new registration after a failed resume");
 
     /* A wake-only slot that FAILS its wake: never quiesced, so it holds a
      * wake_mask bit and no quiesced_mask bit going in. It must still be
@@ -447,6 +471,10 @@ static void test_pm_resume_failure_policy(void)
     TEST_ASSERT_EQ(pm_cb_table_txn_state(&t), PM_TXN_DEGRADED,
                    "failed wake-only wake degrades");
     TEST_ASSERT_EQ(t.wake_mask, 1ull, "and retains that slot");
+    /* It never slept, so degrading must not invent a quiesce for it. The
+     * masks would agree here if the degrade path assigned instead of
+     * intersecting, which is exactly the defect this pins. */
+    TEST_ASSERT_EQ(t.quiesced_mask, 0ull, "no fabricated quiesced bit");
 }
 
 static void test_pm_half_registered_slots(void)

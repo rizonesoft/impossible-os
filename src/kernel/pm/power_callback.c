@@ -9,10 +9,16 @@
  *
  * LOCKING
  *
- * One spinlock guards exactly two fields: count and txn_state. It is taken to
- * open a transaction (and to snapshot count under the same acquire), and to
- * register. It is NEVER held across a callback -- callbacks block for seconds
- * and spin_lock_irqsave raises IRQL to DISPATCH_LEVEL.
+ * One spinlock guards the table's mutable header: count, txn_state, and the
+ * quiesced/wake masks. It is taken to open and to close a transaction (and to
+ * snapshot count under the same acquire), and to register. It is NEVER held
+ * across a callback -- callbacks block for seconds and spin_lock_irqsave
+ * raises IRQL to DISPATCH_LEVEL.
+ *
+ * count and txn_state are written with RELEASE stores even though the lock is
+ * held for every write: pm_cb_table_count() and pm_cb_table_txn_state() read
+ * them with ACQUIRE loads and take no lock, so pairing the stores keeps those
+ * two observers from being a mixed atomic/plain access on the same object.
  *
  * What makes the unlocked walk safe is not the lock, it is the transaction:
  * while txn_state is not PM_TXN_IDLE, registration is refused, so the slot
@@ -31,8 +37,11 @@
 /* The production registry. Deliberately zero-initialised in .bss and never
  * explicitly constructed: PM_TXN_IDLE is 0, an unlocked spinlock_t is 0, a
  * count of 0 is an empty table, and a NULL now_ns selects mono_ns(). Adding a
- * pm_power_callback_init() would create an ordering dependency for the Phase 1
- * fb_init() registration to trip over, and buy nothing. */
+ * pm_power_callback_init() would create a boot-ordering dependency for every
+ * driver registration to trip over, and buy nothing: the only registrant today
+ * is acpi_ec_init() in Phase 2, and the four blocked driver registrations would
+ * land in Phase 1 and Phase 2 alike. Leaving PM_TXN_DEGRADED needs the LOCKED
+ * pm_cb_table_recover(), not this zero state. */
 static pm_cb_table_t s_pm_table;
 
 #define NS_PER_MS 1000000ull
@@ -234,8 +243,10 @@ int pm_cb_table_register(pm_cb_table_t *t, pm_priority_t priority,
      * merely during a walk. A driver admitted between the two walks would be
      * resumed having never been quiesced. */
     if (t->txn_state != PM_TXN_IDLE) {
+        int rc = (t->txn_state == PM_TXN_DEGRADED) ? PM_CB_DEGRADED
+                                                   : PM_CB_BUSY;
         spin_unlock_irqrestore(&t->lock, flags);
-        return PM_CB_BUSY;
+        return rc;
     }
 
     for (i = 0; i < t->count; i++) {
@@ -259,7 +270,7 @@ int pm_cb_table_register(pm_cb_table_t *t, pm_priority_t priority,
     t->slots[slot_idx].name        = name;
     t->slots[slot_idx].priority    = (uint32_t)priority;
     t->slots[slot_idx]._pad        = 0;
-    t->count                       = t->count + 1;
+    __atomic_store_n(&t->count, t->count + 1u, __ATOMIC_RELEASE);
 
     spin_unlock_irqrestore(&t->lock, flags);
     return slot_idx;
@@ -288,10 +299,12 @@ int pm_cb_table_notify_sleep(pm_cb_table_t *t, uint32_t state,
      * for the whole walk without the walk holding anything. */
     spin_lock_irqsave(&t->lock, &flags);
     if (t->txn_state != PM_TXN_IDLE) {
+        int rc = (t->txn_state == PM_TXN_DEGRADED) ? PM_CB_DEGRADED
+                                                   : PM_CB_BUSY;
         spin_unlock_irqrestore(&t->lock, flags);
-        return PM_CB_BUSY;
+        return rc;
     }
-    t->txn_state     = PM_TXN_SLEEPING;
+    __atomic_store_n(&t->txn_state, PM_TXN_SLEEPING, __ATOMIC_RELEASE);
     t->quiesced_mask = 0;
     t->wake_mask     = 0;
     count            = t->count;
@@ -334,12 +347,18 @@ int pm_cb_table_notify_sleep(pm_cb_table_t *t, uint32_t state,
          * The count is the mask population, not rep->invoked: invoked includes
          * the callback that just FAILED (which is not being unwound) and
          * excludes wake-only slots (which are). */
+        /* UNWIND FIRST, THEN REPORT. klog reaches serial_write, whose normal
+         * path spins unbounded on UART THRE (src/kernel/drivers/serial.c
+         * documents this as what hangs a panic on a wedged UART). A diagnostic
+         * ahead of the unwind would let a wedged UART prevent the recovery it
+         * is only describing. Nothing here needs to be said before the devices
+         * are back. */
+        unrecovered = pm_cb_wake_mask(t, quiesced, state, count, rep, 1);
+
         klog(LOG_ERROR, "pm",
-             "sleep aborted at priority %u: unwinding %u quiesced callback(s)",
+             "sleep aborted at priority %u: unwound %u quiesced callback(s)",
              (uint64_t)rep->first_failed_priority,
              (uint64_t)pm_cb_popcount(quiesced));
-
-        unrecovered = pm_cb_wake_mask(t, quiesced, state, count, rep, 1);
 
         spin_lock_irqsave(&t->lock, &flags);
         if (unrecovered) {
@@ -350,11 +369,11 @@ int pm_cb_table_notify_sleep(pm_cb_table_t *t, uint32_t state,
              * re-initialises. */
             t->quiesced_mask = unrecovered;
             t->wake_mask     = unrecovered;
-            t->txn_state     = PM_TXN_DEGRADED;
+            __atomic_store_n(&t->txn_state, PM_TXN_DEGRADED, __ATOMIC_RELEASE);
         } else {
             t->quiesced_mask = 0;
             t->wake_mask     = 0;
-            t->txn_state     = PM_TXN_IDLE;
+            __atomic_store_n(&t->txn_state, PM_TXN_IDLE, __ATOMIC_RELEASE);
         }
         spin_unlock_irqrestore(&t->lock, flags);
 
@@ -371,7 +390,7 @@ int pm_cb_table_notify_sleep(pm_cb_table_t *t, uint32_t state,
     spin_lock_irqsave(&t->lock, &flags);
     t->quiesced_mask = quiesced;
     t->wake_mask     = wake;
-    t->txn_state     = PM_TXN_ASLEEP;
+    __atomic_store_n(&t->txn_state, PM_TXN_ASLEEP, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&t->lock, flags);
 
     return PM_CB_OK;
@@ -384,6 +403,7 @@ int pm_cb_table_notify_resume(pm_cb_table_t *t, uint32_t state,
     pm_cb_report_t *rep = report ? report : &local;
     uint64_t        flags;
     uint64_t        mask;
+    uint64_t        quiesced;
     uint64_t        unrecovered;
     uint32_t        count;
 
@@ -399,8 +419,9 @@ int pm_cb_table_notify_resume(pm_cb_table_t *t, uint32_t state,
         spin_unlock_irqrestore(&t->lock, flags);
         return PM_CB_NO_TRANSACTION;
     }
-    t->txn_state = PM_TXN_RESUMING;
+    __atomic_store_n(&t->txn_state, PM_TXN_RESUMING, __ATOMIC_RELEASE);
     mask         = t->wake_mask;
+    quiesced     = t->quiesced_mask;
     count        = t->count;
     spin_unlock_irqrestore(&t->lock, flags);
 
@@ -417,13 +438,17 @@ int pm_cb_table_notify_resume(pm_cb_table_t *t, uint32_t state,
          * back -- the caller has just been told not to unfreeze the scheduler
          * and would have nothing left to name. Every wake was still attempted
          * before landing here. */
-        t->quiesced_mask = unrecovered;
+        /* INTERSECT, never assign. A wake-only slot holds a wake_mask bit and
+         * no quiesced_mask bit; copying `unrecovered` into both would invent a
+         * quiesce that never happened and contradict the mask contract in the
+         * header. quiesced_mask stays a subset of wake_mask on every path. */
+        t->quiesced_mask = quiesced & unrecovered;
         t->wake_mask     = unrecovered;
-        t->txn_state     = PM_TXN_DEGRADED;
+        __atomic_store_n(&t->txn_state, PM_TXN_DEGRADED, __ATOMIC_RELEASE);
     } else {
         t->quiesced_mask = 0;
         t->wake_mask     = 0;
-        t->txn_state     = PM_TXN_IDLE;
+        __atomic_store_n(&t->txn_state, PM_TXN_IDLE, __ATOMIC_RELEASE);
     }
     spin_unlock_irqrestore(&t->lock, flags);
 
@@ -445,6 +470,52 @@ int pm_cb_table_notify_resume(pm_cb_table_t *t, uint32_t state,
  * diagnostics, a lock would raise IRQL for a single word, and a caller that
  * needs count and txn_state to agree with each other must open a transaction
  * instead -- no pair of separate reads can promise that. */
+int pm_cb_table_recover(pm_cb_table_t *t)
+{
+    uint64_t flags;
+
+    if (!t)
+        return PM_CB_INVALID;
+
+    /* Takes the lock, unlike pm_cb_table_init(): this runs on a live table
+     * that other CPUs may be trying to register against, and it must not
+     * clear the lock word out from under one of them. It also preserves the
+     * registered callbacks -- the devices are still registered, only the
+     * failed transaction is being written off. */
+    spin_lock_irqsave(&t->lock, &flags);
+    if (t->txn_state != PM_TXN_DEGRADED) {
+        spin_unlock_irqrestore(&t->lock, flags);
+        return PM_CB_NO_TRANSACTION;
+    }
+    t->quiesced_mask = 0;
+    t->wake_mask     = 0;
+    __atomic_store_n(&t->txn_state, PM_TXN_IDLE, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(&t->lock, flags);
+
+    klog(LOG_WARN, "pm", "power callback registry recovered from degraded");
+    return PM_CB_OK;
+}
+
+uint64_t pm_cb_table_unrecovered(pm_cb_table_t *t)
+{
+    uint64_t flags;
+    uint64_t mask;
+
+    if (!t)
+        return 0ull;
+
+    /* Under the LOCK, because the answer is a pair: the mask means
+     * "unrecovered" only while the table is DEGRADED, and in every other state
+     * wake_mask holds the slots PENDING a wake. Reading the two separately
+     * would report a healthy mid-transaction table's pending slots as failed
+     * devices, which is the opposite of what a recovery consumer needs. */
+    spin_lock_irqsave(&t->lock, &flags);
+    mask = (t->txn_state == PM_TXN_DEGRADED) ? t->wake_mask : 0ull;
+    spin_unlock_irqrestore(&t->lock, flags);
+
+    return mask;
+}
+
 uint32_t pm_cb_table_count(const pm_cb_table_t *t)
 {
     return t ? __atomic_load_n((const volatile uint32_t *)&t->count,
@@ -549,4 +620,14 @@ int pm_notify_resume(uint32_t state)
 uint32_t pm_power_callback_count(void)
 {
     return pm_cb_table_count(&s_pm_table);
+}
+
+uint32_t pm_power_callback_txn_state(void)
+{
+    return pm_cb_table_txn_state(&s_pm_table);
+}
+
+int pm_power_callback_recover(void)
+{
+    return pm_cb_table_recover(&s_pm_table);
 }

@@ -53,6 +53,11 @@
  *     (the same argument as pci_pm_timebase_ready() in
  *     src/kernel/drivers/pci_pm.c).
  *
+ * The check runs ONCE at entry, not between callbacks: a driver callback that
+ * returns with interrupts masked or IRQL raised makes every later overrun
+ * measurement in that walk untrustworthy, and the dispatcher cannot tell.
+ * Callbacks are required to return in the context they were called in.
+ *
  * The designed caller satisfies this: the pm_enter_s3() worker described in
  * 02-kernel-core/TODO-26-power-management.md section 3 runs on
  * a PASSIVE_LEVEL worker and broadcasts to these callbacks BEFORE the
@@ -124,6 +129,8 @@ typedef int (*pm_power_callback_t)(uint32_t state, void *ctx);
 #define PM_CB_NO_TRANSACTION  (-7)  /* resume without a preceding sleep        */
 #define PM_CB_UNWIND_FAILED   (-8)  /* a sleep abort could not restore a slot  */
 #define PM_CB_STORAGE_FAILED  (-9)  /* resume: storage did not come back       */
+#define PM_CB_DEGRADED       (-10)  /* terminally degraded; retrying cannot    */
+                                    /* clear it -- see pm_cb_table_recover()   */
 
 /* Post-return overrun thresholds. Diagnostic only -- see the header comment.
  * Storage gets the larger resume budget because a controller re-initialising
@@ -289,9 +296,26 @@ int pm_cb_table_notify_sleep(pm_cb_table_t *t, uint32_t state,
 int pm_cb_table_notify_resume(pm_cb_table_t *t, uint32_t state,
                               pm_cb_report_t *report);
 
+/* Leave PM_TXN_DEGRADED. Takes the lock, so unlike pm_cb_table_init() it is
+ * safe against a concurrent registration, and it clears ONLY the transaction
+ * state and the retained masks -- registered callbacks survive.
+ *
+ * Calling this asserts that the caller has accounted for the hardware the
+ * failed walk left down; the registry cannot know that on its own. Returns
+ * PM_CB_OK when it cleared a degraded table, PM_CB_NO_TRANSACTION when the
+ * table was not degraded, PM_CB_INVALID on NULL. */
+int pm_cb_table_recover(pm_cb_table_t *t);
+
 /* Observers, for tests and diagnostics. */
 uint32_t pm_cb_table_count(const pm_cb_table_t *t);
 uint32_t pm_cb_table_txn_state(const pm_cb_table_t *t);
+
+/* Slots a degraded walk could not bring back, so a recovery path can name the
+ * devices rather than only counting them. Zero unless PM_TXN_DEGRADED. */
+/* Takes the lock (so NOT const): the answer is a pair, and reading txn_state
+ * and wake_mask separately would report a healthy mid-transaction table's
+ * pending slots as failed devices. */
+uint64_t pm_cb_table_unrecovered(pm_cb_table_t *t);
 
 /* ---- Production singleton ------------------------------------------------ */
 
@@ -315,7 +339,14 @@ int pm_register_power_callback(pm_priority_t priority,
 int pm_notify_sleep(uint32_t state);
 int pm_notify_resume(uint32_t state);
 
-/* Registered callback count, for diagnostics and tests. */
+/* Registered callback count and transaction state of the kernel's table. */
 uint32_t pm_power_callback_count(void);
+uint32_t pm_power_callback_txn_state(void);
+
+/* Leave PM_TXN_DEGRADED on the kernel's table. Without this the production
+ * singleton has no way out of a degraded state at all -- it is never
+ * pm_cb_table_init()'d, so one failed wake would pin power management for the
+ * rest of the boot. */
+int pm_power_callback_recover(void);
 
 #endif /* KERNEL_PM_POWER_CALLBACK_H */

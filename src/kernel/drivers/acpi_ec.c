@@ -843,9 +843,18 @@ static int acpi_ec_on_wake(uint32_t state, void *ctx)
      *      "acpi_gpe_enable(n) / acpi_gpe_disable(n) so a driver arms only the
      *      events it services") */
     if (!mutex_trylock(&g_ec_lock)) {
+        /* Returns SUCCESS, deliberately. A contended lock means another thread
+         * is driving the EC right now, so the controller is demonstrably alive
+         * and this callback changed nothing. Reporting a failed wake here would
+         * be false, and the dispatcher escalates any failed wake to a terminal
+         * PM_TXN_DEGRADED registry -- so a transient, benign contention would
+         * permanently disable power management for the rest of the boot.
+         *
+         * The cost of proceeding is a skipped idle proof, which is the same
+         * position every pre-section-9 boot was already in. */
         klog(LOG_WARN, "acpi_ec",
              "resume idle proof skipped: a transaction still holds the EC lock");
-        return ACPI_EC_UNAVAIL;
+        return 0;
     }
 
     rc = acpi_ec_quiesce_io(&g_hw_io, &g_ports, &g_state);
