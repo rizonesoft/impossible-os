@@ -2973,6 +2973,21 @@ void registry_populate_defaults(void)
         count += 8;
     }
 
+    /* --- HKLM\SYSTEM\PowerControl --- */
+    /* The button-action policy the ACPI fixed-event dispatcher reads once at
+     * init (include/kernel/acpi.h, ACPI_BTN_REG_PATH). Seeded here because a
+     * policy surface whose key never exists is not configurable at all: every
+     * boot took the "no key" branch and the documented values could not be set
+     * by anyone. 3 = shut down, 1 = sleep, matching the Windows encoding. */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\PowerControl", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "PowerButtonAction", 3);
+        RegSetDword(hKey, "SleepButtonAction", 1);
+        RegCloseKey(hKey);
+        count += 2;
+    }
+
     /* --- HKLM\SYSTEM\Shell --- */
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Shell", 0,
                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,

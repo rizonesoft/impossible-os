@@ -652,23 +652,70 @@ static void test_acpi_btn_none_is_not_an_action(void)
                    "the no-action sentinel is never performable");
 }
 
-/* The cached policy must be what the hive actually holds, not merely a valid
- * code: a policy_init that never reached the registry would leave the static
- * default in place and pass a range check alone. */
+/* The policy key must EXIST. The first cut of this test compared the cached
+ * action against a resolve of whatever the hive held, which cannot fail: with
+ * the key absent both sides evaluate to the same default, so it passed
+ * identically whether or not acpi_button_policy_init ever reached the registry
+ * -- the exact failure its own comment claimed it caught. Assert the key and
+ * both values are present first; that is the claim with a false case. */
+static void test_acpi_btn_policy_key_exists(void)
+{
+    HKEY hk;
+    uint32_t raw = 0;
+
+    TEST_ASSERT_EQ(RegOpenKeyEx(HKEY_LOCAL_MACHINE, ACPI_BTN_REG_PATH, 0,
+                                KEY_READ, &hk),
+                   ERROR_SUCCESS,
+                   "the button policy key is seeded at boot");
+    TEST_ASSERT_EQ(RegGetDword(hk, ACPI_BTN_REG_POWER, &raw), ERROR_SUCCESS,
+                   "PowerButtonAction is present under it");
+    TEST_ASSERT_EQ(raw <= ACPI_BTN_ACTION_MAX, 1,
+                   "the seeded power action is a valid code");
+    raw = 0;
+    TEST_ASSERT_EQ(RegGetDword(hk, ACPI_BTN_REG_SLEEP, &raw), ERROR_SUCCESS,
+                   "SleepButtonAction is present under it");
+    TEST_ASSERT_EQ(raw <= ACPI_BTN_ACTION_MAX, 1,
+                   "the seeded sleep action is a valid code");
+    RegCloseKey(hk);
+}
+
+/* Both cached actions must equal what the hive holds. Meaningful now only
+ * because the test above proves the values are really there: this compares the
+ * cache against a live read of each value BY NAME, so a typo in either
+ * production value name, or a policy_init that read only one of them, fails
+ * here instead of silently ignoring user policy. */
 static void test_acpi_btn_cached_matches_registry(void)
 {
     HKEY hk;
     uint32_t raw = 0;
     int present = 0;
 
-    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\PowerControl", 0,
-                     KEY_READ, &hk) == ERROR_SUCCESS) {
-        present = (RegGetDword(hk, "PowerButtonAction", &raw) == ERROR_SUCCESS);
-        RegCloseKey(hk);
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, ACPI_BTN_REG_PATH, 0,
+                     KEY_READ, &hk) != ERROR_SUCCESS) {
+        TEST_SKIP("no button policy key on this build");
+        return;
     }
+    present = (RegGetDword(hk, ACPI_BTN_REG_POWER, &raw) == ERROR_SUCCESS);
     TEST_ASSERT_EQ(acpi_power_button_action(),
                    acpi_btn_resolve_action(raw, present, ACPI_BTN_DEFAULT_POWER),
-                   "cached power action matches what the hive holds");
+                   "cached power action matches the hive value");
+    raw = 0;
+    present = (RegGetDword(hk, ACPI_BTN_REG_SLEEP, &raw) == ERROR_SUCCESS);
+    TEST_ASSERT_EQ(acpi_sleep_button_action(),
+                   acpi_btn_resolve_action(raw, present, ACPI_BTN_DEFAULT_SLEEP),
+                   "cached sleep action matches the hive value");
+    RegCloseKey(hk);
+}
+
+/* The dispatch counter is a public diagnostic, so it gets a reader: without one
+ * it is a write-only API that no regression could ever catch. It is monotonic
+ * and must never be decremented by a read. */
+static void test_acpi_btn_dispatch_count_monotonic(void)
+{
+    uint32_t a = acpi_btn_dispatch_count();
+    uint32_t b = acpi_btn_dispatch_count();
+
+    TEST_ASSERT_EQ(b >= a, 1, "the dispatch count never goes backwards");
 }
 
 /* The cached actions are always resolved values, whatever the hive held. */
@@ -710,6 +757,10 @@ void test_register_acpi_power(void)
                             test_acpi_btn_plan_null_outputs, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: no-action sentinel is not an action",
                             test_acpi_btn_none_is_not_an_action, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button policy key is seeded",
+                            test_acpi_btn_policy_key_exists, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: button dispatch count is monotonic",
+                            test_acpi_btn_dispatch_count_monotonic, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: cached button action matches the hive",
                             test_acpi_btn_cached_matches_registry, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: button drain survives counter wrap",

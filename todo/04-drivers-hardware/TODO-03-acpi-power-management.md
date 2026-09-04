@@ -158,6 +158,9 @@ Configure the System Control Interrupt from FADT `SCI_INT`, route via IOAPIC as 
   - OSPM never writes `SCI_EN` directly (ACPI 6.5 section 4.8.3.2 / 5.2.9). The wording here previously named a direct `SCI_EN` write, which is the wrong mechanism.
   - `src/kernel/acpi.c` `acpi_pm1_control_owned()` already implements the handshake for the pre-ACPICA path; this item is the ACPICA replacement (`AcpiEnableSubsystem` -> `acpi_hw_set_mode`).
   - Corrected 2026-09-03 from the TODO-26 §1 review. -> XREF: `02-kernel-core/TODO-26-power-management.md` §1
+- [ ] **Control-method button devices** (`_HID` `PNP0C0C` power, `PNP0C0E` sleep), which this ACPICA path is the owner of:
+  - ACPI 6.5 Table 5-10: FADT flags `PWR_BUTTON` (bit 4) and `SLP_BUTTON` (bit 5) set mean the button is a namespace device signalling through a GPE and `Notify(0x80)`, and OSPM must NOT use the PM1 fixed event for it. The pre-ACPICA dispatcher implements the FIXED variant only.
+  - Filed 2026-09-04 from the TODO-26 §7 review: that section now DETECTS both flags and logs that its fixed-event dispatcher will never fire on such a machine, but nothing dispatches the control-method button. -> XREF: `02-kernel-core/TODO-26-power-management.md` §7 (item: "Detect the control-method button")
 - [ ] Boot log: `[ACPI] Power button SCI: GSI %u, vector 0x%02X`
 - [ ] Commit: `"acpi: power button SCI -- FADT SCI_INT routing, PWRBTN_STS, shutdown trigger"`
 

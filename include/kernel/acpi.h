@@ -272,14 +272,40 @@ uint16_t acpi_get_slp_typa(uint8_t state);
  * the whole 2^32 interval. A stuck or repeatedly reasserted SCI is exactly the
  * failure that reaches such a count, and it is the case where silently losing
  * every button press is least acceptable. */
-uint64_t acpi_power_button_count(void);
-uint64_t acpi_sleep_button_count(void);
-uint64_t acpi_wake_event_count(void);
+/* One NAME for the counter width, so a snapshot that must match it is declared
+ * with the same type rather than checked against it. The first cut used a
+ * _Static_assert over sizeof(accessor()), which pins the invariant but is a
+ * function call inside sizeof (cppcheck flags it) and still lets a caller
+ * declare the wrong type and only learn at the assert. */
+typedef uint64_t acpi_event_count_t;
+
+acpi_event_count_t acpi_power_button_count(void);
+acpi_event_count_t acpi_sleep_button_count(void);
+acpi_event_count_t acpi_wake_event_count(void);
 
 /* ---- Power / sleep button action policy ---------------------------------- */
 
-/* Action codes stored in HKLM\SYSTEM\PowerControl\PowerButtonAction and
- * SleepButtonAction, matching the Windows power-button action encoding. */
+/* Registry location of the button policy. Header-owned so the source, the tests
+ * and any future consumer all name the same key: a path typed twice is a path
+ * that drifts, and the drift is silent because an unreadable key resolves to the
+ * same defaults a correct read produces on a machine that has none. */
+#define ACPI_BTN_REG_PATH           "SYSTEM\\PowerControl"
+#define ACPI_BTN_REG_POWER          "PowerButtonAction"
+#define ACPI_BTN_REG_SLEEP          "SleepButtonAction"
+
+/* Action codes stored under ACPI_BTN_REG_PATH.
+ *
+ * 0 through 3 match the Windows GUID_POWERBUTTON_ACTION / GUID_SLEEPBUTTON_ACTION
+ * value tables, so a hive written against the Windows encoding resolves correctly.
+ *
+ * 4 IS A DELIBERATE DIVERGENCE, not a parity claim, and reviewers disagreed about
+ * what Windows means by it: one reading is that both tables stop at 3, another
+ * that 4 is "turn off the display". Either way it is not "lock" there, so a hive
+ * authored by a Windows tool must not be assumed to mean what this names. It is
+ * kept because a lock is the behaviour this OS wants from a power button, and it
+ * is SAFE while unimplemented: acpi_btn_action_available() reports it
+ * unavailable, so a machine configured to 4 refuses the press and says why
+ * instead of performing some other action. */
 #define ACPI_BTN_ACTION_IGNORE      0u
 #define ACPI_BTN_ACTION_SLEEP       1u   /* S3 suspend to RAM */
 #define ACPI_BTN_ACTION_HIBERNATE   2u   /* S4 suspend to disk */

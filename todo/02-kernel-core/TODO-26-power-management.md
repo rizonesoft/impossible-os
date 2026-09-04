@@ -502,6 +502,19 @@ The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_
   - Drain: burst, full width above 2^32, 64-bit wrap, NULL watermark.
   - Plan: burst collapses to one action, an idle pass decides nothing, a press during an action survives, both buttons drain every pass, NULL outputs, the no-action sentinel is outside the action range.
   - Gate admits one holder; the cached action matches what the hive holds, not merely a valid code.
+- [x] Disarm the PM1 enables on every SCI-registration failure path (review, adversarial)
+  - `acpi_enable_fixed_events()` sets `PWRBTN_EN`/`SLPBTN_EN` before `acpi_register_sci()` runs, so a failed registration (unroutable GSI, no IOAPIC for a GSI-valued `SCI_INT`, no vector, vector already claimed) left a level-triggered source enabled with no handler to acknowledge it. `acpi_disable_fixed_events()` now clears both enable and status registers on all four paths.
+- [x] Seed `HKLM\SYSTEM\PowerControl` in `registry_populate_defaults()` (review, kernel-quality auditor)
+  - The key was created nowhere in the tree, so the entire registry half of this policy was unreachable and every boot took the "no key" branch. A configurable surface whose key never exists is not configurable.
+- [x] Re-entry guard on the policy init (review, kernel-quality auditor)
+  - A second `acpi_enable_fixed_events()` would run `KeInitializeThreadedDpc` on a possibly-QUEUED KDPC, zeroing its link fields and unlinking it from the middle of a live queue. `acpi_register_sci()` 70 lines below already carried exactly this guard.
+- [x] Detect the control-method button and say the fixed-event path cannot fire (review, parity)
+  - FADT `PWR_BUTTON` / `SLP_BUTTON` (ACPI 6.5 Table 5-10) mean the button is a `PNP0C0C`/`PNP0C0E` namespace device on a GPE, so `PWRBTN_STS` never asserts. Logging the resolved actions without this reads as "the power button works", which on that hardware is the opposite of the truth. The control-method dispatch itself is owned elsewhere -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §3 (item: "**Control-method button devices**")
+- [x] Header-own the registry path and both value names, and replace the tautological cache test (review, consistency + kernel-quality auditor)
+  - The path was typed once in the source and again in the test, and the test compared the cache against a resolve of whatever the hive held, which cannot fail: with the key absent both sides evaluate to the same default. It now asserts the key and BOTH values exist, then compares each cached action against a live read by name.
+- [x] Give `acpi_btn_dispatch_count()` a reader, and log a gate refusal instead of dropping silently (review)
+- [x] Replace the `sizeof(accessor())` static assert with a named `acpi_event_count_t` (review, cppcheck)
+  - The assert pinned the invariant but was a function call inside `sizeof` and still let a caller declare the wrong type and learn only at the assert. A shared typedef makes a narrowing a compile-time type change instead.
 - [/] `WM_QUERYENDSESSION` to all windows with a 5 s grace before the action executes -- blocked, no in-kernel path can broadcast a window message to top-level windows
   - The primitive it needs is `BroadcastSystemMessage`, which the user32 master table still lists as `NO_OWNING_TODO`, so this park has no owner to wait on yet and that is the honest state -> XREF: `10-platform-services/TODO-A-user32-export-master-table.md` (item: "`BroadcastSystemMessage`")
 - [/] `4` = lock screen: no lock screen or session state exists to lock, so the action parses, resolves and is refused rather than performed -> XREF: `09-desktop-shell/TODO-06-security-accounts.md` §7 (item: "`void lock_screen_show(void)`")
@@ -511,7 +524,7 @@ The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_
 
 **Test checkpoint:** `PowerButtonAction=3` resolves to shutdown, `=0` to ignore, `=99` to the default with one log line, and `=1` (sleep) resolves to sleep and is then REFUSED with one log line rather than falling back to shutdown. `SleepButtonAction` resolves through its own default. A burst of counts produces exactly one action per button, and a press during an action is found by the next pass. Test on: QEMU TCG.
 
-> **Test runner:** `bash scripts/test.sh SUITE=boot` -- the eighteen `ACPI: button *` / `ACPI: no-action sentinel *` cases pass with the rest of `test_acpi_power.c` (`scripts/debug/kernel/run-boot-tests.bat` on Windows).
+> **Test runner:** `bash scripts/test.sh SUITE=boot` -- the twenty-one `ACPI: button *` / `ACPI: no-action sentinel *` cases pass with the rest of `test_acpi_power.c` (`scripts/debug/kernel/run-boot-tests.bat` on Windows).
 
 > **Notes:**
 > - Shipped the thread-level half of the §1 SCI split: a threaded DPC queued from `acpi_sci_process()` drains the fixed-event counters by watermark and performs the cached registry action.
@@ -519,6 +532,13 @@ The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_
 > - Downstream: the three fixed-event counters and their public readers widened from `uint32_t` to `uint64_t`; no caller outside `src/kernel/acpi.c` consumed them.
 > - Malformed policy takes the default, unavailable policy is refused; that split reversed the original draft and is the section's load-bearing behavioural decision.
 > - Scope boundary: lid events are §31 and human-presence detection §32, both split out because their event sources do not exist on this tree.
+
+> **Verified:** 2026-09-04 | commit `eb72bfdbf` | 21/21 items | build OK | suite 33537 kernel + 17 user-mode pass | smoke matrix 4/4 legs
+> **Accepted:** [H] the shutdown action reaches `acpi_shutdown()`, which quiesces storage but halts only the calling CPU, and several initiators can enter it concurrently (reason: pre-existing and already the path taken by `SYS_SHUTDOWN`, `nt_syscall.c` and the desktop power menu, so refusing it for the button alone would change nothing about the risk) -> XREF: `02-kernel-core/TODO-26` §27 (item: "Park every other CPU before the shutdown storage quiesce")
+> **Accepted:** [H] the control-method button device (`PNP0C0C` / `PNP0C0E`) is detected and reported but not dispatched; QEMU's own FADT sets `SLP_BUTTON`, so this is live hardware behaviour rather than a hypothetical (reason: the ACPICA namespace path owns it and this file is the pre-ACPICA fixed-event fallback) -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §3 (item: "**Control-method button devices**")
+> **Accepted:** [M] no short-press versus long-press distinction; a PM1 status bit carries no edge timestamps (reason: the owning section already specifies a press-duration timer) -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §3 (item: "`acpi_button_work`: if `uptime_ns() - press_time < 2_000_000_000`")
+> **Accepted:** [M] this section's flat policy key and §18's planned per-plan copy are two homes for one setting, with no precedence and no AC/DC axis (reason: the power-plan surface owns the reconciliation) -> XREF: `02-kernel-core/TODO-26` §18 (item: "`PowerButtonAction` (REG_DWORD): same codes as §7")
+> **Quality reviewed:** 2026-09-04 | Codex 7x (design, test-coverage, adversarial x2, re-adversarial, consistency, perf) | 8H+5M+2L fixed, 4 open | scope: kernel-code-quality (kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst)
 
 ---
 
@@ -903,6 +923,7 @@ Before changing system or device power state, query all affected drivers and all
   - `HibernateTimeout` (REG_DWORD): seconds to S4 after S3 (0=never)
   - `DisplayOffTimeout` (REG_DWORD): seconds to blank display
   - `PowerButtonAction` (REG_DWORD): same codes as §7
+    - Reconcile the two homes rather than adding a second source of truth: §7 already reads and caches `HKLM\SYSTEM\PowerControl\PowerButtonAction` once at init, and this section plans a per-plan copy. State the precedence, migrate or subsume the flat key, and decide whether the Windows AC/DC split (`ACSettingIndex` / `DCSettingIndex`) is in scope -- a laptop cannot currently hibernate on battery and sleep on AC. -> XREF: `02-kernel-core/TODO-26` §7 (item: "The policy is sampled ONCE, before the PM1 enable bits are written, and cached")
   - `LidCloseAction` (REG_DWORD): same codes as §7 -> XREF: `02-kernel-core/TODO-26` §31
   - `CpuFreqGovernor` (REG_SZ): `"performance"`, `"balanced"`, `"powersave"`, `"schedutil"`
   - `IdleLatencyBudgetUs` (REG_DWORD): max C-state exit latency in microseconds
@@ -1203,6 +1224,8 @@ Both residues are §26's own surface, filed here rather than parked into §26 be
 - [ ] Park every other CPU before the shutdown storage quiesce, then halt them all if firmware power-off fails
   - `acpi_shutdown()` (`src/kernel/acpi.c:1769`) runs `acpi_storage_quiesce()` and then `acpi_poweroff_now()`, both on the calling CPU only. Another CPU can submit I/O while storage is being quiesced, and if the firmware power-off silently fails the other CPUs keep running against dead storage.
   - Filed 2026-09-04 from the §7 design review, which found the hazard while reviewing the power-button dispatcher. It is NOT specific to the button: `SYS_SHUTDOWN` (`src/kernel/sched/syscall.c:1036`), `nt_syscall.c:1591` and the desktop power menu (`src/desktop/desktop.c:1082`) all take the same path today.
+  - Single-entry admission is part of it, not a separate job: the button DPC, `SYS_SHUTDOWN`, `nt_syscall.c` and the desktop power menu can all enter the same unsynchronized quiesce concurrently, so a second initiator can dirty storage after the first marked it clean.
+  - Also decouple the outcome from the caller: `acpi_poweroff_now()` halts only the calling CPU, and for a button press that CPU is the single global threaded-DPC worker, so a machine where `\_S5` and both port fallbacks fail is left running with storage quiesced AND every other threaded DPC permanently dead.
   - The §26 rendezvous is the primitive; this is the same bracket the SLP_EN item below needs, applied to the S5 path. -> XREF: `02-kernel-core/TODO-26` §7 (item: "Route the shutdown action through an SMP-safe shutdown once one exists")
 - [ ] Bracket every SLP_EN write with the §26 rendezvous at a deadlock-safe point
   - §26 shipped the barrier and NOTHING calls it: `acpi_enter_sleep_state()` still writes PM1 SLP_EN with other processors live, so the hazard §2 recorded is unchanged in behaviour even though the primitive it needs now exists. A shipped primitive with no caller closes no hazard.

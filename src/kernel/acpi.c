@@ -1082,6 +1082,11 @@ static uint16_t s_pm1b_en_port;    /* PM1b_EVT enable register (optional) */
 #define PM1_STS_WAK     (1u << 15)
 #define PM1_SERVICED    (PM1_STS_PWRBTN | PM1_STS_SLPBTN | PM1_STS_WAK)
 
+/* ACPI 6.5 Table 5-10 (FADT Flags). Set means the button is a CONTROL-METHOD
+ * device rather than a fixed feature, so the PM1 fixed event never asserts. */
+#define ACPI_FADT_FLAG_PWR_BUTTON   (1u << 4)
+#define ACPI_FADT_FLAG_SLP_BUTTON   (1u << 5)
+
 /* Fixed-event counts, published from the SCI ISR and read at thread level.
  * The ISR must not log (see acpi_sci_process), so these ARE the record of what
  * the interrupt saw until a deferred dispatcher consumes them.
@@ -1091,9 +1096,9 @@ static uint16_t s_pm1b_en_port;    /* PM1b_EVT enable register (optional) */
  * silently discards the entire interval. The count that reaches 2^32 is a stuck
  * or repeatedly reasserted SCI, which is precisely when dropping every press is
  * least acceptable. */
-static volatile uint64_t s_pwrbtn_events;
-static volatile uint64_t s_slpbtn_events;
-static volatile uint64_t s_wake_events;
+static volatile acpi_event_count_t s_pwrbtn_events;
+static volatile acpi_event_count_t s_slpbtn_events;
+static volatile acpi_event_count_t s_wake_events;
 
 /* Serializes the WHOLE PM1 read / acknowledge / count / enqueue sequence.
  *
@@ -1107,6 +1112,16 @@ static volatile uint64_t s_wake_events;
  * enqueue too, not just the counters, because the concurrent insert is the
  * hazard with no other defence. */
 static spinlock_t s_pm1_evt_lock = SPINLOCK_INIT;
+
+/* LOCK ORDERING: s_pm1_evt_lock is acquired strictly BEFORE the per-CPU DPC
+ * queue lock, because acpi_sci_process() calls KeInsertQueueDpcOnCpu() while
+ * holding it. The nesting cannot cycle: dpc.c never takes an ACPI lock, and
+ * this is the only acquirer of s_pm1_evt_lock. It is the same order and the
+ * same justification ktimer.c records for its own expiry scan, which likewise
+ * queues a DPC while holding its lock -- KeInsertQueueDpcOnCpu is bounded,
+ * allocation-free, and performs no serial I/O, and a button press arrives at
+ * human rate rather than the timer's tick rate. A future third acquirer must
+ * respect this order. */
 
 /* The threaded DPC the ISR queues, and the dispatcher's own watermarks.
  *
@@ -1125,9 +1140,6 @@ static volatile uint32_t s_btn_dispatches;
  * are cached instead of read per dispatch. */
 static uint32_t s_pwrbtn_action = ACPI_BTN_DEFAULT_POWER;
 static uint32_t s_slpbtn_action = ACPI_BTN_DEFAULT_SLEEP;
-
-/* Registry location of the button policy. */
-#define ACPI_BTN_REG_PATH   "SYSTEM\\PowerControl"
 
 /* Queue the button DPC on the BSP service list, matching ktimer's convention.
  * Only the BSP DPC queue has a guaranteed drain trigger, and pinning also gives
@@ -1642,8 +1654,15 @@ static void acpi_button_dpc_routine(KDPC *dpc, void *ctx, void *a1, void *a2)
      * shutdown quiesce takes seconds) from stacking a second one. Its counter
      * increment is not lost: the count outlives the refusal, so the next drain
      * still sees it. */
-    if (!acpi_btn_gate_take(&s_button_gate))
+    if (!acpi_btn_gate_take(&s_button_gate)) {
+        /* Say so rather than dropping in silence: this section's whole premise
+         * is that a machine which ignores a button press explains why. The
+         * press is not lost -- the counter outlives the refusal, so the next
+         * drain still sees it. */
+        klog(LOG_INFO, "acpi",
+             "Button action already in flight -- press deferred to next drain");
         return;
+    }
 
     /* Snapshot and PUBLISH the watermarks before acting. Publishing first is
      * what makes a press that arrives mid-action recoverable: it leaves
@@ -1668,9 +1687,20 @@ static void acpi_button_dpc_routine(KDPC *dpc, void *ctx, void *a1, void *a2)
  * the registry is read while no user-mode writer exists. */
 static void acpi_button_policy_init(void)
 {
+    static uint8_t armed;
     HKEY hk;
     uint32_t raw;
     int present;
+
+    /* A second call would re-initialise a KDPC that may be QUEUED, and
+     * KeInitializeThreadedDpc zeroes its queued/next/queued_cpu fields -- which
+     * unlinks the node from the middle of a live list and corrupts that CPU's
+     * queue. acpi_register_sci() carries the same guard for the same reason. */
+    if (armed) {
+        klog(LOG_WARN, "acpi", "Button policy already armed -- ignoring repeat");
+        return;
+    }
+    armed = 1;
 
     KeInitializeThreadedDpc(&s_button_dpc, acpi_button_dpc_routine, (void *)0);
 
@@ -1682,7 +1712,7 @@ static void acpi_button_policy_init(void)
     if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, ACPI_BTN_REG_PATH, 0, KEY_READ, &hk)
         == ERROR_SUCCESS) {
         raw = 0;
-        present = (RegGetDword(hk, "PowerButtonAction", &raw) == ERROR_SUCCESS);
+        present = (RegGetDword(hk, ACPI_BTN_REG_POWER, &raw) == ERROR_SUCCESS);
         s_pwrbtn_action = acpi_btn_resolve_action(raw, present,
                                                   ACPI_BTN_DEFAULT_POWER);
         if (present && raw > ACPI_BTN_ACTION_MAX)
@@ -1692,7 +1722,7 @@ static void acpi_button_policy_init(void)
                  acpi_btn_action_name(ACPI_BTN_DEFAULT_POWER));
 
         raw = 0;
-        present = (RegGetDword(hk, "SleepButtonAction", &raw) == ERROR_SUCCESS);
+        present = (RegGetDword(hk, ACPI_BTN_REG_SLEEP, &raw) == ERROR_SUCCESS);
         s_slpbtn_action = acpi_btn_resolve_action(raw, present,
                                                   ACPI_BTN_DEFAULT_SLEEP);
         if (present && raw > ACPI_BTN_ACTION_MAX)
@@ -1715,18 +1745,38 @@ static void acpi_button_policy_init(void)
          acpi_btn_action_available(s_pwrbtn_action) ? "" : " (unavailable)",
          acpi_btn_action_name(s_slpbtn_action),
          acpi_btn_action_available(s_slpbtn_action) ? "" : " (unavailable)");
+
+    /* Say whether this dispatcher can actually be REACHED on this machine.
+     * ACPI 6.5 Table 5-10: FADT flags PWR_BUTTON (bit 4) and SLP_BUTTON (bit 5)
+     * set mean the button is a CONTROL-METHOD device (_HID PNP0C0C / PNP0C0E)
+     * signalling through a GPE and Notify, and OSPM must NOT use the PM1 fixed
+     * event for it. On such a platform PWRBTN_STS never asserts, so everything
+     * above is armed and unreachable. Logging the resolved actions without this
+     * line reads as "the power button works", which on that hardware is the
+     * opposite of the truth, and a boot log that lies is worse than a silent
+     * one. The control-method path itself is not implemented here. */
+    if (fadt_ptr) {
+        if (fadt_ptr->flags & ACPI_FADT_FLAG_PWR_BUTTON)
+            klog(LOG_WARN, "acpi",
+                 "Power button is a control-method device (PNP0C0C) -- the "
+                 "fixed-event dispatcher above will never fire for it");
+        if (fadt_ptr->flags & ACPI_FADT_FLAG_SLP_BUTTON)
+            klog(LOG_WARN, "acpi",
+                 "Sleep button is a control-method device (PNP0C0E) -- the "
+                 "fixed-event dispatcher above will never fire for it");
+    }
 }
 
 /* Thread-level readers of what the SCI ISR recorded. These are the deferred
  * half of the split above: the ISR counts, a thread-level consumer reports and
  * acts. Counts are monotonic and never cleared here. */
-uint64_t acpi_power_button_count(void) {
+acpi_event_count_t acpi_power_button_count(void) {
     return __atomic_load_n(&s_pwrbtn_events, __ATOMIC_ACQUIRE);
 }
-uint64_t acpi_sleep_button_count(void) {
+acpi_event_count_t acpi_sleep_button_count(void) {
     return __atomic_load_n(&s_slpbtn_events, __ATOMIC_ACQUIRE);
 }
-uint64_t acpi_wake_event_count(void) {
+acpi_event_count_t acpi_wake_event_count(void) {
     return __atomic_load_n(&s_wake_events, __ATOMIC_ACQUIRE);
 }
 
@@ -1745,6 +1795,31 @@ static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
     acpi_sci_process();
     irq_eoi(irq_vector_to_isa((uint8_t)frame->int_no));
     return (uint64_t)frame;
+}
+
+/* Disarm the PM1 fixed events this driver enabled, and clear anything already
+ * pending. Called when SCI registration FAILS: acpi_enable_fixed_events() has
+ * by then already set PWRBTN_EN and SLPBTN_EN, so leaving them on means a
+ * level-triggered line can be asserted with no handler installed to acknowledge
+ * it -- which livelocks the PIC path or storms the GSI until the shared-IRQ
+ * layer quarantines whatever else owns it. Enabling less is the safe direction
+ * (the same reasoning acpi_enable_fixed_events() applies when it declines to OR
+ * against whatever firmware left enabled). */
+static void acpi_disable_fixed_events(const char *why)
+{
+    if (!s_pm1a_en_port) return;
+
+    outw_acpi(s_pm1a_en_port, 0);
+    if (s_pm1b_en_port)
+        outw_acpi(s_pm1b_en_port, 0);
+    if (s_pm1a_sts_port)
+        outw_acpi(s_pm1a_sts_port, PM1_SERVICED);
+    if (s_pm1b_sts_port)
+        outw_acpi(s_pm1b_sts_port, PM1_SERVICED);
+
+    klog(LOG_WARN, "acpi",
+         "PM1 fixed events disabled (%s) -- no handler would acknowledge them",
+         why);
 }
 
 void acpi_register_sci(void)
@@ -1783,6 +1858,7 @@ void acpi_register_sci(void)
             klog(LOG_ERROR, "acpi",
                  "SCI GSI %u not routable -- SCI not registered",
                  (uint64_t)gsi);
+            acpi_disable_fixed_events("SCI GSI not routable");
             return;
         }
         registered = 1;
@@ -1798,12 +1874,14 @@ void acpi_register_sci(void)
         klog(LOG_ERROR, "acpi",
              "SCI_INT %u is a GSI but no IOAPIC -- SCI not registered",
              (uint64_t)fadt_ptr->sci_interrupt);
+        acpi_disable_fixed_events("SCI_INT is a GSI with no IOAPIC");
         return;
     }
     sci_vec = isa_irq_to_vector((uint8_t)fadt_ptr->sci_interrupt);
     if (!sci_vec) {
         klog(LOG_ERROR, "acpi", "SCI ISA IRQ %u has no vector -- not registered",
              (uint64_t)fadt_ptr->sci_interrupt);
+        acpi_disable_fixed_events("SCI ISA IRQ has no vector");
         return;
     }
     /* Refuse rather than steal the vector. idt_register_handler() only WARNs
@@ -1818,6 +1896,7 @@ void acpi_register_sci(void)
         klog(LOG_ERROR, "acpi",
              "vector 0x%x already claimed -- SCI not registered",
              (uint64_t)sci_vec);
+        acpi_disable_fixed_events("SCI vector already claimed");
         return;
     }
 
@@ -1870,7 +1949,11 @@ int acpi_enter_sleep_state(uint8_t state)
     uint16_t typb = acpi_get_slp_typb(state);
     uint16_t sts;
     uint16_t pm1b_cnt = fadt_ptr ? acpi_io_port(fadt_ptr->pm1b_control_block) : 0;
-    uint64_t wake_before;
+    /* Declared with the counter's OWN type, not a hand-picked width: a narrower
+     * snapshot truncates the high half, so past 2^32 the comparison below is
+     * unequal on every pass and any interrupt that merely releases the halt
+     * reads as a confirmed wake. */
+    acpi_event_count_t wake_before;
     uint64_t saved_flags;
     int woke = 0;
     int spins;
@@ -1966,14 +2049,6 @@ int acpi_enter_sleep_state(uint8_t state)
         outw_acpi(s_pm1a_sts_port, PM1_STS_WAK);
     if (s_pm1b_sts_port)
         outw_acpi(s_pm1b_sts_port, PM1_STS_WAK);
-    /* The snapshot MUST be as wide as the counter it is compared against. A
-     * narrower snapshot truncates the high half, so once the wake counter
-     * passes 2^32 the comparison below is unequal on every pass and any
-     * interrupt that merely releases the halt reads as a confirmed wake. That
-     * is exactly the failure the counter was widened to prevent, and it is
-     * invisible until a machine actually reaches that count. */
-    _Static_assert(sizeof(wake_before) == sizeof(acpi_wake_event_count()),
-                   "wake snapshot must match the wake-counter width");
     wake_before = acpi_wake_event_count();
 
     /* Step 3: Write SLP_TYP + SLP_EN, preserving the rest of PM1_CNT. PM1b gets
