@@ -88,7 +88,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   5   | §5 ACPI EC driver (discovery+transactions; GATED OFF, needs §24) | §1                          |  [/]   |
 | 💎  |   6   | §6 Battery & AC adapter ACPI source layer (`_BIX`/`_BST`/`_PSR`) | §29, D04T03§1               |  [/]   |
 | 💎  |   7   | §7 Power & sleep button event dispatch                           | §1                          |  [x]   |
-| 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                   | §1                          |  [ ]   |
+| 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                   | §1                          |  [x]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [ ]   |
 | ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3            |  [ ]   |
 | 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                 |  [ ]   |
@@ -548,32 +548,54 @@ The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_
 
 > **Spawned-by:** root
 
-The config-space-only half of the PCI D-state work: capability discovery and the D0/D1/D2/D3hot transitions the PCI Local Bus spec defines entirely within PMCSR. Two pieces split out of this section because they depend on machinery this one does not: the per-device power registry (§33) and D3cold, which needs ACPI control-method evaluation (§34).
+The config-space-only half of the PCI D-state work: capability discovery and the D0/D1/D2/D3hot transitions defined entirely within PMCSR. Two pieces split out of this section because they depend on machinery this one does not: the per-device power registry (§33) and D3cold, which needs ACPI control-method evaluation (§34).
 > → XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "`pm_register_device(dev, on_sleep, on_wake)` -- called by each PCI driver at probe time; adds to the global `pm_device_list`")
 > → XREF: `02-kernel-core/TODO-26-power-management.md` §34 (item: "`pci_d3cold_enter(dev)` -- `pci_set_d_state(dev, 3)` first (D3hot), then evaluate `_PS3`")
 
-- [ ] `pci_pmcap_find(dev)` -- walk the PCI Capabilities linked list (cap ID `0x01` = Power Management) in config space; return cap offset or -1
-  - Gate the walk on `PCI_STATUS` bit 4 (Capabilities List) and bound it: a malformed or absent list is a hang otherwise.
-- [ ] `pci_pmcap_read(dev)` -> `PCI_PMCAP` struct:
-  ```c
-  typedef struct {
-      uint16_t cap_id;      /* 0x0001 */
-      uint16_t next_cap;
-      uint16_t pmcap;       /* capabilities: D1/D2 support, PME capable */
-      uint16_t pmcsr;       /* Power Management Control/Status Register */
-  } PCI_PMCAP;
-  #define PMCSR_POWER_STATE_MASK 0x0003  /* D0=0, D1=1, D2=2, D3hot=3 */
-  #define PMCSR_PME_EN           0x0100
-  #define PMCSR_PME_STATUS       0x8000
-  ```
-- [ ] `pci_set_d_state(dev, state)` -- write `state & 0x3` to the `PMCSR` power state bits; return `PCI_DX_OK` or `PCI_DX_UNSUPPORTED`
-  - `PCI_DX_UNSUPPORTED` covers both no PM capability at all and a D1/D2 the `PMCAP` capability bits say the device does not support.
-- [ ] Honour the PCI PM spec recovery delays rather than one blanket wait: D3hot->D0 and D2->D0 require 10 ms before the first config access, D1->D0 200 us, D0->D3hot none
-  - A device is not addressable during the delay, so the wait belongs inside `pci_set_d_state()` and not in each caller.
-- [ ] `pci_get_d_state(dev)` -- read the PMCSR power-state field back, so the state machine's source of truth is the hardware and not a value the driver believes it wrote
-- [ ] Commit: `"kernel/pci: PM capability discovery, D0/D1/D2/D3hot state machine, spec recovery delays"`
+- [x] `pci_pmcap_find(bus, dev, fn)` -- walks the capability list for cap ID `0x01` and returns its config offset, in `src/kernel/drivers/pci_pm.c`
+  - Gated on `PCI_STATUS` bit 4, TTL-bounded at `PCI_CAP_WALK_MAX` (48, exactly the number of DWORD-aligned node positions), and header-type aware: `pci_cap_ptr_offset()` reads the pointer at `0x34` for types 0/1 and `0x14` for CardBus, and refuses an undefined type outright.
+  - Misaligned pointers are REJECTED rather than masked, because masking silently redirects the walk into an unrelated register. Node bound and PM footprint bound are separate: a node may sit at `0xFC`, a PM capability may not (its PMCSR at +4 would not fit), so a legal list whose last entry is non-PM is no longer reported malformed.
+  - CardBus lower bound is `0x48`, not `0x40`: type 2 keeps subsystem IDs at `0x40` and the legacy-mode base at `0x44`, and a hostile pointer there reading `0x01` would otherwise be taken for a PM capability.
+- [x] `pci_pmcap_read()` fills `PCI_PMCAP` {`cap_id`, `next_cap`, `pmc`, `pmcsr`, `cap_off`}, declared in `include/kernel/drivers/pci_pm.h`
+  - Field widths are the hardware's (byte ID and next pointer), not the uniform 16-bit words this item originally drafted. Constants shipped: `PMCSR_POWER_STATE_MASK`, `PMCSR_NO_SOFT_RESET`, `PMCSR_PME_EN`, `PMCSR_PME_STATUS`, `PMC_D1_SUPPORT`, `PMC_D2_SUPPORT`.
+  - Reads into a LOCAL snapshot and validates `cap_id`, PMCSR plausibility and PM revision before publishing it, so a device that stops answering partway through the four config transactions cannot hand the caller a mixture of real and floating values.
+- [x] `pci_set_d_state(bus, dev, fn, state, &reinit_required)` -- performs the transition and verifies it latched
+  - Returns `PCI_DX_OK` or a negative `pci_dx_status_t`; `PCI_DX_UNSUPPORTED` covers both no PM capability and a D1/D2 the `PMCAP` bits do not advertise.
+  - Every PMCSR write goes through `pci_pmcsr_write_value()`, which clears `PMCSR_PME_STATUS` out of the write. That bit is write-1-to-clear, so a naive read-modify-write ACKNOWLEDGES and destroys a pending wake event while preserving `PME_En` and the reserved fields.
+- [x] Recovery delays follow the transition, not one blanket wait: any transition with D3hot at either end waits 10 ms, any with D2 at either end waits 200 us, D0 <-> D1 is immediate
+  - Applied INSIDE `pci_set_d_state()` and on the way DOWN as well as up, so even the readback that confirms the write waits. `pci_pm_recovery_delay_us()` is pure and the full matrix is asserted.
+  - Timed on `mono_ns()` with elapsed subtraction. `pci_pm_timebase_ready()` qualifies the SOURCE first and accepts only TSC/HPET/PMTMR: the tick-derived LAPIC source stops advancing with interrupts off, which is exactly the context a transition may run in. An unqualified source refuses with `PCI_DX_NO_TIMEBASE` BEFORE the write, so the device is never left in a state nothing may touch.
+- [x] `pci_get_d_state()` reads the PMCSR state field back, so the hardware is the source of truth rather than a value a driver believes it wrote
+- [x] Transition legality is enforced, not assumed: a device may move DEEPER or to D0, never part-way out
+  - `pci_pm_transition_legal()` refuses D3hot->D1, D3hot->D2 and D2->D1. Matches the transition table the Linux PCI documentation publishes.
+- [x] Non-response is never read as a D-state -- `pci_pm_pmcsr_plausible()` rejects `0xFFFF` and any value with the required-zero PMCSR bits 7:4 set
+  - `0xFFFF & PMCSR_POWER_STATE_MASK` is D3hot, so without this an absent, removed or wedged device CONFIRMS the suspend it failed to perform and the caller carries on believing DMA and interrupts are quiesced. `0xFFFB` is the same hazard without being all-ones. Bit 2 is deliberately not required to read zero: its reset value is device-specific, and refusing a legitimate suspend is not the safe direction.
+  - `pci_pm_pmc_version_supported()` accepts PM revisions 1..3 and gates both the setter and the getter, so a reserved revision is never driven. Discovery stays structural.
+- [x] `No_Soft_Reset` is honoured: a D3hot->D0 on a device with the bit clear lands in D0 Uninitialized, and the caller is told so
+  - Reported through a MANDATORY `int *reinit_required` out-parameter rather than a distinguished return value, so it cannot be missed by a caller that only tests `rc < 0`. It is assigned as soon as the write happens, so a retry after a timed-out wake cannot see a D0 no-op and conclude the device was never reset.
+  - The device is polled for a response (`PCI_VENDOR_ID` != `0xFFFF`, bounded by `PCI_PM_D0_READY_MAX_US`) before its PMCSR is read back, because a device that came back uninitialised can take longer than the spec minimum to answer config cycles at all.
+- [x] Transitions are serialised per device across the WHOLE sequence -- claim, read, decide, write, recover, verify, release
+  - An 8-entry in-flight table under `s_pci_pm_lock`; a second caller for the same BDF gets `PCI_DX_BUSY` rather than blocking, since a spinlock cannot span a 10 ms recovery interval. The claim is taken BEFORE capability discovery, which itself reads config space.
+  - Serialising only the write was not enough: a caller planning from a state the first has already left performs a prohibited transition and waits the wrong delay.
+- [x] A transition that cannot observe its recovery interval POISONS the module rather than reporting success
+  - `pci_pm_delay_us()` ends on `PCI_PM_CLOCK_STALL_SPINS` identical clock samples with `PCI_DX_CLOCK_STALLED`; the flag is machine-wide because the only cause is a qualified hardware counter stopping, which is not a property of the device being transitioned. `pci_pm_clear_poison()` is the only way back and takes no arguments, so no set of dead devices can starve a healthy one.
+  - Poison is an ADMISSION GATE, not a flag consulted separately: every config access goes through `pci_pm_guarded_read8/read16/write16`, which test the flag and perform the access in ONE critical section. A gate that tests and acts separately does not gate.
+- [x] `pci_pm_bdf_valid()` rejects device >= 32 and function >= 8 at every entry point, before any claim or config access
+  - The CF8 address format packs the fields adjacently, so an out-of-range device does not fail, it ALIASES another one: `00:20.0` and `01:00.0` compute the same address while the claim table treats them as different devices.
+- [x] `src/kernel/drivers/pci.c`: every config accessor now holds a global IRQ-safe spinlock across the WHOLE CF8/CFC transaction
+  - The mechanism is a pair of shared PORTS, so without this another CPU replaces CF8 between the address write and the data access and the second half lands on a different device. Eleven files call these accessors, from both thread and interrupt context. This is the root fix for the read-modify-write corruption the PMCSR path would otherwise have suffered.
+- [x] Commit: `"kernel/pci: PM capability discovery, D0/D1/D2/D3hot state machine, spec recovery delays"`
 
 **Test checkpoint:** `pci_pmcap_find()` returns a valid offset for a PM-capable device and -1 both for a device without the capability and for one whose `PCI_STATUS` capability bit is clear. `pci_set_d_state(dev, 3)` writes PMCSR and `pci_get_d_state()` reads 3 back. `pci_set_d_state(dev, 0)` restores D0 after the 10 ms recovery delay. A D1 request against a device whose `PMCAP` does not advertise D1 returns `PCI_DX_UNSUPPORTED` rather than writing. Test on: QEMU TCG + WHPX.
+
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (or `bash scripts/test.sh SUITE=boot`) -- 49 `PCI PM: *` cases, all PASS; the decision logic is pure, so none of them needs a PM-capable device on the bus, and `pci_pm_set_poisoned_for_test()` is the fault-injection seam that makes the admission gate provable (same shape as `pmm_alloc_fail_next`).
+
+> **Notes:**
+> - Shipped `src/kernel/drivers/pci_pm.c` + `include/kernel/drivers/pci_pm.h` (capability walk, D0/D1/D2/D3hot state machine, pure transition planner) and hardened `src/kernel/drivers/pci.c` with a CF8/CFC transaction lock.
+> - Integrates through `pci_read*`/`pci_write16` only; no init hook, no boot-path code, no ACPI dependency, so it is callable from any driver at probe time.
+> - §9 and §12 consume `pci_set_d_state()`; §23 hangs ASPM policy off the same devices; the per-device registry that records their state is §33.
+> - Canonical contract is the header comment block in `include/kernel/drivers/pci_pm.h`: PME_Status is write-1-to-clear, recovery intervals forbid ALL access, the only exit from a low-power state is D0, and No_Soft_Reset clear means D3hot->D0 lands uninitialised.
+> - Scope boundary: D3cold (§34) and the `pm_device_t` registry (§33) are deliberately NOT here; the claim serialises D-state callers only, and a gate binding every config client is §33's.
 
 ---
 
@@ -1406,6 +1428,9 @@ The per-device power-state record and the registry every later power path walks.
 - [ ] SMP: registration happens at probe time on any CPU while §9's notification walk may be running, so the registry needs a spinlock and the walk needs a stable snapshot
   - State the ownership rule in the header: the registry owns the record, the driver owns `driver_ctx`.
 - [ ] `pm_device_find(bus, dev, fn)` and `pm_device_count()` -- lookup and enumeration for §12/§13/§23 and for the tests
+- [ ] Per-device access gate that EVERY config-space client honours, so no driver touches a device during another caller's D-state recovery interval
+  - §8's claim serialises D-state callers only: an unrelated driver reading its own BARs during a 10 ms D3hot recovery is not prevented by it, and cannot be, because §8 has no registry to hang the state on. The registry is where a device's "do not touch" state can live and be consulted by the whole PCI layer.
+  - → XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "Transitions are serialised per device across the WHOLE sequence -- claim, read, decide, write, recover, verify, release")
 - [ ] Commit: `"kernel/pm: pm_device_t registry, pm_register_device, BDF-keyed lookup"`
 
 **Test checkpoint:** `pm_register_device()` adds to the global list and `pm_device_count()` reflects it. A duplicate BDF registration is refused rather than duplicated. Filling the array returns the refusal code and does not write past the bound. `pm_device_find()` returns the registered record and NULL for an unregistered BDF. Test on: QEMU TCG.
@@ -1435,57 +1460,59 @@ D3cold removes VCC from the device, so it is not a PMCSR write at all: it is an 
 
 ## OS Comparison
 
-| ⭐  | Feature                          | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
-| --- | -------------------------------- | --------------- | ---------------- | ---------------- |
-| 💎  | S5 ACPI shutdown                 | ✅ Full         | ✅ Full          | ✅ Done §1       |
-| 💎  | ACPI S-state discovery           | ✅ ACPI.sys     | ✅ acpi_sleep    | ✅ Done §1       |
-| 💎  | PM1 fixed-event SCI              | ✅ ACPI.sys     | ✅ acpi_sci      | ✅ Done §1       |
-| 💎  | C1 idle / HLT                    | ✅ Full         | ✅ cpuidle       | ⬜ §2            |
-| 💎  | S3 suspend RAM                   | ✅ Full         | ✅ sleep         | ⬜ §3            |
-| 💎  | Stop-the-world CPU rendezvous    | ✅ KeIpiGeneric | ✅ stop_machine  | ✅ Done §26      |
-| 💎  | Stop-the-world fault injection   | ✅ Internal     | ✅ ftrace stress | ⬜ §27           |
-| 💎  | Hibernation image format codec   | ✅ hiberfil.sys | ✅ swsusp image  | ✅ Done §4       |
-| 💎  | S4 hibernate disk                | ✅ Full         | ✅ swsusp        | ⬜ §28           |
-| 💎  | Fast startup hiberboot           | ✅ Default      | ❌ None          | ⬜ §11           |
-| 💎  | ACPI EC discovery + transactions | ✅ Full         | ✅ acpi_ec       | ✅ Done §5       |
-| 💎  | ACPI EC enabled for real traffic | ✅ Full         | ✅ acpi_ec       | ⬜ §5 + §24      |
-| 💎  | ACPI EC event (QR_EC) dispatch   | ✅ Full         | ✅ acpi_ec query | ⬜ §5 + §24      |
-| 💎  | Battery `_BIX` / `_BST`          | ✅ Full         | ✅ upower        | ⬜ §6            |
-| 💎  | Power/sleep button events        | ✅ Full         | ✅ logind        | ✅ Done §7       |
-| 💎  | Lid-close events                 | ✅ Full         | ✅ logind        | ⬜ §31           |
-| 💎  | PCI D-states D0--D3cold          | ✅ Full         | ✅ PCI PM        | ⬜ §8            |
-| 💎  | Driver sleep wake callbacks      | ✅ WDM          | ✅ pm_ops        | ⬜ §9            |
-| 💎  | Driver query veto power          | ✅ QUERY_POWER  | ✅ prepare       | ⬜ §17           |
-| 💎  | Runtime idle PoFx RPM            | ✅ PoFx         | ✅ runtime_pm    | ⬜ §12           |
-| 💎  | Power requests tracking          | ✅ powercfg     | ⚠️ wake_lock     | ⬜ §13           |
-| 💎  | Wake source lastwake             | ✅ powercfg     | ⚠️ dmesg         | ⬜ §13           |
-| 💎  | ACPI thermal zones               | ✅ ACPI.sys     | ✅ thermal       | ⬜ §14           |
-| 💎  | Passive active cooling           | ✅ Full         | ✅ step_wise     | ⬜ §14           |
-| 💎  | CPU DVFS cpufreq                 | ✅ PPM HWP      | ✅ cpufreq       | ⬜ §15           |
-| 💎  | CPU idle C-states                | ✅ PPM          | ✅ menu teo      | ⬜ §16           |
-| 💎  | Connected standby S0ix           | ✅ Modern       | ⚠️ Partial       | ⬜ §10           |
-| 💎  | mem_sleep s2idle deep            | ✅ S0 idle      | ✅ sysfs         | ⬜ §21           |
-| 💎  | powercfg CLI surface             | ✅ 50 cmds      | ⚠️ systemctl     | ⬜ §18           |
-| 💎  | Power Options GUI                | ✅ powercpl     | ⚠️ GNOME basic   | ⬜ §18           |
-| ⭐  | Energy aware scheduling          | ⚠️ HW ITD       | ✅ EAS ARM       | ⬜ §19           |
-| ⭐  | Battery wear tray hint           | ❌ Settings     | ❌ CLI only      | ⬜ §6            |
-| ⭐  | batteryreport plain text         | ✅ HTML         | ❌ None          | ⬜ §18           |
-| ⭐  | energy audit trace               | ✅ Full         | ❌ None          | ⬜ §13           |
-| ⭐  | sleepstudy DRIPS report          | ✅ Full         | ❌ None          | ⬜ §18           |
-| 💎  | PoFx F-states components         | ✅ Per Fx       | ❌ Device only   | ⬜ §12           |
-| 💎  | Directed PoFx DRIPS              | ✅ PoFx v3      | ❌ None          | ⬜ §10           |
-| 💎  | USB suspend U1 U2 LPM            | ✅ Full         | ✅ autosuspend   | ⬜ §12           |
-| 💎  | NVMe APST idle states            | ✅ On           | ✅ sysfs         | ⬜ §12           |
-| 💎  | PCIe ASPM L1 substates           | ✅ Plans        | ✅ pcie_aspm     | ⬜ §23           |
-| 💎  | SATA ALPM link power             | ✅ HIPM         | ✅ sysfs         | ⬜ §12           |
-| 💎  | NIC ARP NS offload S0ix          | ✅ NDIS         | ⚠️ Firmware      | ⬜ §10           |
-| 💎  | Smart charge 80 percent          | ✅ OEM          | ⚠️ TLP           | ⬜ §6            |
-| 💎  | RAPL power cap sysfs             | ✅ Internal     | ✅ powercap      | ⬜ §15           |
-| 💎  | AMD P-State EPP                  | ✅ Driver       | ✅ amd_pstate    | ⬜ §15           |
-| 💎  | Energy Saver adaptive            | ✅ Win11        | ⚠️ profiles      | ⬜ §18           |
-| ⭐  | Human presence HPD wake          | ✅ Platform     | ❌ None          | ⬜ §32           |
-| 💎  | HID-idle QoS throttle (fg-only)  | ✅ 25H2         | ❌ None          | ⬜ §22           |
-| 💎  | ACPI GPE block dispatch          | ✅ ACPI.sys     | ✅ acpi_ev_gpe   | ⬜ §24           |
+| ⭐  | Feature                           | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
+| --- | --------------------------------- | --------------- | ---------------- | ---------------- |
+| 💎  | S5 ACPI shutdown                  | ✅ Full         | ✅ Full          | ✅ Done §1       |
+| 💎  | ACPI S-state discovery            | ✅ ACPI.sys     | ✅ acpi_sleep    | ✅ Done §1       |
+| 💎  | PM1 fixed-event SCI               | ✅ ACPI.sys     | ✅ acpi_sci      | ✅ Done §1       |
+| 💎  | C1 idle / HLT                     | ✅ Full         | ✅ cpuidle       | ⬜ §2            |
+| 💎  | S3 suspend RAM                    | ✅ Full         | ✅ sleep         | ⬜ §3            |
+| 💎  | Stop-the-world CPU rendezvous     | ✅ KeIpiGeneric | ✅ stop_machine  | ✅ Done §26      |
+| 💎  | Stop-the-world fault injection    | ✅ Internal     | ✅ ftrace stress | ⬜ §27           |
+| 💎  | Hibernation image format codec    | ✅ hiberfil.sys | ✅ swsusp image  | ✅ Done §4       |
+| 💎  | S4 hibernate disk                 | ✅ Full         | ✅ swsusp        | ⬜ §28           |
+| 💎  | Fast startup hiberboot            | ✅ Default      | ❌ None          | ⬜ §11           |
+| 💎  | ACPI EC discovery + transactions  | ✅ Full         | ✅ acpi_ec       | ✅ Done §5       |
+| 💎  | ACPI EC enabled for real traffic  | ✅ Full         | ✅ acpi_ec       | ⬜ §5 + §24      |
+| 💎  | ACPI EC event (QR_EC) dispatch    | ✅ Full         | ✅ acpi_ec query | ⬜ §5 + §24      |
+| 💎  | Battery `_BIX` / `_BST`           | ✅ Full         | ✅ upower        | ⬜ §6            |
+| 💎  | Power/sleep button events         | ✅ Full         | ✅ logind        | ✅ Done §7       |
+| 💎  | Lid-close events                  | ✅ Full         | ✅ logind        | ⬜ §31           |
+| 💎  | PCI D-states D0--D3hot            | ✅ Full         | ✅ PCI PM        | ✅ Done §8       |
+| 💎  | PCI D3cold via ACPI `_PS0`/`_PS3` | ✅ Full         | ✅ pci_pm_d3cold | ⬜ §34           |
+| 💎  | PM capability + PMCSR integrity   | ✅ Full         | ✅ pci_pm_init   | ✅ Done §8       |
+| 💎  | Driver sleep wake callbacks       | ✅ WDM          | ✅ pm_ops        | ⬜ §9            |
+| 💎  | Driver query veto power           | ✅ QUERY_POWER  | ✅ prepare       | ⬜ §17           |
+| 💎  | Runtime idle PoFx RPM             | ✅ PoFx         | ✅ runtime_pm    | ⬜ §12           |
+| 💎  | Power requests tracking           | ✅ powercfg     | ⚠️ wake_lock     | ⬜ §13           |
+| 💎  | Wake source lastwake              | ✅ powercfg     | ⚠️ dmesg         | ⬜ §13           |
+| 💎  | ACPI thermal zones                | ✅ ACPI.sys     | ✅ thermal       | ⬜ §14           |
+| 💎  | Passive active cooling            | ✅ Full         | ✅ step_wise     | ⬜ §14           |
+| 💎  | CPU DVFS cpufreq                  | ✅ PPM HWP      | ✅ cpufreq       | ⬜ §15           |
+| 💎  | CPU idle C-states                 | ✅ PPM          | ✅ menu teo      | ⬜ §16           |
+| 💎  | Connected standby S0ix            | ✅ Modern       | ⚠️ Partial       | ⬜ §10           |
+| 💎  | mem_sleep s2idle deep             | ✅ S0 idle      | ✅ sysfs         | ⬜ §21           |
+| 💎  | powercfg CLI surface              | ✅ 50 cmds      | ⚠️ systemctl     | ⬜ §18           |
+| 💎  | Power Options GUI                 | ✅ powercpl     | ⚠️ GNOME basic   | ⬜ §18           |
+| ⭐  | Energy aware scheduling           | ⚠️ HW ITD       | ✅ EAS ARM       | ⬜ §19           |
+| ⭐  | Battery wear tray hint            | ❌ Settings     | ❌ CLI only      | ⬜ §6            |
+| ⭐  | batteryreport plain text          | ✅ HTML         | ❌ None          | ⬜ §18           |
+| ⭐  | energy audit trace                | ✅ Full         | ❌ None          | ⬜ §13           |
+| ⭐  | sleepstudy DRIPS report           | ✅ Full         | ❌ None          | ⬜ §18           |
+| 💎  | PoFx F-states components          | ✅ Per Fx       | ❌ Device only   | ⬜ §12           |
+| 💎  | Directed PoFx DRIPS               | ✅ PoFx v3      | ❌ None          | ⬜ §10           |
+| 💎  | USB suspend U1 U2 LPM             | ✅ Full         | ✅ autosuspend   | ⬜ §12           |
+| 💎  | NVMe APST idle states             | ✅ On           | ✅ sysfs         | ⬜ §12           |
+| 💎  | PCIe ASPM L1 substates            | ✅ Plans        | ✅ pcie_aspm     | ⬜ §23           |
+| 💎  | SATA ALPM link power              | ✅ HIPM         | ✅ sysfs         | ⬜ §12           |
+| 💎  | NIC ARP NS offload S0ix           | ✅ NDIS         | ⚠️ Firmware      | ⬜ §10           |
+| 💎  | Smart charge 80 percent           | ✅ OEM          | ⚠️ TLP           | ⬜ §6            |
+| 💎  | RAPL power cap sysfs              | ✅ Internal     | ✅ powercap      | ⬜ §15           |
+| 💎  | AMD P-State EPP                   | ✅ Driver       | ✅ amd_pstate    | ⬜ §15           |
+| 💎  | Energy Saver adaptive             | ✅ Win11        | ⚠️ profiles      | ⬜ §18           |
+| ⭐  | Human presence HPD wake           | ✅ Platform     | ❌ None          | ⬜ §32           |
+| 💎  | HID-idle QoS throttle (fg-only)   | ✅ 25H2         | ❌ None          | ⬜ §22           |
+| 💎  | ACPI GPE block dispatch           | ✅ ACPI.sys     | ✅ acpi_ev_gpe   | ⬜ §24           |
 
 After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 

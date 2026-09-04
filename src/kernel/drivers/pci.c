@@ -7,6 +7,7 @@
 
 #include "kernel/drivers/pci.h"
 #include "kernel/klog.h"
+#include "kernel/sched/spinlock.h"
 
 /* --- Port I/O --- */
 static inline void outl(uint16_t port, uint32_t val)
@@ -55,42 +56,76 @@ static uint32_t pci_addr(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
         | ((uint32_t)off  & 0xFC));
 }
 
-/* --- Read/Write PCI configuration space --- */
+/* --- Read/Write PCI configuration space ---
+ *
+ * The CF8/CFC mechanism is a pair of PORTS shared by every CPU, not a
+ * per-access register: a transaction is "write the BDF+offset to CF8, then read
+ * or write CFC". Without serialisation another CPU can replace CF8 between
+ * those two steps, and the second step then lands on a DIFFERENT device -- a
+ * read returns another device's register, and a write corrupts one. Every
+ * accessor below therefore holds s_pci_cfg_lock across the WHOLE transaction.
+ *
+ * IRQ-safe because these are reachable from both thread and interrupt context
+ * (xhci, nvme, ahci, virtio and the ACPICA OSL all call them). The critical
+ * section is two or three port accesses, well inside the spinlock hold budget.
+ *
+ * This serialises individual transactions only. A read-modify-write built from
+ * two of them (as PMCSR needs) must take its own lock on top -- see
+ * src/kernel/drivers/pci_pm.c. */
+static DEFINE_SPINLOCK(s_pci_cfg_lock);
 
 uint32_t pci_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&s_pci_cfg_lock, &flags);
     outl(PCI_CONFIG_ADDR, pci_addr(bus, dev, func, offset));
-    return inl(PCI_CONFIG_DATA);
+    uint32_t v = inl(PCI_CONFIG_DATA);
+    spin_unlock_irqrestore(&s_pci_cfg_lock, flags);
+    return v;
 }
 
 uint16_t pci_read16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&s_pci_cfg_lock, &flags);
     outl(PCI_CONFIG_ADDR, pci_addr(bus, dev, func, offset));
-    return (uint16_t)(inl(PCI_CONFIG_DATA) >> ((offset & 2) * 8));
+    uint32_t v = inl(PCI_CONFIG_DATA);
+    spin_unlock_irqrestore(&s_pci_cfg_lock, flags);
+    return (uint16_t)(v >> ((offset & 2) * 8));
 }
 
 uint8_t pci_read8(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&s_pci_cfg_lock, &flags);
     outl(PCI_CONFIG_ADDR, pci_addr(bus, dev, func, offset));
-    return (uint8_t)(inl(PCI_CONFIG_DATA) >> ((offset & 3) * 8));
+    uint32_t v = inl(PCI_CONFIG_DATA);
+    spin_unlock_irqrestore(&s_pci_cfg_lock, flags);
+    return (uint8_t)(v >> ((offset & 3) * 8));
 }
 
 void pci_write32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset,
                  uint32_t value)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&s_pci_cfg_lock, &flags);
     outl(PCI_CONFIG_ADDR, pci_addr(bus, dev, func, offset));
     outl(PCI_CONFIG_DATA, value);
+    spin_unlock_irqrestore(&s_pci_cfg_lock, flags);
 }
 
 void pci_write16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset,
                  uint16_t value)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&s_pci_cfg_lock, &flags);
     outl(PCI_CONFIG_ADDR, pci_addr(bus, dev, func, offset));
     uint32_t old = inl(PCI_CONFIG_DATA);
     int shift = (offset & 2) * 8;
     old &= ~(0xFFFF << shift);
     old |= ((uint32_t)value << shift);
     outl(PCI_CONFIG_DATA, old);
+    spin_unlock_irqrestore(&s_pci_cfg_lock, flags);
 }
 
 /* --- PCI bus scan --- */

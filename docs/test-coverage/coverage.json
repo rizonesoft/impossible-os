@@ -1,6 +1,6 @@
 {
-  "total_suites": 3348,
-  "total_assertions": 14937,
+  "total_suites": 3397,
+  "total_assertions": 15096,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -71,6 +71,7 @@
     {"file": "test_nvme.c", "suites": 1, "assertions": 2},
     {"file": "test_ob.c", "suites": 53, "assertions": 292},
     {"file": "test_panic.c", "suites": 39, "assertions": 99},
+    {"file": "test_pci_pm.c", "suites": 49, "assertions": 159},
     {"file": "test_peb_teb.c", "suites": 25, "assertions": 98},
     {"file": "test_pm_idle.c", "suites": 9, "assertions": 21},
     {"file": "test_pmm.c", "suites": 16, "assertions": 58},
