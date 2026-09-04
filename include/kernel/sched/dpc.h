@@ -225,6 +225,38 @@ struct dpc_queue *dpc_this_cpu_queue(void);
 /* Get the per-CPU DPC queue for a specific CPU. */
 struct dpc_queue *dpc_get_cpu_queue(uint32_t cpu_id);
 
+/* Upper bound on the diagnostic queue walk in dpc_sample_queue(). This bounds
+ * how long that helper holds DPC_QLOCK with interrupts off; it is NOT a queue
+ * depth limit -- the normal DPC queue has none, and DPC_QUEUE_WARN_DEPTH above
+ * is only a warning threshold. A walk that reaches the cap reports
+ * truncated = 1, and its counts must then not be compared against depth. */
+#define DPC_SAMPLE_MAX_WALK  1024u
+
+/* Consistent snapshot of one CPU's normal DPC queue, taken inside a SINGLE
+ * DPC_QLOCK critical section so the depth counter and the linked contents
+ * cannot disagree because a remote CPU inserted between two reads. Any CPU may
+ * target any CPU's queue, so a delta between two separately-locked reads of
+ * depth proves nothing; depth == list_len within one snapshot does.
+ *
+ * Deliberately carries NO KDPC-owned fields (queued / queued_cpu): those are
+ * protected by the lock of the queue the KDPC actually lives on, which
+ * dpc_insert_core() re-resolves from dpc->queued_cpu and which need not be
+ * DPC_QLOCK(cpu_id). Read them from the KDPC directly where the caller owns
+ * the object. */
+struct dpc_queue_sample {
+    uint32_t depth;         /* q->depth, read under the lock                 */
+    uint32_t list_len;      /* KDPCs actually linked on q->head              */
+    uint32_t occurrences;   /* times the queried KDPC appears on that list   */
+    uint32_t truncated;     /* 1 if the walk stopped at DPC_SAMPLE_MAX_WALK  */
+};
+
+/* Test/diagnostic: snapshot cpu_id's normal DPC queue. `dpc` may be NULL, in
+ * which case occurrences is always 0. Returns 1 on success, 0 for an invalid
+ * cpu_id or a NULL out pointer (out is then left untouched). Callable up to
+ * DIRQL -- it takes DPC_QLOCK with interrupts saved, like the queue itself. */
+int dpc_sample_queue(uint32_t cpu_id, const KDPC *dpc,
+                     struct dpc_queue_sample *out);
+
 /* Drain all queued DPCs on the current CPU at DISPATCH_LEVEL.
  * Raises IRQL to DISPATCH_LEVEL, executes DPC callbacks in FIFO order,
  * then restores previous IRQL. Bounded: drains at most DPC_BATCH_LIMIT

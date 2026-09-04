@@ -478,6 +478,54 @@ struct dpc_queue *dpc_get_cpu_queue(uint32_t cpu_id)
     return &cpu_queues[cpu_id];
 }
 
+/* Test/diagnostic: one consistent snapshot of cpu_id's normal DPC queue.
+ *
+ * The depth counter and the linked contents are read inside the SAME
+ * DPC_QLOCK critical section, which is the whole point: any CPU may insert
+ * into any CPU's queue (dpc_insert_core below), and raising local IRQL stops
+ * only this CPU's drain, so a delta between two separately-locked reads of
+ * q->depth is not a property of the depth bookkeeping. depth == list_len
+ * within one snapshot is.
+ *
+ * The walk is bounded by DPC_SAMPLE_MAX_WALK so this helper cannot hold the
+ * lock with interrupts off for an unbounded time; a walk that reaches the cap
+ * (or one that meets a corrupt cycle) sets truncated, and the caller must
+ * reject a truncated sample rather than compare its counts against depth.
+ * Reports nothing about dpc->queued / dpc->queued_cpu: those live under the
+ * lock of whichever queue owns the KDPC, which need not be this one. */
+int dpc_sample_queue(uint32_t cpu_id, const KDPC *dpc,
+                     struct dpc_queue_sample *out)
+{
+    struct dpc_queue *q;
+    const KDPC *cur;
+    uint64_t irq_flags;
+    uint32_t len = 0, occ = 0, truncated = 0, depth;
+
+    if (cpu_id >= MAX_CPUS || !out)
+        return 0;
+
+    q = &cpu_queues[cpu_id];
+
+    spin_lock_irqsave(DPC_QLOCK(cpu_id), &irq_flags);
+    for (cur = q->head; cur; cur = cur->next) {
+        if (len >= DPC_SAMPLE_MAX_WALK) {
+            truncated = 1;
+            break;
+        }
+        len++;
+        if (cur == dpc)
+            occ++;
+    }
+    depth = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
+    spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
+
+    out->depth       = depth;
+    out->list_len    = len;
+    out->occurrences = occ;
+    out->truncated   = truncated;
+    return 1;
+}
+
 /* ---- KeInitializeDpc ----------------------------------------------------- */
 
 void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context)

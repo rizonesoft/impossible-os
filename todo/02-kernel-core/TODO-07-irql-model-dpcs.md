@@ -70,7 +70,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
 | 💎  |  17   | Per-CPU threaded DPC worker affinity                   | §8, §15     |  [/]   |
 | ⭐  |  18   | System worker thread pool (long-period periodic)       | §8          |  [/]   |
-| 💎  |  19   | Interference-proof DPC depth-accounting test seam      | §4, §8      |  [ ]   |
+| 💎  |  19   | Interference-proof DPC depth-accounting test seam      | §4, §8      |  [x]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.
@@ -632,16 +632,30 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 
 Found during the TODO-26 §2 review (2026-09-04, adversarial + consistency legs agreeing), while converting that field to a single atomic access discipline. Filed here rather than fixed there because the remedy is DPC test-surface design, which this TODO owns; §2 only made the existing reads well-defined and changed the assertions in no way. -> XREF: `02-kernel-core/TODO-26-power-management.md` §2 (item: "`pm_deep_idle_allowed()` -- the readiness predicate").
 
-- [ ] Give the depth assertions an observation that cannot be perturbed by unrelated queue traffic. Either is acceptable; pick one and say why:
-  - a test-only seam that samples depth AND the queue contents in one critical section under `DPC_QLOCK`, so the pair is consistent by construction; or
-  - a test-only private `struct dpc_queue` that no production producer can target, leaving the shared-queue test to assert only the named KDPC's membership and return-state contract.
-- [ ] Keep the parts of `test_dpc_insert_remove()` that ARE deterministic on the shared queue
-  - `KeInsertQueueDpc`/`KeRemoveQueueDpc` return codes, `dpc.queued` and `dpc.queued_cpu` binding are properties of the NAMED object, which no remote producer can disturb. Only the global depth deltas are interference-prone.
-- [ ] Do NOT "fix" this by widening the assertions to accept a range
-  - A test that accepts two answers verifies nothing (CLAUDE.md, "Never paper over test failures with platform workarounds"). The point is to make the OBSERVATION serialized, not the expectation loose.
-- [ ] Commit: `"test/sched: interference-proof DPC depth accounting"`
+- [x] Gave the depth assertions an observation that cannot be perturbed by unrelated queue traffic: the SEAM, not a private queue
+  - `dpc_sample_queue(cpu_id, dpc, out)` (`src/kernel/sched/dpc.c:496`) reads `q->depth` AND walks `q->head` inside ONE `DPC_QLOCK` critical section, returning `struct dpc_queue_sample {depth, list_len, occurrences, truncated}` (`include/kernel/sched/dpc.h:246`).
+  - Why the seam and not a private `struct dpc_queue`: a private queue is unreachable through the real API, which resolves its target by CPU ID (`dpc_insert_core`, `dpc.c:634-641`), so it would need a second insert path -- new production surface, and the shared-queue behaviour would still go untested. The seam tests the live queue.
+  - What replaced the cross-sample deltas: `depth == list_len` INSIDE each snapshot (the bookkeeping invariant, consistent by construction), and `occurrences` of the NAMED KDPC -- `1` after a re-insert is the no-double-enqueue contract without touching the global counter.
+  - The snapshot deliberately excludes `dpc->queued`/`queued_cpu`: those belong to the lock of whichever queue owns the KDPC (`dpc.c:619` locks `DPC_QLOCK(dpc->queued_cpu)`), which need not be the sampled one.
+- [x] Kept the parts of `test_dpc_insert_remove()` that ARE deterministic on the shared queue
+  - `KeInsertQueueDpc`/`KeRemoveQueueDpc` return codes and the `dpc.queued`/`dpc.queued_cpu` binding are read straight off the test's exclusively-owned stack KDPC and asserted unchanged.
+- [x] Did NOT widen any assertion to accept a range -- every expectation is still exact; only the OBSERVATION became serialized.
+- [x] Covered the two depth-accounting sites the original test never reached, both found by review
+  - `test_dpc_drain_depth_accounting()` -- pop-side decrement (`dpc.c:1024`), with a pre-drain snapshot so an insert that silently failed cannot let it pass vacuously, and unconditional `KeRemoveQueueDpc` cleanup so an exhausted retry budget cannot leave a stack KDPC linked in the live queue.
+  - `test_dpc_threaded_handoff_depth()` -- the same decrement on the threaded-handoff path, where the KDPC stays `queued=1` on a second list; runs at `DISPATCH_LEVEL` so the PASSIVE worker cannot pop it first.
+  - `test_dpc_sample_queue_contract()` -- invalid `cpu_id`, NULL `out` (buffer left untouched, checked with a sentinel), NULL `dpc`, and a KDPC on another CPU's queue reporting zero occurrences.
+- [x] Commit: `"test/sched: interference-proof DPC depth accounting"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=sched` green, and the depth assertions still fail when depth bookkeeping is deliberately broken (mutate one `__atomic_sub_fetch` in `dpc.c` and confirm the test goes red -- a control that must fire, or the new seam is measuring nothing).
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched, TEST_CAT_SCHED) | 572 kernel + 17 user-mode PASS (TCG), 4 DPC depth suites, 0 failures
+> **Notes:**
+> - Shipped: `dpc_sample_queue()` + `struct dpc_queue_sample` + `DPC_SAMPLE_MAX_WALK` (`dpc.h`/`dpc.c`), a rewritten `test_dpc_insert_remove()`, and three new suites (`..._drain_depth_accounting`, `..._threaded_handoff_depth`, `..._sample_queue_contract`).
+> - How it integrates: the seam is a read-only diagnostic that takes the existing `DPC_QLOCK(cpu_id)` with `spin_lock_irqsave`, so it is callable up to DIRQL and adds no new lock or ordering; no production caller exists.
+> - Control that fired: removing either `__atomic_sub_fetch(&q->depth, ...)` (`dpc.c:806` remove-side, `dpc.c:1024` pop-side) turns the suite red, and a threaded-ONLY regression (decrement guarded by `!dpc->threaded`) is caught solely by the threaded suite -- so none of the three is redundant.
+> - Bounded walk: `DPC_SAMPLE_MAX_WALK` caps the lock hold time, NOT the queue (which has no depth limit); every consumer asserts `truncated == 0` before comparing `depth` against `list_len`.
+> - Canonical doc: `include/kernel/sched/dpc.h` (the `struct dpc_queue_sample` comment states the ownership contract).
+> - Scope boundary: test surface only -- no change to insert/remove/drain behaviour; the exact `DPC_SAMPLE_MAX_WALK` boundary is deliberately untested (rationale in the review stamp); and `test_dpc_threaded_remove()` (§15) was repaired in passing because it carried the same single-CPU assumption the re-adversarial found here -- the all-CPU PASSIVE worker can win the cancel race, so both tests now flush rather than assert the cancel always wins.
 
 ---
 
@@ -670,12 +684,14 @@ Found during the TODO-26 §2 review (2026-09-04, adversarial + consistency legs 
 | ⭐  | IRQL nesting validation (LIFO) | ❌ No runtime check          | ✅ lockdep IRQ-state          | ⬜ §13 transition stack        |
 | ⭐  | IRQL violation telemetry       | ⚠️ Checked builds only       | ⚠️ Fragmented debug warnings  | ✅ §13 counters + strict trap  |
 | ⭐  | DPC/APC fairness watchdog      | ⚠️ Internal heuristics       | ⚠️ Subsystem-specific         | ✅ §14 budget + 0x133 + APC    |
+| ⭐  | DPC queue-state introspection  | ⚠️ `!dpcs` (debugger only)   | ⚠️ /proc/softirqs counters    | ✅ §19 locked depth + contents |
 
 > **After §1-§8:** Impossible OS reaches parity on the core IRQL contract and DPC architecture: IRQL transitions, per-CPU DPC queues, auto-drain, targeting, importance, and baseline threaded DPC support all exist.
 > **§9-§10** close the remaining timer-DPC and driver-migration gaps so drivers stop treating workqueue as a DPC substitute.
 > **§11-§12** add the APC subsystem -- the per-thread deferred work mechanism required by async I/O completion, `NtQueueApcThread`, alertable waits, and thread cleanup.
 > **§13-§14** turn correctness and fairness into explicit kernel contracts instead of hidden implementation behavior.
 > **§15-§17** fix the threaded-DPC race, flush, and affinity gaps surfaced by the Codex adversarial review.
+> **§18-§19** add the long-period worker primitive and make DPC depth accounting observable under a single lock, so a bookkeeping regression is caught by a test rather than by a stalled idle path.
 
 ---
 

@@ -644,51 +644,277 @@ static void test_dpc_worker_started(void)
                    "dpc_start_threads brings up the all-CPU drain worker");
 }
 
-/* Test: insert/remove return codes, depth accounting, and queued_cpu binding.
- * Runs at HIGH_LEVEL to block this CPU's timer-tick DPC drain so the live
- * per-CPU queue state is observed deterministically.
+/* Test: insert / re-insert / remove on the shared per-CPU DPC queue.
  *
- * HIGH_LEVEL does NOT make this queue private, and an earlier version of this
- * comment claimed it did: dpc_insert_core() lets ANY CPU target this queue and
- * increment its depth under that queue's lock, and raising local IRQL excludes
- * none of that. The depth snapshots below therefore use the same relaxed
- * atomic load the writers use, so the reads are well-defined; what the local
- * IRQL raise buys is only that OUR OWN drain cannot run underneath them. */
+ * Every observation goes through dpc_sample_queue(), which reads the depth
+ * counter AND walks the linked contents in ONE DPC_QLOCK critical section.
+ * That is what makes the assertions interference-proof: any CPU may insert
+ * into this queue (dpc_insert_core lets a remote producer target CPU 0, which
+ * is where this test runs) and raising local IRQL to HIGH_LEVEL stops only
+ * THIS CPU's drain, so exact deltas between separately-read depth samples
+ * verify nothing. Two things are checked instead, both consistent by
+ * construction: depth == list_len inside each snapshot (the depth-bookkeeping
+ * invariant), and the occurrence count of the NAMED KDPC on the list, which no
+ * remote producer can disturb. dpc.queued / dpc.queued_cpu are read from the
+ * KDPC directly -- the test owns that stack object exclusively, and those
+ * fields belong to the owning queue's lock, not necessarily this CPU's. */
 static void test_dpc_insert_remove(void)
 {
     KDPC dpc;
-    struct dpc_queue *q = dpc_this_cpu_queue();
     KIRQL old;
     uint32_t my_cpu = smp_this_cpu()->cpu_id;
     int r1, r2, rm1, rm2;
-    uint32_t qf1, qf2, qcpu, d0, d1, d2, d3;
+    int ok0, ok1, ok2, ok3;
+    uint32_t qf1, qf2, qcpu;
+    struct dpc_queue_sample s0 = {0, 0, 0, 0}, s1 = {0, 0, 0, 0};
+    struct dpc_queue_sample s2 = {0, 0, 0, 0}, s3 = {0, 0, 0, 0};
 
     KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0);
 
     KeRaiseIrql(HIGH_LEVEL, &old);
-    d0   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
+    ok0  = dpc_sample_queue(my_cpu, &dpc, &s0);
     r1   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
     qf1  = dpc.queued;
     qcpu = dpc.queued_cpu;
-    d1   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
+    ok1  = dpc_sample_queue(my_cpu, &dpc, &s1);
     r2   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
-    d2   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
+    ok2  = dpc_sample_queue(my_cpu, &dpc, &s2);
     rm1  = KeRemoveQueueDpc(&dpc);
     qf2  = dpc.queued;
-    d3   = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
+    ok3  = dpc_sample_queue(my_cpu, &dpc, &s3);
     rm2  = KeRemoveQueueDpc(&dpc);
     KeLowerIrql(old);
 
+    /* A truncated walk counted fewer entries than the list holds, so its
+     * list_len says nothing about depth. Reject it outright rather than
+     * comparing against a partial count. */
+    TEST_ASSERT_EQ((uint64_t)ok0, 1u, "snapshot before insert taken");
+    TEST_ASSERT_EQ((uint64_t)ok1, 1u, "snapshot after insert taken");
+    TEST_ASSERT_EQ((uint64_t)ok2, 1u, "snapshot after re-insert taken");
+    TEST_ASSERT_EQ((uint64_t)ok3, 1u, "snapshot after remove taken");
+    TEST_ASSERT_EQ((uint64_t)s0.truncated, 0u, "snapshot 0 walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s1.truncated, 0u, "snapshot 1 walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s2.truncated, 0u, "snapshot 2 walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s3.truncated, 0u, "snapshot 3 walked the whole queue");
+
+    /* Depth bookkeeping: counter and contents were read under one lock, so
+     * this holds at every sample regardless of unrelated queue traffic. */
+    TEST_ASSERT_EQ((uint64_t)s0.depth, (uint64_t)s0.list_len,
+                   "depth matches linked contents before insert");
+    TEST_ASSERT_EQ((uint64_t)s1.depth, (uint64_t)s1.list_len,
+                   "depth matches linked contents after insert");
+    TEST_ASSERT_EQ((uint64_t)s2.depth, (uint64_t)s2.list_len,
+                   "depth matches linked contents after re-insert");
+    TEST_ASSERT_EQ((uint64_t)s3.depth, (uint64_t)s3.list_len,
+                   "depth matches linked contents after remove");
+
+    /* Contract of the NAMED KDPC -- unperturbable by remote producers. */
+    TEST_ASSERT_EQ((uint64_t)s0.occurrences, 0u, "not linked before insert");
     TEST_ASSERT_EQ((uint64_t)r1, 1u, "first insert returns 1 (newly queued)");
     TEST_ASSERT_EQ((uint64_t)qf1, 1u, "queued flag set");
     TEST_ASSERT_EQ((uint64_t)qcpu, (uint64_t)my_cpu, "queued_cpu bound to inserting CPU");
-    TEST_ASSERT_EQ((uint64_t)d1, (uint64_t)(d0 + 1), "depth incremented");
+    TEST_ASSERT_EQ((uint64_t)s1.occurrences, 1u, "linked exactly once after insert");
     TEST_ASSERT_EQ((uint64_t)r2, 0u, "re-insert returns 0 (already queued)");
-    TEST_ASSERT_EQ((uint64_t)d2, (uint64_t)(d0 + 1), "depth unchanged on re-insert");
+    TEST_ASSERT_EQ((uint64_t)s2.occurrences, 1u,
+                   "still linked exactly once after re-insert (no double-enqueue)");
     TEST_ASSERT_EQ((uint64_t)rm1, 1u, "remove returns 1");
     TEST_ASSERT_EQ((uint64_t)qf2, 0u, "queued flag cleared");
-    TEST_ASSERT_EQ((uint64_t)d3, (uint64_t)d0, "depth restored");
+    TEST_ASSERT_EQ((uint64_t)s3.occurrences, 0u, "unlinked after remove");
     TEST_ASSERT_EQ((uint64_t)rm2, 0u, "remove un-queued returns 0");
+}
+
+/* Bounded drain attempts in test_dpc_drain_depth_accounting(). One
+ * KiDispatchDpc() runs at most DPC_BATCH_LIMIT callbacks, and unrelated
+ * producers may have queued entries ahead of ours. */
+#define DPC_DRAIN_TEST_ROUNDS  8
+
+/* Test: the pop-side depth decrement is accounted for.
+ *
+ * The insert/remove test above never reaches drain_queue(), so on its own it
+ * leaves the pop-side decrement unproven -- breaking it would strand q->depth
+ * above the real queue length, suppressing deep idle and falsifying the
+ * watchdog's depth reporting while every other DPC test still passed. Sampling
+ * after a drain closes that: depth and the linked contents are read under one
+ * lock, so depth == list_len is a direct check on the decrement at the pop.
+ *
+ * The PRE-drain snapshot is what stops this being vacuous. Without it, an
+ * insert that silently failed would leave the named DPC absent and unqueued,
+ * the ambient queue would still satisfy depth == list_len, and every assertion
+ * would pass without the drain ever touching our KDPC. That snapshot is taken
+ * at HIGH_LEVEL so a timer tick cannot drain the evidence away first. */
+static void test_dpc_drain_depth_accounting(void)
+{
+    KDPC dpc;
+    struct dpc_queue_sample sp = {0, 0, 0, 0}, s = {0, 0, 0, 0};
+    uint32_t my_cpu = smp_this_cpu()->cpu_id;
+    KIRQL old;
+    int r, okp, ok = 0, rounds, leftover;
+    uint32_t qp;
+
+    KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    r   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    okp = dpc_sample_queue(my_cpu, &dpc, &sp);
+    qp  = dpc.queued;
+    KeLowerIrql(old);
+
+    for (rounds = 0; rounds < DPC_DRAIN_TEST_ROUNDS; rounds++) {
+        KiDispatchDpc();
+        ok = dpc_sample_queue(my_cpu, &dpc, &s);
+        if (ok && !s.truncated && !s.occurrences)
+            break;
+    }
+
+    /* Clean up BEFORE asserting. A failed TEST_ASSERT_EQ records and continues,
+     * so an exhausted retry budget would otherwise return with this stack-owned
+     * KDPC still linked in the live queue -- a later drain would then follow a
+     * pointer into a dead frame. In the expected case the drain already took
+     * it and this is a no-op returning 0. */
+    leftover = KeRemoveQueueDpc(&dpc);
+
+    TEST_ASSERT_EQ((uint64_t)r, 1u, "drain: DPC was actually queued");
+    TEST_ASSERT_EQ((uint64_t)okp, 1u, "drain: pre-drain snapshot taken");
+    TEST_ASSERT_EQ((uint64_t)sp.truncated, 0u,
+                   "drain: pre-drain snapshot walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)sp.occurrences, 1u, "drain: linked exactly once before drain");
+    TEST_ASSERT_EQ((uint64_t)qp, 1u, "drain: queued flag set before drain");
+    TEST_ASSERT_EQ((uint64_t)sp.depth, (uint64_t)sp.list_len,
+                   "drain: depth matches linked contents before drain");
+    TEST_ASSERT_EQ((uint64_t)ok, 1u, "drain: post-drain snapshot taken");
+    TEST_ASSERT_EQ((uint64_t)s.truncated, 0u,
+                   "drain: post-drain snapshot walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s.occurrences, 0u, "drain: DPC left the queue");
+    TEST_ASSERT_EQ((uint64_t)leftover, 0u, "drain: nothing left to clean up");
+    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "drain: queued flag cleared");
+    TEST_ASSERT_EQ((uint64_t)s.depth, (uint64_t)s.list_len,
+                   "drain: depth matches linked contents after drain (pop decrement)");
+}
+
+/* Test: the threaded handoff decrements the NORMAL queue's depth as it moves
+ * the KDPC onto the threaded list. It is the same pop-side site the plain
+ * drain uses, but the handoff deliberately leaves the KDPC OWNED (queued=1) on
+ * a second list, so a regression that unlinked without decrementing would
+ * strand depth above the normal list length while ownership still looked
+ * correct -- and neither the plain drain test nor the existing threaded
+ * cancellation test would notice. Raising to DISPATCH_LEVEL keeps THIS CPU's
+ * drain out of the way but does NOT exclude the all-CPU PASSIVE worker, so the
+ * test tolerates losing the cancel race and flushes instead -- the stack-owned
+ * KDPC must never outlive its frame while still reachable. */
+static void test_dpc_threaded_handoff_depth(void)
+{
+    extern uint32_t dpc_drain_current_cpu(void);
+    KDPC dpc;
+    struct dpc_queue_sample s = {0, 0, 0, 0};
+    uint32_t my_cpu = smp_this_cpu()->cpu_id;
+    KIRQL old;
+    int r, ok, rm;
+
+    KeInitializeThreadedDpc(&dpc, dpc_noop_routine, (void *)0);
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    r  = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);  /* -> normal queue */
+    dpc_drain_current_cpu();                            /* -> threaded list */
+    ok = dpc_sample_queue(my_cpu, &dpc, &s);
+    rm = KeRemoveQueueDpc(&dpc);      /* may LOSE to the worker on another CPU */
+    KeLowerIrql(old);
+
+    /* The threaded worker is ONE all-CPU PASSIVE thread, so raising THIS CPU's
+     * IRQL does not exclude it: on a multi-CPU boot it can pop the node off the
+     * threaded list before the cancel above, clearing dpc.queued underneath the
+     * read. Both outcomes are legal, so neither is asserted -- what must hold is
+     * that this stack-owned KDPC is unreachable before the frame dies, which
+     * means waiting for any in-flight threaded callback when the cancel lost. */
+    if (!rm)
+        KeFlushQueuedDpcs();
+
+    TEST_ASSERT_EQ((uint64_t)r, 1u, "threaded: DPC was actually queued");
+    TEST_ASSERT_EQ((uint64_t)ok, 1u, "threaded: snapshot taken");
+    TEST_ASSERT_EQ((uint64_t)s.truncated, 0u, "threaded: snapshot walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s.occurrences, 0u,
+                   "threaded: off the normal queue after handoff");
+    TEST_ASSERT_EQ((uint64_t)s.depth, (uint64_t)s.list_len,
+                   "threaded: normal-queue depth matches contents after handoff");
+    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u,
+                   "threaded: owned by nobody once cancelled or run");
+    TEST_ASSERT_EQ((uint64_t)dpc_in_flight_threaded(), 0u,
+                   "threaded: no threaded callback left in flight");
+}
+
+/* Sentinel written into a dpc_queue_sample before a call that must be refused,
+ * so "left untouched" is checkable rather than assumed. */
+#define DPC_SAMPLE_SENTINEL  0xEEu
+
+/* Test: dpc_sample_queue() argument and scoping contract. An invalid cpu_id or
+ * a NULL out pointer is refused with the caller's buffer untouched; a NULL
+ * KDPC still yields a valid queue snapshot with no occurrences; and a KDPC
+ * queued on THIS CPU is not counted on another CPU's queue -- occurrences is a
+ * membership count for the sampled queue only, never a global "is it queued"
+ * answer. */
+static void test_dpc_sample_queue_contract(void)
+{
+    KDPC dpc;
+    struct dpc_queue_sample s = {DPC_SAMPLE_SENTINEL, DPC_SAMPLE_SENTINEL,
+                                 DPC_SAMPLE_SENTINEL, DPC_SAMPLE_SENTINEL};
+    struct dpc_queue_sample s_null  = {0, 0, 0, 0};
+    struct dpc_queue_sample s_mine  = {0, 0, 0, 0};
+    struct dpc_queue_sample s_other = {0, 0, 0, 0};
+    uint32_t my_cpu = smp_this_cpu()->cpu_id;
+    uint32_t other  = MAX_CPUS;
+    KIRQL old;
+    int bad_cpu, bad_max, bad_out, ins, ok_mine, ok_null, ok_other = 1;
+    uint32_t i;
+
+    for (i = 0; i < MAX_CPUS; i++) {
+        if (i != my_cpu) {
+            other = i;      /* any other slot, online or not -- the queue and */
+            break;          /* its lock exist for every slot from phase 1 on. */
+        }
+    }
+
+    KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0);
+
+    bad_cpu = dpc_sample_queue(MAX_CPUS, &dpc, &s);
+    bad_max = dpc_sample_queue(0xFFFFFFFFu, &dpc, &s);
+    bad_out = dpc_sample_queue(my_cpu, &dpc, (struct dpc_queue_sample *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    ins     = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    ok_mine = dpc_sample_queue(my_cpu, &dpc, &s_mine);
+    ok_null = dpc_sample_queue(my_cpu, (const KDPC *)0, &s_null);
+    if (other < MAX_CPUS)
+        ok_other = dpc_sample_queue(other, &dpc, &s_other);
+    KeRemoveQueueDpc(&dpc);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)bad_cpu, 0u, "sample: cpu_id == MAX_CPUS refused");
+    TEST_ASSERT_EQ((uint64_t)bad_max, 0u, "sample: cpu_id == UINT32_MAX refused");
+    TEST_ASSERT_EQ((uint64_t)bad_out, 0u, "sample: NULL out pointer refused");
+    TEST_ASSERT_EQ((uint64_t)s.depth, (uint64_t)DPC_SAMPLE_SENTINEL,
+                   "sample: refused call left depth untouched");
+    TEST_ASSERT_EQ((uint64_t)s.list_len, (uint64_t)DPC_SAMPLE_SENTINEL,
+                   "sample: refused call left list_len untouched");
+    TEST_ASSERT_EQ((uint64_t)s.occurrences, (uint64_t)DPC_SAMPLE_SENTINEL,
+                   "sample: refused call left occurrences untouched");
+    TEST_ASSERT_EQ((uint64_t)s.truncated, (uint64_t)DPC_SAMPLE_SENTINEL,
+                   "sample: refused call left truncated untouched");
+    TEST_ASSERT_EQ((uint64_t)ins, 1u, "sample: fixture DPC was actually queued");
+    TEST_ASSERT_EQ((uint64_t)ok_mine, 1u, "sample: own-CPU snapshot taken");
+    TEST_ASSERT_EQ((uint64_t)s_mine.truncated, 0u,
+                   "sample: own-CPU snapshot walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s_mine.occurrences, 1u,
+                   "sample: fixture DPC linked exactly once on its own CPU");
+    TEST_ASSERT_EQ((uint64_t)ok_null, 1u, "sample: NULL dpc still snapshots the queue");
+    TEST_ASSERT_EQ((uint64_t)s_null.occurrences, 0u, "sample: NULL dpc has no occurrences");
+    TEST_ASSERT_EQ((uint64_t)s_null.truncated, 0u,
+                   "sample: NULL-dpc snapshot walked the whole queue");
+    TEST_ASSERT_EQ((uint64_t)s_null.depth, (uint64_t)s_null.list_len,
+                   "sample: NULL-dpc snapshot depth matches contents");
+    TEST_ASSERT_EQ((uint64_t)ok_other, 1u, "sample: another CPU's slot snapshots");
+    TEST_ASSERT_EQ((uint64_t)s_other.occurrences, 0u,
+                   "sample: KDPC on this CPU is not counted on another CPU's queue");
+    TEST_ASSERT_EQ((uint64_t)s_other.depth, (uint64_t)s_other.list_len,
+                   "sample: another CPU's snapshot depth matches contents");
 }
 
 /* Test: HighImportance DPC is head-inserted ahead of an earlier queued DPC. */
@@ -1484,8 +1710,12 @@ static void test_dpc_watchdog_strict_toggle(void)
 /* Test: after drain_queue hands a threaded DPC to the threaded list, it stays
  * queued=1 (owned, never un-owned mid-transition) and KeRemoveQueueDpc can
  * still cancel it -- it unlinks from the threaded list, not just the normal
- * queue. Run at DISPATCH_LEVEL so the PASSIVE worker thread cannot pop the node
- * before the assertions (deterministic in the single-CPU test harness). */
+ * queue. Runs at DISPATCH_LEVEL to keep THIS CPU's drain out of the way, which
+ * is NOT worker exclusion: the threaded worker is one all-CPU PASSIVE thread
+ * and on a multi-CPU boot it can pop the node before the cancel. The earlier
+ * version of this test assumed the single-CPU harness and asserted the cancel
+ * always won, which both raced the worker's write to dpc.queued and could let
+ * an in-flight callback outlive this stack-owned KDPC. */
 static void test_dpc_threaded_remove(void)
 {
     extern uint32_t dpc_drain_current_cpu(void);
@@ -1499,12 +1729,22 @@ static void test_dpc_threaded_remove(void)
     KeInsertQueueDpc(&dpc, (void *)0, (void *)0);   /* -> normal queue, queued=1 */
     dpc_drain_current_cpu();                         /* -> threaded list, queued stays 1 */
     qf_after_handoff = dpc.queued;
-    rm = KeRemoveQueueDpc(&dpc);                      /* must find + unlink on threaded list */
+    rm = KeRemoveQueueDpc(&dpc);                      /* find + unlink on the threaded list */
     KeLowerIrql(old);
 
-    TEST_ASSERT_EQ((uint64_t)qf_after_handoff, 1u, "threaded DPC stays owned after handoff");
-    TEST_ASSERT_EQ((uint64_t)rm, 1u, "KeRemoveQueueDpc cancels a threaded-pending DPC");
-    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "queued cleared after threaded cancel");
+    /* Cancel lost the race: the worker owns it now, so wait for the callback to
+     * return before this frame (and the KDPC in it) goes away. */
+    if (!rm)
+        KeFlushQueuedDpcs();
+
+    /* qf_after_handoff is 1 only while the worker has not popped it yet. Either
+     * observation is legal; what is NOT legal is the KDPC still being owned
+     * once the cancel-or-flush is done. */
+    TEST_ASSERT_EQ((uint64_t)(qf_after_handoff == 1u || rm == 0), 1u,
+                   "threaded DPC stays owned after handoff unless the worker took it");
+    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "queued cleared after threaded cancel or run");
+    TEST_ASSERT_EQ((uint64_t)dpc_in_flight_threaded(), 0u,
+                   "no threaded callback left in flight when the test returns");
 }
 
 /* ---- Section 16: KeFlushQueuedDpcs threaded DPC completion -------------- */
@@ -1624,6 +1864,12 @@ void test_register_sched(void)
                             test_dpc_flush_runs_at_dispatch, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC insert/remove + queued_cpu",
                             test_dpc_insert_remove, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC drain depth accounting",
+                            test_dpc_drain_depth_accounting, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC threaded handoff depth accounting",
+                            test_dpc_threaded_handoff_depth, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: dpc_sample_queue argument contract",
+                            test_dpc_sample_queue_contract, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC HighImportance head-insert",
                             test_dpc_high_importance_head, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC importance ABI values",
