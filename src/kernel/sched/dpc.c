@@ -500,6 +500,7 @@ int dpc_sample_queue(uint32_t cpu_id, const KDPC *dpc,
     const KDPC *cur;
     uint64_t irq_flags;
     uint32_t len = 0, occ = 0, truncated = 0, depth;
+    uint32_t tocc = 0, visited = 0;
 
     if (cpu_id >= MAX_CPUS || !out)
         return 0;
@@ -507,22 +508,42 @@ int dpc_sample_queue(uint32_t cpu_id, const KDPC *dpc,
     q = &cpu_queues[cpu_id];
 
     spin_lock_irqsave(DPC_QLOCK(cpu_id), &irq_flags);
+    /* ONE budget across BOTH walks, not one each: the cap is a bound on how long
+     * this holds DPC_QLOCK with interrupts off, and two independently-capped
+     * loops under a single acquire would make the real bound twice the one the
+     * header advertises. */
     for (cur = q->head; cur; cur = cur->next) {
-        if (len >= DPC_SAMPLE_MAX_WALK) {
+        if (visited >= DPC_SAMPLE_MAX_WALK) {
             truncated = 1;
             break;
         }
+        visited++;
         len++;
         if (cur == dpc)
             occ++;
     }
     depth = __atomic_load_n(&q->depth, __ATOMIC_RELAXED);
+    /* Same critical section, same lock: threaded_q[cpu_id] is covered by
+     * DPC_QLOCK(cpu_id) exactly as the normal queue is (drain_queue moves a node
+     * between the two while holding it once), so a caller can tell "off the
+     * normal queue AND on the threaded list" from "off both" with no window in
+     * between. Bounded by the same cap, sharing the truncated flag. */
+    for (cur = threaded_q[cpu_id].head; cur; cur = cur->next) {
+        if (visited >= DPC_SAMPLE_MAX_WALK) {
+            truncated = 1;
+            break;
+        }
+        visited++;
+        if (cur == dpc)
+            tocc++;
+    }
     spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
-    out->depth       = depth;
-    out->list_len    = len;
-    out->occurrences = occ;
-    out->truncated   = truncated;
+    out->depth                = depth;
+    out->list_len             = len;
+    out->occurrences          = occ;
+    out->truncated            = truncated;
+    out->threaded_occurrences = tocc;
     return 1;
 }
 
