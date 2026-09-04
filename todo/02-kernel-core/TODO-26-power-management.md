@@ -90,7 +90,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   7   | §7 Power & sleep button event dispatch                           | §1                          |  [x]   |
 | 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                   | §1                          |  [x]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [/]   |
-| ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3            |  [ ]   |
+| ⭐  |  10   | §10 Connected standby S0ix detection + MWAIT C10 entry/exit      | §2, §9, D02T06§3            |  [ ]   |
 | 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                 |  [ ]   |
 | 💎  |  12   | §12 Runtime device idle management                               | §8, §9                      |  [ ]   |
 | 💎  |  13   | §13 Power request tracking & wake source management              | §9, §12                     |  [ ]   |
@@ -115,6 +115,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | ⭐  |  32   | §32 Human presence detection (wake on approach, lock on leave)   | §7, D04T03§1                |  [/]   |
 | 💎  |  33   | §33 PM device registry (`pm_device_t`, `pm_register_device`)     | §8                          |  [ ]   |
 | 💎  |  34   | §34 PCI D3cold via ACPI `_PS0`/`_PS3` platform methods           | §8, §33, D04T03§1           |  [ ]   |
+| ⭐  |  35   | §35 Directed power (DFx) stack walk + DRIPS residency accounting | §9, §10, §12                |  [ ]   |
+| 💎  |  36   | §36 NIC wake offloads (ARP/NS reply, WoL, wake patterns, D0i3)   | §10, §12                    |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -662,6 +664,9 @@ The config-space-only half of the PCI D-state work: capability discovery and the
 ---
 
 ## 10. Connected Standby (S0ix / Modern Standby)
+
+> **Spawned-by:** §10 (split)
+
 - [ ] Check FADT `LOW_POWER_S0_IDLE_CAPABLE` flag (bit 21 of `Flags` field, ACPI 5.0+); if set: the platform supports connected standby and S3 may not be in the `\_Sx_` objects at all
 - [ ] `acpi_s0ix_supported()` -- returns true if `LOW_POWER_S0_IDLE_CAPABLE` and the `_DSM` with `{GUID: S0ix}` is present in the DSDT
 - [ ] On such platforms, `pm_enter_s3()` (§3) is replaced by `pm_enter_s0ix()` transparently; the sleep state entry point remains the same for the rest of the OS
@@ -670,23 +675,12 @@ The config-space-only half of the PCI D-state work: capability discovery and the
   2. Gate DRAM self-refresh: set `MC_PM_STS` power gate bit in the Memory Controller MMIO space (Intel-specific; skip on AMD)
   3. Notify platform firmware via `\_OSC` (OS Capabilities) ACPI method that the OS is entering S0ix
   4. `__asm__ volatile ("mwait" : : "a"(MWAIT_HINT_C10) : "memory")` on each CPU; the hardware enters the deepest idle state; wakeup restores execution after `mwait`
-- [ ] Network keepalive: the NIC (if `_DSM` advertises DRIPS/D0ix support) remains powered in D0i3 state for ARP/IPv6 NS replies and WoL packets; `rtl8139_d0i3_enter()` / `rtl8139_d0i3_exit()` stubs (full implementation depends on the specific NIC driver)
 - [ ] Any interrupt or I/O wakes the CPU from `mwait`; execution resumes immediately after the `mwait` instruction; no page table or register restore needed (unlike S3)
 - [ ] Call `pm_notify_resume(PM_RESUME_S0IX)` (§9) to un-gate devices
 - [ ] TSC recalibration (→ XREF: `TODO-08-time-filetime-management.md §3`) may be needed if `mwait` C10 was held for > 1 second (TSC stops in deep C-states on some CPUs)
-- [ ] Directed PoFx (DFx, PoFx v3): the power manager *directs* entire device stacks to enter low-power during Modern Standby idle when no activator-brokered activity; unlike runtime PM where the device self-idles, DFx is top-down OS-directed
-- [ ] `pm_dfx_power_down(dev_stack)` -- OS calls `PO_FX_DIRECTED_POWER_DOWN_CALLBACK` on each driver in the stack; driver must save state, stop DMA, enter D3
-- [ ] `pm_dfx_power_up(dev_stack)` -- called on activator wake or system exit from S0ix; driver restores state
-- [ ] DRIPS (Deepest Runtime Idle Platform State) tracking: `drips_pct = time_all_devices_idle / total_s0ix_time * 100`; target > 95% for good battery life; exposed via `powercfg /sleepstudy`
-- [ ] Devices that block DRIPS logged: `[S0IX] DRIPS blocker: %s (active for %u ms)` -- helps diagnose battery drain
-- [ ] ARP offload: program NIC hardware to respond to ARP requests while CPU sleeps; `nic_add_arp_offload(ipv4_addr)` writes to NIC offload registers (driver-specific)
-- [ ] IPv6 Neighbor Solicitation offload: `nic_add_ns_offload(ipv6_addr)` -- NIC responds to NS without waking CPU
-- [ ] Wake-on-LAN: `nic_set_wol(dev, WAKE_MAGIC | WAKE_PATTERN)` -- configure Magic Packet wake and pattern-match wake via NIC `WOL_CR` register
-- [ ] Wake-on-Pattern: `nic_add_wake_pattern(dev, pattern, mask, offset)` -- wake CPU on specific packet match (e.g. incoming VoIP SIP INVITE)
-- [ ] NIC D0i3 entry/exit callbacks registered via §12 runtime PM; NIC maintains minimal firmware for offload processing
-- [ ] Commit: `"kernel/acpi: connected standby S0ix, DFx directed power, MWAIT C10, network offloads"`
+- [ ] Commit: `"kernel/acpi: connected standby S0ix detection and MWAIT C10 entry/exit"`
 
-**Test checkpoint:** `acpi_s0ix_supported()` reads FADT `LOW_POWER_S0_IDLE_CAPABLE` flag. MWAIT with C10 hint accepted on supported CPU. DFx `pm_dfx_power_down()` transitions device stack to D3. DRIPS % computed. ARP/NS offload registers written (or skip if no NIC). Test on: QEMU TCG (S0ix flag not set -- graceful skip expected).
+**Test checkpoint:** `acpi_s0ix_supported()` reads FADT `LOW_POWER_S0_IDLE_CAPABLE` flag and returns false when the bit is clear. MWAIT C10 hint gated on the CPUID MONITOR/MWAIT leaf before it is issued. `pm_enter_s0ix()` refuses on an unsupported platform rather than executing `mwait`. Test on: QEMU TCG (S0ix flag not set -- graceful skip expected).
 
 ---
 
@@ -1509,6 +1503,42 @@ D3cold removes VCC from the device, so it is not a PMCSR write at all: it is an 
 - [ ] Commit: `"kernel/pci: D3cold entry/exit via ACPI _PS0/_PS3, config-space restore contract"`
 
 **Test checkpoint:** `pci_d3cold_capable()` is false for a device with no `_PS3` and does not claim D3cold. `pci_d3cold_enter()` reaches D3hot before evaluating `_PS3`. `pci_d3cold_exit()` applies the delay before touching config space. Test on: QEMU TCG (no emulated D3cold hardware exists; the ACPI method path is what is exercised).
+
+---
+
+## 35. Directed Power (DFx) and DRIPS Residency Accounting
+
+> **Spawned-by:** §10 (split)
+
+- [ ] Directed PoFx (DFx, PoFx v3): the power manager *directs* entire device stacks to enter low-power during Modern Standby idle when no activator-brokered activity; unlike runtime PM where the device self-idles, DFx is top-down OS-directed
+- [ ] `pm_dfx_power_down(dev_stack)` -- OS calls `PO_FX_DIRECTED_POWER_DOWN_CALLBACK` on each driver in the stack; driver must save state, stop DMA, enter D3
+- [ ] `pm_dfx_power_up(dev_stack)` -- called on activator wake or system exit from S0ix; driver restores state
+- [ ] Stack ordering is the inverse of §9 resume ordering: power DOWN leaf-first, power UP root-first, so a child never runs against a powered-off parent
+- [ ] A driver that returns failure from a directed power-down aborts the stack walk and unwinds the already-powered-down children, same contract as the §9 suspend unwind
+- [ ] DRIPS (Deepest Runtime Idle Platform State) tracking: `drips_pct = time_all_devices_idle / total_s0ix_time * 100`; target > 95% for good battery life; exposed via `powercfg /sleepstudy`
+- [ ] Devices that block DRIPS logged: `[S0IX] DRIPS blocker: %s (active for %u ms)` -- helps diagnose battery drain
+- [ ] DRIPS accounting must be monotonic-clock based and overflow-safe: a residency counter that wraps must not produce a percentage above 100 or a negative idle span
+- [ ] Commit: `"kernel/pm: directed power (DFx) stack walk and DRIPS residency accounting"`
+
+**Test checkpoint:** `pm_dfx_power_down()` walks a fixture stack leaf-first and `pm_dfx_power_up()` root-first. A mid-stack failure unwinds exactly the devices already powered down. `drips_pct` is 0 with no idle time, 100 with fully idle time, and never exceeds 100 across a counter wrap. Blocker log names the offending device. Test on: QEMU TCG (fixture stacks; no real S0ix platform).
+
+---
+
+## 36. NIC Wake Offloads for Connected Standby (ARP/NS/WoL/Patterns)
+
+> **Spawned-by:** §10 (split)
+
+- [ ] Network keepalive: the NIC (if `_DSM` advertises DRIPS/D0ix support) stays powered in D0i3 state for ARP/IPv6 NS replies and WoL packets
+  - `rtl8139_d0i3_enter()` / `rtl8139_d0i3_exit()` stubs; the full implementation depends on the specific NIC driver
+- [ ] ARP offload: program NIC hardware to respond to ARP requests while CPU sleeps; `nic_add_arp_offload(ipv4_addr)` writes to NIC offload registers (driver-specific)
+- [ ] IPv6 Neighbor Solicitation offload: `nic_add_ns_offload(ipv6_addr)` -- NIC responds to NS without waking CPU
+- [ ] Wake-on-LAN: `nic_set_wol(dev, WAKE_MAGIC | WAKE_PATTERN)` -- configure Magic Packet wake and pattern-match wake via NIC `WOL_CR` register
+- [ ] Wake-on-Pattern: `nic_add_wake_pattern(dev, pattern, mask, offset)` -- wake CPU on specific packet match (e.g. incoming VoIP SIP INVITE)
+- [ ] Offload slots are a bounded hardware resource: registration past the device's slot count fails with a distinct status rather than silently overwriting an existing offload
+- [ ] NIC D0i3 entry/exit callbacks registered via §12 runtime PM; NIC maintains minimal firmware for offload processing
+- [ ] Commit: `"kernel/net: NIC wake offloads -- ARP/NS reply, WoL magic and pattern match, D0i3"`
+
+**Test checkpoint:** `nic_add_arp_offload()` and `nic_add_ns_offload()` reject a registration past the slot bound with a distinct status and leave existing slots intact. `nic_set_wol()` composes the magic+pattern mask without clobbering unrelated `WOL_CR` bits. `nic_add_wake_pattern()` validates offset+length against the pattern buffer. Test on: QEMU TCG (no emulated NIC wake hardware; the register-composition and bounds paths are what is exercised).
 
 ---
 
