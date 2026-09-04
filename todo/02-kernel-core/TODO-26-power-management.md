@@ -88,7 +88,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   5   | §5 ACPI EC driver (discovery+transactions; GATED OFF, needs §24) | §1                          |  [/]   |
 | 💎  |   6   | §6 Battery & AC adapter ACPI source layer (`_BIX`/`_BST`/`_PSR`) | §29, D04T03§1               |  [/]   |
 | 💎  |   7   | §7 Power & sleep button event dispatch                           | §1                          |  [x]   |
-| 💎  |   8   | §8 PCI device D-states (D0--D3cold)                              | §1                          |  [ ]   |
+| 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                   | §1                          |  [ ]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [ ]   |
 | ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3            |  [ ]   |
 | 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                 |  [ ]   |
@@ -113,6 +113,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  30   | §30 Battery charge limiting and smart charging                   | §5, §24, §29                |  [/]   |
 | 💎  |  31   | §31 Lid state and lid-close policy                               | §5, §7, §24, D04T03§1       |  [/]   |
 | ⭐  |  32   | §32 Human presence detection (wake on approach, lock on leave)   | §7, D04T03§1                |  [/]   |
+| 💎  |  33   | §33 PM device registry (`pm_device_t`, `pm_register_device`)     | §8                          |  [ ]   |
+| 💎  |  34   | §34 PCI D3cold via ACPI `_PS0`/`_PS3` platform methods           | §8, §33, D04T03§1           |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -542,8 +544,16 @@ The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_
 
 ---
 
-## 8. PCI Device D-States (D0--D3cold)
-- [ ] `pci_pmcap_find(dev)` -- walk PCI Capabilities linked list (cap ID `0x01` = Power Management) in config space; return cap offset or -1
+## 8. PCI Power Management Capability and D0--D3hot State Machine
+
+> **Spawned-by:** root
+
+The config-space-only half of the PCI D-state work: capability discovery and the D0/D1/D2/D3hot transitions the PCI Local Bus spec defines entirely within PMCSR. Two pieces split out of this section because they depend on machinery this one does not: the per-device power registry (§33) and D3cold, which needs ACPI control-method evaluation (§34).
+> → XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "`pm_register_device(dev, on_sleep, on_wake)` -- called by each PCI driver at probe time; adds to the global `pm_device_list`")
+> → XREF: `02-kernel-core/TODO-26-power-management.md` §34 (item: "`pci_d3cold_enter(dev)` -- `pci_set_d_state(dev, 3)` first (D3hot), then evaluate `_PS3`")
+
+- [ ] `pci_pmcap_find(dev)` -- walk the PCI Capabilities linked list (cap ID `0x01` = Power Management) in config space; return cap offset or -1
+  - Gate the walk on `PCI_STATUS` bit 4 (Capabilities List) and bound it: a malformed or absent list is a hang otherwise.
 - [ ] `pci_pmcap_read(dev)` -> `PCI_PMCAP` struct:
   ```c
   typedef struct {
@@ -556,26 +566,14 @@ The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_
   #define PMCSR_PME_EN           0x0100
   #define PMCSR_PME_STATUS       0x8000
   ```
-- [ ] `pci_set_d_state(dev, state)` -- write `state & 0x3` to `PMCSR` power state bits; wait 10 ms for D3hot->D0 transition (PCI spec minimum); return `PCI_DX_OK` or `PCI_DX_UNSUPPORTED` if no PM capability
-- [ ] D3cold (power completely removed) requires platform support: evaluate `\_SB.PCI0.DEV._PS3` ACPI method (if present) to cut VCC to the device; `_PS0` to restore power for D3cold->D0
-- [ ] `pci_d3cold_enter(dev)` -- call `pci_set_d_state(dev, 3)` first (D3hot), then evaluate `_PS3`; note: device config space is inaccessible in D3cold
-- [ ] `pci_d3cold_exit(dev)` -- evaluate `_PS0`; wait `_D0D3COLD_DELAY` ms (ACPI `_DSM` if present, else 100 ms default); then `pci_set_d_state(dev, 0)`
-- [ ] `pm_device_t` struct registered per PCI device:
-  ```c
-  typedef struct {
-      uint8_t  bus, dev, fn;   /* PCI BDF */
-      uint8_t  current_d_state; /* 0--3 */
-      uint8_t  target_d_state;  /* requested by power manager */
-      uint8_t  d3cold_capable;
-      void    *driver_ctx;
-      pm_power_callback_t on_sleep;  /* §9 */
-      pm_power_callback_t on_wake;   /* §9 */
-  } pm_device_t;
-  ```
-- [ ] `pm_register_device(dev, on_sleep, on_wake)` -- called by each PCI driver at probe time; adds to the global `pm_device_list`
-- [ ] Commit: `"kernel/acpi: PCI D-state machine, D0/D3hot/D3cold transitions, pm_register_device"`
+- [ ] `pci_set_d_state(dev, state)` -- write `state & 0x3` to the `PMCSR` power state bits; return `PCI_DX_OK` or `PCI_DX_UNSUPPORTED`
+  - `PCI_DX_UNSUPPORTED` covers both no PM capability at all and a D1/D2 the `PMCAP` capability bits say the device does not support.
+- [ ] Honour the PCI PM spec recovery delays rather than one blanket wait: D3hot->D0 and D2->D0 require 10 ms before the first config access, D1->D0 200 us, D0->D3hot none
+  - A device is not addressable during the delay, so the wait belongs inside `pci_set_d_state()` and not in each caller.
+- [ ] `pci_get_d_state(dev)` -- read the PMCSR power-state field back, so the state machine's source of truth is the hardware and not a value the driver believes it wrote
+- [ ] Commit: `"kernel/pci: PM capability discovery, D0/D1/D2/D3hot state machine, spec recovery delays"`
 
-**Test checkpoint:** `pci_pmcap_find(dev)` returns valid offset for PM-capable device (or -1 for device without PM cap). `pci_set_d_state(dev, 3)` writes PMCSR. `pci_set_d_state(dev, 0)` restores D0 after 10 ms delay. `pm_register_device()` adds to global list. Test on: QEMU TCG + WHPX.
+**Test checkpoint:** `pci_pmcap_find()` returns a valid offset for a PM-capable device and -1 both for a device without the capability and for one whose `PCI_STATUS` capability bit is clear. `pci_set_d_state(dev, 3)` writes PMCSR and `pci_get_d_state()` reads 3 back. `pci_set_d_state(dev, 0)` restores D0 after the 10 ms recovery delay. A D1 request against a device whose `PMCAP` does not advertise D1 returns `PCI_DX_UNSUPPORTED` rather than writing. Test on: QEMU TCG + WHPX.
 
 ---
 
@@ -1381,6 +1379,59 @@ Wake-on-approach and lock-on-leave. This is presence-sensing HARDWARE, and delib
 
 ---
 
+
+## 33. PM Device Registry (`pm_device_t`, `pm_register_device`)
+
+> **Spawned-by:** §8 (split)
+
+The per-device power-state record and the registry every later power path walks. Split out of §8 because it is a kernel-core data structure with its own lifetime and locking questions, not part of the PCI config-space state machine: §9 iterates it to notify drivers, §12 uses it for runtime idle, and §23 hangs ASPM policy off it. §8 lands first so a registered device has a real D-state to record.
+> → XREF: `02-kernel-core/TODO-26-power-management.md` §9 (item: "`pm_notify_sleep(state)` -- iterates `pm_device_list` in **reverse** priority order")
+> → XREF: `02-kernel-core/TODO-26-power-management.md` §12 (item: "`pm_runtime_register(dev, ops, idle_timeout_ms)` -- register a device for runtime PM") -- runtime idle keys off the same per-device record
+
+- [ ] `pm_device_t` struct registered per PCI device:
+  ```c
+  typedef struct {
+      uint8_t  bus, dev, fn;   /* PCI BDF */
+      uint8_t  current_d_state; /* 0--3 */
+      uint8_t  target_d_state;  /* requested by power manager */
+      uint8_t  d3cold_capable;
+      void    *driver_ctx;
+      pm_power_callback_t on_sleep;  /* §9 */
+      pm_power_callback_t on_wake;   /* §9 */
+  } pm_device_t;
+  ```
+- [ ] `pm_register_device(dev, on_sleep, on_wake)` -- called by each PCI driver at probe time; adds to the global `pm_device_list`
+  - Reject a duplicate BDF rather than adding a second record, so a re-probe cannot produce two entries the notification walk would call twice.
+- [ ] Fixed-capacity static array (no `kmalloc` on the probe path) with a documented bound and a refusal return when it is full; log the refusal once rather than once per device
+- [ ] SMP: registration happens at probe time on any CPU while §9's notification walk may be running, so the registry needs a spinlock and the walk needs a stable snapshot
+  - State the ownership rule in the header: the registry owns the record, the driver owns `driver_ctx`.
+- [ ] `pm_device_find(bus, dev, fn)` and `pm_device_count()` -- lookup and enumeration for §12/§13/§23 and for the tests
+- [ ] Commit: `"kernel/pm: pm_device_t registry, pm_register_device, BDF-keyed lookup"`
+
+**Test checkpoint:** `pm_register_device()` adds to the global list and `pm_device_count()` reflects it. A duplicate BDF registration is refused rather than duplicated. Filling the array returns the refusal code and does not write past the bound. `pm_device_find()` returns the registered record and NULL for an unregistered BDF. Test on: QEMU TCG.
+
+---
+
+## 34. PCI D3cold via ACPI `_PS0`/`_PS3` Platform Methods
+
+> **Spawned-by:** §8 (split)
+
+D3cold removes VCC from the device, so it is not a PMCSR write at all: it is an ACPI control method the platform evaluates. Split out of §8 for exactly that reason -- §8 needs nothing but config space, this needs AML method evaluation, and merging them would have held the shippable half behind the blocked half.
+> → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "Initialisation sequence in `acpi_init()`") -- ACPICA namespace init is the prerequisite; `AcpiEvaluateObject` has no initialised namespace to evaluate against until it lands
+> → XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "`pci_set_d_state(dev, state)` -- write `state & 0x3` to the `PMCSR` power state bits") -- the D3hot step D3cold entry builds on
+
+- [ ] D3cold (power completely removed) requires platform support: evaluate the device's `_PS3` ACPI method (if present) to cut VCC, and `_PS0` to restore power for the D3cold->D0 transition
+  - Resolve the method off the device's own namespace node, not a hardcoded `\_SB.PCI0.DEV` path -- that path is correct for exactly one firmware layout.
+- [ ] `pci_d3cold_capable(dev)` -- report capability honestly from the presence of `_PS3`/`_PS0` on the node plus `_PR3` power resources; absent methods mean D3hot is the deepest state, and the answer is no rather than a silent downgrade
+- [ ] `pci_d3cold_enter(dev)` -- `pci_set_d_state(dev, 3)` first (D3hot), then evaluate `_PS3`; config space is inaccessible afterwards, so nothing may read the device back to confirm
+- [ ] `pci_d3cold_exit(dev)` -- evaluate `_PS0`, wait the `_DSM`-reported `D0D3COLD_DELAY` (else the 100 ms default), then `pci_set_d_state(dev, 0)`
+  - The device has lost all config state across D3cold, so the caller restores BARs, command register, and interrupt line.
+- [ ] Record the config-space restore contract in the header: D3cold is the one transition after which a driver may NOT assume its device is where it left it
+- [ ] Commit: `"kernel/pci: D3cold entry/exit via ACPI _PS0/_PS3, config-space restore contract"`
+
+**Test checkpoint:** `pci_d3cold_capable()` is false for a device with no `_PS3` and does not claim D3cold. `pci_d3cold_enter()` reaches D3hot before evaluating `_PS3`. `pci_d3cold_exit()` applies the delay before touching config space. Test on: QEMU TCG (no emulated D3cold hardware exists; the ACPI method path is what is exercised).
+
+---
 
 ## OS Comparison
 
