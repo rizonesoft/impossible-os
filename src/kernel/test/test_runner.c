@@ -1015,6 +1015,7 @@ extern void test_register_acpi_power(void);
 extern void test_register_acpi_ec(void);
 extern void test_register_pci_pm(void);
 extern void test_register_pm_idle(void);
+extern void test_register_pm_callback(void);
 extern void test_register_hibernate_image(void);
 extern void test_register_exec(void);
 extern void test_register_kimage(void);
@@ -1188,6 +1189,7 @@ void test_runner_init(void)
     test_register_acpi_ec();
     test_register_pci_pm();
     test_register_pm_idle();
+    test_register_pm_callback();
     test_register_hibernate_image();
 
     /* Desktop UI */

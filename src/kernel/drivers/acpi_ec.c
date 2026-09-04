@@ -26,6 +26,7 @@
 #include "kernel/klog.h"
 #include "kernel/sched/mutex.h"
 #include "kernel/time/mono_clock.h"
+#include "kernel/pm/power_callback.h"
 
 /* "ECDT" packed little-endian, the form acpi_get_raw_table() keys on. */
 #define ECDT_SIGNATURE  0x54444345u  /* 'E' | 'C'<<8 | 'D'<<16 | 'T'<<24 */
@@ -794,6 +795,73 @@ int acpi_ec_write(uint8_t addr, uint8_t val)
     return rc;
 }
 
+/* ---- Power callbacks -----------------------------------------------------
+ *
+ * XREF: 02-kernel-core/TODO-26-power-management.md section 9
+ *
+ * On resume the controller cannot be trusted until it has been re-proven idle:
+ * firmware may have run its own transactions while this kernel was asleep, and
+ * a stale output byte left in the data register would be consumed as the first
+ * byte of the next transaction. acpi_ec_quiesce_io() is exactly that bounded
+ * idle proof.
+ *
+ * There is deliberately NO on_sleep half. The pre-sleep work this driver
+ * actually needs is disabling and re-arming the EC GPE around the transition
+ * (Linux additionally forces polling in the noirq window), and nothing in this
+ * kernel owns a GPE yet -- which is the same missing capability that keeps the
+ * EC gated off. Registering a sleep callback that did nothing would tell the
+ * dispatcher the EC was quiesced when it was not.
+ *   -> XREF: 02-kernel-core/TODO-26-power-management.md section 24 (item:
+ *      "acpi_gpe_enable(n) / acpi_gpe_disable(n) so a driver arms only the
+ *      events it services") -- the owner of the sleep half.
+ */
+static int acpi_ec_on_wake(uint32_t state, void *ctx)
+{
+    int rc;
+
+    (void)state;
+    (void)ctx;
+
+    /* Discovered-but-not-driven is the common case on this tree (the EC stays
+     * gated off without GPE acknowledgement). Driving I/O at a controller this
+     * kernel has declined to own would be worse than doing nothing. */
+    if (!acpi_ec_ready())
+        return 0;
+
+    /* TRY-lock, never a blocking acquire. The resume walk runs with the
+     * SCHEDULER FROZEN (the S3 sequence freezes it before sleeping and calls
+     * pm_notify_resume() before unfreezing), so a frozen thread holding this
+     * mutex could never release it and a blocking acquire would hang the
+     * resume forever -- with no diagnostic, because the overrun budget is
+     * measured after a callback RETURNS.
+     *
+     * Refusing is the honest outcome: the controller genuinely was not proven
+     * idle. Closing this properly needs a pre-sleep admission gate that drains
+     * the lock owner while scheduling still runs, and that belongs with the EC
+     * sleep half, which is blocked on GPE control.
+     *   -> XREF: 02-kernel-core/TODO-26-power-management.md section 24 (item:
+     *      "acpi_gpe_enable(n) / acpi_gpe_disable(n) so a driver arms only the
+     *      events it services") */
+    if (!mutex_trylock(&g_ec_lock)) {
+        klog(LOG_WARN, "acpi_ec",
+             "resume idle proof skipped: a transaction still holds the EC lock");
+        return ACPI_EC_UNAVAIL;
+    }
+
+    rc = acpi_ec_quiesce_io(&g_hw_io, &g_ports, &g_state);
+    mutex_unlock(&g_ec_lock);
+
+    if (rc != ACPI_EC_OK) {
+        klog(LOG_WARN, "acpi_ec",
+             "resume idle proof failed (status %d) -- EC left desynchronised",
+             (int64_t)rc);
+        return rc;
+    }
+
+    klog(LOG_INFO, "acpi_ec", "resume idle proof passed");
+    return 0;
+}
+
 int acpi_ec_read_block(uint8_t first_addr, uint8_t *out, uint32_t count)
 {
     int rc;
@@ -884,6 +952,14 @@ void acpi_ec_init(void)
     g_ports  = parsed;
     g_state.desync = 0;
     __atomic_store_n(&g_discovered, 1, __ATOMIC_RELEASE);
+
+    /* Register for resume notification as soon as an EC is DISCOVERED, not
+     * only once it is drivable: whether this kernel may drive the controller
+     * can change after this point, and the callback re-checks readiness at
+     * dispatch time. Registering only on the ready path would silently skip
+     * the idle proof on every machine whose EC becomes drivable later. */
+    (void)pm_register_power_callback(PM_PRI_INPUT, (pm_power_callback_t)0,
+                                     acpi_ec_on_wake, (void *)0, "acpi_ec");
 
     if (!ec_gpe_ack_supported() || !ec_global_lock_satisfied()) {
         /* Discovered and validated, but deliberately not driven. Stated at

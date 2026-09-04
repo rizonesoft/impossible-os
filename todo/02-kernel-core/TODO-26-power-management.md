@@ -89,7 +89,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   6   | §6 Battery & AC adapter ACPI source layer (`_BIX`/`_BST`/`_PSR`) | §29, D04T03§1               |  [/]   |
 | 💎  |   7   | §7 Power & sleep button event dispatch                           | §1                          |  [x]   |
 | 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                   | §1                          |  [x]   |
-| 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [ ]   |
+| 💎  |   9   | §9 Driver power callbacks & resume ordering                      | §3, §8                      |  [/]   |
 | ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)                    | §2, §9, D02T06§3            |  [ ]   |
 | 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                   | §4, §9, §28                 |  [ ]   |
 | 💎  |  12   | §12 Runtime device idle management                               | §8, §9                      |  [ ]   |
@@ -621,27 +621,35 @@ The config-space-only half of the PCI D-state work: capability discovery and the
 ---
 
 ## 9. Driver Power Callbacks & Resume Ordering
-- [ ] EC-specific sleep/resume handling, registered like any other driver callback. -> XREF: `02-kernel-core/TODO-26-power-management.md` §5 (item: "`acpi_ec_init()` -- Phase 2")
-  - On resume the controller cannot be trusted until it is re-proven idle: flush stale output and re-run the bounded idle proof (`acpi_ec_quiesce_io()` already exists for this) before any transaction. Linux additionally disables and re-arms the EC GPE around suspend, switches to forced polling in the noirq window, and carries a clear-on-resume quirk for firmware that leaves output latched.
+- [x] EC-specific sleep/resume handling, registered like any other driver callback. -> XREF: `02-kernel-core/TODO-26-power-management.md` §5 (item: "`acpi_ec_init()` -- Phase 2")
+  - Shipped as `acpi_ec_on_wake()` in `src/kernel/drivers/acpi_ec.c`, registered at `PM_PRI_INPUT` from `acpi_ec_init()` the moment an EC is DISCOVERED rather than once it is drivable: readiness can change after discovery and the callback re-checks `acpi_ec_ready()` at dispatch time, so registering on the ready path only would silently skip the idle proof on every machine whose EC becomes drivable later.
+  - The resume half re-runs the bounded idle proof (`acpi_ec_quiesce_io()`) under the same `g_ec_lock` the public transaction wrappers take, and reports a failed proof rather than swallowing it.
+  - Registered with NO sleep half, deliberately. The pre-sleep work this driver needs is disabling and re-arming the EC GPE around the transition, and nothing in this kernel owns a GPE yet -- a sleep callback that did nothing would tell the dispatcher the EC was quiesced when it was not. -> XREF: `02-kernel-core/TODO-26-power-management.md` §24 (item: "`acpi_gpe_enable(n)` / `acpi_gpe_disable(n)` so a driver arms only the events it services")
   - Filed from the §5 parity pass, 2026-09-04: neither §3, §28 nor `04-drivers-hardware/TODO-03` §9 mentioned the EC at a sleep transition, so this was ownerless.
-- [ ] `pm_register_power_callback(priority, on_sleep, on_wake, ctx)`:
+- [x] `pm_register_power_callback(priority, on_sleep, on_wake, ctx, name)`:
   - `priority`: `PM_PRI_STORAGE=0`, `PM_PRI_NETWORK=1`, `PM_PRI_USB=2`, `PM_PRI_INPUT=3`, `PM_PRI_GRAPHICS=4`, `PM_PRI_USER=5`
-  - Static array of 64 callback slots; sorted by priority
-- [ ] Each major driver registers in its `init()`:
-  - `ahci_init()` -> `PM_PRI_STORAGE`
-  - `xhci_init()` -> `PM_PRI_USB`
-  - `rtl8139_init()` -> `PM_PRI_NETWORK`
-  - `framebuffer_init()` -> `PM_PRI_GRAPHICS`
-- [ ] `pm_notify_sleep(state)` -- iterates `pm_device_list` in **reverse** priority order (user-space -> graphics -> input -> USB -> network -> storage):
-  1. Call `cb->on_sleep(state, ctx)` -- driver flushes queues, stops DMA, calls `pci_set_d_state(dev, 3)` for D3hot
-  2. Wait for `on_sleep` to return (max 2 s per driver; if it hangs, log `[WARN] pm: driver sleep callback timeout` and proceed)
-- [ ] `pm_notify_resume(state)` -- iterates in **forward** priority order (storage first, then network, then USB, then graphics, then user-space):
-  1. Call `pci_set_d_state(dev, 0)` -- device back to D0
-  2. Call `cb->on_wake(state, ctx)` -- driver re-initialises DMA, re-arms interrupts, re-establishes network/USB links
-  3. Wait up to 5 s for storage drivers (`PM_PRI_STORAGE`) before allowing the scheduler to unfreeze; critical to prevent filesystem access before the disk controller is ready
-- [ ] Commit: `"kernel/acpi: pm_register_power_callback, sleep/wake ordering, driver notification"`
+  - Static array of 64 callback slots, append-only and NOT sorted: the walk takes priority as its outer loop instead. Sorting on insert would move published entries under a concurrent reader, and buys nothing a 6-bucket outer loop does not already give.
+  - Refuses a duplicate `(on_sleep, on_wake, ctx)` triple so a re-run init cannot double-notify, refuses a slot with neither callback, and refuses entirely while a transaction is in flight.
+  - Two layers: `pm_cb_table_*()` is pure mechanics over a caller-supplied table (injectable clock, no globals) and `pm_*()` is the production singleton. The split is what lets the tests run at all -- see the Unit Tests note below.
+- [/] Each major driver registers in its `init()` -- EC done, the other four BLOCKED on a per-driver quiesce primitive that does not exist yet
+  - `acpi_ec_init()` -> `PM_PRI_INPUT` -- SHIPPED (wake half; see the first item).
+  - `ahci_init()` -> `PM_PRI_STORAGE`, `xhci_init()` -> `PM_PRI_USB`, `rtl8139_init()` -> `PM_PRI_NETWORK`, `fb_init()` -> `PM_PRI_GRAPHICS` (the section said `framebuffer_init()`; the real symbol is `fb_init()` at `include/kernel/drivers/framebuffer.h:15`).
+  - BLOCKED, and deliberately not stubbed: none of those four drivers exposes a stop/start or save/restore primitive today (verified 2026-09-04 by reading their headers -- `ahci.h`, `xhci.h`, `rtl8139.h` export init/IO entry points only). Registering a callback that did nothing would be worse than not registering: `pm_notify_sleep()` would report the boot disk quiesced to §3 when its DMA is still live. The dispatcher is ready for them the moment the primitives exist.
+  - -> XREF: `04-drivers-hardware/TODO-13-storage-controller-device-drivers.md` §2 (item: "Add power-management callbacks for link state and suspend/resume") -- the AHCI quiesce primitive, already owned there
+  - -> XREF: `04-drivers-hardware/TODO-10-usb-stack.md` §1 (item: "Add `suspend(hcd)` / `resume(hcd)` to `usb_hcd_ops_t`") -- the xHCI quiesce primitive, filed there by this section
+  - `rtl8139_init()` and `fb_init()` have no owning section: TODO-14 covers e1000/RTL8169/igc/RTL8125 but not the legacy RTL8139, and a linear framebuffer has no DMA queue to stop (an S3 resume needs a GPU re-POST this kernel cannot perform). Both follow once AHCI and xHCI establish the primitive shape.
+- [x] `pm_notify_sleep(state)` -- walks the callback registry in **reverse** priority order (user-space -> graphics -> input -> USB -> network -> storage):
+  1. Call `cb->on_sleep(state, ctx)`. The DRIVER owns any `pci_set_d_state(dev, 3)` call, not the dispatcher: a callback carries an untyped `void *ctx` and no bus/dev/fn, so the dispatcher has nothing to address a device with. Generic dispatcher-driven D-state stepping needs the per-device registry. -> XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "`pm_register_device(dev, on_sleep, on_wake)` -- called by each PCI driver at probe time; adds to the global `pm_device_list`")
+  2. Measure each callback and log `[WARN] pm: <phase> callback '<name>' overran budget` past 2 s. This is a POST-RETURN DIAGNOSTIC and the section's original "if it hangs, log and proceed" wording was not implementable: a callback is a plain indirect call, nothing in this kernel can preempt or abandon one, so a callback that genuinely hangs hangs the transition and emits no warning at all. The header says so explicitly rather than leaving a caller to infer a liveness guarantee that does not exist.
+  3. STOP at the first failure and UNWIND -- wake every slot already quiesced, in resume order, and return `PM_CB_CALLBACK_FAILED` so the caller does not enter the platform sleep state. Continuing past a failed quiesce would leave part of the machine live with its driver believing it is suspended.
+  4. If the UNWIND itself fails the table does not return to idle: it enters `PM_TXN_DEGRADED`, retains the bits it could not recover, and returns `PM_CB_UNWIND_FAILED`. Going back to idle there would advertise a clean machine while a device is still down and let the next transaction stack on top of it; only an explicit re-init clears it.
+- [x] `pm_notify_resume(state)` -- walks in **forward** priority order (storage, network, USB, input, graphics, user-space):
+  1. Wakes exactly the slots the matching sleep walk made ELIGIBLE, tracked in a `uint64_t` bitmap, so a driver that registered between the two walks is neither slept nor woken. Registration is refused for the whole sleep-to-resume transaction for the same reason. Eligible is not the same set as quiesced: a wake-only registration (the EC) never ran a sleep half, so it is woken by a completed resume but is NOT touched by a sleep abort, which unwinds only what actually quiesced. The two sets are separate masks in the implementation for exactly that reason.
+  2. Call `cb->on_wake(state, ctx)` -- driver re-initialises DMA, re-arms interrupts, re-establishes network/USB links. The driver owns its own `pci_set_d_state(dev, 0)`, same argument as the sleep side.
+  3. Does NOT stop at the first failure: there is no "do not proceed" left to protect and abandoning the walk would strand every remaining device powered down. A `PM_PRI_STORAGE` wake failure returns the distinct `PM_CB_STORAGE_FAILED` (not the generic `PM_CB_CALLBACK_FAILED`), which is the signal the caller MUST NOT unfreeze the scheduler on -- a return value rather than a report field, because the production entry point does not hand the report back and the one caller who must act on it could not otherwise see it -- releasing filesystem threads against a controller that did not come back is the failure this ordering exists to prevent. The 5 s storage budget is the same post-return diagnostic as the sleep side, not a wait.
+- [x] Commit: `"kernel/pm: pm_register_power_callback, sleep/wake ordering, EC resume idle proof"`
 
-**Test checkpoint:** `pm_register_power_callback(PM_PRI_STORAGE, ...)` accepted. Sleep notification iterates in reverse priority (user->storage). Resume iterates forward (storage->user). Callback timeout (> 2 s) logged and skipped. 64 callback slots max. Test on: QEMU TCG.
+**Test checkpoint:** `pm_register_power_callback(PM_PRI_STORAGE, ...)` accepted. Sleep notification iterates in reverse priority (user->storage). Resume iterates forward (storage->user). A callback exceeding its budget is COUNTED and logged (never "skipped" -- see the sleep item above). 64 callback slots max, slot 65 refused. Test on: QEMU TCG.
 
 ---
 
@@ -1429,8 +1437,9 @@ Wake-on-approach and lock-on-leave. This is presence-sensing HARDWARE, and delib
 
 > **Spawned-by:** §8 (split)
 
-The per-device power-state record and the registry every later power path walks. Split out of §8 because it is a kernel-core data structure with its own lifetime and locking questions, not part of the PCI config-space state machine: §9 iterates it to notify drivers, §12 uses it for runtime idle, and §23 hangs ASPM policy off it. §8 lands first so a registered device has a real D-state to record.
-> → XREF: `02-kernel-core/TODO-26-power-management.md` §9 (item: "`pm_notify_sleep(state)` -- iterates `pm_device_list` in **reverse** priority order")
+The per-device power-state record and the registry every later power path walks. Split out of §8 because it is a kernel-core data structure with its own lifetime and locking questions, not part of the PCI config-space state machine: §12 uses it for runtime idle, and §23 hangs ASPM policy off it. §8 lands first so a registered device has a real D-state to record.
+> §9 does NOT walk this registry, and that boundary is now settled rather than pending: §9 shipped a CALLBACK registry (priority-ordered `pm_register_power_callback` slots) and its dispatcher deliberately owns no device addressing, because a callback carries an untyped `void *ctx` and no bus/dev/fn. This section is what a generic dispatcher-driven D-state step would need, and it is the reason §9 leaves `pci_set_d_state()` to each driver callback.
+> → XREF: `02-kernel-core/TODO-26-power-management.md` §9 (item: "`pm_notify_sleep(state)` -- walks the callback registry in **reverse** priority order (user-space -> graphics -> input -> USB -> network -> storage)")
 > → XREF: `02-kernel-core/TODO-26-power-management.md` §12 (item: "`pm_runtime_register(dev, ops, idle_timeout_ms)` -- register a device for runtime PM") -- runtime idle keys off the same per-device record
 
 - [ ] `pm_device_t` struct registered per PCI device:
@@ -1583,7 +1592,9 @@ After §1 through §21, Impossible OS reaches parity for laptop-grade power on r
   - Energy Saver: `pm_energy_saver_auto()` enables below threshold; disables above
   - HPD: `hpd_register_sensor()` accepted (or skip if no HPD device)
   - Power query/veto: `pm_query_power_state(S3)` vetoed by test driver returning `STATUS_DEVICE_BUSY`
-- [x] Register in `test_runner_init()`: `test_register_power()` -- extern + call wired in `src/kernel/test/test_runner.c` beside `test_register_pm_idle()`
+- [ ] Register in `test_runner_init()`: `test_register_power()` -- extern + call wired in `src/kernel/test/test_runner.c` beside `test_register_pm_idle()`
+  - Was marked `[x]` and is NOT done: `grep -c "test_register_power(" src/kernel/test/test_runner.c` returns 0 and `src/kernel/test/test_power.c` does not exist (verified 2026-09-04). Corrected to `[ ]` rather than left claiming a wiring no reader could find.
+  - Every §4 through §9 suite that HAS shipped followed the repo convention of naming the test file after the source it covers, so each wired its own registrar instead: `test_register_hibernate_image()` (§4), `test_register_acpi_ec()` (§5), `test_register_acpi_power()` (§7), `test_register_pci_pm()` (§8) and `test_register_pm_callback()` (§9, `src/kernel/test/test_pm_callback.c`, 26 cases). This item now covers only the still-unshipped `pm_*`/`cpufreq_*` surface of §10 onward.
 - [ ] Commit: `"test: add power management test suite"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` reports every `test_power_*` (and existing `test_acpi_power_*`) case PASS once `test_power.c` lands; until then, `test_acpi_power.c` suite green; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

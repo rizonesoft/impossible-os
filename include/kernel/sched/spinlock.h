@@ -131,3 +131,28 @@ static inline void local_irq_restore(uint64_t flags)
 {
     __asm__ volatile("pushq %0\n\t popfq" :: "r"(flags) : "memory", "cc");
 }
+
+/* ---------------------------------------------------------------------------
+ * irqs_enabled() -- non-zero when maskable interrupts are currently deliverable
+ * on this CPU (RFLAGS.IF set).
+ *
+ * A predicate, not a mask: it changes nothing. It exists so a caller whose
+ * contract requires interrupts to be ON can REFUSE up front rather than
+ * misbehave. The concrete case is an elapsed-time measurement taken against
+ * mono_ns(): when the active clock source is tick-derived it stops advancing
+ * while interrupts are masked, so the measurement silently becomes fiction
+ * rather than failing loudly.
+ *
+ * Only the IF=0 answer is durable -- nothing can turn interrupts ON underneath
+ * a caller that has them off, whereas an IF=1 answer can be stale the moment it
+ * is read. Do not build mutual exclusion on it.
+ * ARCH: x86-64 -- will move to arch/ with the rest of the CPU primitives.
+ * ------------------------------------------------------------------------- */
+#define RFLAGS_IF_BIT 0x200u   /* RFLAGS.IF (Intel SDM Vol. 3A, 2.3) */
+
+static inline int irqs_enabled(void)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq\n\t popq %0" : "=r"(flags) :: "memory");
+    return (flags & RFLAGS_IF_BIT) != 0;
+}

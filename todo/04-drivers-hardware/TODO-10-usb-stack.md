@@ -85,6 +85,10 @@ Define a transport-agnostic USB core API so class drivers (HID, MSC, hub, CDC-EC
 - [ ] `usb_submit_control(dev, setup, data, len)` / `usb_submit_bulk(dev, ep, data, len)` / `usb_submit_interrupt(dev, ep, data, len)`: dispatch through `dev->hcd->ops->submit_*`; return `USB_OK`, `USB_ERR_STALL`, `USB_ERR_TIMEOUT`, `USB_ERR_TRANSPORT`, or `USB_ERR_DEVICE_GONE`
 - [ ] `usb_control_msg(dev, request_type, request, value, index, data, len)`: convenience wrapper that builds the 8-byte setup packet and calls `usb_submit_control()`
 - [ ] Refactor existing `xhci_bulk_transfer()` and `xhci_control_transfer()` to implement `usb_hcd_ops_t.submit_bulk` and `usb_hcd_ops_t.submit_control`; existing callers (`usb_msc.c`) migrate to `usb_submit_bulk()` / `usb_control_msg()`
+- [ ] Add `suspend(hcd)` / `resume(hcd)` to `usb_hcd_ops_t`: halt the controller and stop DMA on suspend, re-initialise rings and re-arm interrupts on resume
+  - This is the missing primitive that blocks the USB half of the system sleep path. TODO-26 §9 shipped the dispatcher (`pm_register_power_callback`, ordered sleep/resume walks) and registers the EC, but `xhci_init()` cannot register: `xhci.h` exports init and transfer entry points only, with no halt/restart primitive, and registering a callback that did nothing would report USB quiesced when its DMA is still live.
+  - `XHCI_HALT_TIMEOUT_US` / `XHCI_RESET_TIMEOUT_US` (`include/kernel/drivers/xhci.h:72-73`) already exist as the bounds this needs.
+  - -> XREF: `02-kernel-core/TODO-26-power-management.md` §9 (item: "Each major driver registers in its `init()` -- EC done, the other four BLOCKED on a per-driver quiesce primitive that does not exist yet")
 - [ ] Commit: `"drivers: USB core abstraction layer -- usb_device_t, usb_hcd_ops_t, transport-agnostic API"`
 
 ## 2. USB String Descriptor Retrieval `[Sonnet]`
