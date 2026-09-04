@@ -581,9 +581,173 @@ int smp_cpu_is_online(uint32_t cpu);
  * publish sets is_online then the mask bit, retract clears the mask bit then
  * is_online, so the mask is always a SUBSET of the true online set and can
  * never report a parked CPU as active. Retract is panic-path safe (atomics
- * only, no locks, no allocation). */
-void smp_publish_cpu_online(struct per_cpu_data *pcpu);
+ * only, no locks, no allocation).
+ *
+ * Publish returns 0 when the CPU is now a member and -1 when publication was
+ * REFUSED (a slot past MAX_CPUS, or an open stop-the-world round). The verdict
+ * is returned rather than logged-and-swallowed because the bringup caller must
+ * be able to abandon an AP it could not publish: an AP released into normal
+ * operation believing it is online, while carrying no mask bit, is the exact
+ * live-but-uncounted state the publication order exists to prevent. */
+int smp_publish_cpu_online(struct per_cpu_data *pcpu);
 void smp_retract_cpu_online(struct per_cpu_data *pcpu);
+
+/* ---- Stop-the-world CPU rendezvous (TODO-26 S26) ----------------------- *
+ *
+ * A RESUMABLE, GENERATION-TAGGED barrier: the owner CPU stops every other
+ * online CPU inside an IPI handler, does work nothing else may observe, and
+ * then releases them to resume exactly where they were interrupted. It is the
+ * prerequisite for any ACPI system-sleep transition, because a PM1 SLP_EN
+ * write with other processors live behind a local `cli` leaves those CPUs
+ * driving devices across the transition.
+ *
+ * It is NOT smp_test_park_cpu(): that parks the BOOKKEEPING, is KERNEL_TESTS
+ * only, and has no unpark path. It is NOT an online-mask popcount either --
+ * smp_retract_cpu_online() clears a CPU's mask bit BEFORE that CPU has stopped
+ * executing, so a count can never prove quiescence.
+ *
+ * THE PROTOCOL, in one invariant: a round is ACTIVE exactly while
+ * `generation != released_gen`. Arming bumps `generation`; releasing stores
+ * `generation` into `released_gen`. There is no separate "closed" flag to
+ * drift out of step with the counter.
+ *
+ * Acknowledgement is PER-CPU AND GENERATION-VALUED, not a shared bitmap. Each
+ * target stores the generation it observed into its own `ack_gen[]` slot, and
+ * completion requires ack_gen[slot] == generation for every target. A shared
+ * bitmap admits a real ABA: a CPU that reads generation N, stalls, and stores
+ * its bit after the owner has timed out N and armed N+1 would satisfy round
+ * N+1 while still running. A generation-valued slot cannot -- a stale N never
+ * equals N+1.
+ *
+ * The counters are 64-BIT for that reason, not for range. A 32-bit generation
+ * WRAPS, and the wrap re-creates precisely the ABA the generation exists to
+ * kill: incrementing UINT32_MAX yields 0, which already equals the untouched
+ * ack_gen of a CPU that has never acknowledged anything, so the round would
+ * complete before that CPU had parked. At 64 bits the counter cannot be reused
+ * within any machine's uptime, so there is no wrap policy and no extra error
+ * return to get wrong.
+ *
+ * ---- DEADLOCK CONTRACT. Read this before calling smp_rendezvous_begin(). ----
+ *
+ * A parked CPU keeps EVERY lock it held when the IPI reached it, for the whole
+ * barrier, and it services NO maskable interrupt while parked. Therefore:
+ *
+ *   1. Call begin() from THREAD context holding NO spinlock. A caller holding
+ *      lock L deadlocks against any target that is spinning in
+ *      spin_lock_irqsave(L): that target has IF=0 and can never take the IPI,
+ *      so the round can only end by timing out.
+ *   2. Between a successful begin() and its end(), do NOT take any lock,
+ *      allocate, klog(), run a driver callback, or perform any SYNCHRONOUS
+ *      cross-CPU operation. A TLB shootdown or reschedule IPI issued inside
+ *      the window waits on a CPU that will never answer it. Device and
+ *      firmware callbacks belong BEFORE begin(), never inside it.
+ *   3. NMI and #MC still reach a parked CPU; only maskable delivery is
+ *      blocked. Panic-path code must therefore stay parked-CPU safe.
+ *
+ * The window is an audited, lockless, non-blocking sequence. That is a
+ * contract this kernel has no facility to enforce (there is no lock-depth or
+ * IRQL query to assert on), which is exactly why it is stated here. */
+
+/* Bit width of the rendezvous target mask. Same word as the online mask, and
+ * pinned to it so the two can never disagree about how many slots exist. */
+#define SMP_RENDEZVOUS_MASK_BITS  SMP_ONLINE_MASK_BITS
+
+/* Default bound for a rendezvous that does not name its own. Long enough that
+ * a CPU stalled in an SMI still answers, short enough that a wedged machine
+ * fails closed instead of hanging. */
+#define SMP_RENDEZVOUS_TIMEOUT_MS  100u
+
+/* Rendezvous state. Exposed so the PURE protocol helpers below can be driven
+ * over a caller-supplied instance in unit tests without stopping the live
+ * machine -- the same discipline the async-claim and bringup-arbitration
+ * helpers above follow. Live callers use the wrappers, never this struct. */
+struct smp_rendezvous {
+    uint64_t generation;                        /* bumped on arm */
+    uint64_t released_gen;                      /* == generation when idle */
+    uint64_t ack_gen[SMP_RENDEZVOUS_MASK_BITS]; /* per-CPU acknowledged gen */
+    uint32_t target_mask;                       /* who must acknowledge */
+    uint32_t owner_slot_plus1;                  /* 0 = no owner */
+};
+
+/* ---- Pure protocol (no hardware, no globals; safe to unit test) ---- */
+
+/* 1 while a round is open. A NULL rv is inert and answers 0. */
+int smp_rendezvous_round_active(const struct smp_rendezvous *rv);
+
+/* Open a round over `target_mask`, owned by `owner_slot`. Returns 0 on
+ * success, -1 if a round is already open, the owner slot is out of range, or
+ * the target mask names a slot outside the mask width. Bumping the generation
+ * is what closes admission -- there is no second flag. */
+int smp_rendezvous_arm(struct smp_rendezvous *rv, uint32_t target_mask,
+                       uint32_t owner_slot);
+
+/* Replace the target set of an ALREADY-OPEN round owned by `owner_slot`.
+ * Returns 0 on success and -1 if no round is open, the caller is not the
+ * owner, the mask names the owner, or it names a slot outside the mask width.
+ *
+ * This exists so the live owner can close admission BEFORE it decides who the
+ * targets are. Snapshotting the online set first and arming afterwards leaves
+ * a window in which a CPU comes online between the scan and the arm: it misses
+ * the snapshot, passes the admission check that is not yet closed, and ends up
+ * online, executing, and not a target -- so the round completes while it runs,
+ * which defeats the entire primitive. Arming with an empty set and setting the
+ * real one afterwards makes the ordering "no CPU may join" then "here is who
+ * must stop", which is the only order that is safe. */
+int smp_rendezvous_set_targets(struct smp_rendezvous *rv, uint32_t target_mask,
+                               uint32_t owner_slot);
+
+/* Acknowledge the CURRENT generation on behalf of `slot` and return the
+ * generation acknowledged. Idempotent: re-acknowledging the same generation is
+ * a no-op, which is what makes a delayed duplicate IPI harmless. */
+uint64_t smp_rendezvous_ack(struct smp_rendezvous *rv, uint32_t slot);
+
+/* 1 once EVERY targeted slot has acknowledged the CURRENT generation. An empty
+ * target mask is complete immediately -- the single-CPU case is a real case,
+ * not a skip. */
+int smp_rendezvous_complete(const struct smp_rendezvous *rv);
+
+/* Release the open round. Returns 0 on success, -1 if no round is open or
+ * `owner_slot` is not the CPU that armed it. Release is the ONLY way a parked
+ * CPU resumes, so a non-owner must never be able to perform it. */
+int smp_rendezvous_release(struct smp_rendezvous *rv, uint32_t owner_slot);
+
+/* ONE iteration of the parked-CPU loop. Returns 1 when the caller must keep
+ * parking (having acknowledged the current generation) and 0 when it may
+ * resume. Re-reading the generation every iteration is deliberate: a CPU
+ * delayed across a timeout and re-arm acknowledges the NEW round instead of
+ * stranding it. Split out of the loop so the protocol is testable -- an
+ * infinite spin is not. */
+int smp_rendezvous_park_step(struct smp_rendezvous *rv, uint32_t slot);
+
+/* ---- Live wrappers (drive the kernel's own rendezvous) ---- */
+
+/* Register the barrier IPI handler. Called once by the BSP after SMP bringup,
+ * exactly as cpu_cr_verify_ipi_init() is. Until this runs, begin() refuses. */
+void smp_rendezvous_ipi_init(void);
+
+/* Stop every other online CPU. BSP-only, single-flight. Returns 0 with the
+ * world stopped, or -1 having stopped nothing (fail CLOSED: on timeout every
+ * already-parked CPU is released before returning, so a partial rendezvous is
+ * never reported as success). `timeout_ms` of 0 means SMP_RENDEZVOUS_TIMEOUT_MS.
+ *
+ * ON SUCCESS THE OWNER RETURNS WITH INTERRUPTS DISABLED, and smp_rendezvous_end()
+ * restores the interrupt state the caller had on entry. That is not a
+ * convenience: an owner that stayed preemptible could be switched out by its
+ * own LAPIC timer with every AP already parked, and nothing would then be left
+ * running to notice the timeout or perform the release. Both failure paths
+ * restore the caller's state before returning, so a refused or timed-out
+ * begin() leaves interrupts exactly as it found them.
+ *
+ * Read the DEADLOCK CONTRACT above before calling. */
+int smp_rendezvous_begin(uint32_t timeout_ms);
+
+/* Release the world. Legal only from the CPU that opened the round; returns 0
+ * on success and -1 otherwise. */
+int smp_rendezvous_end(void);
+
+/* 1 while the kernel's own round is open. The online-publish path consults
+ * this as a fail-closed backstop. */
+int smp_rendezvous_in_progress(void);
 
 /* ---- Bringup arbitration (TODO-10 S27) ----
  *

@@ -23,6 +23,12 @@
 #include "kernel/atomic.h"
 #include "kernel/config.h"
 #include "kernel/pm.h"         /* pm_idle_c1 -- the AP park loop's halt */
+/* The rendezvous is compiled unconditionally, so its headers must be too: with
+ * these inside the KERNEL_TESTS block the default (tests-on) build succeeded
+ * and the shipping flavor did not. */
+#include "kernel/idt.h"        /* idt_register_handler, interrupt_frame -- S26 barrier IPI */
+#include "kernel/vectors.h"    /* VECTOR_IPI_RENDEZVOUS -- S26 */
+#include "kernel/time/mono_clock.h"  /* mono_tsc_raw/mono_tsc_hz -- S26 IF=0-safe deadline */
 #ifdef KERNEL_TESTS
 #include "kernel/topology.h"   /* g_topo_cpu_count -- S27 park-injection check */
 #endif
@@ -119,7 +125,7 @@ void smp_early_bsp_init(void)
     /* Publishes is_online, the claim word (IDLE) and online-mask bit 0 in one
      * place, so smp_cpu_count() reports the BSP from Phase 0 onward rather
      * than depending on smp_init() having run. */
-    smp_publish_cpu_online(&cpu_data[0]);
+    (void)smp_publish_cpu_online(&cpu_data[0]);
     cpu_data[0].current_irql  = PASSIVE_LEVEL;
     cpu_data[0].current_task  = (void *)0;
     cpu_data[0].irq_count     = 0;
@@ -373,7 +379,7 @@ void smp_init(void)
         cpu_data[0].self         = &cpu_data[0];
         cpu_data[0].cpu_id       = 0;
         cpu_data[0].lapic_id     = lapic_available() ? lapic_id() : 0;
-        smp_publish_cpu_online(&cpu_data[0]);
+        (void)smp_publish_cpu_online(&cpu_data[0]);
         cpu_data[0].irq_count    = 0;
         cpu_data[0].preempt_count = 0;
         cpu_data[0].current_irql  = PASSIVE_LEVEL;
@@ -390,6 +396,14 @@ void smp_init(void)
         cpu_audit_registers(0);
         cpu_audit_log(0);
         cpu_audit_consistency_check(smp_cpu_count());
+        /* Arm the barrier here too (TODO-26 S26). This path RETURNS before the
+         * SMP registration below, so without this a uniprocessor machine would
+         * leave s_rendezvous_ipi_ready clear and smp_rendezvous_begin() would
+         * refuse every caller -- on the one configuration whose round is
+         * trivially satisfiable, since it has no targets to signal. The
+         * uniprocessor case is a real case, not a degenerate one: it is the
+         * path an ACPI sleep transition takes on a single-core machine. */
+        smp_rendezvous_ipi_init();
         return;
     }
 
@@ -397,7 +411,7 @@ void smp_init(void)
     cpu_data[0].self         = &cpu_data[0];
     cpu_data[0].cpu_id       = 0;
     cpu_data[0].lapic_id     = lapic_id();
-    smp_publish_cpu_online(&cpu_data[0]);
+    (void)smp_publish_cpu_online(&cpu_data[0]);
     cpu_data[0].irq_count    = 0;
     cpu_data[0].preempt_count = 0;
     cpu_data[0].current_irql  = PASSIVE_LEVEL;
@@ -618,8 +632,20 @@ void smp_init(void)
          * taking IPIs before its own mask bit existed, which is the
          * live-but-uncounted state this protocol exists to eliminate. */
         if (smp_bsp_bringup_arbitrate(&cpu_data[ap_count].ap_bringup_state)) {
-            smp_publish_cpu_online(&cpu_data[ap_count]);
-            smp_ap_bringup_accept(&cpu_data[ap_count].ap_bringup_state);
+            /* Accept the AP only if it actually became a member. Publication
+             * can refuse (a slot past MAX_CPUS, or an open stop-the-world
+             * round), and accepting past a refusal would release the AP into
+             * normal operation carrying no mask bit -- live but uncounted,
+             * which is the state the publication order exists to prevent. */
+            if (smp_publish_cpu_online(&cpu_data[ap_count]) == 0) {
+                smp_ap_bringup_accept(&cpu_data[ap_count].ap_bringup_state);
+            } else {
+                klog(LOG_ERROR, "smp",
+                     "AP %u abandoned: online publication refused",
+                     (uint64_t)ap_count);
+                __atomic_store_n(&cpu_data[ap_count].ap_bringup_state,
+                                 AP_BRINGUP_ABANDONED, __ATOMIC_RELEASE);
+            }
         } else {
             klog(LOG_WARN, "smp",
                  "AP %u abandoned (bringup timeout) -- parked, not counted",
@@ -678,6 +704,13 @@ void smp_init(void)
      * fixed and APs are parked with IRQs enabled, so the BSP timer tick can now
      * broadcast re-verify IPIs that the APs service. */
     cpu_cr_verify_ipi_init();
+
+    /* Arm the stop-the-world barrier IPI (TODO-26 S26) in the same window and
+     * for the same reason: the online set is fixed and every AP is parked with
+     * IRQs enabled, so a target can actually take the vector. Registered here
+     * rather than at IDT setup because begin() refuses until it is, and a
+     * round whose targets have no handler could only ever time out. */
+    smp_rendezvous_ipi_init();
 
     /* Layer 2 (runtime verification at init) for the two-word membership
      * design. The subset invariant -- every mask bit implies is_online -- is
@@ -840,10 +873,370 @@ int smp_ap_bringup_is_terminal(const uint32_t *state)
     return s == AP_BRINGUP_ONLINE || s == AP_BRINGUP_ABANDONED;
 }
 
-void smp_publish_cpu_online(struct per_cpu_data *pcpu)
+/* ==========================================================================
+ * Stop-the-world CPU rendezvous (TODO-26 S26)
+ *
+ * Contract, protocol rationale and the DEADLOCK CONTRACT live at the
+ * declarations in include/kernel/smp.h. This file implements them.
+ *
+ * The pure helpers below take a caller-supplied struct so the protocol is
+ * provable in unit tests without stopping the running kernel -- the same
+ * discipline smp_async_claim_* and smp_*_bringup_* follow. The live wrappers
+ * underneath are the only code that touches s_rendezvous.
+ * ========================================================================== */
+
+/* THE invariant: a round is open exactly while generation != released_gen. */
+int smp_rendezvous_round_active(const struct smp_rendezvous *rv)
+{
+    if (!rv)
+        return 0;
+    return __atomic_load_n(&rv->generation, __ATOMIC_ACQUIRE) !=
+           __atomic_load_n(&rv->released_gen, __ATOMIC_ACQUIRE);
+}
+
+int smp_rendezvous_arm(struct smp_rendezvous *rv, uint32_t target_mask,
+                       uint32_t owner_slot)
+{
+    uint64_t gen;
+
+    if (!rv || owner_slot >= SMP_RENDEZVOUS_MASK_BITS)
+        return -1;
+    /* A target outside the mask width could never acknowledge, so the round
+     * could only ever time out. Refuse it as a caller bug rather than spin. */
+    if (SMP_RENDEZVOUS_MASK_BITS < 32u &&
+        (target_mask >> SMP_RENDEZVOUS_MASK_BITS) != 0u)
+        return -1;
+    /* The owner is not a target: it is the CPU doing the stopping. A mask
+     * naming it would deadlock waiting for an acknowledgement it can never
+     * send, because it is spinning in begin() rather than in the handler. */
+    if (target_mask & (1u << owner_slot))
+        return -1;
+    if (smp_rendezvous_round_active(rv))
+        return -1;
+
+    rv->target_mask     = target_mask;
+    rv->owner_slot_plus1 = owner_slot + 1u;
+    /* Bumping the generation LAST is the arm: every field a parked CPU reads
+     * must already be visible when the counter says a round is open. */
+    gen = __atomic_load_n(&rv->generation, __ATOMIC_RELAXED);
+    __atomic_store_n(&rv->generation, gen + 1u, __ATOMIC_RELEASE);
+    return 0;
+}
+
+int smp_rendezvous_set_targets(struct smp_rendezvous *rv, uint32_t target_mask,
+                               uint32_t owner_slot)
+{
+    if (!rv || owner_slot >= SMP_RENDEZVOUS_MASK_BITS)
+        return -1;
+    if (SMP_RENDEZVOUS_MASK_BITS < 32u &&
+        (target_mask >> SMP_RENDEZVOUS_MASK_BITS) != 0u)
+        return -1;
+    if (target_mask & (1u << owner_slot))
+        return -1;
+    /* Only the owner of an OPEN round may name its targets. Outside a round
+     * the field means nothing, and a non-owner writing it would redirect a
+     * barrier somebody else is spinning on. */
+    if (!smp_rendezvous_round_active(rv))
+        return -1;
+    if (rv->owner_slot_plus1 != owner_slot + 1u)
+        return -1;
+
+    __atomic_store_n(&rv->target_mask, target_mask, __ATOMIC_RELEASE);
+    return 0;
+}
+
+uint64_t smp_rendezvous_ack(struct smp_rendezvous *rv, uint32_t slot)
+{
+    uint64_t gen;
+
+    if (!rv || slot >= SMP_RENDEZVOUS_MASK_BITS)
+        return 0;
+    gen = __atomic_load_n(&rv->generation, __ATOMIC_ACQUIRE);
+    /* The acknowledgement IS the generation, not a bit. A stale value left by
+     * a CPU that stalled through a timeout and re-arm simply fails the
+     * equality test in smp_rendezvous_complete() -- there is no bitmap for it
+     * to contaminate. */
+    __atomic_store_n(&rv->ack_gen[slot], gen, __ATOMIC_RELEASE);
+    return gen;
+}
+
+int smp_rendezvous_complete(const struct smp_rendezvous *rv)
+{
+    uint64_t gen;
+    uint32_t i, tmask;
+
+    if (!rv)
+        return 0;
+    gen = __atomic_load_n(&rv->generation, __ATOMIC_ACQUIRE);
+    /* Iterate the mask WIDTH and filter, never a CPU count: a count is live
+     * and falls as CPUs park, so it is not a slot bound (CLAUDE.md). */
+    tmask = __atomic_load_n(&rv->target_mask, __ATOMIC_ACQUIRE);
+    for (i = 0; i < SMP_RENDEZVOUS_MASK_BITS; i++) {
+        if (!(tmask & (1u << i)))
+            continue;
+        if (__atomic_load_n(&rv->ack_gen[i], __ATOMIC_ACQUIRE) != gen)
+            return 0;
+    }
+    return 1;
+}
+
+int smp_rendezvous_release(struct smp_rendezvous *rv, uint32_t owner_slot)
+{
+    uint64_t gen;
+
+    if (!rv || owner_slot >= SMP_RENDEZVOUS_MASK_BITS)
+        return -1;
+    if (!smp_rendezvous_round_active(rv))
+        return -1;
+    /* Release is the ONLY way a parked CPU resumes. A CPU that did not arm the
+     * round must never be able to perform it, or a stray caller can restart
+     * the world underneath the owner. */
+    if (rv->owner_slot_plus1 != owner_slot + 1u)
+        return -1;
+
+    gen = __atomic_load_n(&rv->generation, __ATOMIC_ACQUIRE);
+    rv->owner_slot_plus1 = 0u;
+    /* Store-release: every write the owner made inside the window is visible
+     * to a CPU that resumes on the matching acquire load in park_step. */
+    __atomic_store_n(&rv->released_gen, gen, __ATOMIC_RELEASE);
+    return 0;
+}
+
+int smp_rendezvous_park_step(struct smp_rendezvous *rv, uint32_t slot)
+{
+    uint64_t gen;
+
+    if (!rv || slot >= SMP_RENDEZVOUS_MASK_BITS)
+        return 0;
+    gen = __atomic_load_n(&rv->generation, __ATOMIC_ACQUIRE);
+    /* Released (or never armed) at the generation we can see: resume. This is
+     * also what makes a DELAYED DUPLICATE IPI harmless -- it arrives, finds
+     * released_gen == generation, and returns without parking.
+     *
+     * The generation is RE-READ after released_gen because those are two
+     * separate loads: the owner can release round N and arm N+1 between them,
+     * and a caller acting on that split snapshot would resume while N+1 is
+     * open and targeting it. That is fail-closed for quiescence (its ack_gen
+     * stays at N, so N+1 can never complete and begin() times out) but it
+     * costs a whole spurious round, and the re-read removes the window. */
+    if (__atomic_load_n(&rv->released_gen, __ATOMIC_ACQUIRE) == gen &&
+        __atomic_load_n(&rv->generation, __ATOMIC_ACQUIRE) == gen)
+        return 0;
+    /* Acknowledge a generation CHANGE, not every iteration. Re-reading is what
+     * lets a CPU delayed across a timeout and a re-arm join the NEW round
+     * instead of leaving it permanently un-acknowledged, but STORING every
+     * iteration would have every parked CPU writing a shared cache line in a
+     * tight loop for the whole barrier, so the owner's completion scan fights
+     * N spinning writers for those lines. The load is cheap and shared; only
+     * the store needs to be rare. */
+    if (__atomic_load_n(&rv->ack_gen[slot], __ATOMIC_ACQUIRE) != gen)
+        __atomic_store_n(&rv->ack_gen[slot], gen, __ATOMIC_RELEASE);
+    return 1;
+}
+
+/* ---- Live wrappers ---- */
+
+/* The kernel's own rendezvous. Zero-initialised, so generation == released_gen
+ * == 0 and no round is open before anything runs -- which is what makes the
+ * publish-path backstop below inert during boot. */
+static struct smp_rendezvous s_rendezvous;
+
+/* Set once the barrier IPI handler is registered. begin() refuses before this,
+ * because a target that has no handler installed cannot acknowledge and the
+ * round would only ever time out. */
+static volatile int s_rendezvous_ipi_ready;
+
+/* The owner's interrupt state at the moment it armed, restored by end() (and
+ * by every failure path in begin()). Owner-only, and only ever touched while
+ * the owner holds the round, so it needs no synchronisation of its own. It is
+ * deliberately NOT a field of struct smp_rendezvous: the pure protocol has no
+ * notion of an interrupt flag, and putting it there would make it look like
+ * something the barrier algorithm reasons about. */
+static uint64_t s_rendezvous_owner_flags;
+
+/* Save RFLAGS and mask interrupts / restore RFLAGS. Local rather than shared
+ * because lapic.c's equivalents are static to that file. */
+static inline uint64_t rendezvous_irq_save(void)
+{
+    uint64_t f;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(f) :: "memory");
+    return f;
+}
+static inline void rendezvous_irq_restore(uint64_t f)
+{
+    __asm__ volatile ("pushq %0; popfq" :: "r"(f) : "memory", "cc");
+}
+
+int smp_rendezvous_in_progress(void)
+{
+    return smp_rendezvous_round_active(&s_rendezvous);
+}
+
+/* AP-side barrier handler. EOI FIRST, then spin: retiring 0xF9 from the LAPIC
+ * in-service state before parking means the LAPIC is not left holding a
+ * priority for the whole barrier. Nothing can nest here regardless -- an
+ * interrupt gate leaves IF clear for the duration.
+ *
+ * This handler SPINS, which no other handler in this kernel does. That is the
+ * point of the primitive and it is why the DEADLOCK CONTRACT in smp.h forbids
+ * any synchronous cross-CPU operation inside the window: every maskable
+ * interrupt for this CPU, including a TLB shootdown, waits until release. */
+static uint64_t rendezvous_ipi_handler(struct interrupt_frame *frame)
+{
+    uint32_t slot = smp_cpu_id();
+
+    lapic_eoi();
+    while (smp_rendezvous_park_step(&s_rendezvous, slot))
+        __asm__ volatile("pause");
+    return (uint64_t)frame;
+}
+
+void smp_rendezvous_ipi_init(void)
+{
+    idt_register_handler(VECTOR_IPI_RENDEZVOUS, rendezvous_ipi_handler);
+    __atomic_store_n(&s_rendezvous_ipi_ready, 1, __ATOMIC_RELEASE);
+    klog(LOG_INFO, "smp",
+         "stop-the-world rendezvous armed (vector 0x%x)",
+         (uint64_t)VECTOR_IPI_RENDEZVOUS);
+}
+
+/* Ticks the deadline may run for. mono_tsc_raw() is the counter that keeps
+ * advancing with interrupts masked; system_get_ticks() does not, because it
+ * only moves on the BSP's own timer ISR. When no TSC rate is trusted,
+ * MONO_TSC_HZ_MAX is the documented pessimistic bound, so the timeout can only
+ * ever fire LATE -- never early, which would abort a healthy round. */
+static uint64_t rendezvous_timeout_ticks(uint32_t timeout_ms)
+{
+    uint64_t hz = mono_tsc_hz();
+    if (hz == 0)
+        hz = MONO_TSC_HZ_MAX;
+    return (hz / 1000u) * (uint64_t)timeout_ms;
+}
+
+int smp_rendezvous_begin(uint32_t timeout_ms)
+{
+    uint32_t self = smp_cpu_id();
+    uint32_t targets = 0u;
+    uint32_t i;
+    uint64_t start, budget, flags;
+
+    if (timeout_ms == 0u)
+        timeout_ms = SMP_RENDEZVOUS_TIMEOUT_MS;
+
+    /* BSP-only, matching acpi_enter_sleep_state(): the owner spins here rather
+     * than in the handler, so an AP owner would be a target of its own round. */
+    if (self != 0u) {
+        klog(LOG_ERROR, "smp",
+             "rendezvous refused: CPU %u is not the BSP", (uint64_t)self);
+        return -1;
+    }
+    if (!__atomic_load_n(&s_rendezvous_ipi_ready, __ATOMIC_ACQUIRE)) {
+        klog(LOG_ERROR, "smp",
+             "rendezvous refused: barrier IPI handler not registered");
+        return -1;
+    }
+
+    /* MASK INTERRUPTS BEFORE ARMING, and keep them masked until end(). An
+     * owner that stayed preemptible could be switched out by its own LAPIC
+     * timer after some or all APs had parked, at which point nothing is left
+     * running to observe the timeout or perform the release, and the parked
+     * CPUs never resume. Every path out of this function restores the saved
+     * state except the successful one, which hands it to end(). */
+    flags = rendezvous_irq_save();
+
+    /* START THE CLOCK BEFORE ANY WORK THE TIMEOUT IS SUPPOSED TO BOUND. The
+     * IPI sends below are not free: lapic_send_ipi() can spin up to a million
+     * ICR delivery-status polls PER TARGET and reports no failure, so sampling
+     * the deadline after the send loop would leave the owner at IF=0 with APs
+     * parked for an unaccounted multiple of the requested bound. */
+    start  = mono_tsc_raw();
+    budget = rendezvous_timeout_ticks(timeout_ms);
+
+    /* ARM FIRST, WITH NO TARGETS, then snapshot. The generation bump is what
+     * closes admission, so opening the round before the scan is what makes the
+     * scan trustworthy: scanning first leaves a window where a CPU passes the
+     * not-yet-closed admission check, misses the snapshot, and comes online
+     * executing and untargeted -- the round then completes while it runs,
+     * which is exactly the guarantee this primitive exists to provide. */
+    if (smp_rendezvous_arm(&s_rendezvous, 0u, self) != 0) {
+        rendezvous_irq_restore(flags);
+        klog(LOG_ERROR, "smp",
+             "rendezvous refused: a round is already open");
+        return -1;
+    }
+    s_rendezvous_owner_flags = flags;
+
+    /* ONE snapshot of the online set, held for the whole round. Iterate the
+     * mask width and filter by liveness -- a CPU count is not a slot bound. */
+    for (i = 0; i < SMP_RENDEZVOUS_MASK_BITS && i < MAX_CPUS; i++) {
+        if (i != self && smp_cpu_is_online(i))
+            targets |= (1u << i);
+    }
+    (void)smp_rendezvous_set_targets(&s_rendezvous, targets, self);
+
+    /* Uniprocessor is a real case, not a skip: the round is open and balanced
+     * by end(), there is simply nobody to signal. */
+    if (targets == 0u)
+        return 0;
+
+    for (i = 0; i < SMP_RENDEZVOUS_MASK_BITS && i < MAX_CPUS; i++) {
+        struct per_cpu_data *pc;
+        if (!(targets & (1u << i)))
+            continue;
+        /* Check the deadline BETWEEN targets so a stuck ICR on CPU 1 cannot
+         * consume the whole budget before CPU 2 has even been signalled. */
+        if ((uint64_t)(mono_tsc_raw() - start) >= budget)
+            break;
+        pc = smp_get_cpu(i);
+        if (pc)
+            lapic_send_ipi((uint8_t)pc->lapic_id, VECTOR_IPI_RENDEZVOUS);
+    }
+
+    while (!smp_rendezvous_complete(&s_rendezvous)) {
+        /* Unsigned elapsed-difference compare, not an absolute deadline, so a
+         * counter wrap cannot make the timeout fire immediately or never. */
+        if ((uint64_t)(mono_tsc_raw() - start) >= budget) {
+            /* FAIL CLOSED. Release whoever did park before returning: a
+             * partial rendezvous reported as success is the hazard this
+             * primitive exists to prevent, and CPUs left parked behind a
+             * failed begin() would never resume. Restore the owner's
+             * interrupt state before logging, so the klog (which busy-waits on
+             * the UART) does not run with interrupts masked for no reason. */
+            (void)smp_rendezvous_release(&s_rendezvous, self);
+            rendezvous_irq_restore(flags);
+            klog(LOG_ERROR, "smp",
+                 "rendezvous timed out after %u ms -- world NOT stopped",
+                 (uint64_t)timeout_ms);
+            return -1;
+        }
+        __asm__ volatile("pause");
+    }
+    return 0;
+}
+
+int smp_rendezvous_end(void)
+{
+    uint32_t self = smp_cpu_id();
+    uint64_t flags = s_rendezvous_owner_flags;
+
+    if (smp_rendezvous_release(&s_rendezvous, self) != 0) {
+        /* A refused release means this CPU never owned an open round, so it
+         * holds no saved interrupt state and must not restore one -- doing so
+         * would hand it whatever the real owner saved. */
+        klog(LOG_ERROR, "smp",
+             "rendezvous release refused on CPU %u (not the owner, or no open round)",
+             (uint64_t)self);
+        return -1;
+    }
+    s_rendezvous_owner_flags = 0u;
+    rendezvous_irq_restore(flags);
+    return 0;
+}
+
+int smp_publish_cpu_online(struct per_cpu_data *pcpu)
 {
     if (!pcpu)
-        return;
+        return -1;
 
     /* A slot past the mask's width would go live with no mask bit -- the
      * live-but-uncounted state this section exists to eliminate, produced
@@ -855,7 +1248,7 @@ void smp_publish_cpu_online(struct per_cpu_data *pcpu)
         klog(LOG_ERROR, "smp",
              "CPU %u is past MAX_CPUS (%u) -- cannot publish online membership",
              (uint64_t)pcpu->cpu_id, (uint64_t)MAX_CPUS);
-        return;
+        return -1;
     }
     /* The MASK BIT IS THE PUBLICATION POINT, and it is written LAST. Every
      * wait loop in bringup keys off it (smp_cpu_is_online), so an AP stalled
@@ -865,9 +1258,26 @@ void smp_publish_cpu_online(struct per_cpu_data *pcpu)
      * permanently offline, and the first async group omit a CPU that then went
      * live. Writing the mask last also keeps the mask a SUBSET of is_online,
      * so no consumer can ever count a CPU the per-CPU flag does not claim. */
+    /* ADMISSION BACKSTOP (TODO-26 S26). A CPU that comes online while a
+     * stop-the-world round is open would be live and NOT in that round's
+     * target snapshot -- the world would not actually be stopped, and nothing
+     * downstream could tell. Unreachable today by construction: the BSP is the
+     * sole caller of this function (it publishes on behalf of each AP inside
+     * smp_init(), see the bringup arbitration loop) and is also the only legal
+     * rendezvous owner, so one CPU would have to be in both places at once.
+     * That is precisely why it is a loud refusal rather than a wait -- if it
+     * ever fires, a second publisher has appeared and the invariant is gone. */
+    if (smp_rendezvous_round_active(&s_rendezvous)) {
+        klog(LOG_ERROR, "smp",
+             "CPU %u refused online publication: a stop-the-world round is open",
+             (uint64_t)pcpu->cpu_id);
+        return -1;
+    }
+
     smp_async_claim_publish_idle(&pcpu->async_claim);
     __atomic_store_n(&pcpu->is_online, 1u, __ATOMIC_RELEASE);
     smp_mask_set(&online_mask, pcpu->cpu_id);
+    return 0;
 }
 
 void smp_retract_cpu_online(struct per_cpu_data *pcpu)

@@ -106,7 +106,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  23   | §23 PCIe ASPM and L1 substates                      | §8, §9, §12                |  [ ]   |
 | 💎  |  24   | §24 ACPI general-purpose event (GPE) blocks         | §1, §5, §7                 |  [ ]   |
 | 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo   | §2                         |  [ ]   |
-| 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep         | §2                         |  [ ]   |
+| 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep         | §2                         |  [x]   |
+| 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap   | §26                        |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -211,7 +212,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 > **Verified:** 2026-09-04 | 6/6 items ([/] x1 parked: the AP rendezvous; the accounting-precision and S1-entry residues moved to the OPEN sections that own them, §25 and §3, rather than being parked into a section this commit closes) | build OK | 32923 kernel + 17 user-mode tests, 0 failures | sched 522, ipc 379 | smoke matrix 4/4 (TCG+KVM x 1+2 CPU) | `make KERNEL_TESTS=off` links (the release-only defect round 1 caught)
 > **Deferred:** [M] the accounting is an UPPER BOUND, not halted time: the instruction after `hlt` retires only once the waking ISR has returned, and on the BSP the scheduler may switch away first. Safe to ship only because nothing consumes it yet -> XREF: 02-kernel-core/TODO-26 §25 (item: "`SYSTEM_PROCESSOR_IDLE_INFORMATION` -- one fixed-size entry per processor")
 > **Deferred:** [H] S1 entry from any idle path, and `acpi_enter_s1()` itself: S1 is a system sleep transition needing the orchestration §3 owns, and a wrapper today would be dead code (`acpi_enter_sleep_state()` is BSP-only and single-flight) -> XREF: 02-kernel-core/TODO-26 §3 (item: "`pm_enter_s3()` -- runs on a dedicated `PASSIVE_LEVEL` worker, NOT `DISPATCH_LEVEL`")
-> **Deferred:** [H] AP quiesce before any SLP_EN write: no resumable rendezvous exists, and an online-mask popcount is NOT a substitute (`smp_retract_cpu_online()` clears the bit before the CPU stops) -> XREF: 01-boot-platform/TODO-10-bare-metal-hardening.md (live CPU online lifecycle / park)
+> **Deferred:** [H] AP quiesce before any SLP_EN write: an online-mask popcount is NOT a substitute (`smp_retract_cpu_online()` clears the bit before the CPU stops). RESOLVED 2026-09-04 by the section that now owns it -> XREF: 02-kernel-core/TODO-26 §26 (item: "`smp_rendezvous_begin(uint32_t timeout_ms)` (`src/kernel/smp/smp.c:1085`, declared `include/kernel/smp.h`)")
 > **Accepted:** [M] `pm_deep_idle_allowed()` is ADVISORY: a remote `dpc_insert_core()` can enqueue immediately after the sample, so it may not gate deeper idle until an interlocked idle-entry protocol and DPC wake IPI exist (reason: harmless while the predicate never gates the halt) -> XREF: 02-kernel-core/TODO-26 §16 (item: "BLOCKING PRECONDITION: `pm_deep_idle_allowed()` (§2) is ADVISORY")
 > **Accepted:** [M] `test_dpc_insert_remove()`'s exact-delta depth assertions are not interference-proof; this section made the reads well-defined and changed no assertion (reason: DPC test-surface design belongs to its owner) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §19 (item: "Give the depth assertions an observation that cannot be perturbed by unrelated queue traffic")
 > **Quality reviewed:** 2026-09-04 | Codex 11 rounds (design, adversarial x6, consistency x5, perf x2) + kernel-explorer + review-evidence-mapper | 6H+14M+2L fixed, 1 rejected, 6 accepted/deferred | scope: kernel-code-quality gates, SMP, release-vs-test build parity
@@ -223,7 +224,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 > - **Scope boundary:** the C1 primitive only. §16 replaces the fixed C1 choice with a governor, §25 exposes the counter through `NtQuerySystemInformation`, and S1 as a system-sleep operation stays with §3.
 > - **Four halt oracles were tried before one held:** elapsed TSC cycles (passes with the `hlt` deleted), `per_cpu_data.irq_count` (a dead field -- zeroed in four places, incremented nowhere), an advancing tick counter (non-causal both ways), and a 512-byte opcode SEARCH (runs past a 0x97-byte function). What shipped is a global label emitted at the halt site plus a per-CPU reachability counter, so removing the halt is a LINK error and skipping it fails a test.
 
-- [/] Quiesce the APs before any SLP_EN write. BLOCKED: no AP park/rendezvous facility exists
+- [x] Quiesce the APs before any SLP_EN write. CLOSED 2026-09-04 by §26's resumable rendezvous
   - `acpi_enter_sleep_state()` disables interrupts on the CALLING CPU only, so every other processor keeps taking interrupts and driving devices across the transition.
   - `include/kernel/smp.h` has only the test-only `smp_test_park_cpu`. -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` (live CPU online lifecycle / park)
   - The function's own refusal block cites "no APs are stopped" as a blocker for S3/S4, and S1 falls straight through it carrying the identical deficiency.
@@ -233,7 +234,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ## 3. S3: Suspend to RAM
 
-> **Deferred:** the S3 orchestration cannot be entered on this tree, and the three missing prerequisites are all owned elsewhere. (1) The resumable stop-the-world CPU rendezvous every step past the `cli` depends on has been SPLIT OUT of this section and is now §26, so it has a real owner rather than a parked note. (2) ACPI namespace evaluation does not run: ACPICA is vendored and linked, but `AcpiInitializeSubsystem()` / `AcpiLoadTables()` / `AcpiEnableSubsystem()` have ZERO call sites anywhere outside `src/kernel/acpica/` (verified 2026-09-04 by grep over `src/` + `include/`), so `AcpiGbl_FACS` is never populated, `FACS->FirmwareWakingVector` is unreachable, and `_PTS`/`_GTS`/`_WAK` cannot be evaluated. (3) The driver power callbacks steps 1 and 7 broadcast to are §9 and unimplemented: `pm_notify_resume` and `PO_CB_SYSTEM_STATE_LOCK` return 0 matches across `src/`. The S3 refusal at `src/kernel/acpi.c:1573-1578` therefore stays, and its comment ("no APs are stopped, no devices are quiesced, no caches are flushed, no firmware waking vector is installed") remains an accurate description of this tree. -> XREF: `02-kernel-core/TODO-26` §26 (item: "`smp_rendezvous_begin(uint32_t timeout_ms)` in `src/kernel/smp/smp.c`"), `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`"), `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`")
+> **Deferred:** the S3 orchestration cannot be entered on this tree, and the three missing prerequisites are all owned elsewhere. (1) The resumable stop-the-world CPU rendezvous every step past the `cli` depends on was SPLIT OUT of this section and SHIPPED the same day as §26, so that prerequisite is met and is no longer what blocks this section. (2) ACPI namespace evaluation does not run: ACPICA is vendored and linked, but `AcpiInitializeSubsystem()` / `AcpiLoadTables()` / `AcpiEnableSubsystem()` have ZERO call sites anywhere outside `src/kernel/acpica/` (verified 2026-09-04 by grep over `src/` + `include/`), so `AcpiGbl_FACS` is never populated, `FACS->FirmwareWakingVector` is unreachable, and `_PTS`/`_GTS`/`_WAK` cannot be evaluated. (3) The driver power callbacks steps 1 and 7 broadcast to are §9 and unimplemented: `pm_notify_resume` and `PO_CB_SYSTEM_STATE_LOCK` return 0 matches across `src/`. The S3 refusal at `src/kernel/acpi.c:1573-1578` therefore stays, and its comment ("no APs are stopped, no devices are quiesced, no caches are flushed, no firmware waking vector is installed") remains an accurate description of this tree. -> XREF: `02-kernel-core/TODO-26` §26 (item: "`smp_rendezvous_begin(uint32_t timeout_ms)` in `src/kernel/smp/smp.c`"), `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`"), `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`")
 
 - [/] `pm_enter_s3()` -- runs on a dedicated `PASSIVE_LEVEL` worker, NOT `DISPATCH_LEVEL` (steps 1+3 block; DISPATCH_LEVEL forbids blocking/paging/mutex per the IRQL contract) -> XREF: `TODO-07-irql-model-dpcs.md` §7:
   1. Broadcast `PO_CB_SYSTEM_STATE_LOCK` to all registered power callbacks (§9): let drivers flush queues and reach D3hot/D3cold (§8)
@@ -245,7 +246,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   7. Save all CPU general-purpose and SSE registers for the BSP (`struct s3_cpu_state` allocated in pinned physical memory)
   8. Write the physical address of `pm_s3_wakeup_entry` into the ACPI wakeup vector (`FACS->FirmwareWakingVector`)
   9. Call `acpi_enter_sleep_state(3)` -- system loses power to RAM row refresh; wake on power button / RTC alarm resumes in §3
-  - BLOCKED: step 2 needs the §26 rendezvous (no `sched_freeze_all()` exists; grep over `src/kernel/sched/task.c` returns 0) and step 1 needs §9's callback registry. -> XREF: `02-kernel-core/TODO-26` §26, `02-kernel-core/TODO-26` §9
+  - BLOCKED on §9's callback registry only. The AP quiesce this step needs SHIPPED 2026-09-04 as §26 (`smp_rendezvous_begin`/`smp_rendezvous_end`), so step 2 is now buildable and step 1 is not. -> XREF: `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`")
 - [/] `pm_s3_wakeup_entry` (real-mode compatible entry stub in `src/kernel/acpi_wakeup.asm`):
   - BIOS/UEFI firmware jumps here in real mode; stub switches to protected and then long mode (re-using the bootloader's page tables at `0x70000`)
   - Calls `pm_s3_resume()` in C with the saved state pointer
@@ -259,7 +260,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   6. Compute sleep duration from RTC/UEFI time delta; call `ke_suspend_bias_update()` (→ XREF: `TODO-08-time-filetime-management.md §14`)
   7. Call `pm_notify_resume()` (§9) -- drivers transition back D3->D0
   8. Unfreeze scheduler; resume from the instruction after `acpi_enter_sleep_state(3)`
-  - BLOCKED: step 4 unparks APs, which is the §26 barrier's release path, and step 7 is §9. AP re-init after power loss is also new code: the only INIT/SIPI/SIPI sequence in the tree is the one-shot boot loop inside `smp_init()` (`src/kernel/smp/smp.c:479-600`). -> XREF: `02-kernel-core/TODO-26` §26
+  - BLOCKED on §9 (step 7) and on AP re-init after power loss, which is new code: the only INIT/SIPI/SIPI sequence in the tree is the one-shot boot loop inside `smp_init()`. Step 4's unpark is NO LONGER a blocker -- §26 shipped the barrier's release path. -> XREF: `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`")
 - [/] Call `uefi_secureboot_refresh()` after runtime services come back online and before user threads unblock, i.e. after `pm_notify_resume()` has returned storage and registry to D0
   - An attacker with physical access can clear SetupMode and re-add Secure Boot keys while the machine sleeps, so the boot-time snapshot is stale the moment S3 returns.
   - The refresh re-reads SecureBoot / SetupMode / AuditMode / DeployedMode / PK / KEK and, on mismatch with the boot snapshot, emits `LOG_FATAL` and sets `HKLM\SYSTEM\SecureBoot\Drift = 1`.
@@ -269,7 +270,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   - S1 needs the same machinery S3 does, minus the state save: callbacks broadcast, scheduler frozen, APs quiesced, devices to D3. `acpi_enter_sleep_state(1)` already performs the PM1 write and confirms the wake through `WAK_STS`; what is missing is everything around it.
   - It is deliberately NOT reachable from the idle path. §2 ships C1 (`HLT`) as the processor idle state and documents why a PM1 `SLP_EN` write can never be a deeper `HLT` -> XREF: `02-kernel-core/TODO-26` §2 (item: "`pm_idle_c1()` in `src/kernel/pm_idle.c`").
   - Blocked on the same AP rendezvous §2 parks against: entering any sleep state with other processors live behind a local `cli` is the [H] hazard §1 recorded.
-  - BLOCKED: on §26, which is where the AP rendezvous this item names now lives. -> XREF: `02-kernel-core/TODO-26` §26
+  - UNBLOCKED 2026-09-04: §26 shipped the rendezvous this item was waiting on, so S1 now needs only the callbacks-and-devices half of the orchestration above. -> XREF: `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`")
 - [/] Power button physical press -> PM1 fixed event (§1) generates SCI; firmware raises the CPU from S3
   - BLOCKED: the PM1 fixed-event SCI path already ships (§1, `acpi_sci_process()` at `src/kernel/acpi.c:1354`); what is missing is an S3 to be woken FROM. Unblocks with `pm_enter_s3()`.
 - [/] RTC alarm: `acpi_set_wakeup_alarm(seconds)` -- programs CMOS RTC alarm registers (port 0x70/0x71), sets `RTC_EN` in PM1a_EN; used for timed wake (-> `Task Scheduler` integration, future)
@@ -1037,76 +1038,120 @@ Split out of §2 at implementation time: §2 owns the C1 idle primitive and the 
 
 The resumable, generation-tagged barrier that every system-sleep transition is built on, split out of §3 because it is the one deliverable in that section blocked on nothing, and because its failure mode (SMP liveness, lock order, memory ordering) is the opposite of the rest of §3 (ACPI table programming and firmware handoff). §2 recorded the requirement with no owner; this section is that owner. -> XREF: `02-kernel-core/TODO-26` §2 (item: "Quiesce the APs before any SLP_EN write. BLOCKED: no AP park/rendezvous facility exists")
 
-- [ ] `smp_rendezvous_begin(uint32_t timeout_ms)` in `src/kernel/smp/smp.c`, declared in `include/kernel/smp.h`: BSP-only, single-flight, returns 0 only once every OTHER online CPU has acknowledged and is spinning in the barrier
+- [x] `smp_rendezvous_begin(uint32_t timeout_ms)` in `src/kernel/smp/smp.c`, declared in `include/kernel/smp.h`: BSP-only, single-flight, returns 0 only once every OTHER online CPU has acknowledged; RETURNS WITH INTERRUPTS MASKED
   - Take ONE `smp_online_mask()` snapshot as the target set and hold it for the whole rendezvous. `smp_cpu_count()` is LIVE and falls as CPUs park, so a popcount can never be the completion test, and `smp_retract_cpu_online()` (`src/kernel/smp/smp.c:873`) clears a bit before the CPU has stopped executing.
   - Bump a global generation counter BEFORE the IPI goes out, and have each CPU acknowledge WITH the generation it observed, so a late acknowledgement from a previous round cannot satisfy this one.
   - Close CPU admission for the duration: a CPU publishing its online bit while the barrier is closing would be a target that was never signalled.
   - Fail CLOSED on timeout: release every CPU already parked, reopen admission, return non-zero. A partial rendezvous reported as success is the hazard the whole section exists to prevent.
-- [ ] `smp_rendezvous_end(void)`: releases the barrier, reopens admission, and is legal only from the CPU that opened it
+- [x] `smp_rendezvous_end(void)` in `src/kernel/smp/smp.c`: releases the barrier and restores the owner's entry interrupt state; refuses any CPU that did not arm the round
   - Every parked CPU resumes where it spun with its entry interrupt state restored. RESUMABLE is the point: `smp_test_park_cpu()` (`src/kernel/smp/smp.c:925`) parks the bookkeeping, not the CPU, has no unpark path, and is `KERNEL_TESTS`-only.
   - Publish with a release store and have the AP side observe with an acquire load, so writes the initiator made before the release are visible to the resuming CPU.
-- [ ] The AP-side barrier handler: an IPI vector that acknowledges, then spins on the release word with interrupts disabled
+- [x] The AP-side barrier handler `rendezvous_ipi_handler()` in `src/kernel/smp/smp.c`, on new vector `VECTOR_IPI_RENDEZVOUS` 0xF9 (`include/kernel/vectors.h`): EOI, then spin with interrupts disabled
   - It runs in hard-IRQ context with the world stopping around it, so it must not allocate, must not call `klog()`, and must not take any lock another CPU could be holding when it parked.
   - The acknowledgement is a release store of the observed generation; the spin is an acquire load, with a pause hint in the loop.
-- [ ] Document the deadlock contract at the declaration: what a caller may hold when it opens a rendezvous, and what a parked CPU may be holding when it acknowledges
+- [x] The DEADLOCK CONTRACT is stated at the declaration (`include/kernel/smp.h`): thread context, no spinlock held, and no lock/allocation/klog/callback/synchronous cross-CPU operation inside the window
   - Without this stated the primitive is a deadlock generator: any lock a parked CPU holds is held for the entire barrier, so a caller that then takes it wedges the machine with interrupts off.
-- [ ] Tests in `src/kernel/test/test_smp_rendezvous.c`, `TEST_CAT_X86`, registered in `src/kernel/test/test_runner.c`
+- [x] 28 tests in `src/kernel/test/test_smp_rendezvous.c` (`TEST_CAT_X86`), registered in `src/kernel/test/test_runner.c`: 27 pure-protocol cases plus one LIVE begin/end round trip
   - Prove the generation tag rejects a stale acknowledgement, that a timeout leaves no CPU parked and admission reopened, that a non-BSP caller is refused, and that a second concurrent begin is refused rather than corrupting the target set.
   - Single-CPU behaviour is a real case, not a skip: with no other online CPU the rendezvous succeeds immediately and `end` must still be balanced.
-- [ ] Commit: `"kernel/smp: resumable generation-tagged stop-the-world CPU rendezvous"`
+- [x] Commit: `"kernel/smp: resumable generation-tagged stop-the-world CPU rendezvous"`
 
 **Test checkpoint:** `smp_rendezvous_begin()` returns 0 with every other online CPU parked, and non-zero with nothing parked on timeout; a stale-generation acknowledgement never completes a round; `end` restores admission and every CPU resumes. `bash scripts/test.sh SUITE=x86` green. Test on: QEMU TCG + KVM, 1 and 2 CPUs (`scripts/test-smoke-matrix.sh`).
+
+> **Test runner:** `scripts/debug/kernel/run-x86-tests.bat` -- expect 152 x86 suites, 371 assertions, 0 failures, including `smp_rendezvous: LIVE begin/end stops and restarts the world`.
+> **Verified:** 2026-09-04 | 6/6 items (the two review residues are filed as §27, not parked here, because a park into a section being stamped is never revisited) | build OK | 33052 kernel + 17 user-mode tests, 0 failures | x86 152 suites / 371 assertions | smoke matrix 4/4 (TCG+KVM x 1+2 CPU) | release-flavor compile clean with `KERNEL_TESTS` undefined | live serial shows `stop-the-world rendezvous armed (vector 0xf9)`
+> **Deferred:** [M] the timeout, EOI, split-snapshot and admission-refusal paths are MUTATION SURVIVORS -- deleting any of the four leaves the suite green, because each only runs on a path driven by the live clock or the live LAPIC and a test may not drive those -> XREF: `02-kernel-core/TODO-26` §27 (item: "Route the owner's wait through an injectable clock and the IPI send through an injectable dispatcher")
+> **Deferred:** [M] a CPU retracting through the panic path clears its online-mask bit before it stops executing, so a snapshot taken in that window omits a running CPU; reachable only from an already-panicking machine, which is why it is parked and not a ship blocker -> XREF: `02-kernel-core/TODO-26` §27 (item: "Give a retracting CPU a terminal-quiescent publication point the rendezvous snapshot can see")
+> **Notes:**
+> - **What shipped:** a resumable generation-tagged barrier -- `smp_rendezvous_begin/end/in_progress` plus the pure protocol (`round_active/arm/set_targets/ack/complete/release/park_step`) in `src/kernel/smp/smp.c`, vector 0xF9 in `include/kernel/vectors.h`, and 28 tests in `test_smp_rendezvous.c`.
+> - **How it integrates:** armed from `smp_init()` on BOTH the SMP and the single-CPU path; APs take the vector from their existing `pm_idle_c1()` park loop; `smp_publish_cpu_online()` now returns a verdict and the AP bringup caller abandons an AP whose publication is refused.
+> - **The protocol correction that shaped it:** acknowledgement is a per-CPU 64-bit GENERATION, never a bit in a shared mask, because a mask lets a CPU that stalled through a timeout and re-arm satisfy the next round while still running; the counters are 64-bit because a 32-bit wrap re-creates that exact ABA at `UINT32_MAX`.
+> - **The owner runs the window with interrupts masked:** a preemptible owner could be switched out by its own LAPIC timer with every AP already parked, leaving nothing running to observe the timeout or release them.
+> - **Downstream:** this closes §2's parked AP-quiesce item and is the prerequisite §3 was deferred on; nothing calls it yet, which is why the one LIVE test exists -- the smoke matrix alone would only prove the handler registers.
+> - **Ordering that review forced:** the owner ARMS FIRST with an empty target set and names its targets afterwards, because closing admission after the snapshot leaves a window where a CPU joins between the two and the round completes while it runs; the timeout is also sampled before the IPI sends, which can each spin a million ICR polls.
+> - **Scope boundary:** the barrier only. Saving CPU state, the firmware waking vector, and the SLP_EN write stay with §3; this section adds no ACPI code.
+
+---
+
+## 27. Rendezvous Safety Residue: Test Seam and the Retract-Side Window
+
+> **Spawned-by:** §26 (review)
+> **User impact:** a machine that hangs or drops interrupts when it is put to sleep, with nothing in the test suite that would have caught it. Four safety paths in the barrier §26 shipped are MUTATION SURVIVORS -- deleting the fail-closed release, the handler's `lapic_eoi()`, the split-snapshot re-read, or the admission refusal leaves the whole suite green -- and separately a CPU retracting through the panic path can be omitted from a snapshot while it is still executing, which is the one remaining way `smp_rendezvous_begin()` can report a stopped world that is not stopped.
+
+Both residues are §26's own surface, filed here rather than parked into §26 because a park into a section being stamped is stranded work: the fixpoint loop never revisits a DONE section. -> XREF: `02-kernel-core/TODO-26` §26 (item: "`smp_rendezvous_begin(uint32_t timeout_ms)` in `src/kernel/smp/smp.c`, declared in `include/kernel/smp.h`")
+
+- [ ] Route the owner's wait through an injectable clock and the IPI send through an injectable dispatcher, so a caller-owned fake can drive a PARTIAL TIMEOUT deterministically
+  - The four survivors all share one cause: each runs only on a path driven by the live clock or the live LAPIC, and a kernel test may drive neither. More assertions cannot reach them; a seam can.
+  - Keep the seam pure and caller-supplied, matching how the rest of the protocol is already testable: no global hook, no `#ifdef KERNEL_TESTS` branch inside the shipping path.
+  - This is a dependency-injection change to a primitive that stops every CPU, so it wants its own design review rather than being bolted onto §26.
+- [ ] `test_rv_begin_timeout_releases_partial_round`: one target silent, assert -1, `generation == released_gen`, every acknowledged target's next `park_step` returns 0, interrupts restored, and another round can arm
+  - Today `test_rv_timeout_release_leaves_nobody_parked` performs the cleanup it claims to verify: it calls `smp_rendezvous_release()` itself and never enters the timeout branch, so deleting the fail-closed release in `smp_rendezvous_begin()` does not fail it.
+- [ ] `test_rv_park_step_release_rearm_between_loads`: pause after the first generation read, release and re-arm, resume, assert the CPU stays parked and acknowledges the new generation
+  - The existing split-snapshot test performs both transitions BEFORE calling `park_step`, so its first load already sees the new generation and the second re-read is never exercised.
+- [ ] `test_rv_active_round_refuses_publication_without_mutation`: assert an open round leaves claim, `is_online` and the online mask byte-identical, and that publication succeeds after release
+  - Nothing exercises the admission backstop: `test_smp_lifecycle.c` deliberately never calls `smp_publish_cpu_online()`, so deleting the active-round refusal escapes the suite entirely.
+- [ ] Strengthen the single live test to prove AP RESUMPTION and reusable IPI wiring, not just that the BSP survived
+  - `smp_cpu_count() >= 1` proves only that the BSP is still counted. Deleting `lapic_eoi()` from the handler leaves vector 0xF9 in-service and still passes every current assertion.
+  - Preserve the exact pre-round online mask, run two consecutive rounds, and observe bounded evidence that each targeted AP executed after each release. Stay within ONE live test: a second one doubles the wedge surface for no extra proof.
+- [ ] Give a retracting CPU a terminal-quiescent publication point the rendezvous snapshot can see
+  - `smp_retract_cpu_online()` clears the online-mask bit BEFORE the CPU stops, and its panic caller keeps doing shared-state, serial and evidence work afterwards, so a snapshot taken in that window omits a CPU that is still running.
+  - The publish-side twin of this was closed in §26 by arming before snapshotting; the retract side cannot be fixed the same way, because the mask bit is cleared deliberately early so no consumer counts a dying CPU as live.
+  - Reachable only from an already-panicking machine, which is why §26 shipped without it -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` (live CPU online lifecycle / park)
+- [ ] Commit: `"kernel/smp: rendezvous test seam, mutation-proving tests, retract-side quiescence"`
+
+**Test checkpoint:** deleting any one of the four named lines (the fail-closed release, `lapic_eoi()` in the handler, the second generation re-read in `park_step`, the active-round refusal in `smp_publish_cpu_online()`) makes a specific named test FAIL. `bash scripts/test.sh SUITE=x86` green. Test on: QEMU TCG + KVM, 1 and 2 CPUs (`scripts/test-smoke-matrix.sh`).
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                         | 🪟 Win11        | 🐧 Linux        | 🚀 Impossible OS |
-| --- | ------------------------------- | --------------- | --------------- | ---------------- |
-| 💎  | S5 ACPI shutdown                | ✅ Full         | ✅ Full         | ✅ Done §1       |
-| 💎  | ACPI S-state discovery          | ✅ ACPI.sys     | ✅ acpi_sleep   | ✅ Done §1       |
-| 💎  | PM1 fixed-event SCI             | ✅ ACPI.sys     | ✅ acpi_sci     | ✅ Done §1       |
-| 💎  | C1 idle / HLT                   | ✅ Full         | ✅ cpuidle      | ⬜ §2            |
-| 💎  | S3 suspend RAM                  | ✅ Full         | ✅ sleep        | ⬜ §3            |
-| 💎  | Stop-the-world CPU rendezvous   | ✅ KeIpiGeneric | ✅ stop_machine | ⬜ §26           |
-| 💎  | S4 hibernate disk               | ✅ Full         | ✅ swsusp       | ⬜ §4            |
-| 💎  | Fast startup hiberboot          | ✅ Default      | ❌ None         | ⬜ §11           |
-| 💎  | ACPI EC driver                  | ✅ Full         | ✅ acpi_ec      | ⬜ §5            |
-| 💎  | Battery `_BIX` / `_BST`         | ✅ Full         | ✅ upower       | ⬜ §6            |
-| 💎  | Power lid button events         | ✅ Full         | ✅ logind       | ⬜ §7            |
-| 💎  | PCI D-states D0--D3cold         | ✅ Full         | ✅ PCI PM       | ⬜ §8            |
-| 💎  | Driver sleep wake callbacks     | ✅ WDM          | ✅ pm_ops       | ⬜ §9            |
-| 💎  | Driver query veto power         | ✅ QUERY_POWER  | ✅ prepare      | ⬜ §17           |
-| 💎  | Runtime idle PoFx RPM           | ✅ PoFx         | ✅ runtime_pm   | ⬜ §12           |
-| 💎  | Power requests tracking         | ✅ powercfg     | ⚠️ wake_lock    | ⬜ §13           |
-| 💎  | Wake source lastwake            | ✅ powercfg     | ⚠️ dmesg        | ⬜ §13           |
-| 💎  | ACPI thermal zones              | ✅ ACPI.sys     | ✅ thermal      | ⬜ §14           |
-| 💎  | Passive active cooling          | ✅ Full         | ✅ step_wise    | ⬜ §14           |
-| 💎  | CPU DVFS cpufreq                | ✅ PPM HWP      | ✅ cpufreq      | ⬜ §15           |
-| 💎  | CPU idle C-states               | ✅ PPM          | ✅ menu teo     | ⬜ §16           |
-| 💎  | Connected standby S0ix          | ✅ Modern       | ⚠️ Partial      | ⬜ §10           |
-| 💎  | mem_sleep s2idle deep           | ✅ S0 idle      | ✅ sysfs        | ⬜ §21           |
-| 💎  | powercfg CLI surface            | ✅ 50 cmds      | ⚠️ systemctl    | ⬜ §18           |
-| 💎  | Power Options GUI               | ✅ powercpl     | ⚠️ GNOME basic  | ⬜ §18           |
-| ⭐  | Energy aware scheduling         | ⚠️ HW ITD       | ✅ EAS ARM      | ⬜ §19           |
-| ⭐  | Battery wear tray hint          | ❌ Settings     | ❌ CLI only     | ⬜ §6            |
-| ⭐  | batteryreport plain text        | ✅ HTML         | ❌ None         | ⬜ §18           |
-| ⭐  | energy audit trace              | ✅ Full         | ❌ None         | ⬜ §13           |
-| ⭐  | sleepstudy DRIPS report         | ✅ Full         | ❌ None         | ⬜ §18           |
-| 💎  | PoFx F-states components        | ✅ Per Fx       | ❌ Device only  | ⬜ §12           |
-| 💎  | Directed PoFx DRIPS             | ✅ PoFx v3      | ❌ None         | ⬜ §10           |
-| 💎  | USB suspend U1 U2 LPM           | ✅ Full         | ✅ autosuspend  | ⬜ §12           |
-| 💎  | NVMe APST idle states           | ✅ On           | ✅ sysfs        | ⬜ §12           |
-| 💎  | PCIe ASPM L1 substates          | ✅ Plans        | ✅ pcie_aspm    | ⬜ §23           |
-| 💎  | SATA ALPM link power            | ✅ HIPM         | ✅ sysfs        | ⬜ §12           |
-| 💎  | NIC ARP NS offload S0ix         | ✅ NDIS         | ⚠️ Firmware     | ⬜ §10           |
-| 💎  | Smart charge 80 percent         | ✅ OEM          | ⚠️ TLP          | ⬜ §6            |
-| 💎  | RAPL power cap sysfs            | ✅ Internal     | ✅ powercap     | ⬜ §15           |
-| 💎  | AMD P-State EPP                 | ✅ Driver       | ✅ amd_pstate   | ⬜ §15           |
-| 💎  | Energy Saver adaptive           | ✅ Win11        | ⚠️ profiles     | ⬜ §18           |
-| ⭐  | Human presence HPD wake         | ✅ Platform     | ❌ None         | ⬜ §7            |
-| 💎  | HID-idle QoS throttle (fg-only) | ✅ 25H2         | ❌ None         | ⬜ §22           |
-| 💎  | ACPI GPE block dispatch         | ✅ ACPI.sys     | ✅ acpi_ev_gpe  | ⬜ §24           |
+| ⭐  | Feature                         | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
+| --- | ------------------------------- | --------------- | ---------------- | ---------------- |
+| 💎  | S5 ACPI shutdown                | ✅ Full         | ✅ Full          | ✅ Done §1       |
+| 💎  | ACPI S-state discovery          | ✅ ACPI.sys     | ✅ acpi_sleep    | ✅ Done §1       |
+| 💎  | PM1 fixed-event SCI             | ✅ ACPI.sys     | ✅ acpi_sci      | ✅ Done §1       |
+| 💎  | C1 idle / HLT                   | ✅ Full         | ✅ cpuidle       | ⬜ §2            |
+| 💎  | S3 suspend RAM                  | ✅ Full         | ✅ sleep         | ⬜ §3            |
+| 💎  | Stop-the-world CPU rendezvous   | ✅ KeIpiGeneric | ✅ stop_machine  | ✅ Done §26      |
+| 💎  | Stop-the-world fault injection  | ✅ Internal     | ✅ ftrace stress | ⬜ §27           |
+| 💎  | S4 hibernate disk               | ✅ Full         | ✅ swsusp        | ⬜ §4            |
+| 💎  | Fast startup hiberboot          | ✅ Default      | ❌ None          | ⬜ §11           |
+| 💎  | ACPI EC driver                  | ✅ Full         | ✅ acpi_ec       | ⬜ §5            |
+| 💎  | Battery `_BIX` / `_BST`         | ✅ Full         | ✅ upower        | ⬜ §6            |
+| 💎  | Power lid button events         | ✅ Full         | ✅ logind        | ⬜ §7            |
+| 💎  | PCI D-states D0--D3cold         | ✅ Full         | ✅ PCI PM        | ⬜ §8            |
+| 💎  | Driver sleep wake callbacks     | ✅ WDM          | ✅ pm_ops        | ⬜ §9            |
+| 💎  | Driver query veto power         | ✅ QUERY_POWER  | ✅ prepare       | ⬜ §17           |
+| 💎  | Runtime idle PoFx RPM           | ✅ PoFx         | ✅ runtime_pm    | ⬜ §12           |
+| 💎  | Power requests tracking         | ✅ powercfg     | ⚠️ wake_lock     | ⬜ §13           |
+| 💎  | Wake source lastwake            | ✅ powercfg     | ⚠️ dmesg         | ⬜ §13           |
+| 💎  | ACPI thermal zones              | ✅ ACPI.sys     | ✅ thermal       | ⬜ §14           |
+| 💎  | Passive active cooling          | ✅ Full         | ✅ step_wise     | ⬜ §14           |
+| 💎  | CPU DVFS cpufreq                | ✅ PPM HWP      | ✅ cpufreq       | ⬜ §15           |
+| 💎  | CPU idle C-states               | ✅ PPM          | ✅ menu teo      | ⬜ §16           |
+| 💎  | Connected standby S0ix          | ✅ Modern       | ⚠️ Partial       | ⬜ §10           |
+| 💎  | mem_sleep s2idle deep           | ✅ S0 idle      | ✅ sysfs         | ⬜ §21           |
+| 💎  | powercfg CLI surface            | ✅ 50 cmds      | ⚠️ systemctl     | ⬜ §18           |
+| 💎  | Power Options GUI               | ✅ powercpl     | ⚠️ GNOME basic   | ⬜ §18           |
+| ⭐  | Energy aware scheduling         | ⚠️ HW ITD       | ✅ EAS ARM       | ⬜ §19           |
+| ⭐  | Battery wear tray hint          | ❌ Settings     | ❌ CLI only      | ⬜ §6            |
+| ⭐  | batteryreport plain text        | ✅ HTML         | ❌ None          | ⬜ §18           |
+| ⭐  | energy audit trace              | ✅ Full         | ❌ None          | ⬜ §13           |
+| ⭐  | sleepstudy DRIPS report         | ✅ Full         | ❌ None          | ⬜ §18           |
+| 💎  | PoFx F-states components        | ✅ Per Fx       | ❌ Device only   | ⬜ §12           |
+| 💎  | Directed PoFx DRIPS             | ✅ PoFx v3      | ❌ None          | ⬜ §10           |
+| 💎  | USB suspend U1 U2 LPM           | ✅ Full         | ✅ autosuspend   | ⬜ §12           |
+| 💎  | NVMe APST idle states           | ✅ On           | ✅ sysfs         | ⬜ §12           |
+| 💎  | PCIe ASPM L1 substates          | ✅ Plans        | ✅ pcie_aspm     | ⬜ §23           |
+| 💎  | SATA ALPM link power            | ✅ HIPM         | ✅ sysfs         | ⬜ §12           |
+| 💎  | NIC ARP NS offload S0ix         | ✅ NDIS         | ⚠️ Firmware      | ⬜ §10           |
+| 💎  | Smart charge 80 percent         | ✅ OEM          | ⚠️ TLP           | ⬜ §6            |
+| 💎  | RAPL power cap sysfs            | ✅ Internal     | ✅ powercap      | ⬜ §15           |
+| 💎  | AMD P-State EPP                 | ✅ Driver       | ✅ amd_pstate    | ⬜ §15           |
+| 💎  | Energy Saver adaptive           | ✅ Win11        | ⚠️ profiles      | ⬜ §18           |
+| ⭐  | Human presence HPD wake         | ✅ Platform     | ❌ None          | ⬜ §7            |
+| 💎  | HID-idle QoS throttle (fg-only) | ✅ 25H2         | ❌ None          | ⬜ §22           |
+| 💎  | ACPI GPE block dispatch         | ✅ ACPI.sys     | ✅ acpi_ev_gpe   | ⬜ §24           |
 
 After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 

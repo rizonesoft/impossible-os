@@ -80,6 +80,7 @@
 #define IPI_VECTOR_RESCHEDULE     0xFD
 #define IPI_VECTOR_TLB_SHOOTDOWN  0xFE
 #define IPI_VECTOR_CR_VERIFY      VECTOR_IPI_CR_VERIFY  /* 0xFB; central guard (S10) */
+#define IPI_VECTOR_RENDEZVOUS     VECTOR_IPI_RENDEZVOUS  /* 0xF9; stop-the-world (TODO-26 S26) */
 
 /* ---- API ---- */
 

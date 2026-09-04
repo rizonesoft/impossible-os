@@ -929,6 +929,7 @@ extern void test_register_kworker(void);
 extern void test_register_registry(void);
 extern void test_register_boot_init(void);
 extern void test_register_smp_lifecycle(void);
+extern void test_register_smp_rendezvous(void);
 extern void test_register_kernel_config(void);
 extern void test_register_boot_timing(void);
 extern void test_register_boot_info(void);
@@ -1063,6 +1064,7 @@ void test_runner_init(void)
     /* Boot */
     test_register_boot_init();
     test_register_smp_lifecycle();
+    test_register_smp_rendezvous();
     test_register_kernel_config();
     test_register_boot_timing();
     test_register_boot_info();

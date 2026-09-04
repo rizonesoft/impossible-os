@@ -22,6 +22,7 @@
  *                                          alias the DPL=3 INT 0x2E gate
  *   0x80        Linux-style syscall        syscall.c (INT 0x80, DPL=3)
  *   0x81        Yield (cooperative switch)  task.c (INT 0x81)
+ *   0xF9        Stop-the-world rendezvous  smp.c (TODO-26 S26)
  *   0xFA        LAPIC error LVT            lapic.c (LVT_ERROR vector)
  *   0xFB        CR-pin verify IPI          lapic.h (TODO-09-boot S10)
  *   0xFC        Async init IPI             boot_init.c
@@ -69,6 +70,12 @@
 #define VECTOR_NT_SYSCALL          0x2E  /* INT 0x2E -- NT compat syscall */
 #define VECTOR_LINUX_SYSCALL       0x80  /* INT 0x80 -- Linux-style syscall */
 #define VECTOR_YIELD               0x81  /* INT 0x81 -- cooperative yield */
+
+/* ---- Stop-the-world CPU rendezvous IPI (0xF9) ----
+ * Sits BELOW the LAPIC error LVT rather than inside the 0xFB-0xFE IPI block
+ * because that block is full. The dynamic IRQ allocator owns 0x30-0xEF and
+ * never reaches 0xF9, so the gap 0xF0-0xF9 is the only static space left. */
+#define VECTOR_IPI_RENDEZVOUS      0xF9  /* stop-the-world barrier (TODO-26 S26) */
 
 /* ---- LAPIC error LVT (0xFA) ---- */
 #define VECTOR_LAPIC_ERROR         0xFA  /* LAPIC LVT error vector (lapic.c BSP+AP) */
@@ -148,6 +155,20 @@ _Static_assert(VECTOR_LAPIC_ERROR != VECTOR_IPI_CR_VERIFY &&
                VECTOR_LAPIC_ERROR != VECTOR_IPI_RESCHEDULE &&
                VECTOR_LAPIC_ERROR != VECTOR_IPI_TLB_SHOOTDOWN,
     "LAPIC error LVT must not collide with an IPI vector (notably TLB shootdown 0xFE)");
+
+/* The rendezvous vector must be unique against every other static assignment
+ * AND must stay clear of the dynamic IRQ range, because irq_alloc_vector()
+ * hands out 0x30-0xEF without consulting this header -- a rendezvous vector
+ * that drifted into that range would be silently reassigned to a device. */
+_Static_assert(VECTOR_IPI_RENDEZVOUS != VECTOR_LAPIC_ERROR &&
+               VECTOR_IPI_RENDEZVOUS != VECTOR_IPI_CR_VERIFY &&
+               VECTOR_IPI_RENDEZVOUS != VECTOR_IPI_ASYNC_INIT &&
+               VECTOR_IPI_RENDEZVOUS != VECTOR_IPI_RESCHEDULE &&
+               VECTOR_IPI_RENDEZVOUS != VECTOR_IPI_TLB_SHOOTDOWN &&
+               VECTOR_IPI_RENDEZVOUS != VECTOR_LAPIC_SPURIOUS,
+    "rendezvous IPI vector collides with another statically assigned vector");
+_Static_assert(VECTOR_IPI_RENDEZVOUS > 0xEF,
+    "rendezvous IPI vector must sit above the dynamic IRQ range (0x30-0xEF)");
 _Static_assert(VECTOR_LAPIC_ERROR != VECTOR_LAPIC_SPURIOUS &&
                VECTOR_LAPIC_ERROR != VECTOR_LAPIC_TIMER,
     "LAPIC error LVT must not collide with spurious or timer vector");
