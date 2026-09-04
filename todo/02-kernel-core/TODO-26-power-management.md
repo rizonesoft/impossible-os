@@ -84,14 +84,14 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine    | (none)                     |  [x]   |
 | 💎  |   2   | §2 C1 idle entry: race-safe HLT + idle accounting   | §1                         |  [x]   |
 | 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze)   | §1, §2, §26, §9, D04T03§1  |  [/]   |
-| 💎  |   4   | §4 S4: hibernate to disk (image write + resume)     | §3                         |  [ ]   |
+| 💎  |   4   | §4 S4 hibernation image format + LZ4 chunk codec    | (none)                     |  [ ]   |
 | 💎  |   5   | §5 ACPI Embedded Controller (EC) driver             | §1                         |  [ ]   |
 | 💎  |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`)      | §5                         |  [ ]   |
 | 💎  |   7   | §7 Power button & lid-close events                  | §5                         |  [ ]   |
 | 💎  |   8   | §8 PCI device D-states (D0--D3cold)                 | §1                         |  [ ]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering         | §3, §8                     |  [ ]   |
 | ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby)       | §2, §9, D02T06§3           |  [ ]   |
-| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)      | §4, §9                     |  [ ]   |
+| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)      | §4, §9, §28                |  [ ]   |
 | 💎  |  12   | §12 Runtime device idle management                  | §8, §9                     |  [ ]   |
 | 💎  |  13   | §13 Power request tracking & wake source management | §9, §12                    |  [ ]   |
 | 💎  |  14   | §14 ACPI thermal zone management                    | §5, D04T03§4               |  [ ]   |
@@ -108,6 +108,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  25   | §25 Per-CPU idle accounting via NtQuerySystemInfo   | §2                         |  [ ]   |
 | 💎  |  26   | §26 Stop-the-world CPU rendezvous for sleep         | §2                         |  [x]   |
 | 💎  |  27   | §27 Rendezvous safety residue: seam + retract gap   | §26                        |  [ ]   |
+| 💎  |  28   | §28 S4 hibernation write path + resume consumer     | §4, §3, §9, D02T27§7       |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -295,47 +296,31 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ---
 
-## 4. S4: Hibernate to Disk
+## 4. S4: Hibernation Image Format and Compression Codec
 
-> [!NOTE] Ownership boundary (TODO-26 gap-audit 2026-06-17): the bootloader (`01-boot-platform/TODO-26`) owns hibernation image DISCOVERY, eligibility policy (Secure Boot/db/topology/slot invalidation), anti-replay, integrity, and the boot_info handoff. This section owns image WRITING (`pm_hibernate_write`, AEAD encryption, the on-disk header per TODO-26 §1) and the kernel RESUME CONSUMER (`pm_hibernate_resume`) reached via the `BOOT_PAYLOAD_HIBERNATION_META` handoff -- NOT a Phase-1 partition scan + policy decision. The legacy `HIBR_HEADER` below is superseded by TODO-26 §1's authoritative metadata format (adds boot_info ABI version, root volume id, Secure Boot/PCR state, a `resume_generation` anti-replay counter, and AEAD encryption metadata). -> XREF: `01-boot-platform/TODO-26 §1,§2,§4,§5`.
+> **Spawned-by:** root
 
-- [ ] Hibernation image header in `include/kernel/pm/hibernate.h`:
-  ```c
-  #define HIBER_MAGIC  0x4945424F524150 /* "RAPOBRIE" -- "Reboot Impossible" */
-  typedef struct {
-      uint64_t magic;
-      uint64_t kernel_version;    /* must match resume kernel */
-      uint64_t image_pages;       /* number of 4 KiB pages saved */
-      uint64_t resume_cr3;        /* page table root to restore */
-      uint64_t resume_rsp;        /* kernel stack pointer */
-      uint64_t resume_rip;        /* resume return address */
-      uint64_t checksum;          /* CRC32C of all pages */
-      uint8_t  reserved[4032];    /* pad to 4 KiB */
-  } HIBR_HEADER;
-  ```
-- [ ] Pages saved: all physical pages that are in use (PMM used-bit scan) excluding the hibernation scratch buffer itself
-- [ ] Compression: LZ4 block compression (`src/libs/miniz` or a simple LZ4 kernel implementation) applied per 64-page (256 KiB) chunk; reduces image size by ~50% for typical workloads
-- [ ] `pm_hibernate_write()`:
-  1. Pre-suspend sequence identical to §3 (drivers to D3, scheduler freeze, journal flush)
-  2. Open the hibernation partition: IXFS raw block device (C:\ partition reserved region), or a dedicated swap partition identified by GPT type GUID `{HIBER-GUID}`; retrieve via `blkdev_open_by_gpt_type(HIBER_GUID)`
-  3. Walk PMM used-page list; for each page: compress 64-page chunk with LZ4; write to hibernation partition via DMA (must reach D0 device state first)
-  4. Write `HIBR_HEADER` at offset 0 with final `image_pages` count and CRC32C
-  5. Call `acpi_enter_sleep_state(4)` -- system powers off; same as S5 but firmware knows to look for hibernation image on next boot
-- [ ] Encryption: AEAD-encrypt the image (AES-GCM) with a TPM-sealed key; write cipher/key-id/nonce/tag into the header so the bootloader can require it and refuse plaintext. -> XREF: `01-boot-platform/TODO-26 §4`
-- [ ] Resume ENTRY is the bootloader's job (supersedes the old Phase-1 scan): it discovers + validates + selects, then hands off via `BOOT_PAYLOAD_HIBERNATION_META`. -> XREF: `01-boot-platform/TODO-26 §2-§5`
-- [ ] `pm_hibernate_resume()`:
-  1. Read all compressed chunks from the partition; decompress into a separate bounce buffer
-  2. CRC32C verify the full image; halt with `KERNEL_HIBERNATE_CORRUPT` (→ XREF: `TODO-27-crash-dump-generation.md §1`) if mismatch
-  3. Copy pages from bounce buffer back to their original physical addresses; restore CR3, RSP, RIP from `HIBR_HEADER`
-  4. Jump to resume RIP -- execution resumes from inside `pm_hibernate_write()` as if `acpi_enter_sleep_state(4)` just returned
-  5. Run §3 resume steps 4--7 (recalibrate TSC, notify drivers, unfreeze scheduler)
-- [ ] If `kernel_version` mismatches (updated kernel after hibernate): discard the image; cold boot; log `[HIBER] image version mismatch`
-- [ ] Evaluate `_PTS(4)` before the S4 PM1 write and `_WAK(4)` on resume
-  - Same contract as the S3 path and for the same reason. Needs the AML evaluator.
-  - -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`")
-- [ ] Commit: `"kernel/acpi: S4 hibernation image write/resume, LZ4 compression, version guard"`
+> [!NOTE] Ownership boundary (TODO-26 gap-audit 2026-06-17; SPLIT 2026-09-04): the bootloader (`01-boot-platform/TODO-26`) owns hibernation image DISCOVERY, eligibility policy (Secure Boot/db/topology/slot invalidation), anti-replay validation, integrity checking, and the boot_info handoff. This section owns the authoritative on-disk FORMAT and the pure codec that produces and verifies it. The S4 write path, AEAD encryption with a TPM-sealed key, and the kernel resume consumer were split out to §28 because each is blocked on a prerequisite owned elsewhere; keeping them here would have held the codec behind ACPI namespace bring-up. -> XREF: `02-kernel-core/TODO-26` §28, `01-boot-platform/TODO-26 §1,§2,§4,§5`.
 
-**Test checkpoint:** `sizeof(HIBR_HEADER)` == 4096. `HIBR_HEADER.magic == HIBER_MAGIC`. LZ4 compress/decompress round-trips test page. CRC32C mismatch triggers `KERNEL_HIBERNATE_CORRUPT`. Version mismatch discards image and cold boots. Test on: QEMU TCG (with hibernation partition).
+- [ ] Hibernation image header in `include/kernel/pm/hibernate.h`: 4 KiB fixed, `_Static_assert` on `sizeof` and on every field offset (a cross-component on-disk ABI, same discipline as `boot_info`)
+  - Fields follow the bootloader's authoritative list: magic, format version, kernel build id, `BOOT_INFO_VERSION`, root volume id, image size, saved page count, header CRC32C, payload CRC32C, flags, resume type (full hibernate / fast startup / crash-test image), `resume_generation` anti-replay counter, and the AEAD block (cipher id, sealed key id, nonce, tag).
+  - This supersedes the legacy `HIBR_HEADER` sketch this section carried before the split, which had no version, no volume identity, and no encryption metadata. -> XREF: `01-boot-platform/TODO-26` §1 (item: "Define header with magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags.")
+  - The AEAD fields are part of the ABI and are DEFINED here; POPULATING them is §28's blocked work, so the codec writes an explicit `HIBER_CIPHER_NONE` and the format states plaintext rather than implying it by omission.
+- [ ] Chunk framing: fixed 64-page (256 KiB) uncompressed chunks, each carrying a descriptor (uncompressed length, stored length, flags) so a chunk that does not shrink is stored verbatim instead of expanded
+  - Compression uses the codec already vendored in this tree: `lz4_compress()` / `lz4_decompress()` / `lz4_compress_bound()` in `include/libs/lz4.h`. No new compressor.
+- [ ] Streaming encoder in `src/kernel/pm/hibernate_image.c`: `hibernate_image_begin()`, `hibernate_image_append_chunk()`, `hibernate_image_finalize()`
+  - Payload CRC32C accumulates across chunks with `kcrc32c_cont()` (`include/kernel/kchecksum.h`); `finalize` writes the header fields and the header's own CRC last.
+- [ ] Decoder half: `hibernate_image_header_validate()` and `hibernate_image_read_chunk()`, both bounds-checked against attacker-chosen lengths rather than trusting the header
+  - `header_validate`: magic, format version, header CRC, and the declared image size / page count consistent with each other and within bounds.
+  - `read_chunk`: refuses a descriptor whose stored length exceeds the remaining input or whose uncompressed length exceeds the fixed chunk size; a decompressor that produces fewer bytes than declared is a failure, not a partial success.
+- [ ] Kernel-identity guard `hibernate_image_kernel_matches()`: a mismatched kernel build id or `BOOT_INFO_VERSION` returns a distinct reason code so the caller discards the image and cold-boots
+  - The caller logs `[HIBER] image version mismatch`; the guard itself stays pure and returns the reason.
+- [ ] The codec stays PURE -- no disk IO, no ACPI, no scheduler interaction -- so it is exercisable by unit tests on this tree, and shipping it is what unblocks the bootloader-side parser
+  - The bootloader's metadata-format section is deferred waiting for a writer to define the format ("gated on the kernel hibernation WRITER"), so this half of §4 is the piece that breaks that deadlock. -> XREF: `01-boot-platform/TODO-26` §1
+  - Do NOT wire the encoder to any disk sink until §28 lands AEAD encryption: an image on disk is confidential kernel memory. -> XREF: `02-kernel-core/TODO-26` §28 (item: "AEAD-encrypt the image")
+- [ ] Commit: `"kernel/pm: S4 hibernation image format + LZ4 chunk codec"`
+
+**Test checkpoint:** `sizeof` of the header is 4096 and every pinned field offset asserts. Magic matches `HIBER_MAGIC`. A chunk round-trips compress -> decompress byte-identically, including an incompressible chunk that takes the stored-verbatim path. A flipped payload byte fails the CRC32C check. A truncated header, a bad magic, and a descriptor whose stored length runs past the buffer are each rejected. A kernel build id mismatch reports the discard reason. Test on: QEMU TCG.
 
 ---
 
@@ -1110,6 +1095,36 @@ Both residues are §26's own surface, filed here rather than parked into §26 be
 - [ ] Commit: `"kernel/smp: rendezvous test seam, mutation-proving tests, retract-side quiescence"`
 
 **Test checkpoint:** deleting any one of the four named lines (the fail-closed release, `lapic_eoi()` in the handler, the second generation re-read in `park_step`, the active-round refusal in `smp_publish_cpu_online()`) makes a specific named test FAIL. `bash scripts/test.sh SUITE=x86` green. Test on: QEMU TCG + KVM, 1 and 2 CPUs (`scripts/test-smoke-matrix.sh`).
+
+---
+
+## 28. S4 Orchestration: Hibernation Image Write and Resume Path
+
+> **Spawned-by:** §4 (split)
+
+> [!NOTE] Split out of §4 on 2026-09-04. §4 keeps the on-disk format and the pure codec, which are implementable on this tree; every item below needs a prerequisite that does not exist yet, so leaving them in one section would have blocked the codec (and with it the bootloader's format parser) behind ACPI namespace bring-up. -> XREF: `02-kernel-core/TODO-26` §4.
+
+- [/] `pm_hibernate_write()` in `src/kernel/pm/hibernate.c`: §3 pre-suspend sequence, PMM used-page walk, chunk-encode via §4's codec, write to the hibernation partition, then `acpi_enter_sleep_state(4)`
+  - BLOCKED on exactly the prerequisites §3 is deferred on: ACPICA's namespace is never loaded (no call site for `AcpiInitializeSubsystem()` / `AcpiLoadTables()` / `AcpiEnableSubsystem()` outside `src/kernel/acpica/`), and the driver power callbacks the freeze step broadcasts to are §9 and unimplemented. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`"), `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`")
+  - The S4 refusal at `src/kernel/acpi.c:1568-1578` is the current, accurate behaviour and stays until this item can replace it with a real pipeline.
+- [/] Open the hibernation partition by GPT type GUID: no `blkdev_open_by_gpt_type()` exists in the tree, and the GPT-scan helper that would provide it is owned by the crash-dump sink
+  - Reuse that helper rather than adding a second GPT scanner. -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md` §7 (item: "**Prerequisite:** no `blkdev_open_by_gpt_type` exists in tree today; implement `dump_sink_probe()`")
+- [/] AEAD-encrypt the image (AES-GCM) with a TPM-sealed key and populate the §4 header's cipher id / key id / nonce / tag so the bootloader can require encryption and refuse plaintext
+  - Not blocked on crypto primitives: TPM NV storage and the monotonic/write-lock primitives both shipped. It is blocked because there is no write path to encrypt and the bootloader validator that would consume the metadata is itself deferred. -> XREF: `01-boot-platform/TODO-26` §4 (item: "Require an encrypted image: validate the AEAD metadata (cipher/key-id/nonce) and decrypt-verify with the TPM-sealed key")
+- [/] Write the `resume_generation` anti-replay counter from the TPM-NV monotonic primitive at image-write time, so a stale-but-valid image is rejected on the next boot
+  - The primitive exists (`01-boot-platform/TODO-13` §17, shipped); the consumer that compares it does not. -> XREF: `01-boot-platform/TODO-26` §4 (item: "Reject a valid-but-STALE image: compare the header `resume_generation` against the current TPM-NV/NVRAM monotonic value")
+- [/] `pm_hibernate_resume()`: read + decompress chunks into a bounce buffer, CRC32C-verify the whole image, halt with `KERNEL_HIBERNATE_CORRUPT` on mismatch, restore pages / CR3 / RSP / RIP, then run §3 resume steps 4-7
+  - BLOCKED on the handoff that would reach it: resume ENTRY is the bootloader's, and its discovery / validation / selection sections are deferred. The boot payload record is present in the ABI but explicitly unpopulated (`src/boot/uefi/bootx64.c:18233`, "Resume metadata (S4 hibernation): not populated yet"). -> XREF: `01-boot-platform/TODO-26` §2-§5
+  - Corruption halt path. -> XREF: `TODO-27-crash-dump-generation.md` §1
+- [/] Evaluate `_PTS(4)` before the S4 PM1 write and `_WAK(4)` on resume, same contract as the S3 path
+  - BLOCKED: `AcpiEvaluateObject` is compiled and linked (`src/kernel/acpica/components/namespace/nsxfeval.c:325`) but unreachable while the namespace is never loaded. -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` §1
+- [/] Commit: `"kernel/pm: S4 hibernation write path + resume consumer"`
+
+**Test checkpoint:** `pm_hibernate_write()` produces an image the §4 decoder validates end to end; a resume with a mismatched kernel build id discards the image and cold-boots; a corrupted payload halts with `KERNEL_HIBERNATE_CORRUPT`; a plaintext image is refused when encryption is required. Test on: QEMU TCG (with a hibernation partition), then bare metal.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the blockers below clear
+
+> **Deferred:** every item needs a prerequisite owned elsewhere, all four verified against this tree on 2026-09-04. (1) The pre-suspend and resume orchestration is §3's, which is itself deferred: ACPICA is vendored and linked but its namespace is never initialized, so `_PTS`/`_WAK` cannot be evaluated. (2) The §9 driver power callbacks the freeze and thaw steps broadcast to do not exist. (3) There is no `blkdev_open_by_gpt_type()` and no GPT-scan helper in the tree; that helper is owned by the crash-dump sink. (4) Resume entry, image discovery, and integrity/anti-replay validation belong to the bootloader, whose sections are deferred and whose `BOOT_PAYLOAD_HIBERNATION_META` record is explicitly not populated. The format and codec half was split into §4 and is implementable now. -> XREF: `02-kernel-core/TODO-26` §4, `02-kernel-core/TODO-26` §9 (item: "`pm_notify_resume()`"), `04-drivers-hardware/TODO-03-acpi-power-management.md` §1 (item: "`acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject`"), `02-kernel-core/TODO-27-crash-dump-generation.md` §7 (item: "**Prerequisite:** no `blkdev_open_by_gpt_type` exists in tree today; implement `dump_sink_probe()`"), `01-boot-platform/TODO-26` §2-§5
 
 ---
 
