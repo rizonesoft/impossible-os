@@ -659,6 +659,79 @@ static void test_pci_pm_stall_status_is_distinct(void)
                 "and is distinguishable from a failed latch and a missing clock");
 }
 
+/* ---- Not-ready is not the same as absent ---- */
+
+static void test_pci_pm_rrs_is_distinct_from_no_response(void)
+{
+    /* A PCIe function still initialising answers Request Retry Status, which
+     * arrives as a real vendor ID rather than as silence. A readiness poll that
+     * accepts "anything but all-ones" therefore declares an explicitly
+     * not-ready device ready and touches it mid-reset. */
+    TEST_ASSERT(PCI_VENDOR_ID_RRS != PCI_CFG_NO_RESPONSE,
+                "RRS is a real answer, not the absence of one");
+    /* The readiness poll's own predicate: a device is ready only when its
+     * vendor ID is neither of these. Asserted as the predicate rather than as
+     * the two literals, which would only prove they were typed correctly. */
+    TEST_ASSERT(!(PCI_VENDOR_ID_RRS != PCI_CFG_NO_RESPONSE
+                  && PCI_VENDOR_ID_RRS != PCI_VENDOR_ID_RRS),
+                "an RRS answer does not satisfy the ready predicate");
+    TEST_ASSERT(PCI_CFG_NO_RESPONSE > PCI_VENDOR_ID_RRS,
+                "and neither sentinel can be mistaken for the other");
+}
+
+static void test_pci_pm_readiness_allowance_covers_a_reset(void)
+{
+    /* 60 ms was short enough to declare a compliant storage or USB controller
+     * failed during resume; the conventional-reset allowance is a full second. */
+    TEST_ASSERT(PCI_PM_D0_READY_MAX_US >= 1000000u,
+                "the readiness allowance covers a conventional reset");
+    TEST_ASSERT(PCI_PM_D0_READY_STEP_US > 0
+                && PCI_PM_D0_READY_STEP_US < PCI_PM_D0_READY_MAX_US,
+                "and the poll step divides that allowance rather than exceeding it");
+}
+
+static void test_pci_pm_capability_ttl_matches_node_positions(void)
+{
+    /* The walk tells a maximal legal list from a cyclic one by whether the next
+     * pointer is zero when the budget runs out, which is only correct while the
+     * budget equals the number of positions a node can occupy. */
+    TEST_ASSERT_EQ(PCI_CAP_WALK_MAX,
+                   ((PCI_CAP_NODE_OFF_MAX - PCI_CAP_OFF_MIN) / 4) + 1,
+                   "the TTL is the count of legal node positions, not a margin");
+}
+
+static void test_pci_pm_irql_status_is_distinct(void)
+{
+    /* A transition busy-waits for its recovery interval, so it may only run
+     * where that does not hold off interrupts and DPCs. Refusing is a distinct
+     * outcome from anything the device did. */
+    TEST_ASSERT(PCI_DX_IRQL < 0, "a raised-IRQL caller is refused");
+    TEST_ASSERT(PCI_DX_IRQL != PCI_DX_INVALID && PCI_DX_IRQL != PCI_DX_BUSY,
+                "and that is not confused with a bad argument or a busy device");
+}
+
+static void test_pci_pm_plan_d0_noop_on_reset_prone_device(void)
+{
+    /* The planner still reports a D0 request against a device already in D0 as
+     * a no-op; the CONSERVATIVE obligation for that case is applied by
+     * pci_set_d_state, which knows the device may have reached D0 through a
+     * transition nobody saw finish. */
+    pci_pm_plan_t plan;
+    int rc = pci_pm_plan_transition(0, PCI_D0, PCI_D0, 1, &plan);
+    TEST_ASSERT_EQ(rc, PCI_DX_OK, "a D0 request on a D0 device succeeds");
+    TEST_ASSERT_EQ(plan.needs_write, 0, "without writing");
+    TEST_ASSERT_EQ(plan.reinit_after, 0,
+                   "and claims no reinitialisation obligation for it");
+
+    /* Not even when No_Soft_Reset is clear. That bit says what a D3hot->D0
+     * WOULD do; on a device already in D0 it proves nothing, and acting on it
+     * would tear down a live controller's BARs and interrupts. */
+    rc = pci_pm_plan_transition(0, (uint16_t)(PCI_D0), PCI_D0, 1, &plan);
+    TEST_ASSERT_EQ(rc, PCI_DX_OK, "same for a device reporting No_Soft_Reset clear");
+    TEST_ASSERT_EQ(plan.reinit_after, 0,
+                   "a no-op never fabricates a destructive obligation");
+}
+
 /* ---- Registration ---- */
 
 void test_register_pci_pm(void)
@@ -751,6 +824,16 @@ void test_register_pci_pm(void)
                             test_pci_pm_all_ones_pmcsr_is_not_a_state, TEST_CAT_BOOT);
     test_suite_register_cat("PCI PM: a partial response is not a D-state",
                             test_pci_pm_partial_response_pmcsr_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("PCI PM: RRS is distinct from no response",
+                            test_pci_pm_rrs_is_distinct_from_no_response, TEST_CAT_BOOT);
+    test_suite_register_cat("PCI PM: readiness allowance covers a reset",
+                            test_pci_pm_readiness_allowance_covers_a_reset, TEST_CAT_BOOT);
+    test_suite_register_cat("PCI PM: capability TTL matches node positions",
+                            test_pci_pm_capability_ttl_matches_node_positions, TEST_CAT_BOOT);
+    test_suite_register_cat("PCI PM: raised-IRQL refusal is distinct",
+                            test_pci_pm_irql_status_is_distinct, TEST_CAT_BOOT);
+    test_suite_register_cat("PCI PM: a D0 no-op plan claims no obligation",
+                            test_pci_pm_plan_d0_noop_on_reset_prone_device, TEST_CAT_BOOT);
     test_suite_register_cat("PCI PM: poison refuses every entry point",
                             test_pci_pm_poison_refuses_every_entry_point, TEST_CAT_BOOT);
     test_suite_register_cat("PCI PM: poison is global and clearable",

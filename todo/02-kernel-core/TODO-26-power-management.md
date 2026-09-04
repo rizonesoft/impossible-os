@@ -572,7 +572,8 @@ The config-space-only half of the PCI D-state work: capability discovery and the
   - `0xFFFF & PMCSR_POWER_STATE_MASK` is D3hot, so without this an absent, removed or wedged device CONFIRMS the suspend it failed to perform and the caller carries on believing DMA and interrupts are quiesced. `0xFFFB` is the same hazard without being all-ones. Bit 2 is deliberately not required to read zero: its reset value is device-specific, and refusing a legitimate suspend is not the safe direction.
   - `pci_pm_pmc_version_supported()` accepts PM revisions 1..3 and gates both the setter and the getter, so a reserved revision is never driven. Discovery stays structural.
 - [x] `No_Soft_Reset` is honoured: a D3hot->D0 on a device with the bit clear lands in D0 Uninitialized, and the caller is told so
-  - Reported through a MANDATORY `int *reinit_required` out-parameter rather than a distinguished return value, so it cannot be missed by a caller that only tests `rc < 0`. It is assigned as soon as the write happens, so a retry after a timed-out wake cannot see a D0 no-op and conclude the device was never reset.
+  - Reported through a MANDATORY `int *reinit_required` out-parameter rather than a distinguished return value, so it cannot be missed by a caller that only tests `rc < 0`. It is assigned as soon as the write happens, so the failure paths after it carry it too.
+  - A genuine no-op reports NO obligation. Claiming one whenever `No_Soft_Reset` is clear was tried and withdrawn: that bit says what a D3hot->D0 WOULD do, not that this D0 came from one, so an actively running controller would be told to tear down its BARs and interrupts against live DMA. Telling a failed-transition retry from an ordinary D0 request needs history this section does not keep -> XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "Persistent per-BDF reinitialisation-pending state, so a failed D3hot->D0 cannot lose its obligation across a retry")
   - The device is polled for a response (`PCI_VENDOR_ID` != `0xFFFF`, bounded by `PCI_PM_D0_READY_MAX_US`) before its PMCSR is read back, because a device that came back uninitialised can take longer than the spec minimum to answer config cycles at all.
 - [x] Transitions are serialised per device across the WHOLE sequence -- claim, read, decide, write, recover, verify, release
   - An 8-entry in-flight table under `s_pci_pm_lock`; a second caller for the same BDF gets `PCI_DX_BUSY` rather than blocking, since a spinlock cannot span a 10 ms recovery interval. The claim is taken BEFORE capability discovery, which itself reads config space.
@@ -584,11 +585,23 @@ The config-space-only half of the PCI D-state work: capability discovery and the
   - The CF8 address format packs the fields adjacently, so an out-of-range device does not fail, it ALIASES another one: `00:20.0` and `01:00.0` compute the same address while the claim table treats them as different devices.
 - [x] `src/kernel/drivers/pci.c`: every config accessor now holds a global IRQ-safe spinlock across the WHOLE CF8/CFC transaction
   - The mechanism is a pair of shared PORTS, so without this another CPU replaces CF8 between the address write and the data access and the second half lands on a different device. Eleven files call these accessors, from both thread and interrupt context. This is the root fix for the read-modify-write corruption the PMCSR path would otherwise have suffered.
+- [x] `pci_write16()` issues a sized 16-bit write instead of a read-modify-write of the enclosing DWORD (review: kernel-quality-auditor)
+  - The RMW rewrote the ADJACENT register, so writing `PCI_COMMAND` (0x04) wrote back the just-read `PCI_STATUS` (0x06) whose Master Abort, Target Abort, SERR and parity bits are write-1-to-clear. Every `pci_enable_bus_mastering()` and ten driver call sites were silently acknowledging latched bus errors nobody had read. Same defect class as the PMCSR hazard this section was built around, one function away, pre-existing.
+- [x] Transitions refuse above PASSIVE_LEVEL with `PCI_DX_IRQL`, checked before any claim or write (review: perf)
+  - The recovery wait and readiness poll busy-spin for up to a second; at DISPATCH_LEVEL that holds off every lower-priority interrupt and DPC. Documented as a contract on consumers, not just a check.
+- [x] The D0 readiness allowance is 1 s, and vendor ID `0x0001` (PCIe Request Retry Status) counts as NOT ready (review: adversarial)
+  - 60 ms was short enough to declare a compliant storage or USB controller failed during resume, and treating anything but all-ones as ready accepted an explicitly not-ready device and touched it mid-reset.
+- [x] Poisoning emits a one-shot diagnostic through `serial_write_recoverable()` naming the device and the failing status (review: adversarial)
+  - `klog()` was tried and withdrawn: it reaches disk I/O, and the device whose transition just failed may BE the storage controller. Plain `serial_write()` was withdrawn too, because it polls THRE unbounded and a wedged UART would turn a bounded clock stall into a permanent hang holding the serial lock.
+- [x] `virtio.c` uses the shared `PCI_STATUS` / `PCI_STATUS_CAP_LIST` / `PCI_CAP_PTR_TYPE01` instead of its own private duplicates (review: consistency)
+- [x] Named `PCI_CFG_NO_RESPONSE` for the 0xFFFF sentinel and pinned the capability TTL with a `_Static_assert` (review: consistency, kernel-quality-auditor)
+  - The TTL of 48 is exactly the count of legal DWORD-aligned node positions, which is what lets the walk tell a maximal legal list from a cyclic one; that relation was asserted in prose only.
+  - Also corrected two comments that had stopped describing the code: one still documented the removed raw-TSC delay design, the other claimed a config transaction sits "well inside" the spinlock hold budget when it does not.
 - [x] Commit: `"kernel/pci: PM capability discovery, D0/D1/D2/D3hot state machine, spec recovery delays"`
 
 **Test checkpoint:** `pci_pmcap_find()` returns a valid offset for a PM-capable device and -1 both for a device without the capability and for one whose `PCI_STATUS` capability bit is clear. `pci_set_d_state(dev, 3)` writes PMCSR and `pci_get_d_state()` reads 3 back. `pci_set_d_state(dev, 0)` restores D0 after the 10 ms recovery delay. A D1 request against a device whose `PMCAP` does not advertise D1 returns `PCI_DX_UNSUPPORTED` rather than writing. Test on: QEMU TCG + WHPX.
 
-> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (or `bash scripts/test.sh SUITE=boot`) -- 49 `PCI PM: *` cases, all PASS; the decision logic is pure, so none of them needs a PM-capable device on the bus, and `pci_pm_set_poisoned_for_test()` is the fault-injection seam that makes the admission gate provable (same shape as `pmm_alloc_fail_next`).
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (or `bash scripts/test.sh SUITE=boot`) -- 54 `PCI PM: *` cases, all PASS; the decision logic is pure, so none of them needs a PM-capable device on the bus, and `pci_pm_set_poisoned_for_test()` is the fault-injection seam that makes the admission gate provable (same shape as `pmm_alloc_fail_next`).
 
 > **Notes:**
 > - Shipped `src/kernel/drivers/pci_pm.c` + `include/kernel/drivers/pci_pm.h` (capability walk, D0/D1/D2/D3hot state machine, pure transition planner) and hardened `src/kernel/drivers/pci.c` with a CF8/CFC transaction lock.
@@ -596,6 +609,14 @@ The config-space-only half of the PCI D-state work: capability discovery and the
 > - §9 and §12 consume `pci_set_d_state()`; §23 hangs ASPM policy off the same devices; the per-device registry that records their state is §33.
 > - Canonical contract is the header comment block in `include/kernel/drivers/pci_pm.h`: PME_Status is write-1-to-clear, recovery intervals forbid ALL access, the only exit from a low-power state is D0, and No_Soft_Reset clear means D3hot->D0 lands uninitialised.
 > - Scope boundary: D3cold (§34) and the `pm_device_t` registry (§33) are deliberately NOT here; the claim serialises D-state callers only, and a gate binding every config client is §33's.
+> **Verified:** 2026-09-04 | commit `9d40a3ba6` + review fixes | 13/13 items | build OK | tests 33709 kernel + 17 user-mode PASS | smoke matrix 4/4 legs (KVM/TCG x 1/2 CPU) | lint 0 errors
+> **Accepted:** [H] the per-device claim binds D-state callers only, so an unrelated driver can touch a device inside another CPU's recovery interval -> XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "Per-device access gate that EVERY config-space client honours, so no driver touches a device during another caller's D-state recovery interval")
+> **Accepted:** [H] a retry after a failed D3hot->D0 cannot be told from an ordinary D0 request, so the reinitialisation obligation is not tracked exactly (reason: needs per-device history this section does not keep) -> XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "Persistent per-BDF reinitialisation-pending state, so a failed D3hot->D0 cannot lose its obligation across a retry")
+> **Accepted:** [M] every state query re-walks the capability list, up to ~50 config transactions for one read -> XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "Cache the validated PM capability offset and revision per device, invalidated on removal or re-probe")
+> **Accepted:** [M] the machine-wide poison latch has no production caller able to clear it, so a real stall would refuse PCI PM for the rest of the boot -> XREF: `02-kernel-core/TODO-26-power-management.md` §33 (item: "A production owner for PCI PM poison recovery: a bus rescan or re-probe path that calls `pci_pm_clear_poison()` after re-establishing the affected devices")
+> **Accepted:** [M] `pci_set_d_state()` is PASSIVE_LEVEL only, which an ordinary KDPC-driven autosuspend would fail -> XREF: `02-kernel-core/TODO-26-power-management.md` §12 (item: "Timer expiry: call `ops->runtime_idle(ctx)`; if returns 0 (device can suspend): call `ops->runtime_suspend(ctx)` to transition to low-power state")
+> **Quality reviewed:** 2026-09-04 | Codex 17x (design, adversarial x12, consistency, perf, test-coverage, re-adversarial x4) + kernel-quality-auditor + concurrency-evidence-mapper | 12H+9M fixed, 5 accepted | scope: kernel-code-quality
+
 
 ---
 
@@ -693,6 +714,8 @@ Per-device runtime idle management -- equivalent to Windows PoFx (Power Manageme
 - [ ] Reference counter per device: `pm_runtime_get(dev)` increments and ensures device is active; `pm_runtime_put(dev)` decrements and starts idle timer when count reaches 0
 - [ ] When reference count reaches 0: start a DPC timer with `idle_timeout_ms` delay (→ XREF: `TODO-07-irql-model-dpcs.md §3`)
 - [ ] Timer expiry: call `ops->runtime_idle(ctx)`; if returns 0 (device can suspend): call `ops->runtime_suspend(ctx)` to transition to low-power state
+  - The suspend hook must NOT run on the DPC itself: hand off to a threaded DPC or a PASSIVE_LEVEL worker first. `pci_set_d_state()` refuses above PASSIVE_LEVEL with `PCI_DX_IRQL` because it busy-waits up to a second for the recovery interval and readiness, so calling it from an ordinary KDPC callback at DISPATCH_LEVEL would refuse every autosuspend rather than transition anything.
+  - → XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "`pci_set_d_state(bus, dev, fn, state, &reinit_required)` -- performs the transition and verifies it latched")
 - [ ] `pm_runtime_set_autosuspend_delay(dev, ms)` -- adjustable per device; storage controllers use longer delays (2000 ms); input devices use shorter (500 ms)
 - [ ] `pm_runtime_get(dev)` on a suspended device: call `ops->runtime_resume(ctx)` synchronously before returning
 - [ ] Before system S3/S4 entry: all runtime-active devices are suspended via `ops->runtime_suspend()`; runtime-suspended devices remain suspended
@@ -1431,6 +1454,15 @@ The per-device power-state record and the registry every later power path walks.
 - [ ] Per-device access gate that EVERY config-space client honours, so no driver touches a device during another caller's D-state recovery interval
   - §8's claim serialises D-state callers only: an unrelated driver reading its own BARs during a 10 ms D3hot recovery is not prevented by it, and cannot be, because §8 has no registry to hang the state on. The registry is where a device's "do not touch" state can live and be consulted by the whole PCI layer.
   - → XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "Transitions are serialised per device across the WHOLE sequence -- claim, read, decide, write, recover, verify, release")
+- [ ] Persistent per-BDF reinitialisation-pending state, so a failed D3hot->D0 cannot lose its obligation across a retry
+  - §8 reports the obligation on every post-write outcome and, conservatively, on any D0 no-op where `No_Soft_Reset` is clear. That is safe but imprecise: it cannot tell a device that was genuinely never reset from one whose reset nobody saw finish. The registry is where a pending flag can live until a driver acknowledges it.
+  - → XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "`No_Soft_Reset` is honoured: a D3hot->D0 on a device with the bit clear lands in D0 Uninitialized, and the caller is told so")
+- [ ] Cache the validated PM capability offset and revision per device, invalidated on removal or re-probe
+  - `pci_get_d_state()` re-walks the capability list on every call. A PM capability at the last of 48 node positions costs ~50 config transactions, each taking two locks, for one state read. The runtime-idle consumer in §12 would inherit that amplification on a polling path.
+  - → XREF: `02-kernel-core/TODO-26-power-management.md` §12 (item: "`pm_runtime_register(dev, ops, idle_timeout_ms)` -- register a device for runtime PM")
+- [ ] A production owner for PCI PM poison recovery: a bus rescan or re-probe path that calls `pci_pm_clear_poison()` after re-establishing the affected devices
+  - §8 latches a machine-wide refusal when a transition cannot observe its recovery interval, and deliberately provides no automatic expiry because nothing can know when an unobserved interval ended. Today nothing in the tree ever clears it, so the refusal would last the rest of the boot.
+  - → XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "A transition that cannot observe its recovery interval POISONS the module rather than reporting success")
 - [ ] Commit: `"kernel/pm: pm_device_t registry, pm_register_device, BDF-keyed lookup"`
 
 **Test checkpoint:** `pm_register_device()` adds to the global list and `pm_device_count()` reflects it. A duplicate BDF registration is refused rather than duplicated. Filling the array returns the refusal code and does not write past the bound. `pm_device_find()` returns the registered record and NULL for an unregistered BDF. Test on: QEMU TCG.

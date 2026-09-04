@@ -22,7 +22,7 @@ static inline uint32_t inl(uint16_t port)
     return ret;
 }
 
-static inline __attribute__((unused)) void outw_pci(uint16_t port, uint16_t val)
+static inline void outw_pci(uint16_t port, uint16_t val)
 {
     __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
 }
@@ -65,9 +65,18 @@ static uint32_t pci_addr(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
  * read returns another device's register, and a write corrupts one. Every
  * accessor below therefore holds s_pci_cfg_lock across the WHOLE transaction.
  *
- * IRQ-safe because these are reachable from both thread and interrupt context
- * (xhci, nvme, ahci, virtio and the ACPICA OSL all call them). The critical
- * section is two or three port accesses, well inside the spinlock hold budget.
+ * IRQ-safe because these accessors are called from driver init, probe and
+ * diagnostic paths across the tree and from the ACPICA OSL, whose AML operation
+ * regions can be evaluated from contexts this file cannot enumerate; taking the
+ * IRQ-safe variant is the assumption that costs nothing and cannot be wrong.
+ *
+ * The critical section is one CF8 write plus one CFC access. That is SHORT, but
+ * it is not "well inside" the < ~100 ns budget spinlock.h states: each is a
+ * non-posted host-bridge transaction costing hundreds of nanoseconds on real
+ * silicon, and a contended bus scan on a large SMP machine will hold IRQs off
+ * for microseconds per waiter. The locking is still necessary and still the
+ * cheapest correct shape -- the point is that the budget is genuinely exceeded
+ * here, so the same reasoning must not be reused to justify a longer one.
  *
  * This serialises individual transactions only. A read-modify-write built from
  * two of them (as PMCSR needs) must take its own lock on top -- see
@@ -117,14 +126,23 @@ void pci_write32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset,
 void pci_write16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset,
                  uint16_t value)
 {
+    /* A 16-BIT write, not a read-modify-write of the enclosing DWORD.
+     *
+     * The RMW shape looks harmless and is not: it writes the ADJACENT 16-bit
+     * register back with whatever it just read, and half the standard header's
+     * neighbours are write-1-to-clear. The worst pair is the common one --
+     * writing PCI_COMMAND (0x04) also rewrites PCI_STATUS (0x06), whose
+     * Detected Parity Error, Signaled SERR, Received Master Abort, Received and
+     * Signaled Target Abort and Master Data Parity Error bits are all RW1C. So
+     * every pci_enable_bus_mastering() and every driver that touches the command
+     * register was silently ACKNOWLEDGING latched bus errors nobody had read.
+     *
+     * CF8/CFC supports a sized access at CFC + (offset & 2), which is what the
+     * Linux config-mechanism-1 write does, so the neighbour is never touched. */
     uint64_t flags;
     spin_lock_irqsave(&s_pci_cfg_lock, &flags);
     outl(PCI_CONFIG_ADDR, pci_addr(bus, dev, func, offset));
-    uint32_t old = inl(PCI_CONFIG_DATA);
-    int shift = (offset & 2) * 8;
-    old &= ~(0xFFFF << shift);
-    old |= ((uint32_t)value << shift);
-    outl(PCI_CONFIG_DATA, old);
+    outw_pci((uint16_t)(PCI_CONFIG_DATA + (offset & 2)), value);
     spin_unlock_irqrestore(&s_pci_cfg_lock, flags);
 }
 

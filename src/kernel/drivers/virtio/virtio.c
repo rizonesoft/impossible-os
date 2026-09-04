@@ -14,6 +14,7 @@
 
 #include "kernel/drivers/virtio/virtio.h"
 #include "kernel/drivers/pci.h"
+#include "kernel/drivers/pci_pm.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/irq.h"
 #include "kernel/klog.h"
@@ -94,10 +95,10 @@ static void ensure_bar_mapped(uint64_t bar_addr, uint8_t bar_idx,
 
 /* ---- PCI capability list walking ---- */
 
-/* PCI configuration space offsets for capability list */
-#define PCI_CAP_PTR       0x34   /* Pointer to first capability */
-#define PCI_STATUS_REG    0x06   /* Status register */
-#define PCI_STATUS_CAP    (1 << 4) /* Capabilities list present */
+/* Capability-list offsets and the list-present flag come from the shared PCI
+ * headers. They were duplicated here with different names (PCI_CAP_PTR,
+ * PCI_STATUS_REG, PCI_STATUS_CAP), which is two definitions of one hardware
+ * fact and a place for silent drift. */
 
 /* Read a VirtIO PCI capability at the given config space offset.
  * Returns the capability type, or -1 if not a VirtIO cap. */
@@ -141,14 +142,14 @@ int virtio_pci_init(struct virtio_pci_dev *dev,
     dev->notify_off_multiplier = 0;
 
     /* Check if device has capabilities list */
-    status = pci_read16(bus, pci_dev, func, PCI_STATUS_REG);
-    if (!(status & PCI_STATUS_CAP)) {
+    status = pci_read16(bus, pci_dev, func, PCI_STATUS);
+    if (!(status & PCI_STATUS_CAP_LIST)) {
         klog(LOG_DEBUG, "virtio", "Device has no PCI capabilities");
         return -1;
     }
 
     /* Get pointer to first capability */
-    cap_off = pci_read8(bus, pci_dev, func, PCI_CAP_PTR);
+    cap_off = pci_read8(bus, pci_dev, func, PCI_CAP_PTR_TYPE01);
     cap_off &= 0xFC;  /* Align to DWORD */
 
     /* Walk the capability list */
