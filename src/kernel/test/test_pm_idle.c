@@ -311,7 +311,7 @@ static void test_pm_mwait_deepest_picks_deepest_class(void)
 
     /* One sub-state in C1 (bits 7:4) and two in C3 (bits 15:12). C3 is
      * deeper, and its deepest sub-state is count-1 = 1, so 0x21. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x2010u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0x2010u, &hint), 1, "ok");
     TEST_ASSERT_EQ(hint, 0x21u, "C3s1 wins");
 
     /* C1 alone must still WIN, which is the loop's last iteration. Without
@@ -320,7 +320,7 @@ static void test_pm_mwait_deepest_picks_deepest_class(void)
      * Note the hint is a legitimate 0x00: success is the return value, and a
      * caller treating a zero hint as "none" would be wrong. */
     hint = 0xDEADu;
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x10u, &hint), 1, "C1 ok");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0x10u, &hint), 1, "C1 ok");
     TEST_ASSERT_EQ(hint, 0x00u, "C1s0 zero");
 }
 
@@ -330,7 +330,7 @@ static void test_pm_mwait_deepest_skips_empty_classes(void)
 
     /* C7 nibble (bits 31:28) is zero, so C7 is unimplemented and must be
      * skipped rather than encoded as C7 sub0. C2 (bits 11:8) has one. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x0100u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0x0100u, &hint), 1, "ok");
     TEST_ASSERT_EQ(hint, 0x10u, "C2s0");
 }
 
@@ -340,7 +340,7 @@ static void test_pm_mwait_deepest_ignores_c0(void)
 
     /* Only the C0 nibble is set. C0 is the running state, never an idle
      * target, so this must refuse -- not encode class 0. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x000Fu, &hint), 0, "C0 no");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0x000Fu, &hint), 0, "C0 no");
     TEST_ASSERT_EQ(hint, 0xDEADu, "untouched");
 }
 
@@ -351,15 +351,22 @@ static void test_pm_mwait_deepest_refuses_all_zero(void)
     /* What a CPU with no MWAIT idle classes reports, and what this emulated
      * host reports. A fabricated hint here would name a state the CPU does
      * not implement, which is how a monitored wait becomes unbounded. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0u, &hint), 0, "zero no");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0u, &hint), 0, "zero no");
     TEST_ASSERT_EQ(hint, 0xDEADu, "untouched");
+
+    /* Extension bit CLEAR with a populated EDX. Without the ECX[0] gate this
+     * would happily return C7, naming a state the enumeration never promised
+     * -- so the input is chosen to be one that SUCCEEDS when gated on EDX
+     * alone. */
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0u, 0xF0000000u, &hint), 0, "no ext");
+    TEST_ASSERT_EQ(hint, 0xDEADu, "untouched2");
 
     /* The NULL-output probe deliberately supplies an EDX that DOES name a
      * class (C7, count 1). An all-zero EDX would return before reaching the
      * store, so it would pass even with the NULL guard deleted -- proving
      * nothing. This input reaches the store, so only the guard stops a
      * kernel NULL write. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x10000000u, 0), 0, "null no");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0x10000000u, 0), 0, "null no");
 }
 
 static void test_pm_mwait_deepest_substate_within_count(void)
@@ -370,11 +377,11 @@ static void test_pm_mwait_deepest_substate_within_count(void)
      * INDEX is 14 -- not 15. Requesting index 15 off a count of 15 would name
      * a sub-state the class does not implement, so this asserts the count-1
      * conversion rather than the field width. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0xF0000000u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0xF0000000u, &hint), 1, "ok");
     TEST_ASSERT_EQ(hint, 0x6Eu, "C7 n15");
 
     /* A count of 1 is the boundary in the other direction: index 0. */
-    TEST_ASSERT_EQ(pm_mwait_deepest_hint(0x10000000u, &hint), 1, "ok");
+    TEST_ASSERT_EQ(pm_mwait_deepest_hint(PM_MWAIT_LEAF5_ECX_EXT, 0x10000000u, &hint), 1, "ok");
     TEST_ASSERT_EQ(hint, 0x60u, "C7 n1");
 }
 

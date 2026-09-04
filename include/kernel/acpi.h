@@ -138,6 +138,10 @@ _Static_assert(__builtin_offsetof(struct acpi_fadt, x_dsdt) == 140,
  * is kept as-is, with the assert below pinning it to never drop BELOW the
  * structural minimum if the layout moves. */
 #define ACPI_FADT_LEN_BOOT_ARCH  113
+/* FADT Flags bit 21: LOW_POWER_S0 (ACPI 5.0+). Named rather than inlined
+ * because both the accessor and its tests assert against it. */
+#define ACPI_FADT_FLAG_LOW_POWER_S0  (1u << 21)
+
 #define ACPI_FADT_LEN_FLAGS \
     (__builtin_offsetof(struct acpi_fadt, flags) + 4)
 

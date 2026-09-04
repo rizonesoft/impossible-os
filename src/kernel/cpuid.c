@@ -469,6 +469,7 @@ cpu_feature_mask_t cpuid_probe_ap_features(void)
         set_flag_if(&m, CPU_FEATURE_AVX,    ecx, 28);
         set_flag_if(&m, CPU_FEATURE_PCID,   ecx, 17);
         set_flag_if(&m, CPU_FEATURE_CX16,   ecx, 13);
+        set_flag_if(&m, CPU_FEATURE_MONITOR, ecx, 3);  /* gates MWAIT on this CPU */
     }
     if (max_leaf >= 0x07) {
         cpuid_raw(0x07, 0, &eax, &ebx, &ecx, &edx);

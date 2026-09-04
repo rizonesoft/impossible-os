@@ -222,8 +222,10 @@ typedef enum {
  * AP. Per this section's scope ("validates security-critical feature
  * mismatches"), it is NOT the full feature set: it covers the required baseline
  * plus the optional features that drive CR4/XCR0 enables and hybrid divergence
- * (SMEP/SMAP/UMIP/PKU/AVX/AVX512F/PCID/XSAVE/RDTSCP/WAITPKG). WAITPKG drives the
- * UMWAIT_CONTROL MSR replay the way RDTSCP drives TSC_AUX. The global
+ * (SMEP/SMAP/UMIP/PKU/AVX/AVX512F/PCID/XSAVE/RDTSCP/WAITPKG/MONITOR). WAITPKG drives
+ * the UMWAIT_CONTROL MSR replay the way RDTSCP drives TSC_AUX; MONITOR is probed
+ * for the same reason its ring-3 twin WAITPKG is -- a monitored wait issued on an
+ * AP needs the ALL-CPU answer, and cpu_has() alone reports only the BSP's. The global
  * intersection and the optional-mismatch check operate only within this mask. */
 /* AP-probe set = required baseline + the optional features that drive CR4/XCR0
  * enables and hybrid divergence. Reuses the required X-macro list (diag rows)
@@ -234,7 +236,8 @@ typedef enum {
     X(CPU_FEATURE_SMEP,)   X(CPU_FEATURE_SMAP,)    X(CPU_FEATURE_UMIP,) \
     X(CPU_FEATURE_PKU,)    X(CPU_FEATURE_AVX,)     X(CPU_FEATURE_AVX512F,) \
     X(CPU_FEATURE_PCID,)   X(CPU_FEATURE_XSAVE,)   X(CPU_FEATURE_RDTSCP,) \
-    X(CPU_FEATURE_SSE4_2,) X(CPU_FEATURE_WAITPKG,) X(CPU_FEATURE_SPEC_CTRL,)
+    X(CPU_FEATURE_SSE4_2,) X(CPU_FEATURE_WAITPKG,) X(CPU_FEATURE_SPEC_CTRL,) \
+    X(CPU_FEATURE_MONITOR,)
 #define CPU_FEATURES_AP_PROBE_MASK \
     ((cpu_feature_mask_t){ { 0ULL CPU_FEATURES_AP_PROBE_LIST(CPU_FEAT_W0_), \
                              0ULL CPU_FEATURES_AP_PROBE_LIST(CPU_FEAT_W1_) } })

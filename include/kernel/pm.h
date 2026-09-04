@@ -141,24 +141,46 @@ uint64_t pm_idle_delta(uint64_t t0, uint64_t t1);
  * outside C1..C7 or the sub-state exceeds the 4-bit field. */
 uint32_t pm_mwait_hint_encode(uint32_t cclass, uint32_t substate);
 
-/* Derive the deepest legal hint from a CPUID.05H EDX word, which packs one
- * 4-bit sub-state count per class (class Cn at bits 4n+3:4n). Searches C7
- * down to C1 and takes the deepest class reporting a non-zero count, whose
- * deepest sub-state is count-1.
+/* Derive the deepest legal hint from a CPUID.05H ECX/EDX pair. EDX packs one
+ * 4-bit sub-state count per class (class Cn at bits 4n+3:4n); the search runs
+ * C7 down to C1 and takes the deepest class reporting a non-zero count, whose
+ * deepest sub-state index is count-1.
+ *
+ * BOTH words are required, and that is the contract's point: CPUID.05H:ECX[0]
+ * (PM_MWAIT_LEAF5_ECX_EXT) is what makes the ECX/EDX enumeration meaningful at
+ * all. With it clear, EDX is NOT architecturally a table of sub-state counts,
+ * so reading nibbles out of it would name states from whatever the register
+ * happened to hold. This function refuses that case rather than guessing.
  *
  * Returns 1 and writes *out_hint on success; returns 0 and leaves *out_hint
- * untouched when no class reports a non-zero count. A CPU that implements no
- * MWAIT idle class gets a refusal, never a fabricated hint -- naming a state
- * the CPU does not implement is how a monitored wait becomes unbounded. */
-int pm_mwait_deepest_hint(uint32_t leaf5_edx, uint32_t *out_hint);
-
-/* Whether MWAIT may be executed given the caller's interrupt state.
+ * untouched when the extension bit is clear or no class reports a non-zero
+ * count. A CPU that implements no MWAIT idle class gets a refusal, never a
+ * fabricated hint.
  *
- * With interrupts enabled, an arriving interrupt always breaks the wait, so
- * the answer is yes. With interrupts MASKED, the only break event is a masked
- * interrupt, which requires CPUID.05H:ECX[1] support paired with MWAIT
- * ECX[0]; without it the CPU can wait with nothing left to wake it. Returns
- * 1 when MWAIT is permitted, 0 when the caller must not execute it. */
+ * The result is the DEEPEST hint the CPU implements, which is NOT the same as
+ * the hint a caller should always request: it carries no exit-latency, target-
+ * residency or per-SKU errata information, all of which a real idle governor
+ * weighs (Linux drives this from per-microarchitecture tables in intel_idle,
+ * consulting leaf 5 only to sanity-check that MWAIT exists). Treat it as the
+ * ceiling of what is legal, not as a policy decision. */
+int pm_mwait_deepest_hint(uint32_t leaf5_ecx, uint32_t leaf5_edx,
+                          uint32_t *out_hint);
+
+/* The INTERRUPT-STATE rule for executing MWAIT. This is one precondition, not
+ * the whole permission check: a caller must ALSO have established
+ * cpu_has(CPU_FEATURE_MONITOR), a CPUID max-leaf of at least 5, and an armed
+ * MONITOR. Those are the caller's to check; this answers only "is the
+ * interrupt state compatible".
+ *
+ * With interrupts enabled, an arriving interrupt breaks the wait, so the
+ * answer is yes. With interrupts MASKED, a masked interrupt breaks the wait
+ * only when the CPU reports CPUID.05H:ECX[1] and the caller sets MWAIT
+ * ECX[0]; absent that pairing, an interrupt arriving while IF is clear is not
+ * a break event for it. Other break events do still exist -- a store into the
+ * monitored range, NMI, SMI -- so this returns 0 to mean "this caller has not
+ * established a wake source", not "the CPU can never wake".
+ *
+ * Returns 1 when the interrupt state permits MWAIT, 0 when it does not. */
 int pm_mwait_idle_allowed(int if_set, int irq_break_supported);
 
 #ifdef KERNEL_TESTS

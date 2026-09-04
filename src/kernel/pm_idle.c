@@ -148,6 +148,10 @@ int pm_deep_idle_probe_test(uint32_t *out_depth)
 
 /* ---- MWAIT capability and hint selection --------------------------------
  *
+ * ARCH: x86-64 -- will move to arch/. The SDM Table 4-11 hint encoding and the
+ * CPUID leaf 5 layout below are x86-specific; the surrounding idle accounting
+ * is not.
+ *
  * Pure logic only; see the contract in include/kernel/pm.h for why nothing
  * here executes MONITOR or MWAIT. Taking the CPUID words as arguments rather
  * than executing CPUID is what lets the suite prove these on a host whose CPU
@@ -163,11 +167,20 @@ uint32_t pm_mwait_hint_encode(uint32_t cclass, uint32_t substate)
     return ((cclass - 1u) << 4) | substate;
 }
 
-int pm_mwait_deepest_hint(uint32_t leaf5_edx, uint32_t *out_hint)
+int pm_mwait_deepest_hint(uint32_t leaf5_ecx, uint32_t leaf5_edx,
+                          uint32_t *out_hint)
 {
     uint32_t cclass;
 
     if (!out_hint)
+        return 0;
+
+    /* CPUID.05H:ECX[0] is what makes the ECX/EDX enumeration meaningful. With
+     * it clear, EDX is not architecturally a table of sub-state counts, so
+     * every nibble read below would be interpreting whatever the register
+     * happened to hold -- which is precisely how this function would come to
+     * name a state the CPU does not implement. Refuse instead of guessing. */
+    if (!(leaf5_ecx & PM_MWAIT_LEAF5_ECX_EXT))
         return 0;
 
     /* CPUID.05H:EDX packs one 4-bit sub-state count per class, class Cn at
@@ -203,11 +216,13 @@ int pm_mwait_idle_allowed(int if_set, int irq_break_supported)
     if (if_set)
         return 1;
 
-    /* Interrupts masked: the ONLY break event is a masked interrupt, and that
-     * requires CPUID.05H:ECX[1] paired with MWAIT ECX[0]. Without it there is
-     * no guaranteed wake, so the caller must not execute MWAIT at all. This
-     * is a refusal, not a downgrade -- returning 1 here would trade a power
-     * saving for a machine that never wakes. */
+    /* Interrupts masked: a masked interrupt breaks the wait only when the CPU
+     * reports CPUID.05H:ECX[1] and the caller sets MWAIT ECX[0]. Other break
+     * events do exist regardless -- a store into the monitored range, NMI,
+     * SMI -- so this is not a claim that the CPU could never wake. It is a
+     * claim that THIS caller has not established a wake source it controls,
+     * and issuing MWAIT on that basis is not something the predicate will
+     * authorise. */
     return irq_break_supported ? 1 : 0;
 }
 

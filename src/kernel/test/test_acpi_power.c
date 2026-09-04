@@ -740,7 +740,7 @@ static void test_acpi_s0ix_null_and_short_refuse(void)
 {
     struct acpi_fadt f = {0};
 
-    f.flags = (1u << 21);
+    f.flags = ACPI_FADT_FLAG_LOW_POWER_S0;
 
     /* No table cannot advertise a capability. */
     TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(0), 0, "null");
@@ -762,7 +762,7 @@ static void test_acpi_s0ix_reads_bit21(void)
     f.flags = 0;
     TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 0, "b21 clr");
 
-    f.flags = (1u << 21);
+    f.flags = ACPI_FADT_FLAG_LOW_POWER_S0;
     TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 1, "b21 set");
 
     /* Neighbouring bits must not be mistaken for it. Bit 20 is HW_REDUCED,
@@ -781,11 +781,26 @@ static void test_acpi_s0ix_reads_bit21(void)
 static void test_acpi_s0ix_wrapper_matches_pure(void)
 {
     const struct acpi_fadt *live = acpi_get_fadt();
+    struct acpi_fadt f = {0};
 
-    /* The wrapper must forward to its OWN evaluator over the live table --
-     * not to a different accessor, and not to a cached answer. */
+    /* The wrapper must forward to its OWN evaluator over the live table. */
     TEST_ASSERT_EQ(acpi_s0ix_supported(), acpi_fadt_s0ix_capable(live),
                    "wrapper");
+
+    /* That equality alone is weak here: no emulator this suite runs on sets
+     * bit 21, so both sides are 0 and the assertion would also hold if the
+     * wrapper forwarded to any other accessor that is 0 on this platform.
+     * Pin the two evaluators APART on synthetic tables so "its own evaluator"
+     * has teeth independent of what the host firmware reports. */
+    f.header.length = ACPI_FADT_LEN_FLAGS;
+
+    f.flags = ACPI_FADT_FLAG_LOW_POWER_S0;
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 1, "s0ix yes");
+    TEST_ASSERT_EQ(acpi_fadt_hw_reduced(&f), 0, "hwr no");
+
+    f.flags = (1u << 20);   /* HW_REDUCED_ACPI, the adjacent bit */
+    TEST_ASSERT_EQ(acpi_fadt_s0ix_capable(&f), 0, "s0ix no");
+    TEST_ASSERT_EQ(acpi_fadt_hw_reduced(&f), 1, "hwr yes");
 }
 
 

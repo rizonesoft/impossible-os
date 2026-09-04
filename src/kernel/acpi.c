@@ -2462,7 +2462,7 @@ int acpi_fadt_s0ix_capable(const struct acpi_fadt *fadt)
         return 0;
     if (fadt->header.length < ACPI_FADT_LEN_FLAGS)
         return 0;
-    return (fadt->flags & (1u << 21)) ? 1 : 0;
+    return (fadt->flags & ACPI_FADT_FLAG_LOW_POWER_S0) ? 1 : 0;
 }
 
 int acpi_s0ix_supported(void)
