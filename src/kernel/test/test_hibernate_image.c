@@ -30,8 +30,10 @@
 #define TP_CHUNK_BYTES   (TP_CHUNK_PAGES * HIBER_PAGE_SIZE)
 
 /* Frames for the encoded image: header plus a worst-case (all stored) three
- * chunks, rounded up to whole pages. */
-#define TP_IMG_FRAMES    5u
+ * chunks, rounded up to whole pages. 4096 + 3 * (24 + 8192) = 28744, so five
+ * frames was 8 KiB short of the case this comment describes and only the
+ * compressible fixtures kept the multi-chunk tests inside it. */
+#define TP_IMG_FRAMES    8u
 #define TP_IMG_BYTES     (TP_IMG_FRAMES * HIBER_PAGE_SIZE)
 
 /* A test-only kernel identity. The codec never derives one; it compares what
@@ -43,7 +45,15 @@ static const uint8_t tp_kernel_id_a[HIBER_KERNEL_ID_BYTES] = {
     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
 };
 
+/* The arenas below are sized in FORMAT pages and allocated in PMM FRAMES.
+ * Those are different constants -- one is fixed by the on-disk layout, the
+ * other is architecture-dependent -- and every buffer bound here assumes they
+ * agree. On a 16K- or 64K-page port they would not. */
+_Static_assert(HIBER_PAGE_SIZE == PMM_FRAME_SIZE,
+               "test arenas size format pages with PMM frames");
+
 #define TP_BOOT_INFO_VERSION  0x1234u
+#define TP_CPU_COUNT          4u
 
 static void tp_ident_init(hiber_ident_t *id)
 {
@@ -51,8 +61,10 @@ static void tp_ident_init(hiber_ident_t *id)
     memcpy(id->kernel_id, tp_kernel_id_a, HIBER_KERNEL_ID_BYTES);
     id->boot_info_version = TP_BOOT_INFO_VERSION;
     id->resume_type       = HIBER_RESUME_FULL;
+    id->cpu_count_present = TP_CPU_COUNT;
     id->root_volume_id    = 0xFEEDFACEull;
     id->resume_generation = 7u;
+    id->total_ram_pages   = 0x40000ull;
 }
 
 /* Highly redundant: LZ4 must shrink this well below its input. */
@@ -260,8 +272,8 @@ static void test_hiber_byte_layout(void)
      * serializer that drifted from the struct would fail here even though the
      * _Static_asserts still pass. */
     TEST_ASSERT(tp_le64(a.img + 0) == HIBER_MAGIC, "magic at offset 0");
-    TEST_ASSERT_EQ((int)tp_le32(a.img + 8), (int)HIBER_FORMAT_VERSION,
-                   "format_version at offset 8");
+    TEST_ASSERT_EQ((int)tp_le32(a.img + 8), 2,
+                   "format_version at offset 8 is the pinned value 2");
     TEST_ASSERT_EQ((int)tp_le32(a.img + 12), (int)HIBER_HEADER_BYTES,
                    "header_bytes at offset 12");
     TEST_ASSERT(tp_le64(a.img + 16) == bytes, "image_bytes at offset 16");
@@ -272,8 +284,12 @@ static void test_hiber_byte_layout(void)
                    "boot_info_version at offset 40");
     TEST_ASSERT_EQ((int)tp_le32(a.img + 96), (int)HIBER_CIPHER_NONE,
                    "plaintext is stated explicitly in aead_cipher_id");
-    /* Reserved bytes must be zero, and the first of them starts at 140. */
-    TEST_ASSERT_EQ((int)a.img[140], 0, "reserved area starts zeroed");
+    TEST_ASSERT_EQ((int)tp_le32(a.img + 140), (int)TP_CPU_COUNT,
+                   "cpu_count_present at offset 140");
+    TEST_ASSERT(tp_le64(a.img + 144) == 0x40000ull,
+                "total_ram_pages at offset 144");
+    /* Reserved bytes must be zero, and the first of them now starts at 152. */
+    TEST_ASSERT_EQ((int)a.img[152], 0, "reserved area starts zeroed");
 
     tp_arena_free(&a);
 }
@@ -311,8 +327,17 @@ static void test_hiber_header_rejections(void)
 
     w->format_version += 1u;
     TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
-                   HIBER_ERR_FORMAT, "an unknown format version is refused");
+                   HIBER_ERR_FORMAT, "a future format version is refused");
     w->format_version -= 1u;
+
+    /* v1 put zero-only reserved space where v2 puts cpu_count_present and
+     * total_ram_pages, so a v1 image must be refused as a VERSION mismatch
+     * rather than surfacing later as some other malformed-image error. */
+    w->format_version = 1u;
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
+                   HIBER_ERR_FORMAT,
+                   "the superseded version 1 layout is refused by version");
+    w->format_version = HIBER_FORMAT_VERSION;
 
     w->root_volume_id ^= 0xFFull;
     TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
@@ -336,14 +361,18 @@ static void test_hiber_header_rejections(void)
  * test can reach the field-level check that sits behind the CRC. */
 static void tp_reseal_header(uint8_t *img)
 {
+    /* Derived from the struct, not re-typed: the production side binds its own
+     * span constants with _Static_assert and this copy would otherwise be the
+     * one place the span could drift unnoticed. */
     static const uint8_t zeros[4] = { 0, 0, 0, 0 };
+    const size_t off = __builtin_offsetof(hiber_header_t, header_crc32c);
+    const size_t len = sizeof(((hiber_header_t *)0)->header_crc32c);
     hiber_header_t *w = (hiber_header_t *)img;
     uint32_t crc;
 
-    w->header_crc32c = 0u;
-    crc = kcrc32c(img, 136u);
-    crc = kcrc32c_cont(crc, zeros, 4u);
-    crc = kcrc32c_cont(crc, img + 140u, HIBER_HEADER_BYTES - 140u);
+    crc = kcrc32c(img, off);
+    crc = kcrc32c_cont(crc, zeros, len);
+    crc = kcrc32c_cont(crc, img + off + len, HIBER_HEADER_BYTES - off - len);
     w->header_crc32c = crc;
 }
 
@@ -1112,6 +1141,221 @@ static void test_hiber_trailing_bytes(void)
     tp_arena_free(&a);
 }
 
+static void test_hiber_full_chunk(void)
+{
+    /* Every other suite runs at two pages. This one runs at the format's real
+     * chunk size, so the 256 KiB LZ4 path and HIBER_CHUNK_BYTES are actually
+     * exercised rather than merely defined. */
+    uintptr_t img_phys, src_phys, dst_phys;
+    uint8_t *img, *src, *dst;
+    hiber_encoder_t enc;
+    hiber_decoder_t dec;
+    hiber_ident_t id;
+    uint64_t bytes = 0, pfn = 0;
+    uint32_t pages = 0;
+    const uint32_t img_frames = HIBER_CHUNK_PAGES + 2u;
+
+    img_phys = pmm_alloc_contiguous(img_frames);
+    src_phys = pmm_alloc_contiguous(HIBER_CHUNK_PAGES);
+    dst_phys = pmm_alloc_contiguous(HIBER_CHUNK_PAGES);
+    if (img_phys == 0 || src_phys == 0 || dst_phys == 0) {
+        if (img_phys != 0) pmm_free_contiguous(img_phys, img_frames);
+        if (src_phys != 0) pmm_free_contiguous(src_phys, HIBER_CHUNK_PAGES);
+        if (dst_phys != 0) pmm_free_contiguous(dst_phys, HIBER_CHUNK_PAGES);
+        TEST_SKIP("full-chunk fixture needs 194 contiguous frames");
+        return;
+    }
+    img = (uint8_t *)img_phys;
+    src = (uint8_t *)src_phys;
+    dst = (uint8_t *)dst_phys;
+
+    tp_ident_init(&id);
+    tp_fill_compressible(src, HIBER_CHUNK_BYTES);
+
+    TEST_ASSERT_EQ(hibernate_image_begin(&enc, img,
+                                         (size_t)img_frames * HIBER_PAGE_SIZE),
+                   HIBER_OK, "full-chunk encoder begins");
+    TEST_ASSERT_EQ(hibernate_image_append_chunk(&enc, 0x2000ull, src,
+                                                HIBER_CHUNK_PAGES),
+                   HIBER_OK, "a full 64-page chunk appends");
+    TEST_ASSERT_EQ(hibernate_image_finalize(&enc, &id, &bytes), HIBER_OK,
+                   "full-chunk image finalizes");
+
+    TEST_ASSERT_EQ(hibernate_image_decode_begin(&dec, img, (size_t)bytes),
+                   HIBER_OK, "full-chunk image validates");
+    TEST_ASSERT_EQ(hibernate_image_read_chunk(&dec, dst, HIBER_CHUNK_BYTES,
+                                              &pfn, &pages),
+                   HIBER_OK, "the full chunk decodes");
+    TEST_ASSERT_EQ((int)pages, (int)HIBER_CHUNK_PAGES,
+                   "the full chunk keeps its page count");
+    TEST_ASSERT_EQ(memcmp(dst, src, HIBER_CHUNK_BYTES), 0,
+                   "256 KiB round-trips byte-identically");
+    TEST_ASSERT_EQ(hibernate_image_decode_finish(&dec), HIBER_OK,
+                   "full-chunk image passes the completion gate");
+
+    pmm_free_contiguous(img_phys, img_frames);
+    pmm_free_contiguous(src_phys, HIBER_CHUNK_PAGES);
+    pmm_free_contiguous(dst_phys, HIBER_CHUNK_PAGES);
+}
+
+static void test_hiber_null_arguments(void)
+{
+    tp_arena_t a;
+    hiber_encoder_t enc;
+    hiber_decoder_t dec;
+    hiber_ident_t id;
+    const hiber_header_t *h = NULL;
+    uint64_t bytes = 0, pfn = 0;
+    uint32_t pages = 0;
+
+    if (!tp_arena_init(&a)) {
+        TEST_SKIP("hibernation codec scratch frames unavailable");
+        return;
+    }
+    tp_ident_init(&id);
+
+    TEST_ASSERT_EQ(hibernate_image_begin(NULL, a.img, TP_IMG_BYTES),
+                   HIBER_ERR_ARG, "a NULL encoder is refused");
+    TEST_ASSERT_EQ(hibernate_image_decode_begin(NULL, a.img, TP_IMG_BYTES),
+                   HIBER_ERR_ARG, "a NULL decoder is refused");
+    TEST_ASSERT_EQ(hibernate_image_decode_finish(NULL), HIBER_ERR_ARG,
+                   "a NULL decoder is refused by the completion gate");
+    TEST_ASSERT_EQ(hibernate_image_header_validate(NULL, TP_IMG_BYTES, &h),
+                   HIBER_ERR_ARG, "a NULL image is refused");
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, TP_IMG_BYTES, NULL),
+                   HIBER_ERR_ARG, "a NULL out-pointer is refused");
+
+    /* A failed begin must leave state that REFUSES, not state that is
+     * whatever the caller's stack happened to hold: the assertion macros do
+     * not abort, so a regression would otherwise walk into a wild write. */
+    TEST_ASSERT_EQ(hibernate_image_begin(&enc, NULL, TP_IMG_BYTES),
+                   HIBER_ERR_ARG, "a NULL output buffer is refused");
+    TEST_ASSERT_EQ(hibernate_image_append_chunk(&enc, 0, a.src, TP_CHUNK_PAGES),
+                   HIBER_ERR_STATE, "appending after a failed begin is refused");
+    TEST_ASSERT_EQ(hibernate_image_finalize(&enc, &id, &bytes),
+                   HIBER_ERR_STATE, "finalizing after a failed begin is refused");
+
+    TEST_ASSERT_EQ(hibernate_image_decode_begin(&dec, a.img, 8u),
+                   HIBER_ERR_TRUNCATED, "a too-short image is refused");
+    TEST_ASSERT_EQ(hibernate_image_read_chunk(&dec, a.dst, TP_CHUNK_BYTES,
+                                              &pfn, &pages),
+                   HIBER_ERR_STATE, "reading after a failed begin is refused");
+    TEST_ASSERT_EQ(hibernate_image_decode_finish(&dec), HIBER_ERR_STATE,
+                   "finishing after a failed begin is refused");
+
+    TEST_ASSERT(hibernate_image_encoded_bound(0xFFFFFFFFull) != 0,
+                "the largest representable page count still bounds");
+
+    tp_arena_free(&a);
+}
+
+static void test_hiber_aead_block_under_none(void)
+{
+    tp_arena_t a;
+    const hiber_header_t *h = NULL;
+    hiber_header_t *w;
+    hiber_encoder_t enc;
+    hiber_ident_t id;
+    uint64_t bytes;
+
+    if (!tp_arena_init(&a)) {
+        TEST_SKIP("hibernation codec scratch frames unavailable");
+        return;
+    }
+
+    tp_fill_compressible(a.src, TP_CHUNK_BYTES);
+    bytes = tp_encode_one(&a, 0x900ull);
+    TEST_ASSERT(bytes != 0, "image for the AEAD-block check encodes");
+    w = (hiber_header_t *)a.img;
+
+    /* Under HIBER_CIPHER_NONE the AEAD block is reserved space. Leaving it
+     * unconstrained would put 32 CRC-covered bytes outside the reserved rule
+     * and hand a later cipher-aware reader a plaintext image that already
+     * carries a key id, nonce and tag. */
+    w->aead_key_id = 1u;
+    tp_reseal_header(a.img);
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
+                   HIBER_ERR_RESERVED,
+                   "a key id under CIPHER_NONE is refused");
+    w->aead_key_id = 0u;
+
+    w->aead_nonce[11] = 0xAAu;
+    tp_reseal_header(a.img);
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
+                   HIBER_ERR_RESERVED,
+                   "a nonce under CIPHER_NONE is refused");
+    w->aead_nonce[11] = 0u;
+
+    w->aead_tag[0] = 0x01u;
+    tp_reseal_header(a.img);
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
+                   HIBER_ERR_RESERVED,
+                   "a tag under CIPHER_NONE is refused");
+    w->aead_tag[0] = 0u;
+
+    tp_reseal_header(a.img);
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
+                   HIBER_OK, "a zeroed AEAD block under CIPHER_NONE validates");
+
+    /* A zero CPU count is refused where the image is produced, not only where
+     * it is read. */
+    tp_ident_init(&id);
+    id.cpu_count_present = 0u;
+    TEST_ASSERT_EQ(hibernate_image_begin(&enc, a.img, TP_IMG_BYTES), HIBER_OK,
+                   "encoder begins");
+    TEST_ASSERT_EQ(hibernate_image_finalize(&enc, &id, &bytes),
+                   HIBER_ERR_ARG, "an image claiming zero CPUs is refused");
+
+    tp_arena_free(&a);
+}
+
+static void test_hiber_cpu_topology_guard(void)
+{
+    tp_arena_t a;
+    const hiber_header_t *h = NULL;
+    hiber_ident_t now;
+    uint64_t bytes;
+
+    if (!tp_arena_init(&a)) {
+        TEST_SKIP("hibernation codec scratch frames unavailable");
+        return;
+    }
+
+    tp_fill_compressible(a.src, TP_CHUNK_BYTES);
+    bytes = tp_encode_one(&a, 0xA00ull);
+    TEST_ASSERT(bytes != 0, "image for the topology checks encodes");
+    TEST_ASSERT_EQ(hibernate_image_header_validate(a.img, (size_t)bytes, &h),
+                   HIBER_OK, "header validates");
+    TEST_ASSERT_EQ((int)h->cpu_count_present, (int)TP_CPU_COUNT,
+                   "the captured CPU count survives into the header");
+
+    /* Fewer CPUs than the image was captured on is fatal -- it carries
+     * per-CPU state for processors that no longer exist. More is fine. */
+    tp_ident_init(&now);
+    now.cpu_count_present = TP_CPU_COUNT - 1u;
+    TEST_ASSERT_EQ((int)hibernate_image_kernel_matches(h, &now),
+                   (int)HIBER_IDENT_CPU_TOPOLOGY_MISMATCH,
+                   "resuming on fewer CPUs than were captured is refused");
+
+    tp_ident_init(&now);
+    now.cpu_count_present = TP_CPU_COUNT + 4u;
+    TEST_ASSERT_EQ((int)hibernate_image_kernel_matches(h, &now),
+                   (int)HIBER_IDENT_OK,
+                   "resuming on more CPUs than were captured is accepted");
+
+    /* The three fields the guard deliberately does not compare must not
+     * quietly start failing the image if a future edit adds them. */
+    tp_ident_init(&now);
+    now.root_volume_id    ^= 0xFFull;
+    now.resume_generation += 100u;
+    now.total_ram_pages   /= 2u;
+    TEST_ASSERT_EQ((int)hibernate_image_kernel_matches(h, &now),
+                   (int)HIBER_IDENT_OK,
+                   "volume id, generation and RAM size are not this guard's job");
+
+    tp_arena_free(&a);
+}
+
 /* ---- Registration ---- */
 
 void test_register_hibernate_image(void)
@@ -1152,6 +1396,15 @@ void test_register_hibernate_image(void)
                             test_hiber_trailing_bytes, TEST_CAT_BOOT);
     test_suite_register_cat("PM: hibernation oversized read buffer",
                             test_hiber_oversized_buffer, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: hibernation full 64-page chunk",
+                            test_hiber_full_chunk, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: hibernation NULL and failed-begin arguments",
+                            test_hiber_null_arguments, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: hibernation AEAD block under CIPHER_NONE",
+                            test_hiber_aead_block_under_none, TEST_CAT_BOOT);
+    test_suite_register_cat("PM: hibernation CPU topology guard",
+                            test_hiber_cpu_topology_guard, TEST_CAT_BOOT);
+
 }
 
 #endif /* KERNEL_TESTS */

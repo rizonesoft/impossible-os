@@ -12,14 +12,14 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 > **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
 
 > **Goal:** Teach the boot platform how to resume from an S4 hibernation image or fast-startup image before doing a normal cold boot. Power management owns writing the hibernation image, but the boot path owns detecting it, validating it, selecting resume versus cold boot, and handing the image to the kernel safely.
-> **Current state:** Power-management TODOs describe S4 and fast startup, but the bootloader has no resume selection path, no hibernation image metadata contract, no resume-failure rollback, and no boot diagnostics for S4.
-> [!IMPORTANT] Deferred whole-file (2026-06-17, unattended sequencer + Codex design review): the entire resume boot-path is gated on (1) the kernel hibernation WRITER (02-kernel-core/TODO-26 §4 -- `pm_hibernate_write` + LZ4 + AES-GCM + the resume consumer) which is unimplemented, so no image exists to discover/validate/resume, and (2) bootloader AEAD/HMAC/TPM-seal + an anti-replay TPM-NV monotonic counter, none of which exist (same bootloader-crypto gap that deferred TODO-25 §5). Codex design review: §1 is unsafe as a standalone ABI (would freeze `resume_generation`/AEAD field layout before the cipher/TPM-NV/writer decisions), §5 is dead/false-fail-closed plumbing standalone; no must-ship-now core. Sections stay `[/]` with the shared Deferred stamp until the writer + trust primitives land.
+> **Current state:** The hibernation image metadata contract now EXISTS: `02-kernel-core/TODO-26` §4 shipped the authoritative on-disk format and its LZ4 chunk codec on 2026-09-04 (`include/kernel/pm/hibernate.h`, `src/kernel/pm/hibernate_image.c`), which is what this file was waiting on to define its parser against. Still absent: the writer that produces an image (`02-kernel-core/TODO-26` §28), the bootloader resume selection path, resume-failure rollback, and boot diagnostics for S4.
+> [!IMPORTANT] Deferred whole-file (2026-06-17, unattended sequencer + Codex design review): the entire resume boot-path is gated on (1) the kernel hibernation WRITER, now `02-kernel-core/TODO-26` §28 (`pm_hibernate_write` + AES-GCM + the resume consumer), which is unimplemented, so no image exists to discover/validate/resume, and (2) bootloader AEAD/HMAC/TPM-seal, which does not exist (same bootloader-crypto gap that deferred TODO-25 §5). PARTIALLY UNBLOCKED 2026-09-04: the format half split out as `02-kernel-core/TODO-26` §4 and SHIPPED, so §1 is no longer the unsafe standalone ABI the 2026-06-17 design review described -- the field layout it would have frozen is now defined and pinned by a producer, and the anti-replay TPM-NV monotonic primitive it also named landed as `01-boot-platform/TODO-13` §17. What remains gating is the writer and the bootloader crypto. §5 is still dead plumbing standalone. Sections stay `[/]` with the shared Deferred stamp until the writer + bootloader trust primitives land.
 
 ## Inputs
 
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c)
 - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)
-- -> XREF: `../02-kernel-core/TODO-26-power-management.md §4,§11` -- hibernation image writer and fast startup
+- -> XREF: `../02-kernel-core/TODO-26-power-management.md §4,§28,§11` -- image format and codec (shipped), image writer and resume consumer, fast startup
 - -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4` -- typed hibernation payload descriptor
 - -> XREF: `TODO-21-ab-boot-rollback.md` -- resume failure participates in rollback
 - -> XREF: `TODO-07-boot-entry-store-menu-policy.md §10` -- resume targets are a first-class `kind: resume` entry kind
@@ -213,7 +213,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 ## Unit Tests
 
-> **Gated:** all cases need an actual hibernation image (the 02-kernel-core/TODO-26 §4 writer, unimplemented) + the bootloader crypto/TPM-seal/anti-replay primitives; they ship with §1-§9, deferred whole-file. See the §1-§9 Deferred stamps.
+> **Gated:** all cases need an actual hibernation image (the 02-kernel-core/TODO-26 §28 writer, unimplemented; §4 shipped the format these fixtures will be built in) + the bootloader crypto/TPM-seal/anti-replay primitives; they ship with §1-§9, deferred whole-file. See the §1-§9 Deferred stamps.
 
 - [ ] `test_resume_metadata_valid`
 - [ ] `test_resume_bad_checksum_rejected`
@@ -228,7 +228,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 ## Verification
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | N suites, 0 failures
-> **Gated:** the items below need the 02-kernel-core/TODO-26 §4 hibernation writer to produce an image and the bootloader crypto/TPM-seal primitives; they open as §1-§9 ship.
+> **Gated:** the items below need the 02-kernel-core/TODO-26 §28 hibernation writer to produce an image and the bootloader crypto/TPM-seal primitives; they open as §1-§9 ship.
 
 - [ ] QEMU hibernate image fixture
 - [ ] Failed resume cold-boot fallback

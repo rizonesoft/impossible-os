@@ -28,6 +28,16 @@
 #define HIBER_HDR_CRC_OFF   136u
 #define HIBER_HDR_CRC_LEN   4u
 
+/* The CRC span is written as literals so the two kcrc32c_cont calls read as
+ * the format's own rule, but a literal that silently stops matching the struct
+ * would checksum the wrong bytes on both sides of a mirror. Bind them. */
+_Static_assert(HIBER_HDR_CRC_OFF
+               == __builtin_offsetof(hiber_header_t, header_crc32c),
+               "header CRC span must start at the header_crc32c field");
+_Static_assert(HIBER_HDR_CRC_LEN
+               == sizeof(((hiber_header_t *)0)->header_crc32c),
+               "header CRC span must skip exactly the CRC field");
+
 /* An 8-byte-aligned image buffer lets the header be read in place instead of
  * copied onto a kernel stack that only has 8 KiB to spare. */
 #define HIBER_IMAGE_ALIGN   8u
@@ -82,7 +92,16 @@ uint64_t hibernate_image_encoded_bound(uint64_t page_count)
 
 int hibernate_image_begin(hiber_encoder_t *enc, void *out, size_t out_cap)
 {
-    if (enc == NULL || out == NULL) {
+    if (enc == NULL) {
+        return HIBER_ERR_ARG;
+    }
+    /* Zero the state BEFORE any other check can return. A caller that ignores
+     * a failed begin would otherwise hand the next call a struct full of stack
+     * garbage, and append_chunk's first write is through enc->out. Zeroed,
+     * `started` is 0 and every later call refuses with HIBER_ERR_STATE. */
+    memset(enc, 0, sizeof(*enc));
+
+    if (out == NULL) {
         return HIBER_ERR_ARG;
     }
     if (!hiber_ptr_aligned(out)) {
@@ -92,7 +111,6 @@ int hibernate_image_begin(hiber_encoder_t *enc, void *out, size_t out_cap)
         return HIBER_ERR_NOSPACE;
     }
 
-    memset(enc, 0, sizeof(*enc));
     /* Zeroing the header area is what makes the reserved bytes zero and the
      * AEAD block an explicit "no cipher" rather than uninitialised bytes. */
     memset(out, 0, HIBER_HEADER_BYTES);
@@ -161,7 +179,19 @@ int hibernate_image_append_chunk(hiber_encoder_t *enc, uint64_t start_pfn,
 
     /* Capping the compressor at one byte below the input makes "did not
      * shrink" a refusal from LZ4 itself rather than a second size test here,
-     * and it is what keeps an incompressible image from growing. */
+     * and it is what keeps an incompressible image from growing.
+     *
+     * KNOWN COST, deliberately taken: LZ4 emits sequences as it goes and only
+     * discovers the budget is exhausted partway through (src/libs/lz4/lz4.c
+     * returns 0 at :1210 and :1314 with its output pointer already advanced),
+     * so a near-incompressible chunk can be written here and then written
+     * again by the verbatim fallback below. The alternative -- compressing
+     * into a caller-owned workspace and copying the winner in once -- removes
+     * that but adds a copy to EVERY successful chunk, which is the common
+     * case. Which is cheaper depends on the page mix of a real image, and the
+     * write path that would produce one is section 28. Measured there, not
+     * guessed at here. -> XREF: 02-kernel-core/TODO-26-power-management.md, the hibernation
+     * write-path section. */
     rc = lz4_compress(pages, (size_t)uncompressed_len, payload,
                       (size_t)uncompressed_len - 1u);
     if (rc > 0) {
@@ -206,6 +236,12 @@ int hibernate_image_finalize(hiber_encoder_t *enc, const hiber_ident_t *ident,
     if (!hiber_resume_type_known(ident->resume_type)) {
         return HIBER_ERR_ARG;
     }
+    /* An image that claims zero CPUs is one no resume could ever validate
+     * against, so it is refused where it is produced rather than where it is
+     * read. */
+    if (ident->cpu_count_present == 0u) {
+        return HIBER_ERR_ARG;
+    }
 
     h = (hiber_header_t *)enc->out;
     h->magic             = HIBER_MAGIC;
@@ -219,6 +255,8 @@ int hibernate_image_finalize(hiber_encoder_t *enc, const hiber_ident_t *ident,
     h->flags             = 0u;
     h->root_volume_id    = ident->root_volume_id;
     h->resume_generation = ident->resume_generation;
+    h->cpu_count_present = ident->cpu_count_present;
+    h->total_ram_pages   = ident->total_ram_pages;
     memcpy(h->kernel_id, ident->kernel_id, HIBER_KERNEL_ID_BYTES);
     /* Confidentiality is section 28's: the codec states plaintext rather than
      * leaving a reader to infer it from a zero field. */
@@ -226,7 +264,8 @@ int hibernate_image_finalize(hiber_encoder_t *enc, const hiber_ident_t *ident,
     h->aead_key_id       = 0u;
     h->payload_crc32c    = enc->payload_crc;
 
-    h->header_crc32c     = 0u;
+    /* hiber_header_crc substitutes zeros for this field's own span, so the
+     * stored value never feeds its own checksum and needs no pre-zeroing. */
     h->header_crc32c     = hiber_header_crc(enc->out);
 
     *image_bytes_out = (uint64_t)enc->cursor;
@@ -280,6 +319,29 @@ int hibernate_image_header_validate(const void *img, size_t img_len,
         || !hiber_cipher_known(h->aead_cipher_id)) {
         return HIBER_ERR_FORMAT;
     }
+    /* Under NONE the AEAD block is reserved space, and the reserved rule above
+     * would otherwise leave these 32 CRC-covered bytes free to carry anything.
+     * It also removes a downgrade ambiguity before section 28 lands the cipher:
+     * a plaintext image can never arrive already carrying a key id, nonce and
+     * tag that a later reader might be tempted to act on. */
+    if (h->aead_cipher_id == HIBER_CIPHER_NONE) {
+        if (h->aead_key_id != 0u) {
+            return HIBER_ERR_RESERVED;
+        }
+        for (i = 0; i < sizeof(h->aead_nonce); i++) {
+            if (h->aead_nonce[i] != 0) {
+                return HIBER_ERR_RESERVED;
+            }
+        }
+        for (i = 0; i < sizeof(h->aead_tag); i++) {
+            if (h->aead_tag[i] != 0) {
+                return HIBER_ERR_RESERVED;
+            }
+        }
+    }
+    if (h->cpu_count_present == 0u) {
+        return HIBER_ERR_FORMAT;
+    }
     if (h->image_bytes < (uint64_t)HIBER_HEADER_BYTES) {
         return HIBER_ERR_BOUNDS;
     }
@@ -320,12 +382,15 @@ int hibernate_image_decode_begin(hiber_decoder_t *dec, const void *img,
     if (dec == NULL) {
         return HIBER_ERR_ARG;
     }
+    /* Same rule as the encoder: a failed begin leaves a state that refuses
+     * every later call rather than one full of stack garbage. */
+    memset(dec, 0, sizeof(*dec));
+
     rc = hibernate_image_header_validate(img, img_len, &h);
     if (rc != HIBER_OK) {
         return rc;
     }
 
-    memset(dec, 0, sizeof(*dec));
     dec->img             = (const uint8_t *)img;
     /* The header's own length wins over the caller's capacity: a reader
      * working in sectors holds more bytes than the image occupies, and those
@@ -482,5 +547,14 @@ hiber_ident_result_t hibernate_image_kernel_matches(const hiber_header_t *hdr,
     if (hdr->resume_type != now->resume_type) {
         return HIBER_IDENT_RESUME_TYPE_MISMATCH;
     }
+    /* FEWER CPUs than the image was captured on is fatal: the image carries
+     * per-CPU state for processors that no longer exist. MORE is fine -- the
+     * extra ones simply were not running when it was captured. That asymmetry
+     * is why this is an inequality and not an equality. */
+    if (now->cpu_count_present < hdr->cpu_count_present) {
+        return HIBER_IDENT_CPU_TOPOLOGY_MISMATCH;
+    }
+    /* root_volume_id, resume_generation and total_ram_pages are deliberately
+     * NOT compared here; the header documents which component owns each. */
     return HIBER_IDENT_OK;
 }

@@ -2,11 +2,14 @@
  * hibernate.h -- S4 hibernation image format and LZ4 chunk codec
  *
  * The AUTHORITATIVE on-disk format for an Impossible OS hibernation image.
- * Two independently compiled binaries parse this stream: the kernel (this
- * header) and the UEFI bootloader, which discovers and validates the image
- * before the kernel exists. That makes it a cross-binary ABI carrying the
- * same discipline as boot_info -- every offset pinned by _Static_assert,
+ * Two independently compiled binaries WILL parse this stream: the kernel
+ * (this header) and the UEFI bootloader, which discovers and validates the
+ * image before the kernel exists. That bootloader mirror does not exist yet
+ * -- its section is deferred, waiting for exactly this format -- so the
+ * boot_info discipline here is what makes writing one checkable rather than
+ * something already being checked: every offset pinned by _Static_assert,
  * every width fixed, and one canonical byte stream both sides must agree on.
+ * -> XREF: 01-boot-platform/TODO-26, hibernation image metadata format.
  *
  * CANONICAL BYTE STREAM (normative; a reader that disagrees is wrong):
  *   - Little-endian, fixed-width, naturally aligned, no implicit padding in
@@ -66,8 +69,15 @@
 #define HIBER_MAGIC             0x52424948534F5049ull
 
 /* Bumped on any change to the byte stream above. A reader refuses a version
- * it was not built for rather than guessing at the layout. */
-#define HIBER_FORMAT_VERSION    1u
+ * it was not built for rather than guessing at the layout.
+ *
+ * v1 -> v2 (2026-09-04): bytes 140-151 changed from zero-only reserved space
+ * to cpu_count_present + total_ram_pages, and a v2 reader requires a non-zero
+ * CPU count. The two streams reject each other in both directions -- a v1
+ * reader sees non-zero reserved bytes, a v2 reader sees a zero CPU count --
+ * so leaving both self-identifying as v1 would turn a clean version mismatch
+ * into two different malformed-image errors. */
+#define HIBER_FORMAT_VERSION    2u
 
 #define HIBER_HEADER_BYTES      4096u
 #define HIBER_PAGE_SIZE         4096u
@@ -121,7 +131,14 @@
 #define HIBER_OK                 0
 #define HIBER_ERR_ARG           (-1)   /* NULL buffer, impossible length */
 #define HIBER_ERR_MAGIC         (-2)   /* not a hibernation image */
-#define HIBER_ERR_FORMAT        (-3)   /* format_version / header_bytes wrong */
+#define HIBER_ERR_FORMAT        (-3)   /* the header names a semantic value
+                                       * this build does not support:
+                                       * format_version, header_bytes,
+                                       * resume_type or aead_cipher_id.
+                                       * Deliberately ONE code -- a caller
+                                       * that needs to act on which one
+                                       * reads the field, and no consumer
+                                       * branches on the distinction. */
 #define HIBER_ERR_HEADER_CRC    (-4)   /* header self-check failed */
 #define HIBER_ERR_BOUNDS        (-5)   /* a length runs past the buffer */
 #define HIBER_ERR_ORDER         (-6)   /* descriptors not ascending / overlap */
@@ -144,6 +161,11 @@ typedef enum hiber_ident_result {
     HIBER_IDENT_BOOT_INFO_ABI_MISMATCH   = 2,
     HIBER_IDENT_FORMAT_VERSION_MISMATCH  = 3,
     HIBER_IDENT_RESUME_TYPE_MISMATCH     = 4,
+    /* Fewer CPUs than the image was captured on. Windows treats this as its
+     * own bugcheck class (0xBD INVALID_HIBERNATED_STATE, Param1 = 1) rather
+     * than as a wrong-image failure, and it is a different failure: the
+     * artifact is right and the machine changed under it. */
+    HIBER_IDENT_CPU_TOPOLOGY_MISMATCH    = 5,
 } hiber_ident_result_t;
 
 /* ---------------------------------------------------------------------------
@@ -168,7 +190,9 @@ typedef struct hiber_header {
     uint8_t  aead_tag[HIBER_AEAD_TAG_BYTES];     /* 116 */
     uint32_t payload_crc32c;                     /* 132 over the payload */
     uint32_t header_crc32c;                      /* 136 over this header */
-    uint8_t  reserved[3956];                     /* 140 MUST be zero */
+    uint32_t cpu_count_present;                  /* 140 CPUs at hibernate */
+    uint64_t total_ram_pages;                    /* 144 RAM at hibernate */
+    uint8_t  reserved[3944];                     /* 152 MUST be zero */
 } hiber_header_t;
 
 _Static_assert(sizeof(hiber_header_t) == HIBER_HEADER_BYTES,
@@ -191,7 +215,9 @@ _Static_assert(__builtin_offsetof(hiber_header_t, aead_nonce) == 104, "hiber ABI
 _Static_assert(__builtin_offsetof(hiber_header_t, aead_tag) == 116, "hiber ABI");
 _Static_assert(__builtin_offsetof(hiber_header_t, payload_crc32c) == 132, "hiber ABI");
 _Static_assert(__builtin_offsetof(hiber_header_t, header_crc32c) == 136, "hiber ABI");
-_Static_assert(__builtin_offsetof(hiber_header_t, reserved) == 140, "hiber ABI");
+_Static_assert(__builtin_offsetof(hiber_header_t, cpu_count_present) == 140, "hiber ABI");
+_Static_assert(__builtin_offsetof(hiber_header_t, total_ram_pages) == 144, "hiber ABI");
+_Static_assert(__builtin_offsetof(hiber_header_t, reserved) == 152, "hiber ABI");
 
 /* ---------------------------------------------------------------------------
  * On-disk chunk descriptor. Immediately followed by `stored_len` bytes.
@@ -218,9 +244,27 @@ typedef struct hiber_ident {
     uint8_t  kernel_id[HIBER_KERNEL_ID_BYTES];
     uint32_t boot_info_version;
     uint32_t resume_type;
+    uint32_t cpu_count_present;   /* smp_cpu_present_count() at capture */
     uint64_t root_volume_id;
     uint64_t resume_generation;
+    uint64_t total_ram_pages;     /* RAM present at capture, in pages */
 } hiber_ident_t;
+
+/* WHAT THE IDENTITY GUARD DOES AND DOES NOT CHECK -- stated because a caller
+ * filling every field in would otherwise reasonably assume every field is
+ * compared. hibernate_image_kernel_matches() compares kernel_id,
+ * boot_info_version, format_version, resume_type, and refuses a cpu_count
+ * LOWER than the image was captured on. It deliberately does NOT check:
+ *   - root_volume_id: an eligibility question about WHICH image to resume,
+ *     answered by the bootloader before the kernel exists.
+ *   - resume_generation: anti-replay, which is only meaningful compared
+ *     against a TPM-NV monotonic counter the bootloader holds.
+ *   - total_ram_pages: needs the LIVE memory map to mean anything, which a
+ *     pure codec does not have.
+ * All three are carried in the format so the component that CAN check them
+ * has the value. -> XREF: 01-boot-platform/TODO-26 (discovery, eligibility,
+ * anti-replay) and 02-kernel-core/TODO-26-power-management.md, the
+ * hibernation write-path and resume-consumer section. */
 
 /* ---------------------------------------------------------------------------
  * Encoder. Caller owns the output buffer; nothing is allocated.
