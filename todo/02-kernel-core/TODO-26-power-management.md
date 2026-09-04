@@ -91,7 +91,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |   8   | §8 PCI PM capability + D0--D3hot state machine                     | §1                          |  [x]   |
 | 💎  |   9   | §9 Driver power callbacks & resume ordering                        | §3, §8                      |  [/]   |
 | ⭐  |  10   | §10 S0ix firmware advertisement + MWAIT capability layer           | §2                          |  [x]   |
-| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                     | §4, §9, §28                 |  [ ]   |
+| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot)                     | §4, §9, §28                 |  [/]   |
 | 💎  |  12   | §12 Runtime device idle management                                 | §8, §9                      |  [ ]   |
 | 💎  |  13   | §13 Power request tracking & wake source management                | §9, §12                     |  [ ]   |
 | 💎  |  14   | §14 ACPI thermal zone management                                   | §5, §24, D04T03§4           |  [ ]   |
@@ -713,25 +713,30 @@ Scope was rewritten from the original "Connected Standby" draft after the pre-im
 ## 11. Fast Startup (Hybrid Shutdown / Hiberboot)
 
 Windows 11's fast startup hibernates only the kernel session (no user processes) on shutdown, enabling < 5 s boot times by restoring the kernel image instead of cold-booting. This is a significant competitive feature -- Linux has no equivalent.
-- [ ] `HIBERBOOT_HEADER` -- same layout as `HIBR_HEADER` (§4) but with `type = HIBER_TYPE_FAST_STARTUP` flag to distinguish from full S4 hibernate
-- [ ] Only kernel session pages are saved: kernel heap, PMM metadata, loaded driver images, Registry hives, VFS cache (no user-process address spaces)
-- [ ] `pm_hiberboot_page_filter(phys_addr)` -- returns true if the page belongs to kernel session; skips user-mode process pages, reducing image size by 60--80%
-- [ ] `pm_fast_shutdown()`:
+- [/] `HIBERBOOT_HEADER` -- same layout as `HIBR_HEADER` (§4) but with `type = HIBER_TYPE_FAST_STARTUP` flag to distinguish from full S4 hibernate
+- [/] Only kernel session pages are saved: kernel heap, PMM metadata, loaded driver images, Registry hives, VFS cache (no user-process address spaces)
+- [/] `pm_hiberboot_page_filter(phys_addr)` -- returns true if the page belongs to kernel session; skips user-mode process pages, reducing image size by 60--80%
+- [/] `pm_fast_shutdown()`:
   1. Log off all user sessions (close all user processes; same as normal shutdown)
   2. Flush Registry hives and VFS page cache
   3. Freeze scheduler; park APs
   4. Walk PMM used-page list with `pm_hiberboot_page_filter()` -- compress and write only kernel-session pages to hibernation partition
   5. Write `HIBERBOOT_HEADER` with `type = HIBER_TYPE_FAST_STARTUP`
   6. Power off via `acpi_enter_sleep_state(5)` (S5)
-- [ ] Registry key `HKLM\SYSTEM\PowerControl\FastStartupEnabled` (REG_DWORD, default 1): enables/disables fast startup
-- [ ] `powercfg /hibernate on` must be enabled for fast startup to work (reuses hibernation partition)
-- [ ] Bootloader detects `HIBERBOOT_HEADER` with fast startup flag; sets `boot_info.flags |= BOOT_FAST_STARTUP`
-- [ ] `pm_fast_startup_resume()` -- same as §4 hibernate resume but skips user-process page restoration; kernel drivers see `IRP_MN_SET_POWER(S0)` with `SystemPowerAction = PowerActionHibernate` (same as hibernate wake) -- drivers must call `PoFxReportDevicePoweredOn()` equivalent
-- [ ] After kernel restore: `smss.exe` / session manager starts fresh user sessions from scratch (unlike hibernate where user sessions are restored)
-- [ ] Distinguish fast startup from hibernate wake: check `HIBERBOOT_HEADER.type`; expose `PoGetSystemPowerStateFlags(FAST_STARTUP)` for drivers
-- [ ] Commit: `"kernel/pm: fast startup -- hiberboot image, kernel-only page filter, resume path"`
+- [/] Registry key `HKLM\SYSTEM\PowerControl\FastStartupEnabled` (REG_DWORD, default 1): enables/disables fast startup
+- [/] `powercfg /hibernate on` must be enabled for fast startup to work (reuses hibernation partition)
+- [/] Bootloader detects `HIBERBOOT_HEADER` with fast startup flag; sets `boot_info.flags |= BOOT_FAST_STARTUP`
+- [/] `pm_fast_startup_resume()` -- same as §4 hibernate resume but skips user-process page restoration
+  - Kernel drivers see `IRP_MN_SET_POWER(S0)` with `SystemPowerAction = PowerActionHibernate`, the same as a hibernate wake, so each must call the `PoFxReportDevicePoweredOn()` equivalent.
+- [/] After kernel restore: `smss.exe` / session manager starts fresh user sessions from scratch (unlike hibernate where user sessions are restored)
+- [/] Distinguish fast startup from hibernate wake: check `HIBERBOOT_HEADER.type`; expose `PoGetSystemPowerStateFlags(FAST_STARTUP)` for drivers
+- [/] Commit: `"kernel/pm: fast startup -- hiberboot image, kernel-only page filter, resume path"`
 
 **Test checkpoint:** `HIBERBOOT_HEADER.type == HIBER_TYPE_FAST_STARTUP`. `pm_hiberboot_page_filter()` returns true for kernel heap pages, false for user-process pages. Image size < full hibernate (page filter reduces by 60%+). `PoGetSystemPowerStateFlags(FAST_STARTUP)` distinguishes from full hibernate. Test on: QEMU TCG.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the blockers below clear
+
+> **Deferred:** every item needs a prerequisite owned elsewhere, all four verified against this tree on 2026-09-05. (1) There is no hibernation WRITE PATH: `pm_hibernate`, `hiber_write` and `blkdev_open_by_gpt_type` return zero matches across `src/` + `include/`. Fast startup is the kernel-session-only variant of exactly that write, so it cannot precede it; §28 owns the write path and is itself deferred on four prerequisites. (2) Bootloader detection and resume entry are not populated: `src/boot/uefi/bootx64.c:18233` states "Resume metadata (S4 hibernation): not populated yet", so no `HIBERBOOT_HEADER` is ever discovered. `BOOT_PATH_FAST_STARTUP` and `BOOT_REASON_FAST_STARTUP_HIT` already exist in the decision table (`src/kernel/main/boot_decision.c:274`), but nothing produces the signal that selects them. (3) There is no session manager: "`smss.exe` starts fresh user sessions" has no owner in this tree, so the step that distinguishes fast startup from hibernate wake cannot be exercised. (4) The kernel image has **306 bytes** of `.rodata` headroom before it crosses `USER_BASE` (`python3 scripts/overnight/bss-headroom.py`, section-exact, 2026-09-05), so a new translation unit of this size cannot link at all; that ceiling is TODO-33 §3 and is deferred on operator decision Q3. The header-type half of item 1 already shipped with §4: `HIBER_RESUME_FAST_STARTUP` is accepted at `src/kernel/pm/hibernate_image.c:67`. -> XREF: `02-kernel-core/TODO-26` §28 (item: "`pm_hibernate_resume()`: read + decompress chunks into a bounce buffer"), `02-kernel-core/TODO-26` §4, `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §3 (item: "Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`"), `01-boot-platform/TODO-26` §2-§5
 
 ---
 
