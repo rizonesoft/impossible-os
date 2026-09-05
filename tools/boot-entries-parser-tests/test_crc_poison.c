@@ -108,7 +108,7 @@ int main(void)
         int rc;
 
         crc32_reset();
-        if (!find_crc_field((const u8 *)json, len, &zero_off, &hdr)) {
+        if (find_crc_field((const u8 *)json, len, &zero_off, &hdr) != CRC_LOC_FOUND) {
             check(0, "fixture carries a locatable crc32 field");
             return g_failures ? 1 : 0;
         }

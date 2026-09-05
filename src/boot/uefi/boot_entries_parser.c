@@ -99,21 +99,11 @@ static u32 crc32_zeroed(const u8 *raw, u32 len, u32 zero_off)
     return crc ^ 0xFFFFFFFFu;
 }
 
-/* ---- Locate `"crc32": "0xHHHHHHHH"` in raw bytes --------------------------- */
-
-/* Skips whitespace forward. Returns next non-WS offset (may equal len). */
-static u32 skip_ws_forward(const u8 *raw, u32 len, u32 pos)
-{
-    while (pos < len) {
-        u8 c = raw[pos];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { pos++; continue; }
-        break;
-    }
-    return pos;
-}
+/* ---- CRC header value parsing ------------------------------------------- */
 
 /* Parse 8 hex digits at offset; return parsed value or 0 on parse failure.
- * Returns 1 on OK, 0 on failure (invalid hex chars). */
+ * Returns 1 on OK, 0 on failure (invalid hex chars). The caller guarantees
+ * off + 8 <= len. */
 static int parse_hex8(const u8 *raw, u32 off, u32 *out_val)
 {
     u32 v = 0, i;
@@ -127,48 +117,6 @@ static int parse_hex8(const u8 *raw, u32 off, u32 *out_val)
         v = (v << 4) | nybble;
     }
     *out_val = v;
-    return 1;
-}
-
-/* Linear scan for the bytes `"crc32"`. Returns offset of the opening quote, or
- * (u32)-1 if not found. */
-static u32 find_crc32_key(const u8 *raw, u32 len)
-{
-    static const char KEY[] = "\"crc32\"";
-    u32 i;
-    if (len < 7u) return (u32)-1;
-    for (i = 0; i + 7u <= len; i++) {
-        u32 j;
-        int match = 1;
-        for (j = 0; j < 7u; j++) {
-            if (raw[i + j] != (u8)KEY[j]) { match = 0; break; }
-        }
-        if (match) return i;
-    }
-    return (u32)-1;
-}
-
-/* Find `"crc32" \s* : \s* "0xHHHHHHHH"`. On success, *zero_off = offset of
- * the 8 hex chars (the bytes the CRC compute zeros), *expected = parsed value.
- * Returns 1 on OK, 0 on fail.
- */
-static int find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expected)
-{
-    u32 key = find_crc32_key(raw, len);
-    if (key == (u32)-1) return 0;
-    u32 p = key + 7u;             /* past the closing quote of "crc32" */
-    p = skip_ws_forward(raw, len, p);
-    if (p >= len || raw[p] != ':') return 0;
-    p++;
-    p = skip_ws_forward(raw, len, p);
-    if (p >= len || raw[p] != '"') return 0;
-    p++;
-    if (p + 2u >= len) return 0;
-    if (raw[p] != '0' || (raw[p + 1] != 'x' && raw[p + 1] != 'X')) return 0;
-    p += 2u;
-    if (p + 8u > len) return 0;
-    if (!parse_hex8(raw, p, expected)) return 0;
-    *zero_off = p;
     return 1;
 }
 
@@ -520,12 +468,100 @@ static int skip_value_post_token(lexer_t *L)
     return skip_value_depth(L, BOOT_ENTRIES_MAX_PARSE_DEPTH);
 }
 
+/* ---- Locate the ROOT object's `crc32` member ---------------------------- */
+
+/* Outcome of the CRC-header locate. Tri-state, because a store whose structure
+ * is broken BEFORE the header is a JSON problem and not a missing-header one,
+ * and the caller maps the two to different reject codes. */
+typedef enum {
+    CRC_LOC_MALFORMED = -1, /* root-object grammar broke before the header */
+    CRC_LOC_ABSENT    = 0,  /* root walked cleanly; no usable crc32 member */
+    CRC_LOC_FOUND     = 1,
+} crc_loc_t;
+
+/* Find the root object's `"crc32": "0xHHHHHHHH"` member STRUCTURALLY. On
+ * CRC_LOC_FOUND, *zero_off is the offset of the 8 hex chars (the bytes the CRC
+ * computation zeros, and the same bytes the producer patches in place) and
+ * *expected is their value.
+ *
+ * Only a key at depth 1 of the root object can match. The predecessor scanned
+ * the whole file for the seven bytes `"crc32"`, so a store beginning
+ * {"note":"crc32", ...} matched inside the note's VALUE and was rejected as a
+ * bad CRC field before any key was parsed, while the host validator's regex
+ * tie-broke differently -- producer and consumer could disagree about which
+ * bytes carry the CRC. A `crc32` member nested inside `payload` was the same
+ * shape one level down.
+ *
+ * This runs BEFORE the CRC is verified, so it walks untrusted bytes: it is
+ * bounded by raw_len through the lexer, allocates nothing, and charges every
+ * skipped value against BOOT_ENTRIES_MAX_SCAN_DEPTH.
+ *
+ * The depth budget is the RESCAN budget, not the parse budget, for the reason
+ * spelled out at BOOT_ENTRIES_RESCAN_EXTRA_DEPTH: this walk skips the root's
+ * `entries` value from two container levels further out than the authoritative
+ * walk does (it descends the array and the entry object structurally and only
+ * skips the payload). Anything the parser ACCEPTS must be locatable, or the
+ * CRC header stops being findable on exactly the deepest legal stores. The
+ * root object itself is walked here with lex_next and is never pushed onto the
+ * skipper's stack, so it costs no budget.
+ */
+static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expected)
+{
+    lexer_t L;
+    lex_init(&L, raw, len);
+    if (!lex_next(&L) || L.kind != TOK_LBRACE) return CRC_LOC_MALFORMED;
+
+    for (;;) {
+        u32 key_cs, key_ce;
+        int is_crc;
+
+        if (!lex_next(&L)) return CRC_LOC_MALFORMED;
+        if (L.kind == TOK_RBRACE) return CRC_LOC_ABSENT;   /* no crc32 at root */
+        if (L.kind != TOK_STRING) return CRC_LOC_MALFORMED;
+        key_cs = L.content_start;
+        key_ce = L.content_end;
+
+        if (!lex_next(&L) || L.kind != TOK_COLON) return CRC_LOC_MALFORMED;
+        if (!lex_next(&L)) return CRC_LOC_MALFORMED;
+
+        /* Raw-byte compare, so an escaped spelling of the key is not this key.
+         * That matches key_is_literal() below and the schema's literal-key
+         * rule: the firmware never decodes escapes in a key name. */
+        is_crc = (key_ce - key_cs == 5u) &&
+                 bytes_eq(raw + key_cs, (const u8 *)"crc32", 5u);
+        if (is_crc) {
+            u32 vs, ve;
+            /* First occurrence wins. A repeated root key is rejected by the
+             * duplicate-key check during the authoritative parse. */
+            if (L.kind != TOK_STRING) return CRC_LOC_ABSENT;
+            vs = L.content_start;
+            ve = L.content_end;
+            /* EXACTLY `0x` + 8 hex digits, lowercase `x`. The host validator
+             * requires the same (tools/boot-entry-validate/validate.py: the
+             * whole-store check rejects any crc32 text that is not 10 chars
+             * starting "0x"), and the CRC compute patches a fixed 8-byte span,
+             * so a longer or upper-case-prefixed value has no agreed span. */
+            if (ve - vs != 10u) return CRC_LOC_ABSENT;
+            if (raw[vs] != '0' || raw[vs + 1u] != 'x') return CRC_LOC_ABSENT;
+            if (!parse_hex8(raw, vs + 2u, expected)) return CRC_LOC_ABSENT;
+            *zero_off = vs + 2u;
+            return CRC_LOC_FOUND;
+        }
+
+        if (!skip_value_depth(&L, BOOT_ENTRIES_MAX_SCAN_DEPTH)) return CRC_LOC_MALFORMED;
+
+        if (!lex_next(&L)) return CRC_LOC_MALFORMED;
+        if (L.kind == TOK_RBRACE) return CRC_LOC_ABSENT;
+        if (L.kind != TOK_COMMA) return CRC_LOC_MALFORMED;
+    }
+}
+
 /* ---- Unique-key enforcement ------------------------------------------ */
 
 /* A key name must be spelled LITERALLY -- no JSON escape sequences. This is not
- * a restriction invented here: find_crc32_key() locates the CRC field by
- * scanning the raw bytes for `"crc32"`, so a store spelling that key with an
- * escape already fails CRC location. Codifying the rule makes raw-byte key
+ * a restriction invented here: find_crc_field() above compares the root key's
+ * RAW bytes against `crc32`, so a store spelling that key with an escape
+ * already fails CRC location. Codifying the rule makes raw-byte key
  * comparison exact, which is what the duplicate check below relies on, and it
  * closes the divergence where the host's json.loads decodes an escaped spelling
  * into a key the firmware would treat as unknown.
@@ -1208,11 +1244,21 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
         return out->reject_code;
     }
 
-    /* Locate crc32 field early -- needed for verification AFTER we walk the structure */
+    /* Locate the root object's crc32 member early -- needed for verification
+     * BEFORE the structure is trusted. The locate is structural, so it tells a
+     * broken root object apart from a store that simply carries no usable
+     * header, and the two get different reject codes. */
     u32 zero_off, expected_crc;
-    if (!find_crc_field(raw, raw_len, &zero_off, &expected_crc)) {
+    crc_loc_t loc = find_crc_field(raw, raw_len, &zero_off, &expected_crc);
+    if (loc == CRC_LOC_MALFORMED) {
+        set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "malformed JSON before the crc32 header");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+    if (loc != CRC_LOC_FOUND) {
         set_reject(out, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD,
-                   "crc32 field not found in expected shape");
+                   "no root crc32 member of the form \"0xHHHHHHHH\"");
         log_reject(log, out->reject_msg);
         return out->reject_code;
     }

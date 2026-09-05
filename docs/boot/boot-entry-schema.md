@@ -68,7 +68,7 @@ The store is a JSON object with three top-level keys:
 **Key names are unique within an object, and spelled literally.** Both rules are hard rejects, enforced by the firmware parser (`BOOT_ENTRIES_REJECT_DUPLICATE_KEY`, `BOOT_ENTRIES_REJECT_ESCAPED_KEY`) and by the host validator's `strict_loads()`.
 
 - **Unique.** RFC 8259 permits a repeated name and leaves the choice of which one wins to the implementation; `json.loads` keeps the last. This store cannot afford that latitude: the firmware parser's `entries` cap counter is per-occurrence while its output index spans occurrences, so a second `entries` array wrote past the fixed 64-slot output array, and the reset also disarmed the cross-occurrence duplicate-id check. The rule applies to every key at every level the firmware parses (root and entry objects), not only to the three known root keys, so that host and firmware accept the same set of stores.
-- **Literal.** A key name must not use a JSON escape sequence: `"entries"` is not `entries`. The firmware compares key bytes raw, and it locates the CRC field by scanning for the literal bytes `"crc32"`, so an escaped spelling was never readable there while `json.loads` decoded it into the real key.
+- **Literal.** A key name must not use a JSON escape sequence: `"entries"` is not `entries`. The firmware compares key bytes raw, and it matches the root CRC member's key against the literal bytes `crc32`, so an escaped spelling was never readable there while `json.loads` decoded it into the real key.
 - Distinct unknown keys remain forward-compatible and are skipped, with **no limit on how many** an object may carry. Only a REPEAT is rejected.
 - The firmware enforces uniqueness by rescanning the current object's already-parsed prefix, so there is no seen-key table and no key-count ceiling. A rescan that cannot complete (a store nested deeper than the scan budget) is a hard reject, not a silent pass: "the check could not run" must never read as "the check passed".
 - **Value nesting is capped at 8 containers, counted from each value the firmware SKIPS wholesale** (an unrecognised top-level key, an unrecognised entry key, and `payload`), not from the root. `validate_value_depths()` in the host validator mirrors this exactly, and both sides carry a depth-8-accept / depth-9-reject test pair so they cannot drift apart. Values the firmware interprets itself (`flags`, `policy_tags`, `health_check_subset`) are shape-checked instead and never reach that budget.
@@ -233,10 +233,7 @@ The header's `crc32` field MUST equal the IEEE 802.3 CRC-32 (polynomial `0xEDB88
 
 ### Algorithm
 
-1. Locate the `crc32` field. The producer MUST emit it with the exact shape
-   `"crc32": "0xHHHHHHHH"` where `HHHHHHHH` is 8 lowercase or uppercase hex digits.
-   Whitespace between `"crc32"`, `:`, and the value is permitted (matches the regex
-   `"crc32"\s*:\s*"0x[0-9a-fA-F]{8}"`).
+1. Locate the `crc32` field STRUCTURALLY: walk the root object's keys, skipping each value, and take the member whose key is the literal 5 bytes `crc32` at depth 1. The producer MUST emit its value with the exact shape `"0xHHHHHHHH"` -- a lowercase `x` and exactly 8 hex digits (either case), ten characters in total. Whitespace between `"crc32"`, `:`, and the value is permitted. A value-blind search for the characters `crc32` is NOT sufficient and is a defect: it matches inside a string VALUE that precedes the real header (`{"note":"crc32", ...}`) and inside a nested `payload` member, and two implementations searching that way tie-break differently, so they disagree about which bytes carry the CRC. Both implementations locate it structurally: `find_crc_field()` in [`src/boot/uefi/boot_entries_parser.c`](../../src/boot/uefi/boot_entries_parser.c) and `_root_crc32_span()` in [`tools/boot-entry-validate/validate.py`](../../tools/boot-entry-validate/validate.py).
 2. Construct a temporary buffer equal to the file bytes, with the 8 hex digits replaced by
    `00000000` (no `0x` prefix change; only the 8 hex chars change).
 3. Compute IEEE 802.3 CRC-32 over the temporary buffer.
@@ -268,19 +265,23 @@ placeholder with `crc32` of `0x00000000`.
 ### Reference (Python)
 
 ```python
-import re, zlib
+import zlib
 
-_CRC_FIELD_RE = re.compile(rb'"crc32"\s*:\s*"0x([0-9a-fA-F]{8})"')
+from validate import find_crc_field   # tools/boot-entry-validate/validate.py
 
 
 def compute_crc_from_file(raw: bytes) -> int:
-    m = _CRC_FIELD_RE.search(raw)
-    if m is None:
-        raise ValueError('crc32 field not found in expected shape')
-    offset = m.start(1)  # offset of the 8 hex chars
+    offset, _expected = find_crc_field(raw)   # structural: root member only
     zeroed = raw[:offset] + b"00000000" + raw[offset + 8:]
     return zlib.crc32(zeroed) & 0xFFFFFFFF
 ```
+
+`find_crc_field()` is the reference locator rather than a regex on purpose: it walks the root
+object, skips each value it is not interested in, and returns the span of the 8 hex digits
+belonging to the root `crc32` member. It reports three outcomes -- located, no usable root
+member, and a root object whose grammar broke before the header -- which is what lets the
+firmware map the last of those to a JSON-parse rejection instead of claiming the header is
+missing.
 
 `zlib.crc32` uses IEEE 802.3 / 0xEDB88320 by default; the bootloader's parser ships its own
 copy at [`src/kernel/fs/gpt.c`](../../src/kernel/fs/gpt.c) (`gpt_crc32`).

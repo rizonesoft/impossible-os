@@ -32,7 +32,9 @@ static unsigned char s_fixture_buf[2048];
 static unsigned int patch_fixture_crc(unsigned char *buf, unsigned int len)
 {
     unsigned int zero_off, expected;
-    if (!find_crc_field(buf, len, &zero_off, &expected)) return 0;
+    /* Tri-state since section 20: CRC_LOC_MALFORMED is -1, so a plain `!`
+     * test would read a broken fixture as a successful locate. */
+    if (find_crc_field(buf, len, &zero_off, &expected) != CRC_LOC_FOUND) return 0;
     unsigned int crc = crc32_zeroed(buf, len, zero_off);
     /* Write the CRC as 8 uppercase hex digits at offset zero_off. */
     static const char HEX[] = "0123456789ABCDEF";
@@ -1096,6 +1098,316 @@ static void test_parser_health_subset_rejects_trailing_comma(void)
 
 /* ---- Registration ----------------------------------------------------- */
 
+/* ---- Structural CRC-header locate (section 20) ------------------------- */
+
+/* Independent oracle for "which bytes are the real header": the offset of the 8
+ * hex digits of the ONLY `"crc32":"0x` pair written with no space. Every decoy
+ * below is spelled differently on purpose (a plain string value, or a nested
+ * member written WITH a space), so this scanner cannot match one. Deliberately a
+ * different rule from find_crc_field(): an oracle that shared the locator's
+ * logic would agree with it even when both are wrong. */
+static unsigned int oracle_crc_span(const unsigned char *raw, unsigned int len)
+{
+    static const char NEEDLE[] = "\"crc32\":\"0x";
+    unsigned int nlen = s_len(NEEDLE), i, hits = 0, off = 0;
+    if (len < nlen) return 0;
+    for (i = 0; i + nlen <= len; i++) {
+        if (bytes_eq(raw + i, (const u8 *)NEEDLE, nlen)) { hits++; off = i + nlen; }
+    }
+    TEST_ASSERT_EQ(hits, 1u, "oracle needle must be unique in the fixture");
+    return off;
+}
+
+/* Locate must land on the ROOT header, proven against the oracle rather than
+ * against a successful parse: the fixture's CRC is patched at whatever span the
+ * locator reports, so a consistently-wrong locator still produces a store that
+ * verifies. */
+static void assert_locates_root(const char *json, const char *what)
+{
+    unsigned int n = load_fixture(json);
+    unsigned int zero_off = 0, expected = 0;
+    crc_loc_t loc = find_crc_field(s_fixture_buf, n, &zero_off, &expected);
+    TEST_ASSERT_EQ(loc, CRC_LOC_FOUND, what);
+    TEST_ASSERT_EQ(zero_off, oracle_crc_span(s_fixture_buf, n), what);
+}
+
+/* The pre-section-20 value-blind byte scan, kept HERE (never in the parser) as the
+ * control's oracle. Without it the control is a manual revert somebody has to
+ * remember to perform, which is not a regression test at all: a decoy fixture that
+ * fails to reproduce the old defect looks exactly like one that reproduces it. Both
+ * decoy fixtures below were wrong on the first draft and this scan is what says so. */
+static crc_loc_t old_string_match_locate(const u8 *raw, u32 len, u32 *zero_off)
+{
+    static const char KEY[] = "\"crc32\"";
+    u32 i, p;
+    for (i = 0; i + 7u <= len; i++) {
+        u32 k; int match = 1;
+        for (k = 0; k < 7u; k++) if (raw[i + k] != (u8)KEY[k]) { match = 0; break; }
+        if (!match) continue;
+        p = i + 7u;
+        while (p < len && (raw[p] == ' ' || raw[p] == '\t' ||
+                           raw[p] == '\r' || raw[p] == '\n')) p++;
+        if (p >= len || raw[p] != ':') return CRC_LOC_ABSENT;
+        p++;
+        while (p < len && (raw[p] == ' ' || raw[p] == '\t' ||
+                           raw[p] == '\r' || raw[p] == '\n')) p++;
+        if (p >= len || raw[p] != '"') return CRC_LOC_ABSENT;
+        p++;
+        if (p + 10u > len) return CRC_LOC_ABSENT;
+        if (raw[p] != '0' || (raw[p + 1] != 'x' && raw[p + 1] != 'X')) return CRC_LOC_ABSENT;
+        /* The original validated the eight digits before reporting success. A
+         * control that skips this is MORE PERMISSIVE than the code it stands
+         * for, and would certify agreement on a malformed value the real
+         * predecessor rejected. */
+        {
+            unsigned int scratch;
+            if (!parse_hex8(raw, p + 2u, &scratch)) return CRC_LOC_ABSENT;
+        }
+        *zero_off = p + 2u;
+        return CRC_LOC_FOUND;
+    }
+    return CRC_LOC_ABSENT;
+}
+
+/* A decoy fixture EARNS its place by breaking the old scan. This asserts the old
+ * scan either refuses the store or picks a different span, and that it agrees on a
+ * store carrying no decoy at all -- otherwise the control is not measuring the
+ * decoy. */
+static void assert_old_scan_broke(const char *json, const char *what)
+{
+    unsigned int n = load_fixture(json);
+    unsigned int old_off = 0;
+    crc_loc_t old_loc = old_string_match_locate(s_fixture_buf, n, &old_off);
+    unsigned int real = oracle_crc_span(s_fixture_buf, n);
+    TEST_ASSERT(old_loc != CRC_LOC_FOUND || old_off != real, what);
+}
+
+static void test_parser_crc_locate_control(void)
+{
+    /* CONTROL: with no decoy present the locate must succeed and match the
+     * oracle. If this fails, every decoy result below means nothing. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    assert_locates_root(JSON, "plain store locates the root header");
+    {   /* The control must AGREE here, or it is not measuring the decoys. */
+        unsigned int n0 = load_fixture(JSON), old_off = 0;
+        TEST_ASSERT_EQ(old_string_match_locate(s_fixture_buf, n0, &old_off), CRC_LOC_FOUND,
+                       "CONTROL: the old scan locates a plain store");
+        TEST_ASSERT_EQ(old_off, oracle_crc_span(s_fixture_buf, n0),
+                       "CONTROL: the old scan agrees on a plain store");
+    }
+    {   /* CONTROL FIDELITY: the old scan rejected a non-hex value, and so must
+         * the copy of it. Without this the omission above is invisible.
+         * Built by MUTATING the fixture already in the buffer rather than by
+         * embedding a second store: a whole extra literal costs `.rodata` in
+         * the linked image for one assertion, and test strings are the
+         * cheapest thing in this kernel to grow without noticing. */
+        unsigned int nb = load_fixture(JSON), off = 0;
+        unsigned int span = oracle_crc_span(s_fixture_buf, nb);
+        s_fixture_buf[span] = (unsigned char)'G';
+        s_fixture_buf[span + 1u] = (unsigned char)'G';
+        TEST_ASSERT_EQ(old_string_match_locate(s_fixture_buf, nb, &off), CRC_LOC_ABSENT,
+                       "CONTROL: the old scan rejected a non-hex crc32 value");
+        TEST_ASSERT_EQ(find_crc_field(s_fixture_buf, nb, &off, &span), CRC_LOC_ABSENT,
+                       "the structural locate rejects a non-hex value too");
+    }
+    /* Position among the root keys, and whitespace in the gaps, must not matter:
+     * the locate is token-driven, not offset-driven. */
+    static const char FIRST_KEY[] =
+        "{\"crc32\":\"0x00000000\",\"schema_version\":1,\"entries\":[" TEST_ENTRY_A "]}";
+    assert_locates_root(FIRST_KEY, "header as the first root key");
+    static const char SPACED[] =
+        "{\"schema_version\" : 1 ,\n\t\"crc32\" : \"0x00000000\" ,"
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(SPACED);
+    unsigned int zero_off = 0, expected = 0;
+    TEST_ASSERT_EQ(find_crc_field(s_fixture_buf, n, &zero_off, &expected), CRC_LOC_FOUND,
+                   "whitespace around the key, colon and value tolerated");
+}
+
+static void test_parser_crc_decoy_string_value(void)
+{
+    /* The defect: `crc32` inside a string VALUE ahead of the real header. The
+     * old byte scan matched here, looked for a colon, found a comma, and the
+     * store was rejected as a bad CRC field before any key was parsed. */
+    static const char JSON[] =
+        "{\"note\":\"crc32\",\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    assert_locates_root(JSON, "decoy string value before the header");
+    assert_old_scan_broke(JSON, "CONTROL: the old scan broke on this decoy");
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "store with a decoy value accepted");
+    TEST_ASSERT_EQ(r->entry_count, 1u, "decoy store still parses its entry");
+}
+
+static void test_parser_crc_decoy_nested_member(void)
+{
+    /* The same shape one level down: a crc32 member inside `payload`. It sits
+     * BEFORE the root header in the byte stream, which is what makes it a decoy
+     * -- the old scan took the first `"crc32"` it met. Written with a space
+     * after the colon so the oracle needle stays unique. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"entries\":["
+        "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"payload\":{\"crc32\": \"0x11223344\"}}],"
+        "\"crc32\":\"0x00000000\"}";
+    assert_locates_root(JSON, "nested crc32 member inside payload");
+    assert_old_scan_broke(JSON, "CONTROL: the old scan broke on this decoy");
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "store with a nested crc32 accepted");
+}
+
+static void test_parser_crc_decoy_escaped_and_array(void)
+{
+    /* An escaped-quote decoy carries `\"crc32\": \"0x11223344\"` inside a string
+     * value; an array-contained decoy hides the same pair one level down in a list
+     * rather than an object. Only the ARRAY one breaks the old scan, and the
+     * control below says so rather than assuming it: in `\"crc32\"` a backslash
+     * sits where the old seven-byte needle wanted the closing quote, so the old
+     * scan walked straight past it. The escaped case still matters here because
+     * the NEW locator must not match an escaped spelling in a value either. */
+    static const char ESCQ[] =
+        "{\"q\":\"\\\"crc32\\\": \\\"0x11223344\\\"\",\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    static const char ARR[] =
+        "{\"list\":[{\"crc32\": \"0x11223344\"}],\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+
+    assert_locates_root(ESCQ, "escaped-quote decoy before the header");
+    {   /* CONTROL: the old scan AGREED here, so this fixture is a locate case and
+         * not a regression case. Asserting a break would assert a bug that never
+         * existed, and the fixture would pass for the wrong reason. */
+        unsigned int n0 = load_fixture(ESCQ), old_off = 0;
+        TEST_ASSERT_EQ(old_string_match_locate(s_fixture_buf, n0, &old_off), CRC_LOC_FOUND,
+                       "CONTROL: the old scan skipped the escaped spelling");
+        TEST_ASSERT_EQ(old_off, oracle_crc_span(s_fixture_buf, n0),
+                       "CONTROL: the old scan agreed on the escaped-quote store");
+    }
+    unsigned int n = load_fixture(ESCQ);
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "escaped-quote decoy store accepted");
+
+    assert_locates_root(ARR, "array-contained decoy before the header");
+    assert_old_scan_broke(ARR, "CONTROL: the old scan broke on the array decoy");
+    n = load_fixture(ARR);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "array-contained decoy store accepted");
+}
+
+static void test_parser_crc_header_after_deep_value(void)
+{
+    /* The locate skips ROOT values, two container levels further out than the
+     * authoritative walk ever skips from, so it gets the RESCAN budget. A root
+     * value at that budget must still leave the header findable. */
+    static const char JSON[] =
+        "{\"pad\":[[[[[[[[[[0]]]]]]]]]],\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    assert_locates_root(JSON, "header after a 10-container root value");
+}
+
+static void test_parser_crc_header_after_over_budget_value(void)
+{
+    /* One container past the budget: the locate cannot get to the header, and
+     * the store is a JSON problem rather than a missing-header one. */
+    static const char JSON[] =
+        "{\"pad\":[[[[[[[[[[[0]]]]]]]]]]],\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "root value over the scan budget rejected as malformed");
+}
+
+static void test_parser_crc_uppercase_prefix_rejected(void)
+{
+    /* `0X` has no agreed 8-byte span: the host validator requires a lowercase
+     * `0x` in its whole-store check, so accepting it here would mean the two
+     * sides disagree about which bytes carry the CRC. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0XAABBCCDD\",\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD,
+                   "uppercase 0X prefix rejected");
+}
+
+static void test_parser_crc_value_shapes_rejected(void)
+{
+    /* An over-long value and a non-string value are both "no usable header",
+     * not "malformed": the root object itself is fine. */
+    static const char LONG_VAL[] =
+        "{\"schema_version\":1,\"crc32\":\"0xAABBCCDDEE\",\"entries\":[" TEST_ENTRY_A "]}";
+    static const char NUM_VAL[] =
+        "{\"schema_version\":1,\"crc32\":2864434397,\"entries\":[" TEST_ENTRY_A "]}";
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    unsigned int n = load_fixture(LONG_VAL);
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "over-long crc32 value rejected");
+    n = load_fixture(NUM_VAL);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "non-string crc32 value rejected");
+    /* `0x\u0041ABBCCDD` decodes to `0xAABBCCDD` and is 14 RAW bytes, so there is no
+     * agreed 8-byte span for the producer to patch. Absent, not malformed. */
+    static const char ESC_VAL[] =
+        "{\"schema_version\":1,\"crc32\":\"0x\\u0041ABBCCDD\",\"entries\":["
+        TEST_ENTRY_A "]}";
+    n = load_fixture(ESC_VAL);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "escaped crc32 value rejected");
+}
+
+static void test_parser_crc_malformed_before_header(void)
+{
+    /* Root grammar broken ahead of the header. Before this section a broken
+     * prefix could still reach the CRC check and be reported as a mismatch;
+     * naming it a parse error is the honest code. */
+    static const char JSON[] =
+        "{\"note\" \"x\",\"crc32\":\"0x00000000\",\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "malformed root before the header rejected as a parse error");
+}
+
+static void test_parser_crc_absent_root_member(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"entries\":[" TEST_ENTRY_A "]}";
+    static const char EMPTY[] = "{}";
+    static const char ESC_KEY[] =
+        "{\"\\u0063rc32\":\"0x00000000\",\"schema_version\":1,\"entries\":["
+        TEST_ENTRY_A "]}";
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    unsigned int n = load_fixture(JSON);
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "no root crc32 member rejected");
+    n = load_fixture(EMPTY);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "empty root object rejected");
+    /* The key is compared RAW, so an escaped spelling is a different key and the
+     * header is simply absent -- the same conclusion the host reaches. */
+    n = load_fixture(ESC_KEY);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "escaped crc32 key rejected");
+}
+
 void test_register_boot_entry_parser(void)
 {
     test_suite_register_cat("boot-entries: valid minimal",
@@ -1200,6 +1512,26 @@ void test_register_boot_entry_parser(void)
                             test_parser_skip_value_depth_budget, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: entries_retain bound enforced",
                             test_parser_entries_retain_bound, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc locate CONTROL",
+                            test_parser_crc_locate_control, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc decoy string value",
+                            test_parser_crc_decoy_string_value, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc decoy nested member",
+                            test_parser_crc_decoy_nested_member, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc decoy escaped and array",
+                            test_parser_crc_decoy_escaped_and_array, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc header after deep value",
+                            test_parser_crc_header_after_deep_value, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc header over scan budget",
+                            test_parser_crc_header_after_over_budget_value, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc uppercase prefix rejected",
+                            test_parser_crc_uppercase_prefix_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc value shapes rejected",
+                            test_parser_crc_value_shapes_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc malformed before header",
+                            test_parser_crc_malformed_before_header, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc absent root member",
+                            test_parser_crc_absent_root_member, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -105,11 +105,11 @@ _UUID_RE = re.compile(
 # Kebab-case id: lowercase letters/digits, dash-separated, no leading/trailing dash.
 _KEBAB_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
-# Locates the crc32 field's 8 hex digits in raw file bytes. Producer / consumer must emit
-# the field as `"crc32": "0xHHHHHHHH"` (whitespace between the key, colon, and value
-# permitted). Group 1 is the 8 hex chars; .span(1) gives the byte range to zero out
-# during CRC computation.
-_CRC_FIELD_RE = re.compile(rb'"crc32"\s*:\s*"0x([0-9a-fA-F]{8})"')
+# The crc32 header's VALUE shape: exactly `0x` + 8 hex digits, lowercase `x`. This is
+# a shape check on an already-located value, never a search -- the field is located
+# structurally by _root_crc32_span() below, because a value-blind search matches the
+# characters `crc32` inside any string VALUE that happens to contain them.
+_CRC_VALUE_RE = re.compile(rb"^0x([0-9a-fA-F]{8})$")
 
 
 def fail(msg: str) -> None:
@@ -137,9 +137,9 @@ def _is_int(x: Any) -> bool:
 # bless a file that fails to boot.
 #
 # The same applies to escape sequences in KEY names. The firmware compares key bytes
-# raw, and find_crc32_key() locates the CRC field by scanning for the literal bytes
-# `"crc32"`, so an escaped spelling is not the same key there while `json.loads`
-# decodes it into one.
+# raw, and find_crc_field() matches the root CRC key's RAW bytes against `crc32`, so
+# an escaped spelling is not the same key there while `json.loads` decodes it into
+# one.
 #
 # Deliberate asymmetry: this runs at EVERY object level, including inside `payload`
 # objects that the firmware envelope parser skips wholesale. The host is the producer
@@ -365,23 +365,247 @@ def _expect_enum(idx: int, eid: str, kind: str, payload: dict, key: str, *, allo
         fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be one of {sorted(allowed)}, got {val!r}")
 
 
+class _CrcLocateError(Exception):
+    """The root object's grammar broke before the crc32 header was reached."""
+
+
+# The locator is a byte-level MIRROR of the firmware's lexer + skip_value_depth
+# (src/boot/uefi/boot_entries_parser.c). It has to be: the two sides must agree on
+# which bytes carry the CRC, and a host more permissive than the firmware would
+# stamp a store the firmware then refuses to boot from. So the token rules below are
+# the firmware's rules, not Python's -- strict RFC 8259 strings (no raw controls, no
+# invented escapes), literals spelled exactly, and numbers accepted as TOKENS
+# wherever lex_number() accepts them, even where it marks the parsed value unusable.
+_JSON_WS = b" \t\r\n"
+_JSON_SINGLE_ESCAPES = b'"\\/bfnrt'
+_HEX_DIGITS = b"0123456789abcdefABCDEF"
+
+# Token kinds. A string also reports the span BETWEEN the quotes, which is what both
+# the key comparison and the CRC value shape check read.
+_T_EOF, _T_LBRACE, _T_RBRACE, _T_LBRACKET, _T_RBRACKET = "eof", "{", "}", "[", "]"
+_T_COLON, _T_COMMA, _T_STR, _T_ATOM = ":", ",", "str", "atom"
+
+
+def _skip_ws(raw: bytes, i: int) -> int:
+    while i < len(raw) and raw[i] in _JSON_WS:
+        i += 1
+    return i
+
+
+def _scan_string(raw: bytes, i: int) -> tuple[int, int, int]:
+    """`raw[i]` is the opening quote. Returns (content_start, content_end, next_index).
+
+    Escapes are validated but NOT decoded: the caller compares raw bytes, exactly as
+    the firmware does, so an escaped spelling is never the literal key. Mirrors
+    lex_string(): only the eight RFC 8259 single-character escapes, `\\uHHHH` with
+    exactly four hex digits, and no raw byte below 0x20 inside the string.
+    """
+    n = len(raw)
+    if i >= n or raw[i] != 0x22:
+        raise _CrcLocateError(f"expected a string at byte {i}")
+    j = i + 1
+    while j < n:
+        c = raw[j]
+        if c == 0x22:
+            return i + 1, j, j + 1
+        if c == 0x5C:                      # backslash
+            if j + 1 >= n:
+                raise _CrcLocateError(f"escape runs past the end at byte {j}")
+            esc = raw[j + 1]
+            if esc == 0x75:                # u
+                if j + 5 >= n or any(raw[j + 2 + k] not in _HEX_DIGITS for k in range(4)):
+                    raise _CrcLocateError(f"unicode escape without 4 hex digits at byte {j}")
+                j += 6
+                continue
+            if esc not in _JSON_SINGLE_ESCAPES:
+                raise _CrcLocateError(f"invalid escape at byte {j}")
+            j += 2
+            continue
+        if c < 0x20:
+            raise _CrcLocateError(f"raw control byte 0x{c:02X} inside a string at byte {j}")
+        j += 1
+    raise _CrcLocateError(f"unterminated string starting at byte {i}")
+
+
+def _next_token(raw: bytes, i: int) -> tuple[str, int, int, int]:
+    """Return (kind, content_start, content_end, next_index) for the token at/after `i`.
+
+    content_start/content_end span the bytes between the quotes for a string, and the
+    token's own bounds otherwise. Mirrors lex_next().
+    """
+    i = _skip_ws(raw, i)
+    n = len(raw)
+    if i >= n:
+        return _T_EOF, i, i, i
+    c = raw[i]
+    single = {0x7B: _T_LBRACE, 0x7D: _T_RBRACE, 0x5B: _T_LBRACKET,
+              0x5D: _T_RBRACKET, 0x3A: _T_COLON, 0x2C: _T_COMMA}
+    if c in single:
+        return single[c], i, i + 1, i + 1
+    if c == 0x22:
+        cs, ce, nxt = _scan_string(raw, i)
+        return _T_STR, cs, ce, nxt
+    for lit in (b"true", b"false", b"null"):
+        if c == lit[0]:
+            if raw[i:i + len(lit)] != lit:
+                raise _CrcLocateError(f"bad literal at byte {i}")
+            return _T_ATOM, i, i + len(lit), i + len(lit)
+    if c == 0x2D or 0x30 <= c <= 0x39:      # '-' or digit
+        j = i + 1 if c == 0x2D else i
+        digits = 0
+        while j < n and 0x30 <= raw[j] <= 0x39:
+            j += 1
+            digits += 1
+        if digits == 0:
+            raise _CrcLocateError(f"number without digits at byte {i}")
+        # lex_number() accepts a fraction/exponent as a TOKEN (it only marks the
+        # parsed value unusable), so the mirror must accept the same byte run.
+        if j < n and raw[j] in b".eE":
+            while j < n and raw[j] in b"0123456789.eE+-":
+                j += 1
+        return _T_ATOM, i, j, j
+    raise _CrcLocateError(f"unparsable byte 0x{c:02X} at {i}")
+
+
+def _skip_value(raw: bytes, i: int) -> int:
+    """`i` is at the FIRST TOKEN of a value. Returns the index just past the value.
+
+    Mirrors skip_value_depth(): an explicit container stack that VALIDATES object and
+    array grammar, not a brace count. `{"k":}` balances and is still malformed, and
+    the firmware rejects it before it ever reaches the header -- so a host that
+    accepted it would claim a parity the two sides do not have.
+    """
+    kind, _cs, _ce, nxt = _next_token(raw, i)
+    if kind in (_T_STR, _T_ATOM):
+        return nxt
+    if kind not in (_T_LBRACE, _T_LBRACKET):
+        raise _CrcLocateError(f"expected a value at byte {i}")
+
+    OBJ_FIRST_KEY, OBJ_NEXT_KEY, OBJ_COMMA_END = "ofk", "onk", "oce"
+    ARR_FIRST_VAL, ARR_NEXT_VAL, ARR_COMMA_END = "afv", "anv", "ace"
+    stack = [OBJ_FIRST_KEY if kind == _T_LBRACE else ARR_FIRST_VAL]
+    i = nxt
+    while stack:
+        if len(stack) > MAX_SCAN_DEPTH:
+            raise _CrcLocateError(
+                f"value nests over the firmware's {MAX_SCAN_DEPTH}-container scan budget")
+        kind, _cs, _ce, i = _next_token(raw, i)
+        if kind == _T_EOF:
+            raise _CrcLocateError("input ended inside a value")
+        st = stack[-1]
+
+        if st in (OBJ_FIRST_KEY, OBJ_NEXT_KEY):
+            if st == OBJ_FIRST_KEY and kind == _T_RBRACE:
+                stack.pop()
+                continue
+            if kind != _T_STR:
+                raise _CrcLocateError(f"expected an object key at byte {i}")
+            kind, _cs, _ce, i = _next_token(raw, i)
+            if kind != _T_COLON:
+                raise _CrcLocateError(f"expected a colon at byte {i}")
+            kind, _cs, _ce, i = _next_token(raw, i)
+            if kind in (_T_LBRACE, _T_LBRACKET):
+                stack[-1] = OBJ_COMMA_END
+                stack.append(OBJ_FIRST_KEY if kind == _T_LBRACE else ARR_FIRST_VAL)
+            elif kind in (_T_STR, _T_ATOM):
+                stack[-1] = OBJ_COMMA_END
+            else:
+                raise _CrcLocateError(f"expected a value at byte {i}")
+        elif st == OBJ_COMMA_END:
+            if kind == _T_RBRACE:
+                stack.pop()
+                continue
+            if kind != _T_COMMA:
+                raise _CrcLocateError(f"expected a comma or closing brace at byte {i}")
+            stack[-1] = OBJ_NEXT_KEY
+        elif st in (ARR_FIRST_VAL, ARR_NEXT_VAL):
+            if st == ARR_FIRST_VAL and kind == _T_RBRACKET:
+                stack.pop()
+                continue
+            if kind in (_T_LBRACE, _T_LBRACKET):
+                stack[-1] = ARR_COMMA_END
+                stack.append(OBJ_FIRST_KEY if kind == _T_LBRACE else ARR_FIRST_VAL)
+            elif kind in (_T_STR, _T_ATOM):
+                stack[-1] = ARR_COMMA_END
+            else:
+                raise _CrcLocateError(f"expected an array element at byte {i}")
+        else:  # ARR_COMMA_END
+            if kind == _T_RBRACKET:
+                stack.pop()
+                continue
+            if kind != _T_COMMA:
+                raise _CrcLocateError(f"expected a comma or closing bracket at byte {i}")
+            stack[-1] = ARR_NEXT_VAL
+    return i
+
+
+def _root_crc32_span(raw: bytes) -> tuple[int, int] | None:
+    """Locate the ROOT object's crc32 member structurally.
+
+    Returns (offset_of_8_hex_digits, expected_value), or None when the root walked
+    cleanly and carries no usable crc32 member. Raises _CrcLocateError when the root
+    object's grammar breaks before the header is reached.
+
+    Only a key at depth 1 of the root object can match, which is the whole point: a
+    value-blind search matches `crc32` inside a string VALUE that precedes the real
+    header (`{"note":"crc32", ...}`) or inside a nested `payload` member, and firmware
+    and host then disagree about which bytes carry the CRC.
+    """
+    kind, _cs, _ce, i = _next_token(raw, 0)
+    if kind != _T_LBRACE:
+        raise _CrcLocateError("top-level value is not an object")
+    while True:
+        kind, key_start, key_end, i = _next_token(raw, i)
+        if kind == _T_RBRACE:
+            return None
+        if kind != _T_STR:
+            raise _CrcLocateError(f"expected a root key at byte {key_start}")
+        kind, _cs, _ce, i = _next_token(raw, i)
+        if kind != _T_COLON:
+            raise _CrcLocateError(f"expected a colon after the root key at byte {key_start}")
+        if raw[key_start:key_end] == b"crc32":
+            # First occurrence wins; a repeated root key is rejected by the strict
+            # load. The value must be a string of exactly `0x` + 8 hex digits -- the
+            # span the producer patches in place, so a longer, differently-cased or
+            # newline-bearing one has no agreed 8 bytes. fullmatch, not match: `$`
+            # also matches before a trailing newline, and an 11-byte value would then
+            # locate here and be ABSENT to the firmware.
+            kind, val_start, val_end, _ = _next_token(raw, i)
+            if kind != _T_STR:
+                return None
+            m = _CRC_VALUE_RE.fullmatch(raw[val_start:val_end])
+            if not m:
+                return None
+            return val_start + 2, int(m.group(1).decode("ascii"), 16)
+        i = _skip_value(raw, i)
+        kind, _cs, _ce, i = _next_token(raw, i)
+        if kind == _T_RBRACE:
+            return None
+        if kind != _T_COMMA:
+            raise _CrcLocateError(f"expected a comma or closing brace after a root value at byte {i}")
+
+
 def find_crc_field(raw: bytes) -> tuple[int, int]:
     """Locate the crc32 field's 8 hex digit byte range in raw file bytes.
 
     Returns (offset, expected_value) where offset is the byte index of the first hex digit
-    and expected_value is the parsed uint32. Raises a fail() if the field is absent or
-    mis-shaped.
+    and expected_value is the parsed uint32. Calls fail() if the field is absent or
+    mis-shaped, matching the firmware's BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, or if the
+    root object is malformed before the header, matching its JSON_PARSE reject.
 
-    Producer requirement: emit the crc32 field as `"crc32": "0xHHHHHHHH"`. Whitespace
-    between the key, colon, and quoted value is permitted (matches `\\s*` in regex).
+    Producer requirement: emit the crc32 field as a ROOT member `"crc32": "0xHHHHHHHH"`.
+    Whitespace around the key, colon, and value is permitted; the value itself must be
+    exactly ten characters with a lowercase `x`.
     """
-    m = _CRC_FIELD_RE.search(raw)
-    if not m:
-        fail('crc32 field not found in expected shape: "crc32": "0xHHHHHHHH"')
+    try:
+        found = _root_crc32_span(raw)
+    except _CrcLocateError as exc:
+        fail(f"malformed JSON before the crc32 header: {exc}")
         return 0, 0  # unreachable
-    offset = m.start(1)
-    expected = int(m.group(1).decode("ascii"), 16)
-    return offset, expected
+    if found is None:
+        fail('no root crc32 member of the form "crc32": "0xHHHHHHHH"')
+        return 0, 0  # unreachable
+    return found
 
 
 def compute_crc_from_file(raw: bytes) -> int:
@@ -634,6 +858,14 @@ def _reject_non_finite(node: Any, path: str = "") -> None:
 # invalid-store fallback at boot, which is exactly the divergence the unique-key
 # work set out to remove.
 MAX_PARSE_DEPTH = 8         # BOOT_ENTRIES_MAX_PARSE_DEPTH
+
+# The CRC-header locator (_skip_value above) skips a ROOT value, which is two
+# container levels further out than the authoritative walk ever skips from: the
+# firmware descends the `entries` array and each entry object structurally and only
+# hands `payload` to the skipper. Charging the same 8 would refuse to locate the
+# header in stores the parser ACCEPTS, so the locator gets the firmware's
+# BOOT_ENTRIES_MAX_SCAN_DEPTH, not its parse budget.
+MAX_SCAN_DEPTH = MAX_PARSE_DEPTH + 2    # BOOT_ENTRIES_MAX_SCAN_DEPTH
 
 _ENTRY_STRUCTURAL_KEYS = {"id", "title", "kind", "flags", "sort_key",
                           "machine_id", "policy_tags", "timeout_override",

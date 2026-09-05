@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,11 @@ _validator_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_validator_mod)
 _compute_crc_from_file = _validator_mod.compute_crc_from_file
 _find_crc_field = _validator_mod.find_crc_field
+# The non-failing form of the same locate. find_crc_field() calls fail(), which raises
+# SystemExit -- a BaseException that an `except Exception` guard does not catch -- so a
+# fixture with no locatable header would take the whole harness down with it.
+_root_crc32_span = _validator_mod._root_crc32_span
+_CrcLocateError = _validator_mod._CrcLocateError
 
 
 def run_validator(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -107,9 +113,12 @@ def write_tmp_raw(text: str) -> Path:
     path = Path(fd.name)
     raw = path.read_bytes()
     try:
-        offset, _ = _find_crc_field(raw)
-    except Exception:
+        located = _root_crc32_span(raw)
+    except _CrcLocateError:
+        return path          # root grammar broken before the header (malformed fixtures)
+    if located is None:
         return path          # no locatable crc32 field (escaped-key fixtures)
+    offset, _ = located
     zeroed = raw[:offset] + b"00000000" + raw[offset + 8:]
     path.write_bytes(zeroed)
     crc = _compute_crc_from_file(path.read_bytes())
@@ -409,6 +418,19 @@ def cases() -> list[Case]:
                 ("fail", '"0x" + 8 hex digits')))
     out.append(("crc32 non-hex", lambda: write_tmp(mutate(top={"crc32": "0xZZZZZZZZ"})),
                 ("fail", "hex digits only")))
+    out.append(("crc32 decoy in a string value before the header",
+                _crc_decoy_before_header, ("pass",)))
+    out.append(("crc32 member nested inside payload",
+                _crc_decoy_nested_in_payload, ("pass",)))
+    # Both of these are caught by an EARLIER whole-store check than the locator (the strict
+    # load and the crc32 shape check both run first), so the needles are the messages the
+    # host really emits. The locator's own malformed/absent verdicts are asserted directly
+    # in _locator_checks(); what these two cases pin is that the store is REJECTED, which is
+    # the half that matters for firmware/host agreement.
+    out.append(("crc32 value with an uppercase 0X prefix",
+                _crc_uppercase_prefix, ("fail", 'crc32 must be "0x" + 8 hex digits')))
+    out.append(("malformed root object before the crc32 header",
+                _crc_malformed_before_header, ("fail", "JSON parse error")))
     out.append(("schema_version != 1", lambda: write_tmp(mutate(top={"schema_version": 99})),
                 ("fail", "schema_version must be")))
     out.append(("schema_version=true (bool)", lambda: write_tmp(mutate(top={"schema_version": True})),
@@ -967,6 +989,28 @@ def _network_with_userinfo() -> Path:
     return write_tmp(data, recompute_crc=True)
 
 
+def _crc_decoy_before_header() -> Path:
+    """A store carrying the exact bytes `"crc32"` in a string VALUE before the header."""
+    return write_tmp_raw(_store_text(prefix_keys='"note":"crc32",'))
+
+
+def _crc_decoy_nested_in_payload() -> Path:
+    """A `crc32` member nested inside `payload`, ahead of the root header in the bytes."""
+    return write_tmp_raw(_store_text(payload_extra=f',"crc32": "{_DECOY_CRC}"',
+                                     header_last=True))
+
+
+def _crc_uppercase_prefix() -> Path:
+    """`0X` instead of `0x`. The firmware locator and the whole-store check both require
+    lowercase, so a store spelling it that way is rejected rather than half-accepted."""
+    return write_tmp_raw(_store_text(crc_value="0XAABBCCDD"))
+
+
+def _crc_malformed_before_header() -> Path:
+    """Root grammar broken before the header: a missing colon after the first key."""
+    return write_tmp_raw('{"note" "x","crc32":"0xAABBCCDD","entries":[]}')
+
+
 def _deep_nested() -> Path:
     """Deeply-nested JSON should be rejected without crashing (RecursionError caught).
 
@@ -983,6 +1027,227 @@ def _deep_nested() -> Path:
     )
     fd.close()
     return Path(fd.name)
+
+
+# ---- Structural CRC-locator checks (in-process) --------------------------------------------------
+
+# A sentinel the fixtures never repeat, so "which bytes did the locator pick" has one answer.
+_REAL_CRC = "0xAABBCCDD"
+_DECOY_CRC = "0x11223344"
+
+
+def _store_text(*, prefix_keys: str = "", payload_extra: str = "",
+                crc_value: str = _REAL_CRC, tail_keys: str = "",
+                header_last: bool = False) -> str:
+    """One valid store as RAW TEXT, with insertion points for the decoy fixtures.
+
+    Raw text rather than a dict because the whole point of these cases is WHERE the
+    characters sit in the byte stream, which a dict cannot express.
+
+    header_last moves the root `crc32` member AFTER `entries`. That placement is what
+    makes a nested decoy an actual decoy: with the header first, a value-blind search
+    reaches the real header before any nested one and the fixture proves nothing. The
+    same trap cost this section a round on the firmware fixtures.
+    """
+    header = f'"crc32":"{crc_value}"'
+    entries = (
+        '"entries":[{"id":"a","title":"A","kind":"split","flags":["active"],'
+        '"sort_key":"00","machine_id":"11111111-2222-3333-4444-555555555555",'
+        '"policy_tags":[],"payload":{"kernel":"\\\\k.exe","cmdline":"","root":"A"'
+        + payload_extra + "}}]"
+    )
+    body = f"{entries},{header}" if header_last else f"{header},{entries}"
+    return "{" + prefix_keys + '"schema_version":1,' + body + tail_keys + "}"
+
+
+def _expected_span(text: str, crc_value: str = _REAL_CRC) -> int:
+    """Offset of the ROOT header's 8 hex digits, derived independently of the locator.
+
+    The root member is the one written as `"crc32":"<value>"` with no space; every decoy is
+    written differently on purpose, so this oracle cannot accidentally match one.
+    """
+    needle = f'"crc32":"{crc_value}"'
+    assert text.count(needle) == 1, f"oracle needle is not unique in {text!r}"
+    return text.index(needle) + len('"crc32":"') + 2
+
+
+def _locator_checks() -> list[tuple[str, bool, str]]:
+    """Assert the locator returns the ROOT crc32 member's span, against an independent oracle.
+
+    The subprocess cases cannot prove this by themselves: write_tmp_raw() patches the CRC at
+    whatever offset the locator reports, so a locator that is consistently wrong still writes a
+    self-consistent file and every end-to-end case passes anyway. These checks compute the
+    expected offset from the fixture text instead.
+    """
+    out: list[tuple[str, bool, str]] = []
+
+    def check(label: str, text: str, want, *, malformed: bool = False) -> None:
+        raw = text.encode("utf-8")
+        try:
+            got = _root_crc32_span(raw)
+        except _CrcLocateError as exc:
+            out.append((label, malformed, f"raised _CrcLocateError({exc})"))
+            return
+        if malformed:
+            out.append((label, False, f"expected _CrcLocateError, got {got!r}"))
+            return
+        if want is None:
+            out.append((label, got is None, f"expected no usable header, got {got!r}"))
+            return
+        ok = got is not None and got[0] == want and got[1] == int(_REAL_CRC, 16)
+        out.append((label, ok, f"want offset {want} value {_REAL_CRC}, got {got!r}"))
+
+    # CONTROL: with no decoy present the locator must find the header. If this fails, every
+    # "picked the right span" result below is meaningless.
+    plain = _store_text()
+    check("locator CONTROL: plain store locates the root header", plain, _expected_span(plain))
+
+    # The defect this section closes: `crc32` inside a string VALUE that precedes the header.
+    decoy_before = _store_text(prefix_keys='"note":"crc32",')
+    check("locator: crc32 inside a string value before the header",
+          decoy_before, _expected_span(decoy_before))
+
+    # The same shape one level down: a crc32 member nested inside `payload`, placed
+    # BEFORE the root header so a value-blind search meets the decoy first.
+    nested = _store_text(payload_extra=f',"crc32": "{_DECOY_CRC}"', header_last=True)
+    check("locator: nested crc32 member inside payload", nested, _expected_span(nested))
+
+    # A decoy that is itself a well-formed crc32 pair, just not at the root, and again
+    # ahead of the real header.
+    ext = _store_text(prefix_keys=f'"ext":{{"inner":{{"crc32": "{_DECOY_CRC}"}}}},',
+                      header_last=True)
+    check("locator: crc32 member inside a nested extension object", ext, _expected_span(ext))
+
+    # Two more decoy shapes: the pair spelled with escaped quotes inside a string
+    # value, and the pair hidden one level down in an ARRAY rather than an object.
+    escq = _store_text(prefix_keys='"q":"\\"crc32\\": \\"' + _DECOY_CRC + '\\"",')
+    check("locator: escaped-quote decoy before the header", escq, _expected_span(escq))
+    arr = _store_text(prefix_keys=f'"list":[{{"crc32": "{_DECOY_CRC}"}}],')
+    check("locator: array-contained decoy before the header", arr, _expected_span(arr))
+
+    # Position of the header among the root keys must not matter.
+    first = '{"crc32":"' + _REAL_CRC + '","schema_version":1,"entries":[]}'
+    check("locator: header as the first root key", first, _expected_span(first))
+
+    # The header sitting AFTER a value the locator has to skip, at and over the budget.
+    deep = "{" + '"pad":' + "[" * 10 + "0" + "]" * 10 + "," + _store_text()[1:]
+    check("locator: header after a 10-container root value", deep, _expected_span(deep))
+    over = "{" + '"pad":' + "[" * 11 + "0" + "]" * 11 + "," + _store_text()[1:]
+    check("locator: root value over the scan budget is malformed", over, None, malformed=True)
+
+    # Value-shape rules. Uppercase 0X and an over-long value have no agreed 8-byte span, and
+    # the whole-store check rejects both, so the locator must not report one either.
+    check("locator: uppercase 0X prefix is not a usable header",
+          _store_text(crc_value="0XAABBCCDD"), None)
+    check("locator: over-long crc32 value is not a usable header",
+          _store_text(crc_value="0xAABBCCDDEE"), None)
+    check("locator: non-string crc32 value is not a usable header",
+          '{"crc32":2864434397,"entries":[]}', None)
+
+    # Broken root grammar before the header.
+    check("locator: missing colon after a root key is malformed",
+          '{"note" "x","crc32":"0xAABBCCDD","entries":[]}', None, malformed=True)
+    check("locator: unterminated string before the header is malformed",
+          '{"note":"unterminated, "crc32":"0xAABBCCDD"', None, malformed=True)
+    check("locator: top-level array is malformed", '["crc32","0xAABBCCDD"]', None, malformed=True)
+
+    # No root member at all -- absent, not malformed.
+    check("locator: store with no crc32 root member",
+          '{"schema_version":1,"entries":[]}', None)
+    check("locator: empty root object", "{}", None)
+
+    # ---- Parity with the firmware's token rules -------------------------------------
+    # Each of these is MALFORMED to the firmware lexer/skipper before it reaches the
+    # header. A host that located one anyway would claim an agreement the two sides do
+    # not have, and would stamp a store the firmware refuses to boot from.
+    hdr = f'"crc32":"{_REAL_CRC}"'
+    check("locator parity: invalid escape in a value before the header",
+          '{"note":"\\q",' + hdr + "}", None, malformed=True)
+    check("locator parity: short unicode escape before the header",
+          '{"note":"\\u00",' + hdr + "}", None, malformed=True)
+    check("locator parity: raw control byte in a value before the header",
+          '{"note":"a\nb",' + hdr + "}", None, malformed=True)
+    check("locator parity: object member with no value",
+          '{"note":{"k":},' + hdr + "}", None, malformed=True)
+    check("locator parity: mismatched container closer",
+          '{"note":[},' + hdr + "}", None, malformed=True)
+    check("locator parity: trailing comma inside a nested value",
+          '{"note":{"k":1,},' + hdr + "}", None, malformed=True)
+    check("locator parity: misspelled literal before the header",
+          '{"note":tru,' + hdr + "}", None, malformed=True)
+    check("locator parity: truncated mid-key", '{"schema_ver', None, malformed=True)
+    check("locator parity: truncated mid-value", '{"crc32":"0xAABB', None, malformed=True)
+
+    # A raw newline INSIDE the quoted CRC value makes the value 11 bytes, so there is no
+    # agreed 8-byte span -- and it is a raw control, which the string scanner rejects.
+    check("locator parity: newline inside the crc32 value",
+          '{"crc32":"' + _REAL_CRC + '\n","entries":[]}', None, malformed=True)
+    # An escaped spelling of the value has the right decoded text and the wrong RAW
+    # shape, so it is absent rather than malformed -- the producer patches raw bytes.
+    check("locator parity: escaped crc32 value text",
+          '{"crc32":"0x\\u0041ABBCCDD","entries":[]}', None)
+    # ...and the same for the KEY, which the firmware compares raw.
+    check("locator parity: escaped crc32 key name",
+          '{"\\u0063rc32":"' + _REAL_CRC + '","entries":[]}', None)
+    return out
+
+
+def _decoy_control() -> list[tuple[str, bool, str]]:
+    """CONTROL: the pre-section-20 regex must FAIL the decoy fixtures.
+
+    Without this, a decoy fixture that does not actually reproduce the old defect looks
+    identical to one that does -- which is exactly what happened to the first draft of
+    these cases on both sides. The control asserts the old locator picks a DIFFERENT
+    span (or none) for every decoy, so a recurrence cannot pass silently.
+    """
+    old_re = re.compile(rb'"crc32"\s*:\s*"0x([0-9a-fA-F]{8})"')
+
+    def old_span(text: str):
+        m = old_re.search(text.encode("utf-8"))
+        return None if m is None else m.start(1)
+
+    out: list[tuple[str, bool, str]] = []
+
+    # The two nested decoys are the ones the old HOST regex got wrong: its first match
+    # is the nested `"crc32": "0x..."` pair, so it stamped those bytes.
+    mislocating = {
+        "array-contained decoy before the header":
+            _store_text(prefix_keys=f'"list":[{{"crc32": "{_DECOY_CRC}"}}],'),
+        "nested member before the header":
+            _store_text(payload_extra=f',"crc32": "{_DECOY_CRC}"', header_last=True),
+        "nested extension object before the header":
+            _store_text(prefix_keys=f'"ext":{{"inner":{{"crc32": "{_DECOY_CRC}"}}}},',
+                        header_last=True),
+    }
+    for label, text in mislocating.items():
+        want = _expected_span(text)
+        got = old_span(text)
+        out.append((f"decoy CONTROL: old regex mislocates the {label}",
+                    got is not None and got != want,
+                    f"old regex returned {got}, real header is at {want}"))
+
+    # The string-value decoy is deliberately NOT in that set. The old regex required a
+    # colon and `"0x` after the key, so `{"note":"crc32", ...}` never misled it -- that
+    # fixture broke the FIRMWARE's 7-byte scan, which stopped at the first `"crc32"`
+    # and rejected the store. Asserting a host mislocate here would be asserting a bug
+    # the host never had, and the fixture would pass for the wrong reason.
+    # The old regex agreed on these two, so they are locate cases and not regression
+    # cases. In the escaped spelling a backslash sits where the old pattern wanted the
+    # closing quote of the key, so it walked past; in the string-value decoy the key is
+    # followed by a comma rather than a colon. Asserting a mislocate for either would
+    # assert a bug the host never had.
+    agreeing = {
+        "plain store": _store_text(),
+        "string-value decoy": _store_text(prefix_keys='"note":"crc32",'),
+        "escaped-quote decoy":
+            _store_text(prefix_keys='"q":"\\"crc32\\": \\"' + _DECOY_CRC + '\\"",'),
+    }
+    for label, text in agreeing.items():
+        want = _expected_span(text)
+        got = old_span(text)
+        out.append((f"decoy CONTROL: old regex agrees on the {label}",
+                    got == want, f"old regex returned {got}, real header is at {want}"))
+    return out
 
 
 # ---- Driver --------------------------------------------------------------------------------------
@@ -1024,7 +1289,15 @@ def main() -> int:
             print(f"[BAD]  {label}: unknown expectation {kind!r}")
             failures += 1
 
-    total = len(cases())
+    locator = _locator_checks() + _decoy_control()
+    for label, ok, detail in locator:
+        if ok:
+            print(f"[OK]   {label}")
+        else:
+            print(f"[BAD]  {label}: {detail}")
+            failures += 1
+
+    total = len(cases()) + len(locator)
     print(f"\n{total - failures}/{total} passed")
     return 0 if failures == 0 else 1
 

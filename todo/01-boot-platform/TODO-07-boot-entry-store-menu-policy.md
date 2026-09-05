@@ -73,8 +73,9 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
 | 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
-| 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [ ]   |
+| 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
+| 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -662,7 +663,7 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
   - `all_ids_count` resetting meant cross-occurrence duplicate IDs went undetected too. The repeated key is now caught first, which closes both holes; `schema_version` and `crc32` were equally re-assignable and fall under the same rule.
   - The rescan FAILS CLOSED. All three review legs independently found that the first version was bypassable: the value skipper charges its depth budget from where it starts, and the root rescan skips the whole `entries` value (paying for the array and entry object that the main parser descends structurally), so a store the parser ACCEPTED could exhaust the budget -- and "could not finish" was read as "no duplicate", disabling the check on attacker-chosen input. Fixed by giving the rescan exactly the two extra levels of difference and making scan failure a distinct answer the callers reject on.
 - [x] Key names must be spelled LITERALLY -- `key_is_literal()` rejects any key token carrying a backslash with `BOOT_ENTRIES_REJECT_ESCAPED_KEY`. Raised by the design review.
-  - `key_is_literal()` in `src/boot/uefi/boot_entries_parser.c` closes this. `bytes_eq` compares raw bytes, so `"id"` was a distinct (unknown) key to the firmware while the host's `json.loads` decoded it into the real one. Codification rather than a new restriction: `find_crc32_key()` already locates the CRC field by scanning for the literal bytes `"crc32"`, so an escaped spelling was never readable there.
+  - `key_is_literal()` in `src/boot/uefi/boot_entries_parser.c` closes this. `bytes_eq` compares raw bytes, so `"id"` was a distinct (unknown) key to the firmware while the host's `json.loads` decoded it into the real one. Codification rather than a new restriction: the CRC-header locate has always compared the key's RAW bytes (`find_crc32_key()` when §19 shipped, `find_crc_field()`'s structural walk since §20), so an escaped spelling was never readable there.
 - [x] Bound the WRITE as defence in depth: `out->entries[out->entry_count]` is gated on the 64-entry cap, so no future refactor of the key guard can reopen the overflow.
 - [x] Unit tests in `src/kernel/test/test_boot_entry_parser.c` (`TEST_CAT_BOOT`): 20 added, 31 -> 51 in the file, including four ACCEPT controls.
   - Two `entries` arrays; duplicate id split across two `entries` arrays; repeated `schema_version`, `crc32` and unknown root key; repeated entry-object key; escaped root and entry key. Controls: 30 distinct unknown keys still parse, and prefix-sharing keys (`sort` vs `sort_key`) are not confused.
@@ -700,7 +701,7 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
 > - Canonical doc: [docs/boot/boot-entry-schema.md](../../docs/boot/boot-entry-schema.md) section 3 records both key rules and the deliberate payload-level asymmetry.
 > - Scope boundary: per-entry payload contents stay the host validator's and the policy filter's business; the firmware parser still skips payload objects wholesale.
 > **Verified:** 2026-09-05 | commit `a4f5f4982` + review fixes | 9/9 items | build OK | 34026 kernel + 17 user tests PASS | 99 validator + 38 bootcfg host cases PASS | lint 0 errors | smoke matrix 4/4 legs (KVM/TCG x 1/2 CPU)
-> **Accepted:** [M] `find_crc32_key()` locates the CRC header by scanning for the literal bytes `"crc32"` anywhere, so a store carrying that text in a string VALUE before the real header is rejected by firmware while the host accepts it (reason: distinct capability -- locator plus producer patch offset on both sides, with its own test matrix) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §20 (item: "Locate the root object's `crc32` member with a bounded STRUCTURAL scan on the firmware side, so only a key at depth 1 of the root object can match")
+> **Accepted:** [M] The CRC header was located by scanning for the literal bytes `"crc32"` anywhere, so a store carrying that text in a string VALUE before the real header was rejected by firmware while the host accepted it (reason: distinct capability -- locator plus producer patch offset on both sides, with its own test matrix). CLOSED by §20 -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §20 (item: "`find_crc_field()` (`src/boot/uefi/boot_entries_parser.c`) is a bounded STRUCTURAL walk of the ROOT object")
 > **Accepted:** [M] `LoaderDevicePartUUID` is left stale when the partition identity is unknown; that path is not reached by store rejection, so §19's fix does not cover it (reason: different axis, owned by the loader-variable publication surface) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §21 (item: "Clear `LoaderDevicePartUUID` when a valid GPT identity is unavailable OR when formatting it fails, and require GPT partition style before publishing it at all")
 > **Quality reviewed:** 2026-09-05 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) + boot-quality-auditor + kernel-quality-auditor | 1H+3M+2L fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
@@ -713,16 +714,32 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
 
 Found by the §19 consistency review, which reproduced it with a 290-byte CRC-correct fixture. Pre-existing, and NOT introduced by §19 -- but §19 cites this function as the reason key names must be spelled literally, so the same locator being value-blind is the other half of that story. -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §19 (item: "Key names must be spelled LITERALLY").
 
-**The mechanism, confirmed at file:line.** `find_crc32_key()` (`src/boot/uefi/boot_entries_parser.c:135`) is a linear scan for the seven bytes `"crc32"` anywhere in the file, with no notion of object depth or key position. A store beginning `{"note":"crc32","schema_version":1,...}` matches inside the NOTE'S VALUE first; `find_crc_field()` then expects a colon after it, finds a comma, and returns 0, so `boot_entries_parse()` rejects with `BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD` before any key is parsed. The host validator locates the field with the `_CRC_FIELD_RE` regex (`tools/boot-entry-validate/validate.py`), which has the same value-blindness but different tie-breaking, so the two sides disagree about which bytes are the CRC. A nested `crc32` member inside `payload` is the same shape one level down.
+**The mechanism, confirmed at file:line (past tense since §20 shipped).** `find_crc32_key()` (`src/boot/uefi/boot_entries_parser.c:135` at the time) was a linear scan for the seven bytes `"crc32"` anywhere in the file, with no notion of object depth or key position. A store beginning `{"note":"crc32","schema_version":1,...}` matched inside the NOTE'S VALUE first; `find_crc_field()` then expected a colon after it, found a comma, and returned 0, so `boot_entries_parse()` rejected with `BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD` before any key was parsed. The host validator locates the field with the `_CRC_FIELD_RE` regex (`tools/boot-entry-validate/validate.py`), which has the same value-blindness but different tie-breaking, so the two sides disagree about which bytes are the CRC. A nested `crc32` member inside `payload` is the same shape one level down.
 
-- [ ] Locate the root object's `crc32` member with a bounded STRUCTURAL scan on the firmware side, so only a key at depth 1 of the root object can match.
-  - The lexer and `skip_value_depth()` already in this file are the pieces needed: walk root keys, skipping each value, and take the `crc32` key's value span. It must still run BEFORE the full parse, because the CRC has to be verified before the structure is trusted.
-  - Keep the "8 hex digits at a known offset" contract intact -- the producer patches those bytes in place, so the locator must return the same span the writer will patch.
-- [ ] Apply the same structural rule host-side in `tools/boot-entry-validate/validate.py`, replacing the value-blind regex, so producer and consumer agree on which bytes carry the CRC.
-- [ ] Paired regressions on BOTH sides: a store with `"crc32"` as a string VALUE before the header, and a nested `crc32` member inside `payload`, each accepted with the real header located correctly.
-- [ ] Commit: `"boot: locate the crc32 header structurally rather than by string match"`
+- [x] `find_crc_field()` (`src/boot/uefi/boot_entries_parser.c`) is a bounded STRUCTURAL walk of the ROOT object, using the file's own lexer plus `skip_value_depth()`; only a key at depth 1 can match, and `find_crc32_key()` is deleted.
+  - Returns a tri-state `crc_loc_t` so reject codes stay honest: `CRC_LOC_MALFORMED` (root grammar broken before the header) maps to `BOOT_ENTRIES_REJECT_JSON_PARSE`, and absent-or-misshaped maps to `BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD` as before.
+  - Budget is `BOOT_ENTRIES_MAX_SCAN_DEPTH`, not the parse budget: the walk skips the root `entries` value from two container levels further out than the authoritative walk ever skips from, so anything the parser accepts stays locatable. The root object is walked with `lex_next` and costs no budget.
+  - The "8 hex digits at a known offset" contract is intact and tightened to EXACTLY `0x` + 8 hex digits with a lowercase `x`, which is what the host's whole-store check already required. The firmware previously accepted `0X` and an over-long value, so the two sides disagreed on those.
+- [x] Host mirror in `tools/boot-entry-validate/validate.py`: `_root_crc32_span()` plus `_next_token()`, `_scan_string()` and `_skip_value()` replace the `_CRC_FIELD_RE` search.
+  - The token rules are the FIRMWARE's, not Python's: strict RFC 8259 strings, exact literals, `lex_number`-shaped numbers, and a grammar-validating container stack rather than a brace count, so the host cannot locate a header in a store the firmware calls malformed.
+- [x] Paired regressions on both sides, each checked against an INDEPENDENT offset oracle rather than against a successful parse.
+  - 10 kernel cases under `TEST_CAT_BOOT`, and 35 in-process host locator and control checks plus 4 end-to-end validator cases.
+  - Both suites carry an IN-SUITE control that runs the old value-blind locator (`old_string_match_locate()` kernel-side, the old regex host-side) and states, per fixture, whether it broke or agreed.
+  - The controls earned their place three times over: the first draft of the decoy fixtures did NOT reproduce the defect (the firmware fixture spelled the decoy `"crc32 lives below"`, whose bytes never contain the 7-byte needle, and both host decoys sat AFTER the header), and the escaped-quote decoy turned out to break neither locator because a backslash sits where the old needle wanted a quote. A fixture that does not reproduce the defect looks identical to one that does.
+  - Each fixture is therefore classified by MEASUREMENT, not assumption, and the two sides differ: the old FIRMWARE scan failed the string-value decoy outright while the old HOST regex handled it (the regex required a colon and `"0x` after the key), so that shape is a break case kernel-side and an agreement case host-side. Only the nested, extension-object and array-contained shapes break both.
+- [x] `docs/boot/boot-entry-schema.md` states the structural rule as the algorithm and carries the reference locator; the value-blind regex is documented as a defect rather than a recipe.
+- [x] Commit: `"boot: locate the crc32 header structurally rather than by string match"`
 
 **Test checkpoint:** `SUITE=boot` green with the two new fixtures failing before the fix and passing after; host `python3 tools/boot-entry-validate/test_validate.py` green. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 6313 tests, 0 failures; host `python3 tools/boot-entry-validate/test_validate.py` 138 cases, `bash tools/boot-entries-parser-tests/run.sh` 6 cases
+
+> **Notes:**
+> - Shipped: `find_crc_field()` rewritten as a tri-state structural walk of the root object on the firmware side, and `_root_crc32_span()` plus a firmware-faithful tokenizer replacing `_CRC_FIELD_RE` on the host side.
+> - Integrates at `boot_entries_parse()`, which now separates a malformed root (`JSON_PARSE`) from an absent or misshaped header (`BAD_CRC32_FIELD`); the CRC still gates the structure, the locate merely finds the span first.
+> - Downstream: the firmware value-shape rule tightened to exactly `0x` + 8 hex digits with a lowercase `x`, closing two cases (`0X`, over-long) where firmware accepted what the host rejected.
+> - Canonical doc: [docs/boot/boot-entry-schema.md](../../docs/boot/boot-entry-schema.md) section 5, which now states the structural rule as the algorithm and names the text search as the defect.
+> - Scope boundary: the 16 KiB store size cap is untested on both sides and is filed as §22; this section does not touch it.
 
 ---
 
@@ -743,6 +760,25 @@ Found by the §19 re-adversarial rounds while auditing exactly this class. §19 
 - [ ] Commit: `"boot: give every published loader variable an explicit set-or-clear outcome"`
 
 **Test checkpoint:** `scripts/test-smoke-matrix.sh` 4/4 legs, plus a serial-log check across a boot pair showing that a boot with unknown partition identity leaves no stale `LoaderDevicePartUUID` from the boot before it.
+
+---
+
+## 22. Store Size Cap Is Untested on Both Sides of the 16 KiB Boundary
+
+> **Spawned-by:** §20 (review)
+> **User impact:** a boot entry store that grows to the 16 KiB ceiling is rejected by one side and accepted by the other, so `bootcfg` writes a store the firmware then refuses. The user's configured selection is silently discarded and the machine boots the in-firmware fallback, with nothing on screen explaining why -- the same user-visible failure §20 fixed for a different cause.
+
+Found by the §20 test-coverage review, which asked for boundary cases at the cap and found the boundary has no coverage at all on either side. Not introduced by §20. -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §20 (item: "Paired regressions on both sides").
+
+**The mechanism, confirmed at file:line.** The firmware rejects `raw_len > BOOT_ENTRIES_MAX_TOTAL_BYTES` with `BOOT_ENTRIES_REJECT_FILE_TOO_LARGE` (`src/boot/uefi/boot_entries_parser.c` in `boot_entries_parse`), and the host rejects `len(raw) > MAX_TOTAL_BYTES` at `tools/boot-entry-validate/validate.py:1032` and again on the on-disk size at `:1081`. Neither constant appears in any test: `grep -rn "FILE_TOO_LARGE\|MAX_TOTAL_BYTES" src/kernel/test/ tools/boot-entry-validate/test_validate.py` returns nothing. So the two caps are asserted equal by reading, not by measurement, and the off-by-one direction (`>` against `>=`) is unverified on both sides.
+
+- [ ] Kernel cases at 16383, 16384 and 16385 bytes, with the `crc32` header near EOF so the locate is exercised at the boundary too.
+  - `s_fixture_buf` is 2048 bytes (`src/kernel/test/test_boot_entry_parser.c`), so this needs a scratch-backed buffer rather than the existing static; `TEST_SCRATCH_KBUF` is the pattern already used for the parse result. Do NOT grow the static: it is `.bss` in a kernel with a measured ceiling.
+- [ ] Host cases at the same three sizes, asserting the SAME verdict as the firmware at each, since a disagreement here is a store the host stamps and the firmware refuses.
+- [ ] Confirm the two caps are the same number by construction rather than by comment, or state in the schema doc why they legitimately differ.
+- [ ] Commit: `"boot: cover the boot entry store size cap on both sides of the boundary"`
+
+**Test checkpoint:** `SUITE=boot` green with the three new kernel cases; host `python3 tools/boot-entry-validate/test_validate.py` green with the three mirrored cases. No smoke run needed unless the fixture change touches parser code.
 
 ---
 
@@ -768,6 +804,7 @@ Found by the §19 re-adversarial rounds while auditing exactly this class. §19 
 | ⭐  | Schema-versioned + CRC-checksummed entry store        | ❌ Binary BCD, no checksum       | ❌ INI / cfg, no checksum           | ✅ §1 schema_version=1 + CRC-32 IEEE 802.3 🚀                                    |
 | ⭐  | Per-entry mutation audit (add/remove/reorder logged)  | ❌ Not logged                    | ❌ Not logged                       | ✅ §12 `bootcfg.py --mutation-log` JSONL with requester + prior/new CRC 🚀       |
 | ⭐  | Unique + literally-spelled key names enforced         | ❌ Binary BCD, N/A               | ⚠️ Last-wins on repeated BLS key    | ✅ §19 hard reject at both object levels, host + firmware in agreement 🚀        |
+| ⭐  | Integrity header located structurally, not by text search             | ❌ Binary BCD, N/A               | ❌ No checksum to locate             | ✅ §20 root-member locate, firmware and host agree byte-for-byte
 
 > **After §1-§16:** Impossible OS matches Windows 11 and Linux on structured entries, BootNext provenance, recovery, safe mode, previous-kernel rollback, menu UX (renderer §6 + indicators §7), offline tooling, loop prevention (ladder §3 + crash-tolerant decrement §5), health-gated mark-good, entry kinds, OS-visible loader vars, and first-install bootstrap.
 > **After §3 + §9 + §12 + §1 ⭐ rows:** Impossible OS surpasses both with documented two-layer precedence, demote-not-drop UX, per-decision audit, schema+CRC store, and per-entry mutation audit.
