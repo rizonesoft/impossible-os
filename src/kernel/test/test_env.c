@@ -187,8 +187,8 @@ static void test_env_invalid_name(void)
 
 static void test_env_value_too_long(void)
 {
-    /* Needs a value LONGER than env_test_bigval can hold (its length is a
-     * legal value for the other cases), so it is a runtime page allocation
+    /* Needs a value LONGER than ENV_TEST_BIGVAL_SZ (that length is a legal
+     * value for the large-environ cases), so it is a runtime page allocation
      * rather than a second 32 KiB static: the kernel BSS ends within a page of
      * USER_BASE and the build's BSS-collision gate refuses the image when one
      * more static of this size lands (measured 2026-08-29 at the TODO-10
@@ -1747,8 +1747,9 @@ static void test_env_expand_at_cap_boundary(void)
     TEST_SCRATCH_KBUF(bigbuf, ENV_TEST_BIGVAL_SZ);
     char *const env_test_bigval = (char *)bigbuf;
 
-    /* The scratch allocator does not zero; reproduce the old BSS-zero start
-     * state explicitly before the fill overwrites it. */
+    /* DEFENSIVE only: env_test_fill_bigval below writes all ENV_TEST_BIGVAL_SZ
+     * bytes, so nothing uninitialised is read today. The scratch allocator does
+     * not zero, so this keeps that true if the fill ever covers less. */
     memset(env_test_bigval, 0, ENV_TEST_BIGVAL_SZ);
     env_fixture_reset();
     env_test_fill_bigval(env_test_bigval);
@@ -2486,17 +2487,21 @@ static void test_env_parse_block_over_value_skipped(void)
     uint32_t i, p = 0;
     int rc;
     TEST_SCRATCH_KBUF(blockbuf, ENV_PARSE_BLOCK_SZ);
-    char *const s_parse_block = (char *)blockbuf;
+    char *const parse_block = (char *)blockbuf;
 
-    memset(s_parse_block, 0, ENV_PARSE_BLOCK_SZ);
+    /* DEFENSIVE only: env_parse_block is handed the explicit length p below and
+     * every one of those p bytes is written first, so no byte past the prefix is
+     * read. The scratch allocator does not zero; this keeps the whole capacity
+     * in a known state regardless. */
+    memset(parse_block, 0, ENV_PARSE_BLOCK_SZ);
     env_fixture_reset();
-    s_parse_block[p++] = 'A';
-    s_parse_block[p++] = '=';
+    parse_block[p++] = 'A';
+    parse_block[p++] = '=';
     for (i = 0; i < ENV_VALUE_MAX + 2u; i++)   /* value = ENV_VALUE_MAX+2 bytes (over cap) */
-        s_parse_block[p++] = 'x';
-    s_parse_block[p++] = '\0';                 /* entry terminator */
-    s_parse_block[p++] = '\0';                 /* block terminator */
-    rc = env_parse_block(&s_env_fixture, s_parse_block, p, 0);
+        parse_block[p++] = 'x';
+    parse_block[p++] = '\0';                 /* entry terminator */
+    parse_block[p++] = '\0';                 /* block terminator */
+    rc = env_parse_block(&s_env_fixture, parse_block, p, 0);
     TEST_ASSERT_EQ(rc, ENV_OK, "parse succeeds (over-value entry skipped, not an error)");
     TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 0,
                    "over-ENV_VALUE_MAX value not stored");
@@ -3982,6 +3987,7 @@ static void test_env_expand_for_user_large_env(void)
     TEST_SCRATCH_KBUF(bigbuf, ENV_TEST_BIGVAL_SZ);
     char *const env_test_bigval = (char *)bigbuf;
 
+    /* DEFENSIVE only, as above: the fill writes every byte before any read. */
     memset(env_test_bigval, 0, ENV_TEST_BIGVAL_SZ);
     env_fixture_reset();
     env_test_fill_bigval(env_test_bigval);   /* > ENV_STR_KMALLOC_MAX; 3 of these = ~96 KiWCHAR */

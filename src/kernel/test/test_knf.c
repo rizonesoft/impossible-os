@@ -16,8 +16,6 @@
 
 #include "kernel/test/test.h"
 #include "kernel/test/scratch.h"  /* TEST_SCRATCH_KBUF: subscriber-cap array */
-
-extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h> */
 #include "kernel/knf/knf.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
@@ -603,11 +601,12 @@ static void test_knf_poll_invalid(void)
 /* The cap array is one pointer per subscriber slot (~32 KB). It was a
  * file-scope static only to stay under the BSS-collision gate; it is a
  * per-case TEST_SCRATCH_KBUF allocation now, so the bytes leave the kernel
- * image. It MUST be zeroed: the allocator does not, and the unsubscribe loop
- * below walks only the slots that subscribed successfully, so a stale
- * non-NULL slot would otherwise be indistinguishable from a live handle. The
- * array is freed by the action drain AFTER this function returns, which is
- * after the unsubscribe loop has released every handle it owns. */
+ * image. The zeroing is DEFENSIVE, not required: the unsubscribe loop is
+ * bounded by the successful-subscribe count and never inspects a slot it did
+ * not write, so no stale slot is read today. It reproduces the old BSS-zero
+ * start state so that stays true if the loop's bound ever changes. The array
+ * is freed by the action drain AFTER this function returns, which is after
+ * the unsubscribe loop has released every handle it owns. */
 #define KNF_CAP_SUBS_BYTES \
     ((uint64_t)sizeof(struct knf_subscriber *) * (uint64_t)KNF_MAX_SUBSCRIBERS_PER_STATE)
 
@@ -618,9 +617,9 @@ static void test_knf_subscriber_cap(void)
     NTSTATUS               s;
     uint32_t               i, n = 0;
     TEST_SCRATCH_KBUF(subsbuf, KNF_CAP_SUBS_BYTES);
-    struct knf_subscriber **const g_cap_subs = (struct knf_subscriber **)subsbuf;
+    struct knf_subscriber **const cap_subs = (struct knf_subscriber **)subsbuf;
 
-    memset(g_cap_subs, 0, KNF_CAP_SUBS_BYTES);
+    memset(cap_subs, 0, KNF_CAP_SUBS_BYTES);
 
     st = knf_create_state("Kernel", "PubCap", KNF_LIFETIME_TEMPORARY,
                           KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0,
@@ -629,7 +628,7 @@ static void test_knf_subscriber_cap(void)
     if (!st) return;
 
     for (i = 0; i < KNF_MAX_SUBSCRIBERS_PER_STATE; i++) {
-        if (knf_subscribe(st, &g_cap_subs[i]) != STATUS_SUCCESS)
+        if (knf_subscribe(st, &cap_subs[i]) != STATUS_SUCCESS)
             break;
         n++;
     }
@@ -653,7 +652,7 @@ static void test_knf_subscriber_cap(void)
         knf_unsubscribe(&extra);
 
     for (i = 0; i < n; i++)
-        knf_unsubscribe(&g_cap_subs[i]);
+        knf_unsubscribe(&cap_subs[i]);
     TEST_ASSERT_EQ((uint64_t)st->subscriber_count, 0ull,
                    "subscriber_count back to 0 after unsubscribe all");
 
