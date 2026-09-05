@@ -11,6 +11,9 @@
 
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h" /* TEST_KLOG_SUPPRESS for s22 error-path tests */
+#include "kernel/test/scratch.h"       /* TEST_SCRATCH_KBUF: large per-case buffers */
+
+extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h> */
 #include "kernel/env.h"
 #include "kernel/env_searchpath.h" /* SearchPathW/A, SetSearchPathMode (s14) */
 #include "kernel/fs/vfs.h"         /* vfs_create/vfs_stat/vfs_unlink for probes */
@@ -54,18 +57,20 @@ static uint32_t env_test_strlen(const char *s)
 /* One fixture reused across tests. env_fixture_reset frees the prior test's
  * allocations (no leaks) then re-initializes the mutex + NULL fields, mirroring
  * the boot-time all-slots init in task_init. */
-/* ONE ~32 KiB value buffer shared by every large-environ case. Two separate
- * statics of this size push the kernel BSS past the user base and the build's
- * BSS-collision gate rejects the image, so the cases share this buffer; the test
- * runner is single-threaded, and any case that mutates it restores it. */
-static char env_test_bigval[32001];
+/* ~32 KiB value buffer for the large-environ cases. This was a file-scope
+ * static shared across cases purely to survive the build's BSS-collision gate;
+ * it is now a per-case TEST_SCRATCH_KBUF allocation, so it costs the kernel
+ * image nothing and every case gets an independent buffer instead of a
+ * mutate-and-restore contract. The capacity is an explicit constant because
+ * sizeof() on the pointer would silently collapse to 8 and fill seven bytes. */
+#define ENV_TEST_BIGVAL_SZ 32001u
 
-static void env_test_fill_bigval(void)
+static void env_test_fill_bigval(char *buf)
 {
     uint32_t i;
-    for (i = 0; i < sizeof(env_test_bigval) - 1u; i++)
-        env_test_bigval[i] = 'x';
-    env_test_bigval[sizeof(env_test_bigval) - 1u] = '\0';
+    for (i = 0; i < ENV_TEST_BIGVAL_SZ - 1u; i++)
+        buf[i] = 'x';
+    buf[ENV_TEST_BIGVAL_SZ - 1u] = '\0';
 }
 
 static struct task s_env_fixture;
@@ -1739,9 +1744,14 @@ static void test_env_expand_at_cap_boundary(void)
     uint16_t *blk = (uint16_t *)0;
     uint32_t bw = 0, i, big = 0, med = 0;
     char name[8];
+    TEST_SCRATCH_KBUF(bigbuf, ENV_TEST_BIGVAL_SZ);
+    char *const env_test_bigval = (char *)bigbuf;
 
+    /* The scratch allocator does not zero; reproduce the old BSS-zero start
+     * state explicitly before the fill overwrites it. */
+    memset(env_test_bigval, 0, ENV_TEST_BIGVAL_SZ);
     env_fixture_reset();
-    env_test_fill_bigval();
+    env_test_fill_bigval(env_test_bigval);
 
     name[0] = 'B'; name[3] = '\0';
     for (i = 0; i < 40u; i++) {         /* fill to the storage cap in ~32 KiB steps */
@@ -1751,8 +1761,9 @@ static void test_env_expand_at_cap_boundary(void)
             break;
         big++;
     }
-    /* Top off the remainder in ~2 KiB steps, reusing the SAME buffer truncated in
-     * place: a second ~32 KiB static would push the kernel past the user base. */
+    /* Top off the remainder in ~2 KiB steps, reusing the SAME buffer truncated
+     * in place. The truncate/restore pair is kept because this case depends on
+     * the exact value lengths, not because the buffer is shared any more. */
     env_test_bigval[2000] = '\0';
     name[0] = 'M';
     for (i = 0; i < 40u; i++) {
@@ -1762,7 +1773,7 @@ static void test_env_expand_at_cap_boundary(void)
             break;
         med++;
     }
-    env_test_bigval[2000] = 'x';        /* restore: the buffer is shared */
+    env_test_bigval[2000] = 'x';        /* restore the full-length value */
     TEST_ASSERT(big > 30u, "environ filled with ~32 KiB values up to the cap");
     TEST_ASSERT(med > 0u,
                 "the ~32 KiB fill left a remainder the ~2 KiB top-off consumed, so "
@@ -2466,12 +2477,18 @@ static void test_env_block_size_cap(void)
 }
 
 /* Parser must not install a value over ENV_VALUE_MAX (would let NtQuery read
- * past its ENV_VALUE_MAX-sized buffer): the over-cap entry is skipped. */
-static char s_parse_block[ENV_VALUE_MAX + 16];
+ * past its ENV_VALUE_MAX-sized buffer): the over-cap entry is skipped. The
+ * block was a file-scope static only to stay out of the BSS-collision gate's
+ * way; it is a per-case scratch allocation now. */
+#define ENV_PARSE_BLOCK_SZ ((uint64_t)ENV_VALUE_MAX + 16u)
 static void test_env_parse_block_over_value_skipped(void)
 {
     uint32_t i, p = 0;
     int rc;
+    TEST_SCRATCH_KBUF(blockbuf, ENV_PARSE_BLOCK_SZ);
+    char *const s_parse_block = (char *)blockbuf;
+
+    memset(s_parse_block, 0, ENV_PARSE_BLOCK_SZ);
     env_fixture_reset();
     s_parse_block[p++] = 'A';
     s_parse_block[p++] = '=';
@@ -3962,9 +3979,12 @@ static void test_env_expand_for_user_large_env(void)
     uint16_t srcbuf[16], dstbuf[64];
     UNICODE_STRING src, dst;
     NTSTATUS st;
+    TEST_SCRATCH_KBUF(bigbuf, ENV_TEST_BIGVAL_SZ);
+    char *const env_test_bigval = (char *)bigbuf;
 
+    memset(env_test_bigval, 0, ENV_TEST_BIGVAL_SZ);
     env_fixture_reset();
-    env_test_fill_bigval();   /* > ENV_STR_KMALLOC_MAX; 3 of these = ~96 KiWCHAR */
+    env_test_fill_bigval(env_test_bigval);   /* > ENV_STR_KMALLOC_MAX; 3 of these = ~96 KiWCHAR */
     /* Assert every setup insert: if these silently failed, "S" alone would still
      * expand and this case would pass over a TINY environ, proving nothing about
      * the raised cap. */

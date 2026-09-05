@@ -15,6 +15,9 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/scratch.h"  /* TEST_SCRATCH_KBUF: subscriber-cap array */
+
+extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h> */
 #include "kernel/knf/knf.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
@@ -597,7 +600,16 @@ static void test_knf_poll_invalid(void)
 
 /* ---- Subscriber cap (bounds the under-lock fanout walk) ----------------- */
 
-static struct knf_subscriber *g_cap_subs[KNF_MAX_SUBSCRIBERS_PER_STATE];
+/* The cap array is one pointer per subscriber slot (~32 KB). It was a
+ * file-scope static only to stay under the BSS-collision gate; it is a
+ * per-case TEST_SCRATCH_KBUF allocation now, so the bytes leave the kernel
+ * image. It MUST be zeroed: the allocator does not, and the unsubscribe loop
+ * below walks only the slots that subscribed successfully, so a stale
+ * non-NULL slot would otherwise be indistinguishable from a live handle. The
+ * array is freed by the action drain AFTER this function returns, which is
+ * after the unsubscribe loop has released every handle it owns. */
+#define KNF_CAP_SUBS_BYTES \
+    ((uint64_t)sizeof(struct knf_subscriber *) * (uint64_t)KNF_MAX_SUBSCRIBERS_PER_STATE)
 
 static void test_knf_subscriber_cap(void)
 {
@@ -605,6 +617,10 @@ static void test_knf_subscriber_cap(void)
     struct knf_subscriber *extra = (struct knf_subscriber *)0;
     NTSTATUS               s;
     uint32_t               i, n = 0;
+    TEST_SCRATCH_KBUF(subsbuf, KNF_CAP_SUBS_BYTES);
+    struct knf_subscriber **const g_cap_subs = (struct knf_subscriber **)subsbuf;
+
+    memset(g_cap_subs, 0, KNF_CAP_SUBS_BYTES);
 
     st = knf_create_state("Kernel", "PubCap", KNF_LIFETIME_TEMPORARY,
                           KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0,
@@ -627,6 +643,14 @@ static void test_knf_subscriber_cap(void)
     TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
                    "subscribe past the cap rejected");
     TEST_ASSERT_NULL((void *)extra, "over-cap subscribe left the handle NULL");
+
+    /* A failing TEST_ASSERT records and continues, so a fill loop that stopped
+     * short leaves the probe above BELOW the cap, where it SUCCEEDS and hands
+     * back a live handle. Release it before the array or its quota charge and
+     * its state reference leak: knf_delete_state only unlinks the state and
+     * cannot drop a subscriber reference it does not own. */
+    if (extra)
+        knf_unsubscribe(&extra);
 
     for (i = 0; i < n; i++)
         knf_unsubscribe(&g_cap_subs[i]);

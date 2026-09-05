@@ -14,6 +14,9 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/scratch.h"  /* TEST_SCRATCH_KBUF: ~36 KB sort fixture */
+
+extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h> */
 
 /* Pull the parser implementation into this translation unit. The functions
  * become local to test_boot_entry_parser.o and do not collide with the
@@ -422,14 +425,18 @@ static int bls_streq(const char *a, const char *b)
 /* sort_key is the primary key; empty sort_key (the "match any"/unset value)
  * sorts before any non-empty key. id breaks ties when sort_key is equal. The
  * entries[] array is deliberately built out of display order. */
-/* One shared fixture for the (sequentially-run) bls sort tests: the struct is
- * ~36 KB, so two function-local statics cost 72 KB of test-build BSS and push
- * the image over the 0x800000 user-base ceiling. Sharing reclaims 36 KB. */
-static boot_entries_parse_result_t s_bls_fixture;
-
+/* The bls sort fixture is ~36 KB. It was one shared file-scope static because
+ * two function-local statics of that size pushed the image over the 0x800000
+ * user-base ceiling; it is now a per-case TEST_SCRATCH_KBUF allocation, which
+ * keeps the bytes out of the kernel image entirely and gives each case its own
+ * fixture. The explicit zeroing reproduces the old BSS-zero start state, which
+ * the sort relies on for every field the cases do not set. */
 static void test_bls_sort_by_sort_key_then_id(void)
 {
-    boot_entries_parse_result_t *const r = &s_bls_fixture;
+    TEST_SCRATCH_KBUF(fixbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)fixbuf;
+
+    memset(r, 0, sizeof(boot_entries_parse_result_t));
     bls_set(&r->entries[0], "zeta",  "20", "m1");
     bls_set(&r->entries[1], "alpha", "10", "m1");
     bls_set(&r->entries[2], "beta",  "20", "m1");
@@ -449,7 +456,10 @@ static void test_bls_sort_by_sort_key_then_id(void)
  * before id. */
 static void test_bls_sort_machine_id_tiebreak(void)
 {
-    boot_entries_parse_result_t *const r = &s_bls_fixture;
+    TEST_SCRATCH_KBUF(fixbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)fixbuf;
+
+    memset(r, 0, sizeof(boot_entries_parse_result_t));
     bls_set(&r->entries[0], "id-a", "10", "mb");
     bls_set(&r->entries[1], "id-b", "10", "ma");
     r->entry_count = 2;

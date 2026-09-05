@@ -45,22 +45,23 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                | Depends On             | Status |
-| --- | :---: | ---------------------------------------------------------- | ---------------------- | :----: |
-| 🔥  |  10   | Tactical BSS headroom: large static pools -> dynamic       | --                     |  [x]   |
-| 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)     | §10                    |  [/]   |
-| 🔥  |  12   | Second tactical BSS pass: reclaim a large static again     | --                     |  [x]   |
-| 🔥  |  13   | Third tactical reclamation pass: buy a page of headroom    | --                     |  [x]   |
-| 🔥  |  14   | Fourth tactical reclamation pass: correct reserve, reclaim | --                     |  [ ]   |
-| 💎  |   1   | Memory-map design + canonical layout decision              | --                     |  [x]   |
-| 💎  |   2   | Direct map construction (install HHDM; kernel still low)   | §1                     |  [x]   |
-| 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper       | §2                     |  [/]   |
-| 💎  |   3   | Linker VMA/LMA split + higher-half jump (one unit)         | §1, §2, §9             |  [/]   |
-| 💎  |   4   | Descriptor tables + per-CPU at high addresses + AP path    | §3                     |  [/]   |
-| 💎  |   5   | `boot_info` / framebuffer handoff + identity teardown      | §1, §3, §9, D01 T01 §8 |  [/]   |
-| 💎  |   6   | Per-process PML4: kernel high shared, user low private     | §3, D01 T10 §8         |  [/]   |
-| 💎  |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard            | §6                     |  [/]   |
-| ⭐  |   8   | 5-level paging (LA57) support -- exceeds Win11             | §1, §3                 |  [/]   |
+| ⭐  | Order | Deliverable                                                 | Depends On             | Status |
+| --- | :---: | ----------------------------------------------------------- | ---------------------- | :----: |
+| 🔥  |  10   | Tactical BSS headroom: large static pools -> dynamic        | --                     |  [x]   |
+| 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)      | §10                    |  [/]   |
+| 🔥  |  12   | Second tactical BSS pass: reclaim a large static again      | --                     |  [x]   |
+| 🔥  |  13   | Third tactical reclamation pass: buy a page of headroom     | --                     |  [x]   |
+| 🔥  |  14   | Fourth tactical reclamation pass: reclaim test-only statics | --                     |  [x]   |
+| 🔥  |  15   | Fifth tactical reclamation pass: convert the `pipes` pool   | --                     |  [ ]   |
+| 💎  |   1   | Memory-map design + canonical layout decision               | --                     |  [x]   |
+| 💎  |   2   | Direct map construction (install HHDM; kernel still low)    | §1                     |  [x]   |
+| 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper        | §2                     |  [/]   |
+| 💎  |   3   | Linker VMA/LMA split + higher-half jump (one unit)          | §1, §2, §9             |  [/]   |
+| 💎  |   4   | Descriptor tables + per-CPU at high addresses + AP path     | §3                     |  [/]   |
+| 💎  |   5   | `boot_info` / framebuffer handoff + identity teardown       | §1, §3, §9, D01 T01 §8 |  [/]   |
+| 💎  |   6   | Per-process PML4: kernel high shared, user low private      | §3, D01 T10 §8         |  [/]   |
+| 💎  |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard             | §6                     |  [/]   |
+| ⭐  |   8   | 5-level paging (LA57) support -- exceeds Win11              | §1, §3                 |  [/]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
@@ -551,6 +552,7 @@ Measured largest remaining `.bss` consumers (`build/kernel.map`, 2026-08-18, by 
 - [x] A third pass IS expected, and this is what is left in reserve for it.
   - §10 was written as a one-off and its Notes read as solved, which is why the ceiling arrived again unannounced. Naming the reserve is what makes the next recurrence cheap.
   - Reserve, in the order a third pass should consider them: `ctrl_windows` 180736 (needs a fallible `ctrl_init()` wired before `gallery_open()` first), then `tasks` 203776 (needs allocation before Phase 1 unmasks the timer, plus explicit zeroing), then the two §10 already ruled out, `klog_ring` 288000 (pre-PMM) and the xHCI `devices` 277504 (hot-plug ISR writer).
+  - **CORRECTION (§14, 2026-09-05): the `tasks` entry on this line is SUPERSEDED and must not be acted on.** It contradicts this section's own assessment 22 lines above, which DISQUALIFIED the symbol rather than gating it. Treat the disqualification as authoritative. -> XREF: this file §14 (item: "Re-assessed `tasks` against §12's disqualification")
   - Below those: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 38208, `ports` 37632, `s_bls_fixture` 36992, `glyph_cache` 36480, `s_iocp_pool` 33152. None was assessed here.
   - Trigger the next pass on HEADROOM, not on a failed build. The failure is cascading rather than proportional, so a section either fits with a page to spare or fails by a whole page with no warning: treat headroom under one page (4096 bytes) as the signal, which is roughly where §28 of `01-boot-platform/TODO-13` was reverted from.
 - [x] Unparks the ceiling-stalled work -> XREF: this file §7 (item: "Re-run `01-boot-platform/TODO-13` §28 once the guard is gone").
@@ -567,7 +569,7 @@ Measured largest remaining `.bss` consumers (`build/kernel.map`, 2026-08-18, by 
 > - **What shipped** -- `s_recovered` (164000 bytes of BSS) moved to a frame-backed pool sized by the crash region at 131036 bytes, plus two pure guards (`klog_recovered_at`, `klog_recovered_set_ok`) and a coherence precondition on the disk writer's truncating open.
 > - **How it integrates** -- allocation happens inside `klog_crash_recover` AFTER the previous crash region is validated, never at entry, with a physical-overlap check between the allocation and the zeroing; failure and overlap both degrade to serial-only rather than halting.
 > - **Downstream effects** -- `__kernel_end` `0x7ff000` -> `0x7d7000`, headroom 347 bytes -> 167936 (41 pages), which unparks the ceiling-stalled queue; a boot with no prior crash now allocates nothing where it previously spent 40 pages permanently.
-> - **Reserve for the next pass** -- `ctrl_windows` 180736 then `tasks` 203776, both needing prerequisite work named in the items above; trigger on headroom under one page rather than on a failed build.
+> - **Reserve for the next pass** -- `ctrl_windows` 180736 then `tasks` 203776, both needing prerequisite work named in the items above; trigger on headroom under one page rather than on a failed build. **`tasks` is SUPERSEDED: see this section's DISQUALIFIED assessment and the §14 correction.**
 > - **Canonical doc:** [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
 > - **Scope boundary** -- ONE conversion plus its headroom measurement. The permanent ceiling retirement is §7, the address-space move is §3, and the boot-level degraded-path coverage is filed with the klog owner -> XREF: `02-kernel-core/TODO-04 §15` (item: "Cover the crash-recovery DEGRADED path at boot level").
 
@@ -646,7 +648,7 @@ Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 3820
 > - **What shipped** -- `ctrl_windows` (180,736 B) moved to a `pmm_alloc_pages_hhdm` pool, guarded by an atomic CAS (`ctrl_init_state`) + `ctrl_ready()`; plus a 12-function dead-test sweep (all empty-bodied, all previously PASS-on-nothing).
 > - **How it integrates** -- `ctrl_init()` is now actually called (never was before), wired into `boot_desktop.c` Phase 3 before `gallery_open()`, which now checks `ctrl_ready()` first instead of opening a non-functional dialog on OOM.
 > - **Downstream effects** -- `__kernel_end` `0x7ff000` -> `0x7d4000`, `.text` 95 -> 178735 bytes (post-fix-loop; still 176962+ headroom on the tightest section); unparks the ceiling-stalled queue named above; `PASS: 32863 kernel + 17 user-mode`, 0 failures throughout every fix round.
-> - **Reserve for the next pass** -- `tasks` 203776 B (`sched/task.c:69`) is next but still needs its §12-recorded prerequisites; trigger the fourth pass on headroom under one page, same signal §12 set.
+> - **Reserve for the next pass** -- **SUPERSEDED by §14.** This line names `tasks` 203776 B (`sched/task.c:69`) as next "needing its §12-recorded prerequisites", but §12 DISQUALIFIED that symbol (PIT IRQ handler writer, plus a Phase 1 / Phase 3 ordering gap) and only its reserve line softened it. Do not nominate `tasks`. The corrected menu is §14's.
 > - **Canonical doc:** [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
 > - **Scope boundary** -- ONE conversion plus headroom measurement and the test sweep; re-applying unparked sections is §11's job, not this section's.
 
@@ -655,7 +657,7 @@ Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 3820
 
 ---
 
-## 14. Fourth Tactical Reclamation Pass -- Correct the Spent Reserve and Buy Headroom Back
+## 14. Fourth Tactical Reclamation Pass -- Reclaim the Test-Only Statics
 
 > **Spawned-by:** root
 
@@ -663,50 +665,96 @@ Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 3820
 
 **What a user hits if this is not done:** nothing kernel-side ships, again. At 2 bytes of `.rodata` no kernel section can add a single string literal, test name or const table, and the link fails rather than warning. Verified 2026-09-05 against `02-kernel-core/TODO-26`: every one of its 21 remaining sections is a kernel-code section and none is implementable at this ceiling, on top of the sections §13 already recorded as ceiling-deferred on 2026-09-03.
 
-**The reserve §13 handed forward is unsafe as written and must be re-derived, not inherited.** §13's Notes name `tasks` (203,776 B, `sched/task.c:69`) as the next candidate "still needs its §12-recorded prerequisites", and §13's reserve table lists its blocker as "allocation before Phase 1 unmasks the timer, plus explicit zeroing". §12 recorded no such prerequisite: it DISQUALIFIED `tasks` outright, and the reasons still hold against this tree. Converting it on §13's wording would put a NULL pointer under the PIT IRQ handler.
+**The reserve handed forward is unsafe as written and must be re-derived, not inherited. The contradiction ORIGINATES in §12, not §13.** §12 assessed `tasks` (203,776 B, `sched/task.c:69`) and DISQUALIFIED it at line 532, then listed it in its own reserve at line 554 as merely "needs allocation before Phase 1 unmasks the timer, plus explicit zeroing", and repeated that softer framing in its Notes at line 571. §13 inherited §12's reserve wording rather than inventing it. So a reader following the reserve chain reaches a nomination that the same section's assessment had already refused, and converting `tasks` on that wording would put a NULL pointer under the PIT IRQ handler. The disqualification is the correct half and it still holds against this tree.
+
+**Scope was SPLIT on the manifest's own verdict rather than waived.** `section-manifest.py` returns `SPLIT-RECOMMENDED` (7 work items, 6 subsystems, `waiver_required`). §13 waived the same verdict and shipped one section; this pass does not, because the natural seam here is real and cheap: the test-only statics carry NO production code path, while a pool conversion changes live kernel behaviour. Reclaiming the test statics is a strictly-safer, self-contained unit that buys enough headroom on its own. The `pipes` conversion is therefore §15, not an item here.
 
 **Corrected candidate menu, measured from `build/kernel.map` at `ad84efa84` on 2026-09-05** (gap-derived sizes; `tasks` reproduces §12's recorded 203,776 exactly, which is the control that the method is reading real extents):
 
-| Symbol            |   Size | Home                                | Verdict                                                      |
-| ----------------- | -----: | ----------------------------------- | ------------------------------------------------------------ |
-| `klog_ring`       | 288000 | `klog.c:78`                         | ruled out by §10: written pre-PMM                            |
-| `devices`         | 277504 | `xhci_dev.c:31`                     | ruled out by §10: hot-plug ISR writer                        |
-| `tasks`           | 203776 | `sched/task.c:69`                   | DISQUALIFIED by §12, not merely gated; see the item below    |
-| `pipes`           |  73216 | `src/kernel/ipc/pipe.c:25`          | PRIMARY candidate: referenced from one file, syscall-driven  |
-| `cpu_data`        |  64000 | per-CPU data                        | unassessed; expect an ISR/boot-order disqualification        |
-| `s_ureap_slot`    |  38208 | --                                  | unassessed                                                   |
-| `ports`           |  37632 | --                                  | unassessed                                                   |
-| `s_bls_fixture`   |  36992 | `test/test_boot_entry_parser.c:428` | TEST-ONLY static: cheapest reclaim in the table              |
-| `glyph_cache`     |  36480 | --                                  | unassessed                                                   |
-| `s_iocp_pool`     |  33152 | --                                  | unassessed                                                   |
-| `s_parse_block`   |  32784 | --                                  | unassessed                                                   |
-| `g_cap_subs`      |  32768 | --                                  | unassessed                                                   |
-| `env_test_bigval` |  32016 | `test/test_env.c:61`                | TEST-ONLY static: filled with `'x'` at runtime, never static |
+| Symbol            |   Size | Home                                | Verdict                                                   |
+| ----------------- | -----: | ----------------------------------- | --------------------------------------------------------- |
+| `klog_ring`       | 288000 | `klog.c:78`                         | ruled out by §10: written pre-PMM                         |
+| `devices`         | 277504 | `xhci_dev.c:31`                     | ruled out by §10: hot-plug ISR writer                     |
+| `tasks`           | 203776 | `sched/task.c:69`                   | DISQUALIFIED by §12, not merely gated; see the item below |
+| `pipes`           |  73216 | `src/kernel/ipc/pipe.c:25`          | production pool: split out to §15                         |
+| `cpu_data`        |  64000 | per-CPU data                        | unassessed; expect an ISR/boot-order disqualification     |
+| `s_ureap_slot`    |  38208 | --                                  | unassessed                                                |
+| `s_bls_fixture`   |  36992 | `test/test_boot_entry_parser.c:428` | TEST-ONLY: reclaimed here                                 |
+| `ports`           |  37632 | --                                  | unassessed                                                |
+| `glyph_cache`     |  36480 | --                                  | unassessed                                                |
+| `s_iocp_pool`     |  33152 | --                                  | unassessed                                                |
+| `s_parse_block`   |  32784 | `test/test_env.c:2470`              | TEST-ONLY: reclaimed here                                 |
+| `g_cap_subs`      |  32768 | `test/test_knf.c:600`               | TEST-ONLY: reclaimed here                                 |
+| `env_test_bigval` |  32016 | `test/test_env.c:61`                | TEST-ONLY: reclaimed here                                 |
 
-- [ ] Re-measure the whole reserve against the CURRENT `build/kernel.map` before choosing, rather than acting on this table's recorded sizes.
-  - The sizes above are gap-derived from adjacent symbol addresses, which over-attributes trailing anonymous data to the preceding symbol. That is accurate for large `.bss` arrays (the `tasks` control matches §12's independently recorded figure to the byte) and is NOT reliable for `.rodata`, where anonymous string literals dominate. Do not carry the `.rodata` figures into any decision without re-deriving them.
-- [ ] Re-assess `tasks` against §12's disqualification and RECORD the verdict, so the next pass inherits a correct reserve rather than §13's softened wording.
-  - §12 line 528 is explicit: `schedule()` writes it from the PIT IRQ handler (`task.c:1710`), `nm_handler` writes `tasks[current_task].fpu_used`/`.xsave_area` from #NM exception context (`task.c:639`), `sti` happens in Phase 1 (`boot_interrupts.c:473-495`) while `task_init()` runs in Phase 3 (`boot_desktop.c:99-103`) so a pointer would be NULL across every intervening tick, and it relies on BSS-zero state for an APC lock (`task.c:616-618`) while `pmm_alloc_pages_hhdm` does not zero.
+**The four test statics are ALREADY a ceiling workaround, which is why they are the right target.** Each was made a shared file-scope buffer specifically to survive this gate, and two say so in their own comments: `test_boot_entry_parser.c:426-427` records *"two function-local statics cost 72 KB of test-build BSS and push the image over the 0x800000 user-base ceiling. Sharing reclaims 36 KB"*, and `test_env.c:59-60` records *"BSS-collision gate rejects the image, so the cases share this buffer"*. Sharing was the cheap half of the fix; moving them off `.bss` entirely is the rest of it, and it costs the production image nothing because none of these bytes serves production code.
+
+- [x] Re-measured the whole reserve against the CURRENT `build/kernel.map` at `ad84efa84` before choosing, rather than acting on the recorded sizes.
+  - The sizes above are gap-derived from adjacent symbol addresses, which over-attributes trailing anonymous data to the preceding symbol. That is accurate for large `.bss` arrays (the `tasks` control matches §12's independently recorded figure to the byte) and is NOT reliable for `.rodata`, where anonymous string literals dominate. Do not carry any `.rodata` figure into a decision without re-deriving it.
+- [x] Re-assessed `tasks` against §12's disqualification: it STANDS, and §13's reserve wording is corrected above rather than carried forward.
+  - §12 line 528 is explicit: `schedule()` writes it from the PIT IRQ handler (`task.c:1710`), `nm_handler` writes `tasks[current_task].fpu_used`/`.xsave_area` from #NM exception context (`task.c:369`), `sti` happens in Phase 1 (`boot_interrupts.c:473-495`) while `task_init()` runs in Phase 3 (`boot_desktop.c:99-103`) so a pointer would be NULL across every intervening tick, and it relies on BSS-zero state for an APC lock (`task.c:616-618`) while `pmm_alloc_pages_hhdm` does not zero.
   - Either confirm the disqualification stands and correct the reserve wording, or, if the boot-order prerequisite is genuinely landable, say so as its OWN section rather than smuggling a scheduler boot re-order into a tactical reclamation pass.
-- [ ] Assess `pipes` (73,216 B, `src/kernel/ipc/pipe.c:25`) against the §10 bar and convert it if it passes.
-  - Confirm no ISR or ISR-adjacent writer: pipe reads and writes should reach the pool only through syscall context, never an interrupt handler. `pipes[]` is referenced from `pipe.c` alone, so the symbol-use audit is bounded to one file.
-  - Mechanical symbol-use audit before converting: no `sizeof(pipes)`, no whole-array address-of, no static assert naming it, no compile-time consumer of its address, so the pointer conversion cannot collapse a `sizeof` silently.
-  - `pmm_alloc_pages_hhdm` does not zero, so the conversion carries an explicit `memset` plus any per-slot non-zero invariant the static-BSS version relied on. `pipe_init()` already clears `in_use` per slot (`pipe.c:32`), so record whether that loop is the whole invariant or only part of it.
-  - Failure policy is DEGRADED, not halt, matching §12 and §13: klog `LOG_ERROR` on OOM and a readiness accessor every lookup path gates on, so a degraded pool refuses cleanly instead of dereferencing NULL.
-- [ ] Reclaim the two TEST-ONLY statics, which no prior pass assessed and which carry no production hazard at all.
-  - `s_bls_fixture` (36,992 B, `test/test_boot_entry_parser.c:428`) and `env_test_bigval` (32,016 B, `test/test_env.c:61`) together are 69,008 bytes of `.bss` that exists only to run tests.
-  - `env_test_bigval` is filled with `'x'` in a runtime loop (`test_env.c:66-67`), so it never needed static storage duration; the cheapest correct fix may be local or dynamic allocation rather than a pool conversion.
-  - Keep both suites asserting exactly what they assert today. A reclaim that weakens a test is not a reclaim; re-run the owning suites (`SUITE=boot`, `SUITE=abi`) green in their own right, not only in the aggregate.
-- [ ] Record the acceptance evidence, §10/§12/§13 shape, from `build/kernel.map` in the same build flavor (`-DKERNEL_TESTS` on).
-  - BEFORE and AFTER `__kernel_end`, the four per-section budgets from `scripts/overnight/bss-headroom.py`, and the reclaim in bytes and whole pages, with the predicted-versus-observed page count reconciled as §13 did.
-  - A control proves the BSS guard still fires and was not relaxed by a byte. Per the run's own 2026-08-30 lesson, the control must have a predictable effect that the probe demonstrably SEES: a mutation the compiler folds away is not a control.
-- [ ] Name what the new headroom admits and what it does NOT, and hand the re-application to §11 rather than doing it here.
-  - Naming the unparked sections is this section's job; re-applying each preserved diff and re-running its own build, test and review cycle stays §11's. -> XREF: this file §11 (item: "Unpark the ceiling-stalled kernel queue")
-- [ ] State the reserve for a FIFTH pass plainly, with the same trigger, and with each entry's verdict rather than a bare size.
-  - §13's handoff failed because it recorded a size and a soft blocker where §12 had recorded a disqualification. Record the VERDICT next to every candidate so the next pass inherits an assessment, not a shopping list.
-- [ ] Commit: `"kernel/mm: fourth tactical reclamation pass -- correct the reserve, buy headroom back"`
+- [x] Moved the four test-only statics off `.bss` without weakening a single assertion: `s_bls_fixture` (36,992), `s_parse_block` (32,784), `g_cap_subs` (32,768), `env_test_bigval` (32,016).
+  - Total is 134,560 bytes of `.bss` that existed solely to run tests. The vehicle is the repo's own `TEST_SCRATCH_KBUF` (`include/kernel/test/scratch.h`), not a hand-rolled allocation: it already routes by size (`kmalloc` at or below 4 KB, `pmm_alloc_contiguous` above), registers its free through `test_add_action` so cleanup fires on assertion-induced early return, and asserts plus returns on OOM. Using it made all four of the design review's recommendations fall out of an existing reviewed primitive.
+  - The capacity constants are explicit (`ENV_TEST_BIGVAL_SZ`, `ENV_PARSE_BLOCK_SZ`, `KNF_CAP_SUBS_BYTES`) because `sizeof` on the converted pointer collapses to 8. The design review caught this at `test_env.c:66-68`, where the fill helper would have written seven bytes instead of 32,000 and every large-environ case would have passed over a tiny value.
+  - Allocate lazily on first use and release at a defined point, so a suite that never runs pays nothing. `pmm_alloc_pages_hhdm` does not zero: reproduce each buffer's existing initial state explicitly rather than inheriting BSS-zero.
+  - Preserve the sharing invariants the current comments record, notably `test_env.c`'s *"any case that mutates it restores it"* single-threaded contract. If a buffer becomes dynamically allocated, the restore contract still has to hold across cases.
+  - An OOM path in a test must FAIL the test loudly, never silently skip it. A reclaim that converts a real assertion into a no-op on allocation failure is a coverage regression wearing a headroom win.
+- [x] Confirmed the reclaim did not weaken the suites that own these buffers, by CONTROL rather than by inspection.
+  - `SUITE=boot` 6138, `SUITE=abi` 2170, `SUITE=knf` 234, each green in its own right, plus the aggregate.
+  - The count did not fall, and this was MEASURED rather than argued: the change was stashed, the tree rebuilt and the full suite re-run to get a true baseline of **33,889**, against **33,895** with the change. The delta is exactly +6, one `TEST_ASSERT_NOT_NULL` per scratch site, so no assertion was lost. A stamp elsewhere in the corpus reads 33,871; that is an older commit, and taking it as the baseline would have manufactured a +24 discrepancy out of nothing.
+- [x] Recorded the acceptance evidence, §10/§12/§13 shape, from `build/kernel.map` in the same build flavor (`-DKERNEL_TESTS` on).
+  - BEFORE at `ad84efa84`: `__kernel_end` page `0x7ff000`, budgets `.text` 1359, `.rodata` **2**, `.data` 964, `.bss` 1235; `tightest: .rodata`, `tight: true`.
+  - AFTER: `__kernel_end` page `0x7df000`, budgets `.text` 131551, `.rodata` 134898, `.data` 132036, `.bss` 131667; `tightest: .text`, `tight: false`.
+  - Reclaim `0x7ff000 - 0x7df000` = `0x20000` = **131,072 bytes, exactly 32 whole pages**.
+  - Reconciled against DECLARED sizes, which are NOT the table's symbol gaps: `s_bls_fixture` 36,980 (`sizeof(boot_entries_parse_result_t)`), `s_parse_block` 32,783 (`ENV_VALUE_MAX` 32,767 + 16), `g_cap_subs` 32,768 (4,096 pointers), `env_test_bigval` 32,001, total **134,532 bytes** = 32.84 pages. The gap figures in the table above run 12-15 bytes higher per symbol because they absorb inter-symbol padding, which is exactly the over-attribution the first item warns about; using them here would be the same mistake in the same section.
+  - 134,532 freed against 131,072 observed leaves 3,460 bytes, and that residue is expected rather than unexplained: `__kernel_end` only moves in whole pages, and the pre-conversion end `0x7feb2d` already sat 1,235 bytes into its final page. The freed bytes are not page-aligned, so the whole-page reclaim is `floor` of the total, not a clean division. **This bullet originally claimed a 0.13-page residue copied from §13's wording; 134,532 / 4096 leaves 0.84 of a page, and the consistency review caught the copied arithmetic.**
+  - The guard was not touched: `scripts/build.sh` prints the same `BSS check` line shape, now reading `kernel BSS end 0x00000000007df000 < user base 0x800000`. The control that matters here is the stash-and-rebuild above, whose effect the probe demonstrably saw (a different `__kernel_end` and a different test total), rather than a mutation the compiler could fold away.
+- [x] Named what the new headroom admits and what it does NOT, and handed the re-application to §11 rather than doing it here.
+  - ADMITS: 131,551 bytes on the tightest section, against the 95-347-byte fractions that stalled the parked work. All 21 remaining `02-kernel-core/TODO-26` sections (§12-§25, §27, §29, §33-§36, §39) now fit on headroom, as do the §11 sweep candidates `TODO-04` §14, `TODO-09` §20, `TODO-10` §32, `TODO-11` §28 and `TODO-12` §32.
+  - Does NOT admit: anything needing the address-space move itself (§3, §7, and the three `test_highhalf.c` assertions §11 keeps parked), and it does not clear a NON-ceiling blocker. `TODO-26` §2 still needs its own split decision, and the sections deferred on absent ACPI namespace evaluation or an absent hibernation write path are untouched by headroom.
+  - Naming them is this section's job; re-applying each preserved diff and re-running its own build, test and review cycle stays §11's. -> XREF: this file §11 (item: "Run the status sweep for the FOURTH pass")
+- [x] Stated the reserve for a FIFTH pass plainly, with each entry's VERDICT rather than a bare size, and the same under-one-page trigger.
+  - §13's handoff failed because it recorded a size and a soft blocker where §12 had recorded a disqualification. The corrected menu is the table above, and every entry now carries a verdict.
+  - FIFTH PASS, in order: `pipes` 73,216 (`src/kernel/ipc/pipe.c:25`) is ALREADY SCOPED as §15 and is the next move; then `cpu_data` 64,000, `s_ureap_slot` 38,208, `ports` 37,632, `glyph_cache` 36,480 and `s_iocp_pool` 33,152, all UNASSESSED and each needing the §10 bar walked before it is touched. `klog_ring`, `devices` and `tasks` stay DISQUALIFIED and must not be re-proposed without clearing the specific hazard recorded against each.
+  - The four test-only statics are SPENT: there is no comparable test-only `.bss` left, so the fifth pass necessarily converts production state and carries a real failure mode. Trigger stays headroom under one page.
+- [x] Commit: `"kernel/test: fourth tactical reclamation pass -- move the test-only statics off .bss"`
 
-**Test checkpoint:** `bash scripts/build.sh` prints the `BSS check` line with `__kernel_end` at least one page below `0x7ff000` and the headroom recorded in the Notes. Full `scripts/test.sh` green with the converted pool's owning suite green in its own right. `scripts/test-smoke.sh` boots to `C:\>`, because an allocation-failure regression in a pool the boot path touches surfaces as a hang rather than a failing assertion, and `scripts/test-smoke-matrix.sh` if the candidate is touched during boot. A control proves the guard still fires. Scope: one pool conversion plus the test-static reclaim and the headroom measurement; the permanent retirement stays §7, the address-space move stays §3, and the unpark sweep stays §11. Platforms: QEMU KVM + TCG; **bare metal**.
+**Test checkpoint:** `bash scripts/build.sh` prints the `BSS check` line with `__kernel_end` at least one page below `0x7ff000` and the headroom recorded in the Notes. Full `scripts/test.sh` green with `SUITE=boot`, `SUITE=abi` and `SUITE=knf` each green in their own right and the aggregate assertion count not lower than before. `scripts/test-smoke.sh` boots to `C:\>`. A control proves the guard still fires. Scope: the four test-only statics plus the measurement and the reserve correction; the `pipes` pool conversion is §15, the permanent retirement stays §7, the address-space move stays §3, and the unpark sweep stays §11. Platforms: QEMU KVM + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + `run-abi-tests.bat` (SUITE=abi) + `run-knf-tests.bat` (SUITE=knf) | 6138 + 2170 + 234 kernel tests, 0 failures -- 33895 kernel + 17 user tests overall
+
+> **Notes:**
+>
+> - **What shipped** -- four test-only statics (134,560 B total) moved off `.bss` onto per-case `TEST_SCRATCH_KBUF` allocations, plus a partial-failure handle leak fixed in the KNF subscriber-cap case.
+> - **How it integrates** -- no production code path changed; the vehicle is the existing `include/kernel/test/scratch.h` primitive, whose `test_add_action` registration frees each buffer on the suite drain, including after an assertion-induced early return.
+> - **Downstream effects** -- `__kernel_end` `0x7ff000` -> `0x7df000`, `.rodata` budget 2 -> 134,898 bytes, tightest section now `.text` at 131,551; unparks all 21 remaining `TODO-26` sections and the §11 sweep candidates. `PASS: 33895 kernel + 17 user-mode` against a measured 33,889 baseline, the +6 being one scratch assertion per site.
+> - **Reserve for the next pass** -- `pipes` 73,216 is scoped as §15; the test-only source is now SPENT, so the fifth pass necessarily converts production state. Trigger stays headroom under one page.
+> - **Canonical doc:** [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
+> - **Scope boundary** -- the four test statics plus measurement and the reserve correction; the `pipes` conversion is §15, the permanent retirement stays §7, the address-space move stays §3, and the unpark sweep stays §11.
+
+---
+
+## 15. Fifth Tactical Reclamation Pass -- Convert the `pipes` Pool
+
+> **Spawned-by:** §14 (split)
+
+The production half of the fourth-pass candidate menu, split out of §14 on `section-manifest.py`'s `SPLIT-RECOMMENDED` verdict. §14 reclaims test-only `.bss` and touches no production code path; this section converts one live kernel pool and therefore carries a different failure mode, a different review surface, and a different rollback. Run it when the §14 headroom is spent, on the same under-one-page trigger §12 set, or earlier if a section needs more than §14 bought.
+
+`pipes` (`src/kernel/ipc/pipe.c:25`, `static pipe_t pipes[PIPE_MAX]`, 73,216 bytes measured at `ad84efa84`) is the largest `.bss` consumer not already disqualified: `klog_ring` and `devices` were ruled out by §10 (pre-PMM writer, hot-plug ISR writer) and `tasks` by §12 (PIT IRQ handler writer, plus a Phase 1 / Phase 3 ordering gap). It is referenced from exactly one translation unit, which bounds the symbol-use audit to a single file.
+
+- [ ] Assess `pipes` against the §10 bar before converting anything, and record the verdict either way.
+  - Confirm no ISR or ISR-adjacent writer: pipe reads and writes should reach the pool only through syscall context, never an interrupt handler. If an ISR writer exists the symbol is disqualified like `tasks`, and that verdict is the section's deliverable.
+  - Confirm the init ordering: `pipe_init()` must run before any consumer can reach the pool, with no window in which a published pointer is NULL.
+  - Mechanical symbol-use audit: no `sizeof(pipes)`, no whole-array address-of, no static assert naming it, no compile-time consumer of its address, so the pointer conversion cannot collapse a `sizeof` silently.
+- [ ] Convert `pipes` to frame-backed storage via `pmm_alloc_pages_hhdm`, following the `ctrl_windows` conversion §13 shipped and the `reg_value_pool` one at `registry.c:364-378`.
+  - Explicit byte count, zeroed through a local before the global pointer is published, and the publication word stored LAST. `pipe_init()` already clears `in_use` per slot (`pipe.c:32`); record whether that is the whole initial invariant or only part of it.
+  - Failure policy is DEGRADED, not halt, matching §12 and §13: klog `LOG_ERROR` on OOM and a readiness accessor that every lookup path gates on, so a degraded pool refuses cleanly instead of dereferencing NULL.
+  - Guard against a second concurrent initialisation the way §13 did, with an atomic state machine rather than a plain flag, unless the call site provably admits only one caller.
+- [ ] Record the acceptance evidence and the reserve for a SIXTH pass, same shape as §14.
+- [ ] Commit: `"kernel/ipc: fifth tactical reclamation pass -- convert the pipes pool"`
+
+**Test checkpoint:** `bash scripts/build.sh` prints the `BSS check` line with `__kernel_end` at least 17 pages below its pre-section value. Full `scripts/test.sh` green with `SUITE=ipc` green in its own right. `scripts/test-smoke.sh` boots to `C:\>`, because an allocation-failure regression in a pool the boot path touches surfaces as a hang rather than a failing assertion. A control proves the BSS guard still fires. Scope: ONE pool conversion plus its measurement. Platforms: QEMU KVM + TCG.
 
 ---
 
