@@ -603,6 +603,20 @@ unsigned int boot_policy_menu_collect(
     int default_found = 0;
     if (out_default_idx) *out_default_idx = BOOT_POLICY_MENU_DEFAULT_NOT_FOUND;
     if (!parse || !decision || !out_idx || cap == 0u) return 0;
+    /* A REJECTED store offers no candidates. boot_policy_decide() already
+     * short-circuits to FALLBACK_STORE_INVALID without filtering, which means
+     * `decision->rejected[]` is EMPTY -- so the hard-hide filters below have
+     * nothing to match on and every entry the parser happened to retain before
+     * it hit the rejection would be listed and selectable. entry_count is
+     * documented meaningful on BOOT_ENTRIES_OK only (boot_entries_parser.h);
+     * reading it otherwise is reading indeterminate state.
+     *
+     * That mattered concretely: a store rejected for a repeated `entries` key
+     * still exposed the entries parsed before the repeat, and picking one
+     * through the F11 menu replaced the fallback selection with it -- bypassing
+     * the active/machine_id filtering the ladder would have applied. The
+     * rejection is only a rejection if every consumer honours it. */
+    if (parse->reject_code != BOOT_ENTRIES_OK) return 0;
     /* If the decision did not name a selected entry (empty id, e.g.
      * STORE_INVALID), there is nothing to find; treat as
      * default-not-applicable rather than not-found so the caller

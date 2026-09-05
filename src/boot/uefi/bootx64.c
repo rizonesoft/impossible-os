@@ -6358,7 +6358,20 @@ static void loader_set_firmware_info(void)
  * terminator. systemd-boot's bootctl reads this and lists each id. */
 static void loader_set_entries(const boot_entries_parse_result_t *parse)
 {
-    if (!parse || parse->entry_count == 0) return;
+    /* Never publish entries from a REJECTED store: entry_count is meaningful on
+     * BOOT_ENTRIES_OK only, so anything retained before the rejection is
+     * indeterminate state, and advertising it to systemd-BLI consumers presents
+     * a store the loader itself refused to use.
+     *
+     * CLEAR rather than skip. These are EFI_VARIABLE_NON_VOLATILE, so they
+     * survive the reboot: merely not writing them leaves the PREVIOUS boot's
+     * entry list published while this boot rejected the store and offers zero
+     * candidates. Stale is worse than absent here -- a BLI consumer would list
+     * entries the loader itself refuses to boot. */
+    if (!parse || parse->reject_code != BOOT_ENTRIES_OK || parse->entry_count == 0) {
+        loader_clear_var(u"LoaderEntries");
+        return;
+    }
     /* Build a BLS-sorted index permutation of all entries. */
     unsigned int order[BOOT_ENTRIES_MAX_ENTRIES];
     unsigned int n = (unsigned int)parse->entry_count;
@@ -6423,7 +6436,11 @@ static void loader_publish_readonly_vars(
     /* LoaderEntryDefault -- the entry with the lowest sort_key.
      * The policy ladder evaluates this at boot time; for the published
      * default we use the parsed entry whose sort_key sorts first. */
-    if (parse && parse->entry_count > 0) {
+    if (!parse || parse->reject_code != BOOT_ENTRIES_OK || parse->entry_count == 0) {
+        /* Same reasoning as LoaderEntries above: a rejected store must DROP the
+         * stale non-volatile default, not silently keep the previous boot's. */
+        loader_clear_var(u"LoaderEntryDefault");
+    } else {
         UINTN best = (UINTN)-1;
         for (UINTN i = 0; i < parse->entry_count; i++) {
             const boot_entry_envelope_t *e = &parse->entries[i];
@@ -6447,11 +6464,16 @@ static void loader_publish_readonly_vars(
             loader_clear_var(u"LoaderEntryDefault");  /* nothing visible -> drop stale */
     }
 
-    /* LoaderEntrySelected -- this boot's selected id (already in
-     * boot_info v19). Skipped on FALLBACK_STORE_INVALID where the
-     * selected_entry_id is empty by ABI. */
+    /* LoaderEntrySelected -- this boot's selected id (already in boot_info v19).
+     * On FALLBACK_STORE_INVALID the selected_entry_id is empty by ABI, and the
+     * variable is CLEARED rather than skipped: it is non-volatile, so skipping
+     * would leave the PREVIOUS boot's id advertised as this boot's selection --
+     * contradicting boot_info and misreporting a fallback boot as a normal one.
+     * Same reasoning as LoaderEntries / LoaderEntryDefault above. */
     if (decision && decision->selected_entry_id[0] != 0)
         loader_set_var_ascii(u"LoaderEntrySelected", decision->selected_entry_id);
+    else
+        loader_clear_var(u"LoaderEntrySelected");
 
     /* LoaderConfigTimeout -- current effective timeout in seconds. */
     {

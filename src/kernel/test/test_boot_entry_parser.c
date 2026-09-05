@@ -27,7 +27,6 @@ extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h>
 
 /* Helper: build a CRC-correct fixture by writing a placeholder, computing the
  * CRC, and patching the 8 hex digits in place. Mirrors validate.py --emit-crc. */
-static unsigned int s_fixture_buf_size = 0;
 static unsigned char s_fixture_buf[2048];
 
 static unsigned int patch_fixture_crc(unsigned char *buf, unsigned int len)
@@ -59,7 +58,6 @@ static unsigned int load_fixture(const char *json)
         s_fixture_buf[n] = (unsigned char)json[n];
         n++;
     }
-    s_fixture_buf_size = n;
     patch_fixture_crc(s_fixture_buf, n);
     return n;
 }
@@ -170,7 +168,6 @@ static void test_parser_bad_crc(void)
     /* Load WITHOUT patching CRC -- 0xDEADBEEF stays as the stored value. */
     unsigned int n = 0;
     while (JSON[n]) { s_fixture_buf[n] = (unsigned char)JSON[n]; n++; }
-    s_fixture_buf_size = n;
     TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
     boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
     int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
@@ -440,6 +437,13 @@ static void test_parser_top_level_trailing_comma_rejected(void)
  * corrupt the test runner executing it.
  */
 
+/* The depth fixtures below hardcode bracket counts (6/7/8 here, 11 in the
+ * direct rescan test) against the rescan budget. Pin the budget so a change
+ * to it fails HERE, naming the cause, instead of surfacing as an opaque
+ * "unwalkable prefix" assertion failure. */
+_Static_assert(BOOT_ENTRIES_MAX_SCAN_DEPTH == 10u,
+               "rescan budget moved -- update the 6/7/8/11-deep fixtures below with it");
+
 #define TEST_ENTRY_A \
     "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[]," \
     "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\"," \
@@ -484,7 +488,7 @@ static void test_parser_duplicate_id_across_entries_keys_rejected(void)
     boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
     int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
-                   "duplicate id split across two entries arrays rejected");
+                   "duplicate id split across two entries arrays rejected (by the key guard)");
 }
 
 static void test_parser_repeated_schema_version_rejected(void)
@@ -603,11 +607,19 @@ static void test_parser_many_distinct_keys_accepted(void)
 
 static void test_parser_prefix_sharing_keys_accepted(void)
 {
-    /* Control: the rescan must not reject keys that merely SHARE a prefix. A
-     * length-blind compare would fail this, and both fixtures above would then
-     * pass for the wrong reason. */
+    /* Control: the rescan must not reject keys that merely SHARE a prefix.
+     *
+     * ORDER IS LOAD-BEARING. key_seen_before compares `(ce - cs) == key_len &&
+     * bytes_eq(...)`, and only the LENGTH clause separates these two keys. With
+     * the shorter key first ("sort" then "sort_key") a length-blind compare
+     * reads 8 bytes from "sort"'s content start, gets `sort":1,`, and mismatches
+     * anyway -- so that ordering passes with the clause DELETED and pins
+     * nothing. Longer-first is the ordering that kills the mutant: testing
+     * "sort" (4) against the earlier "sort_key" makes a length-blind compare
+     * match its first 4 bytes and report a false DUPLICATE, which would send a
+     * perfectly valid store to invalid-store fallback. */
     static const char JSON[] =
-        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"sort\":1,\"sort_key\":2,"
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"sort_key\":1,\"sort\":2,"
         "\"entries\":[" TEST_ENTRY_A "]}";
     unsigned int n = load_fixture(JSON);
     TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));

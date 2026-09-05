@@ -73,6 +73,8 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
 | 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
+| 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [ ]   |
+| 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -679,6 +681,11 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
   - Directory-flush errors are no longer swallowed wholesale: a platform limitation (Windows cannot fsync a directory fd) is skipped, a genuine EIO propagates. A blanket suppression reported a durable write whose directory entry may never have reached disk, which is the exact guarantee the protocol exists to make. Covered by errno-injection at both flush points.
   - The durability protocol now has ONE implementation (`atomic_write_bytes`), which both writers call. The copies had already diverged in the part that matters: the validator's used a predictable `<path>.tmp` that another process or a symlink could own, so a concurrent run or a planted link defeated the very preservation guarantee it was added for.
   - `--emit-crc` also did its whole pipeline against the DESTINATION file, so a rejected store was left holding an invalid placeholder and a non-UTF-8-encodable one (a lone surrogate, which `json.loads` accepts) was truncated to zero bytes by `write_text` before the encoder raised. It now serializes, encodes, re-parses, validates and stamps the CRC entirely in memory, then replaces the file atomically. Regression asserts a FAILED run leaves the original byte-identical; against the old ordering it measures 1321 -> 0 bytes.
+- [x] Make the rejection stick in every CONSUMER, not just the parser -- a rejected store now yields no menu candidates and publishes no loader entries.
+  - Found by the review: `boot_policy_decide()` short-circuits correctly, but `boot_policy_menu_collect()` ignored `reject_code` and iterated `entry_count`, so a store rejected for a repeated `entries` key still listed the entries parsed before the repeat -- and picking one through the F11 menu made it the boot selection, bypassing the active/machine_id filtering the ladder would have applied.
+  - Because the ladder short-circuits WITHOUT filtering, `decision->rejected[]` is empty on that path, so the collector's hard-hide filters had nothing to match on and every retained entry showed. Guarded at `boot_policy.c` plus `loader_set_entries()` and the `LoaderEntryDefault` publisher in `bootx64.c`.
+  - The loader-variable guards CLEAR rather than skip, across all three of `LoaderEntries`, `LoaderEntryDefault` and `LoaderEntrySelected`. They are `EFI_VARIABLE_NON_VOLATILE`, so not writing them leaves the PREVIOUS boot's list published while this boot rejects the store and offers nothing; stale is worse than absent, since a BLI consumer would list entries the loader refuses to boot, or read the previous boot's id as this boot's selection. Both caught by re-adversarial review of this very fix -- two consecutive rounds, each on the round before it.
+  - Regression + accept-control in `test_boot_policy.c`; mutation-checked (deleting the guard exposes 2 candidates where 0 are expected). The loader-variable clearing itself has no kernel test surface -- `loader_clear_var()` calls `gST->RuntimeServices->SetVariable` -- so it is validated by serial log on a live boot, per the bootloader-only test policy.
 - [x] Commit: `"boot: reject repeated top-level keys in the boot entry store"`
 
 **Test checkpoint:** full `scripts/test.sh` green with `SUITE=boot` green in its own right and the new reject cases failing before the fix and passing after. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code. Platforms: QEMU KVM + TCG.
@@ -692,6 +699,50 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
 > - Host and firmware were brought into agreement on key rules AND on the value-depth budget, across every reader and both writers; review round 2 found the writers escaping keys and the host missing the depth cap.
 > - Canonical doc: [docs/boot/boot-entry-schema.md](../../docs/boot/boot-entry-schema.md) section 3 records both key rules and the deliberate payload-level asymmetry.
 > - Scope boundary: per-entry payload contents stay the host validator's and the policy filter's business; the firmware parser still skips payload objects wholesale.
+> **Verified:** 2026-09-05 | commit `a4f5f4982` + review fixes | 9/9 items | build OK | 34026 kernel + 17 user tests PASS | 99 validator + 38 bootcfg host cases PASS | lint 0 errors | smoke matrix 4/4 legs (KVM/TCG x 1/2 CPU)
+> **Accepted:** [M] `find_crc32_key()` locates the CRC header by scanning for the literal bytes `"crc32"` anywhere, so a store carrying that text in a string VALUE before the real header is rejected by firmware while the host accepts it (reason: distinct capability -- locator plus producer patch offset on both sides, with its own test matrix) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §20 (item: "Locate the root object's `crc32` member with a bounded STRUCTURAL scan on the firmware side, so only a key at depth 1 of the root object can match")
+> **Accepted:** [M] `LoaderDevicePartUUID` is left stale when the partition identity is unknown; that path is not reached by store rejection, so §19's fix does not cover it (reason: different axis, owned by the loader-variable publication surface) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §21 (item: "Clear `LoaderDevicePartUUID` when a valid GPT identity is unavailable OR when formatting it fails, and require GPT partition style before publishing it at all")
+> **Quality reviewed:** 2026-09-05 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) + boot-quality-auditor + kernel-quality-auditor | 1H+3M+2L fixed, 0 open | scope: boot-code-quality + kernel-code-quality
+
+---
+
+## 20. `crc32` Header Located by String Match, Not Structurally
+
+> **Spawned-by:** §19 (review)
+> **User impact:** a boot-entry store whose text contains the characters `crc32` inside a STRING VALUE before the real header is rejected by the firmware while the host validator accepts it. The user's configured boot selection is silently discarded and the machine boots the in-firmware fallback entry instead, with nothing on screen explaining why.
+
+Found by the §19 consistency review, which reproduced it with a 290-byte CRC-correct fixture. Pre-existing, and NOT introduced by §19 -- but §19 cites this function as the reason key names must be spelled literally, so the same locator being value-blind is the other half of that story. -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §19 (item: "Key names must be spelled LITERALLY").
+
+**The mechanism, confirmed at file:line.** `find_crc32_key()` (`src/boot/uefi/boot_entries_parser.c:135`) is a linear scan for the seven bytes `"crc32"` anywhere in the file, with no notion of object depth or key position. A store beginning `{"note":"crc32","schema_version":1,...}` matches inside the NOTE'S VALUE first; `find_crc_field()` then expects a colon after it, finds a comma, and returns 0, so `boot_entries_parse()` rejects with `BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD` before any key is parsed. The host validator locates the field with the `_CRC_FIELD_RE` regex (`tools/boot-entry-validate/validate.py`), which has the same value-blindness but different tie-breaking, so the two sides disagree about which bytes are the CRC. A nested `crc32` member inside `payload` is the same shape one level down.
+
+- [ ] Locate the root object's `crc32` member with a bounded STRUCTURAL scan on the firmware side, so only a key at depth 1 of the root object can match.
+  - The lexer and `skip_value_depth()` already in this file are the pieces needed: walk root keys, skipping each value, and take the `crc32` key's value span. It must still run BEFORE the full parse, because the CRC has to be verified before the structure is trusted.
+  - Keep the "8 hex digits at a known offset" contract intact -- the producer patches those bytes in place, so the locator must return the same span the writer will patch.
+- [ ] Apply the same structural rule host-side in `tools/boot-entry-validate/validate.py`, replacing the value-blind regex, so producer and consumer agree on which bytes carry the CRC.
+- [ ] Paired regressions on BOTH sides: a store with `"crc32"` as a string VALUE before the header, and a nested `crc32` member inside `payload`, each accepted with the real header located correctly.
+- [ ] Commit: `"boot: locate the crc32 header structurally rather than by string match"`
+
+**Test checkpoint:** `SUITE=boot` green with the two new fixtures failing before the fix and passing after; host `python3 tools/boot-entry-validate/test_validate.py` green. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code.
+
+---
+
+## 21. Published Loader Variables Need an Explicit Set-or-Clear Outcome
+
+> **Spawned-by:** §19 (review)
+> **User impact:** a BLI consumer (`bootctl`, or anything reading the systemd loader interface) is told the PREVIOUS boot's partition identity belongs to THIS boot. After a boot that publishes a partition UUID, a later boot whose partition identity is unknown leaves `LoaderDevicePartUUID` in place, so tooling misidentifies which disk the running system booted from.
+
+Found by the §19 re-adversarial rounds while auditing exactly this class. §19 fixed the three ENTRY variables (`LoaderEntries`, `LoaderEntryDefault`, `LoaderEntrySelected`), which went stale specifically on a REJECTED store. This section owns the general rule for the rest. -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §15 (OS-visible loader UEFI variables -- shipped and stamped; this is the follow-up its publication paths need).
+
+**The mechanism, confirmed at file:line.** `loader_set_var()` writes with `EFI_VARIABLE_NON_VOLATILE` (`src/boot/uefi/bootx64.c:6242`), so every published value survives the reboot. Several publishers return early on the "nothing to publish" path instead of clearing, which is not the same thing: absent means unknown, but stale means wrong. `LoaderDevicePartUUID` (`bootx64.c:6291`) returns without clearing when the partition identity is unavailable, and its formatter-failure path has the same omission. Store rejection does NOT reach this path, which is why §19's fix did not cover it.
+
+- [ ] Give every variable this function publishes an explicit set-or-clear outcome, so no path can leave a previous boot's value standing.
+  - Enumerate them first; the review counted 12. For each, decide and record whether "cannot determine" means clear or means legitimately leave alone, rather than letting an early return decide by accident.
+- [ ] Clear `LoaderDevicePartUUID` when a valid GPT identity is unavailable OR when formatting it fails, and require GPT partition style before publishing it at all.
+- [ ] Validation: consecutive-boot behaviour is the thing under test, so it needs persistent variable state across two boots -- a serial-log check on a live boot pair, or a mock variable store if the loader-var path is ever made host-testable.
+  - No kernel test surface today: these call `gST->RuntimeServices->SetVariable` directly, which the test policy forbids a kernel test from reaching.
+- [ ] Commit: `"boot: give every published loader variable an explicit set-or-clear outcome"`
+
+**Test checkpoint:** `scripts/test-smoke-matrix.sh` 4/4 legs, plus a serial-log check across a boot pair showing that a boot with unknown partition identity leaves no stale `LoaderDevicePartUUID` from the boot before it.
 
 ---
 

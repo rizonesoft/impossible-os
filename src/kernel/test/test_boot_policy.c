@@ -1278,6 +1278,71 @@ static void test_menu_collect_filters_hidden_and_skipped(void)
     TEST_ASSERT_EQ(def, 1u, "default highlight points at beta (selected_entry_id match)");
 }
 
+static void test_menu_collect_rejected_store_offers_nothing(void)
+{
+    /* A REJECTED store must offer zero menu candidates. boot_policy_decide()
+     * short-circuits to FALLBACK_STORE_INVALID WITHOUT filtering, so
+     * decision->rejected[] is empty and the hard-hide filters have nothing to
+     * match on -- every entry the parser retained before it hit the rejection
+     * would otherwise be listed and selectable through F11, bypassing the
+     * active/machine_id filtering the ladder would have applied.
+     *
+     * The concrete case is a store carrying valid entries followed by a
+     * repeated `entries` key: the parser rejects it with DUPLICATE_KEY, but the
+     * entries parsed before the repeat are still sitting in the result. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_REJECT_DUPLICATE_KEY;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "alpha");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "beta");
+    r.entries[1].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    d.reason = BOOT_SELECTION_FALLBACK_STORE_INVALID;
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 0u, "a rejected store offers no menu candidates");
+    TEST_ASSERT_EQ(def, (unsigned int)BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "and names no default");
+}
+
+static void test_menu_collect_accepted_store_still_collects(void)
+{
+    /* Control for the case above: the SAME two entries with reject_code OK must
+     * still be collected. Without this, a collector that returned 0
+     * unconditionally would pass the rejection test. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "alpha");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "beta");
+    r.entries[1].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    set_id(d.selected_entry_id, "beta");
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 2u, "an accepted store still collects both entries");
+}
+
 static void test_menu_collect_demote_not_drop_on_tries_exhausted(void)
 {
     /* Demote-not-drop contract: TRIES_EXHAUSTED is a demote signal,
@@ -1582,6 +1647,10 @@ void test_register_boot_policy(void)
                             test_menu_should_show_soft_reasons_render, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect filters HIDDEN + kind_skipped",
                             test_menu_collect_filters_hidden_and_skipped, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: rejected store offers no menu candidates",
+                            test_menu_collect_rejected_store_offers_nothing, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: accepted store still collects candidates",
+                            test_menu_collect_accepted_store_still_collects, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect demote-not-drop on TRIES_EXHAUSTED",
                             test_menu_collect_demote_not_drop_on_tries_exhausted, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect filters hard-hide reasons (KIND_SKIPPED + KIND_UNAVAILABLE)",
