@@ -148,44 +148,84 @@ static int sig_match(const char *sig, const char *target)
            sig[2] == target[2] && sig[3] == target[3];
 }
 
-/* Find a table with the given 4-byte signature in the RSDT */
+/* Defined below, after the memory-map containment policy it depends on.
+ * Discovery is declared against it here because the root-table walkers are the
+ * FIRST readers of firmware memory and must not checksum an unvalidated span. */
+static int acpi_table_valid(const struct acpi_sdt_header *hdr, const char *sig);
+
+/* How many entries does a root table (RSDT/XSDT) declare?
+ *
+ * The count is DERIVED from the firmware's own `length`, so a corrupt root
+ * length is what decides how far the walk below reads. Kept as its own pure
+ * function for two reasons: the underflow guard is easy to lose in an inline
+ * expression (`length - sizeof(header)` wraps to ~4 G on an undersized root and
+ * turns the walk into an unbounded scan), and a pure helper is testable without
+ * firmware. Returns 0 -- walk nothing -- for any root that cannot hold entries.
+ *
+ * The caller must ALSO have proven the root's full declared extent readable;
+ * this function bounds the loop, it does not bound the memory. */
+static uint32_t acpi_root_entry_count(const struct acpi_sdt_header *root,
+                                      uint32_t entry_size)
+{
+    if (!root || entry_size == 0)
+        return 0;
+    if (root->length < sizeof(struct acpi_sdt_header))
+        return 0;
+    return (root->length - (uint32_t)sizeof(struct acpi_sdt_header)) /
+           entry_size;
+}
+
+/* Find a table with the given 4-byte signature in the RSDT.
+ *
+ * Every entry is routed through acpi_table_valid(), which proves the header
+ * mapped BEFORE reading the signature, bounds the declared length, and proves
+ * the whole declared extent mapped BEFORE acpi_checksum() walks it. The old
+ * `sig_match() && acpi_checksum()` pair did the opposite: both are reads of an
+ * unvalidated pointer, and the checksum walk over a forged length IS the
+ * out-of-bounds read, so no check placed after it can help. */
 static const struct acpi_sdt_header *find_table_rsdt(
     const struct acpi_rsdt *rsdt, const char *sig)
 {
     uint32_t entries;
     uint32_t i;
 
-    entries = (rsdt->header.length - sizeof(struct acpi_sdt_header)) /
-              sizeof(uint32_t);
+    /* The root is firmware-supplied too: validate it before its length is
+     * trusted to bound the loop, and before entries[] is read at all. */
+    if (!rsdt || !acpi_table_valid(&rsdt->header, "RSDT"))
+        return (const struct acpi_sdt_header *)0;
+
+    entries = acpi_root_entry_count(&rsdt->header, (uint32_t)sizeof(uint32_t));
 
     for (i = 0; i < entries; i++) {
         const struct acpi_sdt_header *hdr =
             (const struct acpi_sdt_header *)(uintptr_t)rsdt->entries[i];
 
-        if (sig_match(hdr->signature, sig) &&
-            acpi_checksum(hdr, hdr->length))
+        if (acpi_table_valid(hdr, sig))
             return hdr;
     }
 
     return (const struct acpi_sdt_header *)0;
 }
 
-/* Find a table with the given 4-byte signature in the XSDT */
+/* Find a table with the given 4-byte signature in the XSDT. Identical contract
+ * to find_table_rsdt() above -- fixed in the same change so neither the 32-bit
+ * nor the 64-bit entry path is left as the surviving unvalidated copy. */
 static const struct acpi_sdt_header *find_table_xsdt(
     const struct acpi_xsdt *xsdt, const char *sig)
 {
     uint32_t entries;
     uint32_t i;
 
-    entries = (xsdt->header.length - sizeof(struct acpi_sdt_header)) /
-              sizeof(uint64_t);
+    if (!xsdt || !acpi_table_valid(&xsdt->header, "XSDT"))
+        return (const struct acpi_sdt_header *)0;
+
+    entries = acpi_root_entry_count(&xsdt->header, (uint32_t)sizeof(uint64_t));
 
     for (i = 0; i < entries; i++) {
         const struct acpi_sdt_header *hdr =
             (const struct acpi_sdt_header *)(uintptr_t)xsdt->entries[i];
 
-        if (sig_match(hdr->signature, sig) &&
-            acpi_checksum(hdr, hdr->length))
+        if (acpi_table_valid(hdr, sig))
             return hdr;
     }
 
@@ -204,7 +244,12 @@ static const struct acpi_sdt_header *find_acpi_table(
             return find_table_xsdt(xsdt, sig);
         }
     }
-    /* Fall back to RSDT (32-bit) */
+    /* Fall back to RSDT (32-bit). A zero rsdt_addr is an absent root, not an
+     * address to walk: find_table_rsdt() would otherwise validate a header at
+     * physical 0, which is a read the memory-map check cannot make safe. */
+    if (!rsdp->rsdt_addr)
+        return (const struct acpi_sdt_header *)0;
+
     const struct acpi_rsdt *rsdt =
         (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
     return find_table_rsdt(rsdt, sig);
@@ -219,10 +264,14 @@ static const struct acpi_sdt_header *find_acpi_table(
 
 /* Validate a firmware-supplied table BEFORE any code trusts its length:
  * non-NULL, expected signature, a length that covers at least the header and
- * at most ACPI_MAX_TABLE_LENGTH, and a correct checksum over exactly that
- * length. find_table_rsdt()/find_table_xsdt() already apply the checksum half
- * to tables they return; the DSDT is reached through the FADT's `dsdt` field
- * instead and so was never checked at all. */
+ * at most ACPI_MAX_TABLE_LENGTH, containment in a single ACPI-bearing memory
+ * descriptor, and a correct checksum over exactly that length.
+ * find_table_rsdt()/find_table_xsdt() route every root header and every entry
+ * through the WHOLE of this, not merely its checksum half -- discovery is the
+ * first reader of firmware memory, so a check placed after the checksum walk
+ * is after the out-of-bounds read it was meant to prevent. The DSDT is reached
+ * through the FADT's `dsdt` field rather than a root table, and goes through
+ * the same function in acpi_init(). */
 /* Is [phys, phys + len) contained in a SINGLE firmware memory-map descriptor of
  * a type that can hold an ACPI table?
  *
@@ -236,33 +285,69 @@ static const struct acpi_sdt_header *find_acpi_table(
  * Returns 1 when contained, and also 1 when the map cannot answer -- a
  * truncated or absent map is missing evidence, and refusing on it would drop
  * sleep-state support on machines whose firmware simply has more descriptors
- * than the handoff carries. */
-static int acpi_extent_mapped(uint64_t phys, uint64_t len)
+ * than the handoff carries.
+ *
+ * Takes the descriptor array as a PARAMETER, with a g_boot_info-bound wrapper
+ * below, so the containment RULES are testable. They were not before: a
+ * synthetic table necessarily sits in ordinary kernel memory, so the only
+ * assertion a test could make against the live-map version was "refused",
+ * which passes for a table that is fine and a table that is hostile alike. With the map as a parameter a test supplies the
+ * descriptor it is reasoning about, and every branch below -- contained and
+ * admissible, contained in a rejected class, straddling a descriptor end,
+ * outside every descriptor, and the truncated-map benefit of the doubt -- is
+ * reachable and distinguishable.
+ *
+ * `count` is the number of descriptors the caller vouches for; the wrapper
+ * clamps it to what the handoff can actually hold. */
+static int acpi_extent_in_map(const struct boot_mmap_entry *map, uint32_t count,
+                              int truncated, uint64_t phys, uint64_t len)
 {
     uint32_t i;
+    int straddles_known = 0;
+
+    /* A zero-length extent contains nothing and proves nothing; treating it as
+     * contained would let `phys - base > length - 0` admit the address one past
+     * a descriptor's end. Callers always ask about at least a header. */
+    if (!len)
+        return 0;
+
+    /* An extent that wraps the address space is never a real table. */
+    if (len > ~(uint64_t)0 - phys)
+        return 0;
 
     /* ALWAYS scan the descriptors we were given. A truncated map still holds
      * usable ones, and skipping the scan outright turned validation into
      * unconditional approval on exactly the machines with the most complex
      * memory layouts. */
-    for (i = 0; i < g_boot_info.mmap_count && i < BOOT_MMAP_MAX_ENTRIES; i++) {
-        const struct boot_mmap_entry *e = &g_boot_info.mmap[i];
+    for (i = 0; map && i < count; i++) {
+        const struct boot_mmap_entry *e = &map[i];
+
+        /* A descriptor whose own extent wraps is unusable as evidence. */
+        if (e->length > ~(uint64_t)0 - e->base_addr)
+            continue;
+
+        /* Does the extent lie WHOLLY in THIS descriptor? Established before the
+         * type test, so a hit on a rejected class is recorded as a rejection
+         * rather than silently skipped. */
+        if (phys < e->base_addr || len > e->length ||
+            phys - e->base_addr > e->length - len) {
+            /* Not contained here. If it nonetheless OVERLAPS this descriptor,
+             * the extent straddles a boundary we know about: it begins in one
+             * region and runs into whatever follows. That is POSITIVE evidence
+             * the length is wrong, and it must outrank the truncated-map
+             * benefit of the doubt below -- otherwise a table at the end of an
+             * ACPI descriptor with a forged length is checksummed straight
+             * into the adjacent MMIO region, performing device-register reads. */
+            if (phys < e->base_addr + e->length && e->base_addr < phys + len)
+                straddles_known = 1;
+            continue;
+        }
 
         /* Admit only classes that are readable RAM holding firmware tables. The
          * SIMPLIFIED type is not enough: the loader folds EfiMemoryMappedIO,
          * EfiMemoryMappedIOPortSpace and other reserved classes into type 2, and
          * checksumming a "table" in one of those performs device-register reads.
          * The original UEFI type is carried per descriptor for this reason. */
-        /* Does the extent lie in THIS descriptor at all? Established before the
-         * type test, so a hit on a rejected class is recorded as a rejection
-         * rather than silently skipped. */
-        if (phys < e->base_addr)
-            continue;
-        if (len > e->length)
-            continue;
-        if (phys - e->base_addr > e->length - len)
-            continue;              /* runs past this descriptor's end */
-
         /* Admit ONLY the classes an ACPI table actually lives in. Conventional,
          * loader and boot-services memory are excluded deliberately: pmm_init
          * returns those to the allocator, so a table "validated" there can be
@@ -284,16 +369,36 @@ static int acpi_extent_mapped(uint64_t phys, uint64_t len)
         }
     }
 
+    /* Straddled a descriptor we DO know about. This is evidence, not an
+     * absence of it, so it is decided before the missing-evidence fallback. */
+    if (straddles_known)
+        return 0;
+
     /* Outside every descriptor we were given. Only a map we KNOW is incomplete
      * earns the benefit of the doubt; a complete map that does not contain the
      * table is positive evidence the extent is wrong. */
-    if (!g_boot_info.mmap_count || g_boot_info.mmap_truncated) {
+    if (!map || !count || truncated) {
         klog(LOG_WARN, "acpi",
              "table extent unprovable (memory map absent or truncated)");
         return 1;
     }
 
     return 0;
+}
+
+/* Is [phys, phys + len) contained in a SINGLE firmware memory-map descriptor of
+ * a type that can hold an ACPI table? Binds the policy above to the live
+ * handoff, clamping the declared descriptor count to what the handoff carries
+ * so a corrupt mmap_count cannot walk past the array. */
+static int acpi_extent_mapped(uint64_t phys, uint64_t len)
+{
+    uint32_t count = g_boot_info.mmap_count;
+
+    if (count > BOOT_MMAP_MAX_ENTRIES)
+        count = BOOT_MMAP_MAX_ENTRIES;
+
+    return acpi_extent_in_map(g_boot_info.mmap, count,
+                              g_boot_info.mmap_truncated ? 1 : 0, phys, len);
 }
 
 /* STRUCTURAL validity: signature, a length that covers the header and stays
@@ -566,13 +671,31 @@ int acpi_parse_sleep_type_test(const void *table, char state_digit,
 
 int acpi_table_valid_test(const void *table, const char *sig)
 {
-    /* The STRUCTURAL half only. The memory-map containment policy cannot be
-     * exercised from a unit test -- a synthetic table necessarily sits in
-     * ordinary kernel memory, which acpi_extent_mapped() correctly refuses --
-     * so testing the combined function would assert nothing about signature,
-     * length or checksum handling. Containment is exercised on every real boot
-     * instead: the smoke log carries a diagnostic whenever it refuses. */
+    /* The STRUCTURAL half only: signature, bounded length, checksum. A
+     * synthetic table necessarily sits in ordinary kernel memory, which
+     * acpi_extent_mapped() correctly refuses, so a hook over the COMBINED
+     * function could only ever assert "refused" and would prove nothing about
+     * the structural rules. The containment policy is not untestable, it is
+     * tested separately: acpi_extent_in_map_test() takes the descriptor array
+     * as a parameter, so each branch is reachable from a unit test.
+     *
+     * Note that only the rejected-class branch logs; a straddling or wholly
+     * out-of-map extent is refused silently, so a real-boot refusal is not
+     * always visible in the serial log. */
     return acpi_table_struct_valid((const struct acpi_sdt_header *)table, sig);
+}
+
+uint32_t acpi_root_entry_count_test(const void *root, uint32_t entry_size)
+{
+    return acpi_root_entry_count((const struct acpi_sdt_header *)root,
+                                 entry_size);
+}
+
+int acpi_extent_in_map_test(const void *map, uint32_t count, int truncated,
+                            uint64_t phys, uint64_t len)
+{
+    return acpi_extent_in_map((const struct boot_mmap_entry *)map, count,
+                              truncated, phys, len);
 }
 
 /* ---- MADT parsing ---- */
@@ -2591,7 +2714,16 @@ static uint32_t acpi_validate_root(const struct acpi_sdt_header *root,
                                     uint32_t entry_stride,
                                     const char *expected_sig)
 {
-    if (!root || !sig_match(root->signature, expected_sig))
+    if (!root)
+        return 0;
+    /* The header is firmware memory: prove it mapped before reading the
+     * signature or the length, both of which are dereferences. Without this the
+     * enumerator was a third unvalidated copy of the discovery defect the
+     * root walkers fix. */
+    if (!acpi_extent_mapped((uint64_t)(uintptr_t)root,
+                            (uint64_t)sizeof(struct acpi_sdt_header)))
+        return 0;
+    if (!sig_match(root->signature, expected_sig))
         return 0;
     /* length must cover the header plus at least zero entries and not
      * exceed a sane upper bound (1 MiB). */
@@ -2603,6 +2735,10 @@ static uint32_t acpi_validate_root(const struct acpi_sdt_header *root,
         return 0;
     uint32_t count = entries_bytes / entry_stride;
     if (count > ACPI_ROOT_ENTRY_MAX)
+        return 0;
+    /* The checksum walk reads the WHOLE declared length, so the full extent
+     * must be proven mapped before it runs -- a check after it is too late. */
+    if (!acpi_extent_mapped((uint64_t)(uintptr_t)root, (uint64_t)root->length))
         return 0;
     if (!acpi_checksum(root, root->length))
         return 0;
@@ -2616,10 +2752,19 @@ static uint32_t acpi_validate_root(const struct acpi_sdt_header *root,
 static uint32_t acpi_validate_child(const struct acpi_sdt_header *hdr)
 {
     if (!hdr) return 0;
+    /* Same ordering as the root above: header extent, THEN the length read,
+     * THEN full-extent containment before the checksum walks the whole span.
+     * The entry pointer comes straight from firmware and is otherwise
+     * dereferenced with nothing having proven it readable. */
+    if (!acpi_extent_mapped((uint64_t)(uintptr_t)hdr,
+                            (uint64_t)sizeof(struct acpi_sdt_header)))
+        return 0;
     /* Header.length must cover the SDT header itself and not exceed a
      * 16 MiB sanity cap (largest legitimate ACPI table is < 1 MiB). */
     if (hdr->length < sizeof(struct acpi_sdt_header) ||
         hdr->length > 16U * 1024U * 1024U)
+        return 0;
+    if (!acpi_extent_mapped((uint64_t)(uintptr_t)hdr, (uint64_t)hdr->length))
         return 0;
     if (!acpi_checksum(hdr, hdr->length))
         return 0;

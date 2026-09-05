@@ -118,7 +118,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | ⭐  |  35   | §35 Directed power (DFx) stack walk + DRIPS residency accounting   | §9, §10, §12                |  [ ]   |
 | 💎  |  36   | §36 NIC wake offloads (ARP/NS reply, WoL, wake patterns, D0i3)     | §10, §12                    |  [ ]   |
 | ⭐  |  37   | §37 System connected standby entry (all-CPU S0ix transition)       | §10, §27, §9, §28           |  [/]   |
-| 💎  |  38   | §38 ACPI table discovery: validate extents before checksum/publish | §1                          |  [ ]   |
+| 💎  |  38   | §38 ACPI table discovery: validate extents before checksum/publish | §1                          |  [x]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -1628,16 +1628,24 @@ Found by the §10 post-ship adversarial review, which traced `acpi_get_fadt()` b
 
 The tree already HAS the right primitive: `acpi_table_valid()` (§1) checks signature, a length bounded by `ACPI_MAX_TABLE_LENGTH`, containment in one UEFI memory-map descriptor of an ACPI-bearing class, and only then the checksum. Discovery does not call it. This section is about routing discovery through the check that exists, not writing a new one.
 
-- [ ] `find_table_xsdt()` (`src/kernel/acpi.c:183-189`) dereferences each entry pointer and checksums over `hdr->length` with no validation of the pointer or its backing extent
+- [x] `find_table_xsdt()` (`src/kernel/acpi.c:183-189`) dereferences each entry pointer and checksums over `hdr->length` with no validation of the pointer or its backing extent
   - Validate the candidate header and its full readable extent BEFORE `acpi_checksum()` runs over it. The checksum walk is itself the out-of-bounds read, so a check placed after it is too late.
-- [ ] `find_table_rsdt()` (`src/kernel/acpi.c:165-166`) has the identical defect on the 32-bit entry path and must be fixed in the same change, not left as the surviving copy
-- [ ] Validate the XSDT/RSDT root header and its entry count before walking it -- the entry count is derived from `header.length`, so a corrupt root length controls how far the loop reads
-- [ ] `acpi_init()` publishes `fadt_ptr` (`src/kernel/acpi.c:961`) after checking only `length >= 116`; publish only once the FADT passes full validation, so no consumer can inherit an unvalidated table
-- [ ] Regression tests for malformed firmware, four shapes:
+- [x] `find_table_rsdt()` (`src/kernel/acpi.c:165-166`) has the identical defect on the 32-bit entry path and must be fixed in the same change, not left as the surviving copy
+- [x] Validate the XSDT/RSDT root header and its entry count before walking it -- the entry count is derived from `header.length`, so a corrupt root length controls how far the loop reads
+- [x] `acpi_init()` publishes `fadt_ptr` (`src/kernel/acpi.c:961`) after checking only `length >= 116`; publish only once the FADT passes full validation, so no consumer can inherit an unvalidated table
+- [x] Regression tests for malformed firmware, four shapes:
   - a length crossing a memory-map descriptor boundary; an entry pointer outside any ACPI-bearing descriptor; an undersized root header; and a table whose checksum passes only because the walk ran past its declared end
-- [ ] Commit: `"kernel/acpi: validate table extents before checksum and before publishing fadt_ptr"`
+- [x] Commit: `"kernel/acpi: validate table extents before checksum and before publishing fadt_ptr"`
 
 **Test checkpoint:** Each malformed-table fixture is refused, and refused BEFORE any read past the declared extent (assert on the refusal, not merely on the absence of a crash -- a passing read into adjacent RAM is the failure this section exists to stop). `fadt_ptr` stays NULL for every refused FADT. The existing `acpi_table_valid()` suite in `test_acpi_power.c` continues to pass. Test on: QEMU TCG; the real-firmware case is bare metal and cannot be reproduced under emulation.
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot` -- "ACPI: discovery extent guard" in `src/kernel/test/test_acpi_power.c` | full suite: 33,886 kernel + 17 user-mode tests pass | smoke matrix 4/4 legs (kvm/tcg x 1/2 cpu)
+
+> **Verified:** discovery now routes both root headers and every RSDT/XSDT entry through `acpi_table_valid()`, so the header extent is proven mapped before the signature is read and the FULL declared extent is proven mapped before `acpi_checksum()` walks it. `acpi_root_entry_count()` bounds the entry loop and returns 0 on an undersized root, where the old inline `(length - 36) / stride` underflowed to ~4 G. `find_acpi_table()` no longer walks a zero `rsdt_addr`. Positive control: the FADT and MADT are still discovered on a real boot (`build/smoke-test.stripped.log`: "acpi: ACPI: FADT at 0x000000007f779000"), with no containment-rejection warnings -- a tightening that refused everything would still have booted to `C:\>`, so the smoke pass alone would not have caught it.
+
+> **Quality reviewed:** 3 Codex legs (adversarial, consistency, perf), 2 rounds, ending 0 findings. Round 1 [high] adversarial: the truncated-map benefit of the doubt was granted to an extent that STRADDLES a known descriptor, so a table at the end of an ACPI region with a forged length was checksummed into the adjacent MMIO region -- device-register reads. Fixed by recording partial overlap as positive evidence and deciding it before the missing-evidence fallback, plus wrap guards on the requested extent and on each descriptor. Round 1 [high] consistency: `acpi_validate_root()`/`acpi_validate_child()` in the enumerator path were a THIRD unvalidated copy of the same defect; both now prove containment before the length read and before the checksum. Perf: approved, boot-only cost, bounded at 512 descriptors per scan.
+
+> **Accepted:** the containment policy logs only on the rejected-class branch, so a straddling or out-of-map refusal is silent on the serial log. Not fixed here: the kernel image has 18 bytes of `.rodata` headroom, so a new diagnostic string cannot link. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §3 (item: "Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`")
 
 ---
 

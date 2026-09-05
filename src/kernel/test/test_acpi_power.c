@@ -10,6 +10,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/acpi.h"
+#include "kernel/boot_info.h"
 #include "registry.h"
 
 /* ---- S-state discovery ---- */
@@ -376,6 +377,137 @@ static void test_acpi_table_valid_rejects_wrong_signature(void)
     build_table(buf, "FACP", body, (uint32_t)sizeof(body));
     TEST_ASSERT(acpi_table_valid_test(buf, "DSDT") == 0,
                 "a table with the wrong signature is rejected");
+}
+
+/* ---- Discovery: extents proven before the checksum walks them (s38) ----
+ *
+ * Table discovery is the FIRST reader of firmware memory, so a corrupt length
+ * or entry pointer is dereferenced before any later check can reject it. These
+ * exercise the two rules discovery now depends on, against synthetic inputs:
+ * the derived entry count that bounds the root walk, and the memory-map
+ * containment policy that bounds every read of a table body.
+ *
+ * Assertion messages are deliberately terse: the kernel image has a few
+ * hundred bytes of .rodata headroom before it crosses USER_BASE (TODO-33 s3),
+ * and test strings land in .rodata like any other.
+ */
+static void test_acpi_discovery_extent_guard(void)
+{
+    uint8_t buf[96];
+    struct boot_mmap_entry map[2];
+    uint32_t i;
+    uint8_t sum = 0;
+
+    /* -- Root entry count bounds the walk -- */
+
+    /* A root whose declared length cannot even cover its header. The count is
+     * (length - 36) / entry_size, so without the guard this underflows to
+     * ~4 G / 8 and the walk scans hundreds of millions of entries out of
+     * bounds. Zero means "walk nothing", which is the only safe answer. */
+    for (i = 0; i < sizeof(buf); i++)
+        buf[i] = 0;
+    buf[0] = 'X'; buf[1] = 'S'; buf[2] = 'D'; buf[3] = 'T';
+    buf[4] = 8;                                   /* length = 8 < 36 */
+    TEST_ASSERT_EQ(acpi_root_entry_count_test(buf, 8u), 0u,
+                   "short root: 0");
+
+    /* A well-formed root: 36-byte header + four 8-byte entries. */
+    buf[4] = (uint8_t)(36u + 32u);
+    TEST_ASSERT_EQ(acpi_root_entry_count_test(buf, 8u), 4u,
+                   "root entry count");
+    /* Same length read as a 32-bit (RSDT) entry array. */
+    TEST_ASSERT_EQ(acpi_root_entry_count_test(buf, 4u), 8u,
+                   "rsdt entry count");
+    /* A zero entry size cannot divide; it must not fault or admit a walk. */
+    TEST_ASSERT_EQ(acpi_root_entry_count_test(buf, 0u), 0u,
+                   "zero esize: 0");
+
+    /* -- Memory-map containment bounds every body read -- */
+
+    map[0].base_addr = 0x1000; map[0].length = 0x1000;
+    map[0].type = 3; map[0].uefi_memory_type = UEFI_MMAP_ACPI_RECLAIM;
+    map[0].attribute = 0;
+    map[1].base_addr = 0x3000; map[1].length = 0x1000;
+    map[1].type = 1; map[1].uefi_memory_type = UEFI_MMAP_CONVENTIONAL;
+    map[1].attribute = 0;
+
+    /* Wholly inside an ACPI-reclaim descriptor: the only accepting shape. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x1000u, 0x100u), 1,
+                   "in ACPI descriptor");
+
+    /* A declared length that runs off the end of the descriptor holding the
+     * table. This is the hostile-firmware shape: the header sits in real ACPI
+     * memory, so a header-only check passes, and the checksum walk then reads
+     * into whatever follows. Rejected on the FULL extent, not the header. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x1F00u, 0x200u), 0,
+                   "past descriptor end");
+
+    /* An entry pointer outside every descriptor, with a COMPLETE map: that is
+     * positive evidence the pointer is wrong, not missing evidence. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x9000u, 0x10u), 0,
+                   "outside map");
+
+    /* Contained, but in conventional memory -- which pmm_init hands to the
+     * allocator, so a table "validated" there can be overwritten afterwards. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x3000u, 0x10u), 0,
+                   "non-ACPI class");
+
+    /* A zero-length extent proves nothing and must not be read as contained. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x1000u, 0u), 0,
+                   "zero-len extent");
+
+    /* Missing evidence, not bad evidence: a truncated or absent map earns the
+     * benefit of the doubt, or sleep support would drop on the machines with
+     * the most descriptors. Both branches asserted so neither can regress into
+     * the refusing direction unnoticed. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 1, 0x9000u, 0x10u), 1,
+                   "trunc admits");
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 0u, 0, 0x9000u, 0x10u), 1,
+                   "absent admits");
+
+    /* But missing evidence never overrides evidence we DO have. A table whose
+     * header sits at the end of the ACPI descriptor and whose declared length
+     * runs on into the adjacent region straddles a boundary the map describes,
+     * so it is refused even with the map marked truncated. Accepting it would
+     * checksum straight into that neighbour -- device-register reads when the
+     * neighbour is MMIO. */
+    map[1].base_addr = 0x2000;
+    map[1].uefi_memory_type = UEFI_MMAP_MMIO;
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 1, 0x1F00u, 0x200u), 0,
+                   "trunc crossing");
+    /* The header alone still fits, which is why a header-only check passes it
+     * and only the FULL extent test catches the forged length. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 1, 0x1F00u, 0x24u), 1,
+                   "header alone fits");
+
+    /* -- A checksum that only balances PAST the declared end -- */
+
+    /* 38 bytes whose sum is zero, but a declared length of 37. The validator
+     * checksums over exactly `length`, so the 38th byte is not in the sum and
+     * the table is refused. Accepting it is the bug this shape exists to
+     * catch: the walk would have had to read past the declared end to make
+     * the checksum balance. */
+    for (i = 0; i < sizeof(buf); i++)
+        buf[i] = 0;
+    buf[0] = 'D'; buf[1] = 'S'; buf[2] = 'D'; buf[3] = 'T';
+    buf[4] = 37;                                  /* declared length */
+    buf[37] = 0x5A;                               /* one byte past it */
+    for (i = 0; i < 38u; i++)
+        sum = (uint8_t)(sum + buf[i]);
+    buf[9] = (uint8_t)(0u - sum);                 /* balances over 38, not 37 */
+    TEST_ASSERT(acpi_table_valid_test(buf, "DSDT") == 0,
+                "checksum past end");
+
+    /* Control: the SAME image balanced over its declared 37 bytes IS accepted,
+     * so the refusal above is about the extent and not about the fixture. */
+    buf[37] = 0;
+    sum = 0;
+    buf[9] = 0;
+    for (i = 0; i < 37u; i++)
+        sum = (uint8_t)(sum + buf[i]);
+    buf[9] = (uint8_t)(0u - sum);
+    TEST_ASSERT(acpi_table_valid_test(buf, "DSDT") == 1,
+                "control: balances");
 }
 
 /* ---- Sleep-entry refusals ---- */
@@ -806,6 +938,8 @@ static void test_acpi_s0ix_wrapper_matches_pure(void)
 
 void test_register_acpi_power(void)
 {
+    test_suite_register_cat("ACPI: discovery extent guard",
+                            test_acpi_discovery_extent_guard, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: button in-range action preserved",
                             test_acpi_btn_resolve_in_range_preserved, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: button absent value uses default",

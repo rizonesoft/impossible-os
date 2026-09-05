@@ -389,6 +389,15 @@ int acpi_parse_sleep_type_test(const void *table, char state_digit,
                                uint16_t *out_typa, uint16_t *out_typb);
 int acpi_table_valid_test(const void *table, const char *sig);
 
+/* Test-only: the entry count a root table (RSDT/XSDT) declares, and the
+ * memory-map containment policy over a caller-supplied descriptor array.
+ * Discovery reads firmware memory before anything else can reject it, so both
+ * rules are exercised here against synthetic inputs rather than live firmware.
+ * `map` points at an array of `struct boot_mmap_entry`. */
+uint32_t acpi_root_entry_count_test(const void *root, uint32_t entry_size);
+int acpi_extent_in_map_test(const void *map, uint32_t count, int truncated,
+                            uint64_t phys, uint64_t len);
+
 
 /* Power off the machine via ACPI S5 sleep state.
  * Falls back to QEMU-specific port if FADT is unavailable.
