@@ -1,6 +1,6 @@
 {
-  "total_suites": 3423,
-  "total_assertions": 15290,
+  "total_suites": 3425,
+  "total_assertions": 15306,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -50,7 +50,7 @@
     {"file": "test_heap.c", "suites": 16, "assertions": 42},
     {"file": "test_hibernate_image.c", "suites": 22, "assertions": 191},
     {"file": "test_idt.c", "suites": 4, "assertions": 21},
-    {"file": "test_ipc.c", "suites": 5, "assertions": 12},
+    {"file": "test_ipc.c", "suites": 7, "assertions": 28},
     {"file": "test_irq_timer.c", "suites": 21, "assertions": 83},
     {"file": "test_ixfs.c", "suites": 15, "assertions": 25},
     {"file": "test_ixfs_fsck.c", "suites": 26, "assertions": 34},

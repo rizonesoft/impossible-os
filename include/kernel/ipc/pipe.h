@@ -63,8 +63,27 @@ int32_t pipe_read(int pipe_id, void *buf, uint32_t len);
  * When both ends are closed, the pipe is freed. */
 void pipe_close(int pipe_id, int end);
 
-/* Initialize the pipe subsystem. Safe to call multiple times (idempotent).
- * Returns BOOT_OK on success. Never fails in the current implementation
- * because all state is a static array; the boot_result_t return exists
- * so the init sequencing infrastructure can call it uniformly. */
+/* Initialize the pipe subsystem. Safe to call multiple times (idempotent),
+ * and a repeat call is a NO-OP that reports the state it found -- it does NOT
+ * reset live pipes, which the pre-TODO-33-s15 static-array version silently
+ * did. Returns BOOT_OK once the pool is usable, or BOOT_DEGRADED if the pool
+ * could not be allocated (or another CPU is still allocating it). The pool is
+ * frame-backed via pmm_alloc_pages_hhdm, so this CAN fail; boot_desktop.c
+ * routes BOOT_DEGRADED into the degraded-subsystem path rather than halting. */
 boot_result_t pipe_init(void);
+
+/* Is the pipe pool allocated and published? Every entry point above gates on
+ * this: over a frame-backed pool an un-initialized or degraded subsystem must
+ * refuse, where the old static array happened to return -1 off a zeroed
+ * in_use. A caller that ignores per-call return values can check up front
+ * instead of reporting a false success. */
+int pipe_ready(void);
+
+#ifdef KERNEL_TESTS
+/* Test-only: free the pool and reset to uninitialized so a test can drive
+ * pipe_init()'s OOM path via pmm_alloc_fail_next(). Never called outside
+ * KERNEL_TESTS. REFUSES (returns 0, pool untouched) while any slot is still
+ * claimed, because a caller parked inside pipe_read() holds a pointer into
+ * the frames this would free. Returns 1 when the pool was reclaimed. */
+int pipe_test_reset_for_fault_injection(void);
+#endif
