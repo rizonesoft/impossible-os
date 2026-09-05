@@ -38,19 +38,20 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                        | Depends On             | Status |
-| --- | :---: | ---------------------------------- | ---------------------- | :----: |
-| 💎  |   1   | Boot certification matrix schema   | GAP-ANALYSIS           |  [x]   |
-| 💎  |   2   | VM automation suite                | §1                     |  [x]   |
-| 💎  |   3   | Storage/media boot suite           | §1, T16, T17, T06      |  [/]   |
-| 💎  |   4   | Security boot suite                | §1, T02, T13, T12      |  [/]   |
-| 💎  |   5   | Recovery and rollback suite        | §1, T21, T22, T23, T26 |  [/]   |
-| 💎  |   6   | Network boot suite                 | §1, T25                |  [/]   |
-| 💎  |   7   | Bare-metal lab inventory           | §1                     |  [x]   |
-| ⭐  |   8   | Boot support bundle collector      | §2-§7, TODO-24         |  [/]   |
-| ⭐  |   9   | Release gate and dashboard         | §1-§8                  |  [/]   |
-| 💎  |  10   | Certification docs                 | §1-§9                  |  [/]   |
-| 💎  |  11   | Firmware sanity certification gate | §1, T04 §2, §8         |  [/]   |
+| ⭐  | Order | Deliverable                                        | Depends On             | Status |
+| --- | :---: | -------------------------------------------------- | ---------------------- | :----: |
+| 💎  |   1   | Boot certification matrix schema                   | GAP-ANALYSIS           |  [x]   |
+| 💎  |   2   | VM automation suite                                | §1                     |  [x]   |
+| 💎  |   3   | Storage/media boot suite                           | §1, T16, T17, T06      |  [/]   |
+| 💎  |   4   | Security boot suite                                | §1, T02, T13, T12      |  [/]   |
+| 💎  |   5   | Recovery and rollback suite                        | §1, T21, T22, T23, T26 |  [/]   |
+| 💎  |   6   | Network boot suite                                 | §1, T25                |  [/]   |
+| 💎  |   7   | Bare-metal lab inventory                           | §1                     |  [x]   |
+| ⭐  |   8   | Boot support bundle collector                      | §2-§7, TODO-24         |  [/]   |
+| ⭐  |   9   | Release gate and dashboard                         | §1-§8                  |  [/]   |
+| 💎  |  10   | Certification docs                                 | §1-§9                  |  [/]   |
+| 💎  |  11   | Firmware sanity certification gate                 | §1, T04 §2, §8         |  [/]   |
+| ⭐  |  12   | Error-screen pixel oracle (screendump + QR decode) | §2, T03 §23            |  [ ]   |
 
 ## 1. Boot Certification Matrix Schema
 
@@ -251,6 +252,29 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 > **Deferred:** [M] Firmware-sanity gate consumes TODO-04 `firmware-tables.json` (producer = TODO-04 §2/§8) + the §9 release-gate pattern + the §8 support bundle for report capture; the producer artifact + §8/§9 are not yet shipped this pass. TODO-04 §9 Firmware Quirk Database is `[x]`, but the `firmware-tables.json` decoder/report it needs is TODO-04 §2/§8 (still open). -> XREF: 01-boot-platform/TODO-04-firmware-table-platform-inventory.md §2/§8 (firmware-tables.json producer); 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §9 (release-gate consumer).
 
 ---
+
+## 12. Error-Screen Pixel Oracle -- Assert What Was Drawn, Not What the Loader Says It Drew
+
+> **Spawned-by:** root
+> **User impact:** a bootloader error screen can report a successful render on serial and put nothing legible on the panel -- a renderer drawing to the wrong offset, a QR the fill erased, a field cut off mid-instruction. The user in front of the machine sees a blank or truncated screen while every log and every gate reads green.
+
+`01-boot-platform/TODO-03-bootloader-error-recovery.md` §23 built the three-tier error-screen renderer and made it report what it drew: the tier it rendered, whether the recovery QR was painted, and whether any field was truncated. Those reports are derived from the draw calls' own return values, so they catch a skipped render, a missing QR and a truncated field. They cannot catch a renderer that draws correctly-shaped output to the wrong place, and they are the ONLY assertion the smoke legs make, because QEMU runs `-display none` with serial-only capture. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §23 (item: "Assert the rendered PIXELS and the remaining degraded paths, not just the bootloader's own reports").
+
+This file owns it rather than TODO-03: §2 already captures `screen-NNN-*.ppm` through HMP `screendump` (`:83`), so the mechanism exists here and the missing piece is an oracle over those frames. Putting it in the error-recovery TODO would file a boot-validation capability in the wrong domain and split its history.
+
+- [ ] Add a screendump oracle to the VM automation suite that decodes a captured `.ppm` and asserts on its CONTENT, not just that a file appeared.
+  - Minimum useful assertions: the frame is not uniformly one colour (a fill with no text), a glyph-shaped region exists in the expected band, and the QR region decodes to the recovery URL the error code implies.
+  - A QR decode is the strongest single check available: it proves pixels reached the framebuffer at the right scale and position, which is exactly what the serial report cannot establish.
+- [ ] Wire it to the three degraded paths no fixture reaches today, each of which needs boot-time fault injection rather than a resolution override.
+  - Post-EBS fatal rendering: `boot_fatal` after `ExitBootServices`, where ConOut is unavailable and only framebuffer writes remain.
+  - The compact anti-rollback refusal: needs an `IPOSRequiredSecVersion` NVRAM variable set above the shipped image's security version.
+  - The pool-exhaustion store notice: needs `AllocatePool` to fail during policy invocation.
+- [ ] Assert the low-resolution tiers against captured frames, not only against the loader's `tier=` and `rendered=` lines.
+  - The compact tier's floor is 480x256 and its text rectangle is reserved beside the QR; both are geometry the serial line cannot confirm.
+- [ ] Commit: `"test: assert boot error screens by pixels, not by serial self-report"`
+
+**Test checkpoint:** a deliberately-broken renderer (drawing at the wrong y, or filling after the QR) fails the new oracle while the existing serial assertions still pass -- which is the whole point of adding it.
+
 
 ## OS Comparison
 

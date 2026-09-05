@@ -425,18 +425,28 @@ static void test_cause_cap_never_underflows_or_reaches_zero(void)
 
 static void test_real_diagnosis_fits_at_the_compact_floor(void)
 {
-    /* The message round 7 found truncated, at the mode it truncated on. This
-     * composes the SHIPPED geometry: the text rectangle beside the QR at the
-     * 512x256 floor, the planner, and the cause allocation. Reverting any one
-     * of them fails here. */
+    /* The message an earlier round found truncated, at the ACTUAL floor. This
+     * composes the SHIPPED geometry: the text rectangle beside the QR at
+     * 480x256, the planner, and the cause allocation. Reverting any one of
+     * them fails here.
+     *
+     * It ran at the OLD 512-wide floor until that floor moved to 480, which
+     * meant it exercised a budget the floor no longer has -- admission at 480
+     * was proved
+     * by the tier tests while nothing composed the real diagnosis against the
+     * 280 px budget that admission actually gets. */
     const char *cause =
         "The primary and backup GPT are not both valid-and-agreeing on "
         "the A/B metadata partition (a corrupt copy or a primary/backup "
         "disagreement) -- cannot trust slot selection. Reflash or boot "
         "recovery media.";
     const unsigned int LH = BSOD_AA_BODY_LINE_H;
-    unsigned int right = bsod_compact_text_right(512u, 256u, 1, LH);
+    unsigned int right = bsod_compact_text_right(480u, 256u, 1, LH);
     unsigned int budget = right - 2u * BSOD_COMPACT_MARGIN;
+
+    /* Pin the budget itself: if the reservation changes, the row counts below
+     * would move with it and prove nothing. */
+    TEST_ASSERT_EQ(budget, 280u, "the 480x256 floor leaves a 280px text budget");
     unsigned int head_d = 0, code_d = 0, action_d = 0, cap, needed, drawn = 0;
 
     (void)bsod_aa_wrap_plan("Impossible OS could not start", bsod_aa_BODY,
@@ -452,8 +462,8 @@ static void test_real_diagnosis_fits_at_the_compact_floor(void)
     needed = bsod_aa_wrap_plan(cause, bsod_aa_BODY, budget,
                                WRAP_TEST_MAX_BYTES, cap, &drawn);
 
-    TEST_ASSERT_EQ(needed > 3u, 1,
-                   "this diagnosis genuinely needs more than the old fixed cap");
+    TEST_ASSERT_EQ(needed, 7u,
+                   "the diagnosis takes exactly 7 rows at the floor's budget");
     TEST_ASSERT_EQ(needed <= cap, 1,
                    "and the dynamic cap must render all of it, not truncate");
     TEST_ASSERT_EQ(drawn, needed, "every row it needs must be drawn");
@@ -461,6 +471,19 @@ static void test_real_diagnosis_fits_at_the_compact_floor(void)
     TEST_ASSERT_EQ(2u * BSOD_COMPACT_MARGIN +
                    (head_d + code_d + action_d + drawn) * LH <= 256u, 1,
                    "and the resulting stack must fit the screen it was sized for");
+
+    /* And at the panel size the floor was lowered to admit. */
+    {
+        unsigned int r2 = bsod_compact_text_right(480u, 272u, 1, LH);
+        unsigned int d2 = 0;
+        unsigned int n2 = bsod_aa_wrap_plan(cause, bsod_aa_BODY,
+                                            r2 - 2u * BSOD_COMPACT_MARGIN,
+                                            WRAP_TEST_MAX_BYTES, cap, &d2);
+        TEST_ASSERT_EQ(r2 - 2u * BSOD_COMPACT_MARGIN, 280u,
+                       "a 480x272 panel gets the same 280px budget");
+        TEST_ASSERT_EQ(n2, 7u, "and the same 7 rows");
+        TEST_ASSERT_EQ(d2, n2, "all of which are drawn");
+    }
 }
 
 static void test_wrap_plan_exact_counts_across_the_byte_bound(void)
@@ -566,7 +589,7 @@ static void test_compact_text_right_reserves_only_when_they_overlap(void)
     unsigned int qr = bsod_qr_block_extent(512u);
     unsigned int reserve = qr + BSOD_QR_BLOCK_MARGIN + BSOD_COMPACT_QR_GAP;
 
-    /* 512x256 is the compact floor and the case the smoke legs cannot reach:
+    /* 480x256 is the compact floor and the case the smoke legs cannot reach:
      * the QR starts above the text band, so the text must stop short of it.
      * Returning the full width here would let text run into the QR while
      * every tier and QR-fit test stayed green. */
@@ -720,7 +743,7 @@ void test_register_error_screen_wrap(void)
         test_cause_cap_absorbs_the_slack, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen compact: cause cap never underflows",
         test_cause_cap_never_underflows_or_reaches_zero, TEST_CAT_BOOT);
-    test_suite_register_cat("error-screen compact: real diagnosis fits at 512x256",
+    test_suite_register_cat("error-screen compact: real diagnosis fits at the 480x256 floor",
         test_real_diagnosis_fits_at_the_compact_floor, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen compact: text right reserves only on overlap",
         test_compact_text_right_reserves_only_when_they_overlap, TEST_CAT_BOOT);

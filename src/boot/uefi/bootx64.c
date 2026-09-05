@@ -1709,9 +1709,7 @@ static int qr_render_error_url(UINT32 err_code)
     qr_place_data(matrix, used, all_cw, QR_TOTAL_CW);
     qr_apply_mask_and_format(matrix);
 
-    UINT32 mod = 4;
-    if (gFbWidth >= 1920) mod = 6;
-    if (gFbWidth >= 2560) mod = 8;
+    UINT32 mod = (UINT32)bsod_qr_module_scale((unsigned int)gFbWidth);
 
     UINT32 qr_total = qr_error_block_extent();
     UINT32 margin = QR_ERROR_BLOCK_MARGIN;
@@ -2163,9 +2161,7 @@ static int bsod_render_graphical(UINT32 err_code, const char *title,
         /* Same module scale as every other QR placement -- see
          * qr_error_block_extent(). mod is still needed locally because
          * qr_render_to_fb takes it. */
-        mod = 4;
-        if (gFbWidth >= 1920) mod = 6;
-        if (gFbWidth >= 2560) mod = 8;
+        mod = (UINT32)bsod_qr_module_scale((unsigned int)gFbWidth);
         qr_total = qr_error_block_extent();
 
         /* Reserve space below the QR for the URL caption.  The QR
@@ -2251,14 +2247,18 @@ static int bsod_render_graphical(UINT32 err_code, const char *title,
  *   detail text and the QR rectangle overlap. The band below 800x600 is what
  *   the compact tier renders.
  *
- *   COMPACT needs 512x256. Its four fields draw from an 11-row pool
- *   (2 heading + 1 code + 5 cause + 3 action nominal) and the cause takes
+ *   COMPACT needs 480x256. Its four fields draw from an 11-row pool
+ *   (2 heading + 2 code + 4 cause + 3 action nominal) and the cause takes
  *   whatever the other three leave. MEASURED at that floor, where the reserved
- *   QR leaves a 312 px budget: the worst real content is the A/B GPT
- *   diagnosis, taking 6 of the cause's 8 allotted rows, for 9 rows and 212 px
- *   of the 256 available. 400x200 was measured and REJECTED -- its 200 px
- *   budget wraps that diagnosis to 12 rows against a cap of 6 and the stack
- *   reaches 252 px on a 200 px screen, overflowing the display itself.
+ *   QR leaves a 280 px budget: the A/B GPT diagnosis takes 7 rows there and
+ *   the longest detail in the tree takes 8, against the 8 the cause is
+ *   allotted on the fatal path -- 11 rows and 252 px of the 256 at the worst. The width floor is 480 rather than 512
+ *   because a 480x272 kiosk panel clears the height and fits the QR, and
+ *   stopping at 512 would leave that band in the same no-words hole this
+ *   section exists to close. 400x200 was measured and
+ *   REJECTED -- its 200 px budget wraps the diagnosis to 12 rows against a cap
+ *   of 6 and the stack reaches 252 px on a 200 px screen, overflowing the
+ *   display itself.
  *
  * The QR is deliberately NOT gated here. qr_render_error_url() applies its
  * own fit check and already paints at 640x480, so a machine below every text
@@ -2302,7 +2302,8 @@ static UINT32 bsod_compact_text_right_now(int reserve_qr)
  *
  * Content is deliberately short and self-contained rather than the S18
  * strings: the full renderer's title alone is 572 px, which does not fit the
- * screens this function exists for. Returns the number of text rows drawn. */
+ * screens this function exists for. Returns NON-ZERO when any field needed
+ * more rows than its budget drew -- the truncation flag, not a row count. */
 static int bsod_render_compact(UINT8 bg_r, UINT8 bg_g, UINT8 bg_b,
                                int reserve_qr,
                                const char *heading, const char *code_line,
@@ -2358,11 +2359,21 @@ static int bsod_render_compact(UINT8 bg_r, UINT8 bg_g, UINT8 bg_b,
                          0xF0, 0xF0, 0xF0, bg_r, bg_g, bg_b, &need)
          * BSOD_AA_BODY_LINE_H;
     if (need > cause_cap) truncated = 1;
-    (void)bsod_aa_wrapped(x, y, action, bsod_aa_BODY, bsod_aa_BODY_data,
-                          BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H, max_px,
-                          BSOD_COMPACT_ACTION_LINES,
-                          0xB2, 0xD8, 0xFF, bg_r, bg_g, bg_b, &need);
+    y += bsod_aa_wrapped(x, y, action, bsod_aa_BODY, bsod_aa_BODY_data,
+                         BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H, max_px,
+                         BSOD_COMPACT_ACTION_LINES,
+                         0xB2, 0xD8, 0xFF, bg_r, bg_g, bg_b, &need)
+         * BSOD_AA_BODY_LINE_H;
     if (need > BSOD_COMPACT_ACTION_LINES) truncated = 1;
+
+    /* Tell the PERSON, not just the serial log. fit=truncated is read by the
+     * smoke oracle; the user in front of a small panel has no console and
+     * would otherwise read a cause that simply stops. Drawn only when there is
+     * a row left on the display, so the cue can never itself overflow. */
+    if (truncated && y + BSOD_AA_BODY_LINE_H + BSOD_COMPACT_MARGIN <= gFbHeight)
+        bsod_aa_string(x, y, "(message shortened)",
+                       bsod_aa_BODY, bsod_aa_BODY_data, BSOD_AA_BODY_ASCENT,
+                       0xFF, 0xC8, 0x64, bg_r, bg_g, bg_b);
 
     /* Reported on serial and asserted by the smoke oracle. A message edited
      * past its budget in a later change becomes a test failure here rather
@@ -8573,6 +8584,7 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
      * Services (used by bpp_persist_nvram_fault above) are too. */
     bsod_tier_t tier = bsod_render_tier();
     int truncated = 0;
+    int qr_drawn = 0;
     char vbuf[64];
     bpp_format_versions(vbuf, sizeof vbuf, shipped, required);
 
@@ -8615,6 +8627,8 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
          * (GOP backing memory survives ExitBootServices). */
         UINT32 bg = fb_pack_rgb(0x0A, 0x0A, 0x0A);
         bsod_fill_rect(0, 0, gFbWidth, gFbHeight, bg);
+        /* The full rollback screen has room for its own instructions and
+         * deliberately paints no QR; qr_drawn stays 0 and the report says so. */
         bsod_blit_icon_aa(gFbWidth / 2 - BSOD_ICON_W / 2, 30,
                           0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
 
@@ -8658,25 +8672,37 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
         }
     } else if (tier == BSOD_TIER_COMPACT) {
         /* S23: below the S18 layout floor this halt used to leave nothing on
-         * screen at all -- and unlike boot_fatal it has no QR fallback, so a
-         * 640x480 machine refused the boot in complete silence. The wording
+         * screen at all -- and HISTORICALLY it had no QR fallback either, so a
+         * 640x480 machine refused the boot in complete silence. Both are fixed
+         * now: this arm draws the compact screen and then the QR, and the arm
+         * below it draws the QR alone. The wording
          * stays rollback-specific: no "press any key", because this path
          * never returns. */
-        /* reserve_qr = 0: this path paints no QR at all. The wording is
-         * MEASURED against the 512x256 floor at the resulting 480px budget,
-         * where it occupies two of its three lines. */
-        truncated = bsod_render_compact(0x0A, 0x0A, 0x0A, 0,
+        /* reserve_qr = 1: this path DOES paint a QR now, immediately below. */
+        truncated = bsod_render_compact(0x0A, 0x0A, 0x0A, 1,
                             "Security-version downgrade refused",
                             vbuf,
                             "The installed kernel is older than the security "
                             "version this machine requires.",
                             "Boot a newer signed kernel, or clear "
                             "IPOSRequiredSecVersion, then power-cycle.");
+        qr_drawn = qr_render_error_url(BOOT_ERR_ROLLBACK_REFUSE);
+    } else if (gFramebuffer && gFbWidth > 0 && gFbHeight > 0) {
+        /* Below every text floor, or a pixel format we cannot pack. This arm
+         * is the one this section was filed over and did not originally get:
+         * without it a post-EBS machine under the compact floor refused the
+         * boot with NOTHING on screen -- the same complete silence the
+         * comment above describes as the old defect, just one notch lower.
+         * The QR writes palindromic black/white pixels and applies its own
+         * fit check, so it lands where no text can. */
+        qr_drawn = qr_render_error_url(BOOT_ERR_ROLLBACK_REFUSE);
     }
 
     serial_early_print("[BOOT] error-screen: rendered=");
     serial_early_print(bsod_tier_name(tier));
-    serial_early_print(" qr=no fit=");
+    serial_early_print(" qr=");
+    serial_early_print(qr_drawn ? "yes" : "no");
+    serial_early_print(" fit=");
     serial_early_print(truncated ? "truncated" : "ok");
     serial_early_print("\n");
 

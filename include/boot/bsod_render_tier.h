@@ -27,11 +27,20 @@
  *
  *   COMPACT is the S23 four-field screen (heading / error code / cause /
  *   action), drawing from an 11-row pool of wrapped 16px body lines --
- *   2 heading + 1 code + 5 cause + 3 action nominal, with the cause taking
- *   whatever the other three leave. MEASURED at the 512x256 floor, where the
- *   reserved QR leaves a 312 px budget: the worst real content is the A/B GPT
- *   diagnosis, taking 6 of the 8 rows the cause is allotted there, for 9 rows
- *   and 212 px of the 256 available.
+ *   2 heading + 2 code + 4 cause + 3 action nominal, with the cause taking
+ *   whatever the other three leave. MEASURED at the 480x256 floor, where the
+ *   reserved QR leaves a 280 px budget: the A/B GPT diagnosis takes 7 rows
+ *   there and the longest detail in the tree takes 8, against the 8 the cause
+ *   is allotted on the fatal path -- 11 rows and 252 px of the 256 available
+ *   at the worst. The anti-rollback screen is the tightest caller, because
+ *   its heading and version line each take two rows and leave the cause 4 for
+ *   a 3-row diagnosis.
+ *
+ *   The width floor is 480, not 512: a 480x272 panel -- a real kiosk and HMI
+ *   size -- clears the height and fits the QR, and gets the same 280 px budget
+ *   and the same 7-row diagnosis as the floor itself. Stopping at 512 would
+ *   have left that band in the no-words hole this section exists to close,
+ *   one notch below the modes it was filed for.
  *
  *   400x200 was measured and REJECTED. Under this allocation its 200 px budget
  *   wraps that diagnosis to 12 rows against a cap of 6, and the stack reaches
@@ -57,7 +66,7 @@ _Static_assert(sizeof(unsigned int) == 4, "bsod_render_tier.h assumes 32-bit uns
 
 #define BSOD_FULL_MIN_W     800u
 #define BSOD_FULL_MIN_H     600u
-#define BSOD_COMPACT_MIN_W  512u
+#define BSOD_COMPACT_MIN_W  480u
 #define BSOD_COMPACT_MIN_H  256u
 
 /* Pixel-format encoding shared with boot_info: 0=RGBX, 1=BGRX, 2=BitMask.
@@ -75,13 +84,24 @@ _Static_assert(sizeof(unsigned int) == 4, "bsod_render_tier.h assumes 32-bit uns
 #define BSOD_QR_MODULES       29u
 #define BSOD_QR_BLOCK_MARGIN  12u
 
-/* Pixel extent of the QR block (matrix plus quiet zone) at the module scale
- * this framebuffer width selects. */
+/* Module scale (pixels per QR module) for a framebuffer of this width.
+ *
+ * SOLE owner of the ladder. Both painters selected it locally and the extent
+ * helper kept its own copy, so three sites had to agree by hand: change one
+ * painter and the rectangle reserved for the QR no longer matches the QR drawn
+ * into it, with nothing to catch it -- the QR_SIZE static assert binds the
+ * module COUNT, not the scale. */
+static inline unsigned int bsod_qr_module_scale(unsigned int width)
+{
+    if (width >= 2560u) return 8u;
+    if (width >= 1920u) return 6u;
+    return 4u;
+}
+
+/* Pixel extent of the QR block (matrix plus quiet zone) at that scale. */
 static inline unsigned int bsod_qr_block_extent(unsigned int width)
 {
-    unsigned int mod = 4u;
-    if (width >= 1920u) mod = 6u;
-    if (width >= 2560u) mod = 8u;
+    unsigned int mod = bsod_qr_module_scale(width);
     return BSOD_QR_MODULES * mod + (mod * 4u) * 2u;
 }
 
@@ -146,22 +166,28 @@ static inline const char *bsod_tier_name(bsod_tier_t t)
  * rows, and takes the full width when they would not. That decision lived
  * inside the renderer against its framebuffer globals, so no test could reach
  * it: at 640x480 the QR starts well below the text band and the early return
- * is taken, and only a short screen such as the 512x256 floor exercises the
+ * is taken, and only a short screen such as the 480x256 floor exercises the
  * reservation at all. Returning the full width unconditionally would have kept
  * every test green while letting text run into the QR. */
 
 #define BSOD_COMPACT_HEAD_LINES    2u
-#define BSOD_COMPACT_CODE_LINES    1u
+/* TWO rows, not one: the anti-rollback screen puts "image=N required=M" in
+ * this field, and at the narrow budget a reserved QR leaves it wraps -- a
+ * one-row cap silently dropped the REQUIRED version, the only number that
+ * tells the operator what will actually boot. The row comes out of the
+ * cause's nominal share, so the pool and the band are unchanged and the cause
+ * still absorbs whatever the other fields do not use. */
+#define BSOD_COMPACT_CODE_LINES    2u
 /* The cause is the caller's own diagnosis and is the field worth spending
  * rows on, so its budget is the NOMINAL share and the renderer hands it
  * whatever the other three fields do not use. MEASURED against every
- * boot_fatal detail string in the tree at the 512x256 floor's 312-pixel
- * budget: the longest needs 7 rows, which the dynamic cap supplies when the
- * heading, code and action take their usual 4 between them. A fixed 3 dropped
+ * boot_fatal detail string in the tree at the 480x256 floor's 280-pixel
+ * budget: the longest needs 8 rows, which the dynamic cap supplies when the
+ * heading, code and action take their usual 3 between them on the fatal path. A fixed 3 dropped
  * the tail of real messages -- including the words "Reflash or boot recovery
  * media" from the A/B GPT failure -- while the fill erased the ConOut text
  * that had carried them. */
-#define BSOD_COMPACT_CAUSE_LINES   5u
+#define BSOD_COMPACT_CAUSE_LINES   4u
 #define BSOD_COMPACT_ACTION_LINES  3u
 #define BSOD_COMPACT_MAX_LINES  (BSOD_COMPACT_HEAD_LINES +  \
                                  BSOD_COMPACT_CODE_LINES +  \
@@ -208,7 +234,7 @@ static inline unsigned int bsod_compact_text_right(unsigned int width,
  * The cause carries the caller's own diagnosis and real fatal detail runs to
  * about 200 characters, so it gets every row the others leave rather than a
  * fixed share. A fixed three rows cut the tail off the longest messages at the
- * 512x256 floor -- including the words "Reflash or boot recovery media" -- and
+ * 480x256 floor -- including the words "Reflash or boot recovery media" -- and
  * the full-screen fill had already erased the console text that carried them.
  *
  * It lives here rather than inline in the renderer for the reason the rest of
@@ -238,7 +264,11 @@ static inline const char *bsod_compact_action(int qr_fits, const char *url)
 {
     if (qr_fits) return "Scan the QR code below for help.";
     if (url && *url) return url;
-    return "See the serial log for the full diagnosis.";
+    /* Last resort. NOT "see the serial log": the population this tier serves
+     * is someone in front of a small panel who most likely has no console
+     * attached, and neither Windows nor GRUB ever makes a debug log a user's
+     * only next step. Give them something they can act on unaided. */
+    return "Power-cycle; if it repeats, reinstall from recovery media.";
 }
 
 #endif /* BSOD_RENDER_TIER_H */

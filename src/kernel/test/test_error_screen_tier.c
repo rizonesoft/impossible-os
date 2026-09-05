@@ -105,7 +105,7 @@ static void test_one_pixel_below_full_height_is_compact(void)
                    "just under the full height must fall to compact, not none");
 }
 
-/* ---- COMPACT boundary: 512x256 ---- */
+/* ---- COMPACT boundary: 480x256 ---- */
 
 static void test_compact_floor_exact(void)
 {
@@ -144,15 +144,18 @@ static void test_floors_are_the_literal_measured_values(void)
      * screen and a 799-wide one does not. */
     TEST_ASSERT_EQ(tier_at(800u, 600u), BSOD_TIER_FULL, "800x600 is full");
     TEST_ASSERT_EQ(tier_at(799u, 600u), BSOD_TIER_COMPACT, "799x600 is compact");
-    TEST_ASSERT_EQ(tier_at(512u, 256u), BSOD_TIER_COMPACT, "512x256 is compact");
-    TEST_ASSERT_EQ(tier_at(511u, 256u), BSOD_TIER_NONE, "511x256 is none");
+    TEST_ASSERT_EQ(tier_at(480u, 256u), BSOD_TIER_COMPACT, "480x256 is compact");
+    TEST_ASSERT_EQ(tier_at(479u, 256u), BSOD_TIER_NONE, "479x256 is none");
+    /* The band the width floor was lowered for: a real kiosk/HMI panel. */
+    TEST_ASSERT_EQ(tier_at(480u, 272u), BSOD_TIER_COMPACT,
+                   "a 480x272 panel must get words, not just a QR");
     /* The HEIGHT floors need their own literals. Every height-boundary test
      * above derives its input from the constant, so lowering BSOD_FULL_MIN_H
      * to 599 or BSOD_COMPACT_MIN_H to 255 moved those tests with it and left
      * the whole suite green -- admission below the measured height escaping
      * the coverage that claims to pin it. */
     TEST_ASSERT_EQ(tier_at(800u, 599u), BSOD_TIER_COMPACT, "800x599 is compact");
-    TEST_ASSERT_EQ(tier_at(512u, 255u), BSOD_TIER_NONE, "512x255 is none");
+    TEST_ASSERT_EQ(tier_at(480u, 255u), BSOD_TIER_NONE, "480x255 is none");
 }
 
 /* ---- The modes this section exists for ---- */
@@ -263,11 +266,13 @@ static void test_compact_action_follows_the_qr_not_the_tier(void)
                    "with a QR on screen, point at the QR");
     TEST_ASSERT_EQ(action_is(bsod_compact_action(0, url), url), 1,
                    "without one, give the user the URL to type");
+    /* The last resort must be something the user can DO. Routing someone at a
+     * small panel to a serial log they do not have is not an instruction. */
     TEST_ASSERT_EQ(action_is(bsod_compact_action(0, ""),
-                             "See the serial log for the full diagnosis."), 1,
-                   "and with no URL either, say where the diagnosis is");
+                             "Power-cycle; if it repeats, reinstall from recovery media."), 1,
+                   "with no QR and no URL, give an action, not a log pointer");
     TEST_ASSERT_EQ(action_is(bsod_compact_action(0, (const char *)0),
-                             "See the serial log for the full diagnosis."), 1,
+                             "Power-cycle; if it repeats, reinstall from recovery media."), 1,
                    "a NULL URL buffer must not be dereferenced");
     /* Bound to the real geometry: the mode that motivated the branch. */
     TEST_ASSERT_EQ(action_is(bsod_compact_action(
