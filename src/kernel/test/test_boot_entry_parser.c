@@ -74,12 +74,13 @@ static void test_parser_valid_minimal(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "valid minimal store accepted");
-    TEST_ASSERT_EQ(r.entry_count, 1u, "one entry parsed");
-    TEST_ASSERT_EQ(r.entries[0].kind, BOOT_ENTRY_KIND_SPLIT, "kind=split parsed");
-    TEST_ASSERT_EQ(r.entries[0].flags & BOOT_ENTRY_FLAG_ACTIVE, BOOT_ENTRY_FLAG_ACTIVE,
+    TEST_ASSERT_EQ(r->entry_count, 1u, "one entry parsed");
+    TEST_ASSERT_EQ(r->entries[0].kind, BOOT_ENTRY_KIND_SPLIT, "kind=split parsed");
+    TEST_ASSERT_EQ(r->entries[0].flags & BOOT_ENTRY_FLAG_ACTIVE, BOOT_ENTRY_FLAG_ACTIVE,
                    "active flag set");
 }
 
@@ -88,10 +89,35 @@ static void test_parser_bad_schema_version(void)
     static const char JSON[] =
         "{\"schema_version\":99,\"crc32\":\"0x00000000\",\"entries\":[]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION,
                    "schema_version != 1 rejected");
+}
+
+/* The 26 cases above hand boot_entries_parse a scratch buffer instead of the
+ * stack local they used to declare, so nothing zeroes the output before the
+ * call. That is safe ONLY because the parser clears the whole result as its
+ * first act, ahead of any input validation (boot_entries_parser.c: zero_buf on
+ * entry). Prove that contract rather than assuming it: poison the buffer, then
+ * take an EARLY-REJECT path, where a parser that zeroed late (or only on the
+ * success path) would leave the poison visible in entry_count. */
+static void test_parser_zeroes_output_before_validation(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":99,\"crc32\":\"0x00000000\",\"entries\":[]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+
+    memset(r, 0xAA, sizeof(boot_entries_parse_result_t));
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION,
+                   "poisoned output still rejects schema_version 99");
+    TEST_ASSERT_EQ(r->entry_count, 0u,
+                   "parser zeroed entry_count before validating, not after");
 }
 
 static void test_parser_no_entries(void)
@@ -99,8 +125,9 @@ static void test_parser_no_entries(void)
     static const char JSON[] =
         "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":[]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_NO_ENTRIES, "empty entries rejected");
 }
 
@@ -117,8 +144,9 @@ static void test_parser_missing_payload(void)
         "\"policy_tags\":[]}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_MISSING_FIELD, "missing payload rejected");
 }
 
@@ -137,8 +165,9 @@ static void test_parser_bad_crc(void)
     unsigned int n = 0;
     while (JSON[n]) { s_fixture_buf[n] = (unsigned char)JSON[n]; n++; }
     s_fixture_buf_size = n;
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_CRC_MISMATCH, "wrong CRC rejected");
 }
 
@@ -155,12 +184,13 @@ static void test_parser_unknown_string_kind_skipped(void)
         "\"policy_tags\":[],\"payload\":{}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
                    "unknown string kind store accepted overall");
-    TEST_ASSERT_EQ(r.entry_count, 0u, "skipped entry not in entries[]");
-    TEST_ASSERT_EQ(r.skipped_count, 1u, "skipped count incremented");
+    TEST_ASSERT_EQ(r->entry_count, 0u, "skipped entry not in entries[]");
+    TEST_ASSERT_EQ(r->skipped_count, 1u, "skipped count incremented");
 }
 
 static void test_parser_stable_numeric_unknown_rejected(void)
@@ -176,8 +206,9 @@ static void test_parser_stable_numeric_unknown_rejected(void)
         "\"policy_tags\":[],\"payload\":{}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE,
                    "stable-range numeric kind unknown rejected");
 }
@@ -197,8 +228,9 @@ static void test_parser_duplicate_id(void)
         "\"policy_tags\":[],\"payload\":{}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_ID, "duplicate id rejected");
 }
 
@@ -214,8 +246,9 @@ static void test_parser_id_not_kebab(void)
         "\"policy_tags\":[],\"payload\":{}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ID, "non-kebab id rejected");
 }
 
@@ -233,8 +266,9 @@ static void test_parser_malformed_payload_rejected(void)
         "\"policy_tags\":[],\"payload\":{\"k\":}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT(rc != BOOT_ENTRIES_OK, "malformed payload value rejected");
 }
 
@@ -252,12 +286,13 @@ static void test_parser_empty_machine_id_accepted(void)
         "\"machine_id\":\"\","
         "\"policy_tags\":[],\"payload\":{}}]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
                    "empty machine_id accepted as wildcard");
-    TEST_ASSERT_EQ(r.entry_count, 1u, "one entry retained");
-    TEST_ASSERT(r.entries[0].machine_id[0] == '\0',
+    TEST_ASSERT_EQ(r->entry_count, 1u, "one entry retained");
+    TEST_ASSERT(r->entries[0].machine_id[0] == '\0',
                 "empty machine_id preserved as wildcard sentinel");
 }
 
@@ -279,12 +314,13 @@ static void test_parser_chainload_passes_under_secure_boot(void)
         "\"policy_tags\":[],\"payload\":{}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 1, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 1, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
                    "chainload entry retained under Secure Boot for policy filter");
-    TEST_ASSERT_EQ(r.entry_count, 1u, "one entry retained");
-    TEST_ASSERT_EQ(r.entries[0].kind, BOOT_ENTRY_KIND_CHAINLOAD,
+    TEST_ASSERT_EQ(r->entry_count, 1u, "one entry retained");
+    TEST_ASSERT_EQ(r->entries[0].kind, BOOT_ENTRY_KIND_CHAINLOAD,
                    "kind=chainload preserved");
 }
 
@@ -304,8 +340,9 @@ static void test_parser_depth_bomb(void)
     for (i = 0; i < BOOT_ENTRIES_MAX_PARSE_DEPTH + 2u; i++) buf[p++] = ']';
     for (i = 0; suffix[i]; i++) buf[p++] = (unsigned char)suffix[i];
     patch_fixture_crc(buf, p);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(buf, p, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(buf, p, 0, NULL_PTR, r);
     TEST_ASSERT(rc != BOOT_ENTRIES_OK, "depth-bomb rejected without crash");
 }
 
@@ -318,8 +355,9 @@ static void test_parser_trailing_garbage_rejected(void)
         "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
         "\"policy_tags\":[],\"payload\":{}}]}xyz";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
                    "trailing garbage after root object rejected");
 }
@@ -333,8 +371,9 @@ static void test_parser_bad_string_escape_rejected(void)
         "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
         "\"policy_tags\":[],\"payload\":{}}]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT(rc != BOOT_ENTRIES_OK, "bad string escape \\q rejected");
 }
 
@@ -346,8 +385,9 @@ static void test_parser_flags_trailing_comma_rejected(void)
         "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
         "\"policy_tags\":[],\"payload\":{}}]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_FLAGS,
                    "trailing comma in flags rejected");
 }
@@ -362,8 +402,9 @@ static void test_parser_entry_object_trailing_comma_rejected(void)
         "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
         "\"policy_tags\":[],\"payload\":{},}]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
                    "trailing comma in entry object rejected");
 }
@@ -377,8 +418,9 @@ static void test_parser_top_level_trailing_comma_rejected(void)
         "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
         "\"policy_tags\":[],\"payload\":{}}],}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
                    "trailing comma in top-level object rejected");
 }
@@ -488,12 +530,13 @@ static void test_parser_health_subset_valid(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "valid health_check_subset accepted");
-    TEST_ASSERT_EQ(r.entries[0].health_check_subset_count, 2u,
+    TEST_ASSERT_EQ(r->entries[0].health_check_subset_count, 2u,
                    "count=2 retained");
-    TEST_ASSERT_EQ((unsigned int)r.entries[0].health_check_subset[0][0], (unsigned int)'d',
+    TEST_ASSERT_EQ((unsigned int)r->entries[0].health_check_subset[0][0], (unsigned int)'d',
                    "first name first byte is 'd'");
 }
 
@@ -512,10 +555,11 @@ static void test_parser_health_subset_absent_accepted(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "absent subset accepted");
-    TEST_ASSERT_EQ(r.entries[0].health_check_subset_count, 0u,
+    TEST_ASSERT_EQ(r->entries[0].health_check_subset_count, 0u,
                    "absent => count=0");
 }
 
@@ -531,8 +575,9 @@ static void test_parser_health_subset_rejects_non_array(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                    "non-array subset rejected");
 }
@@ -550,8 +595,9 @@ static void test_parser_health_subset_rejects_overflow(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                    "subset count > 8 rejected");
 }
@@ -568,8 +614,9 @@ static void test_parser_health_subset_rejects_empty_name(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                    "empty subset name rejected");
 }
@@ -587,8 +634,9 @@ static void test_parser_health_subset_rejects_oversize_name(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                    "subset name longer than 23 chars rejected");
 }
@@ -608,8 +656,9 @@ static void test_parser_health_subset_rejects_backslash_in_name(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                    "control char in subset name rejected");
 }
@@ -626,8 +675,9 @@ static void test_parser_health_subset_rejects_trailing_comma(void)
         "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
         "]}";
     unsigned int n = load_fixture(JSON);
-    boot_entries_parse_result_t r;
-    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                    "subset trailing comma rejected");
 }
@@ -640,6 +690,8 @@ void test_register_boot_entry_parser(void)
                             test_parser_valid_minimal, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: bad schema_version rejected",
                             test_parser_bad_schema_version, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: output zeroed before validation",
+                            test_parser_zeroes_output_before_validation, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: empty entries rejected",
                             test_parser_no_entries, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: missing payload rejected",

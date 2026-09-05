@@ -2449,17 +2449,24 @@ static void test_env_parse_block_unicode(void)
     env_free(&s_env_fixture);
 }
 
-/* 1 MiB block-size DoS cap: repeated large sets eventually return NOSPACE. */
-static char s_cap_val[8192];
+/* 1 MiB block-size DoS cap: repeated large sets eventually return NOSPACE.
+ * The ~8 KiB value was a file-scope static purely to stay out of the
+ * BSS-collision gate's way; it is a per-case scratch allocation now, so the
+ * bytes leave the kernel image entirely. The capacity is an explicit constant
+ * because sizeof() on the scratch pointer would collapse to 8. */
+#define ENV_CAP_VAL_SZ  8192u
 static void test_env_block_size_cap(void)
 {
     char name[16];
     uint32_t i;
     int hit_cap = 0;
+    TEST_SCRATCH_KBUF(cap_buf, ENV_CAP_VAL_SZ);
+    char *const s_cap_val = (char *)cap_buf;
+
     env_fixture_reset();
-    for (i = 0; i < sizeof(s_cap_val) - 1u; i++)
+    for (i = 0; i < ENV_CAP_VAL_SZ - 1u; i++)
         s_cap_val[i] = 'x';
-    s_cap_val[sizeof(s_cap_val) - 1u] = '\0';   /* ~8 KiB value */
+    s_cap_val[ENV_CAP_VAL_SZ - 1u] = '\0';   /* ~8 KiB value */
     for (i = 0; i < ENV_MAX_ENTRIES; i++) {
         int rc;
         name[0] = 'V';

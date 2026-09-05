@@ -26,6 +26,7 @@
 #include "kernel/sched/irql.h"  /* KeGetCurrentIrql / KeRaiseIrql for IRQL recovery test */
 #include "kernel/mm/heap.h"     /* heap_get_used for delta checks */
 #include "kernel/mm/pmm.h"      /* pmm_get_used_frames for pmm delta checks */
+#include "kernel/mm/memmap.h"   /* mm_virt_in_hhdm / mm_hhdm_to_phys: PMM scratch is HHDM-reached */
 #include "kernel/klog.h"        /* klog_get_level / klog_set_level for suppress tests */
 #include "libc/string.h"        /* strcmp for the [COUNT] record shape assertions */
 
@@ -324,7 +325,6 @@ static void test_harness_scratch_pmm_route(void)
     g_scratch_pmm_pre  = pmm_get_used_frames();
 
     TEST_SCRATCH_KBUF(big, 65536);
-    (void)big;
 
     g_scratch_pmm_during_big = pmm_get_used_frames();
 
@@ -332,6 +332,29 @@ static void test_harness_scratch_pmm_route(void)
                    "64 KiB scratch grew pmm_get_used_frames by exactly 16 pages");
     TEST_ASSERT_EQ(heap_get_used(), g_scratch_heap_pre,
                    "64 KiB scratch did NOT touch heap (PMM route)");
+
+    /* The PMM route is reached through the direct map, not as a raw
+     * physical-as-pointer cast, so the buffer must be a real HHDM address
+     * and must invert back to a page-aligned physical base. Without this
+     * the identity map alone would satisfy every other assertion here,
+     * which is exactly the assumption the identity-map teardown retires. */
+    TEST_ASSERT(mm_virt_in_hhdm((uint64_t)(uintptr_t)big),
+                "64 KiB scratch pointer lies inside the HHDM window");
+    uint64_t big_phys = mm_hhdm_to_phys(big);
+    TEST_ASSERT(big_phys != 0,
+                "PMM scratch pointer inverts to a nonzero physical base");
+    TEST_ASSERT_EQ(big_phys % PMM_FRAME_SIZE, 0u,
+                   "PMM scratch physical base is page-aligned");
+
+    /* First and last byte are genuinely mapped: a run that started inside
+     * the window and ended past its top would pass the base check above
+     * and fault only on the tail. */
+    ((volatile uint8_t *)big)[0]         = 0x5Au;
+    ((volatile uint8_t *)big)[65536 - 1] = 0xA5u;
+    TEST_ASSERT_EQ(((volatile uint8_t *)big)[0], 0x5Au,
+                   "first byte of the PMM scratch run reads back");
+    TEST_ASSERT_EQ(((volatile uint8_t *)big)[65536 - 1], 0xA5u,
+                   "last byte of the PMM scratch run reads back");
 }
 
 static void test_harness_scratch_pmm_verify(void)
@@ -340,6 +363,162 @@ static void test_harness_scratch_pmm_verify(void)
                    "heap unchanged across PMM scratch suite");
     TEST_ASSERT_EQ(pmm_get_used_frames(), g_scratch_pmm_pre,
                    "pmm_get_used_frames returned to pre-snapshot after PMM scratch drain");
+}
+
+/* Case C2: NON-LIFO record removal preserves each record's physical base.
+ *
+ * test_scratch_free removes a record with swap-with-last, and the PMM route
+ * now frees the RECORDED physical base rather than the caller pointer. Those
+ * two facts interact: freeing a record that is not the last one moves a
+ * different record into its slot, so a field-wise (rather than whole-struct)
+ * swap would silently drop the moved record's phys and later free the wrong
+ * frames. Aggregate post-drain counts cannot see that -- an incorrect base
+ * that happens to free an equal-sized run balances the books. This case
+ * pins the frames by identity instead of by count. */
+static void test_harness_scratch_non_lifo_free(void)
+{
+    uint64_t  pmm_pre = pmm_get_used_frames();
+    void     *a = test_scratch_alloc(65536);
+    void     *b = test_scratch_alloc(65536);
+
+    TEST_ASSERT_NOT_NULL(a, "first 64 KiB scratch run allocated");
+    TEST_ASSERT_NOT_NULL(b, "second 64 KiB scratch run allocated");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 32,
+                   "two 64 KiB scratch runs took exactly 32 frames");
+
+    uint64_t a_phys = mm_hhdm_to_phys(a);
+    uint64_t b_phys = mm_hhdm_to_phys(b);
+    TEST_ASSERT(a_phys != 0 && b_phys != 0, "both runs invert to a physical base");
+    TEST_ASSERT(a_phys != b_phys, "the two runs have distinct physical bases");
+
+    /* Free the FIRST record -- not the last -- so the removal takes the
+     * swap-with-last path and relocates b's record. */
+    test_scratch_free(a);
+
+    TEST_ASSERT(pmm_frame_is_free(a_phys),
+                "non-LIFO free released the first run's base frame");
+    TEST_ASSERT(!pmm_frame_is_free(b_phys),
+                "surviving run's base frame is still allocated after the swap");
+    TEST_ASSERT(!pmm_frame_is_free(b_phys + 15u * PMM_FRAME_SIZE),
+                "surviving run's LAST frame is still allocated after the swap");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 16,
+                   "exactly the freed run's 16 frames were returned");
+
+    /* The relocated record must still carry b's base: if the swap dropped
+     * phys, this free either returns nothing or returns the wrong frames. */
+    test_scratch_free(b);
+    TEST_ASSERT(pmm_frame_is_free(b_phys),
+                "relocated record still knew its own physical base");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre,
+                   "both runs fully returned after non-LIFO frees");
+}
+
+/* Case C3: the sidecar table's own capacity guard.
+ *
+ * The action stack and the scratch record table are INDEPENDENT 32-slot
+ * limits; the rollback case below fills the former and never reaches the
+ * latter. An off-by-one here would either overwrite a live record or reject
+ * every fixture for the rest of the boot, and neither shows up as a failing
+ * allocation in any existing case. Uses the kmalloc route so the check costs
+ * no frames. */
+static void test_harness_scratch_table_exhaustion(void)
+{
+    TEST_KLOG_SUPPRESS("SCRATCH");
+
+    void    *held[TEST_SCRATCH_MAX];
+    uint64_t pmm_pre = pmm_get_used_frames();
+    int      i;
+
+    for (i = 0; i < TEST_SCRATCH_MAX; i++)
+        held[i] = test_scratch_alloc(512);
+
+    TEST_ASSERT_NOT_NULL(held[0], "first of 32 scratch records allocated");
+    TEST_ASSERT_NOT_NULL(held[TEST_SCRATCH_MAX - 1],
+                         "32nd scratch record allocated (table exactly full)");
+    TEST_ASSERT(test_scratch_alloc(512) == (void *)0,
+                "33rd scratch alloc refused once the record table is full");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre,
+                   "the refused alloc took no frames");
+
+    /* Releasing one slot must make it reusable -- a leaked slot would leave
+     * the table permanently full. */
+    test_scratch_free(held[0]);
+    void *reuse = test_scratch_alloc(512);
+    TEST_ASSERT_NOT_NULL(reuse, "a freed slot is reclaimed for the next alloc");
+    test_scratch_free(reuse);
+
+    for (i = 1; i < TEST_SCRATCH_MAX; i++)
+        test_scratch_free(held[i]);
+}
+
+/* Case C4: the exact kmalloc/PMM routing boundary.
+ *
+ * The dispatch is `bytes <= PMM_FRAME_SIZE`. The 512 B and 64 KiB cases sit
+ * far either side of it, so flipping <= to < would send a 4096-byte request
+ * to the PMM and pass every other assertion in this file. test_pmm.c checks
+ * the same rounding one layer down, through pmm_alloc_pages_hhdm directly,
+ * which bypasses this dispatch entirely. */
+static void test_harness_scratch_route_boundary(void)
+{
+    uint64_t heap_pre = heap_get_used();
+    uint64_t pmm_pre  = pmm_get_used_frames();
+
+    void *at_limit = test_scratch_alloc(PMM_FRAME_SIZE);
+    TEST_ASSERT_NOT_NULL(at_limit, "exactly-4096-byte scratch allocated");
+    TEST_ASSERT(heap_get_used() > heap_pre,
+                "a 4096-byte request takes the kmalloc route (heap grew)");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre,
+                   "a 4096-byte request took no frames");
+    test_scratch_free(at_limit);
+
+    void *over_limit = test_scratch_alloc(PMM_FRAME_SIZE + 1u);
+    TEST_ASSERT_NOT_NULL(over_limit, "4097-byte scratch allocated");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 2,
+                   "a 4097-byte request rounds up to exactly 2 frames");
+    TEST_ASSERT_EQ(heap_get_used(), heap_pre,
+                   "a 4097-byte request did not touch the heap");
+    test_scratch_free(over_limit);
+
+    TEST_ASSERT_EQ(heap_get_used(), heap_pre,
+                   "heap returned to baseline across the boundary cases");
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre,
+                   "frames returned to baseline across the boundary cases");
+}
+
+/* Case C5: a foreign, NULL or repeated free must not disturb live records.
+ *
+ * This rejection branch is pre-existing, but it is what stands between a bad
+ * pointer and the newly PHYSICAL free path: without it a foreign pointer
+ * would be treated as a recorded base. Prove it is inert while a real record
+ * is live. The branch klogs a warning by design, so the noise is suppressed
+ * rather than tolerated -- under the allocator's OWN tag, never "TEST", which
+ * would also discard this case's assertion-failure diagnostics. */
+static void test_harness_scratch_foreign_free(void)
+{
+    TEST_KLOG_SUPPRESS("SCRATCH");
+
+    uint64_t pmm_pre = pmm_get_used_frames();
+    void    *live    = test_scratch_alloc(65536);
+    TEST_ASSERT_NOT_NULL(live, "live scratch run allocated");
+    uint64_t live_phys = mm_hhdm_to_phys(live);
+    uint64_t used_live = pmm_get_used_frames();
+
+    test_scratch_free((void *)0);                 /* documented no-op */
+    test_scratch_free((void *)&pmm_pre);         /* stack address, never recorded */
+
+    TEST_ASSERT_EQ(pmm_get_used_frames(), used_live,
+                   "NULL and foreign frees released nothing");
+    TEST_ASSERT(!pmm_frame_is_free(live_phys),
+                "live run untouched by NULL and foreign frees");
+
+    test_scratch_free(live);
+    TEST_ASSERT(pmm_frame_is_free(live_phys), "live run released on its real free");
+
+    /* A second free of the same pointer now hits the same unknown-ptr branch;
+     * it must not release the frames a second time. */
+    test_scratch_free(live);
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre,
+                   "repeated free did not double-release the run");
 }
 
 /* Case D: rollback path -- when test_add_action rejects registration
@@ -1383,6 +1562,14 @@ void test_register_harness(void)
                             test_harness_scratch_pmm_route, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: scratch PMM route returns to pre-snapshot",
                             test_harness_scratch_pmm_verify, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch non-LIFO free keeps each phys base",
+                            test_harness_scratch_non_lifo_free, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch record table exhaustion + slot reuse",
+                            test_harness_scratch_table_exhaustion, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch kmalloc/PMM routing boundary",
+                            test_harness_scratch_route_boundary, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: scratch foreign/NULL/repeat free is inert",
+                            test_harness_scratch_foreign_free, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: scratch rollback on full action stack",
                             test_harness_scratch_rollback, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: TEST_KLOG_SUPPRESS demotes level",

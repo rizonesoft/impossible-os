@@ -53,7 +53,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | 🔥  |  13   | Third tactical reclamation pass: buy a page of headroom     | --                     |  [x]   |
 | 🔥  |  14   | Fourth tactical reclamation pass: reclaim test-only statics | --                     |  [x]   |
 | 🔥  |  15   | Fifth tactical reclamation pass: convert the `pipes` pool   | --                     |  [x]   |
-| 🔥  |  16   | Test-side residue of the fourth pass: scratch fixtures      | §14                    |  [ ]   |
+| 🔥  |  16   | Test-side residue of the fourth pass: scratch fixtures      | §14                    |  [x]   |
 | 💎  |   1   | Memory-map design + canonical layout decision               | --                     |  [x]   |
 | 💎  |   2   | Direct map construction (install HHDM; kernel still low)    | §1                     |  [x]   |
 | 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper        | §2                     |  [/]   |
@@ -334,6 +334,10 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
   - MEASURED 2026-09-03 at `abf4dc974`: 15 bytes of `.text` slack, against a new `NtSetSystemInformation` set class plus its privilege gate and name marshalling, which is hundreds of bytes. No probe patch exists because building one would only reconfirm a section-exact budget.
   - The user impact is the one that section exists to fix: every `quota.user.<type>` cap stays at its unlimited built-in because no production caller of `kernel_tunable_set` exists, so the quota plane accounts usage without ever refusing on a configured cap.
   - Its Deferred stamp carries the full design of record (set class shape, the `SeSystemProfilePrivilege` gate, and why neither the registry nor a boot-argument route is available), so the redo starts from a design rather than a blank page.
+- [ ] Cover the post-allocation extent-rejection cleanup in the HHDM page allocator -> XREF: this file §16 (item: "Decided: it DID block the charter")
+  - The path: frames are taken, the whole-extent direct-map check then fails, and every frame of the run must be released (`src/kernel/mm/pmm.c:639`). Filed by §16's test-coverage review.
+  - BLOCKED on a test seam, which is why §16 accepted it rather than shipping it: the branch fires only when a physical run crosses the 64 TiB HHDM top, so no real allocation reaches it, and the existing `pmm_alloc_fail_*` injection rejects BEFORE frames are taken. Forcing it needs a seam inside `mm_phys_extent_in_hhdm` in `memmap.h`, which is the address-space single source of truth and not a test-side section's to modify.
+  - Belongs here because this section already owns the address-space test infrastructure (`test_highhalf.c` and the raw phys-as-pointer lint check); a one-frame-only rollback would leak frames silently and no aggregate count would show it.
 - [ ] Commit: `"mm: retire 0x800000 user-base ceiling -- user owns the lower half"`
 
 **Test checkpoint:** User programs load + run at the new base; `bash scripts/build.sh clean` -> `=== BUILD OK ===` with the BSS guard removed; no `user_range.h` static-assert failures. Test on: QEMU WHPX + TCG; **bare metal**.
@@ -737,9 +741,9 @@ Below those, none assessed: `pipes` 73216, `cpu_data` 63872, `s_ureap_slot` 3820
 > - **Scope boundary** -- the four test statics plus measurement and the reserve correction; the `pipes` conversion is §15, the permanent retirement stays §7, the address-space move stays §3, and the unpark sweep stays §11.
 
 > **Verified:** 2026-09-05 | commit `a82ffff35` | 8/8 items | build OK | `__kernel_end` 0x7ff000 -> 0x7df000 (`.rodata` budget 2 -> 134,898 bytes, tightest now `.text` 131,551) | 33895 kernel + 17 user tests (measured baseline 33889, delta +6 = one scratch assertion per site) | SUITE=boot 6138 / abi 2170 / knf 234 | smoke PASSED 2.530s | lint 0 errors
-> **Deferred:** [L] 26 `boot_entries_parse_result_t` STACK locals of ~36,984 B each, safe only because the runner uses the 256 KiB loader boot stack (reason: pre-existing and stack-shaped, not image-shaped, but §14 converting two cases in the same file made it internally inconsistent) -> XREF: this file §16 (item: "Retire the ~36,984-byte `boot_entries_parse_result_t` STACK locals in `src/kernel/test/test_boot_entry_parser.c`")
-> **Deferred:** [L] `src/kernel/test/scratch.c:75` casts a `pmm_alloc_contiguous` physical address straight to `void *`, which holds only while the kernel is identity-mapped, and §14 moved four more fixtures onto that assumption (reason: matches ~20 other sites and is today's norm, but THIS file is chartered to break it) -> XREF: this file §16 (item: "Decide whether `src/kernel/test/scratch.c:75` blocks this file's own charter")
-> **Deferred:** [L] `s_cap_val` (8,192 B, `src/kernel/test/test_env.c:2452`) left unconverted beside its three converted siblings (reason: below the size bar this pass was working to) -> XREF: this file §16 (item: "Reclaim `s_cap_val`")
+> **Deferred:** [L] RESOLVED 2026-09-05 in §16 -- all 26 `boot_entries_parse_result_t` STACK locals moved onto `TEST_SCRATCH_KBUF`; measured 27 over-limit frames -> 1, largest 37,016 B -> 3,944 B. -> XREF: this file §16 (item: "Retired all 26 `boot_entries_parse_result_t` STACK locals")
+> **Deferred:** [L] RESOLVED 2026-09-05 in §16 -- the cast is gone; `test_scratch_alloc` routes through `pmm_alloc_pages_hhdm()` and frees the recorded physical base. -> XREF: this file §16 (item: "Decided: it DID block the charter, and is now routed through the HHDM")
+> **Deferred:** [L] RESOLVED 2026-09-05 in §16 -- `s_cap_val` converted to `TEST_SCRATCH_KBUF`; `.bss` is no longer the tightest section. -> XREF: this file §16 (item: "Reclaimed `s_cap_val`")
 > **Quality reviewed:** 2026-09-05 | Codex 10x (design, adversarial x3, re-adversarial, test-coverage, consistency x2, perf x2) + kernel-quality-auditor + concurrency-evidence-mapper | 3M+5L fixed, 3L deferred, 1L rejected, 0 open | scope: kernel-code-quality
 
 ---
@@ -817,18 +821,35 @@ The three items §14 deferred into §15, split back out on `section-manifest.py`
 
 **None of the three is gated on headroom.** §14 bought 32 pages, so this section is not a reclamation pass and must not be justified as one: `s_cap_val` is 8,192 bytes (consistency, not capacity), the stack locals never touched `.bss` at all, and the scratch cast is a correctness question this file is chartered to answer. They are here because §14 shipped a file into an internally inconsistent state and filed the residue honestly.
 
-- [ ] Reclaim `s_cap_val` (8,192 B, `src/kernel/test/test_env.c:2452`), the one test-only static §14 left behind because it sat below the size bar it was working to.
+- [x] Reclaimed `s_cap_val` (8,192 B) -- a per-case scratch buffer now, so `.bss` is no longer the tightest section.
+  - `TEST_SCRATCH_KBUF(cap_buf, ENV_CAP_VAL_SZ)` in `test_env_block_size_cap` (`src/kernel/test/test_env.c:2457`). The capacity is an explicit constant because `sizeof` on the scratch pointer collapses to 8.
   - Same `TEST_SCRATCH_KBUF` route as its three converted siblings, same explicit-capacity constant (`sizeof` on the converted pointer collapses to 8), same loud-failure-on-OOM rule: a reclaim that turns an assertion into a no-op is a coverage regression wearing a headroom win.
-- [ ] Retire the ~36,984-byte `boot_entries_parse_result_t` STACK locals in `src/kernel/test/test_boot_entry_parser.c`, filed by the §14 kernel-quality audit. NOT an image-size item: these never touched `.bss`.
+- [x] Retired all 26 `boot_entries_parse_result_t` STACK locals onto scratch buffers. NOT an image-size item: these never touched `.bss`.
+  - `src/kernel/test/test_boot_entry_parser.c`, matching the two `s_bls_fixture` cases §14 converted in the same file, so it is no longer internally inconsistent about where a 36 KB fixture lives.
   - There are 26 of them (`boot_entries_parse_result_t r;`, first at line 77). Each is roughly 4.5x `TASK_STACK_SIZE` (`include/kernel/sched/task.h:98`, 8192) and is safe ONLY because the test runner executes on the 256 KiB loader boot stack (`BL_KSTACK_SIZE`). Moving these suites onto a kthread, or landing two such locals in one frame, puts the frame straight through the stack guard page.
   - §14 converted the two `s_bls_fixture` cases in the same file to scratch buffers, so the file is now internally inconsistent about where a 36 KB fixture lives; the same `TEST_SCRATCH_KBUF` route fixes these.
-  - Prove the win by MEASUREMENT, not by inspection: record the largest remaining frame in that translation unit (`-Wframe-larger-than=` or the map) before and after, so "the guard page is no longer one nested call away" is a number rather than a claim.
-- [ ] Decide whether `src/kernel/test/scratch.c:75` blocks this file's own charter: it casts a `pmm_alloc_contiguous` PHYSICAL address straight to `void *`, which holds only while the kernel is identity-mapped.
+  - MEASURED with `-Wframe-larger-than=1024` on the real compile line, before and after: **27 frames over the limit -> 1**, largest **37,016 B -> 3,944 B** (an 89% cut). The one remaining frame is `boot_entries_parse` itself, which this section did not touch; every test frame now sits under the limit, so the deepest chain fell from ~40,960 B to 3,944 B.
+- [x] Decided: it DID block the charter, and is routed through the HHDM rather than deferred -- no raw phys-as-pointer cast remains in the test allocator.
+  - `test_scratch_alloc` calls the shared `pmm_alloc_pages_hhdm()` (`src/kernel/mm/pmm.c:620`) and records the physical base in its sidecar for the free path.
   - Raised by the §14 audit as a cross-cutting observation rather than a defect: the cast matches ~20 other sites in the tree (`nvme.c:305`, `nvme.c:756`, xHCI) and is today's norm. It matters HERE because §14 moved four more test fixtures onto exactly the phys-equals-virt assumption that §3 and §5 exist to break, so the scratch allocator is now on the higher-half migration's critical path rather than beside it.
-  - Either route it through the HHDM helper the way §9 routed the VMM walkers, or record explicitly that §5 owns converting it. -> XREF: this file §9, this file §5
-- [ ] Commit: `"kernel/test: retire the fourth pass's test-side residue"`
+  - Routed through the HHDM helper, the way §9 routed the VMM walkers. Reused `pmm_alloc_pages_hhdm()` rather than hand-rolling the gate: it already validates the WHOLE extent (`mm_phys_extent_in_hhdm`), not just the base, and releases the entire run on rejection. The free path uses the RECORDED physical base, never `mm_hhdm_to_phys(ctx)`, whose 0-means-failure return `pmm_free_frame` could not tell from a real frame. §5 keeps the identity-map teardown; this removes one more consumer standing in its way. -> XREF: this file §9, this file §5
+- [x] Gave the scratch allocator's own diagnostics a separate klog tag (`KLOG_TAG_SCRATCH`, `src/kernel/test/scratch.c:37`) instead of logging them under `"TEST"`, so a test can suppress the expected warning without discarding its own failures.
+  - Raised by the re-adversarial round and CONFIRMED at file:line before fixing: this section's new cases run as `TEST_CAT_BOOT`, so `s_current_tag` is `"TEST"` (`test_runner.c:1404`), the runner emits assertion FAILURES as `klog(LOG_ERROR, test_tag(), ...)`, and `klog_suppress_begin` demotes the tag to `LOG_FATAL`. Suppressing `"TEST"` to silence one expected warning would therefore have thrown away that case's own failure message, actual/expected values and file:line, leaving a bare count.
+  - Took the separate-tag route over the reviewer's other suggestion (a saved `LOG_ERROR` threshold) because the latter means parameterising `klog_suppress_begin`, which other suites share; the tag change is local to test-only code. Applying it also caught a SECOND case the review did not name: the record-table exhaustion test deliberately trips the table-full warning and was emitting it unsuppressed.
+  - Both halves proved by control rather than argued: an intentionally broken assertion in that case now prints with its message and actual value (`got 8409`), where the old suppression discarded it, and the expected `unknown ptr` warnings still leak 0 times into the log.
+- [x] Commit: `"kernel/test: retire the fourth pass's test-side residue"`
 
 **Test checkpoint:** `bash scripts/build.sh` OK with the `BSS check` line no higher than its pre-section value. Full `scripts/test.sh` green with `SUITE=boot` and `SUITE=abi` each green in their own right and the aggregate assertion count not lower than before, since every item here touches a test fixture and a silent coverage loss is the failure mode. `scripts/test-smoke.sh` boots to `C:\>`. Scope: test-side storage and the scratch allocator's addressing decision only; no production code path. Platforms: QEMU KVM + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + `run-abi-tests.bat` (SUITE=abi) | 26 converted parser cases, the new zero-before-validation case, and 5 new scratch-allocator cases (HHDM membership, non-LIFO phys preservation, record-table exhaustion, routing boundary, foreign/NULL/repeat free); full suite 33971 kernel + 17 user, 0 failures; smoke matrix 4/4 legs.
+
+> **Notes:**
+> - **What shipped** -- the three items §14 filed as residue, plus a review-found klog-tag separation: `s_cap_val` and 26 `boot_entries_parse_result_t` stack locals moved onto `TEST_SCRATCH_KBUF`, and `test_scratch_alloc` re-routed off its raw phys-as-pointer cast.
+> - **How it integrates** -- the scratch allocator now calls the shared `pmm_alloc_pages_hhdm()` and frees the recorded physical base, so every PMM-backed test fixture in the tree reaches its buffer through the direct map instead of the identity map.
+> - **Downstream effects** -- one fewer consumer blocking §5's identity-map teardown; `.bss` is no longer the tightest section; the largest frame in the parser TU fell 37,016 B -> 3,944 B, so these suites are safe to move off the 256 KiB loader boot stack.
+> - **Measurement, not inspection** -- frame counts came from `-Wframe-larger-than=1024` on the real compile line before and after; the assertion count rose 33907 -> 33971 (+64), so nothing was silently dropped. The non-LIFO test was proved to BITE by a control that dropped `phys` from the swap-with-last: exactly its two intended assertions failed, showing the precise 16-frame leak (8409 vs 8393).
+> - **Canonical doc:** [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
+> - **Scope boundary** -- test-side storage and the scratch allocator's addressing decision only; no production path changed. The ~20 other raw phys-as-pointer sites (`nvme.c`, xHCI) stay with §5, the permanent ceiling retirement stays §7, and the address-space move stays §3. One test-coverage finding was ACCEPTED, not fixed: the extent-rejection cleanup path needs a seam in `memmap.h` -> XREF: this file §7 (item: "Cover `pmm_alloc_pages_hhdm()`'s post-allocation extent-rejection cleanup").
 
 
 ---
@@ -838,7 +859,7 @@ The three items §14 deferred into §15, split back out on `section-manifest.py`
 | ⭐  | Feature                           | 🪟 Win11                 | 🐧 Linux                         | 🚀 Impossible OS                                                              |
 | --- | --------------------------------- | ------------------------ | -------------------------------- | ----------------------------------------------------------------------------- |
 | 💎  | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+ | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it                                |
-| 💎  | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 HHDM (PML4 273-400, 64 TiB); §9 walkers route through it                |
+| 💎  | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 HHDM (PML4 273-400); §9 walkers + §16 scratch route through it          |
 | 💎  | 128 TB user / 128 TB kernel split | ✅ 48-bit split          | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling                               |
 | 💎  | Per-process address space         | ✅ per-process           | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6                                  |
 | 💎  | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                                               |
