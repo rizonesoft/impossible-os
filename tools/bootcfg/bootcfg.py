@@ -6,8 +6,11 @@ ESP) using the canonical schema validator at `tools/boot-entry-validate/`.
 Every write goes through the validator before persisting; reject invalid
 stores rather than corrupting the file. Atomic CoW + fsync durability matches
 the boot-counter rename protocol's "write-new + flush + close + atomic-
-replace" contract -- a host crash mid-write never leaves a torn or missing
-store.
+replace" contract. The REPLACEMENT is always atomic, so a reader sees the old
+store or the new one and never a torn one. Surviving a host CRASH additionally
+needs the parent-directory flush, which is skipped where the platform does not
+support it (Windows has no directory handle to flush); a genuine flush failure
+is reported rather than swallowed.
 
 Subcommands (offline mode, all operate on a path argument):
     list <path>                      Dump entries to stdout.
@@ -44,7 +47,6 @@ import json
 import os
 import socket
 import sys
-import tempfile
 import time
 import zlib
 from pathlib import Path
@@ -180,7 +182,14 @@ def _load(path: Path) -> tuple[dict, bytes]:
         print(f"[FAIL] {path}: read failed: {e}", file=sys.stderr)
         sys.exit(2)
     try:
-        data = json.loads(raw)
+        # Shared strict loader: bootcfg must reject the same duplicate-key and
+        # escaped-key stores the firmware parser does, or it would read, rewrite
+        # and re-bless a store that cannot boot. A bare json.loads collapses
+        # duplicates silently before validate_store ever sees them.
+        data = _validator.strict_loads(raw.decode("utf-8"))
+    except UnicodeDecodeError as e:
+        print(f"[FAIL] {path}: file is not valid UTF-8: {e}", file=sys.stderr)
+        sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"[FAIL] {path}: JSON parse error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -201,7 +210,13 @@ def _canonical_dumps(data: dict) -> bytes:
         "crc32": data["crc32"],
         "entries": data["entries"],
     }
-    return json.dumps(top, indent=2, ensure_ascii=True).encode("ascii") + b"\n"
+    # ensure_ascii=False is load-bearing, not cosmetic. With escaping ON, a
+    # literal non-ASCII extension key such as "cafe-mode" spelled with an
+    # accented character was rewritten as "café-mode" -- an ESCAPED key,
+    # which the firmware parser hard-rejects (BOOT_ENTRIES_REJECT_ESCAPED_KEY)
+    # and which bootcfg itself then refuses to reload. The editor could write a
+    # store nothing could read. Key spelling must survive the round trip.
+    return json.dumps(top, indent=2, ensure_ascii=False).encode("utf-8") + b"\n"
 
 
 def _recompute_crc(data: dict) -> dict:
@@ -216,62 +231,23 @@ def _recompute_crc(data: dict) -> dict:
 def _atomic_write(path: Path, raw: bytes) -> None:
     """Atomic CoW + fsync durability protocol.
 
-    Mirrors the boot-counter rename protocol on FAT32 ESPs:
-        1. Write `<path>.new` to the same directory.
-        2. fsync the new file's contents to disk.
-        3. fsync the parent directory so the directory entry for `.new`
-           is durable before the rename.
-        4. os.replace() atomically swaps `.new` over `<path>`.
-        5. fsync the parent directory again so the rename is durable.
+    Delegates to the validator's `atomic_write_bytes`, which is the single copy
+    of this protocol: write an EXCLUSIVELY OWNED same-directory temp (mkstemp,
+    never a predictable `<path>.new` another process or a symlink could own),
+    fsync its contents, fsync the parent so the new directory entry is durable,
+    os.replace over the destination, fsync the parent again.
 
-    Without steps 2/3/5, FAT32 (and ext4 with default mount opts) can leave
-    a torn or missing store after a host crash mid-write. The validator on
-    the next read would reject the store, and the bootloader would fall
-    back to the synthesized default -- recoverable but not the contract
-    bootcfg promised. With these steps, the store is either the old
-    version or the new version; never torn.
+    Without those fsyncs, FAT32 (and ext4 with default mount options) can leave
+    a torn or missing store after a host crash mid-write; the next read would
+    reject it and the bootloader would fall back to the synthesized default --
+    recoverable, but not the contract bootcfg promised. With them the store is
+    either the old version or the new version, never torn.
+
+    Both writers shared this protocol by copy until the copies were found to
+    have diverged in exactly the part that matters (temp-file ownership), which
+    is why there is now one implementation and this wrapper.
     """
-    parent = path.parent
-    if not parent.exists():
-        parent.mkdir(parents=True, exist_ok=True)
-    # Use a tempfile in the same directory so os.replace() is atomic
-    # (rename across filesystems is not).
-    fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=path.name + ".", suffix=".new")
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(raw)
-            f.flush()
-            os.fsync(f.fileno())
-        # Durable parent directory entry for the new file (Linux/POSIX).
-        # fsync on a directory fd is undefined on Windows -- os.replace's
-        # native MoveFileEx is itself atomic on NTFS, and on Windows hosts
-        # editing a FAT32 ESP through a mtools / driver layer the host's
-        # OS handles durability. Skip-on-error is intentional.
-        try:
-            dir_fd = os.open(parent, os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except OSError:
-            pass
-        os.replace(tmp_path, path)
-        try:
-            dir_fd = os.open(parent, os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except OSError:
-            pass
-    except BaseException:
-        # Best-effort cleanup of the temp file on any failure path.
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
+    _validator.atomic_write_bytes(path, raw)
 
 
 def _validate_then_write(path: Path, data: dict) -> None:
@@ -280,6 +256,18 @@ def _validate_then_write(path: Path, data: dict) -> None:
     raw = _canonical_dumps(data)
     # The validator must accept what we are about to write. If it rejects,
     # bail with the validator's exit -- never persist an invalid store.
+    #
+    # Validate the BYTES, not just the dict. validate_store() inspects the
+    # in-memory object, so any rule that lives in the SERIALIZED form (unique
+    # key names, literal key spelling) was unchecked on this path: the writer
+    # could hand _atomic_write a store the firmware rejects. Re-parsing the
+    # exact bytes about to be persisted is the only check that covers what the
+    # writer actually produced.
+    try:
+        _validator.strict_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        print(f"[FAIL] {path}: serialized store is not valid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
     _validator.validate_store(data, raw, recompute_crc=False)
     try:
         _atomic_write(path, raw)
@@ -398,7 +386,9 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_add(args: argparse.Namespace) -> int:
     path = Path(args.path)
     try:
-        new_entry = json.loads(args.json)
+        # Same strict rules as a store read -- an entry authored with a repeated
+        # or escaped key must not be written into a store the firmware rejects.
+        new_entry = _validator.strict_loads(args.json)
     except json.JSONDecodeError as e:
         print(f"[FAIL] --json: parse error: {e}", file=sys.stderr)
         return 2

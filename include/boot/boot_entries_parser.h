@@ -65,6 +65,10 @@ typedef enum {
     BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE,
     BOOT_ENTRIES_REJECT_PATH_ESCAPE,
     BOOT_ENTRIES_REJECT_INTERNAL,
+    /* Appended (not inserted) so every value above keeps the number a shipped
+     * reject record already carries. */
+    BOOT_ENTRIES_REJECT_DUPLICATE_KEY,   /* same key twice in one object */
+    BOOT_ENTRIES_REJECT_ESCAPED_KEY,     /* key name spelled with a JSON escape */
 } boot_entries_reject_code_t;
 
 /* Parsed envelope for one entry. Fields are NUL-terminated where applicable.

@@ -72,7 +72,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  16   | Bootstrap and first-install entry seeding                           | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
 | 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
 | 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
-| 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [ ]   |
+| 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -250,7 +250,7 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 > - Scope boundary: §6 owns renderer + countdown + input + filter; indicators + hotkeys + `hide_when_alone` are §7; demote-not-drop visual is §9.
 
 > **Verified:** 2026-05-09 | commit `b4a076c4` (review fixup over `34ae373c`) | 5/6 items + 1 deferred | build OK | smoke PASS (KVM 2.49s)
-> **Deferred:** [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank) -> XREF: 01-boot-platform/TODO-07 §6 (item: "Dirty-rectangle repaint for `boot_menu_render()`" at line 236)
+> **Deferred:** [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank) -> XREF: 01-boot-platform/TODO-07 §6 (item: "Dirty-rectangle repaint for `boot_menu_render()`" at line 237)
 > **Quality reviewed:** 2026-05-09 | Codex 8x (design + adversarial + test-coverage + 3 re-adversarial + consistency + perf) | 4H+5M fixed, 1M deferred | scope: boot-code-quality
 
 ---
@@ -434,8 +434,8 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 > - Scope boundary: §12 owns codes + sticky + JSONL + mutation log. §14 flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`.
 
 > **Verified:** 2026-05-10 | commit `38517fcc` | 7/7 items | build OK | smoke PASS (KVM 2.41s, seq=1) | tests 32/32 bootcfg + 22 boot_audit
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 591)
-> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 593)
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 592)
+> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 594)
 > **Quality reviewed:** 2026-05-10 | Codex 12x (design + adversarial 2x + test-coverage + re-adversarial 5x + adversarial-impl 4x + consistency + perf) | 7H+5M+0L fixed, 0 open, 2L deferred-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -608,7 +608,7 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > - Scope boundary: §17 owns aggregation + status. New tests for covered behavior belong in their owner sections; dual-write testability + FAT32 LFN belong elsewhere.
 
 > **Verified:** 2026-05-19 | commit `27c6d2c8` (impl) + `a6e2124e` (commit-row flip) | 4/14 items + 5 partial + 5 blocked | build OK (no source changes; verified during §16 commit `17ee74f9`) | lint clean
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 591)
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 592)
 > **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations until cross-cluster LFN removal lands" at line 393)
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
 
@@ -655,17 +655,43 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
 
 **The mechanism, confirmed at file:line.** `boot_entries_parse()` walks the root object with `while (1)` over key/value pairs and an `else if` chain, and tracks NO set of already-seen keys (`src/boot/uefi/boot_entries_parser.c:1101`), so a second top-level `"entries"` key is structurally accepted. Inside that branch `idx` and `all_ids_count` are BLOCK-SCOPED (`boot_entries_parser.c:1164`, `1172`) and therefore reset to 0 on the second occurrence, while `out->entry_count` is never reset. The only cap check is against the per-occurrence `idx` (`boot_entries_parser.c:1195`), but the write is `out->entries[out->entry_count]` (`boot_entries_parser.c:1227`). So `{"schema_version":1,"crc32":"0x0","entries":[64 valid],"entries":[64 valid]}` passes every check and writes indices 64-127 into `boot_entry_envelope_t entries[BOOT_ENTRIES_MAX_ENTRIES]` (`include/boot/boot_entries_parser.h:117`, cap 64 at `include/boot/boot_entries.h:75`).
 
-- [ ] Reject a repeated top-level key outright, which is the fix that also closes the sibling holes rather than patching one symptom.
-  - `all_ids_count` resetting means cross-occurrence DUPLICATE IDs are undetected too, so an entries-bound check alone would leave the duplicate-id gate defeated by the same input. `schema_version` and `crc32` are equally re-assignable today.
-  - Track seen root keys in the walker and reject with a distinct code; the strict-alternating-separator machinery already in that branch is the precedent for how strict this parser is meant to be.
-- [ ] Add a bound on the WRITE as defence in depth: gate `out->entries[out->entry_count]` on `out->entry_count < BOOT_ENTRIES_MAX_ENTRIES` at `boot_entries_parser.c:1227`, so no future refactor of the key-level guard can reopen an overflow.
-- [ ] Unit tests in `src/kernel/test/test_boot_entry_parser.c`, which already covers this parser (`TEST_CAT_BOOT`).
-  - Cases: two `entries` arrays rejected; a duplicate id split across two `entries` arrays rejected; repeated `schema_version` and `crc32` rejected.
-  - Write the overflow case so it asserts the REJECT, never so it performs the overflowing parse -- a test that reproduces the overflow corrupts the runner it is running in.
-- [ ] Check the host-side validator (`scripts/bootcfg.py` or equivalent) applies the same rule, so a store the host accepts cannot be one the firmware parser rejects or vice versa.
-- [ ] Commit: `"boot: reject repeated top-level keys in the boot entry store"`
+- [x] Reject a repeated key outright at BOTH object levels the parser walks (root and entry object) -- `key_seen_before()` rescans the current object's already-walked prefix; new code `BOOT_ENTRIES_REJECT_DUPLICATE_KEY`.
+  - `key_seen_before()` in `src/boot/uefi/boot_entries_parser.c` ships a prefix RESCAN, not a seen-key table. A fixed table must hard-fail on overflow, which would turn otherwise-skipped forward-compat extension keys into a whole-store rejection at boot AND force the host validator to mirror the same ceiling. The rescan needs no per-object scratch on the firmware stack and imposes no key-count limit.
+  - `all_ids_count` resetting meant cross-occurrence duplicate IDs went undetected too. The repeated key is now caught first, which closes both holes; `schema_version` and `crc32` were equally re-assignable and fall under the same rule.
+  - The rescan FAILS CLOSED. All three review legs independently found that the first version was bypassable: the value skipper charges its depth budget from where it starts, and the root rescan skips the whole `entries` value (paying for the array and entry object that the main parser descends structurally), so a store the parser ACCEPTED could exhaust the budget -- and "could not finish" was read as "no duplicate", disabling the check on attacker-chosen input. Fixed by giving the rescan exactly the two extra levels of difference and making scan failure a distinct answer the callers reject on.
+- [x] Key names must be spelled LITERALLY -- `key_is_literal()` rejects any key token carrying a backslash with `BOOT_ENTRIES_REJECT_ESCAPED_KEY`. Raised by the design review.
+  - `key_is_literal()` in `src/boot/uefi/boot_entries_parser.c` closes this. `bytes_eq` compares raw bytes, so `"id"` was a distinct (unknown) key to the firmware while the host's `json.loads` decoded it into the real one. Codification rather than a new restriction: `find_crc32_key()` already locates the CRC field by scanning for the literal bytes `"crc32"`, so an escaped spelling was never readable there.
+- [x] Bound the WRITE as defence in depth: `out->entries[out->entry_count]` is gated on the 64-entry cap, so no future refactor of the key guard can reopen the overflow.
+- [x] Unit tests in `src/kernel/test/test_boot_entry_parser.c` (`TEST_CAT_BOOT`): 20 added, 31 -> 51 in the file, including four ACCEPT controls.
+  - Two `entries` arrays; duplicate id split across two `entries` arrays; repeated `schema_version`, `crc32` and unknown root key; repeated entry-object key; escaped root and entry key. Controls: 30 distinct unknown keys still parse, and prefix-sharing keys (`sort` vs `sort_key`) are not confused.
+  - Every fixture asserts the REJECT and uses ONE-entry arrays, so no case performs the overflowing parse that would corrupt the runner executing it.
+  - The two guards ordinary input CANNOT reach (the fail-closed rescan result and the bounded append `entries_retain()`, both in `src/boot/uefi/boot_entries_parser.c`) are tested by calling the helpers directly, because a backstop no test can fail is one that can be deleted unnoticed. Mutation-checked: making the rescan fail OPEN, and an off-by-one in the skip budget, each fail exactly their own test and nothing else.
+  - Depth regressions at extension depths 6, 7 and 8 cover the rescan bypass, with a control proving a deep store carrying ONE `entries` array is still accepted. Verified as probes: reverting the budget makes 7 and 8 fail (`DEPTH_LIMIT` instead of `DUPLICATE_KEY`) while 6 passes either way, which is what the depth arithmetic predicts.
+- [x] Host-side validator parity via `strict_loads()` in `tools/boot-entry-validate/validate.py`; 18 host cases added, validator 86 -> 99 and bootcfg 33 -> 38.
+  - Routed through it: the validator CLI, `bootcfg.py` store reads and `cmd_add`, which the design review caught calling bare `json.loads` and so bypassing the validator's rules entirely.
+  - Those bootcfg paths now have their own rejection tests: reverting either call to `json.loads` fails three of them. The atomic-write failure matrix uses DISTINCT old and new bytes, so it can tell preservation from replacement, and covers the pre-replace, post-replace and unsupported-flush cases separately.
+  - `bootcfg` also serialized a literal non-ASCII key back out ESCAPED (`ensure_ascii=True`) and validated the dict rather than the bytes, so it could write a store the firmware rejects and it could not itself reload. Now writes UTF-8 literally and re-parses the exact bytes before persisting.
+  - Literal-spelling is checked by a left-to-right `_key_spans()` scanner, not a regex: a regex alternation can begin matching at an escaped quote INSIDE a value, so a value like `"\"a\\b\":x"` was one edit away from reading as a key. It passed by luck, not structure.
+- [x] Close the host-vs-firmware DEPTH divergence the parity claim exposed -- `validate_value_depths()` mirrors the firmware's context-relative 8-container budget for every value the firmware skips wholesale.
+  - Pre-existing, and found by round 2 review: a nine-deep array under an unknown extension key validated on the host and then booted to invalid-store fallback. Leaving it would have made this section's own host/firmware agreement claim false.
+  - The budget RESTARTS at each skipped value (root unknown values, entry unknown values, `payload`), so it is 8 levels from that value, not 8 from the root. Pinned by a depth-8-accept / depth-9-reject pair on BOTH sides, so the two implementations cannot drift apart silently.
+  - Both host writers now serialize keys literally and re-parse their own output before persisting: `bootcfg`'s `_canonical_dumps` and the validator's `--emit-crc`, which had the identical escaping defect.
+  - Directory-flush errors are no longer swallowed wholesale: a platform limitation (Windows cannot fsync a directory fd) is skipped, a genuine EIO propagates. A blanket suppression reported a durable write whose directory entry may never have reached disk, which is the exact guarantee the protocol exists to make. Covered by errno-injection at both flush points.
+  - The durability protocol now has ONE implementation (`atomic_write_bytes`), which both writers call. The copies had already diverged in the part that matters: the validator's used a predictable `<path>.tmp` that another process or a symlink could own, so a concurrent run or a planted link defeated the very preservation guarantee it was added for.
+  - `--emit-crc` also did its whole pipeline against the DESTINATION file, so a rejected store was left holding an invalid placeholder and a non-UTF-8-encodable one (a lone surrogate, which `json.loads` accepts) was truncated to zero bytes by `write_text` before the encoder raised. It now serializes, encodes, re-parses, validates and stamps the CRC entirely in memory, then replaces the file atomically. Regression asserts a FAILED run leaves the original byte-identical; against the old ordering it measures 1321 -> 0 bytes.
+- [x] Commit: `"boot: reject repeated top-level keys in the boot entry store"`
 
 **Test checkpoint:** full `scripts/test.sh` green with `SUITE=boot` green in its own right and the new reject cases failing before the fix and passing after. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code. Platforms: QEMU KVM + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 51 boot-entries suites (20 added), 0 failures; host side `python3 tools/boot-entry-validate/test_validate.py` 99 cases and `python3 tools/bootcfg/test_bootcfg.py` 38 cases, 0 failures
+
+> **Notes:**
+> - Shipped: repeated key names rejected at both parsed object levels plus literal-spelling enforcement, closing a ~36 KB out-of-bounds write reachable from any writer of the ESP.
+> - `key_seen_before()` rescans the current object's walked prefix instead of accumulating a seen-key table, so the fix adds no firmware-stack scratch and no ceiling on distinct keys; a rescan that cannot complete is a REJECT, never a silent pass.
+> - The write at `out->entries[out->entry_count]` now carries its own 64-entry bound; it is unreachable through the parser by construction and exists so a later refactor of the key guard cannot reopen the overflow.
+> - Host and firmware were brought into agreement on key rules AND on the value-depth budget, across every reader and both writers; review round 2 found the writers escaping keys and the host missing the depth cap.
+> - Canonical doc: [docs/boot/boot-entry-schema.md](../../docs/boot/boot-entry-schema.md) section 3 records both key rules and the deliberate payload-level asymmetry.
+> - Scope boundary: per-entry payload contents stay the host validator's and the policy filter's business; the firmware parser still skips payload objects wholesale.
 
 ---
 
@@ -690,6 +716,7 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
 | ⭐  | Per-decision audit trail (BlackBox primary)           | ❌ Event log only                | ❌ journalctl scattered             | ✅ §12 JSONL `X:\Boot\history.jsonl` + 256-byte sticky NVRAM ring 🚀             |
 | ⭐  | Schema-versioned + CRC-checksummed entry store        | ❌ Binary BCD, no checksum       | ❌ INI / cfg, no checksum           | ✅ §1 schema_version=1 + CRC-32 IEEE 802.3 🚀                                    |
 | ⭐  | Per-entry mutation audit (add/remove/reorder logged)  | ❌ Not logged                    | ❌ Not logged                       | ✅ §12 `bootcfg.py --mutation-log` JSONL with requester + prior/new CRC 🚀       |
+| ⭐  | Unique + literally-spelled key names enforced         | ❌ Binary BCD, N/A               | ⚠️ Last-wins on repeated BLS key    | ✅ §19 hard reject at both object levels, host + firmware in agreement 🚀        |
 
 > **After §1-§16:** Impossible OS matches Windows 11 and Linux on structured entries, BootNext provenance, recovery, safe mode, previous-kernel rollback, menu UX (renderer §6 + indicators §7), offline tooling, loop prevention (ladder §3 + crash-tolerant decrement §5), health-gated mark-good, entry kinds, OS-visible loader vars, and first-install bootstrap.
 > **After §3 + §9 + §12 + §1 ⭐ rows:** Impossible OS surpasses both with documented two-layer precedence, demote-not-drop UX, per-decision audit, schema+CRC store, and per-entry mutation audit.

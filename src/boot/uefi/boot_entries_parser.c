@@ -407,7 +407,19 @@ typedef enum {
     SKV_ARR_COMMA_END,    /* just consumed value, expect ',' or ']' */
 } skv_state_t;
 
-static int skip_value_post_token(lexer_t *L)
+/* The unique-key rescan (key_seen_before) skips a value from FURTHER OUT than
+ * the authoritative walk does. Skipping the root's `entries` value costs two
+ * container levels the main parser never charges to this budget -- it descends
+ * the array and the entry object structurally and only calls the skipper on the
+ * payload -- so a store the parser ACCEPTS could exhaust a rescan budget of
+ * BOOT_ENTRIES_MAX_PARSE_DEPTH. Every prefix the parser accepts must be
+ * scannable, or the duplicate check silently stops running on exactly the input
+ * an attacker controls. Two extra levels is the exact difference. */
+#define BOOT_ENTRIES_RESCAN_EXTRA_DEPTH 2u
+#define BOOT_ENTRIES_MAX_SCAN_DEPTH \
+    (BOOT_ENTRIES_MAX_PARSE_DEPTH + BOOT_ENTRIES_RESCAN_EXTRA_DEPTH)
+
+static int skip_value_depth(lexer_t *L, u32 max_depth)
 {
     tok_t k = L->kind;
     /* Atomic values: nothing else to do. */
@@ -415,10 +427,11 @@ static int skip_value_post_token(lexer_t *L)
         return 1;
     }
     if (k != TOK_LBRACE && k != TOK_LBRACKET) return 0;
+    if (max_depth > BOOT_ENTRIES_MAX_SCAN_DEPTH) return 0;
 
-    skv_state_t stack[BOOT_ENTRIES_MAX_PARSE_DEPTH];
+    skv_state_t stack[BOOT_ENTRIES_MAX_SCAN_DEPTH];
     u32 depth = 0;
-    if (depth >= BOOT_ENTRIES_MAX_PARSE_DEPTH) return 0;
+    if (depth >= max_depth) return 0;
     stack[depth++] = (k == TOK_LBRACE) ? SKV_OBJ_FIRST_KEY : SKV_ARR_FIRST_VAL;
 
     while (depth > 0) {
@@ -441,7 +454,7 @@ static int skip_value_post_token(lexer_t *L)
             /* Consume value (recurse via state push or atomic) */
             if (!lex_next(L)) return 0;
             if (L->kind == TOK_LBRACE || L->kind == TOK_LBRACKET) {
-                if (depth >= BOOT_ENTRIES_MAX_PARSE_DEPTH) return 0;
+                if (depth >= max_depth) return 0;
                 /* Mark current state as "after value" before descending */
                 stack[depth - 1] = SKV_OBJ_COMMA_END;
                 stack[depth++] = (L->kind == TOK_LBRACE) ? SKV_OBJ_FIRST_KEY : SKV_ARR_FIRST_VAL;
@@ -475,7 +488,7 @@ static int skip_value_post_token(lexer_t *L)
             }
             /* Token is the start of a value */
             if (L->kind == TOK_LBRACE || L->kind == TOK_LBRACKET) {
-                if (depth >= BOOT_ENTRIES_MAX_PARSE_DEPTH) return 0;
+                if (depth >= max_depth) return 0;
                 stack[depth - 1] = SKV_ARR_COMMA_END;
                 stack[depth++] = (L->kind == TOK_LBRACE) ? SKV_OBJ_FIRST_KEY : SKV_ARR_FIRST_VAL;
             } else if (L->kind == TOK_STRING || L->kind == TOK_NUMBER ||
@@ -498,6 +511,112 @@ static int skip_value_post_token(lexer_t *L)
             stack[depth - 1] = SKV_ARR_NEXT_VAL;
         }
     }
+    return 1;
+}
+
+/* The authoritative walk's skipper: budget starts at the value it is handed. */
+static int skip_value_post_token(lexer_t *L)
+{
+    return skip_value_depth(L, BOOT_ENTRIES_MAX_PARSE_DEPTH);
+}
+
+/* ---- Unique-key enforcement ------------------------------------------ */
+
+/* A key name must be spelled LITERALLY -- no JSON escape sequences. This is not
+ * a restriction invented here: find_crc32_key() locates the CRC field by
+ * scanning the raw bytes for `"crc32"`, so a store spelling that key with an
+ * escape already fails CRC location. Codifying the rule makes raw-byte key
+ * comparison exact, which is what the duplicate check below relies on, and it
+ * closes the divergence where the host's json.loads decodes an escaped spelling
+ * into a key the firmware would treat as unknown.
+ */
+static int key_is_literal(const u8 *raw, u32 cs, u32 ce)
+{
+    u32 i;
+    for (i = cs; i < ce; i++) if (raw[i] == (u8)'\\') return 0;
+    return 1;
+}
+
+/* Return 1 if the key spanning key_ptr[0..key_len) already appeared as a key in
+ * the object whose body begins at body_pos, at any position BEFORE key_start.
+ *
+ * A repeated key is a memory-safety problem here, not a style one: the entries
+ * branch of boot_entries_parse() keeps its cap counter in a block-scoped local
+ * that resets on a second occurrence while out->entry_count does not, so two
+ * 64-element `entries` arrays wrote past the 64-slot output array. The same
+ * reset defeated the cross-occurrence duplicate-id gate.
+ *
+ * This RESCANS the already-walked prefix rather than accumulating a seen-key
+ * table. That costs O(prefix) per key instead of O(1), but it needs no
+ * per-object scratch on the firmware stack (one lexer_t, ~40 bytes, against a
+ * fixed table live in every active frame) and -- the reason it is the right
+ * shape -- it imposes NO ceiling on how many distinct keys an object may carry.
+ * A capped table would have to hard-fail on overflow, turning otherwise-ignored
+ * forward-compat extension keys into a whole-store rejection at boot, and the
+ * host validator would have to mirror that limit to stay in agreement.
+ * The walk is bounded by BOOT_ENTRIES_MAX_TOTAL_BYTES (16 KiB), so the worst
+ * case across a whole store is quadratic in a 16 KiB input, once, before
+ * ExitBootServices. No wall-clock figure is claimed here: it has not been
+ * measured on the slowest supported firmware, and a number nobody measured is
+ * worse than no number.
+ *
+ * FAIL CLOSED. A scan that cannot COMPLETE is not evidence that the key is
+ * absent, and conflating the two is what made the first version of this
+ * function bypassable: the skipper's depth budget is charged from a different
+ * starting level here than in the authoritative walk, so a store the parser
+ * accepted could exhaust it, and "could not finish" was read as "no duplicate"
+ * -- silently disabling the check on exactly the input an attacker controls.
+ * KEY_SCAN_FAILED is therefore a distinct answer and the callers REJECT on it.
+ */
+#define KEY_SCAN_ABSENT     0
+#define KEY_SCAN_DUPLICATE  1
+#define KEY_SCAN_FAILED     2
+
+static int key_seen_before(const lexer_t *L, u32 body_pos, u32 key_start,
+                           const u8 *key_ptr, u32 key_len)
+{
+    lexer_t S;
+    zero_buf(&S, sizeof(S));
+    S.raw = L->raw;
+    S.raw_len = L->raw_len;
+    S.pos = body_pos;
+    while (1) {
+        if (!lex_next(&S)) return KEY_SCAN_FAILED;
+        if (S.kind == TOK_RBRACE) return KEY_SCAN_ABSENT;  /* object end */
+        if (S.kind != TOK_STRING) return KEY_SCAN_FAILED;
+        if (S.start >= key_start) return KEY_SCAN_ABSENT;  /* reached the key */
+        u32 cs = S.content_start;
+        u32 ce = S.content_end;
+        if (!lex_next(&S) || S.kind != TOK_COLON) return KEY_SCAN_FAILED;
+        if (!lex_next(&S)) return KEY_SCAN_FAILED;
+        if (!skip_value_depth(&S, BOOT_ENTRIES_MAX_SCAN_DEPTH)) return KEY_SCAN_FAILED;
+        if ((ce - cs) == key_len && bytes_eq(L->raw + cs, key_ptr, key_len))
+            return KEY_SCAN_DUPLICATE;
+        if (!lex_next(&S)) return KEY_SCAN_FAILED;
+        if (S.kind == TOK_RBRACE) return KEY_SCAN_ABSENT;
+        if (S.kind != TOK_COMMA) return KEY_SCAN_FAILED;
+    }
+}
+
+/* Bounded append into the fixed 64-slot output array. Returns 1 on success, 0
+ * when the array is full, leaving the array and the count untouched.
+ *
+ * Defence in depth: the cap inside the entries walk is checked against the
+ * PER-OCCURRENCE index, while the write indexes out->entry_count, which spans
+ * occurrences -- that gap is what a repeated `entries` key exploited. Rejecting
+ * repeated keys is what makes the two agree; this bound means no later refactor
+ * of that guard can reopen an out-of-bounds write.
+ *
+ * It is a separate function so it can be TESTED. Through the parser it is
+ * unreachable by construction (the key guard fires first), and a backstop that
+ * no test can fail is a backstop that can be deleted without anyone noticing.
+ */
+static int entries_retain(boot_entries_parse_result_t *out,
+                          const boot_entry_envelope_t *e)
+{
+    if (out->entry_count >= BOOT_ENTRIES_MAX_ENTRIES) return 0;
+    out->entries[out->entry_count] = *e;
+    out->entry_count++;
     return 1;
 }
 
@@ -647,6 +766,11 @@ static int parse_entry_object(lexer_t *L, u32 idx,
     /* Track separator state so trailing commas (`{..., "x":1, }`) are rejected
      * to match the host validator's strict json.loads grammar (RFC 8259 §5). */
     int after_comma = 0;
+    /* Body of THIS entry object -- the `{` is already consumed. key_seen_before()
+     * rescans from here to reject a repeated key. Without it the saw_* flags
+     * below record presence only, so a second `"id"` silently overwrote the
+     * first (last-wins) exactly as the root object's repeated `"entries"` did. */
+    u32 entry_body_pos = L->pos;
     while (1) {
         if (!lex_next(L)) {
             set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected entry field or '}'");
@@ -667,6 +791,24 @@ static int parse_entry_object(lexer_t *L, u32 idx,
         /* Save the key range so we can compare BEFORE advancing the lexer */
         u32 key_cs = L->content_start;
         u32 key_ce = L->content_end;
+        u32 key_tok_start = L->start;
+        if (!key_is_literal(L->raw, key_cs, key_ce)) {
+            set_reject(result, BOOT_ENTRIES_REJECT_ESCAPED_KEY,
+                       "entry key name must not use JSON escapes");
+            return 0;
+        }
+        int entry_scan = key_seen_before(L, entry_body_pos, key_tok_start,
+                                         L->raw + key_cs, key_ce - key_cs);
+        if (entry_scan == KEY_SCAN_DUPLICATE) {
+            set_reject(result, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                       "repeated key in entry object");
+            return 0;
+        }
+        if (entry_scan == KEY_SCAN_FAILED) {
+            set_reject(result, BOOT_ENTRIES_REJECT_DEPTH_LIMIT,
+                       "entry unique-key rescan could not complete");
+            return 0;
+        }
         /* Expect colon */
         if (!lex_next(L) || L->kind != TOK_COLON) {
             set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ':' after field name");
@@ -1098,6 +1240,8 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     /* Reject trailing comma at root (`{..., "entries":[...], }`) for parity
      * with the host validator's strict json.loads grammar (RFC 8259 §5). */
     int top_after_comma = 0;
+    /* Body of the root object -- the `{` is already consumed. */
+    u32 root_body_pos = L.pos;
     while (1) {
         if (!lex_next(&L)) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field or '}'");
@@ -1119,6 +1263,31 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             return out->reject_code;
         }
         u32 key_cs = L.content_start, key_ce = L.content_end;
+        u32 key_tok_start = L.start;
+        if (!key_is_literal(L.raw, key_cs, key_ce)) {
+            set_reject(out, BOOT_ENTRIES_REJECT_ESCAPED_KEY,
+                       "top-level key name must not use JSON escapes");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        /* Reject a REPEATED top-level key. `entries` is the one that corrupts
+         * memory (see key_seen_before), but the rule is applied to every key
+         * because the block-scoped reset also re-armed the duplicate-id gate and
+         * schema_version / crc32 were equally re-assignable. */
+        int root_scan = key_seen_before(&L, root_body_pos, key_tok_start,
+                                        L.raw + key_cs, key_ce - key_cs);
+        if (root_scan == KEY_SCAN_DUPLICATE) {
+            set_reject(out, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                       "repeated top-level key");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        if (root_scan == KEY_SCAN_FAILED) {
+            set_reject(out, BOOT_ENTRIES_REJECT_DEPTH_LIMIT,
+                       "top-level unique-key rescan could not complete");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
         if (!lex_next(&L) || L.kind != TOK_COLON) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ':' after top-level field");
             log_reject(log, out->reject_msg);
@@ -1223,9 +1392,11 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                     }
                     if (tmp.kind_skipped) {
                         out->skipped_count++;
-                    } else {
-                        out->entries[out->entry_count] = tmp;
-                        out->entry_count++;
+                    } else if (!entries_retain(out, &tmp)) {
+                        set_reject(out, BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES,
+                                   "retained entries exceed 64-entry cap");
+                        log_reject(log, out->reject_msg);
+                        return out->reject_code;
                     }
                     idx++;
                     entries_expect_value = 0;

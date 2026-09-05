@@ -65,6 +65,16 @@ The store is a JSON object with three top-level keys:
 | `crc32`          | string  | yes      | `"0x"` + exactly 8 hex digits; covers `entries` payload |
 | `entries`        | array   | yes      | 1..64 entry objects; total file <=16 KiB                |
 
+**Key names are unique within an object, and spelled literally.** Both rules are hard rejects, enforced by the firmware parser (`BOOT_ENTRIES_REJECT_DUPLICATE_KEY`, `BOOT_ENTRIES_REJECT_ESCAPED_KEY`) and by the host validator's `strict_loads()`.
+
+- **Unique.** RFC 8259 permits a repeated name and leaves the choice of which one wins to the implementation; `json.loads` keeps the last. This store cannot afford that latitude: the firmware parser's `entries` cap counter is per-occurrence while its output index spans occurrences, so a second `entries` array wrote past the fixed 64-slot output array, and the reset also disarmed the cross-occurrence duplicate-id check. The rule applies to every key at every level the firmware parses (root and entry objects), not only to the three known root keys, so that host and firmware accept the same set of stores.
+- **Literal.** A key name must not use a JSON escape sequence: `"entries"` is not `entries`. The firmware compares key bytes raw, and it locates the CRC field by scanning for the literal bytes `"crc32"`, so an escaped spelling was never readable there while `json.loads` decoded it into the real key.
+- Distinct unknown keys remain forward-compatible and are skipped, with **no limit on how many** an object may carry. Only a REPEAT is rejected.
+- The firmware enforces uniqueness by rescanning the current object's already-parsed prefix, so there is no seen-key table and no key-count ceiling. A rescan that cannot complete (a store nested deeper than the scan budget) is a hard reject, not a silent pass: "the check could not run" must never read as "the check passed".
+- **Value nesting is capped at 8 containers, counted from each value the firmware SKIPS wholesale** (an unrecognised top-level key, an unrecognised entry key, and `payload`), not from the root. `validate_value_depths()` in the host validator mirrors this exactly, and both sides carry a depth-8-accept / depth-9-reject test pair so they cannot drift apart. Values the firmware interprets itself (`flags`, `policy_tags`, `health_check_subset`) are shape-checked instead and never reach that budget.
+- Both host writers emit key names literally (UTF-8, never `\uXXXX`) and re-parse their own serialized bytes before persisting: `bootcfg`'s canonical writer and the validator's `--emit-crc`. Validating the in-memory object is not enough, because these rules live in the serialized form. Both build the complete file in memory and replace the destination atomically through one shared implementation, so a store that fails validation -- or one that cannot be encoded at all -- leaves the existing store untouched rather than truncated. The temporary file is exclusively owned, so a concurrent run or a planted symlink cannot defeat that.
+- The host validator applies both rules inside `payload` objects too, which the firmware envelope parser skips wholesale. That asymmetry is deliberate producer-side strictness (the host already validates payload contents), not a claim that the two parsers accept identical input.
+
 Each entry object carries an envelope plus a per-kind payload:
 
 ```json
@@ -232,15 +242,28 @@ The header's `crc32` field MUST equal the IEEE 802.3 CRC-32 (polynomial `0xEDB88
 3. Compute IEEE 802.3 CRC-32 over the temporary buffer.
 4. Compare to the saved 8 hex digits, parsed as a hex-encoded uint32.
 
-### Producer flow (validate.py --emit-crc, future bootcfg.exe)
+### Producer flow (validate.py --emit-crc, bootcfg)
 
-1. Write the file with `"crc32": "0x00000000"` placeholder (no whitespace difference between
-   placeholder and final).
-2. Read the bytes back.
-3. Compute CRC per the algorithm above.
-4. Patch the 8 hex digits in place with the actual CRC, MSB-first uppercase hex. The bytes
-   already contain `00000000`, so the in-place patch makes the file's stored CRC match the
-   CRC of the file with that field zeroed -- the file is self-verifying.
+**Every step happens in memory. The destination is touched exactly once, at the end, and only
+after the bytes have passed every check.** The earlier recipe wrote the placeholder to the
+destination and patched it in place; that overwrites a valid boot store before validation has
+run, and an interruption or an encoding failure leaves the store truncated or holding a
+placeholder with `crc32` of `0x00000000`.
+
+1. Serialize the store to text with key names spelled literally (`ensure_ascii=False`) and
+   `"crc32": "0x00000000"` as the placeholder (no whitespace difference between placeholder and
+   final).
+2. Encode to UTF-8. A store that cannot be encoded is rejected here, with the destination
+   untouched.
+3. Re-parse those exact bytes under the strict loader, and validate the store. The key rules
+   live in the serialized form, so validating the in-memory object is not sufficient.
+4. Compute CRC per the algorithm above and patch the 8 hex digits in the buffer, MSB-first
+   uppercase hex. The buffer already contains `00000000`, so the patch makes the stored CRC
+   match the CRC of the file with that field zeroed -- the file is self-verifying.
+5. Replace the destination with the finished buffer through the shared atomic writer
+   (exclusively owned same-directory temporary, fsync, `os.replace`, parent fsync). Atomic
+   replacement is guaranteed; crash durability additionally depends on the directory flush,
+   which is skipped only where the platform genuinely does not support it.
 
 ### Reference (Python)
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -66,7 +67,8 @@ def write_tmp(payload: Any, *, recompute_crc: bool = False) -> Path:
     and patches the 8 hex digits in place. Matches the producer flow in validate.py --emit-crc.
     """
     base = _ensure_tmpdir()
-    fd = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, dir=str(base))
+    fd = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False,
+                                    dir=str(base), encoding="utf-8")
     if recompute_crc and isinstance(payload, dict) and "crc32" in payload:
         payload = dict(payload)
         payload["crc32"] = "0x00000000"
@@ -86,6 +88,260 @@ def write_tmp(payload: Any, *, recompute_crc: bool = False) -> Path:
 
 def load_sample() -> dict:
     return json.loads(SAMPLE.read_text(encoding="utf-8"))
+
+
+def write_tmp_raw(text: str) -> Path:
+    """Write RAW JSON text and patch its crc32 field to match the bytes written.
+
+    Duplicate and escaped key names cannot survive a Python dict (json.loads
+    collapses duplicates, json.dumps never emits an escaped key name), so these
+    fixtures are built by string surgery on the sample. The CRC is repaired so
+    the only thing left for the validator to object to is the key rule itself --
+    otherwise the case could pass on a CRC mismatch and prove nothing.
+    """
+    base = _ensure_tmpdir()
+    fd = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False,
+                                    dir=str(base), encoding="utf-8")
+    fd.write(text)
+    fd.close()
+    path = Path(fd.name)
+    raw = path.read_bytes()
+    try:
+        offset, _ = _find_crc_field(raw)
+    except Exception:
+        return path          # no locatable crc32 field (escaped-key fixtures)
+    zeroed = raw[:offset] + b"00000000" + raw[offset + 8:]
+    path.write_bytes(zeroed)
+    crc = _compute_crc_from_file(path.read_bytes())
+    raw2 = path.read_bytes()
+    path.write_bytes(raw2[:offset] + f"{crc:08X}".encode("ascii") + raw2[offset + 8:])
+    return path
+
+
+def _sample_text() -> str:
+    return SAMPLE.read_text(encoding="utf-8")
+
+
+def _dup_top_level_key() -> Path:
+    """Two `schema_version` keys at root. json.loads would keep the last one."""
+    text = _sample_text()
+    return write_tmp_raw(text.replace("{", '{"schema_version": 1, ', 1))
+
+
+def _dup_entries_key() -> Path:
+    """Two `entries` arrays -- the shape that overflowed the firmware parser's
+    64-slot output array (boot_entries_parser.c key_seen_before)."""
+    text = _sample_text()
+    return write_tmp_raw(text.replace("{", '{"entries": [], ', 1))
+
+
+def _dup_entry_object_key() -> Path:
+    """Repeated `id` inside the first entry object."""
+    text = _sample_text()
+    marker = '"entries"'
+    head, sep, tail = text.partition(marker)
+    return write_tmp_raw(head + sep + tail.replace("{", '{"id": "dup-key", ', 1))
+
+
+def _escaped_top_level_key() -> Path:
+    """`\\u0073chema_version` decodes to `schema_version` for json.loads but is an
+    unknown key to the firmware's raw-byte compare."""
+    text = _sample_text()
+    return write_tmp_raw(text.replace('"schema_version"', '"\\u0073chema_version"', 1))
+
+
+def _escaped_entry_key() -> Path:
+    text = _sample_text()
+    marker = '"entries"'
+    head, sep, tail = text.partition(marker)
+    return write_tmp_raw(head + sep + tail.replace('"id"', '"\\u0069d"', 1))
+
+
+def _nest(depth: int) -> Any:
+    """A value nesting exactly `depth` containers."""
+    v: Any = 0
+    for _ in range(depth):
+        v = [v]
+    return v
+
+
+def _entry_ext_depth8() -> Path:
+    """Firmware budget is 8 containers measured from the skipped value, so an
+    8-deep extension under an unknown entry key must be ACCEPTED."""
+    data = load_sample()
+    data["entries"][0]["ext"] = _nest(8)
+    return write_tmp(data, recompute_crc=True)
+
+
+def _entry_ext_depth9() -> Path:
+    """...and 9 must be REJECTED, because the firmware rejects it. The host used
+    to accept this and let bootcfg publish a store that boots to fallback."""
+    data = load_sample()
+    data["entries"][0]["ext"] = _nest(9)
+    return write_tmp(data, recompute_crc=True)
+
+
+def _top_level_ext_depth9() -> Path:
+    data = load_sample()
+    data["ext"] = _nest(9)
+    return write_tmp(data, recompute_crc=True)
+
+
+def _payload_depth9() -> Path:
+    """payload is skipped wholesale by the firmware, so its budget starts there."""
+    data = load_sample()
+    data["entries"][0]["payload"]["ext"] = _nest(8)   # payload{} + 8 = 9 total
+    return write_tmp(data, recompute_crc=True)
+
+
+def _emit_crc_non_ascii_round_trip() -> Path:
+    """--emit-crc must produce a store that still validates.
+
+    It used to serialize with json.dumps' default ensure_ascii=True, so a literal
+    non-ASCII extension key came back ESCAPED -- a store the firmware rejects and
+    that this validator refuses to reload, written while reporting success. The
+    fixture runs the emit-crc pass itself; the case then validates the RESULT, so
+    a writer that escapes the key fails here."""
+    data = load_sample()
+    data["entries"][0]["café"] = 1
+    # write_tmp() serializes with json.dump's default ensure_ascii=True, which
+    # would escape the key in the FIXTURE and make this case fail before
+    # --emit-crc ever ran. The input must be literal for the round trip to be
+    # about the writer.
+    path = write_tmp_raw(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    cp = run_validator(path, "--emit-crc")
+    assert cp.returncode == 0, f"--emit-crc failed: {cp.stderr}"
+    return path
+
+
+def _emit_crc_failure_preserves_original() -> Path:
+    """A FAILED `--emit-crc` must leave the destination byte-for-byte unchanged.
+
+    Two ways this used to destroy the store it was asked to stamp: the
+    placeholder was written to the destination before validation ran, and a lone
+    surrogate (which json.loads accepts) reached the UTF-8 encoder only after
+    write_text had already truncated the file -- zero bytes where the boot store
+    had been. The fixture asserts the failure AND the preservation, then returns
+    the untouched original so the case's ("pass",) expectation also proves the
+    store is still valid afterwards."""
+    data = load_sample()
+    data["entries"][0]["ext"] = "\ud800"          # lone surrogate: not UTF-8 encodable
+    path = write_tmp_raw(json.dumps(data, indent=2, ensure_ascii=True) + "\n")
+    before = path.read_bytes()
+    cp = run_validator(path, "--emit-crc")
+    assert cp.returncode != 0, "--emit-crc must reject a non-encodable store"
+    after = path.read_bytes()
+    assert after == before, (
+        f"destination was modified by a FAILED --emit-crc "
+        f"({len(before)} -> {len(after)} bytes)")
+    # Hand back a clean store so the case's pass-expectation is meaningful.
+    return write_tmp(load_sample(), recompute_crc=True)
+
+
+def _atomic_write_failure_matrix() -> Path:
+    """Failure injection across the atomic writer, with DISTINCT old and new bytes.
+
+    Writing the destination's own bytes back would make byte-equality useless:
+    it cannot tell "the original was preserved" from "it was replaced with an
+    identical copy", so an erroneous early replacement would pass. The new
+    content here differs from the old, which is what makes each assertion mean
+    something.
+
+    Covered: a pre-replace failure preserves the OLD bytes; a post-replace
+    failure still reports the error while the NEW bytes are in place (data
+    landed, durability unconfirmed); a genuinely unsupported flush (EINVAL) is
+    skipped and the write succeeds. Each injection asserts it actually fired."""
+    import errno as _errno
+    real_fsync = os.fsync
+
+    target = write_tmp(load_sample(), recompute_crc=True)
+    old_bytes = target.read_bytes()
+    new_data = load_sample()
+    new_data["entries"][0]["title"] = "Replaced Title"
+    new_bytes = json.dumps(new_data, indent=2).encode("utf-8") + b"\n"
+    assert new_bytes != old_bytes, "fixture must use distinct new content"
+
+    def run(err: int, fail_on_nth_dir_fsync: int) -> tuple[bool, int]:
+        seen = {"n": 0}
+
+        def fake(fd):
+            try:
+                is_dir = os.fstat(fd).st_mode & 0o170000 == 0o040000
+            except OSError:
+                is_dir = False
+            if is_dir:
+                seen["n"] += 1
+                if seen["n"] == fail_on_nth_dir_fsync:
+                    raise OSError(err, "injected")
+                return real_fsync(fd)
+            return real_fsync(fd)
+
+        os.fsync = fake
+        try:
+            try:
+                _validator_mod.atomic_write_bytes(target, new_bytes)
+                return (False, seen["n"])
+            except OSError:
+                return (True, seen["n"])
+        finally:
+            os.fsync = real_fsync
+
+    # A directory descriptor must be obtainable for any of this to fire. Where it
+    # is not (Windows), _fsync_dir returns at the open and these cannot run.
+    try:
+        _probe = os.open(target.parent, os.O_RDONLY)
+        os.close(_probe)
+    except OSError:
+        return target
+
+    # 1. EIO on the FIRST flush -- before os.replace. Original must survive whole.
+    target.write_bytes(old_bytes)
+    raised, hits = run(_errno.EIO, 1)
+    assert hits >= 1, "pre-replace flush never fired"
+    assert raised, "EIO before replacement was swallowed"
+    assert target.read_bytes() == old_bytes, (
+        "a failure BEFORE replacement must leave the original bytes intact")
+
+    # 2. EIO on the SECOND flush -- after os.replace. Error reported, new bytes in
+    #    place: the replacement happened, only its durability is unconfirmed.
+    target.write_bytes(old_bytes)
+    raised, hits = run(_errno.EIO, 2)
+    assert hits >= 2, "post-replace flush never fired"
+    assert raised, "EIO after replacement was swallowed"
+    assert target.read_bytes() == new_bytes, (
+        "a failure AFTER replacement must leave the NEW bytes in place")
+
+    # 3. EINVAL is a genuinely unsupported flush: skipped, write succeeds.
+    target.write_bytes(old_bytes)
+    raised, hits = run(_errno.EINVAL, 1)
+    assert hits >= 1, "flush never fired"
+    assert not raised, "EINVAL (unsupported) must not fail the write"
+    assert target.read_bytes() == new_bytes, "the write should have completed"
+
+    # 4. EACCES from fsync propagates on every platform: only the Windows
+    #    directory-OPEN EACCES is suppressed, never the fsync one.
+    target.write_bytes(old_bytes)
+    raised, hits = run(_errno.EACCES, 1)
+    assert hits >= 1, "flush never fired"
+    assert raised, "EACCES from fsync must propagate"
+    assert target.read_bytes() == old_bytes, "original preserved on that failure"
+
+    # No temp files may survive any of the above.
+    strays = [q.name for q in target.parent.iterdir()
+              if q.name.startswith(target.name + ".")]
+    assert not strays, f"atomic writer left temp files behind: {strays}"
+
+    target.write_bytes(old_bytes)
+    return target
+
+
+def _many_distinct_keys() -> Path:
+    """Regression guard: distinct unknown keys are forward-compat and must still
+    validate. The firmware rescan has no key-count ceiling, so the host must not
+    invent one either."""
+    text = _sample_text()
+    extra = "".join(f'"k{i:02d}": 0, ' for i in range(30))
+    return write_tmp_raw(text.replace("{", "{" + extra, 1))
 
 
 # ---- Mutator helpers -------------------------------------------------------------------------
@@ -399,6 +655,36 @@ def cases() -> list[Case]:
     out.append(("network url with userinfo (https://user@host/k) rejected",
                 _network_with_userinfo,
                 ("fail", "must not contain userinfo")))
+
+    # ---- unique + literally-spelled key names (firmware parity) ----
+    out.append(("repeated top-level key rejected",
+                _dup_top_level_key, ("fail", "repeated key")))
+    out.append(("repeated entries key rejected",
+                _dup_entries_key, ("fail", "repeated key")))
+    out.append(("repeated entry-object key rejected",
+                _dup_entry_object_key, ("fail", "repeated key")))
+    out.append(("escaped top-level key name rejected",
+                _escaped_top_level_key, ("fail", "uses a JSON escape")))
+    out.append(("escaped entry key name rejected",
+                _escaped_entry_key, ("fail", "uses a JSON escape")))
+    out.append(("30 distinct unknown top-level keys accepted",
+                _many_distinct_keys, ("pass",)))
+
+    # ---- firmware value-depth budget parity (8 accept / 9 reject) ----
+    out.append(("entry extension nested 8 deep accepted",
+                _entry_ext_depth8, ("pass",)))
+    out.append(("entry extension nested 9 deep rejected",
+                _entry_ext_depth9, ("fail", "budget")))
+    out.append(("top-level extension nested 9 deep rejected",
+                _top_level_ext_depth9, ("fail", "budget")))
+    out.append(("payload nested 9 deep rejected",
+                _payload_depth9, ("fail", "budget")))
+    out.append(("--emit-crc round-trips a literal non-ASCII key",
+                _emit_crc_non_ascii_round_trip, ("pass",)))
+    out.append(("failed --emit-crc leaves the original store byte-identical",
+                _emit_crc_failure_preserves_original, ("pass",)))
+    out.append(("atomic write: failure matrix preserves or replaces correctly",
+                _atomic_write_failure_matrix, ("pass",)))
 
     return out
 

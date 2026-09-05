@@ -512,6 +512,83 @@ def t_mutation_log_set_default(p: Path) -> None:
     assert "note" in rec and "00-custom" in rec["note"], rec.get("note", "<missing>")
 
 
+@case("write path: a literal non-ASCII key survives serialization and reloads")
+def t_non_ascii_key_round_trip(p: Path) -> None:
+    """Regression: _canonical_dumps used ensure_ascii=True, so a literal
+    non-ASCII extension key was rewritten as an ESCAPED key -- which the
+    firmware hard-rejects (BOOT_ENTRIES_REJECT_ESCAPED_KEY) and which bootcfg
+    itself then refused to reload. The editor could write a store nothing could
+    read, because _validate_then_write only inspected the dict, never the bytes."""
+    _emit_seed(p)
+    entry = _seed_extra_entry("accented")
+    entry["café"] = 1                      # literal non-ASCII extension key
+    cp = _run(["add", str(p), "--json", json.dumps(entry, ensure_ascii=False)])
+    assert cp.returncode == 0, cp.stderr
+    raw = p.read_bytes()
+    assert "café".encode("utf-8") in raw, "key must be written literally"
+    assert b"caf\\u00e9" not in raw, "key must NOT be escaped on the way out"
+    # The store bootcfg just wrote must be one bootcfg and the validator accept.
+    assert _run(["list", str(p)]).returncode == 0, "written store must reload"
+    assert _run_validate(p).returncode == 0, "written store must validate"
+
+
+@case("store read: a duplicate key is rejected, not silently collapsed")
+def t_load_rejects_duplicate_key(p: Path) -> None:
+    """bootcfg used to read stores through a bare json.loads, which keeps the
+    LAST of a repeated key. The firmware rejects such a store outright, so
+    bootcfg could read, rewrite and re-bless a file that cannot boot. Reverting
+    _load to json.loads must fail here."""
+    _emit_seed(p)
+    text = p.read_text()
+    p.write_text(text.replace("{", '{"schema_version": 1, ', 1))
+    before = p.read_bytes()
+    cp = _run(["list", str(p)])
+    assert cp.returncode != 0, "duplicate key must be rejected on read"
+    assert "repeated key" in cp.stderr, cp.stderr
+    assert p.read_bytes() == before, "a rejected read must not rewrite the store"
+
+
+@case("store read: an escaped key name is rejected")
+def t_load_rejects_escaped_key(p: Path) -> None:
+    _emit_seed(p)
+    text = p.read_text()
+    p.write_text(text.replace('"schema_version"', '"\\u0073chema_version"', 1))
+    cp = _run(["list", str(p)])
+    assert cp.returncode != 0, "escaped key name must be rejected on read"
+    assert "JSON escape" in cp.stderr, cp.stderr
+
+
+@case("add --json: a duplicate key in the entry is rejected")
+def t_add_rejects_duplicate_key(p: Path) -> None:
+    """cmd_add parsed its --json argument with a bare json.loads too, so a
+    repeated key there collapsed silently before any validation ran."""
+    _emit_seed(p)
+    before = p.read_bytes()
+    entry = _seed_extra_entry("dupkey")
+    raw = json.dumps(entry)
+    raw = raw.replace("{", '{"id": "shadowed", ', 1)      # two "id" keys
+    cp = _run(["add", str(p), "--json", raw])
+    assert cp.returncode != 0, "duplicate key in --json must be rejected"
+    assert "repeated key" in cp.stderr, cp.stderr
+    assert p.read_bytes() == before, "a rejected add must not modify the store"
+
+
+@case("store read: a nesting depth the firmware rejects is rejected here too")
+def t_load_rejects_overdeep_value(p: Path) -> None:
+    """Host and firmware must accept the same stores. Nine containers under an
+    unknown extension key exceeds the firmware's per-value budget of eight."""
+    _emit_seed(p)
+    data = json.loads(p.read_text())
+    nested: object = 0
+    for _ in range(9):
+        nested = [nested]
+    data["entries"][0]["ext"] = nested
+    p.write_text(json.dumps(data, indent=2))
+    cp = _run(["list", str(p)])
+    assert cp.returncode != 0, "over-deep value must be rejected"
+    assert "budget" in cp.stderr, cp.stderr
+
+
 # ---- summary ----------------------------------------------------------------
 
 print(f"\n{PASS_COUNT}/{PASS_COUNT + FAIL_COUNT} bootcfg tests passed")

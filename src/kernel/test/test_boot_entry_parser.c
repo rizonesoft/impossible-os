@@ -431,6 +431,400 @@ static void test_parser_top_level_trailing_comma_rejected(void)
                    "trailing comma in top-level object rejected");
 }
 
+/* ---- Repeated / escaped key names ------------------------------------- *
+ *
+ * A second top-level `entries` key used to reset the per-occurrence cap counter
+ * while out->entry_count kept climbing, so the second array wrote past the
+ * 64-slot output array. Every fixture below asserts the REJECT and deliberately
+ * uses ONE-entry arrays: a fixture that actually reproduced the overflow would
+ * corrupt the test runner executing it.
+ */
+
+#define TEST_ENTRY_A \
+    "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[]," \
+    "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\"," \
+    "\"policy_tags\":[],\"payload\":{}}"
+#define TEST_ENTRY_B \
+    "{\"id\":\"b\",\"title\":\"B\",\"kind\":\"split\",\"flags\":[]," \
+    "\"sort_key\":\"01\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\"," \
+    "\"policy_tags\":[],\"payload\":{}}"
+
+static void test_parser_repeated_entries_key_rejected(void)
+{
+    /* The memory-safety case: two `entries` arrays. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_A "],"
+        "\"entries\":[" TEST_ENTRY_B "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "second top-level entries array rejected");
+    /* entry_count is deliberately NOT asserted here. The parser documents it as
+     * meaningful on BOOT_ENTRIES_OK only (boot_entries_parser.h), and the first
+     * array is already parsed when the repeated key is found. Nothing consumes
+     * the partial state: boot_policy_decide() short-circuits to
+     * FALLBACK_STORE_INVALID on any reject_code before touching entries
+     * (boot_policy.c:340), so the reject code IS the contract under test. */
+}
+
+static void test_parser_duplicate_id_across_entries_keys_rejected(void)
+{
+    /* Same id in two `entries` arrays. Before the fix the block-scoped
+     * all_ids_count reset, so the duplicate-id gate never saw the collision.
+     * The repeated KEY is caught first, which is what closes both holes. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_A "],"
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "duplicate id split across two entries arrays rejected");
+}
+
+static void test_parser_repeated_schema_version_rejected(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated schema_version rejected");
+}
+
+static void test_parser_repeated_crc32_rejected(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated crc32 rejected");
+}
+
+static void test_parser_repeated_unknown_top_level_key_rejected(void)
+{
+    /* The rule covers every key, not only the three known ones: an unknown key
+     * is skipped, so a repeat carries no meaning either parser could act on,
+     * and rejecting it keeps host and firmware in agreement. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"future\":1,\"future\":2,"
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated unknown top-level key rejected");
+}
+
+static void test_parser_repeated_entry_object_key_rejected(void)
+{
+    /* One level down, the same shape: saw_id recorded presence only, so a
+     * second `id` silently won. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"a\",\"id\":\"b\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"payload\":{}}]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated key in entry object rejected");
+}
+
+static void test_parser_escaped_top_level_key_rejected(void)
+{
+    /* `\u0065ntries` decodes to `entries` in the host's json.loads but is an
+     * unknown key to a raw-byte comparison, and find_crc_field() cannot locate
+     * an escaped `crc32` at all. Both parsers reject the spelling. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"\\u0065ntries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_ESCAPED_KEY,
+                   "escaped top-level key name rejected");
+}
+
+static void test_parser_escaped_entry_key_rejected(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"\\u0069d\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"payload\":{}}]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_ESCAPED_KEY,
+                   "escaped entry key name rejected");
+}
+
+static void test_parser_many_distinct_keys_accepted(void)
+{
+    /* Regression guard for the shape this fix deliberately did NOT take. A
+     * fixed seen-key table would have to hard-fail once an object carried more
+     * distinct keys than it had slots, turning forward-compat extension keys
+     * into a whole-store rejection at boot. The prefix rescan has no ceiling,
+     * so 30 distinct unknown keys must still parse. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"k00\":0,\"k01\":0,\"k02\":0,\"k03\":0,\"k04\":0,\"k05\":0,"
+        "\"k06\":0,\"k07\":0,\"k08\":0,\"k09\":0,\"k10\":0,\"k11\":0,"
+        "\"k12\":0,\"k13\":0,\"k14\":0,\"k15\":0,\"k16\":0,\"k17\":0,"
+        "\"k18\":0,\"k19\":0,\"k20\":0,\"k21\":0,\"k22\":0,\"k23\":0,"
+        "\"k24\":0,\"k25\":0,\"k26\":0,\"k27\":0,\"k28\":0,\"k29\":0,"
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
+                   "30 distinct unknown top-level keys still accepted");
+    TEST_ASSERT_EQ((int)r->entry_count, 1, "the single entry is still retained");
+}
+
+static void test_parser_prefix_sharing_keys_accepted(void)
+{
+    /* Control: the rescan must not reject keys that merely SHARE a prefix. A
+     * length-blind compare would fail this, and both fixtures above would then
+     * pass for the wrong reason. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"sort\":1,\"sort_key\":2,"
+        "\"entries\":[" TEST_ENTRY_A "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
+                   "distinct top-level keys sharing a prefix accepted");
+}
+
+/* Repeated `entries` behind a DEEPLY NESTED entry extension. The first version
+ * of key_seen_before() charged the entries array and the entry object to the
+ * same depth budget the main parser reserves for the payload alone, so a store
+ * the parser accepted could exhaust the rescan -- which then answered "no
+ * duplicate" and let the overflow straight back in. Depths 6, 7 and 8 bracket
+ * the old limit: 6 passed even before the fix, 7 and 8 did not. */
+#define TEST_ENTRY_NEST6 \
+    "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[]," \
+    "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\"," \
+    "\"policy_tags\":[],\"ext\":[[[[[[0]]]]]],\"payload\":{}}"
+#define TEST_ENTRY_NEST7 \
+    "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[]," \
+    "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\"," \
+    "\"policy_tags\":[],\"ext\":[[[[[[[0]]]]]]],\"payload\":{}}"
+#define TEST_ENTRY_NEST8 \
+    "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[]," \
+    "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\"," \
+    "\"policy_tags\":[],\"ext\":[[[[[[[[0]]]]]]]],\"payload\":{}}"
+
+static void test_parser_repeated_entries_behind_nest6(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_NEST6 "],"
+        "\"entries\":[" TEST_ENTRY_B "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated entries behind 6-deep extension rejected");
+}
+
+static void test_parser_repeated_entries_behind_nest7(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_NEST7 "],"
+        "\"entries\":[" TEST_ENTRY_B "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated entries behind 7-deep extension rejected");
+}
+
+static void test_parser_repeated_entries_behind_nest8(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_NEST8 "],"
+        "\"entries\":[" TEST_ENTRY_B "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
+                   "repeated entries behind 8-deep extension rejected");
+}
+
+static void test_parser_deep_extension_single_entries_accepted(void)
+{
+    /* Control for the three above: the SAME deep extension with only ONE
+     * entries array must still be ACCEPTED. Without this, the fix could have
+     * "passed" by rejecting deep stores outright, which would be a functional
+     * regression wearing a security fix's clothes. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\","
+        "\"entries\":[" TEST_ENTRY_NEST8 "]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
+                   "8-deep extension with one entries array still accepted");
+    TEST_ASSERT_EQ((int)r->entry_count, 1, "its entry is retained");
+}
+
+/* The firmware's value-depth budget is 8 containers measured FROM the skipped
+ * value, and the host validator now mirrors exactly that (validate.py
+ * validate_value_depths). These two cases pin the boundary from the firmware
+ * side so the two implementations cannot drift apart silently: the host has a
+ * matching depth-8-accept / depth-9-reject pair. Before this, a nine-deep
+ * extension validated on the host and then booted to invalid-store fallback. */
+static void test_parser_entry_ext_depth8_accepted(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"ext\":[[[[[[[[0]]]]]]]],\"payload\":{}}]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
+                   "entry extension nested 8 deep accepted");
+}
+
+static void test_parser_entry_ext_depth9_rejected(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"a\",\"title\":\"A\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"ext\":[[[[[[[[[0]]]]]]]]],\"payload\":{}}]}";
+    unsigned int n = load_fixture(JSON);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "entry extension nested 9 deep rejected");
+}
+
+/* ---- Guards that ordinary input cannot reach ---------------------------- *
+ *
+ * The fail-closed rescan result and the bounded append are backstops: through
+ * boot_entries_parse() the key guard fires first, so no store fixture exercises
+ * them. A backstop no test can fail is one that can be deleted without anyone
+ * noticing, so these call the helpers directly. The parser source is #included
+ * into this translation unit, which is what makes its statics reachable.
+ */
+static void test_parser_rescan_reports_failure_not_absence(void)
+{
+    /* A prefix the rescan cannot walk must answer KEY_SCAN_FAILED, never
+     * KEY_SCAN_ABSENT. Conflating the two is what made the first version of the
+     * duplicate check bypassable. Here the first value nests deeper than the
+     * rescan budget, so the skipper gives up part-way through the prefix. */
+    static const char RAW[] =
+        "{\"a\":[[[[[[[[[[[0]]]]]]]]]]],\"b\":1}";
+    lexer_t L;
+    lex_init(&L, (const u8 *)RAW, (unsigned int)(sizeof(RAW) - 1u));
+    /* Body starts just past the opening brace; "b" is the key under test. */
+    u32 body_pos = 1u;
+    u32 b_key_start = 0u;
+    {
+        u32 i;
+        for (i = 0; i + 3u < (u32)(sizeof(RAW) - 1u); i++) {
+            if (RAW[i] == '"' && RAW[i + 1] == 'b' && RAW[i + 2] == '"') {
+                b_key_start = i;
+                break;
+            }
+        }
+    }
+    TEST_ASSERT(b_key_start != 0u, "located the second key in the fixture");
+    int rc = key_seen_before(&L, body_pos, b_key_start, (const u8 *)"b", 1u);
+    TEST_ASSERT_EQ(rc, KEY_SCAN_FAILED,
+                   "an unwalkable prefix reports FAILED, not ABSENT");
+}
+
+static void test_parser_rescan_finds_and_misses_correctly(void)
+{
+    /* Controls for the case above: over a WALKABLE prefix the same helper must
+     * return DUPLICATE for a repeat and ABSENT for a fresh key. Without these,
+     * a helper that returned FAILED unconditionally would pass the test above. */
+    static const char RAW[] = "{\"a\":1,\"b\":2,\"a\":3}";
+    lexer_t L;
+    lex_init(&L, (const u8 *)RAW, (unsigned int)(sizeof(RAW) - 1u));
+    u32 second_a = 13u;    /* offset of the third key's opening quote */
+    TEST_ASSERT(RAW[second_a] == '"' && RAW[second_a + 1] == 'a',
+                "fixture offset points at the repeated key");
+    TEST_ASSERT_EQ(key_seen_before(&L, 1u, second_a, (const u8 *)"a", 1u),
+                   KEY_SCAN_DUPLICATE, "repeat found in a walkable prefix");
+    TEST_ASSERT_EQ(key_seen_before(&L, 1u, second_a, (const u8 *)"z", 1u),
+                   KEY_SCAN_ABSENT, "fresh key reported absent");
+}
+
+static void test_parser_skip_value_depth_budget(void)
+{
+    /* The budget is what the rescan fix turns on, so it gets its own test:
+     * a container value must be refused at budget 0 and accepted at 1. */
+    static const char RAW[] = "[0]";
+    lexer_t L;
+    lex_init(&L, (const u8 *)RAW, (unsigned int)(sizeof(RAW) - 1u));
+    TEST_ASSERT(lex_next(&L) && L.kind == TOK_LBRACKET, "positioned on '['");
+    TEST_ASSERT_EQ(skip_value_depth(&L, 0u), 0, "budget 0 refuses a container");
+
+    lex_init(&L, (const u8 *)RAW, (unsigned int)(sizeof(RAW) - 1u));
+    TEST_ASSERT(lex_next(&L) && L.kind == TOK_LBRACKET, "positioned on '['");
+    TEST_ASSERT_EQ(skip_value_depth(&L, 1u), 1, "budget 1 skips a flat array");
+}
+
+static void test_parser_entries_retain_bound(void)
+{
+    /* 63 -> 64 succeeds, 64 -> refused, and a refusal must not write or count. */
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    memset(r, 0, sizeof(*r));
+    boot_entry_envelope_t e;
+    memset(&e, 0, sizeof(e));
+
+    r->entry_count = BOOT_ENTRIES_MAX_ENTRIES - 1u;
+    e.kind = 7;
+    TEST_ASSERT_EQ(entries_retain(r, &e), 1, "the last free slot accepts");
+    TEST_ASSERT_EQ((int)r->entry_count, (int)BOOT_ENTRIES_MAX_ENTRIES,
+                   "count advanced to the cap");
+    TEST_ASSERT_EQ((int)r->entries[BOOT_ENTRIES_MAX_ENTRIES - 1u].kind, 7,
+                   "the entry landed in the last slot");
+
+    e.kind = 9;
+    TEST_ASSERT_EQ(entries_retain(r, &e), 0, "a full array refuses");
+    TEST_ASSERT_EQ((int)r->entry_count, (int)BOOT_ENTRIES_MAX_ENTRIES,
+                   "a refused append does not advance the count");
+    TEST_ASSERT_EQ((int)r->entries[BOOT_ENTRIES_MAX_ENTRIES - 1u].kind, 7,
+                   "a refused append does not overwrite the last slot");
+}
+
 static void test_parser_fallback_uki(void)
 {
     boot_entry_envelope_t e;
@@ -754,6 +1148,46 @@ void test_register_boot_entry_parser(void)
                             test_parser_health_subset_rejects_backslash_in_name, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: health_check_subset trailing comma rejected",
                             test_parser_health_subset_rejects_trailing_comma, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated entries key rejected",
+                            test_parser_repeated_entries_key_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: duplicate id across entries keys rejected",
+                            test_parser_duplicate_id_across_entries_keys_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated schema_version rejected",
+                            test_parser_repeated_schema_version_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated crc32 rejected",
+                            test_parser_repeated_crc32_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated unknown top-level key rejected",
+                            test_parser_repeated_unknown_top_level_key_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated entry-object key rejected",
+                            test_parser_repeated_entry_object_key_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: escaped top-level key rejected",
+                            test_parser_escaped_top_level_key_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: escaped entry key rejected",
+                            test_parser_escaped_entry_key_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: many distinct keys accepted",
+                            test_parser_many_distinct_keys_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: prefix-sharing keys accepted",
+                            test_parser_prefix_sharing_keys_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated entries behind 6-deep extension rejected",
+                            test_parser_repeated_entries_behind_nest6, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated entries behind 7-deep extension rejected",
+                            test_parser_repeated_entries_behind_nest7, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: repeated entries behind 8-deep extension rejected",
+                            test_parser_repeated_entries_behind_nest8, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: deep extension with one entries array accepted",
+                            test_parser_deep_extension_single_entries_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: entry extension 8 deep accepted",
+                            test_parser_entry_ext_depth8_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: entry extension 9 deep rejected",
+                            test_parser_entry_ext_depth9_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: rescan reports failure not absence",
+                            test_parser_rescan_reports_failure_not_absence, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: rescan finds and misses correctly",
+                            test_parser_rescan_finds_and_misses_correctly, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: skip_value_depth budget enforced",
+                            test_parser_skip_value_depth_budget, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: entries_retain bound enforced",
+                            test_parser_entries_retain_bound, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

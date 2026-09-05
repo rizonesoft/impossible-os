@@ -1,19 +1,15 @@
 {
  "resolved": 507,
- "total": 1705,
+ "total": 1709,
  "recorded": "2026-09-05",
  "raised_by": "todo-metadata-layer roadmap's stored-ref-repair work: 111 -> 474 (+363), proved by corpus_resolution_snapshot.py at 0 lost / 0 moved with all 363 added mappings ground-truthed (0 failed an independent head/close-brace check, 0 targeted a non-tree-unique basename, 22 stratified spot-checks exact at file:line). Both repairs are applied at RESOLUTION time in the new scripts/todo-graph/ref_resolution.py, which lint Check 7's walk AND the identity snapshot both call so they cannot drift. (1) BASENAME REPAIR -- a stored .c/.h path with no directory component that does not exist at the repo root, whose basename is unique among the tree's .c/.h files, is checked against that file (e.g. `boot_desktop.c` -> `src/kernel/main/boot_desktop.c`). It applies to `kind=file` refs as well as `kind=symbol` refs: 673 of the corpus's 1,167 stamped .c/.h FILE refs do not exist at their authored path and 629 are bare and tree-unique, so repairing only symbol refs starved the section-scope pairing of candidates (Codex adversarial, +158 occurrences once fixed). The 8 that remain -- 7 occurrences across 2 ambiguous basenames (`entropy.c`, `entropy.h`) plus 1 for an absent one (`hv_bar.h`) -- are never guessed and stay counted. (2) SECTION-SCOPE PAIRING -- a symbol ref carrying no file of its own is paired to a file when exactly ONE of the files its own TODO SECTION's stamped items author actually defines it; build.py pairs only within an ITEM, so an item whose sibling item named the file loses a pairing the section really does carry. One false positive surfaced by the new visibility was fixed at its cause rather than marked: `return <bare identifier>;` is no longer read as a stub when the identifier names a file-scope VARIABLE in the same translation unit, because that is an accessor reading state (compositor_get_test_seed at src/kernel/main/compositor.c:64), not a placeholder; `return STATUS_NOT_IMPLEMENTED;` still fires and neither a macro nor an enum constant can satisfy the exemption. The one genuine stub it found (test_usermode_color_active, the release-flavor no-op inline) got the existing INTENTIONAL-STUB marker. || 2026-08-10, total 1626 -> 1628 (denominator only; `resolved` untouched at its 474 floor): the todo-metadata-layer roadmap's fence-tracker section added two `[x]` items carrying symbol refs (`fence_mask()` and `fence_step()` in one, `fence_step` again in the other). Stamped work was genuinely ADDED, so the population grew for the reason the gate asks about; no ref was lost or moved. || 2026-08-11, total 1628 -> 1629 (denominator only; `resolved` untouched at its 474 floor): the todo-metadata-layer roadmap's section 41 marked its items [x], and one of them carries the symbol ref `todo-section-order.py:parse` -- the item that fixes the SECOND heading scan names both the file and the function. Queried from build/todo-cache.json: it is the ONLY symbol ref naming any of that section's files. `.py` is outside the resolver's .c/.h suffix set, so it lands in non-c-suffix, which is now 66. An earlier draft of this entry named `fence_step` and unpaired-ref; both were wrong and were caught by the section's own consistency review, which is the reason to derive these counts from the checker rather than from the diff you think you made. Stamped work was genuinely ADDED, which is the question the denominator check asks; no ref was lost or moved. || 2026-08-13, total 1629 -> 1630 (denominator only; `resolved` untouched at its 474 floor): the boot-protocol-abi-handoff roadmap's FILE_CLOSE sweep marked two section-3 items [x], and one of them -- the header -> manifest coverage gate, closed by commit `a197fa2ad` -- names the symbol `check_manifest_completeness` without a file of its own. Derived from the checker's own `_walk` rather than from the diff: the ONLY owner that moved is `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md`, 42 -> 43 occurrences with `resolved` unchanged at 15, and the sole bucket that moved is unpaired-ref 859 -> 860 (section 3's authored files are the boot-info-manifest shell/inc surface, so no file in its own section defines that symbol; the identically-named ref carrying `check-doc-coverage.py` belongs to a different section and pairs on its own). Stamped work was genuinely ADDED; no ref was lost or moved. || 2026-08-13, resolved floor 474 -> 475 alongside total 1631 -> 1636: the cpu-boot-sequencing roadmap's FILE_CLOSE sweep marked its `## Unit Tests` items [x], and those items cite the shipped test surface by symbol. One newly-stamped ref resolves (it names both a file and a function defined in it), so the floor rises by exactly 1 -- recorded because raising it is the point when resolution genuinely improves, not merely tolerated.  || 2026-08-15 total 1638 -> 1640 (+2, denominator only; resolved stays 476): the scripted anti-rollback NVRAM fixture harness section added one kind=symbol ref (boot_rollback_raise_if_steady, already resolvable at include/kernel/boot_info.h). No stamped work was removed and no ref was lost -- the population simply grew by the one symbol the new section cites. || 2026-09-03, total 1662 -> 1664 and resolved floor 485 -> 486 (the ONLY owner that moved is todo/01-boot-platform/TODO-23-boot-watchdog.md, 5 -> 7 occurrences with resolved 0 -> 1): the boot-watchdog roadmap's FILE_CLOSE sweep reshaped 31 open-in-deferred items and recorded the section-7 deferral, and the new prose cites the shipped WDAT surface by symbol -- one of those refs names both a file and a function defined in it, so it resolves and the floor rises by exactly 1. Derived from the checker's own _walk rather than from the diff, and `by_owner` was regenerated in the same pass so the map and the totals cannot disagree. No code changed in that commit: the source tree is byte-identical to c6b8af000, so the denominator moved only because stamped TODO prose gained refs. Stamped work was genuinely ADDED; no ref was lost or moved. || 2026-09-03, total 1664 -> 1666 (+2), resolved unchanged at 486. The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 6 -> 8 occurrences with resolved flat at 0, derived from the check's own _walk per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained). The power-management roadmap's section-1 review stamped that section and authored a new section 24 for the GPE-block gap, so stamped work was genuinely ADDED. RECORDED TWICE, and the first attempt is why this note is worth reading: an intermediate state of that commit sat at total 1677 / resolved 488, because the review's new prose put symbol refs on the ITEM LEAD lines. Splitting those leads to satisfy the 250-char cap moved 11 refs onto indented sub-bullets and dropped BOTH resolutions -- the resolver binds a ref on a lead line that it does not bind on a continuation, which is the exact mechanism the two entries in `total_moved_by` already record. A pure line-length repair moved this denominator with no producer change behind it, so the baseline must be derived AFTER the final TODO text, not before. No ref left the corpus. || 2026-09-04, total 1666 -> 1668 (+2) and resolved floor 486 -> 487 (+1). The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 8 -> 10 occurrences with resolved 0 -> 1, derived from the check's own _walk per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained) and taken AFTER the final TODO text, per the 2026-09-03 entry's warning that a pure line-length repair can move this denominator with no producer change behind it. The power-management roadmap's section 2 shipped (C1 idle entry) and its stamps cite the shipped surface by symbol; one of those refs names both a file and a function defined in it, so it resolves and the floor rises by exactly 1 -- which is the point of recording a rise rather than tolerating it. The same commit authored section 25 (per-CPU idle telemetry) and added items to section 16. Stamped work was genuinely ADDED; no ref was lost or moved. || 2026-09-04, total 1668 -> 1669 (+1) and resolved floor 487 -> 489 (+2). The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 10 -> 11 occurrences with resolved 1 -> 3, derived from the check's own _walk per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained) and taken AFTER the final TODO text, per the 2026-09-03 entry's warning that a pure line-length repair can move this denominator with no producer change behind it. The power-management roadmap split section 3 (S3 suspend-to-RAM, deferred on absent ACPI-namespace, section 9 callback and section 8 D-state prerequisites) and shipped the residue as section 26, the resumable stop-the-world CPU rendezvous. Its stamps cite the shipped surface by symbol, and TWO of those refs name both a file and a function defined in it (smp_rendezvous_begin and smp_rendezvous_end, both at src/kernel/smp/smp.c), so both resolve and the floor rises by exactly 2 -- which is the point of recording a rise rather than tolerating it. Stamped work was genuinely ADDED; no ref was lost or moved. || 2026-09-04, total 1670 -> 1682 (+12) and resolved floor 489 -> 499 (+10). The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 11 -> 23 occurrences with resolved 3 -> 13, derived from the check's own _walk per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained, and both maps sum exactly to their totals) and taken AFTER the final TODO text, per the 2026-09-03 entry's warning that a pure line-length repair can move this denominator with no producer change behind it. The power-management roadmap split section 4: the on-disk hibernation image FORMAT and its LZ4 chunk codec shipped as section 4, and the blocked write path, AEAD encryption and resume consumer became section 28. Ten of the added refs resolve because the shipped section's `[x]` lead lines name both the file and a function defined in it -- hibernate_image_begin, hibernate_image_append_chunk, hibernate_image_finalize, hibernate_image_header_validate, hibernate_image_decode_begin, hibernate_image_read_chunk, hibernate_image_decode_finish, hibernate_image_kernel_matches and hibernate_image_encoded_bound in src/kernel/pm/hibernate_image.c, plus the header's own type. That is a large single-section rise because one section shipped an entire new subsystem surface at once, not because the resolver changed. Stamped work was genuinely ADDED; no ref was lost or moved. || 2026-09-04, total 1682 -> 1688 (+6), resolved unchanged at 499. The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 23 -> 29 occurrences with resolved FLAT at 13, derived from the check's own _walk per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained, and both maps sum exactly to their totals) and taken AFTER the final TODO text, per the 2026-09-03 entry's warning that a pure line-length repair can move this denominator with no producer change behind it. The power-management roadmap shipped section 5, the ACPI Embedded Controller driver: ECDT discovery and validation, polled RD_EC/WR_EC transactions, a burst-wrapped block read, and a firmware-quirk port correction. Six added refs, none resolving, and that is the expected shape here rather than a regression: this section's `[x]` leads name the API (acpi_ec_read, acpi_ec_write, acpi_ec_read_block, acpi_ec_init, acpi_ec_ready) while several of the refs sit on indented sub-bullets, because five leads had to be split to satisfy the 250-char cap -- exactly the lead-versus-continuation mechanism the 2026-09-03 and total_moved_by entries already record, and the reason the floor is left where it is instead of being nudged. Stamped work was genuinely ADDED; no ref was lost or moved.",
  "why": "Check 7 can only inspect a stamped symbol it can RESOLVE; an unresolved ref yields no finding, so losing resolution is indistinguishable from passing. This number is the floor: a drop is an ERROR (rc 7). Raising it is the point -- when the resolver improves, update this file in the same commit and say what changed. This file is TRACKED state and is enforced fail-CLOSED (rc 8) when missing or malformed; STUB_LINT_ALLOW_NO_BASELINE=1 is the deliberate, reported bypass. `total` is enforced too: the floor is a RATIO, so a shrinking denominator would let refs lost from the cache read as an improved ratio (rc 7 on any move, in either direction).",
  "standing_gap": "MEASURED 2026-09-05 at total 1705: resolved=507, unresolved=229 OCCURRENCES (220 unique). Refresh this field from the checker whenever `total` moves.",
  "largest_recoverable_class": "unpaired-ref, at 893 occurrences (re-measured 2026-09-04 from the checker's own _walk, not carried forward), remains the largest class and is NOT straightforwardly recoverable. The other buckets at this measurement: unresolved-calllike 140, no-calllike-token 91, unsupported-lang 66, missing-file 8, path-escape 1. MEASURED 2026-08-06: 673 of the 736 unique unpaired symbols do have exactly one C definition tree-wide (1,028 occurrences), but binding on tree-wide name uniqueness alone was REJECTED for this roadmap with reason -- a bare unique-name search can bind an unrelated same-named definition in a different link product with no way to prove linkage, and the one narrow existing use of tree-wide basename uniqueness (follow_declaration's sibling rule) is an explicitly accepted risk paid for by hand-verifying all 18 of its mappings. 673 is 37x that and unverifiable at section scale. The authored scope evidence that would make it provable does not exist in this corpus either: exactly 1 of 232 TODO nodes carries a `file_patterns` frontmatter list, and it holds zero unpaired refs. What section scope could reach, it reached. The residual names a symbol with no file anywhere in its section, which is an authoring convention (prose naming an API) rather than bad stored data, and is a COUNTING-contract question, not an extractor bug.",
- "total_moved_by": "2026-09-05, total 1702 -> 1705 (+3) and resolved floor 504 -> 507 (+3). A GROWTH, and the only owner that moved is todo/02-kernel-core/TODO-26-power-management.md (43 -> 46 occurrences, resolved 18 -> 21), from shipping section 38 (ACPI table discovery validates extents before the checksum walk and before publishing fadt_ptr). Every added ref RESOLVES, so the floor rises with the denominator: the ratio the gate protects is unchanged in meaning and strictly tighter in value. That is the healthy shape, and it happened because the section's `[x]` LEAD lines name both the file and a function defined in it -- acpi_root_entry_count, acpi_extent_in_map and the test hooks all sit on leads rather than on indented sub-bullets, which is the lead-versus-continuation mechanism every entry below records in the other direction. Derived from the checker's OWN _walk over build/todo-cache.json per this file's standing rule and taken AFTER the final TODO text: the live by_owner map was diffed against the recorded one (no owner gone, none gained, exactly one moved) and both maps sum exactly to their totals, 1705 / 507, equal to the live coverage line. Stamped work was genuinely ADDED; no ref was lost or moved.\n\n2026-09-05, total 1701 -> 1702 (+1) and resolved floor 503 -> 504 (+1). A GROWTH, and the only owner that moved is todo/02-kernel-core/TODO-26-power-management.md (42 -> 43 occurrences, resolved 17 -> 18), from shipping section 10 (S0ix firmware advertisement and MWAIT capability layer). The added ref RESOLVED, so the floor rises with the denominator rather than lagging it: the ratio the gate protects is unchanged in meaning and strictly tighter in value. Verified with the checker's own walk immediately before recording -- it reported resolved=504/1702 against baseline=503, which is exactly this delta and no other owner's. Both numbers are updated in the same commit as the section that caused them, which is the condition the POPULATION GREW refusal asks for.\n\n2026-09-04, total 1703 -> 1701 (-2) and resolved floor 504 -> 503 (-1). A SHRINK, which this file treats as the case most worth explaining. The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 44 -> 42 occurrences with resolved 18 -> 17, derived from the checker's OWN _walk over build/todo-cache.json per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained, and both maps sum exactly to their totals -- 1701 / 503) and taken AFTER the final TODO text. NO REF WAS LOST FROM THE CACHE: the population shrank because a FALSE STAMP WAS CORRECTED, which is the one direction a shrink is supposed to be allowed to move. The power-management roadmap's `## Unit Tests` item 'Register in test_runner_init(): test_register_power()' was marked `[x]` and was not done -- `grep -c \"test_register_power(\" src/kernel/test/test_runner.c` returns 0 and src/kernel/test/test_power.c does not exist (verified 2026-09-04). Its LEAD line named three refs (test_register_power, src/kernel/test/test_runner.c, test_register_pm_idle) where the resolver binds them, so flipping it to `[ ]` removed them from the STAMPED population -- correctly, because they described a wiring no reader could find. Against that, section 9 shipped (driver power callbacks and resume ordering) and went from 0 `[x]` items at HEAD to 5, three of whose leads name a symbol (pm_register_power_callback, pm_notify_sleep, pm_notify_resume); the rest of that section's new symbols sit on indented sub-bullets, which is the lead-versus-continuation mechanism every entry below records. Net -2 / -1. The floor is lowered rather than held because holding it would demand resolution from a ref set that legitimately no longer contains a false claim. || PREVIOUS: 2026-09-04, 1701 -> 1703 (+2) and resolved floor 503 -> 504 (+1). The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 42 -> 44 occurrences with resolved 17 -> 18, derived from the check's own _walk per this file's standing rule (by_owner diffed against the recorded map: no owner gone, none gained, both sum to their totals) and taken AFTER the final TODO text including the table-alignment pass. This is the section-8 REVIEW commit: its fixes were named as their own `[x]` items per the fix-and-name rule rather than left as a stamp tally, and those lead lines carry symbols the pre-review wording did not (pci_write16, pci_pm_clear_poison, serial_write_recoverable, PCI_CFG_NO_RESPONSE). One resolves because its lead names both the file and a function defined in it. Same lead-versus-continuation mechanism the entries below record. || PREVIOUS: 2026-09-04, 1697 -> 1701 (+4) and resolved floor 499 -> 503 (+4). The ONLY owner that moved is todo/02-kernel-core/TODO-26-power-management.md, 38 -> 42 occurrences with resolved 13 -> 17, derived from the check's own _walk per this file's standing rule (the live by_owner map was diffed against the recorded one: no owner gone, none gained, and both maps sum exactly to their totals) and taken AFTER the final TODO text -- including the table-alignment pass -- per the 2026-09-03 entry's warning that a pure line-length repair can move this denominator with no producer change behind it. The power-management roadmap split section 8 (the PM capability and D0/D1/D2/D3hot state machine stayed; the pm_device_t registry became section 33 and D3cold via ACPI _PS0/_PS3 became section 34) and shipped the retained half. Every added ref resolves, which is why the floor rises by exactly as much as the population: the shipped section's `[x]` LEAD lines name both the file and a function defined in it -- pci_pmcap_find, pci_set_d_state, pci_get_d_state and pci_pm_bdf_valid in src/kernel/drivers/pci_pm.c. A +4/+4 move is the healthy shape for a section that ships a new surface and names it on leads rather than on continuations; contrast the section-5 entry below, where five leads had to be split for the 250-char cap and the added refs landed on sub-bullets where the resolver does not bind them. Stamped work was genuinely ADDED; no ref was lost or moved. || PREVIOUS: 2026-09-04, 1695 -> 1697, resolved 499 -> 499. The power-management roadmap's section 7 REVIEW round, which named each review fix as its own `[x]` item per the fix-and-name rule; those lead lines carry symbols the pre-review wording did not (acpi_disable_fixed_events, registry_populate_defaults, acpi_btn_dispatch_count, acpi_event_count_t). Same mechanism as the entries below: the resolver binds refs on a lead line and not on an indented continuation. Regenerated with the checker's own _walk() so by_owner and the totals cannot disagree. Previous entry: 2026-09-04, 1694 -> 1695 (+1), resolved unchanged at 499. Same owner and same mechanism as the entry below: the power-management roadmap's section 7 ship gained one more `[x]` LEAD line naming `acpi_enter_sleep_state()`, recording the re-adversarial fix that widened its wake snapshot. The resolver binds refs on a lead line and not on an indented continuation, so a symbol promoted onto a lead moves this denominator with no producer change behind it. Previous entry: 2026-09-04, 1688 -> 1694 (+6), resolved unchanged at 499. Sole owner that moved: the power-management roadmap's section 7 ship (power and sleep button event dispatch). Its checklist items were rewritten from the draft wording to what shipped, and the shipped wording names symbols the draft did not: `acpi_btn_resolve_action(raw, present, fallback)`, `acpi_btn_action_available()`, `acpi_btn_drain()`, `acpi_btn_plan()`, `acpi_btn_gate_take()` / `acpi_btn_gate_release()` and `s_pm1_evt_lock` now appear on `[x]` LEAD lines. The resolver binds refs on a lead line and not on an indented continuation, so promoting a symbol from prose onto a lead moves this denominator; the same mechanism as the 2026-09-04 +1 recorded below. No producer change is behind it. Previous entry: 2026-09-04, 1669 -> 1670 (+1), resolved unchanged at 489. Sole owner that moved: the irql-model-dpcs roadmap's section 19 ship (interference-proof DPC depth-accounting test seam). Its four checklist items were rewritten from the draft wording to what shipped, which is what added the ref: the `[x]` LEAD line now names `dpc_sample_queue(cpu_id, dpc, out)` where the draft lead named no symbol at all -- the resolver binds refs on a lead line and not on an indented continuation, so a symbol promoted from prose onto a lead moves this denominator with no producer change behind it, exactly the mechanism the previous entry recorded in the opposite direction. Derived from the check's own _walk (resolved=489/1670, unresolved=227) rather than from the diff, per this file's standing rule. The single owner that moved is todo/02-kernel-core/TODO-07-irql-model-dpcs.md, 39 -> 40 occurrences with resolved flat at 15; by_owner and the totals were regenerated together from one _walk, never separately. No owner gone, none gained.",
+ "total_moved_by": "2026-09-05, total 1705 -> 1709 (+4) with the resolved floor UNCHANGED at 507. A GROWTH, and the only owner that moved is todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md (26 -> 30 occurrences, resolved unchanged at 12), from shipping section 19 (reject repeated top-level keys in the boot entry store). The four added refs are the section's new firmware helpers -- key_seen_before, key_is_literal, entries_retain -- plus the host-side strict loader. They do NOT resolve, so unlike the section-38 growth above this one DILUTES the ratio rather than tightening it, and that is recorded here rather than hidden: the C helpers are file-scope statics in src/boot/uefi/boot_entries_parser.c, and naming that file alongside each symbol in the stamped item did not change the outcome (re-walked, still 507/1709), so the gap is in what the resolver indexes, not in how the items are authored. The floor is held at its previous value rather than lowered, so the gate still refuses any real regression in resolved coverage.",
  "by_owner": {
   "todo/00-infrastructure/TODO-01-developer-tooling-stack.md": {
    "occurrences": 1,
-   "resolved": 0
-  },
-  "todo/00-infrastructure/TODO-02-ai-development-system.md": {
-   "occurrences": 0,
    "resolved": 0
   },
   "todo/00-infrastructure/TODO-03-kernel-test-harness.md": {
@@ -38,10 +34,6 @@
   },
   "todo/00-infrastructure/TODO-08-automation-hardening.md": {
    "occurrences": 20,
-   "resolved": 0
-  },
-  "todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md": {
-   "occurrences": 0,
    "resolved": 0
   },
   "todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md": {
@@ -69,12 +61,8 @@
    "resolved": 3
   },
   "todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md": {
-   "occurrences": 26,
+   "occurrences": 30,
    "resolved": 12
-  },
-  "todo/01-boot-platform/TODO-08-alternate-boot-protocols.md": {
-   "occurrences": 0,
-   "resolved": 0
   },
   "todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md": {
    "occurrences": 57,
@@ -144,17 +132,9 @@
    "occurrences": 11,
    "resolved": 10
   },
-  "todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
   "todo/01-boot-platform/TODO-27-uefi-advanced.md": {
    "occurrences": 18,
    "resolved": 9
-  },
-  "todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md": {
-   "occurrences": 0,
-   "resolved": 0
   },
   "todo/01-boot-platform/TODO-29-boot-perf-health-observability.md": {
    "occurrences": 10,
@@ -220,10 +200,6 @@
    "occurrences": 5,
    "resolved": 0
   },
-  "todo/02-kernel-core/TODO-16-kernel-notification-facility.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
   "todo/02-kernel-core/TODO-17-binary-system.md": {
    "occurrences": 18,
    "resolved": 6
@@ -268,672 +244,32 @@
    "occurrences": 12,
    "resolved": 8
   },
-  "todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
   "todo/02-kernel-core/TODO-31-kernel-bulletproofing.md": {
    "occurrences": 42,
    "resolved": 3
-  },
-  "todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md": {
-   "occurrences": 0,
-   "resolved": 0
   },
   "todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md": {
    "occurrences": 18,
    "resolved": 13
   },
-  "todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/02-kernel-core/TODO-A-SSDT-Master-Table.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-02-memory-security.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-03-advanced-allocator.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
   "todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md": {
    "occurrences": 12,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-07-smp-phase2.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-08-advanced-sync.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-03-acpi-power-management.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-04-security-hardware.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-05-kernel-module-system.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-07-device-manager.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-10-usb-stack.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-11-input-system.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-12-i2c-touchpad.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-14-network-drivers.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-15-wifi-drivers.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-16-bluetooth.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-18-audio-drivers.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-21-game-controller-haptics.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-01-block-storage-hardening.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-03-volume-management-automount.md": {
-   "occurrences": 0,
    "resolved": 0
   },
   "todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md": {
    "occurrences": 54,
    "resolved": 1
   },
-  "todo/05-storage-filesystems/TODO-05-win32-file-io-api.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-08-exfat-readwrite.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-09-ext4-readwrite.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-10-btrfs-readonly.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-11-optical-media.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/06-desktop-foundation/TODO-01-wm-completion.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/06-desktop-foundation/TODO-02-compositor-optimization.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/06-desktop-foundation/TODO-03-input-system.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/06-desktop-foundation/TODO-04-control-library.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/06-desktop-foundation/TODO-05-desktop-shell.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/06-desktop-foundation/TODO-06-desktop-icons.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-01-tcp-network-infrastructure.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-02-dns-sockets.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-03-http-tls.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-04-ipv6-dual-stack.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-05-firewall.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-06-ntp-status-winsock.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-07-web-browser.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-08-ssh-ftp-clients.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-09-email-client.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-10-pdf-viewer.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/07-networking/TODO-11-syslog-forwarding.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-02-text-font-internationalization.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-03-theme-system.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-04-animation-engine.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-05-widget-library-core.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-06-widget-dialogs.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-08-window-manager.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-09-desktop-shell-features.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-10-taskbar.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-12-clock-time.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-13-boot-splash-recovery.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-01-clipboard.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-02-file-associations-resources.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-03-service-manager.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-05-file-search.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
   "todo/09-desktop-shell/TODO-06-security-accounts.md": {
    "occurrences": 1,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-07-cng-crypto.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-08-terminal.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-09-file-manager.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-10-notepad.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-11-control-panel.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-12-utilities.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/09-desktop-shell/TODO-13-explorer-shell-host.md": {
-   "occurrences": 0,
    "resolved": 0
   },
   "todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md": {
    "occurrences": 10,
    "resolved": 3
   },
-  "todo/10-platform-services/TODO-01-audio-system.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-02-paint-app.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-03-updates-packages.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-04-restore-recovery.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-05-screensaver-widgets-display.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-06-accessibility.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-07-win32-pe-loader.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-08-win32-api-surface.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-09-compiler-sdk.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-10-linux-compat.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-11-installer-iso.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-12-long-term-features.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-A-user32-export-master-table.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-B-comctl32-export-master-table.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/10-platform-services/TODO-C-shell32-export-master-table.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-01-web-browser.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-02-ftp-wget-wifi.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-03-ssh-client.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-04-email-client.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-05-pdf-viewer.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-06-video-player.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-07-collaboration-apps.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-08-notepad.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-09-calculator.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-10-wordpad.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-11-photos-image-viewer.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-12-screenshot-archive.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/11-apps/TODO-13-calendar-utilities.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-01-kernel-libraries.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-05-win32-subsystem.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-06-sdk-distribution.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/13-tools-accessories/TODO-02-event-viewer.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-01-sdk-build-system.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
   "todo/14-host-tools/TODO-02-ixfs-mount.md": {
    "occurrences": 1,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-03-addr2line.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-04-crash-decode.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-05-serial-analyze.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-06-disk-inspect.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-07-ixfs-fsck.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/14-host-tools/TODO-08-blackbox-log-extractor.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/15-installer-release/TODO-01-release-artifacts.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/15-installer-release/TODO-02-unattended-install.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/15-installer-release/TODO-03-update-server.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/15-installer-release/TODO-04-release-qa.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/15-installer-release/TODO-05-github-release-community.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/18-future-research/TODO-01-multi-arch-port.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/18-future-research/TODO-02-hypervisor.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/18-future-research/TODO-03-gpu-compositor.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/18-future-research/TODO-04-secureboot-tpm.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/18-future-research/TODO-05-ai-ml-runtime.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/18-future-research/TODO-06-android-app-compatibility.md": {
-   "occurrences": 0,
-   "resolved": 0
-  },
-  "todo/TODO-Claude-Overnight-Runner.md": {
-   "occurrences": 0,
    "resolved": 0
   }
  },

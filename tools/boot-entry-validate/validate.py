@@ -18,9 +18,12 @@ Usage:
 
 from __future__ import annotations
 
+import errno
 import json
 import math
+import os
 import re
+import tempfile
 import sys
 import zlib
 from pathlib import Path
@@ -122,6 +125,87 @@ def warn(msg: str) -> None:
 def _is_int(x: Any) -> bool:
     """Strict integer check (excludes bool). Python's `isinstance(True, int)` is True; here it isn't."""
     return isinstance(x, int) and not isinstance(x, bool)
+
+
+# ---- Strict JSON load (unique, literally-spelled key names) ----
+#
+# `json.loads` accepts a repeated key and silently keeps the last one. The firmware
+# parser cannot afford that: its `entries` cap counter is per-occurrence while the
+# output index spans occurrences, so a second `entries` array used to write past the
+# 64-slot output array (boot_entries_parser.c key_seen_before). The firmware now
+# rejects any repeated key, and the host must reject the same stores or it would
+# bless a file that fails to boot.
+#
+# The same applies to escape sequences in KEY names. The firmware compares key bytes
+# raw, and find_crc32_key() locates the CRC field by scanning for the literal bytes
+# `"crc32"`, so an escaped spelling is not the same key there while `json.loads`
+# decodes it into one.
+#
+# Deliberate asymmetry: this runs at EVERY object level, including inside `payload`
+# objects that the firmware envelope parser skips wholesale. The host is the producer
+# and validates payload contents anyway (validate_payload); being stricter there is
+# producer validation, not a claim that the two parsers accept identical inputs.
+
+def _key_spans(text: str):
+    """Yield (offset, raw_body) for every string in KEY position.
+
+    In valid JSON a string followed by `:` is always a key -- a string VALUE is
+    always followed by `,`, `}` or `]`. This scans strictly left to right,
+    consuming each string as a unit, so a candidate can never BEGIN inside
+    another string. That is the reason it is a scanner and not a regex: a regex
+    alternation is free to start matching at an escaped quote in the middle of a
+    value, which turns a value like `"\\"a\\\\b\\":x"` into a spurious key.
+    Only meaningful on text json.loads has already proven well-formed.
+    """
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != '"':
+            i += 1
+            continue
+        start = i
+        i += 1
+        body_start = i
+        while i < n:
+            ch = text[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                break
+            i += 1
+        body = text[body_start:i]
+        i += 1                       # step past the closing quote
+        j = i
+        while j < n and text[j] in " \t\r\n":
+            j += 1
+        if j < n and text[j] == ":":
+            yield start, body
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    seen: set[str] = set()
+    for key, _ in pairs:
+        if key in seen:
+            fail(f"repeated key {key!r} in a JSON object (keys must be unique)")
+        seen.add(key)
+    return dict(pairs)
+
+
+def strict_loads(text: str) -> Any:
+    """json.loads with the store's two key rules enforced: keys are unique within
+    an object, and key names are spelled literally. Raises json.JSONDecodeError on
+    malformed input (callers own the message); calls fail() on a rule violation."""
+    data = json.loads(
+        text,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=lambda c: fail(f"non-finite JSON token {c!r} not allowed"),
+    )
+    # Only meaningful once json.loads has proven the text is well-formed JSON.
+    for offset, body in _key_spans(text):
+        if "\\" in body:
+            fail(f"key name at offset {offset} uses a JSON escape; "
+                 "key names must be spelled literally")
+    return data
 
 
 def _is_bool(x: Any) -> bool:
@@ -535,6 +619,151 @@ def _reject_non_finite(node: Any, path: str = "") -> None:
                 stack.append((v, f"{cur_path}[{i}]"))
 
 
+# ---- Firmware value-depth budget (context-relative) ----
+#
+# The firmware parser walks the root object and each entry object STRUCTURALLY,
+# but hands any value it does not interpret to a bounded skipper
+# (skip_value_post_token -> skip_value_depth with BOOT_ENTRIES_MAX_PARSE_DEPTH).
+# That budget counts containers and RESTARTS at each such value, so the limit is
+# context-relative: 8 levels measured from the skipped value itself, not 8 levels
+# from the root. Values the firmware interprets itself (flags, policy_tags,
+# health_check_subset) are shape-checked elsewhere and never reach the skipper.
+#
+# Without this check the host accepted stores the firmware rejects -- a nine-deep
+# array under an unknown extension key validated here and then triggered
+# invalid-store fallback at boot, which is exactly the divergence the unique-key
+# work set out to remove.
+MAX_PARSE_DEPTH = 8         # BOOT_ENTRIES_MAX_PARSE_DEPTH
+
+_ENTRY_STRUCTURAL_KEYS = {"id", "title", "kind", "flags", "sort_key",
+                          "machine_id", "policy_tags", "timeout_override",
+                          "health_check_subset"}
+
+
+def _container_depth(value: Any) -> int:
+    """Max container nesting of `value`, counting the value itself. Scalars are 0.
+
+    Iterative for the same reason _reject_non_finite is: a recursive form dies on
+    a deeply-nested-but-small adversarial store before it can report anything."""
+    best = 0
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        cur, d = stack.pop()
+        if isinstance(cur, (dict, list)):
+            if d > best:
+                best = d
+            children = cur.values() if isinstance(cur, dict) else cur
+            for child in children:
+                if isinstance(child, (dict, list)):
+                    stack.append((child, d + 1))
+    return best
+
+
+def _check_skipped_value_depth(value: Any, where: str) -> None:
+    depth = _container_depth(value)
+    if depth > MAX_PARSE_DEPTH:
+        fail(f"{where}: value nests {depth} containers, over the firmware "
+             f"parser's {MAX_PARSE_DEPTH}-level budget for a skipped value")
+
+
+def validate_value_depths(data: dict) -> None:
+    """Apply the firmware's per-value depth budget everywhere the firmware skips."""
+    for key, value in data.items():
+        if key in ("schema_version", "crc32", "entries"):
+            continue
+        _check_skipped_value_depth(value, f"top-level key {key!r}")
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        for key, value in entry.items():
+            if key in _ENTRY_STRUCTURAL_KEYS:
+                continue
+            # `payload` and any unknown extension key are both skipped wholesale.
+            _check_skipped_value_depth(value, f"entry[{idx}] key {key!r}")
+
+
+def atomic_write_bytes(path: Path, raw: bytes) -> None:
+    """Write-new + fsync + atomic replace. Raises OSError; callers map it to
+    their own exit-code contract.
+
+    The temporary file is created with tempfile.mkstemp, so this process
+    exclusively OWNS it. A fixed `<path>.tmp` would not be owned: an existing
+    file there is silently overwritten, a symlink pointed at the destination
+    defeats the whole failure-preservation guarantee, two concurrent runs share
+    one inode (A can fsync and replace while B is still writing the same file),
+    and the cleanup path would unlink something it did not create. os.replace
+    makes the RENAME atomic; it says nothing about who else can write the
+    source. Cleanup catches BaseException so an interrupt cannot strand a temp.
+
+    Both directory fsyncs are part of the FAT32 ESP durability protocol the
+    boot-counter rename uses: without them a host crash can leave the directory
+    entry missing after the data is on disk. They are skipped on error because
+    fsync of a directory fd is undefined on Windows, where os.replace's native
+    MoveFileEx is itself atomic.
+    """
+    parent = path.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=path.name + ".", suffix=".new")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _fsync_dir(parent)
+        os.replace(tmp_path, path)
+        _fsync_dir(parent)
+    except BaseException:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+# Directory fsync is undefined on Windows (os.open of a directory raises
+# EACCES/EPERM there) and unsupported on some filesystems. Those are PLATFORM
+# LIMITATIONS and are skipped. A genuine I/O failure -- EIO, ENOSPC -- is NOT:
+# swallowing it reported a durable write while the directory entry may never
+# have reached the disk, which is precisely the "old-or-new, never torn"
+# guarantee this protocol exists to make. Suppress the limitation, propagate
+# the failure.
+_DIR_FSYNC_UNSUPPORTED = frozenset({
+    errno.EINVAL, errno.ENOSYS,
+    getattr(errno, "ENOTSUP", errno.EOPNOTSUPP), errno.EOPNOTSUPP,
+})
+
+# Windows has no directory handle to fsync: os.open(dir, O_RDONLY) fails with a
+# permission error there for every directory, so on THAT platform EACCES/EPERM
+# means "unsupported". On POSIX it means what it says -- a parent granting write
+# and search but not read is a real configuration, and suppressing it there
+# skipped both flushes and returned success with rename durability unestablished.
+# Platform limitation is a property of the platform, not of the errno.
+_WINDOWS_DIR_OPEN_LIMITATION = frozenset({errno.EACCES, errno.EPERM})
+
+
+def _fsync_dir(parent: Path) -> None:
+    try:
+        dir_fd = os.open(parent, os.O_RDONLY)
+    except OSError as e:
+        if os.name == "nt" and e.errno in _WINDOWS_DIR_OPEN_LIMITATION:
+            return
+        if e.errno in _DIR_FSYNC_UNSUPPORTED:
+            return
+        raise
+    try:
+        os.fsync(dir_fd)
+    except OSError as e:
+        if e.errno not in _DIR_FSYNC_UNSUPPORTED:
+            raise
+    finally:
+        os.close(dir_fd)
+
+
 def validate_store(data: dict, raw: bytes, *, recompute_crc: bool) -> int:
     """Validate the parsed store. Returns the computed CRC. Calls fail() on any violation.
 
@@ -550,6 +779,7 @@ def validate_store(data: dict, raw: bytes, *, recompute_crc: bool) -> int:
         fail(f"missing top-level fields: {sorted(missing)}")
 
     _reject_non_finite(data, "<store>")
+    validate_value_depths(data)
 
     sv = data["schema_version"]
     if not _is_int(sv) or sv != SCHEMA_VERSION:
@@ -625,10 +855,7 @@ def main(argv: list[str]) -> int:
 
     raw = path.read_bytes()
     try:
-        data = json.loads(
-            raw.decode("utf-8"),
-            parse_constant=lambda c: fail(f"non-finite JSON token {c!r} not allowed"),
-        )
+        data = strict_loads(raw.decode("utf-8"))
     except json.JSONDecodeError as e:
         print(f"[FAIL] JSON parse error at line {e.lineno} col {e.colno}: {e.msg}", file=sys.stderr)
         return 1
@@ -644,14 +871,39 @@ def main(argv: list[str]) -> int:
         # stable basis, then patch the 8 hex digits in place with the real CRC. The on-disk
         # bytes used for verification are the SAME bytes the producer just wrote, so the
         # placeholder + patch flow guarantees the CRC matches.
+        # EVERYTHING happens in memory; the destination is touched exactly once,
+        # atomically, and only after the bytes have passed every check.
+        #
+        # This used to write the placeholder straight to `path` and validate
+        # afterwards, so any failure destroyed the store it was asked to stamp.
+        # Two ways that fired: a rejected store left the destination holding the
+        # invalid placeholder (CRC 0x00000000), and -- once ensure_ascii=False
+        # let a lone surrogate such as "\ud800" survive to the encoder --
+        # write_text() truncated the file before UnicodeEncodeError was raised,
+        # leaving ZERO bytes where the boot store had been. A store the store
+        # editor is asked to fix must never come back emptier than it went in.
         data["crc32"] = "0x00000000"
-        placeholder_text = json.dumps(data, indent=2) + "\n"
-        path.write_text(placeholder_text, encoding="utf-8")
-        raw_with_placeholder = path.read_bytes()
+        # ensure_ascii=False: the default would re-spell a literal non-ASCII key
+        # as an ESCAPED one, which the firmware hard-rejects and strict_loads
+        # refuses to reload -- this writer would emit a store nothing can read.
+        # Same defect as bootcfg's _canonical_dumps; both writers must agree.
+        placeholder_text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        try:
+            raw_with_placeholder = placeholder_text.encode("utf-8")
+        except UnicodeEncodeError as e:
+            fail(f"store contains text that is not encodable as UTF-8 ({e}); "
+                 f"{path} left unchanged")
+        # Validate the BYTES about to be persisted, not just the dict: the key
+        # rules live in the serialized form, so validate_store() alone cannot
+        # see them.
+        strict_loads(raw_with_placeholder.decode("utf-8"))
         crc = validate_store(data, raw_with_placeholder, recompute_crc=True)
         offset, _ = find_crc_field(raw_with_placeholder)
         final = raw_with_placeholder[:offset] + f"{crc:08X}".encode("ascii") + raw_with_placeholder[offset + 8:]
-        path.write_bytes(final)
+        try:
+            atomic_write_bytes(path, final)
+        except OSError as e:
+            fail(f"{path}: write failed: {e}")
         print(f"[OK] {path}: crc32 -> 0x{crc:08X}")
         return 0
 
