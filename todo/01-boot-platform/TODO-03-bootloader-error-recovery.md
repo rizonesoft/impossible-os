@@ -60,31 +60,32 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                  | Depends On   | Status |
-| --- | :---: | ---------------------------------------------------------------------------- | ------------ | :----: |
-| 💎  |   1   | ELF bounds checking                                                          | --           |  [x]   |
-| 💎  |   2   | ExitBootServices retry loop (bounded)                                        | --           |  [x]   |
-| 💎  |   3   | Fallback kernel search (3 paths)                                             | --           |  [x]   |
-| 💎  |   4   | Serial port probe and COM2 fallback                                          | --           |  [x]   |
-| 💎  |   5   | GOP timeout and graceful degradation                                         | --           |  [x]   |
-| 💎  |   6   | Memory map overflow detection (512 entries)                                  | --           |  [x]   |
-| 💎  |   7   | boot.conf validation and version field                                       | --           |  [x]   |
-| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --           |  [x]   |
-| ⭐  |   9   | Boot failure error screen                                                    | §1-§8        |  [x]   |
-| 💎  |  10   | ACPI SPCR serial port auto-detection                                         | §4           |  [x]   |
-| 💎  |  11   | UEFI watchdog timer management                                               | --           |  [x]   |
-| 💎  |  12   | Memory map descriptor validation                                             | §6           |  [x]   |
-| ⭐  |  13   | Boot error code registry & NVRAM persistence                                 | §9           |  [x]   |
-| ⭐  |  14   | Error screen QR code                                                         | §9           |  [x]   |
-| 💎  |  15   | boot_info ABI foundation moved to TODO-01                                    | --           |  [x]   |
-| 💎  |  16   | boot_info kernel validation moved to TODO-01                                 | §15          |  [x]   |
-| 💎  |  17   | Memory map overlap normalization (sort+carve)                                | §12          |  [x]   |
-| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14      |  [x]   |
-| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1           |  [x]   |
-| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13          |  [x]   |
-| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20          |  [x]   |
-| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18      |  [x]   |
-| ⭐  |  23   | No on-screen words below 800x600 (QR renders, text does not)                 | §9, §18, §22 |  [ ]   |
+| ⭐  | Order | Deliverable                                                                  | Depends On    | Status |
+| --- | :---: | ---------------------------------------------------------------------------- | ------------- | :----: |
+| 💎  |   1   | ELF bounds checking                                                          | --            |  [x]   |
+| 💎  |   2   | ExitBootServices retry loop (bounded)                                        | --            |  [x]   |
+| 💎  |   3   | Fallback kernel search (3 paths)                                             | --            |  [x]   |
+| 💎  |   4   | Serial port probe and COM2 fallback                                          | --            |  [x]   |
+| 💎  |   5   | GOP timeout and graceful degradation                                         | --            |  [x]   |
+| 💎  |   6   | Memory map overflow detection (512 entries)                                  | --            |  [x]   |
+| 💎  |   7   | boot.conf validation and version field                                       | --            |  [x]   |
+| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --            |  [x]   |
+| ⭐  |   9   | Boot failure error screen                                                    | §1-§8         |  [x]   |
+| 💎  |  10   | ACPI SPCR serial port auto-detection                                         | §4            |  [x]   |
+| 💎  |  11   | UEFI watchdog timer management                                               | --            |  [x]   |
+| 💎  |  12   | Memory map descriptor validation                                             | §6            |  [x]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence                                 | §9            |  [x]   |
+| ⭐  |  14   | Error screen QR code                                                         | §9            |  [x]   |
+| 💎  |  15   | boot_info ABI foundation moved to TODO-01                                    | --            |  [x]   |
+| 💎  |  16   | boot_info kernel validation moved to TODO-01                                 | §15           |  [x]   |
+| 💎  |  17   | Memory map overlap normalization (sort+carve)                                | §12           |  [x]   |
+| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14       |  [x]   |
+| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1            |  [x]   |
+| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13           |  [x]   |
+| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20           |  [x]   |
+| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18       |  [x]   |
+| ⭐  |  23   | No on-screen words below 800x600 (QR renders, text does not)                 | §9, §18, §22  |  [ ]   |
+| ⭐  |  24   | A rejected store leaves no trace the user can act on afterwards              | §13, §20, §22 |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -808,6 +809,18 @@ Found by the parity pass on `01-boot-platform/TODO-07` §20, which fixed one CAU
 
 **Test checkpoint:** `SUITE=boot` green; `scripts/test-smoke-matrix.sh` 4/4 legs with a corrupt-store fixture proving the notice renders and the fallback still boots. DONE: 34,461 kernel + 17 user tests green; matrix 4/4 (303s) each reporting `channel=gop`.
 
+> **Verified:** 2026-09-05 | commit `0f4358ce0` | 4/4 items | build OK | 34461 kernel + 17 user tests; smoke matrix 4/4 legs (kvm:1/2, tcg:1/2) each `channel=gop`; control run 0 store-reject lines; lint exit 0
+> **Accepted:** [L] Windows halts on the equivalent BCD corruption and needs external media, so continuing to a working fallback is ahead of it; the OS Comparison table did not credit the row -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` OS Comparison (row: "Rejected boot store", added this commit)
+> **Deferred:** [H] the rejection is visible for 8s and then gone: it bypasses `nvram_write_boot_error()` + the history ring, so a headless or absent user never learns of it -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §24 (item: "Give the rejected-store condition its own `BOOT_ERR_*` code and persist it without going through `boot_fatal()`" at line 861)
+> **Deferred:** [M] `boot_entries_reject_cause()` names the failure class but no position, so repairing a hand-edited 16 KiB store means hunting by eye -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §24 (item: "Put a position in the reject cause, so the message is actionable" at line 869)
+> **Deferred:** [M] every graphical path is gated at 800x600, so a valid 640x480 mode gets no on-screen words -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §23 (item: "Add a compact direct-framebuffer renderer for validated modes below the floor" at line 838)
+> **Quality reviewed:** 2026-09-05 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 1H+5M+1L fixed, 3 open | scope: boot-code-quality (14 gates walked via boot-quality-auditor)
+> **Notes:**
+> - Advisory, not fatal, is the design decision this section owned. `boot_fatal()` would turn a trailing comma in a hand-edited JSON file into an unbootable machine, and the fallback boot already works.
+> - The false-positive gate is the load-bearing part: the ESP staging ships `boot.conf` only, so a notice keyed on "the parse did not return OK" would have fired on every healthy dev and smoke boot. `boot_entries_store_notice_warranted()` is a pure predicate over a tri-state load status, unit-tested from the kernel tests with a control proving an absent store stays silent.
+> - An inline bootloader repair route was considered and REJECTED, not deferred: GRUB needs a rescue shell because a broken `grub.cfg` leaves the machine unbootable, whereas this notice is advisory and the fallback boots, so the user repairs the store from their own running system. Reasoning recorded in §24.
+> - The smoke assertion is the CHANNEL, not the log line: QEMU runs `-display none` with serial-only capture, so `grep store-reject` would still pass with both render branches deleted.
+
 ## 23. No On-Screen Words Below 800x600 -- the QR Renders, the Text Does Not
 
 > **Spawned-by:** §22 (review)
@@ -836,29 +849,56 @@ The remaining fallback below the floor is `gST->ConOut`, and it is weaker than i
 
 **Test checkpoint:** `SUITE=boot` green; one smoke leg at a sub-floor resolution proving an error screen still renders.
 
+## 24. A Rejected Store Leaves No Trace the User Can Act On Afterwards
+
+> **Spawned-by:** §22 (review)
+> **User impact:** the notice §22 added is visible for eight seconds and then gone forever. A user who boots headless, walks away during POST, or simply looks up too late never learns their boot configuration was rejected -- and neither does the running OS. Their configured selection is silently absent on every subsequent boot with no record anywhere. Separately, a user who DOES read the notice is told the failure class ("the store is not valid JSON") with no position in the file, so repairing a 16 KiB hand-edited store means hunting for the error by eye.
+
+Found by the parity pass on §22. Two independent halves of one outcome: the user cannot act on what they were told, either because they never saw it or because it does not say enough.
+
+**The persistence half is the one this file already sells as a differentiator.** `boot_fatal()` persists its code through `nvram_write_boot_error()` (`src/boot/uefi/bootx64.c:2264`) and appends to the §20 history ring (`:729`), which §21's kernel-side renderer surfaces at the welcome banner and in `X:\Diag\boot-error-history.bin`. §22's notice was deliberately routed AROUND `boot_fatal()` because it is advisory, and in doing so it bypassed that chain entirely. So this file states that "neither Windows nor Linux persists structured bootloader error codes in NVRAM" while its newest failure class persists nothing. `selection_reason` does reach `boot_info` for the same boot session, but nothing survives the reboot.
+
+- [ ] Give the rejected-store condition its own `BOOT_ERR_*` code and persist it without going through `boot_fatal()`.
+  - The registry is a flat `#define` list in `src/boot/uefi/efi.h` with `BOOT_ERR_REGISTRY_MAX` at `bootx64.c:1221`; adding a code is mechanical.
+  - The write path is NOT mechanical, and that is why this is its own section rather than a §22 follow-up: every existing caller is TERMINAL, so writing once per fatal is bounded. A rejected store RECURS on every boot until the user fixes the file.
+- [ ] Decide and record the recurrence policy before wiring the write. It is the whole design question here.
+  - Unconditional `SetVariable` on every boot is NVRAM wear on a condition that can persist for months.
+  - An unconditional history-ring append is worse: the ring holds 8 entries, so a corrupt store evicts every genuinely different error within 8 boots, destroying the diagnostic value §20 exists for.
+  - Candidate shapes: write only when the code or the reject reason CHANGES from the stored one; or a dedicated single-slot "last store rejection" variable outside the ring. Pick one, state why.
+- [ ] Surface it after boot so the OS can tell the user, not just the next bootloader run. §21's renderer is the existing consumer; confirm whether it should carry this or whether a `sysconfig_info` field is the better route.
+- [ ] Put a position in the reject cause, so the message is actionable.
+  - `boot_entries_reject_cause()` (`src/boot/uefi/boot_entries_parser.c`) returns a category only.
+  - The parser already walks the buffer, so a byte offset (or line number) is available at the point of rejection; carry it into `reject_msg` or a sibling field and render it in the notice.
+- [ ] Commit: `"boot: persist and locate boot-entry store rejections"`
+
+**Explicitly NOT in scope: an inline repair route from the bootloader.** GRUB offers a rescue shell because a broken `grub.cfg` can leave the machine unbootable, so the user has nowhere else to stand. That asymmetry does not apply here: §22's notice is advisory and the fallback entry boots, so the user repairs the store from their own running system with a normal editor. Building an editor or rescue shell into the bootloader would be a large capability answering a problem the fallback already solves. `01-boot-platform/TODO-22-recovery-partition.md` §5 was considered as an owner and is NOT one: it resets A/B slot metadata and never touches the boot-entry store.
+
+**Test checkpoint:** `SUITE=boot` green; a corrupt-store boot followed by a second boot, asserting the rejection is still discoverable on the second one and that a repeated rejection does not evict unrelated history-ring entries.
+
 ## OS Comparison
 
-| ⭐  | Feature            | 🪟 Win11                           | 🐧 Linux                           | 🚀 Impossible OS                         |
-| --- | ------------------ | ---------------------------------- | ---------------------------------- | ---------------------------------------- |
-| 💎  | ELF bounds         | ✅ PE header + SizeOfImage check   | ✅ GRUB ELF phdr bounds            | ✅ §1 phdr+seg+overlap+32M cap           |
-| 💎  | EBS retry          | ✅ bootmgr bounded retry loop      | ✅ efi-stub retry on map stale     | ✅ §2 N=4 bounded + map refresh          |
-| 💎  | Kernel fallback    | ✅ BCD alternate paths + WinRE     | ✅ GRUB rescue + fallback.cfg      | ✅ §3 3-path search + DeviceHdl          |
-| 💎  | Serial detect      | ✅ ACPI SPCR + EMS headless        | ✅ earlycon=uart,io,0x3f8          | ✅ §4 COM1/COM2 probe+boot_info          |
-| 💎  | GOP degrade        | ✅ Fallback to basic display       | ✅ efifb + simpledrm fallback      | ✅ §5 headless + SetMode fallbk          |
-| 💎  | Mmap overflow      | ✅ Dynamic buffer reallocation     | ✅ Grow buf + retry loop           | ✅ §6 512 cap + truncate warn            |
-| 💎  | boot.conf parse    | ✅ BCD registry schema + edit      | ✅ grub.cfg + grub-mkconfig        | ✅ §7 key whitelist + range chk          |
-| 💎  | Alloc fallback     | ✅ Graduated pool sizes            | ✅ Dynamic retry allocation        | ✅ §8 32/16/8 MiB + overlap chk          |
-| 💎  | SPCR serial        | ✅ EMS Emergency Management        | ✅ earlycon SPCR auto-detect       | ✅ §10 RSDP->XSDT->SPCR parse            |
-| 💎  | UEFI watchdog      | ✅ Re-arm via SetWatchdogTimer     | ✅ efi_stub disables watchdog      | ✅ §11 60s arm + disarm pre-EBS          |
-| 💎  | Mmap validate      | ✅ Descriptor version + size       | ✅ efi_stub sanity checks          | ✅ §12 align+pages+type+overlap          |
-| ⭐  | Error screen       | ❌ Generic BSOD (no boot ctx)      | ⚠️ GRUB text menu (no graphics)    | ✅ §9 blue BSOD + key + reboot           |
-| ⭐  | NVRAM errors       | ⚠️ Opaque status codes             | ❌ No persistent boot errors       | ✅ §13 13 codes + NVRAM persist          |
-| ⭐  | Boot QR            | ❌ No UEFI-phase QR codes          | ❌ No GRUB QR support              | ✅ §14 QR V3 byte mode + scan            |
-| ⭐  | Graphical error    | ✅ :( BSOD (OS-level only)         | ❌ GRUB text menu only             | ✅ §18 pre-OS pixel BSOD + icon          |
-| 💎  | Mmap normalize     | ✅ Hal.dll coalesces overlaps      | ✅ efi_fake_memmap + sanitize      | ✅ §17 sweep-line carve+min-loss         |
-| 💎  | Handoff ABI        | ✅ BCD signature + protocol        | ✅ Multiboot2 / Linux boot         | ✅ §15 magic+ver+size + halt             |
-| 💎  | Offline repair     | ✅ Windows Recovery Environment    | ✅ rescue/live ISO image           | ⬜ TODO-22 recovery partition            |
-| ⭐  | Multi-attempt diag | ✅ BootStatusData (Vista+, last 4) | ⚠️ systemd-bootctl status (single) | ✅ §20+§21 8-entry NVRAM ring + renderer |
+| ⭐  | Feature             | 🪟 Win11                              | 🐧 Linux                                 | 🚀 Impossible OS                         |
+| --- | ------------------- | ------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎  | ELF bounds          | ✅ PE header + SizeOfImage check      | ✅ GRUB ELF phdr bounds                  | ✅ §1 phdr+seg+overlap+32M cap           |
+| 💎  | EBS retry           | ✅ bootmgr bounded retry loop         | ✅ efi-stub retry on map stale           | ✅ §2 N=4 bounded + map refresh          |
+| 💎  | Kernel fallback     | ✅ BCD alternate paths + WinRE        | ✅ GRUB rescue + fallback.cfg            | ✅ §3 3-path search + DeviceHdl          |
+| 💎  | Serial detect       | ✅ ACPI SPCR + EMS headless           | ✅ earlycon=uart,io,0x3f8                | ✅ §4 COM1/COM2 probe+boot_info          |
+| 💎  | GOP degrade         | ✅ Fallback to basic display          | ✅ efifb + simpledrm fallback            | ✅ §5 headless + SetMode fallbk          |
+| 💎  | Mmap overflow       | ✅ Dynamic buffer reallocation        | ✅ Grow buf + retry loop                 | ✅ §6 512 cap + truncate warn            |
+| 💎  | boot.conf parse     | ✅ BCD registry schema + edit         | ✅ grub.cfg + grub-mkconfig              | ✅ §7 key whitelist + range chk          |
+| 💎  | Alloc fallback      | ✅ Graduated pool sizes               | ✅ Dynamic retry allocation              | ✅ §8 32/16/8 MiB + overlap chk          |
+| 💎  | SPCR serial         | ✅ EMS Emergency Management           | ✅ earlycon SPCR auto-detect             | ✅ §10 RSDP->XSDT->SPCR parse            |
+| 💎  | UEFI watchdog       | ✅ Re-arm via SetWatchdogTimer        | ✅ efi_stub disables watchdog            | ✅ §11 60s arm + disarm pre-EBS          |
+| 💎  | Mmap validate       | ✅ Descriptor version + size          | ✅ efi_stub sanity checks                | ✅ §12 align+pages+type+overlap          |
+| ⭐  | Error screen        | ❌ Generic BSOD (no boot ctx)         | ⚠️ GRUB text menu (no graphics)          | ✅ §9 blue BSOD + key + reboot           |
+| ⭐  | NVRAM errors        | ⚠️ Opaque status codes                | ❌ No persistent boot errors             | ✅ §13 13 codes + NVRAM persist          |
+| ⭐  | Boot QR             | ❌ No UEFI-phase QR codes             | ❌ No GRUB QR support                    | ✅ §14 QR V3 byte mode + scan            |
+| ⭐  | Graphical error     | ✅ :( BSOD (OS-level only)            | ❌ GRUB text menu only                   | ✅ §18 pre-OS pixel BSOD + icon          |
+| 💎  | Mmap normalize      | ✅ Hal.dll coalesces overlaps         | ✅ efi_fake_memmap + sanitize            | ✅ §17 sweep-line carve+min-loss         |
+| 💎  | Handoff ABI         | ✅ BCD signature + protocol           | ✅ Multiboot2 / Linux boot               | ✅ §15 magic+ver+size + halt             |
+| 💎  | Offline repair      | ✅ Windows Recovery Environment       | ✅ rescue/live ISO image                 | ⬜ TODO-22 recovery partition            |
+| ⭐  | Multi-attempt diag  | ✅ BootStatusData (Vista+, last 4)    | ⚠️ systemd-bootctl status (single)       | ✅ §20+§21 8-entry NVRAM ring + renderer |
+| ⭐  | Rejected boot store | ⚠️ Halts: 0xc000000f + external media | ⚠️ GRUB rescue shell; systemd-boot quiet | ✅ §22 named notice, then boots fallback |
 
 > **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-27 §2`; multi-GOP enumeration stays `TODO-27 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-22-recovery-partition.md`, not duplicated here.
 

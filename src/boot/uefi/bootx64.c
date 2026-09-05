@@ -5358,9 +5358,13 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
          * claim otherwise. A graphical UEFI console implements OutputString
          * by rendering glyphs, which allocates; under the pool exhaustion
          * that brings us here from the AllocatePool-failure caller, those
-         * writes can fail and the user sees nothing. So every write's status
-         * is checked, and the channel is only upgraded if they all succeeded
-         * -- entering the branch is not evidence that anything was drawn.
+         * writes can fail and the user sees nothing. So every TEXT write's
+         * status is checked, and the channel is only upgraded if they all
+         * succeeded -- entering the branch is not evidence that anything was
+         * drawn. SetAttribute is deliberately NOT folded into that check: it
+         * only sets colours, and firmware that refuses it can still render
+         * the words. Failing the whole notice over a colour would suppress
+         * the message this section exists to deliver.
          * The alternative (report conout, then dwell 8 seconds on a blank
          * screen) is worse than the silence this section set out to fix,
          * because it also wastes the user's time. */
