@@ -2549,16 +2549,22 @@ static void test_env_adopt_block_sorts_dedups(void)
 /* Cached block-byte total stays accurate: fill to the block cap, unset one
  * entry, and a new same-size set must then fit (env_unset decremented the
  * cached total; a drifted counter would wrongly reject). */
-static char s_bt_val[8192];
+/* Same route as ENV_CAP_VAL_SZ above: an 8 KiB filler value is per-case scratch,
+ * not a file-scope static. Both suites below refill it completely, so a private
+ * buffer each is exactly equivalent to the shared static they used to share. */
+#define ENV_BT_VAL_SZ  8192u
 static void test_env_bytes_unset_reclaims(void)
 {
     char name[8];
     uint32_t i;
     int hit = 0;
+    TEST_SCRATCH_KBUF(bt_buf, ENV_BT_VAL_SZ);
+    char *const s_bt_val = (char *)bt_buf;
+
     env_fixture_reset();
-    for (i = 0; i < sizeof(s_bt_val) - 1u; i++)
+    for (i = 0; i < ENV_BT_VAL_SZ - 1u; i++)
         s_bt_val[i] = 'z';
-    s_bt_val[sizeof(s_bt_val) - 1u] = '\0';
+    s_bt_val[ENV_BT_VAL_SZ - 1u] = '\0';
     for (i = 0; i < ENV_MAX_ENTRIES; i++) {
         int rc;
         name[0] = 'B';
@@ -2586,10 +2592,13 @@ static void test_env_adopt_empty_resets_quota(void)
     char name[8];
     uint32_t i;
     int hit = 0;
+    TEST_SCRATCH_KBUF(bt_buf, ENV_BT_VAL_SZ);
+    char *const s_bt_val = (char *)bt_buf;
+
     env_fixture_reset();
-    for (i = 0; i < sizeof(s_bt_val) - 1u; i++)
+    for (i = 0; i < ENV_BT_VAL_SZ - 1u; i++)
         s_bt_val[i] = 'q';
-    s_bt_val[sizeof(s_bt_val) - 1u] = '\0';
+    s_bt_val[ENV_BT_VAL_SZ - 1u] = '\0';
     for (i = 0; i < ENV_MAX_ENTRIES; i++) {
         int rc;
         name[0] = 'Q';

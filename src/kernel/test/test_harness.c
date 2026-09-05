@@ -375,15 +375,28 @@ static void test_harness_scratch_pmm_verify(void)
  * frames. Aggregate post-drain counts cannot see that -- an incorrect base
  * that happens to free an equal-sized run balances the books. This case
  * pins the frames by identity instead of by count. */
+#define SCRATCH_RUN_SZ     65536u
+#define SCRATCH_RUN_FRAMES (SCRATCH_RUN_SZ / PMM_FRAME_SIZE)
 static void test_harness_scratch_non_lifo_free(void)
 {
     uint64_t  pmm_pre = pmm_get_used_frames();
-    void     *a = test_scratch_alloc(65536);
-    void     *b = test_scratch_alloc(65536);
+    void     *a = test_scratch_alloc(SCRATCH_RUN_SZ);
+    void     *b = test_scratch_alloc(SCRATCH_RUN_SZ);
 
+    /* TEST_ASSERT_NOT_NULL records a failure but does NOT return, so the
+     * guard is explicit: the rest of this case dereferences both runs. */
     TEST_ASSERT_NOT_NULL(a, "first 64 KiB scratch run allocated");
     TEST_ASSERT_NOT_NULL(b, "second 64 KiB scratch run allocated");
-    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 32,
+    if (!a || !b) {
+        /* Release whichever run DID succeed before bailing -- these are
+         * manual allocations with no registered drain action, so an early
+         * return here would strand the frames for the rest of the boot.
+         * test_scratch_free ignores NULL, so both calls are safe. */
+        test_scratch_free(a);
+        test_scratch_free(b);
+        return;
+    }
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 2u * SCRATCH_RUN_FRAMES,
                    "two 64 KiB scratch runs took exactly 32 frames");
 
     uint64_t a_phys = mm_hhdm_to_phys(a);
@@ -399,9 +412,9 @@ static void test_harness_scratch_non_lifo_free(void)
                 "non-LIFO free released the first run's base frame");
     TEST_ASSERT(!pmm_frame_is_free(b_phys),
                 "surviving run's base frame is still allocated after the swap");
-    TEST_ASSERT(!pmm_frame_is_free(b_phys + 15u * PMM_FRAME_SIZE),
+    TEST_ASSERT(!pmm_frame_is_free(b_phys + (SCRATCH_RUN_FRAMES - 1u) * PMM_FRAME_SIZE),
                 "surviving run's LAST frame is still allocated after the swap");
-    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 16,
+    TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + SCRATCH_RUN_FRAMES,
                    "exactly the freed run's 16 frames were returned");
 
     /* The relocated record must still carry b's base: if the swap dropped
@@ -415,8 +428,9 @@ static void test_harness_scratch_non_lifo_free(void)
 
 /* Case C3: the sidecar table's own capacity guard.
  *
- * The action stack and the scratch record table are INDEPENDENT 32-slot
- * limits; the rollback case below fills the former and never reaches the
+ * The action stack and the scratch record table are enforced as INDEPENDENT
+ * 32-slot limits (the capacities are deliberately equal, but neither bounds
+ * the other); the rollback case below fills the former and never reaches the
  * latter. An off-by-one here would either overwrite a live record or reject
  * every fixture for the rest of the boot, and neither shows up as a failing
  * allocation in any existing case. Uses the kmalloc route so the check costs
@@ -465,6 +479,8 @@ static void test_harness_scratch_route_boundary(void)
 
     void *at_limit = test_scratch_alloc(PMM_FRAME_SIZE);
     TEST_ASSERT_NOT_NULL(at_limit, "exactly-4096-byte scratch allocated");
+    if (!at_limit)
+        return;
     TEST_ASSERT(heap_get_used() > heap_pre,
                 "a 4096-byte request takes the kmalloc route (heap grew)");
     TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre,
@@ -473,6 +489,8 @@ static void test_harness_scratch_route_boundary(void)
 
     void *over_limit = test_scratch_alloc(PMM_FRAME_SIZE + 1u);
     TEST_ASSERT_NOT_NULL(over_limit, "4097-byte scratch allocated");
+    if (!over_limit)
+        return;
     TEST_ASSERT_EQ(pmm_get_used_frames(), pmm_pre + 2,
                    "a 4097-byte request rounds up to exactly 2 frames");
     TEST_ASSERT_EQ(heap_get_used(), heap_pre,
@@ -500,6 +518,8 @@ static void test_harness_scratch_foreign_free(void)
     uint64_t pmm_pre = pmm_get_used_frames();
     void    *live    = test_scratch_alloc(65536);
     TEST_ASSERT_NOT_NULL(live, "live scratch run allocated");
+    if (!live)
+        return;
     uint64_t live_phys = mm_hhdm_to_phys(live);
     uint64_t used_live = pmm_get_used_frames();
 

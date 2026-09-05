@@ -72,6 +72,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  16   | Bootstrap and first-install entry seeding                           | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
 | 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
 | 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
+| 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -642,6 +643,29 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 > **Deferred:** [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point -> XREF: 01-boot-platform/TODO-07 §18 (item: "Relocate the LoaderTime publish to after TSC calibration")
 > **Deferred:** [M] full BLS order (bad-counted-last + `version` sub-key) + `LoaderFeatures` bit 8 not advertised -> XREF: 01-boot-platform/TODO-07 §18 (item: "BLS full order + `LoaderFeatures` bit 8")
 > **Quality reviewed:** 2026-06-13 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H+1M deferred | scope: boot-code-quality
+
+---
+
+## 19. Repeated Top-Level Keys Defeat the Entries-Array Bound
+
+> **Spawned-by:** root
+> **User impact:** a boot-entry store on the ESP can overflow the parser's fixed 64-entry output array by ~36 KB. The store is disk-sourced config the bootloader parses before ExitBootServices, so anything that can write the ESP can corrupt bootloader memory during boot.
+
+Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's TEST fixtures onto a scratch allocator. The parser itself was never in that section's scope, so the defect is filed here with its owner rather than fixed there. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §16 (item: "Decided: it DID block the charter, and is routed through the HHDM")
+
+**The mechanism, confirmed at file:line.** `boot_entries_parse()` walks the root object with `while (1)` over key/value pairs and an `else if` chain, and tracks NO set of already-seen keys (`src/boot/uefi/boot_entries_parser.c:1101`), so a second top-level `"entries"` key is structurally accepted. Inside that branch `idx` and `all_ids_count` are BLOCK-SCOPED (`boot_entries_parser.c:1164`, `1172`) and therefore reset to 0 on the second occurrence, while `out->entry_count` is never reset. The only cap check is against the per-occurrence `idx` (`boot_entries_parser.c:1195`), but the write is `out->entries[out->entry_count]` (`boot_entries_parser.c:1227`). So `{"schema_version":1,"crc32":"0x0","entries":[64 valid],"entries":[64 valid]}` passes every check and writes indices 64-127 into `boot_entry_envelope_t entries[BOOT_ENTRIES_MAX_ENTRIES]` (`include/boot/boot_entries_parser.h:117`, cap 64 at `include/boot/boot_entries.h:75`).
+
+- [ ] Reject a repeated top-level key outright, which is the fix that also closes the sibling holes rather than patching one symptom.
+  - `all_ids_count` resetting means cross-occurrence DUPLICATE IDs are undetected too, so an entries-bound check alone would leave the duplicate-id gate defeated by the same input. `schema_version` and `crc32` are equally re-assignable today.
+  - Track seen root keys in the walker and reject with a distinct code; the strict-alternating-separator machinery already in that branch is the precedent for how strict this parser is meant to be.
+- [ ] Add a bound on the WRITE as defence in depth: gate `out->entries[out->entry_count]` on `out->entry_count < BOOT_ENTRIES_MAX_ENTRIES` at `boot_entries_parser.c:1227`, so no future refactor of the key-level guard can reopen an overflow.
+- [ ] Unit tests in `src/kernel/test/test_boot_entry_parser.c`, which already covers this parser (`TEST_CAT_BOOT`).
+  - Cases: two `entries` arrays rejected; a duplicate id split across two `entries` arrays rejected; repeated `schema_version` and `crc32` rejected.
+  - Write the overflow case so it asserts the REJECT, never so it performs the overflowing parse -- a test that reproduces the overflow corrupts the runner it is running in.
+- [ ] Check the host-side validator (`scripts/bootcfg.py` or equivalent) applies the same rule, so a store the host accepts cannot be one the firmware parser rejects or vice versa.
+- [ ] Commit: `"boot: reject repeated top-level keys in the boot entry store"`
+
+**Test checkpoint:** full `scripts/test.sh` green with `SUITE=boot` green in its own right and the new reject cases failing before the fix and passing after. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code. Platforms: QEMU KVM + TCG.
 
 ---
 

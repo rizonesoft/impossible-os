@@ -1,15 +1,19 @@
 /* ============================================================================
  * scratch.c -- Implementation of test_scratch_alloc / test_scratch_free.
  *
- * Sidecar ptr -> (phys, pages, mode) table lets test_scratch_free route a
+ * Sidecar ptr -> (phys, pages) table lets test_scratch_free route a
  * free to kfree or pmm_free_contiguous without embedding a header in the
  * user's buffer. This preserves whatever alignment the underlying
- * allocator returned (pmm_alloc_contiguous gives page-aligned, kmalloc
+ * allocator returned (the direct-map route gives page-aligned, kmalloc
  * gives its own alignment) and keeps the returned pointer byte-for-byte
  * what the caller would get from the raw allocator.
  *
- * Table size: TEST_SCRATCH_MAX (=32), matching the action-registry
- * capacity so the worst case is one scratch-per-action. The 33rd
+ * Table size: TEST_SCRATCH_MAX (=32), CHOSEN to equal the action-registry
+ * capacity so the worst case is one scratch-per-action. The two limits are
+ * enforced INDEPENDENTLY -- exhausting one does not exhaust the other, which
+ * test_harness_scratch_table_exhaustion pins -- so this is a sizing choice,
+ * not a shared bound. Nothing binds them at compile time: TEST_MAX_ACTIONS is
+ * file-local to test_runner.c, so a _Static_assert cannot see it. The 33rd
  * alloc returns NULL so the caller's TEST_ASSERT_NOT_NULL surfaces it.
  * Free uses swap-with-last for O(1) record removal, so the sidecar is
  * bounded in size AND in per-call cost.
@@ -122,9 +126,17 @@ void test_scratch_free(void *ctx)
             } else {
                 kfree(ctx);
             }
-            /* Swap-with-last to remove the record in O(1). */
+            /* Swap-with-last to remove the record in O(1). Copy the
+             * surviving record into this slot BEFORE retiring the last one,
+             * mirroring the alloc path's publish-fields-then-bump-count
+             * order: the reverse leaves the survivor momentarily unreachable
+             * by lookup, and a record lost in that window now strands a whole
+             * N-frame physical run rather than one heap block. Unreachable
+             * while the runner is sequential, but the ordering costs nothing
+             * and the file's own "if the runner ever fans out" caveat is
+             * exactly the case it protects. */
+            s_recs[i] = s_recs[s_rec_count - 1u];
             s_rec_count--;
-            s_recs[i] = s_recs[s_rec_count];
             return;
         }
     }

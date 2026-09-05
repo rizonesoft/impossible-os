@@ -8,11 +8,16 @@
  *
  * Routes by size to respect the project's "kmalloc <= 4 KB" rule:
  *   size <= PMM_FRAME_SIZE  -- kmalloc(size)
- *   size >  PMM_FRAME_SIZE  -- pmm_alloc_contiguous(ceil(size / 4 KiB))
+ *   size >  PMM_FRAME_SIZE  -- pmm_alloc_pages_hhdm(size)
  *
  * For a 64 KiB test buffer this saves ~3% of the 2 MiB kernel heap per
- * test (the heap would otherwise be dominated by one allocation) and
- * uses raw physical pages instead, returned cleanly on free.
+ * test (the heap would otherwise be dominated by one allocation) and uses
+ * whole physical frames instead, returned cleanly on free. The pointer
+ * handed back for that route is a DIRECT-MAP (HHDM) address, never a raw
+ * physical-as-pointer cast: the cast holds only while the kernel is
+ * identity-mapped, which the identity-map teardown retires. Callers may
+ * treat it as ordinary kernel memory; nothing may pass it anywhere a
+ * PHYSICAL address is required (DMA, MMIO, a page-table entry).
  *
  * Usage:
  *   static void test_my_thing(void) {

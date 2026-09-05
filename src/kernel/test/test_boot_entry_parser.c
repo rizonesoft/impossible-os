@@ -49,7 +49,13 @@ static unsigned int load_fixture(const char *json)
 {
     unsigned int n = 0;
     while (json[n]) {
-        if (n >= sizeof(s_fixture_buf)) break;
+        /* Hard-fail rather than silently truncate: a shortened fixture is a
+         * DIFFERENT input than the case author wrote, so the case could pass
+         * for the wrong reason with nothing on the log to say so. */
+        if (n >= sizeof(s_fixture_buf)) {
+            TEST_ASSERT(0, "fixture exceeds s_fixture_buf -- grow the buffer");
+            break;
+        }
         s_fixture_buf[n] = (unsigned char)json[n];
         n++;
     }
@@ -96,9 +102,9 @@ static void test_parser_bad_schema_version(void)
                    "schema_version != 1 rejected");
 }
 
-/* The 26 cases above hand boot_entries_parse a scratch buffer instead of the
- * stack local they used to declare, so nothing zeroes the output before the
- * call. That is safe ONLY because the parser clears the whole result as its
+/* The converted cases in this file hand boot_entries_parse a scratch buffer
+ * instead of the stack local they used to declare, so nothing zeroes the
+ * output before the call. That is safe ONLY because the parser clears the whole result as its
  * first act, ahead of any input validation (boot_entries_parser.c: zero_buf on
  * entry). Prove that contract rather than assuming it: poison the buffer, then
  * take an EARLY-REJECT path, where a parser that zeroed late (or only on the
