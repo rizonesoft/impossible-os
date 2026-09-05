@@ -935,7 +935,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > - Test gap: none for stubs -- test_nt_lpc_pending_features (TEST_PENDING) asserts all 15 return NOT_IMPLEMENTED. Metadata follow-up: TODO-A owner cells + service_numbers next-avail still name stale T17.
 
 > **Verified:** 2026-07-02 | commit `645afa47` | 15/15 items | build OK | ob 426/426 PASS (stub-wired)
-> **Deferred:** [M] all 15 LPC syscalls are deliberate stubs (STATUS_NOT_IMPLEMENTED); the whole port/message engine + SeAccessCheck/impersonation is deferred -> XREF: 03-memory-concurrency/TODO-09 §7 (item: "Retrofit the 15 LPC SSDT stubs in `src/kernel/nt/nt_lpc.c`" at line 185)
+> **Deferred:** [M] all 15 LPC syscalls are deliberate stubs (STATUS_NOT_IMPLEMENTED); the whole port/message engine + SeAccessCheck/impersonation is deferred -> XREF: 03-memory-concurrency/TODO-09 §7 (item: "Retrofit the 15 LPC SSDT stubs in `src/kernel/nt/nt_lpc.c`" at line 186)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed (note range + IO/status + owner XREF reconciled), 1M deferred | scope: kernel-code-quality
 
 ---

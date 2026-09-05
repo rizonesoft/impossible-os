@@ -246,7 +246,7 @@ Boot-disk data-integrity gaps found in gap audit: the driver acknowledges durabl
 > - Scope boundary: §6 owns the NVMe-side primitives + the thin block-layer hook; the full clean-shutdown orchestrator (write-quiesce, ordered mark-clean) is `04-drivers-hardware/TODO-03` §2; advanced NVMe is §5 / D04 T08.
 > **Verified:** 2026-06-15 | this commit | 5/5 items | build OK | smoke PASS 2.56s
 > **Accepted:** [H] ACPI shutdown does not flush all mounted FS sector caches before device flush (only X: flushed) -> XREF: 04-drivers-hardware/TODO-03 §2 (item: "`vfs_cache_flush()` -- flush block cache" at line 95)
-> **Accepted:** [H] storage quiesce lacks a system-wide stop-the-world barrier (other CPUs can issue I/O during quiesce; only the caller halts) -> XREF: 04-drivers-hardware/TODO-03 §2 (item: "Stop-the-world barrier before storage quiesce" at line 127)
+> **Accepted:** [H] storage quiesce lacks a system-wide stop-the-world barrier (other CPUs can issue I/O during quiesce; only the caller halts) -> XREF: 04-drivers-hardware/TODO-03 §2 (item: "Stop-the-world barrier before storage quiesce" at line 145)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (adversarial, consistency, perf, re-adversarial) | 1C+4H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---

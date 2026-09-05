@@ -449,7 +449,7 @@ When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrup
 > - Canonical: `src/kernel/time/wall_clock.c` (primitive); resume owner is power management.
 > - Scope boundary: §14 owns the bias-application primitive; the S3/S4 resume hook + RTC wake alarm are TODO-26 (power management).
 > **Verified:** 2026-06-27 | primitive shipped (§7) | 1/5 items | build OK | resume path deferred
-> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 185)
+> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 263)
 > **Quality reviewed:** 2026-06-27 | scope: N/A (infra-blocked defer; the shipped `ke_suspend_bias_update` primitive was quality-reviewed under §7)
 
 ---

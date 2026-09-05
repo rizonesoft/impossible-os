@@ -126,7 +126,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 **Test checkpoint:** `test_knf` blocks a thread on a subscription handle via `NtWaitForSingleObject`, publishes from another thread, and asserts the waiter wakes exactly when the sequence passes its last-seen value; a timeout wait returns `STATUS_TIMEOUT` when no publish occurs; fanout to 3 subscribers allocates zero at DISPATCH_LEVEL (pre-allocated wait blocks). Serial: `"[KNF] subscriber woke seq=%llu"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] §3 not started -- blocked on prerequisites owned elsewhere: alertable-wait + user-APC async delivery unimplemented, and the waitable core needs a race-free wait (kernel `event_t` lost-wakeup, ex.h:149) + two-phase rundown-pinned wake (Codex design verdict: No-ship on the naive event_wait design) -> XREF: 02-kernel-core/TODO-07 §12 (item: "Alertable-wait integration" at line 399)
+> **Deferred:** [H] §3 not started -- blocked on prerequisites owned elsewhere: alertable-wait + user-APC async delivery unimplemented, and the waitable core needs a race-free wait (kernel `event_t` lost-wakeup, ex.h:149) + two-phase rundown-pinned wake (Codex design verdict: No-ship on the naive event_wait design) -> XREF: 02-kernel-core/TODO-07 §12 (item: "Alertable-wait integration" at line 400)
 
 ---
 
