@@ -1385,6 +1385,30 @@ static void test_parser_crc_malformed_before_header(void)
                    "malformed root before the header rejected as a parse error");
 }
 
+static void test_parser_crc_broken_root_is_malformed(void)
+{
+    /* The tri-state's whole claim is that it tells a BROKEN root object apart from
+     * one that merely carries no crc32 member. These three shapes are where that
+     * claim was false: a trailing comma, and truncation after the crc32 colon or
+     * after a root comma, all reported ABSENT because `}` was accepted at both the
+     * first-key and after-comma positions and because lex_next reports EOF as a
+     * successful token read. Found by the boot-quality auditor. */
+    static const char TRAILING_COMMA[] = "{\"schema_version\":1,}";
+    static const char TRUNC_COLON[] = "{\"crc32\":";
+    static const char TRUNC_COMMA[] = "{\"schema_version\":1,";
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    unsigned int n = load_fixture(TRAILING_COMMA);
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE, "trailing comma at root is malformed");
+    n = load_fixture(TRUNC_COLON);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE, "truncation after the crc32 colon");
+    n = load_fixture(TRUNC_COMMA);
+    rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE, "truncation after a root comma");
+}
+
 static void test_parser_crc_absent_root_member(void)
 {
     static const char JSON[] =
@@ -1530,6 +1554,8 @@ void test_register_boot_entry_parser(void)
                             test_parser_crc_value_shapes_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: crc malformed before header",
                             test_parser_crc_malformed_before_header, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: crc broken root is malformed",
+                            test_parser_crc_broken_root_is_malformed, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: crc absent root member",
                             test_parser_crc_absent_root_member, TEST_CAT_BOOT);
 }

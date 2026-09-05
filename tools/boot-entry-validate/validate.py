@@ -554,10 +554,18 @@ def _root_crc32_span(raw: bytes) -> tuple[int, int] | None:
     kind, _cs, _ce, i = _next_token(raw, 0)
     if kind != _T_LBRACE:
         raise _CrcLocateError("top-level value is not an object")
+    # A `}` closes the object legally at the FIRST key position and illegally right
+    # after a comma. Without this flag `{"schema_version":1,}` -- a trailing comma the
+    # firmware rejects -- reads as "the root carries no crc32 member".
+    after_comma = False
     while True:
         kind, key_start, key_end, i = _next_token(raw, i)
         if kind == _T_RBRACE:
+            if after_comma:
+                raise _CrcLocateError(f"trailing comma before the closing brace at byte {key_start}")
             return None
+        if kind == _T_EOF:
+            raise _CrcLocateError("input ended inside the root object")
         if kind != _T_STR:
             raise _CrcLocateError(f"expected a root key at byte {key_start}")
         kind, _cs, _ce, i = _next_token(raw, i)
@@ -571,6 +579,10 @@ def _root_crc32_span(raw: bytes) -> tuple[int, int] | None:
             # also matches before a trailing newline, and an 11-byte value would then
             # locate here and be ABSENT to the firmware.
             kind, val_start, val_end, _ = _next_token(raw, i)
+            # Truncation right after the colon is a broken root object, not a
+            # missing member -- the firmware makes the same distinction.
+            if kind == _T_EOF:
+                raise _CrcLocateError("input ended after the crc32 key's colon")
             if kind != _T_STR:
                 return None
             m = _CRC_VALUE_RE.fullmatch(raw[val_start:val_end])
@@ -583,6 +595,7 @@ def _root_crc32_span(raw: bytes) -> tuple[int, int] | None:
             return None
         if kind != _T_COMMA:
             raise _CrcLocateError(f"expected a comma or closing brace after a root value at byte {i}")
+        after_comma = True
 
 
 def find_crc_field(raw: bytes) -> tuple[int, int]:

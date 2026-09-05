@@ -511,18 +511,30 @@ static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expe
     lex_init(&L, raw, len);
     if (!lex_next(&L) || L.kind != TOK_LBRACE) return CRC_LOC_MALFORMED;
 
+    /* A `}` closes the object legally at the FIRST key position and illegally
+     * straight after a comma: `{"schema_version":1,}` is a trailing comma, which
+     * the authoritative parse rejects and this walk must not read as "the root
+     * simply carries no crc32 member". Without the flag both positions share one
+     * RBRACE check and a broken root reports ABSENT. */
+    int after_comma = 0;
+
     for (;;) {
         u32 key_cs, key_ce;
         int is_crc;
 
         if (!lex_next(&L)) return CRC_LOC_MALFORMED;
-        if (L.kind == TOK_RBRACE) return CRC_LOC_ABSENT;   /* no crc32 at root */
+        if (L.kind == TOK_RBRACE)
+            return after_comma ? CRC_LOC_MALFORMED : CRC_LOC_ABSENT;
         if (L.kind != TOK_STRING) return CRC_LOC_MALFORMED;
         key_cs = L.content_start;
         key_ce = L.content_end;
 
         if (!lex_next(&L) || L.kind != TOK_COLON) return CRC_LOC_MALFORMED;
-        if (!lex_next(&L)) return CRC_LOC_MALFORMED;
+        /* lex_next reports end-of-input as a SUCCESSFUL TOK_EOF read, so a store
+         * truncated right after the colon would otherwise fall through to the
+         * value-shape checks and be classified ABSENT. Truncation is a broken
+         * root object, not a missing member. */
+        if (!lex_next(&L) || L.kind == TOK_EOF) return CRC_LOC_MALFORMED;
 
         /* Raw-byte compare, so an escaped spelling of the key is not this key.
          * That matches key_is_literal() below and the schema's literal-key
@@ -553,6 +565,7 @@ static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expe
         if (!lex_next(&L)) return CRC_LOC_MALFORMED;
         if (L.kind == TOK_RBRACE) return CRC_LOC_ABSENT;
         if (L.kind != TOK_COMMA) return CRC_LOC_MALFORMED;
+        after_comma = 1;
     }
 }
 

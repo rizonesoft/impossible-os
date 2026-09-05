@@ -83,6 +83,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1         |  [x]   |
 | ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13        |  [x]   |
 | ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20        |  [x]   |
+| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18    |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -776,6 +777,25 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 > **Quality reviewed:** 2026-05-02 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed, 0 open | scope: kernel-code-quality
 
 ---
+
+
+## 22. Rejected Boot-Entry Store Is a Silent Failure on Screen
+
+> **Spawned-by:** §9 (review)
+> **User impact:** the user edits their boot configuration, the store is rejected (corrupt bytes, a CRC mismatch, a schema violation, over the size cap), and the machine boots the in-firmware fallback entry with NOTHING on screen. Their configured selection is gone and there is no way to find out why without attaching a serial cable. Windows shows a stop screen with an error code (`0xc0000001` / `0xc000000f`) for the equivalent BCD corruption and routes into Startup Repair.
+
+Found by the parity pass on `01-boot-platform/TODO-07` §20, which fixed one CAUSE of a rejected store and then measured that the rejection itself is invisible. This file's Goal is the owner: "Eliminate every silent failure in `bootx64.c` ... every failure produces a visible error message on screen and serial with actionable information." -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §20 (item: "`find_crc_field()` (`src/boot/uefi/boot_entries_parser.c`) is a bounded STRUCTURAL walk of the ROOT object").
+
+**The mechanism, confirmed at file:line.** Every reject path reports through `serial_early_print()` only: `src/boot/uefi/bootx64.c:6730` logs `policy: bootentries.json parsed reject_code=<n>`, `:6751` logs the absent/unreadable case, and `:7431` logs `selection_reason=`. A grep for an `efi_print` message naming a store, a rejection, corruption or the CRC returns exactly one hit at `bootx64.c:7969`, which is an unrelated operator-consent line. `boot_policy_decide()` (`src/boot/uefi/boot_policy.c:340`) short-circuits to `BOOT_SELECTION_FALLBACK_STORE_INVALID` without a user-facing signal, and the menu cannot cover for it because `cand_count` derives from the parse's entries, which are empty for a rejected store, so the menu never renders. This is a WIRING gap rather than a missing capability: the full error-screen facility this file shipped in §9 and §18 already exists at `bootx64.c:2251-2347` with a title, hex code, human message, QR code and a four-step recovery list, and is simply never invoked for this condition.
+
+- [ ] Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot.
+  - Decide and record whether this is fatal or advisory. Booting the fallback is the safe behaviour and should probably continue, so a timed notice that the user can dismiss is the likely shape rather than `boot_fatal()`; that is a design decision this section owns, not an implementation detail.
+  - The message needs the reject code, a one-line human cause, and the store path. `selection_reason_name()` already exists for half of it.
+- [ ] Cover the headless case honestly: with no GOP the screen route is unavailable, so the serial line stays the fallback and the section must not claim a guarantee it cannot make on a headless machine.
+- [ ] Smoke coverage: a deliberately corrupted store in the test image, asserting the notice appears rather than asserting only that the machine still boots.
+- [ ] Commit: `"boot: tell the user when the boot entry store was rejected"`
+
+**Test checkpoint:** `SUITE=boot` green; `scripts/test-smoke-matrix.sh` 4/4 legs with a corrupt-store fixture proving the notice renders and the fallback still boots.
 
 ## OS Comparison
 

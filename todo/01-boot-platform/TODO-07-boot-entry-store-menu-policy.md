@@ -76,6 +76,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [ ]   |
+| 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -723,7 +724,7 @@ Found by the §19 consistency review, which reproduced it with a 290-byte CRC-co
 - [x] Host mirror in `tools/boot-entry-validate/validate.py`: `_root_crc32_span()` plus `_next_token()`, `_scan_string()` and `_skip_value()` replace the `_CRC_FIELD_RE` search.
   - The token rules are the FIRMWARE's, not Python's: strict RFC 8259 strings, exact literals, `lex_number`-shaped numbers, and a grammar-validating container stack rather than a brace count, so the host cannot locate a header in a store the firmware calls malformed.
 - [x] Paired regressions on both sides, each checked against an INDEPENDENT offset oracle rather than against a successful parse.
-  - 10 kernel cases under `TEST_CAT_BOOT`, and 35 in-process host locator and control checks plus 4 end-to-end validator cases.
+  - 11 kernel cases under `TEST_CAT_BOOT`, and 38 in-process host locator and control checks plus 4 end-to-end validator cases.
   - Both suites carry an IN-SUITE control that runs the old value-blind locator (`old_string_match_locate()` kernel-side, the old regex host-side) and states, per fixture, whether it broke or agreed.
   - The controls earned their place three times over: the first draft of the decoy fixtures did NOT reproduce the defect (the firmware fixture spelled the decoy `"crc32 lives below"`, whose bytes never contain the 7-byte needle, and both host decoys sat AFTER the header), and the escaped-quote decoy turned out to break neither locator because a backslash sits where the old needle wanted a quote. A fixture that does not reproduce the defect looks identical to one that does.
   - Each fixture is therefore classified by MEASUREMENT, not assumption, and the two sides differ: the old FIRMWARE scan failed the string-value decoy outright while the old HOST regex handled it (the regex required a colon and `"0x` after the key), so that shape is a break case kernel-side and an agreement case host-side. Only the nested, extension-object and array-contained shapes break both.
@@ -732,14 +733,20 @@ Found by the §19 consistency review, which reproduced it with a 290-byte CRC-co
 
 **Test checkpoint:** `SUITE=boot` green with the two new fixtures failing before the fix and passing after; host `python3 tools/boot-entry-validate/test_validate.py` green. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 6313 tests, 0 failures; host `python3 tools/boot-entry-validate/test_validate.py` 138 cases, `bash tools/boot-entries-parser-tests/run.sh` 6 cases
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 6317 tests, 0 failures; host `python3 tools/boot-entry-validate/test_validate.py` 141 cases, `bash tools/boot-entries-parser-tests/run.sh` 6 cases
 
 > **Notes:**
 > - Shipped: `find_crc_field()` rewritten as a tri-state structural walk of the root object on the firmware side, and `_root_crc32_span()` plus a firmware-faithful tokenizer replacing `_CRC_FIELD_RE` on the host side.
 > - Integrates at `boot_entries_parse()`, which now separates a malformed root (`JSON_PARSE`) from an absent or misshaped header (`BAD_CRC32_FIELD`); the CRC still gates the structure, the locate merely finds the span first.
 > - Downstream: the firmware value-shape rule tightened to exactly `0x` + 8 hex digits with a lowercase `x`, closing two cases (`0X`, over-long) where firmware accepted what the host rejected.
 > - Canonical doc: [docs/boot/boot-entry-schema.md](../../docs/boot/boot-entry-schema.md) section 5, which now states the structural rule as the algorithm and names the text search as the defect.
-> - Scope boundary: the 16 KiB store size cap is untested on both sides and is filed as §22; this section does not touch it.
+> - Scope boundary: the 16 KiB store size cap has host over-cap coverage (`test_validate.py` `_oversize_file`, a 17 KiB store) but no coverage at the boundary on either side and none at all firmware-side; filed as §22, and this section does not touch it.
+
+> **Verified:** 2026-09-05 | commit `598bc0749` | 5/5 items | build OK | 34089 kernel + 17 user tests, 6317 boot-suite, 141 host validator cases, 6 standalone parser cases, smoke matrix 4/4, lint 0 errors
+> **Accepted:** [M] Every store-rejection path logs only to serial, so a rejected store boots the fallback with nothing on screen; the error-screen facility exists but is never invoked (reason: owned by the no-silent-failure TODO, whose Goal sentence covers it) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §22 (item: "Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot" at line 791)
+> **Deferred:** [M] A corrupt store has no shadow copy, no A/B pair and no regeneration route, only one hardcoded fallback entry (reason: needs a model decision this section cannot make) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §23 (item: "Decide the model and record it: a shadow copy of the last-known-good store, an A/B pair for the store itself, or regeneration from a source of truth")
+> **Deferred:** [L] The 16 KiB size cap has no boundary coverage on either side and no firmware coverage at all (reason: needs a scratch-backed fixture the 2048-byte static cannot provide) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §22 (item: "Kernel cases at 16383, 16384 and 16385 bytes, with the `crc32` header near EOF so the locate is exercised at the boundary too")
+> **Quality reviewed:** 2026-09-05 | Codex 8x (design, test-coverage, adversarial x3, consistency x2, perf x2, re-adversarial) | 0H+7M+2L fixed, 0 open | scope: boot-code-quality
 
 ---
 
@@ -770,15 +777,36 @@ Found by the §19 re-adversarial rounds while auditing exactly this class. §19 
 
 Found by the §20 test-coverage review, which asked for boundary cases at the cap and found the boundary has no coverage at all on either side. Not introduced by §20. -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §20 (item: "Paired regressions on both sides").
 
-**The mechanism, confirmed at file:line.** The firmware rejects `raw_len > BOOT_ENTRIES_MAX_TOTAL_BYTES` with `BOOT_ENTRIES_REJECT_FILE_TOO_LARGE` (`src/boot/uefi/boot_entries_parser.c` in `boot_entries_parse`), and the host rejects `len(raw) > MAX_TOTAL_BYTES` at `tools/boot-entry-validate/validate.py:1032` and again on the on-disk size at `:1081`. Neither constant appears in any test: `grep -rn "FILE_TOO_LARGE\|MAX_TOTAL_BYTES" src/kernel/test/ tools/boot-entry-validate/test_validate.py` returns nothing. So the two caps are asserted equal by reading, not by measurement, and the off-by-one direction (`>` against `>=`) is unverified on both sides.
+**The mechanism, confirmed at file:line.** The firmware rejects `raw_len > BOOT_ENTRIES_MAX_TOTAL_BYTES` with `BOOT_ENTRIES_REJECT_FILE_TOO_LARGE` (`src/boot/uefi/boot_entries_parser.c` in `boot_entries_parse`), and the host rejects `len(raw) > MAX_TOTAL_BYTES` at `tools/boot-entry-validate/validate.py:1032` and again on the on-disk size at `:1081`. The host has ONE over-cap case, `_oversize_file` (a 17 KiB store, rejected pre-read); the firmware has none, and neither side has a case at the boundary. So the two caps are asserted equal by reading rather than by measurement, and the off-by-one direction (`>` against `>=`) is unverified on both sides. The §20 review's first draft of this section claimed the cap was untested outright, which the consistency leg corrected against `test_validate.py`.
 
 - [ ] Kernel cases at 16383, 16384 and 16385 bytes, with the `crc32` header near EOF so the locate is exercised at the boundary too.
   - `s_fixture_buf` is 2048 bytes (`src/kernel/test/test_boot_entry_parser.c`), so this needs a scratch-backed buffer rather than the existing static; `TEST_SCRATCH_KBUF` is the pattern already used for the parse result. Do NOT grow the static: it is `.bss` in a kernel with a measured ceiling.
-- [ ] Host cases at the same three sizes, asserting the SAME verdict as the firmware at each, since a disagreement here is a store the host stamps and the firmware refuses.
+- [ ] Host cases at the same three sizes, asserting the SAME verdict as the firmware at each.
+  - A disagreement here is a store the host stamps and the firmware then refuses. The existing `_oversize_file` case stays; it proves the over-cap path, not the boundary.
 - [ ] Confirm the two caps are the same number by construction rather than by comment, or state in the schema doc why they legitimately differ.
 - [ ] Commit: `"boot: cover the boot entry store size cap on both sides of the boundary"`
 
 **Test checkpoint:** `SUITE=boot` green with the three new kernel cases; host `python3 tools/boot-entry-validate/test_validate.py` green with the three mirrored cases. No smoke run needed unless the fixture change touches parser code.
+
+---
+
+## 23. A Rejected Store Has No Repair Path, Only a One-Entry Fallback
+
+> **Spawned-by:** §20 (review)
+> **User impact:** once `bootentries.json` is corrupt, the user cannot get their boot configuration back. The machine boots one hardcoded fallback entry forever, and there is no second copy to fall back to, no way to regenerate the store from anything, and no offline editor shipped yet. Every entry they configured is gone and the only route back is to author the file by hand, on another machine, with a CRC they have to compute themselves.
+
+Found by the parity pass on §20. Distinct from the already-tracked authentication gap (Ed25519, Branch B) and from the visibility gap, which is owned elsewhere. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §22 (item: "Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot").
+
+**The mechanism, confirmed at file:line.** The Fallback Contract (`docs/boot/boot-entry-schema.md` section 8) synthesizes exactly one hardcoded entry (`id="fallback"`) and boots it; `boot_entries_synthesize_fallback()` in `src/boot/uefi/boot_entries_parser.c` is the whole of it. There is no backup copy of the store, no A/B pair for the store itself (the doc's "No A/B reference today" line concerns kernel slots, a different mechanism), and the only stated repair route is `bootcfg.exe`, marked "(later)" in the same doc. Both incumbents pair their integrity story with redundancy that this does not have: the Windows BCD is a registry hive whose format carries a base-block checksum plus transaction-log self-healing, with `bootrec /rebuildbcd` rescanning disks to reconstruct the store from scratch; GRUB has no checksum at all, but `grub.cfg` is a GENERATED artifact, so the standard repair is regenerating it with `grub-mkconfig` rather than patching the corrupt file.
+
+- [ ] Decide the model and record it: a shadow copy of the last-known-good store, an A/B pair for the store itself, or regeneration from a source of truth.
+  - These are meaningfully different and the choice constrains every item below it, which is why it is the first item rather than an implementation detail.
+  - Regeneration is the option worth arguing for even though it is the largest: it is what makes GRUB's checksum-free config survivable, and it would give the installer and the recovery partition a single story. Whether this system HAS a source of truth to regenerate from is the open question.
+- [ ] Implement the chosen model in the bootloader's store read path, including the case where BOTH copies fail their integrity check.
+- [ ] Write the recovery route the user actually follows, and put it in the schema doc's Fallback Contract next to the existing one-entry behaviour, so the doc stops implying the fallback is the whole story.
+- [ ] Commit: `"boot: give a corrupt boot entry store a way back"`
+
+**Test checkpoint:** `SUITE=boot` green with cases covering a corrupt primary and a good shadow, both corrupt, and a shadow that is stale rather than corrupt; `scripts/test-smoke-matrix.sh` 4/4 legs.
 
 ---
 

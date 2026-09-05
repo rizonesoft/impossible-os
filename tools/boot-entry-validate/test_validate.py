@@ -1176,6 +1176,17 @@ def _locator_checks() -> list[tuple[str, bool, str]]:
     check("locator parity: misspelled literal before the header",
           '{"note":tru,' + hdr + "}", None, malformed=True)
     check("locator parity: truncated mid-key", '{"schema_ver', None, malformed=True)
+    # Both sides classify these as MALFORMED rather than ABSENT: the root object is
+    # broken, it does not merely lack a member. Found by the boot-quality auditor,
+    # which measured both reading as ABSENT -- the tri-state's whole claim is that it
+    # tells those two apart, so the shapes where it could not were the contract being
+    # wrong rather than a cosmetic imprecision.
+    check("locator parity: trailing comma at the root", '{"schema_version":1,}',
+          None, malformed=True)
+    check("locator parity: truncated right after the crc32 colon", '{"crc32":',
+          None, malformed=True)
+    check("locator parity: truncated right after a root comma", '{"schema_version":1,',
+          None, malformed=True)
     check("locator parity: truncated mid-value", '{"crc32":"0xAABB', None, malformed=True)
 
     # A raw newline INSIDE the quoted CRC value makes the value 11 bytes, so there is no
