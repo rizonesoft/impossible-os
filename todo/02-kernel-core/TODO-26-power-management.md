@@ -119,6 +119,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | 💎  |  36   | §36 NIC wake offloads (ARP/NS reply, WoL, wake patterns, D0i3)     | §10, §12                    |  [ ]   |
 | ⭐  |  37   | §37 System connected standby entry (all-CPU S0ix transition)       | §10, §27, §9, §28           |  [/]   |
 | 💎  |  38   | §38 ACPI table discovery: validate extents before checksum/publish | §1                          |  [x]   |
+| 💎  |  39   | §39 ACPI root-pointer integrity + validator unification            | §38                         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -1643,69 +1644,112 @@ The tree already HAS the right primitive: `acpi_table_valid()` (§1) checks sign
 
 > **Verified:** discovery now routes both root headers and every RSDT/XSDT entry through `acpi_table_valid()`, so the header extent is proven mapped before the signature is read and the FULL declared extent is proven mapped before `acpi_checksum()` walks it. `acpi_root_entry_count()` bounds the entry loop and returns 0 on an undersized root, where the old inline `(length - 36) / stride` underflowed to ~4 G. `find_acpi_table()` no longer walks a zero `rsdt_addr`. Positive control: the FADT and MADT are still discovered on a real boot (`build/smoke-test.stripped.log`: "acpi: ACPI: FADT at 0x000000007f779000"), with no containment-rejection warnings -- a tightening that refused everything would still have booted to `C:\>`, so the smoke pass alone would not have caught it.
 
-> **Quality reviewed:** 3 Codex legs (adversarial, consistency, perf), 2 rounds, ending 0 findings. Round 1 [high] adversarial: the truncated-map benefit of the doubt was granted to an extent that STRADDLES a known descriptor, so a table at the end of an ACPI region with a forged length was checksummed into the adjacent MMIO region -- device-register reads. Fixed by recording partial overlap as positive evidence and deciding it before the missing-evidence fallback, plus wrap guards on the requested extent and on each descriptor. Round 1 [high] consistency: `acpi_validate_root()`/`acpi_validate_child()` in the enumerator path were a THIRD unvalidated copy of the same defect; both now prove containment before the length read and before the checksum. Perf: approved, boot-only cost, bounded at 512 descriptors per scan.
+> **Quality reviewed:** 17 Codex legs across 9 rounds, ending 0 findings on every leg, plus an Opus `kernel-quality-auditor` pass that returned 10 findings and drove three further fix rounds. Each round past the third returned a MEASURED defect in the previous round's fix, which is the shape that earns another round rather than a spiral: round 5 found the diagnostics gate failing open, round 6 found the length snapshot missing from the ROOT validator after the child was fixed, round 7 confirmed clean. Round 1 [high] adversarial: the truncated-map benefit of the doubt was granted to an extent that STRADDLES a known descriptor, so a table at the end of an ACPI region with a forged length was checksummed into the adjacent MMIO region -- device-register reads. Fixed by recording partial overlap as positive evidence and deciding it before the missing-evidence fallback, plus wrap guards on the requested extent and on each descriptor. Round 1 [high] consistency: `acpi_validate_root()`/`acpi_validate_child()` in the enumerator path were a THIRD unvalidated copy of the same defect; both now prove containment before the length read and before the checksum. Perf: approved, boot-only cost, bounded at 512 descriptors per scan.
+
+> **Quality reviewed:** the `kernel-quality-auditor` pass found five issues worth fixing here, all applied. [H] routing the ROOT through `acpi_table_valid()` made a root checksum mismatch fatal to ALL discovery, where the pre-change code never checksummed a root at all -- a new refusal mode that would boot a quirky machine single-core with no ACPI, and the opposite of what the vendored reference does (`src/kernel/acpica/include/acconfig.h` sets `ACPI_CHECKSUM_ABORT FALSE`). Roots now take `acpi_table_extent_valid()`: containment is the safety property, the checksum is a heuristic, and every ENTRY still carries the full check the old code applied. [M] the containment warning was reachable from unprivileged user mode via `NtQuerySystemInformation(SystemFirmwareTableInformation)`, twice per call over up to `ACPI_ROOT_ENTRY_MAX` children, each line holding the klog and serial locks -- a user-triggerable log flood this change introduced; now gated on `!acpi_ready`, so it diagnoses at boot and is silent at runtime. [M] the straddle rule refused a table spanning two ADMISSIBLE descriptors, which the loader leaves split whenever their EFI_MEMORY_* attributes differ even though the type matches, so a legitimate FADT could have been refused; a straddle is now evidence only when the neighbour is an inadmissible class. [L] `hdr->length` was read twice, once for the extent check and again for the checksum, so the walk could run over a length nothing proved; the validated length is snapshotted and passed through. [L] the enumerator's hardcoded 16 MiB cap now uses `ACPI_MAX_TABLE_LENGTH`.
+
+> **Quality reviewed:** round 4 caught three consequences of the round-3 fixes themselves, all applied. [M] the `!acpi_ready` gate on the containment warnings FAILS OPEN exactly where it matters: `acpi_ready` is set only on `acpi_init()`'s success path, so a machine whose FADT is refused leaves it 0 for the life of the system while boot continues and the user-reachable enumerator keeps warning. The window is now closed by an `acpi_init()` wrapper around `acpi_init_inner()`, so it ends on every exit including the failures. [M] refusing a straddle was still too strong on a COMPLETE map: an extent wholly covered by a CONTIGUOUS run of admissible descriptors is legitimate, because the loader coalesces neighbours only when type AND attribute match, so a table spanning two ACPI ranges split by an attribute difference was refused on most machines rather than only on truncated-map ones. `acpi_extent_covered()` now admits it on the evidence. [M] the length snapshot stopped at `acpi_table_valid()`; `acpi_validate_child()` still read `hdr->length` four separate times, so its extent check, its checksum and its returned size could describe three different lengths. All three now use one read.
+
+> **Quality reviewed:** round 5 found the surviving copy of the snapshot defect: `acpi_validate_child()` had been fixed while `acpi_validate_root()` still re-read `root->length` between proving the extent and checksumming it, and the reviewer confirmed a fresh load in the clang-19 -O2 output rather than asserting it from the source. Both public firmware-table accessors reach that validator, so it was the runtime-reachable half of the same bug. The root now snapshots once and uses it for the size limit, the entry-count arithmetic, the containment proof and the checksum. Round 6's finding was procedural and worth recording: the fix was in the working tree and NOT in the index, and the reviewer reads the index -- a fix that is not staged is not the candidate, however green the tree looks. Round 7 reviewed the staged bytes and approved.
+
+> **Quality reviewed:** the perf leg, re-run against the final content, found the one cost this change introduced. `acpi_extent_covered()` restarts its descriptor scan at zero for every boundary crossed, so it is O(descriptors^2) per call -- and `acpi_enumerate_signatures()` reaches it from an unprivileged `NtQuerySystemInformation` that runs the validators over up to `ACPI_ROOT_ENTRY_MAX` children TWICE, once to count and once to fill. On a 512-descriptor map with a long admissible run and children claiming one byte past its end, that is hundreds of millions of descriptor visits per syscall, repeatable at will. Bounded by capping the CROSSING count at `ACPI_COVER_MAX_SPANS` (8): the loader already coalesces neighbours, so a split survives only where two differ in EFI_MEMORY_* attributes and a table spanning more than a handful is not a shape real firmware produces. Past the cap the extent falls through to the evidence rules rather than being admitted, which is the safe direction. The asymptotic fix is a sorted coalesced range index, filed in section 39 and blocked on image size (`.bss` headroom 1,235 bytes against roughly 8 KB for the table).
+
+> **Accepted:** five further audit findings are real but sit outside this section's scope -- the RSDP's own extent is never proven, the ACPI 2.0 extended checksum over 36 bytes is never computed although `xsdt_addr` is read past the 20 bytes that are, the two root-walk rule sets still disagree, `acpi_extent_mapped()` compares a virtual pointer against physical descriptor bases, and `X_DSDT` is never consulted. The first two need a refusal-policy decision validated on bare metal (an EBDA-resident RSDP can legitimately sit in a class this kernel excludes, so a naive check refuses ACPI on real hardware while passing under OVMF). -> XREF: `02-kernel-core/TODO-26` §39 (item: "Prove the RSDP's own extent before checksumming it")
 
 > **Accepted:** the containment policy logs only on the rejected-class branch, so a straddling or out-of-map refusal is silent on the serial log. Not fixed here: the kernel image has 18 bytes of `.rodata` headroom, so a new diagnostic string cannot link. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §3 (item: "Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`")
 
 ---
 
+## 39. ACPI Root-Pointer Integrity and Validator Unification
+
+> **Spawned-by:** §38 (review)
+> **User impact:** The RSDP is the root of the whole table chain and is the ONE firmware pointer §38 did not reach. On a machine whose firmware publishes a corrupt RSDP, the kernel checksums 20 bytes at a loader-supplied address nothing proved readable, then dereferences a 64-bit `xsdt_addr` that sits 12 bytes PAST the region that checksum covers -- so every extent guard §38 added downstream is anchored to an unverified pointer. Separately, a machine whose XSDT length is not an exact multiple of 8 gets its tables from boot discovery but NOT from the enumerator, silently losing the watchdog (WDAT), the EC (ECDT) and TPM2 with no diagnostic.
+
+Filed by the §38 post-ship kernel quality audit. §38 hardened everything reachable FROM the RSDP; these are the pointer itself, the two validators that disagree about the same root, and two capability gaps the audit surfaced while tracing the chain. None is a regression from §38 -- all are pre-existing -- but each sits on the path §38 now guards, so leaving them makes that guarantee only as strong as its weakest anchor.
+
+- [ ] Prove the RSDP's own extent before checksumming it (`src/kernel/acpi.c` `acpi_init()`, and the four runtime readers that verify no checksum at all)
+  - The read is `acpi_checksum(rsdp, 20)` over `g_boot_info.acpi_rsdp_addr` with no `acpi_extent_mapped()` call in front of it. Route it through the same header-then-extent ordering §38 established.
+  - **Decide the refusal policy deliberately, and validate on bare metal before shipping.** An RSDP in the EBDA can legitimately sit in a class this kernel's admissible set excludes, so a naive containment check REFUSES ACPI outright on real hardware while passing under OVMF. The conservative shape is to widen the admissible set for the RSDP specifically, or to warn rather than refuse, following the same reasoning §38 used for the root checksum.
+- [ ] Compute the ACPI 2.0 extended checksum over 36 bytes before trusting `xsdt_addr`
+  - `find_acpi_table()` reads `rsdp2->xsdt_addr` at RSDP offset 24, which is outside the 20 bytes `acpi_checksum(rsdp, 20)` covers, and nothing anywhere computes the v2 checksum the specification defines over the full 36-byte structure.
+  - Gate it on `revision >= 2` and treat a mismatch the way the vendored reference does (`src/kernel/acpica/include/acconfig.h` sets `ACPI_CHECKSUM_ABORT FALSE`, so ACPICA warns and proceeds), not as a hard refusal.
+- [ ] Unify the two root-walk rule sets so one RSDT/XSDT cannot be accepted by boot discovery and rejected by the enumerator
+  - `acpi_root_entry_count_len()` uses truncating division with no stride-multiple requirement and the 16 MiB `ACPI_MAX_TABLE_LENGTH` cap; `acpi_validate_root()` demands `entries_bytes % stride == 0`, caps entries at `ACPI_ROOT_ENTRY_MAX` and length at 1 MiB.
+  - The divergence is silent and costs real capability: a root the enumerator refuses takes WDAT, ECDT, TPM2 and the firmware-tables catalog with it while boot discovery reports everything fine.
+- [ ] Make the physical-versus-virtual assumption in `acpi_extent_mapped()` explicit rather than implied
+  - It is handed `(uint64_t)(uintptr_t)hdr`, a VIRTUAL pointer, and compares it against `boot_mmap_entry.base_addr`, which is PHYSICAL. That is correct only while ACPI ranges stay identity-mapped, which nothing asserts.
+  - Add the containment assert against the owning window from `include/kernel/mm/memmap.h`, or convert explicitly. The guard becomes silently wrong the day ACPI ranges move to the HHDM, and a wrong containment check reads exactly like a working one.
+- [ ] Prefer `X_DSDT` (FADT offset 140) over the 32-bit `dsdt` field when it is non-zero
+  - ACPI requires OSPM to prefer the extended field. Firmware that publishes a DSDT above 4 GiB with `dsdt` zeroed currently falls into the failure branch and loses S1/S3/S4/S5 entirely -- a silent capability loss on exactly the modern machines this roadmap targets.
+- [ ] Replace `acpi_extent_covered()`'s restart-from-zero scan with a sorted, coalesced admissible-range index built once
+  - The walk is bounded today by `ACPI_COVER_MAX_SPANS` (8 crossings), which caps the cost but is a heuristic: a legitimate table spanning more descriptors than that is refused. A sorted index makes coverage a bounded lookup and removes the cap entirely.
+  - It also collapses the double map scan `acpi_table_valid()` performs (header extent, then full extent): the header lookup can return its containing range so the full-length proof reuses it when it fits.
+  - **Blocked on image size, not design.** The index needs a static array the kernel has no room for -- `.bss` headroom was 1,235 bytes when this was filed, against roughly 8 KB for a 512-entry range table. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §3 (item: "Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`")
+- [ ] Commit: `"kernel/acpi: RSDP extent + v2 checksum, unified root validators, X_DSDT"`
+
+**Test checkpoint:** A synthetic RSDP outside every admissible descriptor is handled by the policy this section picks (refused, or admitted with a diagnostic) rather than checksummed blindly. A v2 RSDP whose extended checksum fails is diagnosed. One XSDT image produces the SAME accept/reject verdict from boot discovery and from `acpi_enumerate_signatures()`. A FADT carrying only `X_DSDT` reaches `parse_s5_from_dsdt()`. Test on: QEMU TCG; the RSDP-placement cases are bare metal and cannot be reproduced under emulation.
+
+---
+
 ## OS Comparison
 
-| ⭐  | Feature                           | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
-| --- | --------------------------------- | --------------- | ---------------- | ---------------- |
-| 💎  | S5 ACPI shutdown                  | ✅ Full         | ✅ Full          | ✅ Done §1       |
-| 💎  | ACPI S-state discovery            | ✅ ACPI.sys     | ✅ acpi_sleep    | ✅ Done §1       |
-| 💎  | PM1 fixed-event SCI               | ✅ ACPI.sys     | ✅ acpi_sci      | ✅ Done §1       |
-| 💎  | C1 idle / HLT                     | ✅ Full         | ✅ cpuidle       | ⬜ §2            |
-| 💎  | S3 suspend RAM                    | ✅ Full         | ✅ sleep         | ⬜ §3            |
-| 💎  | Stop-the-world CPU rendezvous     | ✅ KeIpiGeneric | ✅ stop_machine  | ✅ Done §26      |
-| 💎  | Stop-the-world fault injection    | ✅ Internal     | ✅ ftrace stress | ⬜ §27           |
-| 💎  | Hibernation image format codec    | ✅ hiberfil.sys | ✅ swsusp image  | ✅ Done §4       |
-| 💎  | S4 hibernate disk                 | ✅ Full         | ✅ swsusp        | ⬜ §28           |
-| 💎  | Fast startup hiberboot            | ✅ Default      | ❌ None          | ⬜ §11           |
-| 💎  | ACPI EC discovery + transactions  | ✅ Full         | ✅ acpi_ec       | ✅ Done §5       |
-| 💎  | ACPI EC enabled for real traffic  | ✅ Full         | ✅ acpi_ec       | ⬜ §5 + §24      |
-| 💎  | ACPI EC event (QR_EC) dispatch    | ✅ Full         | ✅ acpi_ec query | ⬜ §5 + §24      |
-| 💎  | Battery `_BIX` / `_BST`           | ✅ Full         | ✅ upower        | ⬜ §6            |
-| 💎  | Power/sleep button events         | ✅ Full         | ✅ logind        | ✅ Done §7       |
-| 💎  | Lid-close events                  | ✅ Full         | ✅ logind        | ⬜ §31           |
-| 💎  | PCI D-states D0--D3hot            | ✅ Full         | ✅ PCI PM        | ✅ Done §8       |
-| 💎  | PCI D3cold via ACPI `_PS0`/`_PS3` | ✅ Full         | ✅ pci_pm_d3cold | ⬜ §34           |
-| 💎  | PM capability + PMCSR integrity   | ✅ Full         | ✅ pci_pm_init   | ✅ Done §8       |
-| 💎  | Driver sleep wake callbacks       | ✅ WDM          | ✅ pm_ops        | ✅ Registry §9   |
-| 💎  | Driver query veto power           | ✅ QUERY_POWER  | ✅ prepare       | ⬜ §17           |
-| 💎  | Runtime idle PoFx RPM             | ✅ PoFx         | ✅ runtime_pm    | ⬜ §12           |
-| 💎  | Power requests tracking           | ✅ powercfg     | ⚠️ wake_lock     | ⬜ §13           |
-| 💎  | Wake source lastwake              | ✅ powercfg     | ⚠️ dmesg         | ⬜ §13           |
-| 💎  | ACPI thermal zones                | ✅ ACPI.sys     | ✅ thermal       | ⬜ §14           |
-| 💎  | Passive active cooling            | ✅ Full         | ✅ step_wise     | ⬜ §14           |
-| 💎  | CPU DVFS cpufreq                  | ✅ PPM HWP      | ✅ cpufreq       | ⬜ §15           |
-| 💎  | CPU idle C-states                 | ✅ PPM          | ✅ menu teo      | ⬜ §16           |
-| 💎  | Connected standby S0ix            | ✅ Modern       | ⚠️ Partial       | ⬜ §37           |
-| 💎  | S0ix firmware advertisement       | ✅ FADT DSM     | ✅ FADT DSM      | ✅ §10           |
-| 💎  | MWAIT C-state hint selection      | ✅ PPM          | ✅ intel_idle    | ⚠️ §10 §37       |
-| 💎  | mem_sleep s2idle deep             | ✅ S0 idle      | ✅ sysfs         | ⬜ §21           |
-| 💎  | powercfg CLI surface              | ✅ 50 cmds      | ⚠️ systemctl     | ⬜ §18           |
-| 💎  | Power Options GUI                 | ✅ powercpl     | ⚠️ GNOME basic   | ⬜ §18           |
-| ⭐  | Energy aware scheduling           | ⚠️ HW ITD       | ✅ EAS ARM       | ⬜ §19           |
-| ⭐  | Battery wear tray hint            | ❌ Settings     | ❌ CLI only      | ⬜ §6            |
-| ⭐  | batteryreport plain text          | ✅ HTML         | ❌ None          | ⬜ §18           |
-| ⭐  | energy audit trace                | ✅ Full         | ❌ None          | ⬜ §13           |
-| ⭐  | sleepstudy DRIPS report           | ✅ Full         | ❌ None          | ⬜ §18           |
-| 💎  | PoFx F-states components          | ✅ Per Fx       | ❌ Device only   | ⬜ §12           |
-| 💎  | Directed PoFx DRIPS               | ✅ PoFx v3      | ❌ None          | ⬜ §35           |
-| 💎  | USB suspend U1 U2 LPM             | ✅ Full         | ✅ autosuspend   | ⬜ §12           |
-| 💎  | NVMe APST idle states             | ✅ On           | ✅ sysfs         | ⬜ §12           |
-| 💎  | PCIe ASPM L1 substates            | ✅ Plans        | ✅ pcie_aspm     | ⬜ §23           |
-| 💎  | SATA ALPM link power              | ✅ HIPM         | ✅ sysfs         | ⬜ §12           |
-| 💎  | NIC ARP NS offload S0ix           | ✅ NDIS         | ⚠️ Firmware      | ⬜ §36           |
-| 💎  | Smart charge 80 percent           | ✅ OEM          | ⚠️ TLP           | ⬜ §6            |
-| 💎  | RAPL power cap sysfs              | ✅ Internal     | ✅ powercap      | ⬜ §15           |
-| 💎  | AMD P-State EPP                   | ✅ Driver       | ✅ amd_pstate    | ⬜ §15           |
-| 💎  | Energy Saver adaptive             | ✅ Win11        | ⚠️ profiles      | ⬜ §18           |
-| ⭐  | Human presence HPD wake           | ✅ Platform     | ❌ None          | ⬜ §32           |
-| 💎  | HID-idle QoS throttle (fg-only)   | ✅ 25H2         | ❌ None          | ⬜ §22           |
-| 💎  | ACPI GPE block dispatch           | ✅ ACPI.sys     | ✅ acpi_ev_gpe   | ⬜ §24           |
+| ⭐  | Feature                           | 🪟 Win11        | 🐧 Linux          | 🚀 Impossible OS |
+| --- | --------------------------------- | --------------- | ----------------- | ---------------- |
+| 💎  | S5 ACPI shutdown                  | ✅ Full         | ✅ Full           | ✅ Done §1       |
+| 💎  | ACPI S-state discovery            | ✅ ACPI.sys     | ✅ acpi_sleep     | ✅ Done §1       |
+| 💎  | PM1 fixed-event SCI               | ✅ ACPI.sys     | ✅ acpi_sci       | ✅ Done §1       |
+| 💎  | C1 idle / HLT                     | ✅ Full         | ✅ cpuidle        | ⬜ §2            |
+| 💎  | S3 suspend RAM                    | ✅ Full         | ✅ sleep          | ⬜ §3            |
+| 💎  | Stop-the-world CPU rendezvous     | ✅ KeIpiGeneric | ✅ stop_machine   | ✅ Done §26      |
+| 💎  | Stop-the-world fault injection    | ✅ Internal     | ✅ ftrace stress  | ⬜ §27           |
+| 💎  | Hibernation image format codec    | ✅ hiberfil.sys | ✅ swsusp image   | ✅ Done §4       |
+| 💎  | S4 hibernate disk                 | ✅ Full         | ✅ swsusp         | ⬜ §28           |
+| 💎  | Fast startup hiberboot            | ✅ Default      | ❌ None           | ⬜ §11           |
+| 💎  | ACPI EC discovery + transactions  | ✅ Full         | ✅ acpi_ec        | ✅ Done §5       |
+| 💎  | ACPI EC enabled for real traffic  | ✅ Full         | ✅ acpi_ec        | ⬜ §5 + §24      |
+| 💎  | ACPI EC event (QR_EC) dispatch    | ✅ Full         | ✅ acpi_ec query  | ⬜ §5 + §24      |
+| 💎  | Battery `_BIX` / `_BST`           | ✅ Full         | ✅ upower         | ⬜ §6            |
+| 💎  | Power/sleep button events         | ✅ Full         | ✅ logind         | ✅ Done §7       |
+| 💎  | Lid-close events                  | ✅ Full         | ✅ logind         | ⬜ §31           |
+| 💎  | PCI D-states D0--D3hot            | ✅ Full         | ✅ PCI PM         | ✅ Done §8       |
+| 💎  | PCI D3cold via ACPI `_PS0`/`_PS3` | ✅ Full         | ✅ pci_pm_d3cold  | ⬜ §34           |
+| 💎  | PM capability + PMCSR integrity   | ✅ Full         | ✅ pci_pm_init    | ✅ Done §8       |
+| 💎  | Driver sleep wake callbacks       | ✅ WDM          | ✅ pm_ops         | ✅ Registry §9   |
+| 💎  | Driver query veto power           | ✅ QUERY_POWER  | ✅ prepare        | ⬜ §17           |
+| 💎  | Runtime idle PoFx RPM             | ✅ PoFx         | ✅ runtime_pm     | ⬜ §12           |
+| 💎  | Power requests tracking           | ✅ powercfg     | ⚠️ wake_lock      | ⬜ §13           |
+| 💎  | Wake source lastwake              | ✅ powercfg     | ⚠️ dmesg          | ⬜ §13           |
+| 💎  | ACPI thermal zones                | ✅ ACPI.sys     | ✅ thermal        | ⬜ §14           |
+| 💎  | Passive active cooling            | ✅ Full         | ✅ step_wise      | ⬜ §14           |
+| 💎  | CPU DVFS cpufreq                  | ✅ PPM HWP      | ✅ cpufreq        | ⬜ §15           |
+| 💎  | CPU idle C-states                 | ✅ PPM          | ✅ menu teo       | ⬜ §16           |
+| 💎  | Connected standby S0ix            | ✅ Modern       | ⚠️ Partial        | ⬜ §37           |
+| 💎  | S0ix firmware advertisement       | ✅ FADT DSM     | ✅ FADT DSM       | ✅ §10           |
+| 💎  | MWAIT C-state hint selection      | ✅ PPM          | ✅ intel_idle     | ⚠️ §10 §37       |
+| 💎  | mem_sleep s2idle deep             | ✅ S0 idle      | ✅ sysfs          | ⬜ §21           |
+| 💎  | powercfg CLI surface              | ✅ 50 cmds      | ⚠️ systemctl      | ⬜ §18           |
+| 💎  | Power Options GUI                 | ✅ powercpl     | ⚠️ GNOME basic    | ⬜ §18           |
+| ⭐  | Energy aware scheduling           | ⚠️ HW ITD       | ✅ EAS ARM        | ⬜ §19           |
+| ⭐  | Battery wear tray hint            | ❌ Settings     | ❌ CLI only       | ⬜ §6            |
+| ⭐  | batteryreport plain text          | ✅ HTML         | ❌ None           | ⬜ §18           |
+| ⭐  | energy audit trace                | ✅ Full         | ❌ None           | ⬜ §13           |
+| ⭐  | sleepstudy DRIPS report           | ✅ Full         | ❌ None           | ⬜ §18           |
+| 💎  | PoFx F-states components          | ✅ Per Fx       | ❌ Device only    | ⬜ §12           |
+| 💎  | Directed PoFx DRIPS               | ✅ PoFx v3      | ❌ None           | ⬜ §35           |
+| 💎  | USB suspend U1 U2 LPM             | ✅ Full         | ✅ autosuspend    | ⬜ §12           |
+| 💎  | NVMe APST idle states             | ✅ On           | ✅ sysfs          | ⬜ §12           |
+| 💎  | PCIe ASPM L1 substates            | ✅ Plans        | ✅ pcie_aspm      | ⬜ §23           |
+| 💎  | SATA ALPM link power              | ✅ HIPM         | ✅ sysfs          | ⬜ §12           |
+| 💎  | NIC ARP NS offload S0ix           | ✅ NDIS         | ⚠️ Firmware       | ⬜ §36           |
+| 💎  | Smart charge 80 percent           | ✅ OEM          | ⚠️ TLP            | ⬜ §6            |
+| 💎  | RAPL power cap sysfs              | ✅ Internal     | ✅ powercap       | ⬜ §15           |
+| 💎  | AMD P-State EPP                   | ✅ Driver       | ✅ amd_pstate     | ⬜ §15           |
+| 💎  | Energy Saver adaptive             | ✅ Win11        | ⚠️ profiles       | ⬜ §18           |
+| ⭐  | Human presence HPD wake           | ✅ Platform     | ❌ None           | ⬜ §32           |
+| 💎  | HID-idle QoS throttle (fg-only)   | ✅ 25H2         | ❌ None           | ⬜ §22           |
+| 💎  | ACPI GPE block dispatch           | ✅ ACPI.sys     | ✅ acpi_ev_gpe    | ⬜ §24           |
+| 💎  | ACPI table extent validation      | ✅ ACPI.sys     | ✅ acpi_tb_verify | ✅ Done §38      |
+| 💎  | RSDP v2 extended checksum         | ✅ ACPI.sys     | ✅ acpi_tb_check  | ⬜ §39           |
 
 After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 

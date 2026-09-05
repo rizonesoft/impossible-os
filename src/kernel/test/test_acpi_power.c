@@ -445,7 +445,7 @@ static void test_acpi_discovery_extent_guard(void)
     /* An entry pointer outside every descriptor, with a COMPLETE map: that is
      * positive evidence the pointer is wrong, not missing evidence. */
     TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x9000u, 0x10u), 0,
-                   "outside map");
+                   "outside");
 
     /* Contained, but in conventional memory -- which pmm_init hands to the
      * allocator, so a table "validated" there can be overwritten afterwards. */
@@ -478,7 +478,27 @@ static void test_acpi_discovery_extent_guard(void)
     /* The header alone still fits, which is why a header-only check passes it
      * and only the FULL extent test catches the forged length. */
     TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 1, 0x1F00u, 0x24u), 1,
-                   "header alone fits");
+                   "hdr fits");
+
+    /* But straddling an ADMISSIBLE neighbour is NOT evidence of corruption.
+     * The loader coalesces adjacent descriptors only when type AND attribute
+     * match, so two abutting ACPI-reclaim ranges differing only in their
+     * EFI_MEMORY_* attributes stay split, and a legitimate table spanning them
+     * must still be admitted under the truncated-map fallback. Refusing it
+     * would fail the FADT and boot the machine single-core with no ACPI. */
+    map[1].uefi_memory_type = UEFI_MMAP_ACPI_NVS;
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 1, 0x1F00u, 0x200u), 1,
+                   "ok neighbour");
+    /* And on a COMPLETE map too. The span is wholly covered by a contiguous
+     * run of admissible descriptors, so it is admitted on the evidence rather
+     * than on the benefit of the doubt -- a table spanning two ACPI ranges the
+     * loader left split is legitimate, and most machines have a complete map. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x1F00u, 0x200u), 1,
+                   "span ok classes");
+    /* A span reaching one byte past the covered run is refused: coverage is
+     * decided on the WHOLE extent, not on where it starts. */
+    TEST_ASSERT_EQ(acpi_extent_in_map_test(map, 2u, 0, 0x1F00u, 0x1101u), 0,
+                   "span past run");
 
     /* -- A checksum that only balances PAST the declared end -- */
 
