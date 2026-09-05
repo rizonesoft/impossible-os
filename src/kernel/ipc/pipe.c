@@ -46,9 +46,15 @@
  * atomic_set's release on the READY transition makes every write below it
  * (the pool contents, pipes_phys/pipes_pages, the pipes pointer itself)
  * visible to any CPU that acquire-reads READY before touching pipes. This
- * closes only the pipe-vs-pipe race: the PMM bitmap has no internal SMP lock,
- * so a concurrent UNRELATED PMM caller remains a live, separately-tracked gap
- * (pmm.h caller contract; owned by 03-memory-concurrency/TODO-03 s1).
+ * closes only the INIT race, and the scope of that claim matters: the PMM
+ * bitmap has no internal SMP lock, so a concurrent unrelated PMM caller
+ * remains a live, separately-tracked gap (pmm.h caller contract; owned by
+ * 03-memory-concurrency/TODO-03 s1) -- and, larger, the pool's OWN slot
+ * bookkeeping is still not SMP-safe. pipe_create() scans for a free slot and
+ * claims it without a lock, and pipe_read()/pipe_write() read count,
+ * read_open and write_open outside p->lock. Both are pre-existing, both are
+ * ring-3-reachable, and neither is fixed here: this file is SMP-audited for
+ * INITIALISATION only -> XREF: 03-memory-concurrency/TODO-09 s11.
  *
  * The CAS also fixes a latent bug in the old idempotence. pipe_init() is
  * documented "safe to call multiple times", but the old body re-zeroed in_use
@@ -95,9 +101,13 @@ boot_result_t pipe_init(void)
         /* Degraded, not fatal. boot_desktop.c halts only on BOOT_FATAL and
          * routes BOOT_DEGRADED into the degraded-subsystem path, and every
          * entry point below refuses through pipe_ready() rather than
-         * dereferencing NULL. Back to UNINIT (not a terminal failed state)
-         * so a later retry can still succeed once other boot-time
-         * allocations have freed up. */
+         * dereferencing NULL. Back to UNINIT rather than a terminal failed
+         * state, so the state machine does not foreclose a retry -- but be
+         * honest that no production retry EXISTS: boot_desktop.c:238 is the
+         * only non-test caller and it runs once at phase 3, so a genuine
+         * allocation failure there is the last word for the session. The
+         * rollback is what lets the KERNEL_TESTS recovery path re-init, and
+         * what a future on-demand retry would need; it is not one itself. */
         klog(LOG_ERROR, "ipc",
              "pipe: failed to allocate pipe pool (%u bytes) -- IPC pipes degraded",
              bytes);
@@ -109,7 +119,7 @@ boot_result_t pipe_init(void)
      * per slot and relied on BSS-zero for the rest, so an all-zero pool
      * reproduces the previous initial state exactly: pipe_create() assigns
      * every other field of a slot at the moment it claims it. */
-    memset(pool, 0, (uint32_t)bytes);
+    memset(pool, 0, bytes);   /* size_t: do NOT narrow -- PIPE_MAX is a header constant */
 
     pipes_phys  = phys;
     pipes_pages = pages;
@@ -164,23 +174,40 @@ int pipe_test_reset_for_fault_injection(void)
      * another CPU and claim a slot this loop has already walked past, and
      * the frames would then be freed underneath it.
      *
-     * Be precise about what the reorder buys, because it is less than it
-     * looks. A release store NARROWS the window -- any CPU whose gate load
-     * happens after it refuses -- but it does not retract a READY already
-     * loaded, does not order this store against a concurrent pipe_init(),
-     * and does not make the scan a proof of quiescence on its own. The
-     * actual safety here comes from the caller (see the header comment):
-     * a sequential BSP-only test suite. Treat this ordering as removing an
-     * obviously-wrong sequence, not as an exclusion mechanism.
+     * Be precise about what this buys, because it is less than it looks.
+     * Holding INITIALIZING does exclude other initialisers and every new
+     * consumer for the whole teardown. What it does NOT do is retract a
+     * READY that some CPU already loaded: a caller already past pipe_ready()
+     * and not yet holding a slot is invisible to both the gate and the scan.
+     * So the scan is not a proof of quiescence on its own -- for that
+     * residual the safety comes from the caller (see the header comment), a
+     * sequential BSP-only test suite.
      *
      * Restore READY on refusal, so a refused reset leaves the subsystem
      * exactly as it found it. */
-    atomic_set(&pipe_init_state, PIPE_INIT_UNINIT);
+    if (atomic_cmpxchg(&pipe_init_state, PIPE_INIT_READY,
+                       PIPE_INIT_INITIALIZING) != PIPE_INIT_READY) {
+        klog(LOG_ERROR, "ipc", "pipe pool reset refused: pool not READY");
+        return 0;
+    }
+
+    /* We now HOLD the token, and holding INITIALIZING is the point: an
+     * earlier draft of this function CAS'd READY -> UNINIT, which reads like
+     * ownership and is not. UNINIT is precisely the state pipe_init()'s own
+     * CAS accepts, so that draft withdrew consumers and in the same
+     * instruction invited an initialiser to allocate a replacement pool over
+     * the one being scanned and freed -- and its restore-on-refusal would
+     * then have stored READY over that initialiser's INITIALIZING.
+     * INITIALIZING excludes both: pipe_ready() is false on it, so no
+     * consumer is admitted, and pipe_init()'s CAS requires UNINIT, so no
+     * initialiser is either. UNINIT is published LAST, after teardown. */
 
     for (i = 0; i < PIPE_MAX; i++) {
         if (pipes[i].in_use) {
             klog(LOG_ERROR, "ipc",
                  "pipe pool reset refused: slot %u still in use", (uint64_t)i);
+            /* Safe because we hold INITIALIZING: nothing else can have
+             * moved the state, so this returns exactly what the CAS took. */
             atomic_set(&pipe_init_state, PIPE_INIT_READY);
             return 0;
         }
@@ -194,6 +221,10 @@ int pipe_test_reset_for_fault_injection(void)
     pipes_pages = 0;
 
     pmm_free_contiguous(phys, pages);
+
+    /* Release the token LAST. Publishing UNINIT any earlier would re-open
+     * pipe_init() over frames this function had not finished reclaiming. */
+    atomic_set(&pipe_init_state, PIPE_INIT_UNINIT);
     return 1;
 }
 #endif

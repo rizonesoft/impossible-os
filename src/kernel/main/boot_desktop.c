@@ -228,7 +228,11 @@ void boot_phase3(void)
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_REGISTRY);
 
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
-    /* pipe_create/shmem_create init lazily; explicit pipe_init gives the
+    /* shmem_create inits lazily; pipe_create does NOT, and has not since
+     * TODO-33 s15 moved the pipe pool off .bss -- pmm_alloc_pages_hhdm's
+     * caller contract forbids allocating on a post-scheduler call path, so
+     * pipe_create() now refuses on an un-initialised pool and THIS call is
+     * the only thing that makes pipes work. Explicit pipe_init also gives the
      * sequencing a uniform entry point. Entry POST is written before init so
      * a hang/fault inside pipe_init/alpc_init shows the IPC stage rather than
      * the prior SCHED milestone. Fatal-severity policy for both is documented

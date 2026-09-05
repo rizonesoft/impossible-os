@@ -50,6 +50,7 @@ title: "TODO-09 -- Win32 IPC Extensions & Async I/O"
 | 💎  |   8   | §8 ALPC extensions -- shared section, handle attrs, direct mode | §7, TODO-05 §5 (Section Object)         |  [ ]   |
 | ⭐  |   9   | §9 `ImpossibleRing` SQ+CQ async submission rings                | §4, §5, TODO-05 §5 (NtMapViewOfSection) |  [ ]   |
 | 💎  |  10   | IPC syscalls wired to SSDT                                      | §1–§4, D02 T12 §4                       |  [ ]   |
+| 💎  |  11   | Anonymous-pipe hardening: SMP-safe slots, error codes, capacity | `pipe.c` baseline                       |  [ ]   |
 
 > 💎 = parity -- named pipes, IOCP, named sync objects, LPC, and ALPC are Windows NT core IPC primitives; Impossible OS must match for Win32 compatibility. Mailslots are a Windows-exclusive feature Linux lacks.
 > ⭐ = exclusive -- `ImpossibleRing` provides io_uring–style zero-syscall async submission, going beyond classic Windows I/O models.
@@ -243,6 +244,37 @@ Wire named pipes, mailslots, and I/O completion port syscalls into the SSDT. (�
 - [ ] Commit: `"ipc: wire named pipe, mailslot, and IOCP syscalls to SSDT"`
 
 **Test checkpoint:** `NtCreateNamedPipeFile` creates `\\.\pipe\test`; reader/writer round-trip. `NtCreateIoCompletion` + `NtSetIoCompletion` + `NtRemoveIoCompletion` post/dequeue round-trip.
+
+---
+
+## 11. Anonymous-Pipe Hardening -- SMP-Safe Slot State, Real Error Codes, Honest Capacity
+
+> **Spawned-by:** §1 (review)
+> **User impact:** two processes calling `pipe()` at the same moment on different CPUs can be handed the SAME pipe id, so one process's stdout lands in another's stdin. That is a cross-process data leak reachable from ring 3 today, with no privilege needed. Below it, a caller that exhausts the 16-pipe machine-wide table cannot tell that apart from "you passed a bad handle", and two writers to one pipe can interleave a sub-`PIPE_BUF` write that POSIX guarantees is atomic.
+
+This file's preamble records anonymous pipes as "already complete" and the baseline it extends. They are complete as a FEATURE and not as an SMP-safe one. Filed from the `02-kernel-core/TODO-33 §15` review (the pass that moved the pool off `.bss`), whose kernel-quality audit and parity pass both landed here; §15 fixed the pool's INITIALISATION race and deliberately did not touch the slot bookkeeping, because a correct fix changes production pipe semantics and deserves its own review rather than a drive-by inside a reclamation pass.
+
+- [ ] Make the slot claim atomic -- `pipe_create()`'s free-slot scan and claim is an unlocked check-then-act.
+  - It scans for `!in_use` at `src/kernel/ipc/pipe.c:216-219` and claims the slot several lines later at `:232`, with no lock on either side. Both `SYS_PIPE` (`src/kernel/sched/syscall.c:1100`) and `NtCreateNamedPipeFile` (`src/kernel/nt/nt_syscall.c:1614`) reach it from ring 3 on any CPU.
+  - Two CPUs can both observe `in_use == 0` for the same slot and both receive that id; the loser's `mutex_init`/`sem_init` (`:234-236`) then re-initialise primitives the winner is already using.
+  - The fix is a compare-and-swap on the claim, not a lock around the scan: walk the table attempting `0 -> 1` on `in_use` and take the first slot that succeeds. That needs `in_use` to become an `atomic_t` (or be accessed through the `atomic.h` builtins), which is a `pipe_t` layout change -- internal to `pipe.c`, so no external consumer moves.
+- [ ] Bring `pipe_t`'s state fields under `p->lock`, or make each one atomic.
+  - `count`, `read_open`, `write_open` and `in_use` are read outside the mutex at `pipe.c:260,264,272,306,312,317,322,325,330,362` while `pipe_write()` mutates `count` under it (`:282`), so `pipe_read()`'s EOF and loop-control decisions run on unsynchronised reads of a field another CPU is incrementing.
+  - This is what makes the per-byte blocking loop unsound on real SMP rather than merely slow. Decide deliberately between widening the mutex and making the fields atomic; the ring-buffer indices and the open/closed flags have different access patterns and may not want the same answer.
+- [ ] Give the failure paths distinguishable status codes end to end.
+  - `pipe_create()` already KNOWS which failure it hit -- it logs `LOG_ERROR "pipe_create on a degraded pipe pool"` (`pipe.c:211`) against `LOG_DEBUG "No free pipe slots"` (`:222`) -- and then returns `-1` for both.
+  - `nt_syscall.c:1614-1616` collapses every nonzero return to `STATUS_NO_MEMORY`, and `pipe_write`/`pipe_read` failures surface as `STATUS_INVALID_HANDLE` (`nt_syscall.c:342-343,465-466`) on a handle that is perfectly valid.
+  - Win11 distinguishes the resource classes (`ERROR_NO_SYSTEM_RESOURCES` / `STATUS_INSUFFICIENT_RESOURCES`) and Linux `pipe(2)` returns three actionable errnos (`EMFILE` per-process, `ENFILE` system-wide, `ENOMEM`). Target at least: pool degraded -> `STATUS_INSUFFICIENT_RESOURCES`, table full -> a distinct code, broken pipe -> `STATUS_PIPE_BROKEN`.
+- [ ] Decide whether `PIPE_MAX` 16 with a fixed 4 KiB `PIPE_BUF_SIZE` (`include/kernel/ipc/pipe.h:24-27`) is the shipping capacity, and record the answer either way.
+  - It is machine-wide with no per-process or per-user accounting, so one runaway caller starves every other process's `pipe_create()`. Linux imposes no pipe COUNT at all (it gates on `RLIMIT_NOFILE` and `fs.pipe-user-pages-soft`/`hard`) and its default per-pipe buffer has been 64 KiB since 2.6.11, 16x ours; Windows anonymous pipes carry no documented instance cap.
+  - Either raise it with accounting (`02-kernel-core/TODO-25` owns resource quotas) or record the cap as a deliberate, documented limitation. A number nobody chose is the failure mode here.
+- [ ] Restore the POSIX `PIPE_BUF` write-atomicity guarantee, or state explicitly that it is not offered.
+  - `pipe_write()` takes and releases `p->lock` and does a `sem_wait`/`sem_signal` pair PER BYTE (`pipe.c:269-289`), so two writers to one pipe interleave arbitrarily even for writes far under `PIPE_BUF_SIZE`.
+  - POSIX.1-2001 requires a write of `PIPE_BUF` bytes or fewer (4096 on Linux) to land as one non-interleaved unit. Fixing this and the per-byte semaphore traffic is the same edit: move to a bulk copy under one lock acquisition.
+- [ ] Commit: `"kernel/ipc: anonymous-pipe hardening -- SMP-safe slots, real error codes"`
+
+**Test checkpoint:** a multi-CPU test that has two threads call `pipe_create()` concurrently and asserts they never receive the same id. `SUITE=ipc` green in its own right and the aggregate assertion count not lower than before. `scripts/test-smoke.sh` boots to `C:\>`, since the terminal and shell both sit on `pipe_create`. Platforms: QEMU KVM + TCG, and the slot race wants the 2-CPU legs of `test-smoke-matrix.sh` specifically.
+
 
 ---
 
