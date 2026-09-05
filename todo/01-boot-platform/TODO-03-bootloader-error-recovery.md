@@ -60,30 +60,31 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                  | Depends On | Status |
-| --- | :---: | ---------------------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | ELF bounds checking                                                          | --         |  [x]   |
-| 💎  |   2   | ExitBootServices retry loop (bounded)                                        | --         |  [x]   |
-| 💎  |   3   | Fallback kernel search (3 paths)                                             | --         |  [x]   |
-| 💎  |   4   | Serial port probe and COM2 fallback                                          | --         |  [x]   |
-| 💎  |   5   | GOP timeout and graceful degradation                                         | --         |  [x]   |
-| 💎  |   6   | Memory map overflow detection (512 entries)                                  | --         |  [x]   |
-| 💎  |   7   | boot.conf validation and version field                                       | --         |  [x]   |
-| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --         |  [x]   |
-| ⭐  |   9   | Boot failure error screen                                                    | §1-§8      |  [x]   |
-| 💎  |  10   | ACPI SPCR serial port auto-detection                                         | §4         |  [x]   |
-| 💎  |  11   | UEFI watchdog timer management                                               | --         |  [x]   |
-| 💎  |  12   | Memory map descriptor validation                                             | §6         |  [x]   |
-| ⭐  |  13   | Boot error code registry & NVRAM persistence                                 | §9         |  [x]   |
-| ⭐  |  14   | Error screen QR code                                                         | §9         |  [x]   |
-| 💎  |  15   | boot_info ABI foundation moved to TODO-01                                    | --         |  [x]   |
-| 💎  |  16   | boot_info kernel validation moved to TODO-01                                 | §15        |  [x]   |
-| 💎  |  17   | Memory map overlap normalization (sort+carve)                                | §12        |  [x]   |
-| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14    |  [x]   |
-| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1         |  [x]   |
-| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13        |  [x]   |
-| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20        |  [x]   |
-| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18    |  [ ]   |
+| ⭐  | Order | Deliverable                                                                  | Depends On   | Status |
+| --- | :---: | ---------------------------------------------------------------------------- | ------------ | :----: |
+| 💎  |   1   | ELF bounds checking                                                          | --           |  [x]   |
+| 💎  |   2   | ExitBootServices retry loop (bounded)                                        | --           |  [x]   |
+| 💎  |   3   | Fallback kernel search (3 paths)                                             | --           |  [x]   |
+| 💎  |   4   | Serial port probe and COM2 fallback                                          | --           |  [x]   |
+| 💎  |   5   | GOP timeout and graceful degradation                                         | --           |  [x]   |
+| 💎  |   6   | Memory map overflow detection (512 entries)                                  | --           |  [x]   |
+| 💎  |   7   | boot.conf validation and version field                                       | --           |  [x]   |
+| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --           |  [x]   |
+| ⭐  |   9   | Boot failure error screen                                                    | §1-§8        |  [x]   |
+| 💎  |  10   | ACPI SPCR serial port auto-detection                                         | §4           |  [x]   |
+| 💎  |  11   | UEFI watchdog timer management                                               | --           |  [x]   |
+| 💎  |  12   | Memory map descriptor validation                                             | §6           |  [x]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence                                 | §9           |  [x]   |
+| ⭐  |  14   | Error screen QR code                                                         | §9           |  [x]   |
+| 💎  |  15   | boot_info ABI foundation moved to TODO-01                                    | --           |  [x]   |
+| 💎  |  16   | boot_info kernel validation moved to TODO-01                                 | §15          |  [x]   |
+| 💎  |  17   | Memory map overlap normalization (sort+carve)                                | §12          |  [x]   |
+| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14      |  [x]   |
+| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1           |  [x]   |
+| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13          |  [x]   |
+| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20          |  [x]   |
+| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18      |  [x]   |
+| ⭐  |  23   | No on-screen words below 800x600 (QR renders, text does not)                 | §9, §18, §22 |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -788,14 +789,52 @@ Found by the parity pass on `01-boot-platform/TODO-07` §20, which fixed one CAU
 
 **The mechanism, confirmed at file:line.** Every reject path reports through `serial_early_print()` only: `src/boot/uefi/bootx64.c:6730` logs `policy: bootentries.json parsed reject_code=<n>`, `:6751` logs the absent/unreadable case, and `:7431` logs `selection_reason=`. A grep for an `efi_print` message naming a store, a rejection, corruption or the CRC returns exactly one hit at `bootx64.c:7969`, which is an unrelated operator-consent line. `boot_policy_decide()` (`src/boot/uefi/boot_policy.c:340`) short-circuits to `BOOT_SELECTION_FALLBACK_STORE_INVALID` without a user-facing signal, and the menu cannot cover for it because `cand_count` derives from the parse's entries, which are empty for a rejected store, so the menu never renders. This is a WIRING gap rather than a missing capability: the full error-screen facility this file shipped in §9 and §18 already exists at `bootx64.c:2251-2347` with a title, hex code, human message, QR code and a four-step recovery list, and is simply never invoked for this condition.
 
-- [ ] Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot.
-  - Decide and record whether this is fatal or advisory. Booting the fallback is the safe behaviour and should probably continue, so a timed notice that the user can dismiss is the likely shape rather than `boot_fatal()`; that is a design decision this section owns, not an implementation detail.
-  - The message needs the reject code, a one-line human cause, and the store path. `selection_reason_name()` already exists for half of it.
-- [ ] Cover the headless case honestly: with no GOP the screen route is unavailable, so the serial line stays the fallback and the section must not claim a guarantee it cannot make on a headless machine.
-- [ ] Smoke coverage: a deliberately corrupted store in the test image, asserting the notice appears rather than asserting only that the machine still boots.
-- [ ] Commit: `"boot: tell the user when the boot entry store was rejected"`
+- [x] Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot.
+  - DECIDED: **advisory, not fatal.** `boot_store_reject_notice()` (`src/boot/uefi/bootx64.c:5248`) renders an amber banner, dwells 8s, accepts a keypress to dismiss, and RETURNS so the fallback boot continues. `boot_fatal()` was rejected because booting the fallback already works: making it fatal would turn a recoverable misconfiguration (a hand-edited JSON file with a trailing comma) into an unbootable machine.
+  - The notice is ALLOCATION-FREE by contract. That is load-bearing rather than tidy: one of its two callers is the `AllocatePool`-exhaustion fallback, where any allocation would fail exactly when the notice is most needed.
+  - A rejected store was not the only silent path. The three `AllocatePool` failures in `boot_policy_invoke()` return BEFORE the store is ever loaded (`bootx64.c:6687-6703`), abandoning a perfectly good configured store just as silently; they now raise the same notice with a `POLICY_ALLOC_EXHAUSTED` token.
+  - `boot_entries_reject_name()` / `boot_entries_reject_cause()` (`src/boot/uefi/boot_entries_parser.c`) give every reject code a stable token and a one-line human sentence, mirroring `boot_entry_kind_reject_name()`.
+- [x] Cover the headless case honestly: with no GOP the screen route is unavailable, so the serial line stays the fallback and the section must not claim a guarantee it cannot make on a headless machine.
+  - The notice reports the channel it actually reached: `[BOOT] store-reject: notice channel=gop|conout|serial-only`. On a headless machine the value is `serial-only` and the dwell is SKIPPED entirely, because there is nothing on screen to read and holding an unattended machine for 8s per boot would be a regression.
+  - So the guarantee this section makes is: serial always, screen where a screen exists, and the log says which one happened. It does not claim a visible notice on a headless machine.
+  - A machine WITH a framebuffer can still report `serial-only`, because every graphical path in this file is gated on `gFbWidth >= 800 && gFbHeight >= 600` (`src/boot/uefi/bootx64.c:2135`) and the ConOut fallback below that floor is best-effort. That is a pre-existing limit of the shared error-screen facility rather than of this notice. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §23 (item: "Add a compact direct-framebuffer renderer for validated modes below the floor").
+- [x] Smoke coverage: a deliberately corrupted store in the test image, asserting the notice appears rather than asserting only that the machine still boots.
+  - `SMOKE_CORRUPT_STORE=1` (`scripts/test-smoke.sh`) copies the built image, `mcopy`s a truncated store into the COPY's ESP, and boots that. The canonical image is never mutated: the smoke receipt is bound to it, so mutating it in place would certify a boot that never happened.
+  - The assertion is the CHANNEL, not the log line. QEMU runs `-display none` with serial-only capture, so `grep '[BOOT] store-reject:'` would still pass with both render branches deleted; asserting `channel != serial-only` is what proves a screen render occurred.
+  - Verified 4/4 matrix legs (`kvm:1 kvm:2 tcg:1 tcg:2`, 303s), each reporting `channel=gop` with the boot still completing. CONTROL: a normal run (store absent) produces ZERO `store-reject` lines, proving the notice does not fire on the healthy path.
+- [x] Commit: `"boot: tell the user when the boot entry store was rejected"`
 
-**Test checkpoint:** `SUITE=boot` green; `scripts/test-smoke-matrix.sh` 4/4 legs with a corrupt-store fixture proving the notice renders and the fallback still boots.
+**The false-positive gate is the load-bearing part.** The ESP staging copies only `boot.conf` (`Makefile:1286`), so every dev and smoke image legitimately boots with NO store, and `load_bootentries_json()` previously collapsed genuinely-absent, oversize, unreadable, zero-length and allocation-exhausted into one `EFI_NOT_FOUND`. A notice keyed on "the parse did not return OK" would therefore have fired on every healthy boot. The loader now returns a tri-state `boot_store_load_status_t` (`include/boot/boot_entries_parser.h`), and `boot_entries_store_notice_warranted()` is a pure predicate over it, unit-tested from the kernel tests. ABSENT is deliberately narrow: only a missing file, or a boot device with no filesystem that could hold one (PXE / ramdisk). A zero-length store is UNREADABLE, not absent, because it follows a SUCCESSFUL open and therefore means a truncated write.
+
+**Test checkpoint:** `SUITE=boot` green; `scripts/test-smoke-matrix.sh` 4/4 legs with a corrupt-store fixture proving the notice renders and the fallback still boots. DONE: 34,461 kernel + 17 user tests green; matrix 4/4 (303s) each reporting `channel=gop`.
+
+## 23. No On-Screen Words Below 800x600 -- the QR Renders, the Text Does Not
+
+> **Spawned-by:** §22 (review)
+> **User impact:** on firmware whose GOP reports a valid but small mode (640x480 is the common one), the user gets NO on-screen words. A fatal error still paints its QR code, so there is a recovery route, but nothing states the error code, the cause or the recovery steps; a rejected boot-entry store gets no screen output at all beyond whatever the UEFI text console manages. The user is left scanning a QR code to find out what happened, or staring at a blank screen.
+
+Found while reviewing §22. `bsod_can_render_graphical()` (`src/boot/uefi/bootx64.c:2135`) gates the TEXT-BEARING graphical paths on `gFbWidth >= 800 && gFbHeight >= 600`, so this is not a §22 defect: the §9 BSOD text, the §18 graphical renderer and the §22 notice fall through together on a 640x480 framebuffer. §22 made the consequence visible rather than causing it, by reporting the channel it actually reached -- a `channel=serial-only` line on a machine that HAS a framebuffer is this gap being observed. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §22 (item: "Cover the headless case honestly").
+
+**The QR code is NOT part of the gap, and the distinction is load-bearing for the fix.** `boot_fatal()` already calls `qr_render_error_url()` below the floor on both its branches (`bootx64.c:2356` and `:2365`, the second without ConOut at all), and the QR renderer applies its OWN fit check (`bootx64.c:1688`) that 640x480 passes. So a sub-floor machine hitting a fatal error does get a scannable recovery route today. What it does not get is any WORDS: no error code, no cause, no recovery steps. The refactor below must therefore preserve the existing QR-only route rather than fold it into one shared gate and silently drop it.
+
+The remaining fallback below the floor is `gST->ConOut`, and it is weaker than it looks. A graphical UEFI console renders glyphs to draw text, which allocates, so on the pool-exhaustion path the writes can fail; §22 now checks `OutputString`'s status and honestly downgrades to `serial-only` rather than claiming a render, which is what makes the size of this hole measurable instead of invisible.
+
+- [ ] Establish what the real floor is rather than assuming 800x600 is a hardware limit.
+  - It is a LAYOUT constant: the QR code, the sad-face icon and the title font were sized for it.
+  - Measure which elements actually fail to fit at 640x480 and at 800x480, and record the answer. The floor may be lower than the constant for a subset of the elements.
+- [ ] Add a compact direct-framebuffer renderer for validated modes below the floor.
+  - Content: error code, one-line cause, one recovery instruction. No icon and no QR if they do not fit.
+  - Direct framebuffer writes allocate nothing, which is the property `boot_store_reject_notice()` depends on and ConOut cannot promise.
+- [ ] Route the TEXT callers through it so the floor is enforced in ONE predicate, not repeated per call site.
+  - The callers are `boot_fatal`, the §18 graphical BSOD, and `boot_store_reject_notice`.
+  - `qr_render_error_url()` is deliberately NOT folded in: it already works below the floor on its own fit check, and a shared gate that swallowed it would delete a working recovery route while every counter still read green.
+- [ ] Keep the honesty contract from §22: whatever renders must report the channel it reached, and a mode too small for anything must report `serial-only` rather than a channel it did not use.
+- [ ] Test: a QEMU leg forced to a sub-floor GOP mode, asserting both halves.
+  - The rejected-store notice reaches the screen, with a channel line naming the low-res route.
+  - A fatal error at that resolution still paints its QR. This half is the regression guard for the route this section must not break.
+- [ ] Commit: `"boot: render error screens on framebuffers below 800x600"`
+
+**Test checkpoint:** `SUITE=boot` green; one smoke leg at a sub-floor resolution proving an error screen still renders.
 
 ## OS Comparison
 

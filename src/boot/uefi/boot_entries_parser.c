@@ -1605,3 +1605,116 @@ void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
         idx[j + 1] = v;
     }
 }
+
+/* ---- Reject vocabulary ------------------------------------------------
+ * Two views of the same boot_entries_reject_code_t: a stable token for
+ * serial/log correlation, and a one-line human cause for the on-screen
+ * rejected-store notice in the bootloader error-recovery roadmap. Kept
+ * beside the enum they
+ * describe so a new reject code cannot be added without the compiler's
+ * -Wswitch pointing here; the default arms exist for a code arriving from
+ * an out-of-contract caller, not to excuse an unhandled enumerator.
+ */
+const char *boot_entries_reject_name(int code)
+{
+    switch ((boot_entries_reject_code_t)code) {
+        case BOOT_ENTRIES_OK:                        return "OK";
+        case BOOT_ENTRIES_REJECT_FILE_TOO_LARGE:     return "FILE_TOO_LARGE";
+        case BOOT_ENTRIES_REJECT_JSON_PARSE:         return "JSON_PARSE";
+        case BOOT_ENTRIES_REJECT_DEPTH_LIMIT:        return "DEPTH_LIMIT";
+        case BOOT_ENTRIES_REJECT_NOT_OBJECT:         return "NOT_OBJECT";
+        case BOOT_ENTRIES_REJECT_MISSING_FIELD:      return "MISSING_FIELD";
+        case BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION: return "BAD_SCHEMA_VERSION";
+        case BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD:    return "BAD_CRC32_FIELD";
+        case BOOT_ENTRIES_REJECT_CRC_MISMATCH:       return "CRC_MISMATCH";
+        case BOOT_ENTRIES_REJECT_NOT_ARRAY:          return "NOT_ARRAY";
+        case BOOT_ENTRIES_REJECT_NO_ENTRIES:         return "NO_ENTRIES";
+        case BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES:   return "TOO_MANY_ENTRIES";
+        case BOOT_ENTRIES_REJECT_DUPLICATE_ID:       return "DUPLICATE_ID";
+        case BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD: return "BAD_ENVELOPE_FIELD";
+        case BOOT_ENTRIES_REJECT_BAD_ID:             return "BAD_ID";
+        case BOOT_ENTRIES_REJECT_BAD_TITLE:          return "BAD_TITLE";
+        case BOOT_ENTRIES_REJECT_BAD_FLAGS:          return "BAD_FLAGS";
+        case BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE: return "UNKNOWN_KIND_RANGE";
+        case BOOT_ENTRIES_REJECT_PATH_ESCAPE:        return "PATH_ESCAPE";
+        case BOOT_ENTRIES_REJECT_INTERNAL:           return "INTERNAL";
+        case BOOT_ENTRIES_REJECT_DUPLICATE_KEY:      return "DUPLICATE_KEY";
+        case BOOT_ENTRIES_REJECT_ESCAPED_KEY:        return "ESCAPED_KEY";
+    }
+    return "UNKNOWN";
+}
+
+const char *boot_entries_reject_cause(int code)
+{
+    switch ((boot_entries_reject_code_t)code) {
+        case BOOT_ENTRIES_OK:
+            return "the store was accepted";
+        case BOOT_ENTRIES_REJECT_FILE_TOO_LARGE:
+            return "the store file is larger than the 16 KiB limit";
+        case BOOT_ENTRIES_REJECT_JSON_PARSE:
+            return "the store is not valid JSON";
+        case BOOT_ENTRIES_REJECT_DEPTH_LIMIT:
+            return "the store nests objects too deeply";
+        case BOOT_ENTRIES_REJECT_NOT_OBJECT:
+            return "the store's top level is not a JSON object";
+        case BOOT_ENTRIES_REJECT_MISSING_FIELD:
+            return "a required field is missing from the store";
+        case BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION:
+            return "the store's schema version is not supported";
+        case BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD:
+            return "the store's checksum field is malformed";
+        case BOOT_ENTRIES_REJECT_CRC_MISMATCH:
+            return "the store's checksum does not match its contents";
+        case BOOT_ENTRIES_REJECT_NOT_ARRAY:
+            return "the store's entry list is not a JSON array";
+        case BOOT_ENTRIES_REJECT_NO_ENTRIES:
+            return "the store contains no boot entries";
+        case BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES:
+            return "the store contains more entries than the limit allows";
+        case BOOT_ENTRIES_REJECT_DUPLICATE_ID:
+            return "two boot entries share the same id";
+        case BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD:
+            return "a boot entry field has the wrong type";
+        case BOOT_ENTRIES_REJECT_BAD_ID:
+            return "a boot entry id is empty or malformed";
+        case BOOT_ENTRIES_REJECT_BAD_TITLE:
+            return "a boot entry title is empty or malformed";
+        case BOOT_ENTRIES_REJECT_BAD_FLAGS:
+            return "a boot entry flags value is out of range";
+        case BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE:
+            return "a boot entry uses an unrecognised entry kind";
+        case BOOT_ENTRIES_REJECT_PATH_ESCAPE:
+            return "a boot entry path points outside the boot partition";
+        case BOOT_ENTRIES_REJECT_INTERNAL:
+            return "the store parser hit an internal limit";
+        case BOOT_ENTRIES_REJECT_DUPLICATE_KEY:
+            return "a JSON object in the store repeats a key";
+        case BOOT_ENTRIES_REJECT_ESCAPED_KEY:
+            return "a JSON key in the store is spelled with an escape";
+    }
+    return "the store was rejected for an unrecognised reason";
+}
+
+int boot_entries_store_notice_warranted(int load_status, int reject_code)
+{
+    switch ((boot_store_load_status_t)load_status) {
+        case BOOT_STORE_LOAD_ABSENT:
+            /* No store on this machine. Normal on a fresh install and on
+             * every dev/smoke image, so it is never a notice -- this arm
+             * is the whole reason the load status is tri-state rather than
+             * a bare "did the parse succeed" boolean. */
+            return 0;
+        case BOOT_STORE_LOAD_UNREADABLE:
+            /* A store is there (or the volume itself failed) and we could
+             * not use it. The parser never ran, so reject_code carries
+             * only the caller's synthesized placeholder and is not
+             * consulted here. */
+            return 1;
+        case BOOT_STORE_LOAD_OK:
+            /* The bytes were read, so the parser's verdict decides. */
+            return reject_code != (int)BOOT_ENTRIES_OK;
+    }
+    /* Out-of-contract status: stay quiet rather than cry wolf on a healthy
+     * machine. The serial line still records the raw values. */
+    return 0;
+}

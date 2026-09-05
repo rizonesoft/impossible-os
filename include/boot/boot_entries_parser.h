@@ -191,4 +191,41 @@ int boot_entry_bls_less(const boot_entry_envelope_t *a,
 void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
                            unsigned int *idx, unsigned int n);
 
+/* Short stable token for a reject code ("CRC_MISMATCH", "PATH_ESCAPE", ...).
+ * Never NULL; an out-of-range code returns "UNKNOWN". Mirrors
+ * boot_entry_kind_reject_name() so both reject vocabularies print the same
+ * way on serial and on the rejected-store notice. */
+const char *boot_entries_reject_name(int code);
+
+/* One-line human cause for a reject code, phrased for a user standing at the
+ * machine rather than a developer reading a log ("the store's checksum does
+ * not match its contents"). Never NULL. Kept short so the bootloader can
+ * render it on one line of the ConOut fallback. */
+const char *boot_entries_reject_cause(int code);
+
+/* Why the store could not be handed to the parser. Kept beside the reject
+ * codes so "why is the store unusable" has one answer set spanning both the
+ * load step (UEFI file I/O, bootloader-side) and the parse step.
+ *
+ * ABSENT is deliberately narrow: the file is not there, or the boot device
+ * carries no filesystem that could hold it (PXE / ramdisk). Everything else
+ * is UNREADABLE, because a store that exists and cannot be read is a failure
+ * the user must see, while a missing store is normal -- the ESP staging in
+ * the Makefile copies only boot.conf, so every dev and smoke image ships
+ * without one. */
+typedef enum {
+    BOOT_STORE_LOAD_OK = 0,
+    BOOT_STORE_LOAD_ABSENT,      /* no store here, and that is normal */
+    BOOT_STORE_LOAD_UNREADABLE,  /* a store exists (or the volume broke) */
+} boot_store_load_status_t;
+
+/* Does this (load_status, reject_code) pair warrant a user-visible notice?
+ *
+ * This is the false-positive gate for the rejected-store notice, split out
+ * as a pure predicate so it can be proven from the kernel tests without a
+ * framebuffer or a UEFI volume. Returns 1 only when a store was actually
+ * there and could not be used. A missing store returns 0 no matter what
+ * reject code the caller synthesized for the policy ladder. */
+int boot_entries_store_notice_warranted(int load_status, int reject_code);
+
 #endif /* BOOT_ENTRIES_PARSER_H */

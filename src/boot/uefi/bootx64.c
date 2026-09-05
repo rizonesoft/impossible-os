@@ -4775,18 +4775,41 @@ static void read_boot_optionaldata_id(UINT16 boot_current,
     }
 }
 
+/* Why the store could not be handed to the parser. EFI_NOT_FOUND alone
+ * cannot carry this: UEFI Open() returns it for a genuinely missing file
+ * AND the volume layer returns device/media/corruption errors for a store
+ * that exists but cannot be read (UEFI 2.10 section 13.5, EFI_FILE_PROTOCOL.Open:
+ * EFI_NO_MEDIA, EFI_MEDIA_CHANGED, EFI_DEVICE_ERROR, EFI_VOLUME_CORRUPTED,
+ * EFI_ACCESS_DENIED, EFI_OUT_OF_RESOURCES). Collapsing the two is what made
+ * a corrupt ESP indistinguishable from a fresh install, and the on-screen
+ * notice (section 22) MUST NOT fire on the latter: the Makefile ESP staging
+ * copies only boot.conf, so every dev and smoke image legitimately ships
+ * with no store at all.
+ *
+ * ABSENT is deliberately narrow -- the file is not there, or there is no
+ * filesystem on the boot device that could hold it (PXE / ramdisk boot).
+ * Every other failure is UNREADABLE, including a zero-length file, which
+ * follows a SUCCESSFUL open and therefore means a store was truncated
+ * rather than never written. The vocabulary itself lives beside the reject
+ * codes in boot_entries_parser.h so the "why is the store unusable"
+ * question has exactly one answer set, testable from the kernel tests. */
 /* Read \EFI\ImpossibleOS\bootentries.json into a freshly AllocatePool'd
  * buffer. Mirror parse_boot_conf's size-probe + AllocatePool shape.
  * Returns EFI_SUCCESS + (*out_buf, *out_len) on success; EFI_NOT_FOUND
- * when the file is absent (ladder treats this as STORE_INVALID and
- * synthesizes the fallback envelope). hard-fails via boot_fatal() when
- * the file exceeds BOOT_ENTRIES_MAX_TOTAL_BYTES (16 KiB) per the boot
- * entry file format spec -- anything larger means filesystem corruption
- * or hostile input, never silent truncation. */
-static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
+ * when the store cannot be handed to the parser, with *out_status saying
+ * WHY (absent vs unreadable) and *out_detail naming the failing operation
+ * for the notice and the serial line. *out_detail points at a string
+ * literal and is never freed. An oversize store is UNREADABLE, not fatal:
+ * a corrupt or hostile ESP must not be able to stop the machine merely by
+ * inflating the policy file. */
+static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
+                                        boot_store_load_status_t *out_status,
+                                        const char **out_detail)
 {
     *out_buf = (unsigned char *)0;
     *out_len = 0;
+    *out_status = BOOT_STORE_LOAD_ABSENT;
+    *out_detail = "no boot entry store on this device";
 
     if (!g_boot_device_handle) return EFI_NOT_FOUND;
 
@@ -4794,11 +4817,19 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
     EFI_STATUS status = gBS->HandleProtocol(g_boot_device_handle, &fs_guid,
                                             (VOID **)&fs);
+    /* No filesystem on the boot device: there is nowhere for a store to
+     * live, so this is absence, not corruption. */
     if (EFI_ERROR(status) || !fs) return EFI_NOT_FOUND;
 
     EFI_FILE_PROTOCOL *root_dir = (EFI_FILE_PROTOCOL *)0;
     status = fs->OpenVolume(fs, &root_dir);
-    if (EFI_ERROR(status) || !root_dir) return EFI_NOT_FOUND;
+    if (EFI_ERROR(status) || !root_dir) {
+        /* The protocol exists but the volume would not open -- media
+         * error or a corrupt filesystem, never a missing file. */
+        *out_status = BOOT_STORE_LOAD_UNREADABLE;
+        *out_detail = "the boot partition could not be opened";
+        return EFI_NOT_FOUND;
+    }
 
     EFI_FILE_PROTOCOL *json_file = (EFI_FILE_PROTOCOL *)0;
     status = root_dir->Open(root_dir, &json_file,
@@ -4806,6 +4837,12 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
                             EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status) || !json_file) {
         root_dir->Close(root_dir);
+        /* ONLY EFI_NOT_FOUND means the file is not there. Every other
+         * Open() status is a real failure to read an existing store. */
+        if (status != EFI_NOT_FOUND) {
+            *out_status = BOOT_STORE_LOAD_UNREADABLE;
+            *out_detail = "the boot entry store could not be opened";
+        }
         return EFI_NOT_FOUND;
     }
 
@@ -4817,6 +4854,8 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
         if (status != EFI_BUFFER_TOO_SMALL || info_size == 0) {
             json_file->Close(json_file);
             root_dir->Close(root_dir);
+            *out_status = BOOT_STORE_LOAD_UNREADABLE;
+            *out_detail = "the boot entry store's size could not be read";
             return EFI_NOT_FOUND;
         }
         VOID *info_buf = (VOID *)0;
@@ -4824,7 +4863,9 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
         if (EFI_ERROR(status) || !info_buf) {
             json_file->Close(json_file);
             root_dir->Close(root_dir);
-            serial_early_print("[BOOT] policy: AllocatePool exhaustion -- treating store as absent\n");
+            serial_early_print("[BOOT] policy: AllocatePool exhaustion reading store info\n");
+            *out_status = BOOT_STORE_LOAD_UNREADABLE;
+            *out_detail = "the firmware ran out of memory reading the store";
             return EFI_NOT_FOUND;
         }
         status = json_file->GetInfo(json_file, &file_info_guid, &info_size, info_buf);
@@ -4832,6 +4873,8 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
             gBS->FreePool(info_buf);
             json_file->Close(json_file);
             root_dir->Close(root_dir);
+            *out_status = BOOT_STORE_LOAD_UNREADABLE;
+            *out_detail = "the boot entry store's size could not be read";
             return EFI_NOT_FOUND;
         }
         file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
@@ -4839,8 +4882,15 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
     }
 
     if (file_size == 0) {
+        /* A successful open followed by a zero-length file means the store
+         * was TRUNCATED, not never written -- an interrupted write or a
+         * failing filesystem. Reporting it as absence would hide the one
+         * corruption a user is most likely to cause by hand. */
         json_file->Close(json_file);
         root_dir->Close(root_dir);
+        serial_early_print("[BOOT] policy: bootentries.json is empty -- treating as invalid store\n");
+        *out_status = BOOT_STORE_LOAD_UNREADABLE;
+        *out_detail = "the boot entry store file is empty";
         return EFI_NOT_FOUND;
     }
     if (file_size > (UINT64)BOOT_ENTRIES_MAX_TOTAL_BYTES) {
@@ -4856,6 +4906,8 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
         serial_early_print("[BOOT] policy: bootentries.json oversize (");
         serial_early_print_uint((UINT32)file_size);
         serial_early_print(" bytes > 16 KiB cap) -- treating as invalid store\n");
+        *out_status = BOOT_STORE_LOAD_UNREADABLE;
+        *out_detail = "the boot entry store is larger than the 16 KiB limit";
         return EFI_NOT_FOUND;
     }
 
@@ -4864,7 +4916,9 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
     if (EFI_ERROR(status) || !buf) {
         json_file->Close(json_file);
         root_dir->Close(root_dir);
-        serial_early_print("[BOOT] policy: AllocatePool exhaustion -- treating store as absent\n");
+        serial_early_print("[BOOT] policy: AllocatePool exhaustion reading store\n");
+        *out_status = BOOT_STORE_LOAD_UNREADABLE;
+        *out_detail = "the firmware ran out of memory reading the store";
         return EFI_NOT_FOUND;
     }
 
@@ -4875,6 +4929,8 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
 
     if (EFI_ERROR(status) || read_len == 0) {
         gBS->FreePool(buf);
+        *out_status = BOOT_STORE_LOAD_UNREADABLE;
+        *out_detail = "the boot entry store could not be read";
         return EFI_NOT_FOUND;
     }
     /* Reject short reads. UEFI Read() may legally return EFI_SUCCESS
@@ -4890,11 +4946,15 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
         serial_early_print_uint((UINT32)file_size);
         serial_early_print(" bytes) -- rejecting as unreadable\n");
         gBS->FreePool(buf);
+        *out_status = BOOT_STORE_LOAD_UNREADABLE;
+        *out_detail = "the boot entry store was only partly readable";
         return EFI_NOT_FOUND;
     }
     buf[read_len] = 0;
     *out_buf = buf;
     *out_len = read_len;
+    *out_status = BOOT_STORE_LOAD_OK;
+    *out_detail = "the boot entry store was read";
     return EFI_SUCCESS;
 }
 
@@ -5220,6 +5280,171 @@ static const char *selection_reason_name(unsigned int r)
     }
 }
 
+/* ---- Rejected boot-entry store: tell the user -------------------------
+ *
+ * Before this, every store rejection reported through serial_early_print()
+ * alone: the machine booted the in-firmware fallback with NOTHING on screen,
+ * so a user who edited their boot configuration lost their selection with no
+ * way to find out why short of attaching a serial cable. Windows shows a stop
+ * screen with an error code for the equivalent BCD corruption.
+ *
+ * ADVISORY, NOT FATAL -- a deliberate decision this section owns. Booting the
+ * fallback entry is the safe behaviour and already works, so boot_fatal()
+ * would convert a recoverable misconfiguration (a hand-edited JSON file with
+ * a trailing comma) into an unbootable machine. The notice therefore dwells,
+ * accepts a keypress to dismiss early, and returns so the boot continues.
+ *
+ * ALLOCATION-FREE by contract: one caller is the AllocatePool-exhaustion
+ * fallback, where any allocation here would fail exactly when the notice is
+ * most needed. Everything below renders from string literals, the existing
+ * framebuffer globals, and ConOut.
+ */
+#define BOOT_STORE_NOTICE_DWELL_MS 8000u
+
+/* Which channel the notice actually reached. Reported on serial because the
+ * smoke test cannot see the screen: asserting only that a serial line was
+ * printed would pass even if both render branches were deleted, so the line
+ * names the branch that ran instead. */
+typedef enum {
+    BOOT_STORE_NOTICE_SERIAL_ONLY = 0,  /* no screen route exists here */
+    BOOT_STORE_NOTICE_CONOUT,
+    BOOT_STORE_NOTICE_GOP,
+} boot_store_notice_channel_t;
+
+static const char *boot_store_notice_channel_name(boot_store_notice_channel_t c)
+{
+    switch (c) {
+        case BOOT_STORE_NOTICE_GOP:         return "gop";
+        case BOOT_STORE_NOTICE_CONOUT:      return "conout";
+        case BOOT_STORE_NOTICE_SERIAL_ONLY: return "serial-only";
+    }
+    return "serial-only";
+}
+
+static boot_store_notice_channel_t boot_store_notice_render(const char *token,
+                                                            const char *cause)
+{
+    boot_store_notice_channel_t channel = BOOT_STORE_NOTICE_SERIAL_ONLY;
+
+    /* Graphical banner. Same framebuffer preconditions as the BSOD path, so
+     * a headless / low-res / BitMask framebuffer falls through to ConOut
+     * rather than writing through an address GOP never gave us. */
+    if (bsod_can_render_graphical()) {
+        const UINT32 band_y = 0;
+        const UINT32 band_h = 200;
+        UINT32 bg = fb_pack_rgb(0x6E, 0x4A, 0x00);  /* amber: advisory, not the BSOD blue */
+        for (UINT32 y = band_y; y < band_h && y < gFbHeight; y++)
+            for (UINT32 x = 0; x < gFbWidth; x++)
+                gFramebuffer[y * gFbPitch + x] = bg;
+        bsod_aa_string(64, 56, "Boot configuration was not used",
+                       bsod_aa_TITLE, bsod_aa_TITLE_data, BSOD_AA_TITLE_ASCENT,
+                       0xFF, 0xFF, 0xFF, 0x6E, 0x4A, 0x00);
+        bsod_aa_string(64, 104, cause,
+                       bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                       0xF0, 0xE0, 0xC0, 0x6E, 0x4A, 0x00);
+        bsod_aa_string(64, 140, "Starting the fallback entry instead. Press any key to continue.",
+                       bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                       0xF0, 0xE0, 0xC0, 0x6E, 0x4A, 0x00);
+        bsod_aa_string(64, 172, token,
+                       bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                       0xC0, 0xB0, 0x90, 0x6E, 0x4A, 0x00);
+        channel = BOOT_STORE_NOTICE_GOP;
+    } else if (gST && gST->ConOut && gST->ConOut->OutputString && !g_ebs_in_progress) {
+        /* Text console. Reached on firmware with a console but no framebuffer
+         * the graphical path will accept -- notably a valid 640x480 mode,
+         * which fails bsod_can_render_graphical()'s 800x600 floor.
+         *
+         * ConOut is BEST-EFFORT, not a guarantee, and this branch must not
+         * claim otherwise. A graphical UEFI console implements OutputString
+         * by rendering glyphs, which allocates; under the pool exhaustion
+         * that brings us here from the AllocatePool-failure caller, those
+         * writes can fail and the user sees nothing. So every write's status
+         * is checked, and the channel is only upgraded if they all succeeded
+         * -- entering the branch is not evidence that anything was drawn.
+         * The alternative (report conout, then dwell 8 seconds on a blank
+         * screen) is worse than the silence this section set out to fix,
+         * because it also wastes the user's time. */
+        EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *con = gST->ConOut;
+        EFI_STATUS w = EFI_SUCCESS;
+        if (con->SetAttribute)
+            con->SetAttribute(con, EFI_WHITE | EFI_BACKGROUND_BLUE);
+        if (!EFI_ERROR(w))
+            w = con->OutputString(con, u"\r\n  Boot configuration was not used\r\n");
+        if (!EFI_ERROR(w))
+            w = con->OutputString(con, u"  ");
+        if (!EFI_ERROR(w)) {
+            /* ASCII -> CHAR16 widen. The cause strings are ASCII by
+             * construction (boot_entries_reject_cause) and the bound stops
+             * short of the buffer regardless of what a caller passes. */
+            CHAR16 wide[128];
+            UINTN wi = 0;
+            while (cause[wi] && wi < 126) {
+                wide[wi] = (CHAR16)(UINT8)cause[wi];
+                wi++;
+            }
+            wide[wi] = 0;
+            w = con->OutputString(con, wide);
+        }
+        if (!EFI_ERROR(w))
+            w = con->OutputString(con, u"\r\n  Starting the fallback entry instead.\r\n");
+        if (!EFI_ERROR(w))
+            w = con->OutputString(con, u"  Press any key to continue.\r\n\r\n");
+        if (!EFI_ERROR(w))
+            channel = BOOT_STORE_NOTICE_CONOUT;
+        else
+            serial_early_print("[BOOT] store-reject: ConOut write failed -- no screen route\n");
+    }
+
+    return channel;
+}
+
+/* Bounded, dismissible dwell. Mirrors boot_fatal_dwell's pre-EBS shape
+ * (ConIn->Reset to flush stale keystrokes, then 50 ms polling) but is
+ * shorter and always returns -- this is an advisory, so a headless machine
+ * with no keyboard must not be delayed for long. Serial-only renders skip
+ * the dwell entirely: there is nothing on screen to read, and holding an
+ * unattended machine for 8 seconds per boot would be a regression. */
+static void boot_store_notice_dwell(int rendered_to_screen)
+{
+    if (!rendered_to_screen) return;
+    if (g_ebs_in_progress || !gBS || !gBS->Stall) return;
+
+    UINT64 elapsed_ms = 0;
+    if (gST && gST->ConIn && gST->ConIn->Reset)
+        gST->ConIn->Reset(gST->ConIn, 0);
+    while (elapsed_ms < BOOT_STORE_NOTICE_DWELL_MS) {
+        if (gST && gST->ConIn) {
+            EFI_INPUT_KEY key;
+            if (!EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn, &key)))
+                return;  /* dismissed */
+        }
+        gBS->Stall(50000);
+        elapsed_ms += 50;
+    }
+}
+
+/* The whole notice: serial record, screen render, dwell. `token` is a short
+ * stable string for log correlation, `cause` the one-line human sentence. */
+static void boot_store_reject_notice(const char *token, const char *cause)
+{
+    serial_early_print("[BOOT] store-reject: ");
+    serial_early_print(token);
+    serial_early_print(" -- ");
+    serial_early_print(cause);
+    serial_early_print("\n");
+
+    boot_store_notice_channel_t channel = boot_store_notice_render(token, cause);
+
+    /* The channel is the honest part of this line. On a headless machine
+     * the screen route does not exist, so the section cannot promise a
+     * visible notice there -- it promises serial, and says so. */
+    serial_early_print("[BOOT] store-reject: notice channel=");
+    serial_early_print(boot_store_notice_channel_name(channel));
+    serial_early_print(" -- booting fallback entry\n");
+
+    boot_store_notice_dwell(channel != BOOT_STORE_NOTICE_SERIAL_ONLY);
+}
+
 /* Write a minimal STORE_INVALID decision directly to boot_info v19
  * without going through the parser/decision heap path. Used when the
  * pre-EBS AllocatePool budget is exhausted -- as the live producer for
@@ -5248,6 +5473,15 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
     serial_early_print("[BOOT] policy: ");
     serial_early_print(what);
     serial_early_print(" AllocatePool failed -- publishing FALLBACK_STORE_INVALID\n");
+
+    /* These three returns happen BEFORE load_bootentries_json() runs, so the
+     * store's state is unknown: a machine with a perfectly good configured
+     * store is abandoned here just as silently as a corrupt one. A notice
+     * gated on the loader's result could never cover this path, which is why
+     * it is raised directly. The notice allocates nothing, which is the
+     * precondition that makes it usable from an allocation failure at all. */
+    boot_store_reject_notice("POLICY_ALLOC_EXHAUSTED",
+                             "the firmware ran out of memory reading boot settings");
 }
 
 /* Boot menu cap. UEFI spec section 13.5 supports far more entries, but
@@ -6721,7 +6955,9 @@ static void boot_policy_invoke(void)
     int sb_active = bootloader_secureboot_active();
 
     /* ---- Parse the ESP store (or synthesize a STORE_INVALID result). */
-    s = load_bootentries_json(&json_buf, &json_len);
+    boot_store_load_status_t load_status = BOOT_STORE_LOAD_ABSENT;
+    const char *load_detail = "no boot entry store on this device";
+    s = load_bootentries_json(&json_buf, &json_len, &load_status, &load_detail);
     if (s == EFI_SUCCESS && json_buf && json_len > 0) {
         int rc = boot_entries_parse(json_buf, (unsigned int)json_len,
                                     sb_active, boot_policy_log_cb, parse);
@@ -6741,14 +6977,39 @@ static void boot_policy_invoke(void)
          * synthesizes the in-firmware fallback envelope. Use the
          * existing JSON_PARSE reject code with a clear reject_msg; the
          * code distinguishes "store unreadable" from "store rejected"
-         * via the message shown on serial. */
+         * via load_status, which the notice below consults. */
         parse->reject_code = BOOT_ENTRIES_REJECT_JSON_PARSE;
-        const char *m = "bootentries.json absent or unreadable";
+        const char *m = (load_status == BOOT_STORE_LOAD_UNREADABLE)
+                        ? "bootentries.json present but unreadable"
+                        : "bootentries.json absent";
         UINTN mi;
         for (mi = 0; mi < BOOT_ENTRIES_REJECT_MSG_LEN - 1u && m[mi]; mi++)
             parse->reject_msg[mi] = m[mi];
         parse->reject_msg[mi] = 0;
-        serial_early_print("[BOOT] policy: bootentries.json absent/unreadable -- fallback\n");
+        serial_early_print("[BOOT] policy: ");
+        serial_early_print(m);
+        serial_early_print(" -- fallback\n");
+    }
+
+    /* ---- Tell the user, if there is anything worth telling them. -------
+     * The predicate is the false-positive gate: an ABSENT store is normal
+     * (the ESP staging ships boot.conf only, so every dev and smoke image
+     * has none) and must stay silent, while a store that exists and could
+     * not be used is exactly the silent failure this section removes. */
+    if (boot_entries_store_notice_warranted((int)load_status,
+                                            (int)parse->reject_code)) {
+        const char *token;
+        const char *cause;
+        if (load_status == BOOT_STORE_LOAD_UNREADABLE) {
+            /* The parser never ran; the loader knows why. */
+            token = "STORE_UNREADABLE";
+            cause = load_detail;
+        } else {
+            /* The bytes were read and the parser rejected them. */
+            token = boot_entries_reject_name((int)parse->reject_code);
+            cause = boot_entries_reject_cause((int)parse->reject_code);
+        }
+        boot_store_reject_notice(token, cause);
     }
 
     /* ---- Fill ladder inputs. ----------------------------------------- */

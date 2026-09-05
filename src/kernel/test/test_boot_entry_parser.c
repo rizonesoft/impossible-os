@@ -1432,6 +1432,102 @@ static void test_parser_crc_absent_root_member(void)
     TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "escaped crc32 key rejected");
 }
 
+
+/* ---- Reject vocabulary + the notice's false-positive gate (TODO-03 s22) --- */
+
+/* Local strcmp: the parser TU is freestanding and pulls in no libc. */
+static int rn_streq(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == 0 && *b == 0;
+}
+
+/* Every reject code must have its own name. A missing switch arm would fall
+ * through to "UNKNOWN", which is exactly the failure a user sees as a notice
+ * that cannot say what went wrong -- so the control below asserts that an
+ * out-of-range code DOES reach "UNKNOWN", proving the probe can detect the
+ * fall-through it is looking for. */
+static void test_reject_name_table_complete(void)
+{
+    const int last = (int)BOOT_ENTRIES_REJECT_ESCAPED_KEY;
+    for (int c = 0; c <= last; c++) {
+        const char *n = boot_entries_reject_name(c);
+        TEST_ASSERT_EQ(n != (const char *)0, 1, "reject name never NULL");
+        TEST_ASSERT_EQ(n[0] != 0, 1, "reject name never empty");
+        TEST_ASSERT_EQ(rn_streq(n, "UNKNOWN"), 0, "in-range code has a real name");
+    }
+    /* Names are distinct -- a copy-paste arm returning a neighbour's token
+     * would misreport the cause on screen. */
+    for (int a = 0; a <= last; a++)
+        for (int b = a + 1; b <= last; b++)
+            TEST_ASSERT_EQ(rn_streq(boot_entries_reject_name(a),
+                                    boot_entries_reject_name(b)), 0,
+                           "reject names are distinct");
+    /* CONTROL: the fall-through arm is reachable, so the assertions above
+     * are testing something. */
+    TEST_ASSERT_EQ(rn_streq(boot_entries_reject_name(last + 1), "UNKNOWN"), 1,
+                   "out-of-range code reports UNKNOWN");
+}
+
+/* The cause strings are what the user actually reads, so they must exist for
+ * every code and must not be the generic fallback sentence. */
+static void test_reject_cause_table_complete(void)
+{
+    const int last = (int)BOOT_ENTRIES_REJECT_ESCAPED_KEY;
+    const char *generic = boot_entries_reject_cause(last + 1);
+    TEST_ASSERT_EQ(generic != (const char *)0, 1, "fallback cause never NULL");
+    for (int c = 0; c <= last; c++) {
+        const char *m = boot_entries_reject_cause(c);
+        TEST_ASSERT_EQ(m != (const char *)0, 1, "cause never NULL");
+        TEST_ASSERT_EQ(m[0] != 0, 1, "cause never empty");
+        TEST_ASSERT_EQ(rn_streq(m, generic), 0, "in-range code has a real cause");
+    }
+}
+
+/* The gate that decides whether a user sees a notice at all.
+ *
+ * The ABSENT arm is the load-bearing one: the Makefile ESP staging copies
+ * only boot.conf, so every dev and smoke image legitimately boots with no
+ * store. A notice keyed on "the parse did not return OK" would fire on every
+ * one of those boots, which is why the caller synthesizes a JSON_PARSE reject
+ * code for the absent case and the gate must still stay silent. */
+static void test_store_notice_gate(void)
+{
+    /* Absent stays silent even carrying the synthesized reject code the
+     * policy ladder needs. */
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_ABSENT,
+                       (int)BOOT_ENTRIES_REJECT_JSON_PARSE), 0,
+                   "absent store is silent despite a synthesized reject code");
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_ABSENT, (int)BOOT_ENTRIES_OK), 0,
+                   "absent store is silent");
+
+    /* Present but unreadable always notifies -- the parser never ran, so the
+     * reject code carries no information and must not gate the notice. */
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_UNREADABLE, (int)BOOT_ENTRIES_OK), 1,
+                   "unreadable store notifies regardless of reject code");
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_UNREADABLE,
+                       (int)BOOT_ENTRIES_REJECT_CRC_MISMATCH), 1,
+                   "unreadable store notifies");
+
+    /* Read successfully: the parser's verdict decides. */
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_OK, (int)BOOT_ENTRIES_OK), 0,
+                   "accepted store is silent");
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_OK,
+                       (int)BOOT_ENTRIES_REJECT_CRC_MISMATCH), 1,
+                   "rejected store notifies");
+
+    /* An out-of-contract status stays quiet rather than crying wolf. */
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       99, (int)BOOT_ENTRIES_REJECT_CRC_MISMATCH), 0,
+                   "unknown load status is silent");
+}
+
 void test_register_boot_entry_parser(void)
 {
     test_suite_register_cat("boot-entries: valid minimal",
@@ -1558,6 +1654,12 @@ void test_register_boot_entry_parser(void)
                             test_parser_crc_broken_root_is_malformed, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: crc absent root member",
                             test_parser_crc_absent_root_member, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: reject name table complete",
+                            test_reject_name_table_complete, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: reject cause table complete",
+                            test_reject_cause_table_complete, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store notice gate",
+                            test_store_notice_gate, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

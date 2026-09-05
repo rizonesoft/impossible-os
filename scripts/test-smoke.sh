@@ -235,6 +235,43 @@ fi
 
 cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 
+# ---- Optional corrupt-boot-entry-store fixture ----------------------------
+# Proves the rejected-store notice actually renders instead of the machine
+# falling back to the in-firmware entry in silence.
+#
+# Works on a COPY of the image, never the canonical one. The canonical image
+# is what the smoke receipt and the rollover gate are bound to, so mutating it
+# in place would certify a boot that never happened against bytes that no
+# longer exist. The copy also keeps this off the receipt surface: the fixture
+# needs no change to the Makefile or scripts/build.sh, which the unattended
+# run may not edit.
+CORRUPT_STORE="${SMOKE_CORRUPT_STORE:-0}"
+if [ "$CORRUPT_STORE" = "1" ]; then
+    if ! command -v mcopy >/dev/null 2>&1; then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CORRUPT_STORE=1 needs mtools (mcopy)${NC}"
+        exit 1
+    fi
+    if [ ! -f "$DISK.info" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: $DISK.info missing (need EFI_OFFSET)${NC}"
+        exit 1
+    fi
+    # shellcheck disable=SC1090
+    . "$DISK.info"
+    CORRUPT_DISK="$BUILD/system-disk.corrupt-store.img"
+    CORRUPT_JSON="$BUILD/bootentries.corrupt.json"
+    cp "$DISK" "$CORRUPT_DISK"
+    # A store that EXISTS and cannot be parsed. Deliberately not merely
+    # absent: absence is the normal state of this image (the ESP staging
+    # copies boot.conf only), and the notice must stay silent for it -- so a
+    # fixture that removed the store would assert nothing.
+    printf '%s\n' '{ "schema_version": 1, "entries": [ { "id": ' > "$CORRUPT_JSON"
+    mmd -i "$CORRUPT_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
+    mcopy -i "$CORRUPT_DISK@@$EFI_OFFSET" -o "$CORRUPT_JSON" \
+          ::EFI/ImpossibleOS/bootentries.json
+    DISK="$CORRUPT_DISK"
+    echo -e "  ${DIM}corrupt-store fixture staged into $(basename "$CORRUPT_DISK")${NC}"
+fi
+
 # Boot the canonical GPT image via AHCI (matches Makefile run: target).
 QEMU_FLAGS=(
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
@@ -646,6 +683,37 @@ if [ "$BOOT_FAILED" = true ]; then
 elif [ "$BOOT_PASSED" = true ]; then
     # Extract boot time
     BOOT_TIME=$(grep -o "Boot complete in [0-9.]*s" "$SERIAL_LOG" 2>/dev/null | head -1 || echo "")
+
+    # ---- Corrupt-store assertions -----------------------------------------
+    # Reaching here means the machine still booted, which is the SAFE half of
+    # the contract. The other half is that it did not do so silently.
+    if [ "$CORRUPT_STORE" = "1" ]; then
+        if ! grep -q "\[BOOT\] store-reject:" "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: corrupt store produced no rejection notice${NC}"
+            grep -c "policy:" "$STRIPPED_LOG" 2>/dev/null | sed 's/^/  policy lines seen: /'
+            exit 1
+        fi
+        # The channel is the part that proves a SCREEN render happened. QEMU
+        # runs with -display none and the harness captures serial only, so a
+        # bare "the line was printed" assertion would still pass with both
+        # render branches deleted -- it is the notice's own report of which
+        # branch it took that carries the information.
+        NOTICE_CHANNEL=$(grep -o "store-reject: notice channel=[a-z-]*" "$STRIPPED_LOG" \
+                         2>/dev/null | head -1 | sed 's/.*channel=//')
+        if [ -z "$NOTICE_CHANNEL" ]; then
+            echo -e "${RED}SMOKE TEST FAILED: rejection notice reported no render channel${NC}"
+            exit 1
+        fi
+        if [ "$NOTICE_CHANNEL" = "serial-only" ]; then
+            echo -e "${RED}SMOKE TEST FAILED: notice fell back to serial-only${NC}"
+            echo -e "${DIM}  This QEMU boot has a GOP framebuffer, so the screen route${NC}"
+            echo -e "${DIM}  should have been taken. serial-only here means the on-screen${NC}"
+            echo -e "${DIM}  notice regressed -- which is the exact defect s22 removed.${NC}"
+            exit 1
+        fi
+        echo -e "  ${GREEN}✓${NC} rejected store announced on screen (channel=$NOTICE_CHANNEL)"
+    fi
+
     echo ""
     echo -e "${GREEN}══════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}  SMOKE TEST PASSED${NC}"
@@ -657,7 +725,17 @@ elif [ "$BOOT_PASSED" = true ]; then
     # Content-bound smoke receipt (image + build inputs + toolchain + markers).
     # A rollover / verification over an unchanged image + inputs is then free;
     # any change to the image or a build input invalidates it. Best-effort.
-    python3 "$(dirname "$0")/overnight/receipts.py" record-smoke . >/dev/null 2>&1 || true
+    #
+    # NOT recorded in corrupt-store mode: receipts.py fingerprints the
+    # CANONICAL build image regardless of which image this run actually
+    # booted, so recording here would certify the untouched image (and the
+    # default markers) using evidence from a different boot scenario, and a
+    # later rollover would reuse it as though the real image had been smoked.
+    if [ "$CORRUPT_STORE" = "1" ]; then
+        echo -e "${DIM}  smoke receipt not recorded (corrupt-store fixture run)${NC}"
+    else
+        python3 "$(dirname "$0")/overnight/receipts.py" record-smoke . >/dev/null 2>&1 || true
+    fi
     exit 0
 else
     echo ""
