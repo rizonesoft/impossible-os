@@ -183,6 +183,155 @@ echo -e "${CYAN}  Impossible OS -- Smoke Test${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
 echo ""
 
+# The assertion body is a FUNCTION over a log path, not inline code, so the
+# oracle itself can be exercised against synthetic transcripts (see
+# SMOKE_ES_SELFTEST below). Two false passes were found by review that a live
+# boot could not have surfaced, because a correct build never produces the
+# transcript that would expose them. Sets ES_FAIL_MSG and returns 1 on a
+# rejection rather than exiting, so the self-test can assert rejections.
+es_check_log() {
+    local log="$1"
+    ES_FAIL_MSG=""
+    ES_TIER_LINE=$(grep -oE "error-screen: tier=[a-z]+ [0-9]+x[0-9]+ qr=[a-z]+" \
+                   "$log" 2>/dev/null | head -1)
+    ES_RENDERED=$(grep -oE "error-screen: rendered=[a-z]+ qr=[a-z]+ fit=[a-z]+" \
+                  "$log" 2>/dev/null | head -1)
+
+    if ! grep -qF -- "[BOOT] error_screen_test=1 -- triggering boot_fatal" "$log" 2>/dev/null; then
+        ES_FAIL_MSG="the injected error never fired (boot.conf fixture not applied?)"; return 1
+    fi
+    if ! grep -qF -- "[BOOT] error_screen_test: halting" "$log" 2>/dev/null; then
+        ES_FAIL_MSG="boot_fatal did not reach its deliberate halt"; return 1
+    fi
+    [ -n "$ES_TIER_LINE" ] || { ES_FAIL_MSG="no error-screen capability line on serial"; return 1; }
+    [ -n "$ES_RENDERED" ]  || { ES_FAIL_MSG="boot_fatal reported no render channel"; return 1; }
+
+    # UNCONDITIONAL floor, whatever mode this leg forced. Asserting only that
+    # the lines EXIST would pass on 'tier=none 0x0 qr=no' + 'rendered=none' --
+    # a boot that painted nothing at all, which is precisely the state this
+    # section exists to eliminate. QEMU always gives us a framebuffer, so a
+    # 'none' here is a regression, never a platform limit.
+    case "$ES_TIER_LINE" in
+        *"tier=none"*) ES_FAIL_MSG="capability reported no tier: $ES_TIER_LINE"; return 1 ;;
+        *" 0x0 "*)     ES_FAIL_MSG="capability reported a 0x0 mode: $ES_TIER_LINE"; return 1 ;;
+    esac
+    case "$ES_RENDERED" in
+        "error-screen: rendered=none"*)
+            ES_FAIL_MSG="boot_fatal painted nothing: $ES_RENDERED"; return 1 ;;
+    esac
+    # fit= is the renderer's own report that no field was truncated. A message
+    # edited past its line budget in a later change stops being a screen that
+    # quietly ends mid-instruction and becomes this failure.
+    case "$ES_RENDERED" in
+        *"fit=ok") : ;;
+        *) ES_FAIL_MSG="a rendered field was truncated: $ES_RENDERED"; return 1 ;;
+    esac
+
+    # The capability line says what this display COULD carry; the render line
+    # says what it DID. They are computed from the same predicate over the same
+    # globals, so a disagreement is a real defect -- a layout downgrade between
+    # init_gop and the fault, or a stale tier. Asserting equality unconditionally
+    # is what makes the full-tier leg a regression guard rather than a smoke
+    # test that accepts any render at all.
+    ES_CAP_TIER=${ES_TIER_LINE#*tier=}; ES_CAP_TIER=${ES_CAP_TIER%% *}
+    ES_GOT_TIER=${ES_RENDERED#*rendered=}; ES_GOT_TIER=${ES_GOT_TIER%% *}
+    if [ "$ES_CAP_TIER" != "$ES_GOT_TIER" ]; then
+        ES_FAIL_MSG="the display could carry '$ES_CAP_TIER' but rendered '$ES_GOT_TIER'"
+        return 1
+    fi
+    # Same rule for the recovery route: when the capability line says the QR
+    # fits, a fatal render that did not paint one has lost it. This is the
+    # route the section is required NOT to break.
+    ES_CAP_QR=${ES_TIER_LINE##*qr=}
+    ES_GOT_QR=${ES_RENDERED##*qr=}; ES_GOT_QR=${ES_GOT_QR%% *}
+    if [ "$ES_CAP_QR" = "fits" ] && [ "$ES_GOT_QR" != "yes" ]; then
+        ES_FAIL_MSG="the QR fits on this display but was not painted: $ES_RENDERED"
+        return 1
+    fi
+
+    if [ -n "$EXPECT_TIER" ]; then
+        case "$ES_TIER_LINE" in
+            *"tier=${EXPECT_TIER} "*) : ;;
+            *) ES_FAIL_MSG="expected tier=${EXPECT_TIER}, capability said '$ES_TIER_LINE'"; return 1 ;;
+        esac
+        case "$ES_RENDERED" in
+            "error-screen: rendered=${EXPECT_TIER} qr=yes fit=ok") : ;;
+            *) ES_FAIL_MSG="expected 'rendered=${EXPECT_TIER} qr=yes fit=ok', got '$ES_RENDERED'"; return 1 ;;
+        esac
+    fi
+    if [ -n "$FORCE_MODE" ]; then
+        # The forced mode must actually have taken -- otherwise the leg is
+        # asserting against whatever OVMF picked.
+        case "$ES_TIER_LINE" in
+            *" ${FORCE_MODE} qr="*) : ;;
+            *) ES_FAIL_MSG="the forced mode ${FORCE_MODE} did not take: '$ES_TIER_LINE'"; return 1 ;;
+        esac
+    fi
+    if [ "$LOWRES" = "1" ]; then
+        case "$ES_TIER_LINE" in
+            *"tier=compact ${LOWRES_MODE} qr=fits") : ;;
+            *) ES_FAIL_MSG="expected 'tier=compact ${LOWRES_MODE} qr=fits', got '$ES_TIER_LINE'"; return 1 ;;
+        esac
+        [ "$ES_RENDERED" = "error-screen: rendered=compact qr=yes fit=ok" ] || {
+            ES_FAIL_MSG="expected 'rendered=compact qr=yes fit=ok', got '$ES_RENDERED'"; return 1; }
+    fi
+    return 0
+}
+
+# ---- Oracle self-test (SMOKE_ES_SELFTEST=1) --------------------------------
+# Runs es_check_log against synthetic transcripts and asserts its VERDICT.
+# Boots nothing, so it costs milliseconds and can assert the rejections a
+# correct build can never produce. The two ACCEPT cases at the end are the
+# false passes review demonstrated against the previous inline oracle.
+if [ "${SMOKE_ES_SELFTEST:-0}" = "1" ]; then
+    es_selftest_fixture() {
+        printf '%s\n' \
+            "[BOOT] error-screen: tier=$1 $2 qr=$3" \
+            "[BOOT] error_screen_test=1 -- triggering boot_fatal" \
+            "[BOOT] error-screen: rendered=$4 qr=$5 fit=$6" \
+            "[BOOT] error_screen_test: halting (screen stays visible)" \
+            > "$BUILD/es-selftest.log"
+    }
+    es_selftest_fails=0
+    es_expect() {  # $1 = expect (accept|reject), $2 = label, rest = fixture args
+        local want="$1" label="$2"; shift 2
+        es_selftest_fixture "$@"
+        if es_check_log "$BUILD/es-selftest.log"; then got=accept; else got=reject; fi
+        if [ "$got" != "$want" ]; then
+            echo -e "  ${RED}✗${NC} oracle self-test: $label -- wanted $want, got $got ($ES_FAIL_MSG)"
+            es_selftest_fails=$((es_selftest_fails + 1))
+        else
+            echo -e "  ${GREEN}✓${NC} oracle self-test: $label ($got)"
+        fi
+    }
+    LOWRES=0; FORCE_MODE=""; EXPECT_TIER=""
+    es_expect accept "healthy full-tier render"      full 800x600 fits full yes ok
+    es_expect accept "healthy compact-tier render"   compact 640x480 fits compact yes ok
+    es_expect reject "nothing rendered"              none 0x0 no none no ok
+    es_expect reject "truncated field"               full 800x600 fits full yes truncated
+    # The two false passes review demonstrated against the inline oracle.
+    es_expect reject "QR lost though it fits"        full 800x600 fits full no ok
+    es_expect reject "silent downgrade to compact"   full 800x600 fits compact yes ok
+    EXPECT_TIER=full
+    es_expect accept "expect-full leg, full render"  full 800x600 fits full yes ok
+    es_expect reject "expect-full leg, downgraded"   compact 800x600 fits compact yes ok
+    es_expect reject "expect-full leg, QR absent"    full 800x600 fits full no ok
+    # Capability AND render both say no QR, so the agreement check above passes
+    # it and only EXPECT_TIER's qr=yes clause can reject it. Without this case,
+    # weakening that clause leaves every other self-test green.
+    es_expect reject "expect-full leg, QR absent on both lines" full 800x600 no full no ok
+    EXPECT_TIER=""
+    LOWRES=1; LOWRES_MODE=640x480; FORCE_MODE=640x480; EXPECT_TIER=compact
+    es_expect accept "lowres leg, correct render"    compact 640x480 fits compact yes ok
+    es_expect reject "lowres leg, wrong forced mode" compact 800x600 fits compact yes ok
+    if [ "$es_selftest_fails" -gt 0 ]; then
+        echo -e "${RED}ORACLE SELF-TEST FAILED: $es_selftest_fails case(s)${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ORACLE SELF-TEST PASSED${NC}"
+    exit 0
+fi
+
 # ---- Step 1: Build ----
 echo -e "${CYAN}[1/3]${NC} Building OS..."
 cd "$REPO_ROOT"
@@ -246,9 +395,34 @@ cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 # needs no change to the Makefile or scripts/build.sh, which the unattended
 # run may not edit.
 CORRUPT_STORE="${SMOKE_CORRUPT_STORE:-0}"
-if [ "$CORRUPT_STORE" = "1" ]; then
+# S23 fixtures. SMOKE_LOWRES forces a GOP mode below the full error-screen
+# layout floor so the compact renderer is the one under test; SMOKE_ERROR_SCREEN
+# additionally makes the bootloader raise a real boot_fatal, which is the only
+# way to observe that the compact screen and the QR recovery route coexist
+# rather than the compact fill erasing the QR.
+# SMOKE_FORCE_MODE writes a Resolution= into the fixture boot.conf and asserts
+# nothing about the tier; SMOKE_LOWRES additionally asserts the render came out
+# COMPACT. Keeping them separate is what makes an 800x600 full-tier regression
+# leg runnable -- coupling the two meant forcing any mode also demanded a
+# compact result, so the full layout could not be exercised at its own floor.
+LOWRES="${SMOKE_LOWRES:-0}"
+ERROR_SCREEN="${SMOKE_ERROR_SCREEN:-0}"
+LOWRES_MODE="${SMOKE_LOWRES_MODE:-640x480}"
+FORCE_MODE="${SMOKE_FORCE_MODE:-}"
+# SMOKE_EXPECT_TIER states the REQUIRED outcome rather than merely requiring
+# the two reports to agree. Agreement alone accepts a downgrade: raising the
+# full floor would make a forced 800x600 report compact on BOTH lines, and the
+# unit boundary tests derive their inputs from that same constant, so nothing
+# would have caught it.
+EXPECT_TIER="${SMOKE_EXPECT_TIER:-}"
+if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; fi
+# Any fixture that edits the image invalidates the smoke receipt, which
+# fingerprints the CANONICAL build image: recording one here would certify the
+# untouched image using evidence from a boot of different bytes.
+IMAGE_MODIFIED=0
+if [ "$CORRUPT_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
-        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CORRUPT_STORE=1 needs mtools (mcopy)${NC}"
+        echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
     fi
     if [ ! -f "$DISK.info" ]; then
@@ -257,19 +431,64 @@ if [ "$CORRUPT_STORE" = "1" ]; then
     fi
     # shellcheck disable=SC1090
     . "$DISK.info"
-    CORRUPT_DISK="$BUILD/system-disk.corrupt-store.img"
+    FIXTURE_DISK="$BUILD/system-disk.fixture.img"
+    cp "$DISK" "$FIXTURE_DISK"
+    DISK="$FIXTURE_DISK"
+    IMAGE_MODIFIED=1
+    mmd -i "$FIXTURE_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
+fi
+if [ "$CORRUPT_STORE" = "1" ]; then
     CORRUPT_JSON="$BUILD/bootentries.corrupt.json"
-    cp "$DISK" "$CORRUPT_DISK"
     # A store that EXISTS and cannot be parsed. Deliberately not merely
     # absent: absence is the normal state of this image (the ESP staging
     # copies boot.conf only), and the notice must stay silent for it -- so a
     # fixture that removed the store would assert nothing.
     printf '%s\n' '{ "schema_version": 1, "entries": [ { "id": ' > "$CORRUPT_JSON"
-    mmd -i "$CORRUPT_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
-    mcopy -i "$CORRUPT_DISK@@$EFI_OFFSET" -o "$CORRUPT_JSON" \
+    mcopy -i "$DISK@@$EFI_OFFSET" -o "$CORRUPT_JSON" \
           ::EFI/ImpossibleOS/bootentries.json
-    DISK="$CORRUPT_DISK"
-    echo -e "  ${DIM}corrupt-store fixture staged into $(basename "$CORRUPT_DISK")${NC}"
+    echo -e "  ${DIM}corrupt-store fixture staged into $(basename "$DISK")${NC}"
+fi
+if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
+    CONF_FIXTURE="$BUILD/boot.conf.fixture"
+    if ! mcopy -i "$DISK@@$EFI_OFFSET" -o ::EFI/ImpossibleOS/boot.conf \
+               "$CONF_FIXTURE" 2>/dev/null; then
+        echo -e "${RED}SMOKE TEST FAILED: no boot.conf on the ESP to patch${NC}"
+        exit 1
+    fi
+    # Drop any existing values for the keys we set, then append ours, so the
+    # fixture does not depend on which duplicate the parser happens to keep.
+    sed -i -E '/^[[:space:]]*(Resolution|error_screen_test)[[:space:]]*=/d' "$CONF_FIXTURE"
+    if [ -n "$FORCE_MODE" ]; then
+        printf 'Resolution=%s\n' "$FORCE_MODE" >> "$CONF_FIXTURE"
+    fi
+    if [ "$ERROR_SCREEN" = "1" ]; then
+        printf 'error_screen_test=1\n' >> "$CONF_FIXTURE"
+    fi
+    mcopy -i "$DISK@@$EFI_OFFSET" -o "$CONF_FIXTURE" ::EFI/ImpossibleOS/boot.conf
+    echo -e "  ${DIM}boot.conf fixture: $(tr '\n' ' ' < "$CONF_FIXTURE" | tail -c 60)${NC}"
+fi
+
+# The deliberate-fatal leg never reaches userland, so the normal end-to-end
+# markers can never appear and most of the generic FAIL set is EXPECTED output
+# ([CRIT] BOOT FATAL and the halt banner are what the leg exists to produce).
+# It therefore carries its own oracle: unrelated faults still fail, and the
+# assertions below are the ones only a correct compact render can satisfy.
+if [ "$ERROR_SCREEN" = "1" ]; then
+    PASS_PATTERNS_ALL=(
+        "[BOOT] error-screen: rendered="
+        "[BOOT] error_screen_test: halting"
+    )
+    FAIL_PATTERNS=(
+        "KERNEL PANIC"
+        "ASSERT FAILED"
+        "triple fault"
+        "General Protection Fault"
+        "Page Fault"
+        "Double Fault"
+        "[CRIT] ExitBootServices failed"
+        "[FAIL] Kernel ELF corrupt"
+        "[FAIL] init_gop"
+    )
 fi
 
 # Boot the canonical GPT image via AHCI (matches Makefile run: target).
@@ -392,6 +611,31 @@ if [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
     sleep "$GRACE_SEC"
     strip_ansi
     printf "\r"
+fi
+
+# ---- S23 deliberate-fatal verdict (SMOKE_ERROR_SCREEN=1) -------------------
+# Runs BEFORE every later layer, because those layers assert an end-to-end boot
+# this leg deliberately does not perform. Each assertion below is one a broken
+# compact path fails: the rendered= tier is the bootloader's own report of which
+# layout it painted, qr= is whether the recovery QR survived the compact fill
+# that happens immediately before it, and the tier= capability line proves the
+# forced sub-floor mode actually took rather than the fixture being ignored.
+if [ "$ERROR_SCREEN" = "1" ]; then
+    strip_ansi
+    es_fail() {
+        echo -e "${RED}SMOKE TEST FAILED (error-screen leg): $1${NC}"
+        grep -E "error-screen:|error_screen_test|GOP: " "$STRIPPED_LOG" 2>/dev/null \
+            | sed 's/^/    /' | head -12
+        exit 1
+    }
+    [ "$BOOT_FAILED" = true ] && es_fail "unrelated fault: $FAIL_REASON"
+    es_check_log "$STRIPPED_LOG" || es_fail "$ES_FAIL_MSG"
+    echo -e "  ${GREEN}✓${NC} $ES_TIER_LINE"
+    echo -e "  ${GREEN}✓${NC} $ES_RENDERED"
+    echo ""
+    echo -e "${GREEN}  ERROR-SCREEN LEG PASSED${NC}"
+    echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
+    exit 0
 fi
 
 # ---- SURVIVE-PAST-THE-PROMPT re-check (2026-07-28) -------------------------
@@ -711,6 +955,24 @@ elif [ "$BOOT_PASSED" = true ]; then
             echo -e "${DIM}  notice regressed -- which is the exact defect s22 removed.${NC}"
             exit 1
         fi
+        # S23: below the full layout floor the notice must name the COMPACT
+        # route. Accepting any non-serial channel here would pass on a run that
+        # silently kept reporting "gop" while rendering nothing, which is the
+        # class of dishonesty the channel field exists to make impossible.
+        if [ "$LOWRES" = "1" ] && [ "$NOTICE_CHANNEL" != "gop-compact" ]; then
+            echo -e "${RED}SMOKE TEST FAILED: at $LOWRES_MODE the notice reported${NC}"
+            echo -e "${RED}  channel=$NOTICE_CHANNEL, expected gop-compact${NC}"
+            grep -E "error-screen: tier=" "$STRIPPED_LOG" 2>/dev/null | sed 's/^/    /' | head -2
+            exit 1
+        fi
+        # The notice reports truncation on its own line rather than inline, so
+        # the assertion is its ABSENCE: a field edited past its budget makes
+        # this fire instead of silently shortening the message on screen.
+        if grep -qF -- "[BOOT] store-reject: notice fit=truncated" \
+           "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the notice truncated a field${NC}"
+            exit 1
+        fi
         echo -e "  ${GREEN}✓${NC} rejected store announced on screen (channel=$NOTICE_CHANNEL)"
     fi
 
@@ -731,8 +993,8 @@ elif [ "$BOOT_PASSED" = true ]; then
     # booted, so recording here would certify the untouched image (and the
     # default markers) using evidence from a different boot scenario, and a
     # later rollover would reuse it as though the real image had been smoked.
-    if [ "$CORRUPT_STORE" = "1" ]; then
-        echo -e "${DIM}  smoke receipt not recorded (corrupt-store fixture run)${NC}"
+    if [ "$IMAGE_MODIFIED" = "1" ]; then
+        echo -e "${DIM}  smoke receipt not recorded (fixture image, not the canonical build)${NC}"
     else
         python3 "$(dirname "$0")/overnight/receipts.py" record-smoke . >/dev/null 2>&1 || true
     fi

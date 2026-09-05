@@ -1,6 +1,6 @@
 {
-  "total_suites": 3466,
-  "total_assertions": 15423,
+  "total_suites": 3517,
+  "total_assertions": 15565,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -39,6 +39,8 @@
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
     {"file": "test_entropy.c", "suites": 15, "assertions": 197},
     {"file": "test_env.c", "suites": 171, "assertions": 738},
+    {"file": "test_error_screen_tier.c", "suites": 22, "assertions": 52},
+    {"file": "test_error_screen_wrap.c", "suites": 29, "assertions": 90},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
     {"file": "test_except.c", "suites": 63, "assertions": 269},
     {"file": "test_exec.c", "suites": 60, "assertions": 111},

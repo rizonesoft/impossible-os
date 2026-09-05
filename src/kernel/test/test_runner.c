@@ -950,6 +950,8 @@ extern void test_register_klog(void);
 extern void test_register_uefi_boot(void);
 extern void test_register_boot_entry_parser(void);
 extern void test_register_boot_entry_kind(void);
+extern void test_register_error_screen_tier(void);
+extern void test_register_error_screen_wrap(void);
 extern void test_register_boot_policy(void);
 extern void test_register_firmware_tables(void);
 extern void test_register_firmware_platform(void);
@@ -1089,6 +1091,8 @@ void test_runner_init(void)
     test_register_uefi_boot();
     test_register_boot_entry_parser();
     test_register_boot_entry_kind();
+    test_register_error_screen_tier();
+    test_register_error_screen_wrap();
     test_register_boot_policy();
     test_register_firmware_tables();
     test_register_firmware_platform();

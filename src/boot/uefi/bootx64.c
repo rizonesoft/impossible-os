@@ -37,6 +37,8 @@
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
 #include "../../../include/boot/boot_implicit_payload.h"  /* implicit-payload reservation + claim */
+#include "../../../include/boot/bsod_aa_wrap.h"          /* glyph metrics + pure line-break decision */
+#include "../../../include/boot/bsod_render_tier.h"      /* error-screen tier floors, shared with kernel test */
 #include "../../../include/boot/ab_boot_metadata.h"        /* A/B dual-slot metadata wire ABI + validators (TODO-21) */
 #include "../../../include/kernel/mm/memmap_boot.h"          /* single-sourced HHDM constants (no drift vs memmap.h) */
 #include "../../../include/kernel/boot_version_constants.h"  /* BOOT_INFO_PHYS_ADDR + fault-class constants */
@@ -1119,7 +1121,7 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
  *                       error screen entirely and boot_fatal_dwell() skips its
  *                       Stall-and-keypress branch -- on a machine where Boot
  *                       Services are in fact perfectly healthy.
- *   gFramebuffer and    all four terms of bsod_can_render_graphical() pass
+ *   gFramebuffer and    bsod_render_tier() returns FULL or COMPACT
  *   gFbWidth/Height/    under 0xAF fill (non-NULL pointer, 0xAFAFAFAF clears
  *   gFbPixelFormat      the 800/600 minimums, format is not 2), so the fatal
  *                       path writes through a framebuffer address nothing
@@ -1654,18 +1656,48 @@ static UINTN format_recovery_url(char *buf, UINTN size, UINT32 err_code)
     return i;
 }
 
-static void qr_render_error_url(UINT32 err_code)
+/* Pixel extent of the recovery QR block (matrix + quiet zone), for the
+ * module scale this framebuffer width selects. Three renderers place this
+ * block -- qr_render_error_url below, the S18 graphical BSOD, and the S23
+ * compact screen, which must bound its text away from it -- and until this
+ * helper existed the scale ladder was transcribed into each of them. A
+ * transcription that drifts does not fail a build: it silently draws a QR
+ * at a different size than the caller reserved space for. */
+_Static_assert(QR_SIZE == (int)BSOD_QR_MODULES,
+               "QR matrix size must match bsod_render_tier.h's BSOD_QR_MODULES");
+
+/* Bind the shared QR geometry to this file's framebuffer globals. */
+static UINT32 qr_error_block_extent(void)
+{
+    return (UINT32)bsod_qr_block_extent((unsigned int)gFbWidth);
+}
+
+/* Fixed gap between the QR block and the screen edges on the bottom-right. */
+#define QR_ERROR_BLOCK_MARGIN BSOD_QR_BLOCK_MARGIN
+
+static int qr_error_block_fits(void)
+{
+    return bsod_qr_block_fits(gFramebuffer != (UINT32 *)0,
+                              (unsigned int)gFbWidth,
+                              (unsigned int)gFbHeight);
+}
+
+/* Returns 1 when the QR was actually drawn, 0 when it did not fit or the
+ * URL could not be built. The return value is the honesty contract from
+ * S22 applied to the QR: boot_fatal reports the recovery route it really
+ * painted rather than the one it attempted. */
+static int qr_render_error_url(UINT32 err_code)
 {
     char url[48];
     int i;
 
-    if (format_recovery_url(url, sizeof url, err_code) == 0) return;
+    if (format_recovery_url(url, sizeof url, err_code) == 0) return 0;
 
     UINT8 data_cw[QR_DATA_CW];
     UINT8 ec_cw[QR_EC_LEN];
     UINT8 all_cw[QR_TOTAL_CW];
 
-    if (qr_encode_data(url, data_cw) == 0) return;
+    if (qr_encode_data(url, data_cw) == 0) return 0;
     qr_reed_solomon(data_cw, QR_DATA_CW, ec_cw);
 
     for (i = 0; i < QR_DATA_CW; i++) all_cw[i] = data_cw[i];
@@ -1681,15 +1713,16 @@ static void qr_render_error_url(UINT32 err_code)
     if (gFbWidth >= 1920) mod = 6;
     if (gFbWidth >= 2560) mod = 8;
 
-    UINT32 quiet_zone = mod * 4;
-    UINT32 qr_total = QR_SIZE * mod + quiet_zone * 2;
-    UINT32 margin = 12;
+    UINT32 qr_total = qr_error_block_extent();
+    UINT32 margin = QR_ERROR_BLOCK_MARGIN;
 
-    if (gFbWidth >= qr_total + margin && gFbHeight >= qr_total + margin) {
+    if (qr_error_block_fits()) {
         UINT32 x = gFbWidth - qr_total - margin;
         UINT32 y = gFbHeight - qr_total - margin;
         qr_render_to_fb(matrix, x, y, mod);
+        return 1;
     }
+    return 0;
 }
 
 /* ============================================================================
@@ -1745,15 +1778,9 @@ static UINT32 fb_pack_rgb(UINT8 r, UINT8 g, UINT8 b)
  *   bsod_font_body.inc   -- 16px, ~9 KB alpha data
  * ------------------------------------------------------------------- */
 
-struct bsod_aa_glyph {
-    UINT8  width;
-    UINT8  height;
-    INT8   bearing_x;
-    INT8   bearing_y;
-    UINT8  advance;
-    UINT8  _pad;
-    UINT16 data_offset;
-};
+/* struct bsod_aa_glyph and BSOD_AA_TRACKING come from
+ * include/boot/bsod_aa_wrap.h, which also owns the pure line-break decision
+ * so the kernel tests can pin it. */
 
 #include "bsod_font_title.inc"
 #include "bsod_font_sub.inc"
@@ -1795,11 +1822,6 @@ static void bsod_aa_char(UINT32 px, UINT32 py,
     }
 }
 
-/* Extra letter spacing added to each glyph advance for readability.
- * Selawik's default metrics are tight for a BSOD context viewed from
- * a distance; +1px gives the text room to breathe. */
-#define BSOD_AA_TRACKING  1
-
 /* Render an antialiased string using the given font atlas. */
 static void bsod_aa_string(UINT32 px, UINT32 py, const char *str,
                              const struct bsod_aa_glyph *glyphs,
@@ -1820,68 +1842,99 @@ static void bsod_aa_string(UINT32 px, UINT32 py, const char *str,
     }
 }
 
-/* Compute the pixel width of an AA string (includes tracking). */
+/* Compute the pixel width of an AA string (includes tracking). Delegates to
+ * the shared helper so the kernel tests measure the same function. */
 static UINT32 bsod_aa_string_width(const char *str,
                                      const struct bsod_aa_glyph *glyphs)
 {
-    UINT32 w = 0;
-    UINT32 n = 0;
-    while (*str) {
-        unsigned char ch = (unsigned char)*str;
-        if (ch < 0x20 || ch > 0x7E) ch = '?';
-        w += glyphs[ch - 0x20].advance;
-        n++;
-        str++;
-    }
-    if (n > 0) w += (n - 1) * BSOD_AA_TRACKING;
-    return w;
+    return (UINT32)bsod_aa_text_width(glyphs, str);
+}
+
+/* Would this string be clipped if drawn at x? bsod_aa_string stops at the
+ * SCREEN edge, silently and without telling its caller, so the S18 renderer's
+ * fixed-position lines can lose their tail on a narrow mode. Measuring first
+ * is what lets the fit report be derived from reality rather than asserted. */
+static int bsod_aa_string_clipped(UINT32 x, const char *str,
+                                  const struct bsod_aa_glyph *glyphs)
+{
+    return bsod_aa_would_clip((unsigned int)x, (unsigned int)gFbWidth,
+                              glyphs, str);
 }
 
 /* Word-wrap an AA string into lines of at most max_px width. */
-static void bsod_aa_wrapped(UINT32 px, UINT32 py, const char *text,
+/* out_needed (optional) receives how many lines the text WOULD have taken at
+ * this width, which is not the same as how many were DRAWN. Silent truncation
+ * is the exact failure this section exists to remove: a renderer that reports
+ * success while its last recovery instruction fell off the bottom is the same
+ * dishonesty S22 removed from the channel field. */
+static UINT32 bsod_aa_wrapped(UINT32 px, UINT32 py, const char *text,
                               const struct bsod_aa_glyph *glyphs,
                               const UINT8 *data, UINT32 ascent,
                               UINT32 line_h, UINT32 max_px,
                               UINT32 max_lines,
                               UINT8 fg_r, UINT8 fg_g, UINT8 fg_b,
-                              UINT8 bg_r, UINT8 bg_g, UINT8 bg_b)
+                              UINT8 bg_r, UINT8 bg_g, UINT8 bg_b,
+                              UINT32 *out_needed)
 {
     UINT32 line = 0;
     UINT32 start = 0;
-    char buf[128];
+    UINT32 admit = 0;
+    unsigned int admit_u = 0;
+    char buf[BSOD_AA_LINE_MAX_BYTES + 1u];
+    _Static_assert(sizeof(buf) == BSOD_AA_LINE_MAX_BYTES + 1u,
+                   "the line buffer must match the published wrap bound");
 
-    if (!text) return;
+    if (out_needed) *out_needed = 0;
+    if (!text) return 0;
 
-    while (text[start] && line < max_lines) {
-        UINT32 end = start;
-        UINT32 last_space = start;
-        UINT32 have_space = 0;
-        UINT32 cur_w = 0;
+    /* The COUNT comes from the shared planner, not from this loop.
+     *
+     * Counting here and drawing here meant the two could drift: restoring the
+     * old `line < max_lines` loop condition would have stopped the walk at the
+     * cap, making needed equal drawn, and every truncated recovery instruction
+     * would have reported fit=ok again. The kernel tests cover
+     * bsod_aa_wrap_plan; production consuming it is what makes that coverage
+     * bind to the shipped behaviour rather than to a parallel copy of it. */
+    admit = (UINT32)0;
+    {
+        unsigned int needed = bsod_aa_wrap_plan(text, glyphs, max_px,
+                                                BSOD_AA_LINE_MAX_BYTES,
+                                                max_lines, &admit_u);
+        if (out_needed) *out_needed = (UINT32)needed;
+        admit = (UINT32)admit_u;
+    }
 
-        while (text[end] && cur_w < max_px) {
-            unsigned char ch = (unsigned char)text[end];
-            if (ch < 0x20 || ch > 0x7E) ch = '?';
-            cur_w += glyphs[ch - 0x20].advance + BSOD_AA_TRACKING;
-            if (text[end] == ' ') { last_space = end; have_space = 1; }
-            end++;
-        }
-        if (text[end] != 0 && have_space && cur_w >= max_px)
-            end = last_space;
+    while (text[start]) {
+        UINT32 end;
 
-        {
+        /* max_px is a HARD right boundary; the decision itself lives in
+         * bsod_aa_wrap_next_break() so a unit test can pin it. */
+        end = (UINT32)bsod_aa_wrap_next_break(text, start, glyphs, max_px,
+                                              BSOD_AA_LINE_MAX_BYTES);
+
+        /* Draw exactly the lines the planner admitted. Bounding by `admit`
+         * rather than by max_lines is deliberate: the two are the same number,
+         * and taking it from the planner means the drawing cannot disagree
+         * with the count the caller was given. */
+        if (line < admit) {
+            /* The break is byte-bounded by BSOD_AA_LINE_MAX_BYTES, which the
+             * static assert above ties to this buffer, so the clamp can no
+             * longer discard anything. It stays as the second layer. */
             UINT32 n = end - start;
             UINT32 k;
             if (n >= sizeof(buf)) n = sizeof(buf) - 1;
             for (k = 0; k < n; k++) buf[k] = text[start + k];
             buf[n] = '\0';
+            bsod_aa_string(px, py + line * line_h, buf,
+                             glyphs, data, ascent,
+                             fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+            line++;
         }
-        bsod_aa_string(px, py + line * line_h, buf,
-                         glyphs, data, ascent,
-                         fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
-        line++;
         start = end;
         while (text[start] == ' ') start++;
+        if (line >= admit) break;   /* nothing further would be drawn */
     }
+    return line;
 }
 
 /* Legacy 8x8 bitmap font and its blit helpers removed -- superseded by
@@ -1952,13 +2005,21 @@ static void bsod_fill_rect(UINT32 x0, UINT32 y0, UINT32 w, UINT32 h, UINT32 colo
  *   - gFbPixelFormat != 2 (RGBX or BGRX)
  * Fills the entire screen and renders every overlay.  Does NOT wait
  * for a keypress -- caller handles that. */
-static void bsod_render_graphical(UINT32 err_code, const char *title,
-                                    const char *detail)
+/* Returns 1 when the QR block was painted, 0 when it did not fit or the
+ * recovery URL could not be built. The caller reports the recovery route
+ * the user actually got; claiming a QR this function skipped would be the
+ * same dishonesty S22 removed from the store-reject notice. */
+static int bsod_render_graphical(UINT32 err_code, const char *title,
+                                    const char *detail,
+                                 int *out_truncated)
 {
     UINT32 blue   = fb_pack_rgb(0x0A, 0x0A, 0x0A);  /* near-black background */
     UINT32 i;
     char err_buf[32];
     const char hex[] = "0123456789ABCDEF";
+    int clipped = 0;
+
+    if (out_truncated) *out_truncated = 0;
 
     /* 1. Fill entire framebuffer with blue. */
     bsod_fill_rect(0, 0, gFbWidth, gFbHeight, blue);
@@ -1988,6 +2049,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         UINT32 w = bsod_aa_string_width(t, bsod_aa_TITLE);
         UINT32 x = (gFbWidth > w) ? (gFbWidth - w) / 2 : 8;
         AA_TITLE(x, 150, t, 0xFF, 0xFF, 0xFF);
+        if (bsod_aa_string_clipped(x, t, bsod_aa_TITLE)) clipped = 1;
     }
 
     /* 4. Error code subtitle (22px Selawik Semibold, left-aligned).
@@ -2014,27 +2076,51 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         {
             UINT32 w1 = bsod_aa_string_width(err_buf, bsod_aa_SUB);
             AA_SUB(80, 250, err_buf, 0xB2, 0xD8, 0xFF);
-            if (title)
+            if (bsod_aa_string_clipped(80, err_buf, bsod_aa_SUB)) clipped = 1;
+            if (title) {
                 AA_SUB(80 + w1, 250, title, 0xFF, 0xFF, 0xFF);
+                if (bsod_aa_string_clipped(80 + w1, title, bsod_aa_SUB))
+                    clipped = 1;
+            }
         }
     }
 
     /* 5. Detail text wrapped (16px body font). */
     if (detail) {
+        UINT32 detail_needed = 0;
         bsod_aa_wrapped(80, 310, detail,
                          bsod_aa_BODY, bsod_aa_BODY_data,
                          BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H,
                          gFbWidth - 160, 3,
                          0xA0, 0xC0, 0xE0,   /* dim blue-white */
-                         0x0A, 0x0A, 0x0A);
+                         0x0A, 0x0A, 0x0A, &detail_needed);
+        if (detail_needed > 3) clipped = 1;
     }
 
     /* 6. Recovery hint lines (16px body font). */
-    AA_BODY(80, 390, "Here's what you can do:", 0xFF, 0xFF, 0xFF);
-    AA_BODY(100, 414, "- Make sure your boot drive is connected", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 438, "- Check that \\boot\\kernel.exe is on the drive", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 462, "- Scan the QR code below for help", 0xB2, 0xD8, 0xFF);
-    AA_BODY(100, 486, "- Press any key to restart", 0xB2, 0xD8, 0xFF);
+    {
+        /* Fixed-position, unwrapped: each one is clipped at the screen edge
+         * rather than wrapped, so each is measured before it is drawn. */
+        static const struct { UINT32 x; UINT32 y; const char *s; } hints[] = {
+            {  80, 390, "Here's what you can do:" },
+            { 100, 414, "- Make sure your boot drive is connected" },
+            { 100, 438, "- Check that \\boot\\kernel.exe is on the drive" },
+            { 100, 462, "- Scan the QR code below for help" },
+            { 100, 486, "- Press any key to restart" },
+        };
+        UINT32 hi;
+        for (hi = 0; hi < sizeof hints / sizeof hints[0]; hi++) {
+            UINT32 r = (hi == 0) ? 0xFF : 0xB2;
+            UINT32 g = (hi == 0) ? 0xFF : 0xD8;
+            UINT32 b = 0xFF;
+            AA_BODY(hints[hi].x, hints[hi].y, hints[hi].s,
+                    (UINT8)r, (UINT8)g, (UINT8)b);
+            if (bsod_aa_string_clipped(hints[hi].x, hints[hi].s, bsod_aa_BODY))
+                clipped = 1;
+            /* The layout also assumes the row is on screen at all. */
+            if (hints[hi].y + BSOD_AA_BODY_LINE_H > gFbHeight) clipped = 1;
+        }
+    }
 
 #undef AA_TITLE
 #undef AA_SUB
@@ -2050,6 +2136,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
      * The URL itself is built by format_recovery_url() so QR payload
      * and caption text match qr_render_error_url's contract exactly. */
     {
+        int qr_drawn = 0;
         char url[48];
         int k;
         UINT8 data_cw[QR_DATA_CW];
@@ -2058,7 +2145,6 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         UINT8 matrix[QR_SIZE][QR_SIZE];
         UINT8 used[QR_SIZE][QR_SIZE];
         UINT32 mod;
-        UINT32 quiet_zone;
         UINT32 qr_total;
         UINT32 side_margin = 12;
         UINT32 caption_reserve;
@@ -2074,13 +2160,13 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
         if (format_recovery_url(url, sizeof url, err_code) == 0)
             goto skip_qr;
 
-        /* Match the mod-size selection from qr_render_error_url so the
-         * QR has the same visual scale across renderers. */
+        /* Same module scale as every other QR placement -- see
+         * qr_error_block_extent(). mod is still needed locally because
+         * qr_render_to_fb takes it. */
         mod = 4;
         if (gFbWidth >= 1920) mod = 6;
         if (gFbWidth >= 2560) mod = 8;
-        quiet_zone = mod * 4;
-        qr_total = (UINT32)(QR_SIZE * mod + quiet_zone * 2);
+        qr_total = qr_error_block_extent();
 
         /* Reserve space below the QR for the URL caption.  The QR
          * is pushed up by exactly caption_reserve pixels so the
@@ -2104,6 +2190,7 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                 qr_x = gFbWidth  - qr_total - side_margin;
                 qr_y = gFbHeight - qr_total - side_margin - caption_reserve;
                 qr_render_to_fb(matrix, qr_x, qr_y, mod);
+                qr_drawn = 1;
 
                 /* URL caption centered below the QR with a 4px gap. */
                 url_w = bsod_aa_string_width(url, bsod_aa_BODY);
@@ -2124,20 +2211,242 @@ static void bsod_render_graphical(UINT32 err_code, const char *title,
                                     BSOD_AA_BODY_ASCENT,
                                     0xB2, 0xD8, 0xFF,
                                     0x0A, 0x0A, 0x0A);
+                } else {
+                    /* The QR still carries the URL, but the human-readable
+                     * copy did not reach the screen -- content that was
+                     * meant to be there and is not. */
+                    clipped = 1;
                 }
             }
         }
     skip_qr:;
+        if (out_truncated) *out_truncated = clipped;
+        return qr_drawn;
     }
 }
 
-/* Gate predicate: is the framebuffer usable for the graphical BSOD? */
-static int bsod_can_render_graphical(void)
+/* ============================================================================
+ * S23: Render tier -- the single predicate that owns the resolution floor.
+ *
+ * Every TEXT-bearing error path asks this one function which layout the
+ * current framebuffer can carry. Before S23 the floor was a bare
+ * `gFbWidth >= 800 && gFbHeight >= 600` inside a boolean, and a framebuffer
+ * below it fell straight through to "no words at all" at four separate call
+ * sites -- boot_fatal's two arms, the S22 rejected-store notice, and the
+ * anti-rollback halt screen. A 640x480 GOP mode is a valid mode that common
+ * firmware reports, so that was silence on a working display.
+ *
+ * The floors are MEASURED against the checked-in Selawik atlases, not chosen:
+ *
+ *   FULL (the S18 renderer) stays at 800x600. The measurement that matters is
+ *   why the modes below cannot carry the layout: its last hint line bottoms at
+ *   y=522, from real glyph placement (py + ascent + bearing_y + height), not
+ *   py + ascent, which read 502 and understated the line by a descender. A
+ *   480-row mode clips that hint by 42 px, which is what excludes 640x480 and
+ *   800x480 -- width is not the constraint there.
+ *
+ *   No LOWER full floor is claimed, deliberately. Per-element bounds do not
+ *   compose: at a hypothetical 640x522 the 572 px centred title, the hint
+ *   column reaching x=469 and the 194-row QR block each fit, while the wrapped
+ *   detail text and the QR rectangle overlap. The band below 800x600 is what
+ *   the compact tier renders.
+ *
+ *   COMPACT needs 512x256. Its four fields draw from an 11-row pool
+ *   (2 heading + 1 code + 5 cause + 3 action nominal) and the cause takes
+ *   whatever the other three leave. MEASURED at that floor, where the reserved
+ *   QR leaves a 312 px budget: the worst real content is the A/B GPT
+ *   diagnosis, taking 6 of the cause's 8 allotted rows, for 9 rows and 212 px
+ *   of the 256 available. 400x200 was measured and REJECTED -- its 200 px
+ *   budget wraps that diagnosis to 12 rows against a cap of 6 and the stack
+ *   reaches 252 px on a 200 px screen, overflowing the display itself.
+ *
+ * The QR is deliberately NOT gated here. qr_render_error_url() applies its
+ * own fit check and already paints at 640x480, so a machine below every text
+ * floor keeps a scannable recovery route; folding it in would have deleted
+ * that route while every counter still read green.
+ * ============================================================================ */
+
+/* Floors + the tier enum live in include/boot/bsod_render_tier.h so the
+ * kernel unit tests pin them at their boundaries. */
+
+/* Compact field line budgets and geometry live in bsod_render_tier.h so the
+ * kernel tests exercise the SAME reservation decision the renderer makes. */
+
+/* Bind the shared pure predicate to this file's framebuffer globals. */
+static bsod_tier_t bsod_render_tier(void)
 {
-    return gFramebuffer != (UINT32 *)0 &&
-           gFbWidth  >= 800 &&
-           gFbHeight >= 600 &&
-           gFbPixelFormat != 2;  /* skip BitMask format */
+    return bsod_tier_for(gFramebuffer != (UINT32 *)0,
+                         (unsigned int)gFbWidth,
+                         (unsigned int)gFbHeight,
+                         (unsigned int)gFbPitch,
+                         (unsigned int)gFbPixelFormat);
+}
+
+/* Bind the shared compact-geometry decision to this file's globals. */
+static UINT32 bsod_compact_text_right_now(int reserve_qr)
+{
+    return (UINT32)bsod_compact_text_right((unsigned int)gFbWidth,
+                                           (unsigned int)gFbHeight,
+                                           reserve_qr,
+                                           (unsigned int)BSOD_AA_BODY_LINE_H);
+}
+
+/* Compact error screen for framebuffers below the S18 layout's floor.
+ *
+ * ALLOCATION-FREE by contract, same as the S22 notice it also serves: one
+ * caller is the AllocatePool-exhaustion fallback, so every glyph here comes
+ * from the checked-in atlases and every write goes straight to the GOP
+ * framebuffer. bsod_fill_rect and bsod_aa_wrapped clip against gFbWidth /
+ * gFbHeight, and bsod_aa_wrapped now treats max_px as a hard bound, so the
+ * text cannot reach into the QR rectangle reserved above.
+ *
+ * Content is deliberately short and self-contained rather than the S18
+ * strings: the full renderer's title alone is 572 px, which does not fit the
+ * screens this function exists for. Returns the number of text rows drawn. */
+static int bsod_render_compact(UINT8 bg_r, UINT8 bg_g, UINT8 bg_b,
+                               int reserve_qr,
+                               const char *heading, const char *code_line,
+                               const char *cause, const char *action)
+{
+    UINT32 right = bsod_compact_text_right_now(reserve_qr);
+    UINT32 x = BSOD_COMPACT_MARGIN;
+    UINT32 y = BSOD_COMPACT_MARGIN;
+    UINT32 max_px;
+    UINT32 need;
+    UINT32 cause_cap;
+    int truncated = 0;
+
+    if (right <= x + BSOD_COMPACT_MARGIN) return 1;
+    max_px = right - x - BSOD_COMPACT_MARGIN;
+
+    /* Give the CAUSE every row the other three fields do not use. The cause
+     * carries the caller's actual diagnosis, and callers pass real fatal
+     * detail up to ~200 characters; a fixed share cut the tail off the longest
+     * of them at this floor. Planning is position-independent, so the action's
+     * requirement is known before the cause is drawn. */
+    {
+        unsigned int head_d = 0, code_d = 0, action_d = 0;
+        (void)bsod_aa_wrap_plan(heading, bsod_aa_BODY, max_px,
+                                BSOD_AA_LINE_MAX_BYTES,
+                                BSOD_COMPACT_HEAD_LINES, &head_d);
+        (void)bsod_aa_wrap_plan(code_line, bsod_aa_BODY, max_px,
+                                BSOD_AA_LINE_MAX_BYTES,
+                                BSOD_COMPACT_CODE_LINES, &code_d);
+        (void)bsod_aa_wrap_plan(action, bsod_aa_BODY, max_px,
+                                BSOD_AA_LINE_MAX_BYTES,
+                                BSOD_COMPACT_ACTION_LINES, &action_d);
+        cause_cap = (UINT32)bsod_compact_cause_cap(head_d, code_d, action_d);
+    }
+
+    bsod_fill_rect(0, 0, gFbWidth, gFbHeight, fb_pack_rgb(bg_r, bg_g, bg_b));
+
+    y += bsod_aa_wrapped(x, y, heading, bsod_aa_BODY, bsod_aa_BODY_data,
+                         BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H, max_px,
+                         BSOD_COMPACT_HEAD_LINES,
+                         0xFF, 0xFF, 0xFF, bg_r, bg_g, bg_b, &need)
+         * BSOD_AA_BODY_LINE_H;
+    if (need > BSOD_COMPACT_HEAD_LINES) truncated = 1;
+    y += bsod_aa_wrapped(x, y, code_line, bsod_aa_BODY, bsod_aa_BODY_data,
+                         BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H, max_px,
+                         BSOD_COMPACT_CODE_LINES,
+                         0xC8, 0xDC, 0xFF, bg_r, bg_g, bg_b, &need)
+         * BSOD_AA_BODY_LINE_H;
+    if (need > BSOD_COMPACT_CODE_LINES) truncated = 1;
+    y += bsod_aa_wrapped(x, y, cause, bsod_aa_BODY, bsod_aa_BODY_data,
+                         BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H, max_px,
+                         cause_cap,
+                         0xF0, 0xF0, 0xF0, bg_r, bg_g, bg_b, &need)
+         * BSOD_AA_BODY_LINE_H;
+    if (need > cause_cap) truncated = 1;
+    (void)bsod_aa_wrapped(x, y, action, bsod_aa_BODY, bsod_aa_BODY_data,
+                          BSOD_AA_BODY_ASCENT, BSOD_AA_BODY_LINE_H, max_px,
+                          BSOD_COMPACT_ACTION_LINES,
+                          0xB2, 0xD8, 0xFF, bg_r, bg_g, bg_b, &need);
+    if (need > BSOD_COMPACT_ACTION_LINES) truncated = 1;
+
+    /* Reported on serial and asserted by the smoke oracle. A message edited
+     * past its budget in a later change becomes a test failure here rather
+     * than a screen that quietly stops mid-instruction. */
+    return truncated;
+}
+
+/* "Error code: 0xNNNNNNNN" into a caller buffer. cap must be >= 24; a short
+ * buffer yields an empty string rather than a truncated code, because a
+ * half-written error code is worse than none for someone reading it aloud
+ * to support. */
+static void bsod_format_code_line(char *buf, UINTN cap, UINT32 err_code)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    const char *label = "Error code: 0x";
+    UINTN i = 0;
+    int shift;
+
+    if (!buf || cap < 24) { if (buf && cap) buf[0] = '\0'; return; }
+    while (label[i]) { buf[i] = label[i]; i++; }
+    for (shift = 28; shift >= 0; shift -= 4)
+        buf[i++] = hex[(err_code >> shift) & 0xF];
+    buf[i] = '\0';
+}
+
+/* S23: the single place the fatal path decides what reaches the screen.
+ *
+ * Reports the tier it rendered and whether the QR recovery route was
+ * actually painted. Both are read by the smoke test, which cannot see the
+ * screen: without them a run asserts only that boot_fatal was entered, which
+ * stays true with every render branch deleted. */
+static void boot_fatal_render_screen(UINT32 err_code, const char *title,
+                                     const char *detail)
+{
+    bsod_tier_t tier = bsod_render_tier();
+    int qr_drawn = 0;
+    int truncated = 0;
+
+    if (tier == BSOD_TIER_FULL) {
+        qr_drawn = bsod_render_graphical(err_code, title, detail, &truncated);
+    } else if (tier == BSOD_TIER_COMPACT) {
+        char code_line[32];
+        char url[48];
+        const char *action;
+        bsod_format_code_line(code_line, sizeof code_line, err_code);
+        /* The action must describe a route that will actually be there. A
+         * compact tier does NOT imply a QR: a valid 2560x256 mode clears the
+         * compact floor while the QR block needs 308 rows, so "scan the QR
+         * code below" would point at nothing -- and the full-screen fill has
+         * already erased whatever the console said. Ask the same predicate
+         * the QR renderer applies, and give the URL in text when it will not
+         * fit. */
+        /* `url` is a local of THIS function and the selector may return a
+         * pointer into it, so it must outlive bsod_render_compact below --
+         * which it does: both live for the whole of this branch. */
+        if (format_recovery_url(url, sizeof url, err_code) == 0)
+            url[0] = '\0';
+        action = bsod_compact_action(qr_error_block_fits(), url);
+        /* Same blue as the S18 background so the two screens read as one
+         * family rather than two unrelated failures. reserve_qr = 1: this
+         * path DOES paint a QR immediately below. */
+        truncated = bsod_render_compact(0x00, 0x33, 0x99, 1,
+                            "Impossible OS could not start",
+                            code_line,
+                            detail ? detail : "No further detail is available.",
+                            action);
+        /* AFTER the compact render, never before: bsod_render_compact fills
+         * the whole framebuffer, so a QR painted first would be erased. */
+        qr_drawn = qr_render_error_url(err_code);
+    } else if (gFramebuffer && gFbWidth > 0 && gFbHeight > 0) {
+        /* Below every text floor, or a BitMask format we cannot pack. The QR
+         * still renders: it writes palindromic black/white pixels, which land
+         * correctly whatever the channel order is, and it applies its own fit
+         * check rather than this tier floor. */
+        qr_drawn = qr_render_error_url(err_code);
+    }
+
+    serial_early_print("[BOOT] error-screen: rendered=");
+    serial_early_print(bsod_tier_name(tier));
+    serial_early_print(" qr=");
+    serial_early_print(qr_drawn ? "yes" : "no");
+    serial_early_print(" fit=");
+    serial_early_print(truncated ? "truncated" : "ok");
+    serial_early_print("\n");
 }
 
 /* Hold the fatal error screen on-screen long enough for a human to
@@ -2345,29 +2654,16 @@ static __attribute__((noreturn)) void boot_fatal(UINT32 err_code,
         efi_print(u"  2. Verify \\boot\\kernel.exe exists\r\n");
         efi_print(u"  3. Scan QR code for recovery help\r\n");
         efi_print(u"  4. Press any key to reboot or power off\r\n\r\n");
-
-        /* S18: Render full graphical BSOD when the framebuffer is
-         * usable.  Covers the blue background, sad face icon, title,
-         * error code, description, QR, and URL.  Fallback when the
-         * framebuffer is headless / too small / BitMask format: the
-         * ConOut text above is the only on-screen signal. */
-        if (bsod_can_render_graphical()) {
-            bsod_render_graphical(err_code, title, detail);
-        } else if (gFramebuffer && gFbWidth > 0 && gFbHeight > 0) {
-            /* Low-res or BitMask: only the QR still works reliably. */
-            qr_render_error_url(err_code);
-        }
-    } else if (bsod_can_render_graphical()) {
-        /* EBS in progress or no ConOut -- ConOut is not safe, but direct
-         * framebuffer writes are.  Render the full graphical BSOD; the
-         * serial log above still has the critical details. */
-        bsod_render_graphical(err_code, title, detail);
-    } else if (gFramebuffer && gFbWidth > 0 && gFbHeight > 0) {
-        /* Post-EBS with unusable framebuffer format -- only the QR
-         * renderer works because it uses palindromic B/W pixels that
-         * render correctly on every format. */
-        qr_render_error_url(err_code);
     }
+
+    /* S23: paint the screen at whatever tier this framebuffer supports.
+     * This used to be duplicated across both arms of the ConOut test above,
+     * with a bare 800x600 floor in each and nothing below it but a QR; the
+     * two arms never differed in what they drew, only in whether ConOut text
+     * had already been printed, so the render now happens once after the
+     * text. Direct framebuffer writes are safe in both cases, including
+     * post-EBS -- GOP backing memory survives ExitBootServices. */
+    boot_fatal_render_screen(err_code, title, detail);
 
     /* S18: unified dwell.  Hold the fatal screen visible for the user
      * before ResetSystem in all branches (pre-EBS, post-EBS, graphical
@@ -5308,15 +5604,22 @@ static const char *selection_reason_name(unsigned int r)
 typedef enum {
     BOOT_STORE_NOTICE_SERIAL_ONLY = 0,  /* no screen route exists here */
     BOOT_STORE_NOTICE_CONOUT,
+    BOOT_STORE_NOTICE_GOP_COMPACT,      /* S23: below the S18 layout floor */
     BOOT_STORE_NOTICE_GOP,
 } boot_store_notice_channel_t;
 
+/* The compact route is reported under its own name rather than folded into
+ * "gop". The two render different amounts of text, so a run that silently
+ * downgraded to compact would look identical to a full-banner render in the
+ * only place this is observable -- which is the failure S22 removed when it
+ * stopped reporting a channel the notice had not reached. */
 static const char *boot_store_notice_channel_name(boot_store_notice_channel_t c)
 {
     switch (c) {
-        case BOOT_STORE_NOTICE_GOP:         return "gop";
-        case BOOT_STORE_NOTICE_CONOUT:      return "conout";
-        case BOOT_STORE_NOTICE_SERIAL_ONLY: return "serial-only";
+        case BOOT_STORE_NOTICE_GOP:          return "gop";
+        case BOOT_STORE_NOTICE_GOP_COMPACT:  return "gop-compact";
+        case BOOT_STORE_NOTICE_CONOUT:       return "conout";
+        case BOOT_STORE_NOTICE_SERIAL_ONLY:  return "serial-only";
     }
     return "serial-only";
 }
@@ -5326,10 +5629,15 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
 {
     boot_store_notice_channel_t channel = BOOT_STORE_NOTICE_SERIAL_ONLY;
 
-    /* Graphical banner. Same framebuffer preconditions as the BSOD path, so
-     * a headless / low-res / BitMask framebuffer falls through to ConOut
-     * rather than writing through an address GOP never gave us. */
-    if (bsod_can_render_graphical()) {
+    /* Graphical banner. The tier predicate owns the floor: a framebuffer too
+     * small for this banner may still carry the compact screen below, and
+     * only a headless / BitMask / sub-compact framebuffer falls through to
+     * ConOut. Before S23 this asked a bare 800x600 boolean, so a valid
+     * 640x480 mode took the ConOut path -- best-effort text that fails under
+     * exactly the pool exhaustion one caller arrives from. */
+    bsod_tier_t tier = bsod_render_tier();
+
+    if (tier == BSOD_TIER_FULL) {
         const UINT32 band_y = 0;
         const UINT32 band_h = 200;
         UINT32 bg = fb_pack_rgb(0x6E, 0x4A, 0x00);  /* amber: advisory, not the BSOD blue */
@@ -5349,10 +5657,27 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
                        bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
                        0xC0, 0xB0, 0x90, 0x6E, 0x4A, 0x00);
         channel = BOOT_STORE_NOTICE_GOP;
+    } else if (tier == BSOD_TIER_COMPACT) {
+        /* Amber, matching the full banner: advisory, not the BSOD blue. The
+         * compact renderer writes only to the framebuffer, so unlike the
+         * ConOut branch below it cannot fail under pool exhaustion -- which
+         * is the condition boot_policy_publish_alloc_failure_fallback()
+         * calls this from. */
+        /* reserve_qr = 0: the advisory notice paints no QR, so narrowing its
+         * text for one would cost a third of the width for empty pixels. */
+        if (bsod_render_compact(0x6E, 0x4A, 0x00, 0,
+                                "Boot configuration was not used",
+                                token, cause,
+                                "Starting the fallback entry instead. "
+                                "Press any key to continue."))
+            serial_early_print("[BOOT] store-reject: notice fit=truncated\n");
+        channel = BOOT_STORE_NOTICE_GOP_COMPACT;
     } else if (gST && gST->ConOut && gST->ConOut->OutputString && !g_ebs_in_progress) {
         /* Text console. Reached on firmware with a console but no framebuffer
-         * the graphical path will accept -- notably a valid 640x480 mode,
-         * which fails bsod_can_render_graphical()'s 800x600 floor.
+         * either graphical tier will accept -- a headless machine, a BitMask
+         * pixel format we cannot pack, or a mode below the compact floor.
+         * A valid 640x480 mode used to land here; since S23 it renders the
+         * compact screen above instead.
          *
          * ConOut is BEST-EFFORT, not a guarantee, and this branch must not
          * claim otherwise. A graphical UEFI console implements OutputString
@@ -8182,6 +8507,35 @@ static __attribute__((noreturn)) void bpp_render_and_reset(
  * fresh build is actually helpful).
  *
  * Does not return. */
+/* "image=N    required=M" into a caller buffer. Shared by the full and the
+ * S23 compact rollback screens so the two cannot report different numbers
+ * for the same refusal. */
+static void bpp_format_versions(char *buf, UINTN cap, UINT32 shipped,
+                                UINT32 required)
+{
+    UINT32 vp = 0;
+    const char *prefix = "image=";
+    const char *mid = "    required=";
+    UINT32 i;
+
+    if (!buf || cap < 2) { if (buf && cap) buf[0] = '\0'; return; }
+    for (i = 0; prefix[i] && vp < cap - 1; i++) buf[vp++] = prefix[i];
+    {
+        char tmp[16]; UINT32 ti = 0; UINT32 v = shipped;
+        if (v == 0) tmp[ti++] = '0';
+        while (v && ti < sizeof(tmp)) { tmp[ti++] = (char)('0' + (v % 10)); v /= 10; }
+        while (ti && vp < cap - 1) buf[vp++] = tmp[--ti];
+    }
+    for (i = 0; mid[i] && vp < cap - 1; i++) buf[vp++] = mid[i];
+    {
+        char tmp[16]; UINT32 ti = 0; UINT32 v = required;
+        if (v == 0) tmp[ti++] = '0';
+        while (v && ti < sizeof(tmp)) { tmp[ti++] = (char)('0' + (v % 10)); v /= 10; }
+        while (ti && vp < cap - 1) buf[vp++] = tmp[--ti];
+    }
+    buf[vp] = '\0';
+}
+
 static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
     UINT32 shipped, UINT32 required)
 {
@@ -8217,6 +8571,11 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
      * !g_ebs_in_progress and fall back to serial-only when Boot
      * Services have been exited. Serial is post-EBS safe; Runtime
      * Services (used by bpp_persist_nvram_fault above) are too. */
+    bsod_tier_t tier = bsod_render_tier();
+    int truncated = 0;
+    char vbuf[64];
+    bpp_format_versions(vbuf, sizeof vbuf, shipped, required);
+
     if (!g_ebs_in_progress && gST && gST->ConOut) {
         gST->ConOut->ClearScreen(gST->ConOut);
         efi_print(u"\r\n");
@@ -8243,7 +8602,7 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
             efi_print(u"  See serial log for full EFI_STATUS value.\r\n");
         }
         efi_print(u"\r\n  Power-cycle and enter the UEFI shell to recover.\r\n");
-    } else if (bsod_can_render_graphical()) {
+    } else if (tier == BSOD_TIER_FULL) {
         /* Post-EBS path (the normal call site for the rollback gate)
          * cannot use ConOut. Render a ROLLBACK-SPECIFIC graphical
          * screen instead of the generic bsod_render_graphical: that
@@ -8270,31 +8629,8 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
                            0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
         }
 
-        /* Build "image=N required=M" line; append it as a SUB-size
-         * line. UINT32 -> decimal in a stack buffer; max 11 digits + NUL. */
-        char vbuf[64];
-        UINT32 vp = 0;
-        const char *prefix = "image=";
-        for (UINT32 i = 0; prefix[i] && vp < sizeof(vbuf) - 1; i++)
-            vbuf[vp++] = prefix[i];
-        {
-            char tmp[16]; UINT32 ti = 0;
-            UINT32 v = shipped;
-            if (v == 0) tmp[ti++] = '0';
-            while (v) { tmp[ti++] = (char)('0' + (v % 10)); v /= 10; }
-            while (ti && vp < sizeof(vbuf) - 1) vbuf[vp++] = tmp[--ti];
-        }
-        const char *mid = "    required=";
-        for (UINT32 i = 0; mid[i] && vp < sizeof(vbuf) - 1; i++)
-            vbuf[vp++] = mid[i];
-        {
-            char tmp[16]; UINT32 ti = 0;
-            UINT32 v = required;
-            if (v == 0) tmp[ti++] = '0';
-            while (v) { tmp[ti++] = (char)('0' + (v % 10)); v /= 10; }
-            while (ti && vp < sizeof(vbuf) - 1) vbuf[vp++] = tmp[--ti];
-        }
-        vbuf[vp] = '\0';
+        /* "image=N required=M" as a SUB-size line; built above so the
+         * compact branch below reports the identical numbers. */
         bsod_aa_string(80, 230, vbuf, bsod_aa_SUB, bsod_aa_SUB_data,
                        BSOD_AA_SUB_ASCENT,
                        0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
@@ -8320,7 +8656,29 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
                            0xFF, 0xFF, 0xFF, 0x0A, 0x0A, 0x0A);
             ly += BSOD_AA_BODY_ASCENT + 8;
         }
+    } else if (tier == BSOD_TIER_COMPACT) {
+        /* S23: below the S18 layout floor this halt used to leave nothing on
+         * screen at all -- and unlike boot_fatal it has no QR fallback, so a
+         * 640x480 machine refused the boot in complete silence. The wording
+         * stays rollback-specific: no "press any key", because this path
+         * never returns. */
+        /* reserve_qr = 0: this path paints no QR at all. The wording is
+         * MEASURED against the 512x256 floor at the resulting 480px budget,
+         * where it occupies two of its three lines. */
+        truncated = bsod_render_compact(0x0A, 0x0A, 0x0A, 0,
+                            "Security-version downgrade refused",
+                            vbuf,
+                            "The installed kernel is older than the security "
+                            "version this machine requires.",
+                            "Boot a newer signed kernel, or clear "
+                            "IPOSRequiredSecVersion, then power-cycle.");
     }
+
+    serial_early_print("[BOOT] error-screen: rendered=");
+    serial_early_print(bsod_tier_name(tier));
+    serial_early_print(" qr=no fit=");
+    serial_early_print(truncated ? "truncated" : "ok");
+    serial_early_print("\n");
 
     /* Serial diagnostic (always safe, pre- or post-EBS). Format the
      * full EFI_STATUS as a 64-bit hex value so the top error bit
@@ -18140,6 +18498,27 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         serial_early_print("[BOOT] init_gop OK (headless)\n");
     else
         serial_early_print("[BOOT] init_gop OK\n");
+
+    /* S23: capability report. Emitted here rather than inside
+     * gop_negotiate_mode because negotiation can still be followed by a
+     * SetMode(0) retry, a candidate-GOP replacement or a validation failure
+     * that zeroes the globals -- a tier reported mid-negotiation could be
+     * stale by the time an error screen needs it. This is the one line that
+     * records, on EVERY boot, which error-screen layout this display could
+     * carry and whether the QR recovery route is available, so a regression
+     * that quietly drops a tier is visible without provoking a fault. */
+    {
+        bsod_tier_t t = bsod_render_tier();
+        serial_early_print("[BOOT] error-screen: tier=");
+        serial_early_print(bsod_tier_name(t));
+        serial_early_print(" ");
+        serial_early_print_uint(gFbWidth);
+        serial_early_print("x");
+        serial_early_print_uint(gFbHeight);
+        serial_early_print(" qr=");
+        serial_early_print(qr_error_block_fits() ? "fits" : "no");
+        serial_early_print("\n");
+    }
     g_boot_info_ptr->timing.gop_end = boot_rdtsc();
 
     /* Clear screen to black before loading the kernel. */
