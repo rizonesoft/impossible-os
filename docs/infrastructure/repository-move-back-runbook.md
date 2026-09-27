@@ -5,8 +5,8 @@
 > path** before it is needed: moving `rizonetech/impossible-os` back to a personal account and flipping the
 > repository to public should be a planned ownership change, not a scramble during the public launch.
 >
-> **Status:** forward-planning. The repository currently lives at `rizonetech/impossible-os` (private).
-> No move-back has been executed. This document is the procedure to follow when the move-back trigger fires.
+> **Status:** EXECUTED 2026-09-27. The repository now lives at `rizonesoft/impossible-os` (public). This document is
+> kept as the procedure record; the execution evidence is in the [repository transfer TODO](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#8-move-back-and-public-visibility-runbook).
 >
 > **Command recipes are reference, not a tested script.** The `gh` / `curl` / `jq` snippets are written to assert
 > the right invariant and fail closed, but GitHub's REST API evolves -- validate each against the current API

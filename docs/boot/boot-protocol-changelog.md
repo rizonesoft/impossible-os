@@ -129,7 +129,7 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 Adds three boot_info fields populated by the UEFI bootloader's pre-load ESP sanity gate so the kernel knows the partition was structurally validated before any code was loaded.
 
-- **Commit**: [`fb0c6520`](https://github.com/rizonetech/impossible-os/commit/fb0c6520) "boot: ESP integrity check (GPT type GUID + FAT32 BPB + required-files batch)"
+- **Commit**: [`fb0c6520`](https://github.com/rizonesoft/impossible-os/commit/fb0c6520) "boot: ESP integrity check (GPT type GUID + FAT32 BPB + required-files batch)"
 - **TODO**: [`02-uefi-hardening-secureboot.md` §13](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#13-esp-integrity-check)
 - **Fields added**: `esp_size_mb` (uint32), `esp_filesystem_type` (uint8 -- FAT32 / FAT16 / unknown), `esp_type_guid_valid` (uint8 -- 1 if the ESP partition's GPT type GUID matched the expected `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`).
 - **Producer contract**: bootloader runs `esp_integrity_check()` before `load_kernel()`; halts via `boot_fatal()` on GPT type GUID mismatch, FAT32 BPB validation failure, or any required-file (BOOTX64.EFI, kernel.exe, boot.conf) missing. On success the three fields are stamped into boot_info as a structural-validity attestation the kernel can echo into BlackBox.
@@ -151,7 +151,7 @@ struct layout changes; the bump signals that consumers may now observe
 
 Two independent ABI extensions land under v9:
 
-- **Commits**: [`11be3e13`](https://github.com/rizonetech/impossible-os/commit/11be3e13) "boot: anti-rollback security-version binding via UEFI NVRAM" + [`975ef6e5`](https://github.com/rizonetech/impossible-os/commit/975ef6e5) "boot: warm-kernel-update handoff ABI fields and descriptor"
+- **Commits**: [`11be3e13`](https://github.com/rizonesoft/impossible-os/commit/11be3e13) "boot: anti-rollback security-version binding via UEFI NVRAM" + [`975ef6e5`](https://github.com/rizonesoft/impossible-os/commit/975ef6e5) "boot: warm-kernel-update handoff ABI fields and descriptor"
 - **TODOs**: [§13 Anti-Rollback and Security-Version Binding](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#13-anti-rollback-and-security-version-binding) + [§14 Warm-Kernel-Update Handoff ABI](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#14-warm-kernel-update-handoff-abi)
 - **Anti-rollback fields added**: `flags`, `os_loader_security_version`, `required_security_version`, `_rollback_pad` (four `uint32_t` fields appended to `struct boot_info` after `boot_fallback_depth`). Also `anti_rollback_raise` (1 byte taken from `boot_config._reserved[10]` -> `_reserved[9]`; boot_config total size unchanged).
 - **Warm-update extensions**: new enum value `BOOT_PAYLOAD_WARM_UPDATE_STATE=9` for `enum boot_payload_type`, new flag bit `BOOT_FLAG_WARM_UPDATE` in `boot_info.flags`, new mmap discriminator `BOOT_MMAP_WARM_UPDATE=15`, and a 6-bit continuation flag family (`BOOT_WARM_UPDATE_CONT_*`) carried in `boot_payload_desc.flags` bits 8..13 alongside the standard `BOOT_PAYLOAD_FLAG_*` family. No struct field changes for the warm-update half -- ABI extension via new enum + flag values.
@@ -160,7 +160,7 @@ Two independent ABI extensions land under v9:
 
 ### v8 -- Boot-path provenance and decision record
 
-- **Commit**: [`12f39619`](https://github.com/rizonetech/impossible-os/commit/12f39619) "boot: add common boot decision record"
+- **Commit**: [`12f39619`](https://github.com/rizonesoft/impossible-os/commit/12f39619) "boot: add common boot decision record"
 - **TODO**: [Common Boot-Path Provenance and Decision Record](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#12-common-boot-path-provenance-and-decision-record)
 - **Fields added**: `boot_path`, `boot_reason`, `boot_source_flags`, `boot_fallback_depth` (four `uint32_t` fields appended to `struct boot_info` after `caps_degraded`).
 - **Manifest**: 232 fields, `struct_size = 23736` bytes.
@@ -169,7 +169,7 @@ Two independent ABI extensions land under v9:
 
 ### v7 -- Capability negotiation
 
-- **Commit**: [`bed68e53`](https://github.com/rizonetech/impossible-os/commit/bed68e53) "boot: add boot_info capability negotiation"
+- **Commit**: [`bed68e53`](https://github.com/rizonesoft/impossible-os/commit/bed68e53) "boot: add boot_info capability negotiation"
 - **TODO**: [Capability Negotiation and Degraded-Feature Flags](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags)
 - **Fields added**: `caps_required`, `caps_present`, `caps_degraded` (three `uint64_t` bitmasks appended to `struct boot_info` after `payload_total_bytes`).
 - **Manifest**: 228 fields, `struct_size = 23720` bytes.
@@ -178,7 +178,7 @@ Two independent ABI extensions land under v9:
 
 ### v6 -- Typed payload descriptor array
 
-- **Commit**: [`01991083`](https://github.com/rizonetech/impossible-os/commit/01991083) "boot: add typed payload descriptors"
+- **Commit**: [`01991083`](https://github.com/rizonesoft/impossible-os/commit/01991083) "boot: add typed payload descriptors"
 - **TODO**: [Optional Payload Descriptor Array](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - **Fields added**: `payload_descriptors[32]`, `payload_count`, `payload_overflow`, `payload_total_bytes`.
 - **Manifest**: 225 fields, `struct_size = 23696` bytes.
@@ -187,32 +187,32 @@ Two independent ABI extensions land under v9:
 
 ### v5 -- Removable media detection
 
-- **Commit**: [`e4bd76be`](https://github.com/rizonetech/impossible-os/commit/e4bd76be) "boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"
+- **Commit**: [`e4bd76be`](https://github.com/rizonesoft/impossible-os/commit/e4bd76be) "boot: detect removable media via EFI_BLOCK_IO_PROTOCOL"
 - **TODO**: [UEFI Hardening + Secure Boot](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md) (boot media classification work).
 - **Fields added**: removable-media / boot partition classification flags in the boot_device area.
 - **Why**: downstream consumers (recovery path, default drive selection) need to distinguish removable from fixed boot media before mounting.
 
 ### v4 -- Boot partition GUID
 
-- **Commit**: [`d125a47c`](https://github.com/rizonetech/impossible-os/commit/d125a47c) "boot: extract and validate boot partition GUID from device path"
+- **Commit**: [`d125a47c`](https://github.com/rizonesoft/impossible-os/commit/d125a47c) "boot: extract and validate boot partition GUID from device path"
 - **Fields added**: `boot_partition_guid[16]`, `boot_partition_style` (GPT vs MBR), plus related metadata.
 - **Why**: GPT-style boot media needs explicit partition identification so the kernel can locate diagnostic scratch (X:\Diag\) on the correct partition and so recovery can cross-check the partition identity vs `BootOrder`.
 
 ### v3 -- UEFI boot variables
 
-- **Commit**: [`77a4823c`](https://github.com/rizonetech/impossible-os/commit/77a4823c) "boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"
+- **Commit**: [`77a4823c`](https://github.com/rizonesoft/impossible-os/commit/77a4823c) "boot: read UEFI boot variables -- BootOrder, BootCurrent, BootNext"
 - **Fields added**: `uefi_boot_current`, `uefi_boot_next`, `uefi_boot_next_valid`, `uefi_boot_order[16]`, `uefi_boot_order_count`.
 - **Why**: the bootloader needs to read `BootOrder` + `BootCurrent` + `BootNext` before ExitBootServices (they come from UEFI variable storage); surfacing them to the kernel lets higher-level boot-device debug code explain the boot entry that fired.
 
 ### v2 -- Boot device type and path
 
-- **Commit**: [`6c3e723f`](https://github.com/rizonetech/impossible-os/commit/6c3e723f) "boot: pass boot device type and path in boot_info"
+- **Commit**: [`6c3e723f`](https://github.com/rizonesoft/impossible-os/commit/6c3e723f) "boot: pass boot device type and path in boot_info"
 - **Fields added**: `boot_device_type` (enum: unknown / SATA / NVMe / USB / network), `boot_device_path[128]` (UEFI device path in text form).
 - **Why**: the kernel needs to log which device it booted from for diagnostics and to drive the recovery-partition search.
 
 ### v1 -- Initial ABI
 
-- **Commit**: [`24d7baa2`](https://github.com/rizonetech/impossible-os/commit/24d7baa2) "boot: boot_info ABI header fields and bootloader populate"
+- **Commit**: [`24d7baa2`](https://github.com/rizonesoft/impossible-os/commit/24d7baa2) "boot: boot_info ABI header fields and bootloader populate"
 - **Baseline** of `struct boot_info` with `header{magic, version, size}`, memory map, framebuffer, UEFI config table, runtime services pointer, TPM event log pointer, USB enumeration state, timing TSC timestamps, serial port metadata, last-boot error code, and the parsed `boot_config` subset.
 - **Why**: first version of the ABI. Everything since is accretion.
 

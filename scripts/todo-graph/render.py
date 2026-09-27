@@ -49,7 +49,7 @@ EFFORT_DEFAULT = _cs.EFFORT_DEFAULT
 # Repo URL for clickable mermaid nodes. Spec pins this to the Impossible OS
 # GitHub repo; no override flag today (deferrable to a follow-up when the
 # graph ships on a fork or under a non-main default branch).
-REPO_URL_BASE = "https://github.com/rizonetech/impossible-os/blob/main"
+REPO_URL_BASE = "https://github.com/rizonesoft/impossible-os/blob/main"
 
 STATUS_STYLES = {
     "done":       {"fill": "#d4edda", "stroke": "#28a745"},

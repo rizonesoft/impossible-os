@@ -4,13 +4,13 @@
 
 ## Overview
 
-The `rizonetech/impossible-os` GitHub repository is configured with CI/CD pipelines, automated release management, issue/PR templates, branch protection, and community documentation. A secondary archived repo (`rizonesoft/impossible-os-bootloader`) exists but all development happens in the main repo.
+The `rizonesoft/impossible-os` GitHub repository is configured with CI/CD pipelines, automated release management, issue/PR templates, branch protection, and community documentation. A secondary archived repo (`rizonesoft/impossible-os-bootloader`) exists but all development happens in the main repo.
 
-> **Repository ownership and org policy.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the completed transfer (executed **2026-04-27**) from `rizonesoft/impossible-os` to `rizonetech/impossible-os` (enterprise org), plus the §8 future move-back / public-visibility runbook ([`repository-move-back-runbook.md`](repository-move-back-runbook.md)).
+> **Repository ownership and org policy.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the completed transfer (executed **2026-04-27**) from `rizonesoft/impossible-os` to `rizonesoft/impossible-os` (enterprise org), plus the §8 future move-back / public-visibility runbook ([`repository-move-back-runbook.md`](repository-move-back-runbook.md)).
 >
-> **Verified after the move:** owner is `rizonetech`; custom domain `impossibleos.co` (apex A records on GitHub Pages IPs, `www` CNAME to `rizonetech.github.io`, cert approved, apex serves over HTTPS); branch-protection / ruleset **structure** carried over.
+> **Moved back and made public 2026-09-27:** owner is `rizonesoft` (personal account), visibility **public**, `rizonetech/impossible-os` 301-redirects here. Custom domain `impossibleos.co` (apex A records on GitHub Pages IPs, cert approved, HTTPS **enforced**). The admin bypass on the `Default Branch Security` ruleset is restored. Secret scanning and push protection are enabled. Execution record: [move-back and public-visibility runbook](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#8-move-back-and-public-visibility-runbook).
 >
-> **Operator-pending (tracked in §2 / §5 / §7, NOT yet verified):** Pages `https_enforced` is still `false` (an HTTPS-redirect hardening gap to flip under the new owner); the ruleset **bypass actor** (admin Maintain role) did not map cleanly so no admin bypass entry survives (preflight F1) -- a branch-protection hardening gap to restore in §5 (the `Build Impossible OS` check is "expected", so pushes still land); and the org-level **autonomous-agent boundary** (Settings -> Copilot -> Access policies) is an operator-only UI check (O5) with no public API, not yet confirmed -- see [`ai-system.md`](ai-system.md#autonomous-agent-boundary-policy).
+> **Operator-pending:** the `www` CNAME still targets `rizonetech.github.io`; flip it to `rizonesoft.github.io` at the DNS provider (not urgent: `www` 301s to the apex either way). The autonomous-agent boundary check (Settings -> Copilot -> Access policies) is an operator-only UI check with no public API.
 >
 > The pre-transfer current-state baseline -- repository identity, Pages source mode, DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
 
@@ -45,10 +45,10 @@ graph TD
 
 | Repository                            | Visibility | Purpose                                    |
 | ------------------------------------- | ---------- | ------------------------------------------ |
-| `rizonetech/impossible-os`            | Private    | Kernel, bootloader, desktop, drivers, apps |
+| `rizonesoft/impossible-os`            | Public     | Kernel, bootloader, desktop, drivers, apps |
 | `rizonesoft/impossible-os-bootloader` | Public     | Superseded pre-release stopgap -- retire post-acceptance (see Secure Boot note) |
 
-> **Secure Boot release plan (decided 2026-06-16).** At public release, the shim-review / Microsoft 3rd-party UEFI CA submission uses the **main source** (`rizonetech/impossible-os`, which builds `BOOTX64.EFI` from `src/boot/uefi/`), NOT a separate bootloader repo. `rizonesoft/impossible-os-bootloader` was only ever a pre-release stopgap; it is not part of the future signing path. Retire it once the release main-source submission is accepted. Do not delete it while any upstream `rhboot/shim-review` submission referencing it is still open. The local `bootloader` git remote was removed 2026-06-16 (nothing syncs to it; the `BOOTLOADER_REPO_TOKEN` secret is orphaned with no consumer).
+> **Secure Boot release plan (decided 2026-06-16).** At public release, the shim-review / Microsoft 3rd-party UEFI CA submission uses the **main source** (`rizonesoft/impossible-os`, which builds `BOOTX64.EFI` from `src/boot/uefi/`), NOT a separate bootloader repo. `rizonesoft/impossible-os-bootloader` was only ever a pre-release stopgap; it is not part of the future signing path. Retire it once the release main-source submission is accepted. Do not delete it while any upstream `rhboot/shim-review` submission referencing it is still open. The local `bootloader` git remote was removed 2026-06-16 (nothing syncs to it; the `BOOTLOADER_REPO_TOKEN` secret is orphaned with no consumer).
 
 ---
 
@@ -404,7 +404,7 @@ Critical path explicit ownership:
 | Content         | Hero section, features, countdown, download   |
 | Download link   | Points to latest GitHub Release (`/releases`) |
 | Deploy          | GitHub Pages from `gh-pages` branch root      |
-| URL             | `rizonetech.github.io/impossible-os/`         |
+| URL             | `rizonesoft.github.io/impossible-os/`         |
 | Deploy workflow | `.github/workflows/pages.yml`                 |
 
 ---
@@ -479,7 +479,7 @@ Critical path explicit ownership:
 
 ## References
 
-- Repository: [rizonetech/impossible-os](https://github.com/rizonetech/impossible-os)
+- Repository: [rizonesoft/impossible-os](https://github.com/rizonesoft/impossible-os)
 - CI config: `.github/workflows/`
 - Templates: `.github/ISSUE_TEMPLATE/`
 - Related: [Development Tooling](development-tooling.md)

@@ -11,700 +11,700 @@ flowchart TD
   classDef superseded fill:#e2e3e5,stroke:#6c757d,stroke-dasharray:5 5;
   todo_00_infrastructure_TODO_01_developer_tooling_stack_md_b86fba["developer-tooling-stack<br/>TODO-01"]
   class todo_00_infrastructure_TODO_01_developer_tooling_stack_md_b86fba active
-  click todo_00_infrastructure_TODO_01_developer_tooling_stack_md_b86fba "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+  click todo_00_infrastructure_TODO_01_developer_tooling_stack_md_b86fba "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
   todo_00_infrastructure_TODO_02_ai_development_system_md_9576a9["ai-development-system<br/>TODO-02"]
   class todo_00_infrastructure_TODO_02_ai_development_system_md_9576a9 active
-  click todo_00_infrastructure_TODO_02_ai_development_system_md_9576a9 "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-02-ai-development-system.md"
+  click todo_00_infrastructure_TODO_02_ai_development_system_md_9576a9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-02-ai-development-system.md"
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb["kernel-test-harness<br/>TODO-03"]
   class todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb active
-  click todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-03-kernel-test-harness.md"
+  click todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-03-kernel-test-harness.md"
   todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087["usermode-test-framework<br/>TODO-04"]
   class todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 active
-  click todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-04-usermode-test-framework.md"
+  click todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-04-usermode-test-framework.md"
   todo_00_infrastructure_TODO_05_desktop_ui_test_framework_md_e8b1df["desktop-ui-test-framework<br/>TODO-05"]
   class todo_00_infrastructure_TODO_05_desktop_ui_test_framework_md_e8b1df active
-  click todo_00_infrastructure_TODO_05_desktop_ui_test_framework_md_e8b1df "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md"
+  click todo_00_infrastructure_TODO_05_desktop_ui_test_framework_md_e8b1df "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md"
   todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1["todo-metadata-layer<br/>TODO-06"]
   class todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1 active
-  click todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1 "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-06-todo-metadata-layer.md"
+  click todo_00_infrastructure_TODO_06_todo_metadata_layer_md_2681a1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-06-todo-metadata-layer.md"
   todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90["lsp-mcp-bridge<br/>TODO-07"]
   class todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 draft
-  click todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md"
+  click todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md"
   todo_00_infrastructure_TODO_08_automation_hardening_md_187877["automation-hardening<br/>TODO-08"]
   class todo_00_infrastructure_TODO_08_automation_hardening_md_187877 draft
-  click todo_00_infrastructure_TODO_08_automation_hardening_md_187877 "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-08-automation-hardening.md"
+  click todo_00_infrastructure_TODO_08_automation_hardening_md_187877 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-08-automation-hardening.md"
   todo_00_infrastructure_TODO_09_repository_transfer_rizonetech_md_246db5["repository-transfer-rizonetech<br/>TODO-09"]
   class todo_00_infrastructure_TODO_09_repository_transfer_rizonetech_md_246db5 draft
-  click todo_00_infrastructure_TODO_09_repository_transfer_rizonetech_md_246db5 "https://github.com/rizonetech/impossible-os/blob/main/todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md"
+  click todo_00_infrastructure_TODO_09_repository_transfer_rizonetech_md_246db5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md"
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791["boot-protocol-abi-handoff<br/>TODO-01"]
   class todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 active
-  click todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md"
+  click todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md"
   todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c["uefi-hardening-secureboot<br/>TODO-02"]
   class todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c active
-  click todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md"
+  click todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md"
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477["bootloader-error-recovery<br/>TODO-03"]
   class todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 active
-  click todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-03-bootloader-error-recovery.md"
+  click todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-03-bootloader-error-recovery.md"
   todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4["firmware-table-platform-inventory<br/>TODO-04"]
   class todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4 active
-  click todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md"
+  click todo_01_boot_platform_TODO_04_firmware_table_platform_inventory_md_daf5a4 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md"
   todo_01_boot_platform_TODO_05_boot_device_discovery_md_a01858["boot-device-discovery<br/>TODO-05"]
   class todo_01_boot_platform_TODO_05_boot_device_discovery_md_a01858 active
-  click todo_01_boot_platform_TODO_05_boot_device_discovery_md_a01858 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-05-boot-device-discovery.md"
+  click todo_01_boot_platform_TODO_05_boot_device_discovery_md_a01858 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-05-boot-device-discovery.md"
   todo_01_boot_platform_TODO_06_boot_media_image_installer_handoff_md_5871e1["boot-media-image-installer-handoff<br/>TODO-06"]
   class todo_01_boot_platform_TODO_06_boot_media_image_installer_handoff_md_5871e1 active
-  click todo_01_boot_platform_TODO_06_boot_media_image_installer_handoff_md_5871e1 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md"
+  click todo_01_boot_platform_TODO_06_boot_media_image_installer_handoff_md_5871e1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md"
   todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1["boot-entry-store-menu-policy<br/>TODO-07"]
   class todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1 active
-  click todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md"
+  click todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md"
   todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06["alternate-boot-protocols<br/>TODO-08"]
   class todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06 done
-  click todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-08-alternate-boot-protocols.md"
+  click todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-08-alternate-boot-protocols.md"
   todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775["cpu-boot-sequencing<br/>TODO-09"]
   class todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775 active
-  click todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md"
+  click todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md"
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12["bare-metal-hardening<br/>TODO-10"]
   class todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 active
-  click todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-10-bare-metal-hardening.md"
+  click todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-10-bare-metal-hardening.md"
   todo_01_boot_platform_TODO_11_interrupt_timer_arch_md_b2e16a["interrupt-timer-arch<br/>TODO-11"]
   class todo_01_boot_platform_TODO_11_interrupt_timer_arch_md_b2e16a active
-  click todo_01_boot_platform_TODO_11_interrupt_timer_arch_md_b2e16a "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-11-interrupt-timer-arch.md"
+  click todo_01_boot_platform_TODO_11_interrupt_timer_arch_md_b2e16a "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-11-interrupt-timer-arch.md"
   todo_01_boot_platform_TODO_12_early_entropy_random_seed_md_5d8fe0["early-entropy-random-seed<br/>TODO-12"]
   class todo_01_boot_platform_TODO_12_early_entropy_random_seed_md_5d8fe0 active
-  click todo_01_boot_platform_TODO_12_early_entropy_random_seed_md_5d8fe0 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-12-early-entropy-random-seed.md"
+  click todo_01_boot_platform_TODO_12_early_entropy_random_seed_md_5d8fe0 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-12-early-entropy-random-seed.md"
   todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e["tpm-measured-boot-attestation<br/>TODO-13"]
   class todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e active
-  click todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md"
+  click todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md"
   todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3["boot-diagnostics<br/>TODO-14"]
   class todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3 active
-  click todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-14-boot-diagnostics.md"
+  click todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-14-boot-diagnostics.md"
   todo_01_boot_platform_TODO_15_visual_post_display_md_51f068["visual-post-display<br/>TODO-15"]
   class todo_01_boot_platform_TODO_15_visual_post_display_md_51f068 active
-  click todo_01_boot_platform_TODO_15_visual_post_display_md_51f068 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-15-visual-post-display.md"
+  click todo_01_boot_platform_TODO_15_visual_post_display_md_51f068 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-15-visual-post-display.md"
   todo_01_boot_platform_TODO_16_nvme_storage_md_75ab03["nvme-storage<br/>TODO-16"]
   class todo_01_boot_platform_TODO_16_nvme_storage_md_75ab03 active
-  click todo_01_boot_platform_TODO_16_nvme_storage_md_75ab03 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-16-nvme-storage.md"
+  click todo_01_boot_platform_TODO_16_nvme_storage_md_75ab03 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-16-nvme-storage.md"
   todo_01_boot_platform_TODO_17_xhci_usb_boot_md_b7e0b6["xhci-usb-boot<br/>TODO-17"]
   class todo_01_boot_platform_TODO_17_xhci_usb_boot_md_b7e0b6 active
-  click todo_01_boot_platform_TODO_17_xhci_usb_boot_md_b7e0b6 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-17-xhci-usb-boot.md"
+  click todo_01_boot_platform_TODO_17_xhci_usb_boot_md_b7e0b6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-17-xhci-usb-boot.md"
   todo_01_boot_platform_TODO_18_usb_hid_keyboard_mouse_md_0dc9c5["usb-hid-keyboard-mouse<br/>TODO-18"]
   class todo_01_boot_platform_TODO_18_usb_hid_keyboard_mouse_md_0dc9c5 active
-  click todo_01_boot_platform_TODO_18_usb_hid_keyboard_mouse_md_0dc9c5 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md"
+  click todo_01_boot_platform_TODO_18_usb_hid_keyboard_mouse_md_0dc9c5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md"
   todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d["usb-boot-hardening<br/>TODO-19"]
   class todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d active
-  click todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-19-usb-boot-hardening.md"
+  click todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-19-usb-boot-hardening.md"
   todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e["usb-zero-delay-handover<br/>TODO-20"]
   class todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e active
-  click todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md"
+  click todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md"
   todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62["ab-boot-rollback<br/>TODO-21"]
   class todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62 active
-  click todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-21-ab-boot-rollback.md"
+  click todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-21-ab-boot-rollback.md"
   todo_01_boot_platform_TODO_22_recovery_partition_md_ee1d1c["recovery-partition<br/>TODO-22"]
   class todo_01_boot_platform_TODO_22_recovery_partition_md_ee1d1c active
-  click todo_01_boot_platform_TODO_22_recovery_partition_md_ee1d1c "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-22-recovery-partition.md"
+  click todo_01_boot_platform_TODO_22_recovery_partition_md_ee1d1c "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-22-recovery-partition.md"
   todo_01_boot_platform_TODO_23_boot_watchdog_md_15b589["boot-watchdog<br/>TODO-23"]
   class todo_01_boot_platform_TODO_23_boot_watchdog_md_15b589 active
-  click todo_01_boot_platform_TODO_23_boot_watchdog_md_15b589 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-23-boot-watchdog.md"
+  click todo_01_boot_platform_TODO_23_boot_watchdog_md_15b589 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-23-boot-watchdog.md"
   todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0["blackbox-service-partition<br/>TODO-24"]
   class todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0 active
-  click todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-24-blackbox-service-partition.md"
+  click todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-24-blackbox-service-partition.md"
   todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384["network-pxe-http-boot<br/>TODO-25"]
   class todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 active
-  click todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-25-network-pxe-http-boot.md"
+  click todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-25-network-pxe-http-boot.md"
   todo_01_boot_platform_TODO_26_hibernation_resume_fast_startup_handoff_md_b1e5e5["hibernation-resume-fast-startup-handoff<br/>TODO-26"]
   class todo_01_boot_platform_TODO_26_hibernation_resume_fast_startup_handoff_md_b1e5e5 active
-  click todo_01_boot_platform_TODO_26_hibernation_resume_fast_startup_handoff_md_b1e5e5 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md"
+  click todo_01_boot_platform_TODO_26_hibernation_resume_fast_startup_handoff_md_b1e5e5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md"
   todo_01_boot_platform_TODO_27_uefi_advanced_md_f510b5["uefi-advanced<br/>TODO-27"]
   class todo_01_boot_platform_TODO_27_uefi_advanced_md_f510b5 active
-  click todo_01_boot_platform_TODO_27_uefi_advanced_md_f510b5 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-27-uefi-advanced.md"
+  click todo_01_boot_platform_TODO_27_uefi_advanced_md_f510b5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-27-uefi-advanced.md"
   todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca["boot-validation-certification-matrix<br/>TODO-28"]
   class todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca active
-  click todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md"
+  click todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md"
   todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f["boot-perf-health-observability<br/>TODO-29"]
   class todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f active
-  click todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-29-boot-perf-health-observability.md"
+  click todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f "https://github.com/rizonesoft/impossible-os/blob/main/todo/01-boot-platform/TODO-29-boot-perf-health-observability.md"
   todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c["kernel-init-sequencing<br/>TODO-01"]
   class todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c active
-  click todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-01-kernel-init-sequencing.md"
+  click todo_02_kernel_core_TODO_01_kernel_init_sequencing_md_0dbd4c "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-01-kernel-init-sequencing.md"
   todo_02_kernel_core_TODO_02_kernel_configuration_policy_md_8a0d7f["kernel-configuration-policy<br/>TODO-02"]
   class todo_02_kernel_core_TODO_02_kernel_configuration_policy_md_8a0d7f active
-  click todo_02_kernel_core_TODO_02_kernel_configuration_policy_md_8a0d7f "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-02-kernel-configuration-policy.md"
+  click todo_02_kernel_core_TODO_02_kernel_configuration_policy_md_8a0d7f "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-02-kernel-configuration-policy.md"
   todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976["kernel-libraries<br/>TODO-03"]
   class todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 active
-  click todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-03-kernel-libraries.md"
+  click todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-03-kernel-libraries.md"
   todo_02_kernel_core_TODO_04_system_logging_md_f11c79["system-logging<br/>TODO-04"]
   class todo_02_kernel_core_TODO_04_system_logging_md_f11c79 active
-  click todo_02_kernel_core_TODO_04_system_logging_md_f11c79 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-04-system-logging.md"
+  click todo_02_kernel_core_TODO_04_system_logging_md_f11c79 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-04-system-logging.md"
   todo_02_kernel_core_TODO_05_object_manager_md_832dce["object-manager<br/>TODO-05"]
   class todo_02_kernel_core_TODO_05_object_manager_md_832dce active
-  click todo_02_kernel_core_TODO_05_object_manager_md_832dce "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-05-object-manager.md"
+  click todo_02_kernel_core_TODO_05_object_manager_md_832dce "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-05-object-manager.md"
   todo_02_kernel_core_TODO_06_executive_support_runtime_md_5831d4["executive-support-runtime<br/>TODO-06"]
   class todo_02_kernel_core_TODO_06_executive_support_runtime_md_5831d4 active
-  click todo_02_kernel_core_TODO_06_executive_support_runtime_md_5831d4 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-06-executive-support-runtime.md"
+  click todo_02_kernel_core_TODO_06_executive_support_runtime_md_5831d4 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-06-executive-support-runtime.md"
   todo_02_kernel_core_TODO_07_irql_model_dpcs_md_094b11["irql-model-dpcs<br/>TODO-07"]
   class todo_02_kernel_core_TODO_07_irql_model_dpcs_md_094b11 active
-  click todo_02_kernel_core_TODO_07_irql_model_dpcs_md_094b11 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-07-irql-model-dpcs.md"
+  click todo_02_kernel_core_TODO_07_irql_model_dpcs_md_094b11 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-07-irql-model-dpcs.md"
   todo_02_kernel_core_TODO_08_time_filetime_management_md_8bbbfc["time-filetime-management<br/>TODO-08"]
   class todo_02_kernel_core_TODO_08_time_filetime_management_md_8bbbfc active
-  click todo_02_kernel_core_TODO_08_time_filetime_management_md_8bbbfc "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-08-time-filetime-management.md"
+  click todo_02_kernel_core_TODO_08_time_filetime_management_md_8bbbfc "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-08-time-filetime-management.md"
   todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27["x86-64-architecture<br/>TODO-09"]
   class todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27 active
-  click todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-09-x86-64-architecture.md"
+  click todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-09-x86-64-architecture.md"
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7["kernel-security-hardening<br/>TODO-10"]
   class todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 active
-  click todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-10-kernel-security-hardening.md"
+  click todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-10-kernel-security-hardening.md"
   todo_02_kernel_core_TODO_11_peb_teb_user_abi_md_b6f5d6["peb-teb-user-abi<br/>TODO-11"]
   class todo_02_kernel_core_TODO_11_peb_teb_user_abi_md_b6f5d6 active
-  click todo_02_kernel_core_TODO_11_peb_teb_user_abi_md_b6f5d6 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-11-peb-teb-user-abi.md"
+  click todo_02_kernel_core_TODO_11_peb_teb_user_abi_md_b6f5d6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-11-peb-teb-user-abi.md"
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594["native-api-ssdt<br/>TODO-12"]
   class todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 active
-  click todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-12-native-api-ssdt.md"
+  click todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-12-native-api-ssdt.md"
   todo_02_kernel_core_TODO_13_atom_nls_locale_subsystem_md_d2decf["atom-nls-locale-subsystem<br/>TODO-13"]
   class todo_02_kernel_core_TODO_13_atom_nls_locale_subsystem_md_d2decf active
-  click todo_02_kernel_core_TODO_13_atom_nls_locale_subsystem_md_d2decf "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md"
+  click todo_02_kernel_core_TODO_13_atom_nls_locale_subsystem_md_d2decf "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md"
   todo_02_kernel_core_TODO_14_registry_completion_md_e13937["registry-completion<br/>TODO-14"]
   class todo_02_kernel_core_TODO_14_registry_completion_md_e13937 active
-  click todo_02_kernel_core_TODO_14_registry_completion_md_e13937 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-14-registry-completion.md"
+  click todo_02_kernel_core_TODO_14_registry_completion_md_e13937 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-14-registry-completion.md"
   todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb["security-reference-monitor<br/>TODO-15"]
   class todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb active
-  click todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-15-security-reference-monitor.md"
+  click todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-15-security-reference-monitor.md"
   todo_02_kernel_core_TODO_16_kernel_notification_facility_md_a4627a["kernel-notification-facility<br/>TODO-16"]
   class todo_02_kernel_core_TODO_16_kernel_notification_facility_md_a4627a active
-  click todo_02_kernel_core_TODO_16_kernel_notification_facility_md_a4627a "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-16-kernel-notification-facility.md"
+  click todo_02_kernel_core_TODO_16_kernel_notification_facility_md_a4627a "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-16-kernel-notification-facility.md"
   todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8["binary-system<br/>TODO-17"]
   class todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8 active
-  click todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-17-binary-system.md"
+  click todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-17-binary-system.md"
   todo_02_kernel_core_TODO_18_kernel_image_module_registry_md_a8091a["kernel-image-module-registry<br/>TODO-18"]
   class todo_02_kernel_core_TODO_18_kernel_image_module_registry_md_a8091a active
-  click todo_02_kernel_core_TODO_18_kernel_image_module_registry_md_a8091a "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-18-kernel-image-module-registry.md"
+  click todo_02_kernel_core_TODO_18_kernel_image_module_registry_md_a8091a "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-18-kernel-image-module-registry.md"
   todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09["code-integrity-trust-policy<br/>TODO-19"]
   class todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09 active
-  click todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-19-code-integrity-trust-policy.md"
+  click todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-19-code-integrity-trust-policy.md"
   todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194["eif-full-implementation<br/>TODO-20"]
   class todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194 active
-  click todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-20-eif-full-implementation.md"
+  click todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-20-eif-full-implementation.md"
   todo_02_kernel_core_TODO_21_process_model_extensions_md_6c5bc6["process-model-extensions<br/>TODO-21"]
   class todo_02_kernel_core_TODO_21_process_model_extensions_md_6c5bc6 active
-  click todo_02_kernel_core_TODO_21_process_model_extensions_md_6c5bc6 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-21-process-model-extensions.md"
+  click todo_02_kernel_core_TODO_21_process_model_extensions_md_6c5bc6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-21-process-model-extensions.md"
   todo_02_kernel_core_TODO_22_environment_variables_md_a79eb3["environment-variables<br/>TODO-22"]
   class todo_02_kernel_core_TODO_22_environment_variables_md_a79eb3 active
-  click todo_02_kernel_core_TODO_22_environment_variables_md_a79eb3 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-22-environment-variables.md"
+  click todo_02_kernel_core_TODO_22_environment_variables_md_a79eb3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-22-environment-variables.md"
   todo_02_kernel_core_TODO_23_exception_dispatch_seh_md_b5e4b8["exception-dispatch-seh<br/>TODO-23"]
   class todo_02_kernel_core_TODO_23_exception_dispatch_seh_md_b5e4b8 active
-  click todo_02_kernel_core_TODO_23_exception_dispatch_seh_md_b5e4b8 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-23-exception-dispatch-seh.md"
+  click todo_02_kernel_core_TODO_23_exception_dispatch_seh_md_b5e4b8 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-23-exception-dispatch-seh.md"
   todo_02_kernel_core_TODO_24_alpc_message_ports_md_9d63bf["alpc-message-ports<br/>TODO-24"]
   class todo_02_kernel_core_TODO_24_alpc_message_ports_md_9d63bf active
-  click todo_02_kernel_core_TODO_24_alpc_message_ports_md_9d63bf "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-24-alpc-message-ports.md"
+  click todo_02_kernel_core_TODO_24_alpc_message_ports_md_9d63bf "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-24-alpc-message-ports.md"
   todo_02_kernel_core_TODO_25_kernel_resource_accounting_quotas_md_ef92af["kernel-resource-accounting-quotas<br/>TODO-25"]
   class todo_02_kernel_core_TODO_25_kernel_resource_accounting_quotas_md_ef92af active
-  click todo_02_kernel_core_TODO_25_kernel_resource_accounting_quotas_md_ef92af "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md"
+  click todo_02_kernel_core_TODO_25_kernel_resource_accounting_quotas_md_ef92af "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md"
   todo_02_kernel_core_TODO_26_power_management_md_d51bc9["power-management<br/>TODO-26"]
   class todo_02_kernel_core_TODO_26_power_management_md_d51bc9 active
-  click todo_02_kernel_core_TODO_26_power_management_md_d51bc9 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-26-power-management.md"
+  click todo_02_kernel_core_TODO_26_power_management_md_d51bc9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-26-power-management.md"
   todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66["crash-dump-generation<br/>TODO-27"]
   class todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66 active
-  click todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-27-crash-dump-generation.md"
+  click todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-27-crash-dump-generation.md"
   todo_02_kernel_core_TODO_28_bsod_ux_enhancements_md_454948["bsod-ux-enhancements<br/>TODO-28"]
   class todo_02_kernel_core_TODO_28_bsod_ux_enhancements_md_454948 active
-  click todo_02_kernel_core_TODO_28_bsod_ux_enhancements_md_454948 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md"
+  click todo_02_kernel_core_TODO_28_bsod_ux_enhancements_md_454948 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md"
   todo_02_kernel_core_TODO_29_kernel_debugger_kd_protocol_md_3fcc17["kernel-debugger-kd-protocol<br/>TODO-29"]
   class todo_02_kernel_core_TODO_29_kernel_debugger_kd_protocol_md_3fcc17 active
-  click todo_02_kernel_core_TODO_29_kernel_debugger_kd_protocol_md_3fcc17 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md"
+  click todo_02_kernel_core_TODO_29_kernel_debugger_kd_protocol_md_3fcc17 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md"
   todo_02_kernel_core_TODO_30_system_health_recovery_orchestrator_md_8c85b8["system-health-recovery-orchestrator<br/>TODO-30"]
   class todo_02_kernel_core_TODO_30_system_health_recovery_orchestrator_md_8c85b8 active
-  click todo_02_kernel_core_TODO_30_system_health_recovery_orchestrator_md_8c85b8 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md"
+  click todo_02_kernel_core_TODO_30_system_health_recovery_orchestrator_md_8c85b8 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md"
   todo_02_kernel_core_TODO_31_kernel_bulletproofing_md_f4ac23["kernel-bulletproofing<br/>TODO-31"]
   class todo_02_kernel_core_TODO_31_kernel_bulletproofing_md_f4ac23 active
-  click todo_02_kernel_core_TODO_31_kernel_bulletproofing_md_f4ac23 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-31-kernel-bulletproofing.md"
+  click todo_02_kernel_core_TODO_31_kernel_bulletproofing_md_f4ac23 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-31-kernel-bulletproofing.md"
   todo_02_kernel_core_TODO_32_kernel_logging_v2_lockless_md_4bbf00["kernel-logging-v2-lockless<br/>TODO-32"]
   class todo_02_kernel_core_TODO_32_kernel_logging_v2_lockless_md_4bbf00 active
-  click todo_02_kernel_core_TODO_32_kernel_logging_v2_lockless_md_4bbf00 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md"
+  click todo_02_kernel_core_TODO_32_kernel_logging_v2_lockless_md_4bbf00 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md"
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375["higher-half-kernel-relocation<br/>TODO-33"]
   class todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 draft
-  click todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md"
+  click todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md"
   todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e["serial-log-signal-to-noise<br/>TODO-34"]
   class todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e draft
-  click todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md"
+  click todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md"
   todo_02_kernel_core_TODO_35_unblocked_deferral_backfill_md_1eeef8["unblocked-deferral-backfill<br/>TODO-35"]
   class todo_02_kernel_core_TODO_35_unblocked_deferral_backfill_md_1eeef8 draft
-  click todo_02_kernel_core_TODO_35_unblocked_deferral_backfill_md_1eeef8 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md"
+  click todo_02_kernel_core_TODO_35_unblocked_deferral_backfill_md_1eeef8 "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md"
   todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab["ssdt-master-table<br/>TODO-A"]
   class todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab active
-  click todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-A-SSDT-Master-Table.md"
+  click todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab "https://github.com/rizonesoft/impossible-os/blob/main/todo/02-kernel-core/TODO-A-SSDT-Master-Table.md"
   todo_03_memory_concurrency_TODO_01_vmm_memory_protection_md_3a251c["vmm-memory-protection<br/>TODO-01"]
   class todo_03_memory_concurrency_TODO_01_vmm_memory_protection_md_3a251c active
-  click todo_03_memory_concurrency_TODO_01_vmm_memory_protection_md_3a251c "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md"
+  click todo_03_memory_concurrency_TODO_01_vmm_memory_protection_md_3a251c "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md"
   todo_03_memory_concurrency_TODO_02_memory_security_md_fdd204["memory-security<br/>TODO-02"]
   class todo_03_memory_concurrency_TODO_02_memory_security_md_fdd204 active
-  click todo_03_memory_concurrency_TODO_02_memory_security_md_fdd204 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-02-memory-security.md"
+  click todo_03_memory_concurrency_TODO_02_memory_security_md_fdd204 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-02-memory-security.md"
   todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf["advanced-allocator<br/>TODO-03"]
   class todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf active
-  click todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-03-advanced-allocator.md"
+  click todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-03-advanced-allocator.md"
   todo_03_memory_concurrency_TODO_04_pager_reclaim_working_set_md_289e4b["pager-reclaim-working-set<br/>TODO-04"]
   class todo_03_memory_concurrency_TODO_04_pager_reclaim_working_set_md_289e4b active
-  click todo_03_memory_concurrency_TODO_04_pager_reclaim_working_set_md_289e4b "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md"
+  click todo_03_memory_concurrency_TODO_04_pager_reclaim_working_set_md_289e4b "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md"
   todo_03_memory_concurrency_TODO_05_advanced_virtual_memory_md_514c65["advanced-virtual-memory<br/>TODO-05"]
   class todo_03_memory_concurrency_TODO_05_advanced_virtual_memory_md_514c65 active
-  click todo_03_memory_concurrency_TODO_05_advanced_virtual_memory_md_514c65 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md"
+  click todo_03_memory_concurrency_TODO_05_advanced_virtual_memory_md_514c65 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md"
   todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55["scheduler-enhancement<br/>TODO-06"]
   class todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55 active
-  click todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md"
+  click todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md"
   todo_03_memory_concurrency_TODO_07_smp_phase2_md_27362e["smp-phase2<br/>TODO-07"]
   class todo_03_memory_concurrency_TODO_07_smp_phase2_md_27362e active
-  click todo_03_memory_concurrency_TODO_07_smp_phase2_md_27362e "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-07-smp-phase2.md"
+  click todo_03_memory_concurrency_TODO_07_smp_phase2_md_27362e "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-07-smp-phase2.md"
   todo_03_memory_concurrency_TODO_08_advanced_sync_md_31eaa2["advanced-sync<br/>TODO-08"]
   class todo_03_memory_concurrency_TODO_08_advanced_sync_md_31eaa2 active
-  click todo_03_memory_concurrency_TODO_08_advanced_sync_md_31eaa2 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-08-advanced-sync.md"
+  click todo_03_memory_concurrency_TODO_08_advanced_sync_md_31eaa2 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-08-advanced-sync.md"
   todo_03_memory_concurrency_TODO_09_win32_ipc_extensions_md_18ade5["win32-ipc-extensions<br/>TODO-09"]
   class todo_03_memory_concurrency_TODO_09_win32_ipc_extensions_md_18ade5 active
-  click todo_03_memory_concurrency_TODO_09_win32_ipc_extensions_md_18ade5 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md"
+  click todo_03_memory_concurrency_TODO_09_win32_ipc_extensions_md_18ade5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md"
   todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0["concurrency-diagnostics<br/>TODO-10"]
   class todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0 active
-  click todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md"
+  click todo_03_memory_concurrency_TODO_10_concurrency_diagnostics_md_8cffc0 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md"
   todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7["warm-kernel-update-runtime<br/>TODO-11"]
   class todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7 active
-  click todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7 "https://github.com/rizonetech/impossible-os/blob/main/todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md"
+  click todo_03_memory_concurrency_TODO_11_warm_kernel_update_runtime_md_0449f7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md"
   todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b["pci-pcie-pnp-resource-manager<br/>TODO-01"]
   class todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b active
-  click todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md"
+  click todo_04_drivers_hardware_TODO_01_pci_pcie_pnp_resource_manager_md_45903b "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md"
   todo_04_drivers_hardware_TODO_02_apic_interrupt_routing_md_c282da["apic-interrupt-routing<br/>TODO-02"]
   class todo_04_drivers_hardware_TODO_02_apic_interrupt_routing_md_c282da active
-  click todo_04_drivers_hardware_TODO_02_apic_interrupt_routing_md_c282da "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md"
+  click todo_04_drivers_hardware_TODO_02_apic_interrupt_routing_md_c282da "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md"
   todo_04_drivers_hardware_TODO_03_acpi_power_management_md_2c6d10["acpi-power-management<br/>TODO-03"]
   class todo_04_drivers_hardware_TODO_03_acpi_power_management_md_2c6d10 active
-  click todo_04_drivers_hardware_TODO_03_acpi_power_management_md_2c6d10 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-03-acpi-power-management.md"
+  click todo_04_drivers_hardware_TODO_03_acpi_power_management_md_2c6d10 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-03-acpi-power-management.md"
   todo_04_drivers_hardware_TODO_04_security_hardware_md_4e7447["security-hardware<br/>TODO-04"]
   class todo_04_drivers_hardware_TODO_04_security_hardware_md_4e7447 active
-  click todo_04_drivers_hardware_TODO_04_security_hardware_md_4e7447 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-04-security-hardware.md"
+  click todo_04_drivers_hardware_TODO_04_security_hardware_md_4e7447 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-04-security-hardware.md"
   todo_04_drivers_hardware_TODO_05_kernel_module_system_md_93cbc6["kernel-module-system<br/>TODO-05"]
   class todo_04_drivers_hardware_TODO_05_kernel_module_system_md_93cbc6 active
-  click todo_04_drivers_hardware_TODO_05_kernel_module_system_md_93cbc6 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-05-kernel-module-system.md"
+  click todo_04_drivers_hardware_TODO_05_kernel_module_system_md_93cbc6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-05-kernel-module-system.md"
   todo_04_drivers_hardware_TODO_06_firmware_loader_device_blobs_md_01c9cd["firmware-loader-device-blobs<br/>TODO-06"]
   class todo_04_drivers_hardware_TODO_06_firmware_loader_device_blobs_md_01c9cd active
-  click todo_04_drivers_hardware_TODO_06_firmware_loader_device_blobs_md_01c9cd "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md"
+  click todo_04_drivers_hardware_TODO_06_firmware_loader_device_blobs_md_01c9cd "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md"
   todo_04_drivers_hardware_TODO_07_device_manager_md_0fe3cf["device-manager<br/>TODO-07"]
   class todo_04_drivers_hardware_TODO_07_device_manager_md_0fe3cf active
-  click todo_04_drivers_hardware_TODO_07_device_manager_md_0fe3cf "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-07-device-manager.md"
+  click todo_04_drivers_hardware_TODO_07_device_manager_md_0fe3cf "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-07-device-manager.md"
   todo_04_drivers_hardware_TODO_08_core_driver_enhancements_md_ae79d2["core-driver-enhancements<br/>TODO-08"]
   class todo_04_drivers_hardware_TODO_08_core_driver_enhancements_md_ae79d2 active
-  click todo_04_drivers_hardware_TODO_08_core_driver_enhancements_md_ae79d2 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md"
+  click todo_04_drivers_hardware_TODO_08_core_driver_enhancements_md_ae79d2 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md"
   todo_04_drivers_hardware_TODO_09_hypervisor_abstraction_md_22380b["hypervisor-abstraction<br/>TODO-09"]
   class todo_04_drivers_hardware_TODO_09_hypervisor_abstraction_md_22380b active
-  click todo_04_drivers_hardware_TODO_09_hypervisor_abstraction_md_22380b "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md"
+  click todo_04_drivers_hardware_TODO_09_hypervisor_abstraction_md_22380b "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md"
   todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84["usb-stack<br/>TODO-10"]
   class todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84 active
-  click todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-10-usb-stack.md"
+  click todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-10-usb-stack.md"
   todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a["input-system-drivers<br/>TODO-11"]
   class todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a active
-  click todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-11-input-system.md"
+  click todo_04_drivers_hardware_TODO_11_input_system_md_a64a2a "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-11-input-system.md"
   todo_04_drivers_hardware_TODO_12_i2c_touchpad_md_9db485["i2c-touchpad<br/>TODO-12"]
   class todo_04_drivers_hardware_TODO_12_i2c_touchpad_md_9db485 active
-  click todo_04_drivers_hardware_TODO_12_i2c_touchpad_md_9db485 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-12-i2c-touchpad.md"
+  click todo_04_drivers_hardware_TODO_12_i2c_touchpad_md_9db485 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-12-i2c-touchpad.md"
   todo_04_drivers_hardware_TODO_13_storage_controller_device_drivers_md_a47774["storage-controller-device-drivers<br/>TODO-13"]
   class todo_04_drivers_hardware_TODO_13_storage_controller_device_drivers_md_a47774 active
-  click todo_04_drivers_hardware_TODO_13_storage_controller_device_drivers_md_a47774 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md"
+  click todo_04_drivers_hardware_TODO_13_storage_controller_device_drivers_md_a47774 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md"
   todo_04_drivers_hardware_TODO_14_network_drivers_md_d696ff["network-drivers<br/>TODO-14"]
   class todo_04_drivers_hardware_TODO_14_network_drivers_md_d696ff active
-  click todo_04_drivers_hardware_TODO_14_network_drivers_md_d696ff "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-14-network-drivers.md"
+  click todo_04_drivers_hardware_TODO_14_network_drivers_md_d696ff "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-14-network-drivers.md"
   todo_04_drivers_hardware_TODO_15_wifi_drivers_md_d184d4["wifi-drivers<br/>TODO-15"]
   class todo_04_drivers_hardware_TODO_15_wifi_drivers_md_d184d4 active
-  click todo_04_drivers_hardware_TODO_15_wifi_drivers_md_d184d4 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-15-wifi-drivers.md"
+  click todo_04_drivers_hardware_TODO_15_wifi_drivers_md_d184d4 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-15-wifi-drivers.md"
   todo_04_drivers_hardware_TODO_16_bluetooth_md_eff04b["bluetooth<br/>TODO-16"]
   class todo_04_drivers_hardware_TODO_16_bluetooth_md_eff04b active
-  click todo_04_drivers_hardware_TODO_16_bluetooth_md_eff04b "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-16-bluetooth.md"
+  click todo_04_drivers_hardware_TODO_16_bluetooth_md_eff04b "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-16-bluetooth.md"
   todo_04_drivers_hardware_TODO_17_gpu_display_drivers_md_2f0929["gpu-display-drivers<br/>TODO-17"]
   class todo_04_drivers_hardware_TODO_17_gpu_display_drivers_md_2f0929 active
-  click todo_04_drivers_hardware_TODO_17_gpu_display_drivers_md_2f0929 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md"
+  click todo_04_drivers_hardware_TODO_17_gpu_display_drivers_md_2f0929 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md"
   todo_04_drivers_hardware_TODO_18_audio_drivers_md_17efda["audio-drivers<br/>TODO-18"]
   class todo_04_drivers_hardware_TODO_18_audio_drivers_md_17efda active
-  click todo_04_drivers_hardware_TODO_18_audio_drivers_md_17efda "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-18-audio-drivers.md"
+  click todo_04_drivers_hardware_TODO_18_audio_drivers_md_17efda "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-18-audio-drivers.md"
   todo_04_drivers_hardware_TODO_19_hardware_monitoring_sensors_md_0110e4["hardware-monitoring-sensors<br/>TODO-19"]
   class todo_04_drivers_hardware_TODO_19_hardware_monitoring_sensors_md_0110e4 active
-  click todo_04_drivers_hardware_TODO_19_hardware_monitoring_sensors_md_0110e4 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md"
+  click todo_04_drivers_hardware_TODO_19_hardware_monitoring_sensors_md_0110e4 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md"
   todo_04_drivers_hardware_TODO_20_serial_parallel_debug_io_md_3d1fbe["serial-parallel-debug-io<br/>TODO-20"]
   class todo_04_drivers_hardware_TODO_20_serial_parallel_debug_io_md_3d1fbe active
-  click todo_04_drivers_hardware_TODO_20_serial_parallel_debug_io_md_3d1fbe "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md"
+  click todo_04_drivers_hardware_TODO_20_serial_parallel_debug_io_md_3d1fbe "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md"
   todo_04_drivers_hardware_TODO_21_game_controller_haptics_md_e66951["game-controller-haptics<br/>TODO-21"]
   class todo_04_drivers_hardware_TODO_21_game_controller_haptics_md_e66951 active
-  click todo_04_drivers_hardware_TODO_21_game_controller_haptics_md_e66951 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-21-game-controller-haptics.md"
+  click todo_04_drivers_hardware_TODO_21_game_controller_haptics_md_e66951 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-21-game-controller-haptics.md"
   todo_04_drivers_hardware_TODO_22_camera_imaging_devices_md_056a7d["camera-imaging-devices<br/>TODO-22"]
   class todo_04_drivers_hardware_TODO_22_camera_imaging_devices_md_056a7d active
-  click todo_04_drivers_hardware_TODO_22_camera_imaging_devices_md_056a7d "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md"
+  click todo_04_drivers_hardware_TODO_22_camera_imaging_devices_md_056a7d "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md"
   todo_04_drivers_hardware_TODO_23_printing_scanning_device_path_md_af0582["printing-scanning-device-path<br/>TODO-23"]
   class todo_04_drivers_hardware_TODO_23_printing_scanning_device_path_md_af0582 active
-  click todo_04_drivers_hardware_TODO_23_printing_scanning_device_path_md_af0582 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md"
+  click todo_04_drivers_hardware_TODO_23_printing_scanning_device_path_md_af0582 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md"
   todo_04_drivers_hardware_TODO_24_docking_thunderbolt_usb4_expansion_md_e31467["docking-thunderbolt-usb4-expansion<br/>TODO-24"]
   class todo_04_drivers_hardware_TODO_24_docking_thunderbolt_usb4_expansion_md_e31467 active
-  click todo_04_drivers_hardware_TODO_24_docking_thunderbolt_usb4_expansion_md_e31467 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md"
+  click todo_04_drivers_hardware_TODO_24_docking_thunderbolt_usb4_expansion_md_e31467 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md"
   todo_04_drivers_hardware_TODO_25_driver_hardware_certification_matrix_md_d94ee3["driver-hardware-certification-matrix<br/>TODO-25"]
   class todo_04_drivers_hardware_TODO_25_driver_hardware_certification_matrix_md_d94ee3 active
-  click todo_04_drivers_hardware_TODO_25_driver_hardware_certification_matrix_md_d94ee3 "https://github.com/rizonetech/impossible-os/blob/main/todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md"
+  click todo_04_drivers_hardware_TODO_25_driver_hardware_certification_matrix_md_d94ee3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md"
   todo_05_storage_filesystems_TODO_01_block_storage_hardening_md_4a94a1["block-storage-hardening<br/>TODO-01"]
   class todo_05_storage_filesystems_TODO_01_block_storage_hardening_md_4a94a1 active
-  click todo_05_storage_filesystems_TODO_01_block_storage_hardening_md_4a94a1 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-01-block-storage-hardening.md"
+  click todo_05_storage_filesystems_TODO_01_block_storage_hardening_md_4a94a1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-01-block-storage-hardening.md"
   todo_05_storage_filesystems_TODO_02_ntfs_readwrite_md_69562c["ntfs-readwrite<br/>TODO-02"]
   class todo_05_storage_filesystems_TODO_02_ntfs_readwrite_md_69562c active
-  click todo_05_storage_filesystems_TODO_02_ntfs_readwrite_md_69562c "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md"
+  click todo_05_storage_filesystems_TODO_02_ntfs_readwrite_md_69562c "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md"
   todo_05_storage_filesystems_TODO_03_volume_management_automount_md_0c85b9["volume-management-automount<br/>TODO-03"]
   class todo_05_storage_filesystems_TODO_03_volume_management_automount_md_0c85b9 active
-  click todo_05_storage_filesystems_TODO_03_volume_management_automount_md_0c85b9 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-03-volume-management-automount.md"
+  click todo_05_storage_filesystems_TODO_03_volume_management_automount_md_0c85b9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-03-volume-management-automount.md"
   todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d["fat32-hardening-vfs-semantics<br/>TODO-04"]
   class todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d active
-  click todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md"
+  click todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md"
   todo_05_storage_filesystems_TODO_05_win32_file_io_api_md_ed725a["win32-file-io-api<br/>TODO-05"]
   class todo_05_storage_filesystems_TODO_05_win32_file_io_api_md_ed725a active
-  click todo_05_storage_filesystems_TODO_05_win32_file_io_api_md_ed725a "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-05-win32-file-io-api.md"
+  click todo_05_storage_filesystems_TODO_05_win32_file_io_api_md_ed725a "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-05-win32-file-io-api.md"
   todo_05_storage_filesystems_TODO_06_ixfs_core_win32_compat_md_168ab4["ixfs-core-win32-compat<br/>TODO-06"]
   class todo_05_storage_filesystems_TODO_06_ixfs_core_win32_compat_md_168ab4 active
-  click todo_05_storage_filesystems_TODO_06_ixfs_core_win32_compat_md_168ab4 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md"
+  click todo_05_storage_filesystems_TODO_06_ixfs_core_win32_compat_md_168ab4 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md"
   todo_05_storage_filesystems_TODO_07_ixfs_advanced_enterprise_md_ea935c["ixfs-advanced-enterprise<br/>TODO-07"]
   class todo_05_storage_filesystems_TODO_07_ixfs_advanced_enterprise_md_ea935c active
-  click todo_05_storage_filesystems_TODO_07_ixfs_advanced_enterprise_md_ea935c "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md"
+  click todo_05_storage_filesystems_TODO_07_ixfs_advanced_enterprise_md_ea935c "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md"
   todo_05_storage_filesystems_TODO_08_exfat_readwrite_md_6da82f["exfat-readwrite<br/>TODO-08"]
   class todo_05_storage_filesystems_TODO_08_exfat_readwrite_md_6da82f active
-  click todo_05_storage_filesystems_TODO_08_exfat_readwrite_md_6da82f "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-08-exfat-readwrite.md"
+  click todo_05_storage_filesystems_TODO_08_exfat_readwrite_md_6da82f "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-08-exfat-readwrite.md"
   todo_05_storage_filesystems_TODO_09_ext4_readwrite_md_00db48["ext4-readwrite<br/>TODO-09"]
   class todo_05_storage_filesystems_TODO_09_ext4_readwrite_md_00db48 active
-  click todo_05_storage_filesystems_TODO_09_ext4_readwrite_md_00db48 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-09-ext4-readwrite.md"
+  click todo_05_storage_filesystems_TODO_09_ext4_readwrite_md_00db48 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-09-ext4-readwrite.md"
   todo_05_storage_filesystems_TODO_10_btrfs_readonly_md_76fc95["btrfs-readonly<br/>TODO-10"]
   class todo_05_storage_filesystems_TODO_10_btrfs_readonly_md_76fc95 active
-  click todo_05_storage_filesystems_TODO_10_btrfs_readonly_md_76fc95 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-10-btrfs-readonly.md"
+  click todo_05_storage_filesystems_TODO_10_btrfs_readonly_md_76fc95 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-10-btrfs-readonly.md"
   todo_05_storage_filesystems_TODO_11_optical_media_md_179d15["optical-media<br/>TODO-11"]
   class todo_05_storage_filesystems_TODO_11_optical_media_md_179d15 active
-  click todo_05_storage_filesystems_TODO_11_optical_media_md_179d15 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-11-optical-media.md"
+  click todo_05_storage_filesystems_TODO_11_optical_media_md_179d15 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-11-optical-media.md"
   todo_05_storage_filesystems_TODO_12_apple_filesystems_readonly_md_956e61["apple-filesystems-readonly<br/>TODO-12"]
   class todo_05_storage_filesystems_TODO_12_apple_filesystems_readonly_md_956e61 active
-  click todo_05_storage_filesystems_TODO_12_apple_filesystems_readonly_md_956e61 "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md"
+  click todo_05_storage_filesystems_TODO_12_apple_filesystems_readonly_md_956e61 "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md"
   todo_05_storage_filesystems_TODO_13_partition_tools_storage_suite_md_e3ee9f["partition-tools-storage-suite<br/>TODO-13"]
   class todo_05_storage_filesystems_TODO_13_partition_tools_storage_suite_md_e3ee9f active
-  click todo_05_storage_filesystems_TODO_13_partition_tools_storage_suite_md_e3ee9f "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md"
+  click todo_05_storage_filesystems_TODO_13_partition_tools_storage_suite_md_e3ee9f "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md"
   todo_05_storage_filesystems_TODO_14_disk_benchmark_diagnostics_md_252bae["disk-benchmark-diagnostics<br/>TODO-14"]
   class todo_05_storage_filesystems_TODO_14_disk_benchmark_diagnostics_md_252bae active
-  click todo_05_storage_filesystems_TODO_14_disk_benchmark_diagnostics_md_252bae "https://github.com/rizonetech/impossible-os/blob/main/todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md"
+  click todo_05_storage_filesystems_TODO_14_disk_benchmark_diagnostics_md_252bae "https://github.com/rizonesoft/impossible-os/blob/main/todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md"
   todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9["wm-completion<br/>TODO-01"]
   class todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 active
-  click todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 "https://github.com/rizonetech/impossible-os/blob/main/todo/06-desktop-foundation/TODO-01-wm-completion.md"
+  click todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/06-desktop-foundation/TODO-01-wm-completion.md"
   todo_06_desktop_foundation_TODO_02_compositor_optimization_md_af5a1d["compositor-optimization<br/>TODO-02"]
   class todo_06_desktop_foundation_TODO_02_compositor_optimization_md_af5a1d active
-  click todo_06_desktop_foundation_TODO_02_compositor_optimization_md_af5a1d "https://github.com/rizonetech/impossible-os/blob/main/todo/06-desktop-foundation/TODO-02-compositor-optimization.md"
+  click todo_06_desktop_foundation_TODO_02_compositor_optimization_md_af5a1d "https://github.com/rizonesoft/impossible-os/blob/main/todo/06-desktop-foundation/TODO-02-compositor-optimization.md"
   todo_06_desktop_foundation_TODO_03_input_system_md_b66944["input-system<br/>TODO-03"]
   class todo_06_desktop_foundation_TODO_03_input_system_md_b66944 active
-  click todo_06_desktop_foundation_TODO_03_input_system_md_b66944 "https://github.com/rizonetech/impossible-os/blob/main/todo/06-desktop-foundation/TODO-03-input-system.md"
+  click todo_06_desktop_foundation_TODO_03_input_system_md_b66944 "https://github.com/rizonesoft/impossible-os/blob/main/todo/06-desktop-foundation/TODO-03-input-system.md"
   todo_06_desktop_foundation_TODO_04_control_library_md_0a24d5["control-library<br/>TODO-04"]
   class todo_06_desktop_foundation_TODO_04_control_library_md_0a24d5 active
-  click todo_06_desktop_foundation_TODO_04_control_library_md_0a24d5 "https://github.com/rizonetech/impossible-os/blob/main/todo/06-desktop-foundation/TODO-04-control-library.md"
+  click todo_06_desktop_foundation_TODO_04_control_library_md_0a24d5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/06-desktop-foundation/TODO-04-control-library.md"
   todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2["desktop-shell<br/>TODO-05"]
   class todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2 active
-  click todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2 "https://github.com/rizonetech/impossible-os/blob/main/todo/06-desktop-foundation/TODO-05-desktop-shell.md"
+  click todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2 "https://github.com/rizonesoft/impossible-os/blob/main/todo/06-desktop-foundation/TODO-05-desktop-shell.md"
   todo_06_desktop_foundation_TODO_06_desktop_icons_md_09e4c3["desktop-icons<br/>TODO-06"]
   class todo_06_desktop_foundation_TODO_06_desktop_icons_md_09e4c3 active
-  click todo_06_desktop_foundation_TODO_06_desktop_icons_md_09e4c3 "https://github.com/rizonetech/impossible-os/blob/main/todo/06-desktop-foundation/TODO-06-desktop-icons.md"
+  click todo_06_desktop_foundation_TODO_06_desktop_icons_md_09e4c3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/06-desktop-foundation/TODO-06-desktop-icons.md"
   todo_07_networking_TODO_01_tcp_network_infrastructure_md_f05061["tcp-network-infrastructure<br/>TODO-01"]
   class todo_07_networking_TODO_01_tcp_network_infrastructure_md_f05061 active
-  click todo_07_networking_TODO_01_tcp_network_infrastructure_md_f05061 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-01-tcp-network-infrastructure.md"
+  click todo_07_networking_TODO_01_tcp_network_infrastructure_md_f05061 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-01-tcp-network-infrastructure.md"
   todo_07_networking_TODO_02_dns_sockets_md_ec78ea["dns-sockets<br/>TODO-02"]
   class todo_07_networking_TODO_02_dns_sockets_md_ec78ea active
-  click todo_07_networking_TODO_02_dns_sockets_md_ec78ea "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-02-dns-sockets.md"
+  click todo_07_networking_TODO_02_dns_sockets_md_ec78ea "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-02-dns-sockets.md"
   todo_07_networking_TODO_03_http_tls_md_43627d["http-tls<br/>TODO-03"]
   class todo_07_networking_TODO_03_http_tls_md_43627d active
-  click todo_07_networking_TODO_03_http_tls_md_43627d "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-03-http-tls.md"
+  click todo_07_networking_TODO_03_http_tls_md_43627d "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-03-http-tls.md"
   todo_07_networking_TODO_04_ipv6_dual_stack_md_8a814e["ipv6-dual-stack<br/>TODO-04"]
   class todo_07_networking_TODO_04_ipv6_dual_stack_md_8a814e active
-  click todo_07_networking_TODO_04_ipv6_dual_stack_md_8a814e "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-04-ipv6-dual-stack.md"
+  click todo_07_networking_TODO_04_ipv6_dual_stack_md_8a814e "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-04-ipv6-dual-stack.md"
   todo_07_networking_TODO_05_firewall_md_f73d42["firewall<br/>TODO-05"]
   class todo_07_networking_TODO_05_firewall_md_f73d42 active
-  click todo_07_networking_TODO_05_firewall_md_f73d42 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-05-firewall.md"
+  click todo_07_networking_TODO_05_firewall_md_f73d42 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-05-firewall.md"
   todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c["ntp-status-winsock<br/>TODO-06"]
   class todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c active
-  click todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-06-ntp-status-winsock.md"
+  click todo_07_networking_TODO_06_ntp_status_winsock_md_a84c0c "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-06-ntp-status-winsock.md"
   todo_07_networking_TODO_07_web_browser_md_ee3197["web-browser-networking<br/>TODO-07"]
   class todo_07_networking_TODO_07_web_browser_md_ee3197 active
-  click todo_07_networking_TODO_07_web_browser_md_ee3197 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-07-web-browser.md"
+  click todo_07_networking_TODO_07_web_browser_md_ee3197 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-07-web-browser.md"
   todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11["ssh-ftp-clients<br/>TODO-08"]
   class todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11 active
-  click todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-08-ssh-ftp-clients.md"
+  click todo_07_networking_TODO_08_ssh_ftp_clients_md_d03e11 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-08-ssh-ftp-clients.md"
   todo_07_networking_TODO_09_email_client_md_5e20b9["email-client-networking<br/>TODO-09"]
   class todo_07_networking_TODO_09_email_client_md_5e20b9 active
-  click todo_07_networking_TODO_09_email_client_md_5e20b9 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-09-email-client.md"
+  click todo_07_networking_TODO_09_email_client_md_5e20b9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-09-email-client.md"
   todo_07_networking_TODO_10_pdf_viewer_md_549fa6["pdf-viewer-networking<br/>TODO-10"]
   class todo_07_networking_TODO_10_pdf_viewer_md_549fa6 active
-  click todo_07_networking_TODO_10_pdf_viewer_md_549fa6 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-10-pdf-viewer.md"
+  click todo_07_networking_TODO_10_pdf_viewer_md_549fa6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-10-pdf-viewer.md"
   todo_07_networking_TODO_11_syslog_forwarding_md_8694c5["syslog-forwarding<br/>TODO-11"]
   class todo_07_networking_TODO_11_syslog_forwarding_md_8694c5 active
-  click todo_07_networking_TODO_11_syslog_forwarding_md_8694c5 "https://github.com/rizonetech/impossible-os/blob/main/todo/07-networking/TODO-11-syslog-forwarding.md"
+  click todo_07_networking_TODO_11_syslog_forwarding_md_8694c5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/07-networking/TODO-11-syslog-forwarding.md"
   todo_08_graphics_ui_TODO_01_graphics_asset_foundation_md_cac06a["graphics-asset-foundation<br/>TODO-01"]
   class todo_08_graphics_ui_TODO_01_graphics_asset_foundation_md_cac06a active
-  click todo_08_graphics_ui_TODO_01_graphics_asset_foundation_md_cac06a "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md"
+  click todo_08_graphics_ui_TODO_01_graphics_asset_foundation_md_cac06a "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md"
   todo_08_graphics_ui_TODO_02_text_font_internationalization_md_2cb1a9["text-font-internationalization<br/>TODO-02"]
   class todo_08_graphics_ui_TODO_02_text_font_internationalization_md_2cb1a9 active
-  click todo_08_graphics_ui_TODO_02_text_font_internationalization_md_2cb1a9 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-02-text-font-internationalization.md"
+  click todo_08_graphics_ui_TODO_02_text_font_internationalization_md_2cb1a9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-02-text-font-internationalization.md"
   todo_08_graphics_ui_TODO_03_theme_system_md_ea7096["theme-system<br/>TODO-03"]
   class todo_08_graphics_ui_TODO_03_theme_system_md_ea7096 active
-  click todo_08_graphics_ui_TODO_03_theme_system_md_ea7096 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-03-theme-system.md"
+  click todo_08_graphics_ui_TODO_03_theme_system_md_ea7096 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-03-theme-system.md"
   todo_08_graphics_ui_TODO_04_animation_engine_md_7c269f["animation-engine<br/>TODO-04"]
   class todo_08_graphics_ui_TODO_04_animation_engine_md_7c269f active
-  click todo_08_graphics_ui_TODO_04_animation_engine_md_7c269f "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-04-animation-engine.md"
+  click todo_08_graphics_ui_TODO_04_animation_engine_md_7c269f "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-04-animation-engine.md"
   todo_08_graphics_ui_TODO_05_widget_library_core_md_2a961f["widget-library-core<br/>TODO-05"]
   class todo_08_graphics_ui_TODO_05_widget_library_core_md_2a961f active
-  click todo_08_graphics_ui_TODO_05_widget_library_core_md_2a961f "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-05-widget-library-core.md"
+  click todo_08_graphics_ui_TODO_05_widget_library_core_md_2a961f "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-05-widget-library-core.md"
   todo_08_graphics_ui_TODO_06_widget_dialogs_md_f6325b["widget-dialogs<br/>TODO-06"]
   class todo_08_graphics_ui_TODO_06_widget_dialogs_md_f6325b active
-  click todo_08_graphics_ui_TODO_06_widget_dialogs_md_f6325b "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-06-widget-dialogs.md"
+  click todo_08_graphics_ui_TODO_06_widget_dialogs_md_f6325b "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-06-widget-dialogs.md"
   todo_08_graphics_ui_TODO_07_ui_accessibility_automation_ime_md_b18873["ui-accessibility-automation-ime<br/>TODO-07"]
   class todo_08_graphics_ui_TODO_07_ui_accessibility_automation_ime_md_b18873 active
-  click todo_08_graphics_ui_TODO_07_ui_accessibility_automation_ime_md_b18873 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md"
+  click todo_08_graphics_ui_TODO_07_ui_accessibility_automation_ime_md_b18873 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md"
   todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1["window-manager<br/>TODO-08"]
   class todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1 active
-  click todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-08-window-manager.md"
+  click todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-08-window-manager.md"
   todo_08_graphics_ui_TODO_09_desktop_shell_features_md_c3edbb["desktop-shell-features<br/>TODO-09"]
   class todo_08_graphics_ui_TODO_09_desktop_shell_features_md_c3edbb active
-  click todo_08_graphics_ui_TODO_09_desktop_shell_features_md_c3edbb "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-09-desktop-shell-features.md"
+  click todo_08_graphics_ui_TODO_09_desktop_shell_features_md_c3edbb "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-09-desktop-shell-features.md"
   todo_08_graphics_ui_TODO_10_taskbar_md_b10adc["taskbar<br/>TODO-10"]
   class todo_08_graphics_ui_TODO_10_taskbar_md_b10adc active
-  click todo_08_graphics_ui_TODO_10_taskbar_md_b10adc "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-10-taskbar.md"
+  click todo_08_graphics_ui_TODO_10_taskbar_md_b10adc "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-10-taskbar.md"
   todo_08_graphics_ui_TODO_11_startmenu_tray_notifications_md_b9ead2["startmenu-tray-notifications<br/>TODO-11"]
   class todo_08_graphics_ui_TODO_11_startmenu_tray_notifications_md_b9ead2 active
-  click todo_08_graphics_ui_TODO_11_startmenu_tray_notifications_md_b9ead2 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md"
+  click todo_08_graphics_ui_TODO_11_startmenu_tray_notifications_md_b9ead2 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md"
   todo_08_graphics_ui_TODO_12_clock_time_md_b95ea7["clock-time<br/>TODO-12"]
   class todo_08_graphics_ui_TODO_12_clock_time_md_b95ea7 active
-  click todo_08_graphics_ui_TODO_12_clock_time_md_b95ea7 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-12-clock-time.md"
+  click todo_08_graphics_ui_TODO_12_clock_time_md_b95ea7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-12-clock-time.md"
   todo_08_graphics_ui_TODO_13_boot_splash_recovery_md_fb6591["boot-splash-recovery<br/>TODO-13"]
   class todo_08_graphics_ui_TODO_13_boot_splash_recovery_md_fb6591 active
-  click todo_08_graphics_ui_TODO_13_boot_splash_recovery_md_fb6591 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-13-boot-splash-recovery.md"
+  click todo_08_graphics_ui_TODO_13_boot_splash_recovery_md_fb6591 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-13-boot-splash-recovery.md"
   todo_08_graphics_ui_TODO_14_win32_gdi_user32_stubs_md_485c02["win32-gdi-user32-stubs<br/>TODO-14"]
   class todo_08_graphics_ui_TODO_14_win32_gdi_user32_stubs_md_485c02 active
-  click todo_08_graphics_ui_TODO_14_win32_gdi_user32_stubs_md_485c02 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md"
+  click todo_08_graphics_ui_TODO_14_win32_gdi_user32_stubs_md_485c02 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md"
   todo_08_graphics_ui_TODO_15_win32k_shadow_ssdt_md_b49080["win32k-shadow-ssdt<br/>TODO-15"]
   class todo_08_graphics_ui_TODO_15_win32k_shadow_ssdt_md_b49080 active
-  click todo_08_graphics_ui_TODO_15_win32k_shadow_ssdt_md_b49080 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md"
+  click todo_08_graphics_ui_TODO_15_win32k_shadow_ssdt_md_b49080 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md"
   todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c["win32k-shadow-native-api<br/>TODO-16"]
   class todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c active
-  click todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md"
+  click todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md"
   todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33["win32k-shadow-ssdt-master-table<br/>TODO-A"]
   class todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33 active
-  click todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33 "https://github.com/rizonetech/impossible-os/blob/main/todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md"
+  click todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md"
   todo_09_desktop_shell_TODO_01_clipboard_md_8e4b49["clipboard<br/>TODO-01"]
   class todo_09_desktop_shell_TODO_01_clipboard_md_8e4b49 active
-  click todo_09_desktop_shell_TODO_01_clipboard_md_8e4b49 "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-01-clipboard.md"
+  click todo_09_desktop_shell_TODO_01_clipboard_md_8e4b49 "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-01-clipboard.md"
   todo_09_desktop_shell_TODO_02_file_associations_resources_md_9f4cb2["file-associations-resources<br/>TODO-02"]
   class todo_09_desktop_shell_TODO_02_file_associations_resources_md_9f4cb2 active
-  click todo_09_desktop_shell_TODO_02_file_associations_resources_md_9f4cb2 "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-02-file-associations-resources.md"
+  click todo_09_desktop_shell_TODO_02_file_associations_resources_md_9f4cb2 "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-02-file-associations-resources.md"
   todo_09_desktop_shell_TODO_03_service_manager_md_46923a["service-manager<br/>TODO-03"]
   class todo_09_desktop_shell_TODO_03_service_manager_md_46923a active
-  click todo_09_desktop_shell_TODO_03_service_manager_md_46923a "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-03-service-manager.md"
+  click todo_09_desktop_shell_TODO_03_service_manager_md_46923a "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-03-service-manager.md"
   todo_09_desktop_shell_TODO_04_recycle_zip_scheduler_md_f64d6c["recycle-zip-scheduler<br/>TODO-04"]
   class todo_09_desktop_shell_TODO_04_recycle_zip_scheduler_md_f64d6c active
-  click todo_09_desktop_shell_TODO_04_recycle_zip_scheduler_md_f64d6c "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md"
+  click todo_09_desktop_shell_TODO_04_recycle_zip_scheduler_md_f64d6c "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md"
   todo_09_desktop_shell_TODO_05_file_search_md_e38b94["file-search<br/>TODO-05"]
   class todo_09_desktop_shell_TODO_05_file_search_md_e38b94 active
-  click todo_09_desktop_shell_TODO_05_file_search_md_e38b94 "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-05-file-search.md"
+  click todo_09_desktop_shell_TODO_05_file_search_md_e38b94 "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-05-file-search.md"
   todo_09_desktop_shell_TODO_06_security_accounts_md_82ef0e["security-accounts<br/>TODO-06"]
   class todo_09_desktop_shell_TODO_06_security_accounts_md_82ef0e active
-  click todo_09_desktop_shell_TODO_06_security_accounts_md_82ef0e "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-06-security-accounts.md"
+  click todo_09_desktop_shell_TODO_06_security_accounts_md_82ef0e "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-06-security-accounts.md"
   todo_09_desktop_shell_TODO_07_cng_crypto_md_0f4cdf["cng-crypto<br/>TODO-07"]
   class todo_09_desktop_shell_TODO_07_cng_crypto_md_0f4cdf active
-  click todo_09_desktop_shell_TODO_07_cng_crypto_md_0f4cdf "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-07-cng-crypto.md"
+  click todo_09_desktop_shell_TODO_07_cng_crypto_md_0f4cdf "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-07-cng-crypto.md"
   todo_09_desktop_shell_TODO_08_terminal_md_c4fbfe["terminal<br/>TODO-08"]
   class todo_09_desktop_shell_TODO_08_terminal_md_c4fbfe active
-  click todo_09_desktop_shell_TODO_08_terminal_md_c4fbfe "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-08-terminal.md"
+  click todo_09_desktop_shell_TODO_08_terminal_md_c4fbfe "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-08-terminal.md"
   todo_09_desktop_shell_TODO_09_file_manager_md_e444bc["file-manager<br/>TODO-09"]
   class todo_09_desktop_shell_TODO_09_file_manager_md_e444bc active
-  click todo_09_desktop_shell_TODO_09_file_manager_md_e444bc "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-09-file-manager.md"
+  click todo_09_desktop_shell_TODO_09_file_manager_md_e444bc "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-09-file-manager.md"
   todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e["notepad-shell-host<br/>TODO-10"]
   class todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e active
-  click todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-10-notepad.md"
+  click todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-10-notepad.md"
   todo_09_desktop_shell_TODO_11_control_panel_md_e1e4fc["control-panel<br/>TODO-11"]
   class todo_09_desktop_shell_TODO_11_control_panel_md_e1e4fc active
-  click todo_09_desktop_shell_TODO_11_control_panel_md_e1e4fc "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-11-control-panel.md"
+  click todo_09_desktop_shell_TODO_11_control_panel_md_e1e4fc "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-11-control-panel.md"
   todo_09_desktop_shell_TODO_12_utilities_md_eb60d5["utilities<br/>TODO-12"]
   class todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 active
-  click todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-12-utilities.md"
+  click todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-12-utilities.md"
   todo_09_desktop_shell_TODO_13_explorer_shell_host_md_9a73ce["explorer-shell-host<br/>TODO-13"]
   class todo_09_desktop_shell_TODO_13_explorer_shell_host_md_9a73ce active
-  click todo_09_desktop_shell_TODO_13_explorer_shell_host_md_9a73ce "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-13-explorer-shell-host.md"
+  click todo_09_desktop_shell_TODO_13_explorer_shell_host_md_9a73ce "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-13-explorer-shell-host.md"
   todo_09_desktop_shell_TODO_14_desktop_test_late_phase_harness_md_b895a6["desktop-test-late-phase-harness<br/>TODO-14"]
   class todo_09_desktop_shell_TODO_14_desktop_test_late_phase_harness_md_b895a6 active
-  click todo_09_desktop_shell_TODO_14_desktop_test_late_phase_harness_md_b895a6 "https://github.com/rizonetech/impossible-os/blob/main/todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md"
+  click todo_09_desktop_shell_TODO_14_desktop_test_late_phase_harness_md_b895a6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md"
   todo_10_platform_services_TODO_01_audio_system_md_aa7f3e["audio-system<br/>TODO-01"]
   class todo_10_platform_services_TODO_01_audio_system_md_aa7f3e active
-  click todo_10_platform_services_TODO_01_audio_system_md_aa7f3e "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-01-audio-system.md"
+  click todo_10_platform_services_TODO_01_audio_system_md_aa7f3e "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-01-audio-system.md"
   todo_10_platform_services_TODO_02_paint_app_md_78bf8f["paint-app<br/>TODO-02"]
   class todo_10_platform_services_TODO_02_paint_app_md_78bf8f active
-  click todo_10_platform_services_TODO_02_paint_app_md_78bf8f "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-02-paint-app.md"
+  click todo_10_platform_services_TODO_02_paint_app_md_78bf8f "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-02-paint-app.md"
   todo_10_platform_services_TODO_03_updates_packages_md_34481d["updates-packages<br/>TODO-03"]
   class todo_10_platform_services_TODO_03_updates_packages_md_34481d active
-  click todo_10_platform_services_TODO_03_updates_packages_md_34481d "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-03-updates-packages.md"
+  click todo_10_platform_services_TODO_03_updates_packages_md_34481d "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-03-updates-packages.md"
   todo_10_platform_services_TODO_04_restore_recovery_md_97f62f["restore-recovery<br/>TODO-04"]
   class todo_10_platform_services_TODO_04_restore_recovery_md_97f62f active
-  click todo_10_platform_services_TODO_04_restore_recovery_md_97f62f "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-04-restore-recovery.md"
+  click todo_10_platform_services_TODO_04_restore_recovery_md_97f62f "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-04-restore-recovery.md"
   todo_10_platform_services_TODO_05_screensaver_widgets_display_md_99b40e["screensaver-widgets-display<br/>TODO-05"]
   class todo_10_platform_services_TODO_05_screensaver_widgets_display_md_99b40e active
-  click todo_10_platform_services_TODO_05_screensaver_widgets_display_md_99b40e "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-05-screensaver-widgets-display.md"
+  click todo_10_platform_services_TODO_05_screensaver_widgets_display_md_99b40e "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-05-screensaver-widgets-display.md"
   todo_10_platform_services_TODO_06_accessibility_md_28551e["accessibility<br/>TODO-06"]
   class todo_10_platform_services_TODO_06_accessibility_md_28551e active
-  click todo_10_platform_services_TODO_06_accessibility_md_28551e "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-06-accessibility.md"
+  click todo_10_platform_services_TODO_06_accessibility_md_28551e "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-06-accessibility.md"
   todo_10_platform_services_TODO_07_win32_pe_loader_md_3fd53a["win32-pe-loader<br/>TODO-07"]
   class todo_10_platform_services_TODO_07_win32_pe_loader_md_3fd53a active
-  click todo_10_platform_services_TODO_07_win32_pe_loader_md_3fd53a "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-07-win32-pe-loader.md"
+  click todo_10_platform_services_TODO_07_win32_pe_loader_md_3fd53a "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-07-win32-pe-loader.md"
   todo_10_platform_services_TODO_08_win32_api_surface_md_f28e57["win32-api-surface<br/>TODO-08"]
   class todo_10_platform_services_TODO_08_win32_api_surface_md_f28e57 active
-  click todo_10_platform_services_TODO_08_win32_api_surface_md_f28e57 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-08-win32-api-surface.md"
+  click todo_10_platform_services_TODO_08_win32_api_surface_md_f28e57 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-08-win32-api-surface.md"
   todo_10_platform_services_TODO_09_compiler_sdk_md_14adc5["compiler-sdk<br/>TODO-09"]
   class todo_10_platform_services_TODO_09_compiler_sdk_md_14adc5 active
-  click todo_10_platform_services_TODO_09_compiler_sdk_md_14adc5 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-09-compiler-sdk.md"
+  click todo_10_platform_services_TODO_09_compiler_sdk_md_14adc5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-09-compiler-sdk.md"
   todo_10_platform_services_TODO_10_linux_compat_md_9671b0["linux-compat<br/>TODO-10"]
   class todo_10_platform_services_TODO_10_linux_compat_md_9671b0 active
-  click todo_10_platform_services_TODO_10_linux_compat_md_9671b0 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-10-linux-compat.md"
+  click todo_10_platform_services_TODO_10_linux_compat_md_9671b0 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-10-linux-compat.md"
   todo_10_platform_services_TODO_11_installer_iso_md_e0add7["installer-iso<br/>TODO-11"]
   class todo_10_platform_services_TODO_11_installer_iso_md_e0add7 active
-  click todo_10_platform_services_TODO_11_installer_iso_md_e0add7 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-11-installer-iso.md"
+  click todo_10_platform_services_TODO_11_installer_iso_md_e0add7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-11-installer-iso.md"
   todo_10_platform_services_TODO_12_long_term_features_md_c6e0ff["long-term-features<br/>TODO-12"]
   class todo_10_platform_services_TODO_12_long_term_features_md_c6e0ff active
-  click todo_10_platform_services_TODO_12_long_term_features_md_c6e0ff "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-12-long-term-features.md"
+  click todo_10_platform_services_TODO_12_long_term_features_md_c6e0ff "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-12-long-term-features.md"
   todo_10_platform_services_TODO_A_user32_export_master_table_md_37a276["user32-export-master-table<br/>TODO-A"]
   class todo_10_platform_services_TODO_A_user32_export_master_table_md_37a276 active
-  click todo_10_platform_services_TODO_A_user32_export_master_table_md_37a276 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-A-user32-export-master-table.md"
+  click todo_10_platform_services_TODO_A_user32_export_master_table_md_37a276 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-A-user32-export-master-table.md"
   todo_10_platform_services_TODO_B_comctl32_export_master_table_md_4d9eb4["comctl32-export-master-table<br/>TODO-B"]
   class todo_10_platform_services_TODO_B_comctl32_export_master_table_md_4d9eb4 active
-  click todo_10_platform_services_TODO_B_comctl32_export_master_table_md_4d9eb4 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-B-comctl32-export-master-table.md"
+  click todo_10_platform_services_TODO_B_comctl32_export_master_table_md_4d9eb4 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-B-comctl32-export-master-table.md"
   todo_10_platform_services_TODO_C_shell32_export_master_table_md_459218["shell32-export-master-table<br/>TODO-C"]
   class todo_10_platform_services_TODO_C_shell32_export_master_table_md_459218 active
-  click todo_10_platform_services_TODO_C_shell32_export_master_table_md_459218 "https://github.com/rizonetech/impossible-os/blob/main/todo/10-platform-services/TODO-C-shell32-export-master-table.md"
+  click todo_10_platform_services_TODO_C_shell32_export_master_table_md_459218 "https://github.com/rizonesoft/impossible-os/blob/main/todo/10-platform-services/TODO-C-shell32-export-master-table.md"
   todo_11_apps_TODO_01_web_browser_md_a7d536["web-browser<br/>TODO-01"]
   class todo_11_apps_TODO_01_web_browser_md_a7d536 active
-  click todo_11_apps_TODO_01_web_browser_md_a7d536 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-01-web-browser.md"
+  click todo_11_apps_TODO_01_web_browser_md_a7d536 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-01-web-browser.md"
   todo_11_apps_TODO_02_ftp_wget_wifi_md_bfcf1a["ftp-wget-wifi<br/>TODO-02"]
   class todo_11_apps_TODO_02_ftp_wget_wifi_md_bfcf1a active
-  click todo_11_apps_TODO_02_ftp_wget_wifi_md_bfcf1a "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-02-ftp-wget-wifi.md"
+  click todo_11_apps_TODO_02_ftp_wget_wifi_md_bfcf1a "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-02-ftp-wget-wifi.md"
   todo_11_apps_TODO_03_ssh_client_md_689a74["ssh-client<br/>TODO-03"]
   class todo_11_apps_TODO_03_ssh_client_md_689a74 active
-  click todo_11_apps_TODO_03_ssh_client_md_689a74 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-03-ssh-client.md"
+  click todo_11_apps_TODO_03_ssh_client_md_689a74 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-03-ssh-client.md"
   todo_11_apps_TODO_04_email_client_md_95008b["email-client<br/>TODO-04"]
   class todo_11_apps_TODO_04_email_client_md_95008b active
-  click todo_11_apps_TODO_04_email_client_md_95008b "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-04-email-client.md"
+  click todo_11_apps_TODO_04_email_client_md_95008b "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-04-email-client.md"
   todo_11_apps_TODO_05_pdf_viewer_md_ceaf66["pdf-viewer<br/>TODO-05"]
   class todo_11_apps_TODO_05_pdf_viewer_md_ceaf66 active
-  click todo_11_apps_TODO_05_pdf_viewer_md_ceaf66 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-05-pdf-viewer.md"
+  click todo_11_apps_TODO_05_pdf_viewer_md_ceaf66 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-05-pdf-viewer.md"
   todo_11_apps_TODO_06_video_player_md_cac7e3["video-player<br/>TODO-06"]
   class todo_11_apps_TODO_06_video_player_md_cac7e3 active
-  click todo_11_apps_TODO_06_video_player_md_cac7e3 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-06-video-player.md"
+  click todo_11_apps_TODO_06_video_player_md_cac7e3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-06-video-player.md"
   todo_11_apps_TODO_07_collaboration_apps_md_750f0a["collaboration-apps<br/>TODO-07"]
   class todo_11_apps_TODO_07_collaboration_apps_md_750f0a active
-  click todo_11_apps_TODO_07_collaboration_apps_md_750f0a "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-07-collaboration-apps.md"
+  click todo_11_apps_TODO_07_collaboration_apps_md_750f0a "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-07-collaboration-apps.md"
   todo_11_apps_TODO_08_notepad_md_8d9f09["notepad<br/>TODO-08"]
   class todo_11_apps_TODO_08_notepad_md_8d9f09 active
-  click todo_11_apps_TODO_08_notepad_md_8d9f09 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-08-notepad.md"
+  click todo_11_apps_TODO_08_notepad_md_8d9f09 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-08-notepad.md"
   todo_11_apps_TODO_09_calculator_md_066f07["calculator<br/>TODO-09"]
   class todo_11_apps_TODO_09_calculator_md_066f07 active
-  click todo_11_apps_TODO_09_calculator_md_066f07 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-09-calculator.md"
+  click todo_11_apps_TODO_09_calculator_md_066f07 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-09-calculator.md"
   todo_11_apps_TODO_10_wordpad_md_7c20c0["wordpad<br/>TODO-10"]
   class todo_11_apps_TODO_10_wordpad_md_7c20c0 active
-  click todo_11_apps_TODO_10_wordpad_md_7c20c0 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-10-wordpad.md"
+  click todo_11_apps_TODO_10_wordpad_md_7c20c0 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-10-wordpad.md"
   todo_11_apps_TODO_11_photos_image_viewer_md_02245b["photos-image-viewer<br/>TODO-11"]
   class todo_11_apps_TODO_11_photos_image_viewer_md_02245b active
-  click todo_11_apps_TODO_11_photos_image_viewer_md_02245b "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-11-photos-image-viewer.md"
+  click todo_11_apps_TODO_11_photos_image_viewer_md_02245b "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-11-photos-image-viewer.md"
   todo_11_apps_TODO_12_screenshot_archive_md_f931ff["screenshot-archive<br/>TODO-12"]
   class todo_11_apps_TODO_12_screenshot_archive_md_f931ff active
-  click todo_11_apps_TODO_12_screenshot_archive_md_f931ff "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-12-screenshot-archive.md"
+  click todo_11_apps_TODO_12_screenshot_archive_md_f931ff "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-12-screenshot-archive.md"
   todo_11_apps_TODO_13_calendar_utilities_md_90f622["calendar-utilities<br/>TODO-13"]
   class todo_11_apps_TODO_13_calendar_utilities_md_90f622 active
-  click todo_11_apps_TODO_13_calendar_utilities_md_90f622 "https://github.com/rizonetech/impossible-os/blob/main/todo/11-apps/TODO-13-calendar-utilities.md"
+  click todo_11_apps_TODO_13_calendar_utilities_md_90f622 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-13-calendar-utilities.md"
   todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1["kernel-libraries-sdk<br/>TODO-01"]
   class todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 active
-  click todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-01-kernel-libraries.md"
+  click todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-01-kernel-libraries.md"
   todo_12_user_platform_sdk_TODO_02_env_vars_process_abi_md_725aaf["env-vars-process-abi<br/>TODO-02"]
   class todo_12_user_platform_sdk_TODO_02_env_vars_process_abi_md_725aaf active
-  click todo_12_user_platform_sdk_TODO_02_env_vars_process_abi_md_725aaf "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md"
+  click todo_12_user_platform_sdk_TODO_02_env_vars_process_abi_md_725aaf "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md"
   todo_12_user_platform_sdk_TODO_03_elf_reloc_kernel_modules_md_4e71a7["elf-reloc-kernel-modules<br/>TODO-03"]
   class todo_12_user_platform_sdk_TODO_03_elf_reloc_kernel_modules_md_4e71a7 active
-  click todo_12_user_platform_sdk_TODO_03_elf_reloc_kernel_modules_md_4e71a7 "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md"
+  click todo_12_user_platform_sdk_TODO_03_elf_reloc_kernel_modules_md_4e71a7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md"
   todo_12_user_platform_sdk_TODO_04_ntdll_user_runtime_md_572488["ntdll-user-runtime<br/>TODO-04"]
   class todo_12_user_platform_sdk_TODO_04_ntdll_user_runtime_md_572488 active
-  click todo_12_user_platform_sdk_TODO_04_ntdll_user_runtime_md_572488 "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md"
+  click todo_12_user_platform_sdk_TODO_04_ntdll_user_runtime_md_572488 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md"
   todo_12_user_platform_sdk_TODO_05_win32_subsystem_md_a72493["win32-subsystem<br/>TODO-05"]
   class todo_12_user_platform_sdk_TODO_05_win32_subsystem_md_a72493 active
-  click todo_12_user_platform_sdk_TODO_05_win32_subsystem_md_a72493 "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-05-win32-subsystem.md"
+  click todo_12_user_platform_sdk_TODO_05_win32_subsystem_md_a72493 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-05-win32-subsystem.md"
   todo_12_user_platform_sdk_TODO_06_sdk_distribution_md_3c54c6["sdk-distribution<br/>TODO-06"]
   class todo_12_user_platform_sdk_TODO_06_sdk_distribution_md_3c54c6 active
-  click todo_12_user_platform_sdk_TODO_06_sdk_distribution_md_3c54c6 "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-06-sdk-distribution.md"
+  click todo_12_user_platform_sdk_TODO_06_sdk_distribution_md_3c54c6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-06-sdk-distribution.md"
   todo_12_user_platform_sdk_TODO_07_win32_compat_matrix_md_4e2bee["win32-compat-matrix<br/>TODO-07"]
   class todo_12_user_platform_sdk_TODO_07_win32_compat_matrix_md_4e2bee active
-  click todo_12_user_platform_sdk_TODO_07_win32_compat_matrix_md_4e2bee "https://github.com/rizonetech/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md"
+  click todo_12_user_platform_sdk_TODO_07_win32_compat_matrix_md_4e2bee "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md"
   todo_13_tools_accessories_TODO_01_obbrowse_namespace_browser_md_7e7c64["obbrowse-namespace-browser<br/>TODO-01"]
   class todo_13_tools_accessories_TODO_01_obbrowse_namespace_browser_md_7e7c64 active
-  click todo_13_tools_accessories_TODO_01_obbrowse_namespace_browser_md_7e7c64 "https://github.com/rizonetech/impossible-os/blob/main/todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md"
+  click todo_13_tools_accessories_TODO_01_obbrowse_namespace_browser_md_7e7c64 "https://github.com/rizonesoft/impossible-os/blob/main/todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md"
   todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3["event-viewer<br/>TODO-02"]
   class todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3 active
-  click todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3 "https://github.com/rizonetech/impossible-os/blob/main/todo/13-tools-accessories/TODO-02-event-viewer.md"
+  click todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/13-tools-accessories/TODO-02-event-viewer.md"
   todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d["sdk-build-system<br/>TODO-01"]
   class todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d active
-  click todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-01-sdk-build-system.md"
+  click todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-01-sdk-build-system.md"
   todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041["ixfs-mount<br/>TODO-02"]
   class todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041 active
-  click todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-02-ixfs-mount.md"
+  click todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-02-ixfs-mount.md"
   todo_14_host_tools_TODO_03_addr2line_md_f04591["addr2line<br/>TODO-03"]
   class todo_14_host_tools_TODO_03_addr2line_md_f04591 active
-  click todo_14_host_tools_TODO_03_addr2line_md_f04591 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-03-addr2line.md"
+  click todo_14_host_tools_TODO_03_addr2line_md_f04591 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-03-addr2line.md"
   todo_14_host_tools_TODO_04_crash_decode_md_3a5ac9["crash-decode<br/>TODO-04"]
   class todo_14_host_tools_TODO_04_crash_decode_md_3a5ac9 active
-  click todo_14_host_tools_TODO_04_crash_decode_md_3a5ac9 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-04-crash-decode.md"
+  click todo_14_host_tools_TODO_04_crash_decode_md_3a5ac9 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-04-crash-decode.md"
   todo_14_host_tools_TODO_05_serial_analyze_md_929fa5["serial-analyze<br/>TODO-05"]
   class todo_14_host_tools_TODO_05_serial_analyze_md_929fa5 active
-  click todo_14_host_tools_TODO_05_serial_analyze_md_929fa5 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-05-serial-analyze.md"
+  click todo_14_host_tools_TODO_05_serial_analyze_md_929fa5 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-05-serial-analyze.md"
   todo_14_host_tools_TODO_06_disk_inspect_md_9e3450["disk-inspect<br/>TODO-06"]
   class todo_14_host_tools_TODO_06_disk_inspect_md_9e3450 active
-  click todo_14_host_tools_TODO_06_disk_inspect_md_9e3450 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-06-disk-inspect.md"
+  click todo_14_host_tools_TODO_06_disk_inspect_md_9e3450 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-06-disk-inspect.md"
   todo_14_host_tools_TODO_07_ixfs_fsck_md_841145["ixfs-fsck<br/>TODO-07"]
   class todo_14_host_tools_TODO_07_ixfs_fsck_md_841145 active
-  click todo_14_host_tools_TODO_07_ixfs_fsck_md_841145 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-07-ixfs-fsck.md"
+  click todo_14_host_tools_TODO_07_ixfs_fsck_md_841145 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-07-ixfs-fsck.md"
   todo_14_host_tools_TODO_08_blackbox_log_extractor_md_a2dce2["blackbox-log-extractor<br/>TODO-08"]
   class todo_14_host_tools_TODO_08_blackbox_log_extractor_md_a2dce2 active
-  click todo_14_host_tools_TODO_08_blackbox_log_extractor_md_a2dce2 "https://github.com/rizonetech/impossible-os/blob/main/todo/14-host-tools/TODO-08-blackbox-log-extractor.md"
+  click todo_14_host_tools_TODO_08_blackbox_log_extractor_md_a2dce2 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-08-blackbox-log-extractor.md"
   todo_15_installer_release_TODO_01_release_artifacts_md_0a102f["release-artifacts<br/>TODO-01"]
   class todo_15_installer_release_TODO_01_release_artifacts_md_0a102f active
-  click todo_15_installer_release_TODO_01_release_artifacts_md_0a102f "https://github.com/rizonetech/impossible-os/blob/main/todo/15-installer-release/TODO-01-release-artifacts.md"
+  click todo_15_installer_release_TODO_01_release_artifacts_md_0a102f "https://github.com/rizonesoft/impossible-os/blob/main/todo/15-installer-release/TODO-01-release-artifacts.md"
   todo_15_installer_release_TODO_02_unattended_install_md_97727b["unattended-install<br/>TODO-02"]
   class todo_15_installer_release_TODO_02_unattended_install_md_97727b active
-  click todo_15_installer_release_TODO_02_unattended_install_md_97727b "https://github.com/rizonetech/impossible-os/blob/main/todo/15-installer-release/TODO-02-unattended-install.md"
+  click todo_15_installer_release_TODO_02_unattended_install_md_97727b "https://github.com/rizonesoft/impossible-os/blob/main/todo/15-installer-release/TODO-02-unattended-install.md"
   todo_15_installer_release_TODO_03_update_server_md_fefcaf["update-server<br/>TODO-03"]
   class todo_15_installer_release_TODO_03_update_server_md_fefcaf active
-  click todo_15_installer_release_TODO_03_update_server_md_fefcaf "https://github.com/rizonetech/impossible-os/blob/main/todo/15-installer-release/TODO-03-update-server.md"
+  click todo_15_installer_release_TODO_03_update_server_md_fefcaf "https://github.com/rizonesoft/impossible-os/blob/main/todo/15-installer-release/TODO-03-update-server.md"
   todo_15_installer_release_TODO_04_release_qa_md_95bcbc["release-qa<br/>TODO-04"]
   class todo_15_installer_release_TODO_04_release_qa_md_95bcbc active
-  click todo_15_installer_release_TODO_04_release_qa_md_95bcbc "https://github.com/rizonetech/impossible-os/blob/main/todo/15-installer-release/TODO-04-release-qa.md"
+  click todo_15_installer_release_TODO_04_release_qa_md_95bcbc "https://github.com/rizonesoft/impossible-os/blob/main/todo/15-installer-release/TODO-04-release-qa.md"
   todo_15_installer_release_TODO_05_github_release_community_md_096424["github-release-community<br/>TODO-05"]
   class todo_15_installer_release_TODO_05_github_release_community_md_096424 active
-  click todo_15_installer_release_TODO_05_github_release_community_md_096424 "https://github.com/rizonetech/impossible-os/blob/main/todo/15-installer-release/TODO-05-github-release-community.md"
+  click todo_15_installer_release_TODO_05_github_release_community_md_096424 "https://github.com/rizonesoft/impossible-os/blob/main/todo/15-installer-release/TODO-05-github-release-community.md"
   todo_16_architecture_ports_TODO_01_arch_abstraction_layer_md_e738d6["arch-abstraction-layer<br/>TODO-01"]
   class todo_16_architecture_ports_TODO_01_arch_abstraction_layer_md_e738d6 active
-  click todo_16_architecture_ports_TODO_01_arch_abstraction_layer_md_e738d6 "https://github.com/rizonetech/impossible-os/blob/main/todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md"
+  click todo_16_architecture_ports_TODO_01_arch_abstraction_layer_md_e738d6 "https://github.com/rizonesoft/impossible-os/blob/main/todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md"
   todo_16_architecture_ports_TODO_02_aarch64_kernel_port_md_20773f["aarch64-kernel-port<br/>TODO-02"]
   class todo_16_architecture_ports_TODO_02_aarch64_kernel_port_md_20773f active
-  click todo_16_architecture_ports_TODO_02_aarch64_kernel_port_md_20773f "https://github.com/rizonetech/impossible-os/blob/main/todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md"
+  click todo_16_architecture_ports_TODO_02_aarch64_kernel_port_md_20773f "https://github.com/rizonesoft/impossible-os/blob/main/todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md"
   todo_16_architecture_ports_TODO_03_smp_scaling_processor_groups_md_6cc893["smp-scaling-processor-groups<br/>TODO-03"]
   class todo_16_architecture_ports_TODO_03_smp_scaling_processor_groups_md_6cc893 active
-  click todo_16_architecture_ports_TODO_03_smp_scaling_processor_groups_md_6cc893 "https://github.com/rizonetech/impossible-os/blob/main/todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md"
+  click todo_16_architecture_ports_TODO_03_smp_scaling_processor_groups_md_6cc893 "https://github.com/rizonesoft/impossible-os/blob/main/todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md"
   todo_18_future_research_TODO_01_multi_arch_port_md_6589f3["multi-arch-port<br/>TODO-01"]
   class todo_18_future_research_TODO_01_multi_arch_port_md_6589f3 active
-  click todo_18_future_research_TODO_01_multi_arch_port_md_6589f3 "https://github.com/rizonetech/impossible-os/blob/main/todo/18-future-research/TODO-01-multi-arch-port.md"
+  click todo_18_future_research_TODO_01_multi_arch_port_md_6589f3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-01-multi-arch-port.md"
   todo_18_future_research_TODO_02_hypervisor_md_2c2e0d["hypervisor<br/>TODO-02"]
   class todo_18_future_research_TODO_02_hypervisor_md_2c2e0d active
-  click todo_18_future_research_TODO_02_hypervisor_md_2c2e0d "https://github.com/rizonetech/impossible-os/blob/main/todo/18-future-research/TODO-02-hypervisor.md"
+  click todo_18_future_research_TODO_02_hypervisor_md_2c2e0d "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-02-hypervisor.md"
   todo_18_future_research_TODO_03_gpu_compositor_md_17c7aa["gpu-compositor<br/>TODO-03"]
   class todo_18_future_research_TODO_03_gpu_compositor_md_17c7aa active
-  click todo_18_future_research_TODO_03_gpu_compositor_md_17c7aa "https://github.com/rizonetech/impossible-os/blob/main/todo/18-future-research/TODO-03-gpu-compositor.md"
+  click todo_18_future_research_TODO_03_gpu_compositor_md_17c7aa "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-03-gpu-compositor.md"
   todo_18_future_research_TODO_04_secureboot_tpm_md_23d419["secureboot-tpm<br/>TODO-04"]
   class todo_18_future_research_TODO_04_secureboot_tpm_md_23d419 active
-  click todo_18_future_research_TODO_04_secureboot_tpm_md_23d419 "https://github.com/rizonetech/impossible-os/blob/main/todo/18-future-research/TODO-04-secureboot-tpm.md"
+  click todo_18_future_research_TODO_04_secureboot_tpm_md_23d419 "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-04-secureboot-tpm.md"
   todo_18_future_research_TODO_05_ai_ml_runtime_md_cd05f3["ai-ml-runtime<br/>TODO-05"]
   class todo_18_future_research_TODO_05_ai_ml_runtime_md_cd05f3 active
-  click todo_18_future_research_TODO_05_ai_ml_runtime_md_cd05f3 "https://github.com/rizonetech/impossible-os/blob/main/todo/18-future-research/TODO-05-ai-ml-runtime.md"
+  click todo_18_future_research_TODO_05_ai_ml_runtime_md_cd05f3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-05-ai-ml-runtime.md"
   todo_18_future_research_TODO_06_android_app_compatibility_md_178c48["android-app-compatibility<br/>TODO-06"]
   class todo_18_future_research_TODO_06_android_app_compatibility_md_178c48 active
-  click todo_18_future_research_TODO_06_android_app_compatibility_md_178c48 "https://github.com/rizonetech/impossible-os/blob/main/todo/18-future-research/TODO-06-android-app-compatibility.md"
+  click todo_18_future_research_TODO_06_android_app_compatibility_md_178c48 "https://github.com/rizonesoft/impossible-os/blob/main/todo/18-future-research/TODO-06-android-app-compatibility.md"
   todo_TODO_Claude_Overnight_Runner_md_4949c7["claude-overnight-runner<br/>TODO-Claude-Overnight-Runner"]
   class todo_TODO_Claude_Overnight_Runner_md_4949c7 active
-  click todo_TODO_Claude_Overnight_Runner_md_4949c7 "https://github.com/rizonetech/impossible-os/blob/main/todo/TODO-Claude-Overnight-Runner.md"
+  click todo_TODO_Claude_Overnight_Runner_md_4949c7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/TODO-Claude-Overnight-Runner.md"
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3

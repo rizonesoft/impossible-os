@@ -17,7 +17,7 @@ UEFI mode and a VDI disk image (included in releases).
 Each release includes a `.vdi` file ready for VirtualBox:
 
 1. Download `system-disk.vdi` from the
-   [latest release](https://github.com/rizonetech/impossible-os/releases)
+   [latest release](https://github.com/rizonesoft/impossible-os/releases)
 2. Follow **Create the VM** below, and select this VDI as the hard disk
 
 ---

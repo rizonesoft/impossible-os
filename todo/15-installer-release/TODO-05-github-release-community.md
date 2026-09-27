@@ -52,7 +52,7 @@ title: "TODO-05 -- GitHub Releases & Community Launch"
 
 ## Outcome
 
-Visiting `https://github.com/rizonetech/impossible-os` shows a polished README with a
+Visiting `https://github.com/rizonesoft/impossible-os` shows a polished README with a
 desktop screenshot, 3-command quick start, and download links. New contributors find
 `CONTRIBUTING.md`, structured issue templates, and a `good-first-issue` label queue.
 Every stable release tags the repo, posts a GitHub Release with all signed artifacts,
@@ -89,7 +89,7 @@ outsiders can track progress without reading 100+ TODO files.
   6. Upload SDK ZIP (delegate to `scripts/release-sdk.sh` from `TODO-06 §8`, pass `--upload-only` flag)
   7. Publish draft: `gh release edit "v{version}" --draft=false`
   8. Post Discord announcement webhook (§7): `curl -X POST $DISCORD_RELEASES_WEBHOOK -d "{\"content\":\"...\"}"` with version, download URL, changelog summary
-  9. Print: `"Release v{version} ({channel}) published: https://github.com/rizonetech/impossible-os/releases/tag/v{version}"`
+  9. Print: `"Release v{version} ({channel}) published: https://github.com/rizonesoft/impossible-os/releases/tag/v{version}"`
 - [ ] **`.github/workflows/release.yml`**: triggered on `push` to tags matching `v*`; steps: checkout, `bash scripts/build.sh clean`, `bash scripts/sign-release.sh`, `bash scripts/create-release.sh ${{ github.ref_name }} ${{ inputs.channel }}`; requires secrets `GH_RELEASE_TOKEN`, `CODESIGN_PRIV_KEY`, `CLOUDFLARE_R2_*`, `DISCORD_RELEASES_WEBHOOK`
 - [ ] **SDK version synchronization**: `create-release.sh` reads `HKLM\SYSTEM\SDK\InstalledVersion` equivalent from `sdk/VERSION` file; asserts it matches OS version before proceeding
 
@@ -119,8 +119,8 @@ outsiders can track progress without reading 100+ TODO files.
   ### Removed
   - Legacy `SYS_DEBUG_OLD` syscall stub (#110)
 
-  [1.0.22100]: https://github.com/rizonetech/impossible-os/compare/v1.0.21000...v1.0.22100
-  [Unreleased]: https://github.com/rizonetech/impossible-os/compare/v1.0.22100...HEAD
+  [1.0.22100]: https://github.com/rizonesoft/impossible-os/compare/v1.0.21000...v1.0.22100
+  [Unreleased]: https://github.com/rizonesoft/impossible-os/compare/v1.0.22100...HEAD
   ```
 - [ ] **PR requirement**: every PR must add an entry to `## [Unreleased]`; PR template (§4) checklist includes `[ ] CHANGELOG.md updated`; CI linter checks that `## [Unreleased]` section is non-empty on PRs that add/change code
 - [ ] **`scripts/gen-changelog.sh <old-tag> <new-tag>`** (specced in `D10T03 §5`; used here): `gh pr list --state merged --base main --search "merged:{old-date}..{new-date}" --json title,number,url` → group by PR label (`kernel`/`boot`/`desktop`/`drivers`/etc.) → output draft `docs/changelog/{version}.md`; maintainer reviews + promotes to `CHANGELOG.md`
@@ -224,7 +224,7 @@ outsiders can track progress without reading 100+ TODO files.
   ## Quick Start
 
   ```bash
-  git clone https://github.com/rizonetech/impossible-os
+  git clone https://github.com/rizonesoft/impossible-os
   bash scripts/setup.sh        # install dependencies (Ubuntu/WSL2)
   bash scripts/build.sh run    # build + launch in QEMU
   ```
@@ -255,7 +255,7 @@ outsiders can track progress without reading 100+ TODO files.
   GPL-3.0 -- Copyright © 2026 [Rizonetech (Pty) Ltd](https://rizonetech.com)
   ````
 - [ ] **Desktop screenshot**: capture QEMU framebuffer at `1280×720` showing desktop with taskbar, wallpaper, and at least one open window; save as `docs/screenshots/desktop-v{version}.png`; script `scripts/take-screenshot.sh` (QEMU `-screenshot` option on a specific frame or `sendkey` sequence to open a window)
-- [ ] **CI status badge**: `[![CI](https://github.com/rizonetech/impossible-os/actions/workflows/build.yml/badge.svg)](...)` -- auto-shows green/red from GHA
+- [ ] **CI status badge**: `[![CI](https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg)](...)` -- auto-shows green/red from GHA
 - [ ] **Tooling-command sync**: README quick start and test guidance must reuse the canonical commands from `D00 T01 §1-§7`; no stale `make test`, `run-tests.sh`, or obsolete ISO-only launcher wording
 - [ ] **Auto-update download table**: `scripts/update-readme-links.sh` -- reads `build/release-{version}.json`; replaces `{latest}` placeholders in README with current version + URLs; called by `create-release.sh` (§1)
 - [ ] **README status sync**: feature status table in README stays current; `scripts/sync-readme-status.sh` generates README table from source to avoid drift
@@ -302,7 +302,7 @@ outsiders can track progress without reading 100+ TODO files.
   ```
   🚀 **Impossible OS v{version}** is out!
   {type} release -- {N} new changes
-  Download: https://github.com/rizonetech/impossible-os/releases/tag/v{version}
+  Download: https://github.com/rizonesoft/impossible-os/releases/tag/v{version}
   Changelog: https://impossible-os.dev/changelog#{version}
   ```
 - [ ] **`CODE_OF_CONDUCT.md`** (enhance existing): adopt Contributor Covenant 2.1 verbatim; add project-specific contact: `conduct@impossible-os.dev` (GitHub-forwarded email alias); link from `CONTRIBUTING.md` and all issue templates
@@ -361,7 +361,7 @@ immediately to community members without polling GitHub.
 
 ## Verification
 
-- [ ] **Release workflow**: `scripts/create-release.sh 1.0.22100 stable` (dry run with `GH_RELEASE_TOKEN` set to test PAT): annotated tag created, draft GH Release created with correct title, all artifact upload calls made, Discord webhook fires, release published; verify at `https://github.com/rizonetech/impossible-os/releases`
+- [ ] **Release workflow**: `scripts/create-release.sh 1.0.22100 stable` (dry run with `GH_RELEASE_TOKEN` set to test PAT): annotated tag created, draft GH Release created with correct title, all artifact upload calls made, Discord webhook fires, release published; verify at `https://github.com/rizonesoft/impossible-os/releases`
 - [ ] **Changelog lint**: PR with code change + empty `## [Unreleased]` → CI fails with `CHANGELOG.md: [Unreleased] section is empty`; PR with entry in `[Unreleased]` → lint passes
 - [ ] **CONTRIBUTING.md**: fresh Ubuntu/WSL2 environment, follow `CONTRIBUTING.md` setup steps exactly → OS builds and runs in QEMU without additional intervention
 - [ ] **Issue templates**: open new issue on GitHub → two template options appear; fill bug report form → all fields validate; submit → issue created with `bug` + `triage` labels

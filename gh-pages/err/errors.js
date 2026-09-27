@@ -393,7 +393,7 @@ function buildOverview() {
             </div>
             <div class="hero-actions">
                 <a class="btn btn-primary" href="${escapeHtml(homeHref)}">Project homepage</a>
-                <a class="btn btn-secondary" href="https://github.com/rizonetech/impossible-os" target="_blank" rel="noopener">Source code</a>
+                <a class="btn btn-secondary" href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">Source code</a>
             </div>
         </section>
         <section class="registry-grid">

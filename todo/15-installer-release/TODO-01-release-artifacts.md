@@ -169,7 +169,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   =======================
   To install: boot from this disc (UEFI mode required).
   Minimum requirements: x86-64 CPU, 512 MB RAM, 4 GB disk.
-  For help: https://github.com/rizonetech/impossible-os
+  For help: https://github.com/rizonesoft/impossible-os
   ```
 - [ ] **SHA-256** alongside ISO: `sha256sum "build/impossible-os-${VER}.iso" > "build/impossible-os-${VER}.iso.sha256"`
 - [ ] **Verify**: `file build/impossible-os-*.iso` must match `ISO 9660 CD-ROM filesystem`; `isoinfo -d -i *.iso` shows Joliet + Rock Ridge present; ISO boots in QEMU with `-cdrom` flag
@@ -227,7 +227,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
           "type": "disk_image",
           "size_bytes": 123456789,
           "sha256": "abc123...",
-          "download_url": "https://github.com/rizonetech/impossible-os/releases/download/v1.0.22000/impossible-os-1.0.22000.img.zst"
+          "download_url": "https://github.com/rizonesoft/impossible-os/releases/download/v1.0.22000/impossible-os-1.0.22000.img.zst"
         },
         { "name": "impossible-os-1.0.22000.iso", "type": "iso", ... },
         { "name": "impossible-os-1.0.22000.vmdk", "type": "vm_vmdk", ... },
@@ -235,7 +235,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
       ]
     }
     ```
-  - `download_url` uses `https://github.com/rizonetech/impossible-os/releases/download/v{VER}/` prefix
+  - `download_url` uses `https://github.com/rizonesoft/impossible-os/releases/download/v{VER}/` prefix
 - [ ] **Consumed by `TODO-03` update check**: `update_check()` fetches `https://sdk.impossible-os.dev/releases/latest.json` (which redirects to or mirrors the GitHub Release manifest); parses `version` field; compares to `HKLM\SYSTEM\Version`
 - [ ] **Boot-platform schema XREF** -- run `bash scripts/release/build-manifest.sh build` per image; include each emitted `manifest.json` in `release-{version}.json` as `type: "boot_manifest"`. Schema owner: `D01 T06 §1`.
 - [ ] **`make manifest`** target: runs `scripts/make-manifest.sh`; depends on `make release-image`, `make iso`, `make vm-images`

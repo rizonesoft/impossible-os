@@ -334,6 +334,12 @@ Define the return path before it is needed. Moving back later should be a planne
 - [x] Documented asserting the receiving path is live + only NON-destination prior owners 301 to it, plus the redirect-retention decision (runbook §8).
 - [x] Documented the stale-secret audit (`BOOTLOADER_REPO_TOKEN` orphaned; §1 preflight baseline stale) with a fresh consumer-scan requirement before delete/rotate (runbook §7).
 - [x] Commit: `"docs/github: add move-back and public-visibility runbook"`
+- [x] Executed the move-back 2026-09-27: `rizonesoft/impossible-os`, public.
+  - gitleaks 8.30.1 over all 5,917 commits found no true secret (13 hits, all false positives).
+  - Pages `https_enforced` now `true` (cert approved); the `Default Branch Security` admin bypass (RepositoryRole 5) the org move dropped is restored.
+  - Secret scanning + push protection enabled; `rizonetech/impossible-os` returns 301 to the new path; live owner refs swept in 36 files.
+- [/] Flip the `www.impossibleos.co` CNAME to `rizonesoft.github.io` (owner: operator, DNS provider access).
+  - Not blocking: `www` still 301s to the apex because every `*.github.io` host resolves to the same Pages edge.
 
 **Test checkpoint:** The runbook documents every move-back + public-visibility step in operator-runnable form; `docs/infrastructure/repository-move-back-runbook.md` exists and a reader can follow trigger -> readiness -> transfer -> re-point -> domain -> visibility-flip -> redirect-verify without gaps. The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order (the actual execution is the future operator action).
 

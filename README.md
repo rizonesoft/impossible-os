@@ -7,14 +7,14 @@
 </p>
 
 <!-- Dynamic badges (uncomment when repo is public):
-  <a href="https://github.com/rizonetech/impossible-os/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/rizonetech/impossible-os/build.yml?branch=main&style=flat-square&logo=github&label=Build" alt="Build" /></a>
-  <a href="https://github.com/rizonetech/impossible-os/releases/latest"><img src="https://img.shields.io/github/v/release/rizonetech/impossible-os?style=flat-square&label=Release&color=green" alt="Release" /></a>
-  <a href="https://github.com/rizonetech/impossible-os/commits/main"><img src="https://img.shields.io/github/last-commit/rizonetech/impossible-os?style=flat-square&label=Last%20Commit" alt="Last Commit" /></a>
-  <a href="https://github.com/rizonetech/impossible-os/stargazers"><img src="https://img.shields.io/github/stars/rizonetech/impossible-os?style=flat-square&color=yellow" alt="Stars" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/rizonesoft/impossible-os/build.yml?branch=main&style=flat-square&logo=github&label=Build" alt="Build" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/releases/latest"><img src="https://img.shields.io/github/v/release/rizonesoft/impossible-os?style=flat-square&label=Release&color=green" alt="Release" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/commits/main"><img src="https://img.shields.io/github/last-commit/rizonesoft/impossible-os?style=flat-square&label=Last%20Commit" alt="Last Commit" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/stargazers"><img src="https://img.shields.io/github/stars/rizonesoft/impossible-os?style=flat-square&color=yellow" alt="Stars" /></a>
 -->
 <p align="center">
-  <a href="https://github.com/rizonetech/impossible-os/actions/workflows/build.yml"><img src="https://github.com/rizonetech/impossible-os/actions/workflows/build.yml/badge.svg?branch=main" alt="Build" /></a>
-  <a href="https://github.com/rizonetech/impossible-os/actions/workflows/release.yml"><img src="https://github.com/rizonetech/impossible-os/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg?branch=main" alt="Build" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/release.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
   <img src="https://img.shields.io/badge/platform-x86__64-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/boot-UEFI-00979D?style=flat-square" alt="Boot" />
   <img src="https://img.shields.io/badge/license-GPL--3.0--only-blue?style=flat-square" alt="License" />
@@ -67,7 +67,7 @@ They said building a fully functional, feature-rich operating system from scratc
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/rizonetech/impossible-os.git
+git clone https://github.com/rizonesoft/impossible-os.git
 cd impossible-os
 bash scripts/setup.sh          # Install all dependencies
 bash scripts/build.sh run      # Build + boot in QEMU
@@ -98,7 +98,7 @@ bash scripts/build.sh run      # Build + boot in QEMU
 
 ### Downloads
 
-Pre-built disk images are available on the [**Releases**](https://github.com/rizonetech/impossible-os/releases) page. Each release includes:
+Pre-built disk images are available on the [**Releases**](https://github.com/rizonesoft/impossible-os/releases) page. Each release includes:
 
 - **`system-disk.img`** -- raw GPT image for QEMU or USB boot
 - **`system-disk.vdi`** -- VirtualBox native format

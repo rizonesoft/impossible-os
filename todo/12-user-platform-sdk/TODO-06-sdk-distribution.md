@@ -303,7 +303,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
   6. Tag: `git tag sdk/v${VERSION} -m "SDK release ${VERSION}"`
   7. Push: `git push origin sdk/v${VERSION}`
   8. GitHub Release: `gh release create sdk/v${VERSION} build/impossible-os-sdk-${VERSION}.zip build/impossible-os-sdk-${VERSION}.zip.sha256 --title "Impossible OS SDK v${VERSION}" --notes-file sdk/docs/CHANGELOG.md`
-  9. Print: `SDK v${VERSION} released → https://github.com/rizonetech/impossible-os/releases/tag/sdk/v${VERSION}`
+  9. Print: `SDK v${VERSION} released → https://github.com/rizonesoft/impossible-os/releases/tag/sdk/v${VERSION}`
 - [ ] **`sdk-update` shell command** (on-OS):
   - Read `HKLM\SYSTEM\SDK\InstalledVersion` (set by `D10T09 §10` SDK installer)
   - Fetch `https://sdk.impossible-os.dev/latest` → get `latest_version` string (via `SYS_PING`-equivalent HTTP GET)

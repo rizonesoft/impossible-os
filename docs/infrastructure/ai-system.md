@@ -417,7 +417,7 @@ These paths exist in the repo for other reasons. Their presence does NOT imply a
 
 ### GitHub-side enablement note (regression pack cannot detect)
 
-Copilot cloud-agent can be enabled at the **repository or organization level in the GitHub UI** (Settings -> Copilot -> Access policies, or equivalent). That enablement is NOT a file in the repo; the regression suite cannot detect it. Enforcement is procedural: the project owner (`rizonetech/impossible-os` org admin) keeps cloud-agent access policies set to "disabled for this repo" and audits the Settings pane whenever the org-wide Copilot configuration changes. A cloud-agent-authored PR appearing on the repo despite this policy is a process bug, not a repo bug; close the PR with a citation to this section and re-check the Settings pane.
+Copilot cloud-agent can be enabled at the **repository or organization level in the GitHub UI** (Settings -> Copilot -> Access policies, or equivalent). That enablement is NOT a file in the repo; the regression suite cannot detect it. Enforcement is procedural: the project owner (`rizonesoft/impossible-os` org admin) keeps cloud-agent access policies set to "disabled for this repo" and audits the Settings pane whenever the org-wide Copilot configuration changes. A cloud-agent-authored PR appearing on the repo despite this policy is a process bug, not a repo bug; close the PR with a citation to this section and re-check the Settings pane.
 
 ### MCP-server corollary
 

@@ -19,7 +19,7 @@ everything you need to get started.
 ### Development Environment Setup
 
 ```bash
-git clone https://github.com/rizonetech/impossible-os.git
+git clone https://github.com/rizonesoft/impossible-os.git
 cd impossible-os
 bash scripts/setup.sh          # Installs Clang-19, NASM, QEMU, OVMF, mtools, gcc, python3, etc.
 bash scripts/build.sh run      # Build + boot in QEMU to verify everything works

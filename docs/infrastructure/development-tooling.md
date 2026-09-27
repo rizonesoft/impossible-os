@@ -525,7 +525,7 @@ Idempotent -- checks `command -v` before installing. Colored output with ✓/·/
 ### One-Command Setup
 
 ```bash
-git clone https://github.com/rizonetech/impossible-os.git
+git clone https://github.com/rizonesoft/impossible-os.git
 cd impossible-os
 bash scripts/setup.sh    # installs deps + verification build
 bash scripts/build.sh run

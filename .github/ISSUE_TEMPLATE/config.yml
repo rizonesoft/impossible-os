@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 Discussions
-    url: https://github.com/rizonetech/impossible-os/discussions
+    url: https://github.com/rizonesoft/impossible-os/discussions
     about: Ask questions or share ideas in Discussions
   - name: 📋 Roadmap
-    url: https://github.com/rizonetech/impossible-os/tree/main/todo
+    url: https://github.com/rizonesoft/impossible-os/tree/main/todo
     about: Check the TODO roadmap before requesting a feature

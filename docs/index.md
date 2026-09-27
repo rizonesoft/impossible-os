@@ -24,5 +24,5 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | Understand the build system     | [Infrastructure → Development Tooling](infrastructure/development-tooling.md) |
 | Set up CI/CD                    | [Infrastructure → GitHub Setup](infrastructure/github-setup.md)               |
 | Read a hardware spec            | [Specs](../specs/index.md)                                                       |
-| Contribute to the project       | [CONTRIBUTING.md](https://github.com/rizonetech/impossible-os/blob/main/CONTRIBUTING.md) |
-| Find work items                 | [TODO Index](https://github.com/rizonetech/impossible-os/blob/main/todo/TODO-00-INDEX.md) |
+| Contribute to the project       | [CONTRIBUTING.md](https://github.com/rizonesoft/impossible-os/blob/main/CONTRIBUTING.md) |
+| Find work items                 | [TODO Index](https://github.com/rizonesoft/impossible-os/blob/main/todo/TODO-00-INDEX.md) |

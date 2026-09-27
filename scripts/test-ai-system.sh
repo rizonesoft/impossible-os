@@ -394,7 +394,7 @@ check_autonomous_agent_boundary() {
     assert_fixed_string "AGENTS.md has Autonomous-agent stop sign" \
         "AGENTS.md" "Autonomous-agent stop sign"
     # Non-automatable reminder.
-    t_info "GitHub-side: verify repo/org Settings -> Copilot access = disabled for rizonetech/impossible-os (not detectable from this script)"
+    t_info "GitHub-side: verify repo/org Settings -> Copilot access = disabled for rizonesoft/impossible-os (not detectable from this script)"
 }
 
 # ============================================================================
