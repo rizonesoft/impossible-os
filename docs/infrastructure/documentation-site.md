@@ -17,7 +17,7 @@ The Pages workflow (`.github/workflows/pages.yml`) runs the drift check first, t
 
 ## Where do project facts come from?
 
-`project.json` holds the repository owner, URLs and the release date. Landing-page templates in `gh-pages/` use `{{key}}` placeholders. Markdown files such as the README use regions that still read naturally on GitHub:
+`project.json` holds the repository owner, URLs (including the PayPal `donate_url`) and the release date. Landing-page templates in `gh-pages/` use `{{key}}` placeholders. Markdown files such as the README use regions that still read naturally on GitHub:
 
 ```markdown
 <!-- project:release_date_long -->August 8, 2028<!-- /project -->
@@ -45,7 +45,8 @@ The [coverage page](https://impossibleos.co/docs/coverage.html) lists every road
 | Stale project region | README still showing an old release date |
 | Unknown `{{key}}` in a template | a typo in `gh-pages/index.html` |
 | Repository URL naming another owner | a leftover `rizonetech/impossible-os` link after the move back |
-| Line-count badge disagreeing with COUNT.md | a README edited without the post-commit hook |
+| Line-count badge disagreeing with COUNT.md | a README edited without the post-commit hook (the badge shows the exact total, for example 1,325,572) |
+| A PayPal donate link other than `project.json`'s `donate_url` | an old donation button left in a doc or the README |
 | Stale generated theme header | `include/desktop/theme_tokens.h` older than `docs/design/tokens.json` |
 | Coverage regression | a new roadmap file with no docs page |
 | A `sources=` path that is not a tracked file or directory | a page naming a file that was renamed or never committed |

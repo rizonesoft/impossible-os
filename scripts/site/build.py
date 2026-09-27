@@ -186,9 +186,8 @@ def load_stats() -> dict[str, str]:
         "stat_docs_covered": str(len(covered & set(todos))),
         "stat_test_suites": f"{cov['total_suites']:,}",
         "stat_test_assertions": f"{cov['total_assertions']:,}",
-        # The same whole-tree total, floored to thousands, that the README badge shows.
-        "stat_lines": f"{lines // 1000 * 1000:,}+",
-        "stat_lines_k": f"{lines // 1000:,}K+",
+        # The same exact whole-tree total the README badge shows.
+        "stat_lines": f"{lines:,}",
     }
 
 
@@ -1004,6 +1003,33 @@ def check_owner_urls(facts: dict, errors: list[str]) -> None:
                               f"project.json says '{facts['owner']}'")
 
 
+DONATE_RE = re.compile(r"paypal\.com/donate/?\?hosted_button_id=([A-Za-z0-9]+)")
+
+
+def check_donate_links(facts: dict, errors: list[str]) -> None:
+    """Every PayPal donate link in the tree must be project.json's `donate_url`:
+    templates use {{donate_url}}, and a hand-typed link (README, docs) that
+    names another button fails here, so an old donation link cannot survive."""
+    want = DONATE_RE.search(facts.get("donate_url", ""))
+    if not want:
+        errors.append("project.json: donate_url is missing or is not a PayPal donate link")
+        return
+    where = ["--cached"] if SOURCE == "index" else ([SOURCE] if SOURCE != "worktree" else [])
+    proc = subprocess.run(["git", "grep", "-nIE", *where, "-e", DONATE_RE.pattern, "--", ":!src/libs"],
+                          cwd=REPO, capture_output=True, text=True)
+    if proc.returncode not in (0, 1):
+        errors.append(f"donate link scan failed (git grep rc={proc.returncode}): {proc.stderr.strip()}")
+        return
+    for line in proc.stdout.splitlines():
+        if SOURCE not in ("worktree", "index"):
+            line = line.split(":", 1)[1]
+        rel, lineno, content = line.split(":", 2)
+        for m in DONATE_RE.finditer(content):
+            if m.group(1) != want.group(1):
+                errors.append(f"{rel}:{lineno}: PayPal donate link uses button {m.group(1)}, "
+                              f"project.json donate_url uses {want.group(1)}")
+
+
 ICON_SIZES = (16, 24, 32, 48, 64, 72, 96, 128, 256)  # must match SIZES in scripts/convert-icons.sh
 
 
@@ -1075,13 +1101,13 @@ COUNT_TOTAL_RE = re.compile(r"\*\*All lines in tree\*\*\s*\|\s*\*\*\d+\*\*\s*\|\
 def check_count_badge(errors: list[str]) -> None:
     count = (ROOT / "COUNT.md").read_text(encoding="utf-8")
     m = COUNT_TOTAL_RE.search(count)
-    b = re.search(r"img\.shields\.io/badge/lines-(\d+)k-", (ROOT / "README.md").read_text(encoding="utf-8"))
+    b = re.search(r"img\.shields\.io/badge/lines-([0-9]+(?:%2C[0-9]{3})*)-", (ROOT / "README.md").read_text(encoding="utf-8"))
     if not m or not b:
         errors.append("README/COUNT.md: line-count badge or COUNT.md total not found")
         return
-    want = int(m.group(1)) // 1000  # post-commit writes the floor
-    if int(b.group(1)) != want:
-        errors.append(f"README.md: line-count badge says {b.group(1)}k, COUNT.md says {want}k "
+    shown = int(b.group(1).replace("%2C", ""))      # the exact count, comma-grouped
+    if shown != int(m.group(1)):
+        errors.append(f"README.md: line-count badge says {shown:,}, COUNT.md says {int(m.group(1)):,} "
                       f"(run: COUNT_ONLY=1 bash .githooks/post-commit)")
 
 
@@ -1187,6 +1213,7 @@ def run(args: argparse.Namespace) -> int:
 
     check_regions(facts, errors, write=False, skip_stats=args.skip_stats)
     check_owner_urls(facts, errors)
+    check_donate_links(facts, errors)
     check_count_badge(errors)
     check_icon_renders(errors)
     check_scripts(files, errors)

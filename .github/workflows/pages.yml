@@ -1,4 +1,4 @@
-name: Deploy GitHub Pages
+name: GitHub Pages
 
 # The published site is GENERATED, never committed: scripts/site/build.py
 # renders the landing templates in gh-pages/ (with project.json facts) and every

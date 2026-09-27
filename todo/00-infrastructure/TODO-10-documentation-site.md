@@ -736,6 +736,6 @@ A page that was right when written goes wrong when its code changes. Neither Win
 - [ ] `python3 scripts/site/build.py --check` -> `site: OK (... N/231 TODO files documented)` with N = 231 at completion
 - [ ] `bash scripts/lint.sh` -> no Check 30 error
 - [ ] `bash scripts/test-tooling.sh --quiet` -> the site suite passes
-- [ ] The latest `Deploy GitHub Pages` run is green and `https://impossibleos.co/docs/` serves the current `main`
+- [ ] The latest `GitHub Pages` run is green and `https://impossibleos.co/docs/` serves the current `main`
 - [ ] `docs/.coverage-baseline.json` lists no files
 - [ ] Commit: `"00-infrastructure/TODO-10: documentation site and corpus complete"`

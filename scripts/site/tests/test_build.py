@@ -583,6 +583,38 @@ class Freshness(unittest.TestCase):
         self.assertEqual(states["B"], "stale")
         self.assertEqual(states["A"], "fresh")
 
+
+PP = "paypal." + "com/donate/?hosted_button_id="   # split so the repo-wide link scan skips this file
+
+
+class DonateAndBadge(unittest.TestCase):
+    _use, setUp, tearDown = RawHtmlAndBaseline._use, RawHtmlAndBaseline.setUp, RawHtmlAndBaseline.tearDown
+
+    def test_a_stale_donate_link_and_a_wrong_line_count_are_errors(self):
+        root = Path(tempfile.mkdtemp(prefix="site-donate-"))
+        (root / "README.md").write_text(
+            '<img src="https://img.shields.io/badge/lines-1%2C325%2C570-blueviolet" />\n'
+            f"[d](https://www.{PP}OLDBUTTON)\n[e](https://www.{PP}NEWBUTTON)\n", encoding="utf-8")
+        (root / "COUNT.md").write_text("| **All lines in tree** | **9** | **1325572** |\n", encoding="utf-8")
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "f", "--no-verify"]):
+            subprocess.run(["git", *cmd], cwd=root, check=True, env=env, capture_output=True)
+        self._use(root)
+        errors: list[str] = []
+        B.check_donate_links({"donate_url": f"https://www.{PP}NEWBUTTON"}, errors)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("README.md:2: PayPal donate link uses button OLDBUTTON", errors[0])
+        errors = []
+        B.check_count_badge(errors)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("says 1,325,570, COUNT.md says 1,325,572", errors[0])
+        (root / "README.md").write_text('<img src="https://img.shields.io/badge/lines-1%2C325%2C572-blueviolet" />\n',
+                                        encoding="utf-8")
+        errors = []
+        B.check_count_badge(errors)
+        self.assertEqual(errors, [])
+
 class RepoMeta(unittest.TestCase):
     def setUp(self):
         import repo_meta
