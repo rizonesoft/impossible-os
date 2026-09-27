@@ -656,6 +656,12 @@ A page that was right when written goes wrong when its code changes. Neither Win
 - [ ] Improve search: index H2/H3 text with anchors so a hit jumps to the section, and rank title > heading > body; keep `search.json` under 2 MB
 - [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
 - [ ] Add Open Graph and canonical URL tags to docs pages from `project.json`
+- [ ] Landing page feature claims are hand-written and some are false; derive or verify them (found 2026-09-27)
+  - `gh-pages/index.html:950` says "per-CPU run queues, CFS-style scheduler"; CLAUDE.md (Safety Gates) documents a flat-cyclic round-robin over all runnable threads. Line 955 ("TCP and DNS in progress") and the Codex Registry, IXFS and Secure Boot cards need the same check.
+  - Fix: move each feature card's claim into `project.json` (or a `gh-pages/features.json`) with the roadmap file that owns it, render the cards from that, and have `--check` fail when a card cites a roadmap file whose status contradicts the claim (for example "full" on a file with open sections).
+- [ ] GitHub repository description, homepage and topics are not covered by any drift check (found 2026-09-27)
+  - Live values: the description carries an em dash and the homepage is `http://impossibleos.co/` (not https); neither comes from `project.json`.
+  - Fix: add `description`, `topics` and the https `site_url` to `project.json`; a `scripts/site/sync-repo-meta.sh` applies them with `gh repo edit`, and the Pages workflow compares `gh api repos/{owner}/{repo}` against them and warns on a difference.
 - [ ] Commit: `"site: sitemap, last-updated dates, section search, release doc snapshots"`
 
 **Test checkpoint:** the deployed site serves `https://impossibleos.co/sitemap.xml` listing every docs page; a search for a section heading lands on that section; a test tag build produces a versioned docs tree locally. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
