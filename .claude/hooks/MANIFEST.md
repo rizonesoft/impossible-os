@@ -252,6 +252,10 @@ No `hooks/hooks.json` shipped. Plugin contributes the agent-creator / plugin-val
 | PostToolUse | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-hook.sh` | Appends to the `.remember/` rolling history buffer after tool calls. |
 | SessionEnd | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/session-end-hook.sh` | Flushes any unsaved session history to `.remember/now.md` when the session ends, ignoring the save cooldown. Added by the plugin in the 0.8.6 -> 0.33.0 upgrade (found by `scripts/audit-hooks.sh` 2026-09-27). |
 
+### `cloudflare@cloudflare` 1.0.1
+
+No `hooks/hooks.json` shipped. Plugin contributes Cloudflare skills, rules and MCP server wiring only (installed 2026-09-27).
+
 > Plugin selection lives at `~/.claude/plugins/installed_plugins.json`. The retired `firecrawl@claude-plugins-official` plugin was uninstalled 2026-04-27. When installing or removing a plugin, add or remove the matching `### <name>@<marketplace>` subsection here in the same commit; `audit-hooks.sh` cross-checks the plugin index against the subsection headings.
 
 ## Wrap.sh eligibility quick reference

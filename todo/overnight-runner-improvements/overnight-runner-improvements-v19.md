@@ -279,3 +279,5 @@ Carry the baselines forward. A measurement without one is an anecdote.
   - `scripts/tests/test_todo_fence.py` case "s48 dense `<a>` scales linearly" failed once under full-suite load (13.2x over a 4x size step, 2.17 s) and passed alone (705 assertions); it asserts a wall-clock ratio, which host load can break.
   - Nested logs: `.claude/overnight/artifacts/nested-test_build-20260927-164729.log` (line 480) and `nested-test_todo_fence-20260927-164752.log`.
   - Possible fix, not applied: make 22ed wait on the reap event rather than a sleep window, and give s48 a retry or a CPU-time basis instead of wall-clock.
+  - 2026-09-27 evening: 22ed failed in all four pack runs that day (nested logs 154452, 164729, 211123, 215115, line 480 each) yet `bash scripts/todo-graph/tests/test_build.sh` run alone passed 844/844, so the survivor is reaped by something the pack adds, not by timing alone; CI's Build passed it.
+  - Third host-dependent case, FIXED in `9e4e531a1`: lsp-mcp `1c` ran a global `pgrep -x cat`, which WSL's `/pre-start.sh` (two long-lived `cat` children) always satisfied; it now diffs the cat pid set before and after.
