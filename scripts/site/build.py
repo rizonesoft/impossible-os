@@ -1011,6 +1011,8 @@ def run(args: argparse.Namespace) -> int:
     sys.path.insert(0, str(REPO / "scripts" / "site"))
     import gen_theme_header  # noqa: E402  (sibling module; set_root() repoints it at a snapshot)
     errors.extend(gen_theme_header.check())
+    import repo_meta  # noqa: E402  (offline half; the live GitHub comparison is repo-metadata.yml)
+    errors.extend(repo_meta.validate(json.loads(PROJECT_FILE.read_text(encoding="utf-8"))))
 
     if errors:
         for e in errors:

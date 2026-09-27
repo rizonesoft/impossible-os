@@ -49,6 +49,11 @@ The [coverage page](https://impossibleos.co/docs/coverage.html) lists every road
 | Stale generated theme header | `include/desktop/theme_tokens.h` older than `docs/design/tokens.json` |
 | Coverage regression | a new roadmap file with no docs page |
 | JavaScript that does not parse | a stray `});` that stops the landing page countdown and hides every section that fades in on scroll |
+| Bad GitHub About-box values | a description with a dash, an `http` homepage, or an invalid topic in `project.json` |
+
+## How is the GitHub About box kept in sync?
+
+The repository description, homepage and topics are published text too, but they live in the repository settings rather than the tree. They come from `project.json` (`tagline`, `site_url`, `topics`). `scripts/site/repo_meta.py --apply` writes them to GitHub, and `.github/workflows/repo-metadata.yml` runs `repo_meta.py --check` on every change to them and once a day, so an edit made in the GitHub web interface turns that workflow red. Change the values in `project.json` and run `--apply`; never edit them on GitHub.
 
 ## How do I work on the site?
 

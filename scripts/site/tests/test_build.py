@@ -221,5 +221,37 @@ class Scripts(unittest.TestCase):
         B.check_scripts({"ok.html": files["ok.html"]}, errors)
         self.assertEqual(errors, [])
 
+
+class RepoMeta(unittest.TestCase):
+    def setUp(self):
+        import repo_meta
+        self.R = repo_meta
+        self.good = {"tagline": "A kernel: fast.", "site_url": "https://example.org", "topics": ["kernel", "x86-64"]}
+
+    def test_valid_values_pass_and_bad_values_are_named(self):
+        self.assertEqual(self.R.validate(self.good), [])
+        bad = dict(self.good, tagline="A kernel " + chr(0x2014) + " fast", site_url="http://example.org",
+                   topics=["Kernel", "kernel", "x" * 60])
+        errs = " | ".join(self.R.validate(bad))
+        for needle in ("dash", "https", "not a valid GitHub topic", "duplicate"):
+            self.assertIn(needle, errs)
+        self.assertIn("missing or empty", " | ".join(self.R.validate(dict(self.good, topics=[]))))
+
+    def test_wrong_shapes_are_refused_before_anything_is_derived(self):
+        self.assertIn("list of strings", " | ".join(self.R.validate(dict(self.good, topics="linux"))))
+        self.assertIn("list of strings", " | ".join(self.R.validate(dict(self.good, topics=["kernel", 3]))))
+        self.assertIn("tagline must be", " | ".join(self.R.validate({"site_url": "https://x.org", "topics": ["a"]})))
+        self.assertIn("site_url must be", " | ".join(self.R.validate(dict(self.good, site_url=None))))
+
+    def test_diff_reports_each_field_and_ignores_topic_order_and_trailing_slash(self):
+        want = self.R.expected(self.good)
+        same = self.R.normalise({"description": "A kernel: fast.", "homepage": "https://example.org",
+                                 "topics": ["x86-64", "kernel"]})
+        self.assertEqual(self.R.diff(want, same), [])
+        other = self.R.normalise({"description": "old", "homepage": None, "topics": ["kernel", "hobby-os"]})
+        d = " | ".join(self.R.diff(want, other))
+        for needle in ("description:", "homepage:", "missing on GitHub: x86-64", "not in project.json: hobby-os"):
+            self.assertIn(needle, d)
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -1,0 +1,34 @@
+name: Repository metadata
+
+# The GitHub About box (description, homepage, topics) is published text that
+# lives in repository settings, not the tree. project.json is its source;
+# scripts/site/repo_meta.py --check compares the live repository with it. Runs
+# on a change to either, daily (an edit in the GitHub UI changes no file), and
+# on demand. A red run means: fix project.json and run --apply, never edit the UI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'project.json'
+      - 'scripts/site/repo_meta.py'
+      - '.github/workflows/repo-metadata.yml'
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare GitHub metadata with project.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/site/repo_meta.py --check

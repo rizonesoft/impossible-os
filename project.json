@@ -8,7 +8,21 @@
   "docs_url": "https://impossibleos.co/docs/",
   "release_date": "2028-08-08",
   "license": "GPL-3.0-only",
-  "historical_owners": ["rizonetech"],
+  "topics": [
+    "operating-system",
+    "os-development",
+    "kernel",
+    "x86-64",
+    "uefi-boot",
+    "bare-metal",
+    "freestanding",
+    "win32",
+    "windows-compatibility",
+    "linux-compatibility"
+  ],
+  "historical_owners": [
+    "rizonetech"
+  ],
   "historical_owner_files": [
     "docs/infrastructure/repository-transfer-preflight.md",
     "docs/infrastructure/repository-move-back-runbook.md",
