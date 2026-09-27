@@ -699,6 +699,82 @@ def hex_to_css(value: str) -> str:
     return f"rgba({r}, {g}, {b}, {a / 255:.3f})"
 
 
+FEATURES_FILE = "features.json"   # under gh-pages/; rendered, never published as-is
+_TODO_GRAPH = None
+
+
+def todo_graph():
+    """The todo-graph producer (scripts/todo-graph/build.py), loaded once by path.
+    Its `extract_implementation_order` IS the roadmap's status rule, so a feature
+    card's progress can never disagree with the graph the overnight run reads."""
+    global _TODO_GRAPH
+    if _TODO_GRAPH is None:
+        import importlib.util
+        sys.path.insert(0, str(REPO / "scripts" / "todo-graph"))
+        spec = importlib.util.spec_from_file_location("todo_graph_producer", REPO / "scripts" / "todo-graph" / "build.py")
+        _TODO_GRAPH = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_TODO_GRAPH)
+    return _TODO_GRAPH
+
+
+def roadmap_progress(owners: list[str]) -> tuple[int, int, int]:
+    """(done, in_progress, total) Implementation Order rows across `owners`."""
+    done = partial = total = 0
+    for rel in owners:
+        for row in todo_graph().extract_implementation_order((ROOT / rel).read_text(encoding="utf-8")):
+            total += 1
+            done += row["status"] == "x"
+            partial += row["status"] == "/"
+    return done, partial, total
+
+
+def feature_cards(facts: dict, errors: list[str]) -> str:
+    """Landing page feature cards from gh-pages/features.json. The text is written
+    by hand and must state only what the code does today; the roadmap status line
+    under it is COMPUTED from the owning roadmap files, and `sources` feed the doc
+    freshness check. A missing owner or source path is a drift error."""
+    path = SITE_SRC / FEATURES_FILE
+    try:
+        cards = json.loads(path.read_text(encoding="utf-8"))["cards"]
+    except (OSError, ValueError, KeyError) as e:
+        errors.append(f"gh-pages/{FEATURES_FILE}: unreadable ({e})")
+        return ""
+    known = set(todo_files())
+    out = []
+    for card in cards:
+        where = f"gh-pages/{FEATURES_FILE}: card {card.get('title', '?')!r}"
+        owners, sources = card.get("owners") or [], card.get("sources") or []
+        if not owners:
+            errors.append(f"{where}: names no owning roadmap file")
+        for o in owners:
+            if o not in known:
+                errors.append(f"{where}: owner is not a roadmap file: {o}")
+        tracked, tracked_dirs = fileset()   # the SOURCE being checked, not the disk: a
+        for src in sources:                 # snapshot holds only site paths, and an
+            if src not in tracked and src.rstrip("/") not in tracked_dirs:   # ignored file is no source
+                errors.append(f"{where}: source path is not a tracked file or directory: {src}")
+        for field in ("title", "text"):
+            if any(d in card.get(field, "") for d in (chr(0x2014), chr(0x2013))):
+                errors.append(f"{where}: {field} contains an em or en dash")
+        good = [o for o in owners if o in known]
+        # What is AHEAD, not what is done: much of the foundation predates the
+        # roadmap, so a done-count would read "0 of 12" on a card whose features
+        # run today. The open-section count is true whatever the history.
+        done, _partial, total = roadmap_progress(good) if good else (0, 0, 0)
+        left = total - done
+        status = "Roadmap complete" if total and not left else f"{left} roadmap section{'s' if left != 1 else ''} to go"
+        link = f"{facts['repo_url']}/blob/main/{good[0]}" if good else facts["repo_url"]
+        out.append(
+            '<div class="feature-card">\n'
+            f'    <div class="feature-card-icon">{card.get("icon", "")}</div>\n'
+            f'    <h4>{html.escape(card.get("title", ""))}</h4>\n'
+            f'    <p>{html.escape(card.get("text", ""))}</p>\n'
+            f'    <a class="feature-status" href="{html.escape(link)}" target="_blank" '
+            f'rel="noopener">{status}</a>\n'
+            '</div>')
+    return "\n".join(out)
+
+
 def design_tokens_css() -> str:
     """CSS custom properties generated from docs/design/tokens.json, so the web
     mockup and the C header (gen_theme_header.py) share one source."""
@@ -747,6 +823,10 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     """Return {site-relative path: bytes} for the whole site."""
     files: dict[str, bytes] = {}
     facts = dict(facts, design_tokens_css=design_tokens_css())
+    # Only when a template uses it: a snapshot of an older tree has no features.json.
+    if any("{{feature_cards}}" in f.read_text(encoding="utf-8", errors="replace")
+           for f in SITE_SRC.rglob("*.html")):
+        facts["feature_cards"] = feature_cards(facts, errors)
     for src_dir, dest, exts in ASSET_DIRS:
         base = ROOT / src_dir
         if base.is_dir():
@@ -761,7 +841,7 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
         data = src.read_bytes()
         if src.suffix in TEMPLATE_EXTS and rel not in ("docs-template.html",):
             data = render_template(data.decode("utf-8"), facts, f"gh-pages/{rel}", errors).encode("utf-8")
-        if rel != "docs-template.html":
+        if rel not in ("docs-template.html", FEATURES_FILE):
             files[rel] = data
     # 2. Docs.
     pages, _ = load_pages(facts, errors)

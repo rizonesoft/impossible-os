@@ -6,6 +6,7 @@ Run: python3 scripts/site/tests/test_build.py
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -221,6 +222,46 @@ class Scripts(unittest.TestCase):
         B.check_scripts({"ok.html": files["ok.html"]}, errors)
         self.assertEqual(errors, [])
 
+
+class FeatureCards(unittest.TestCase):
+    _use, setUp, tearDown = RawHtmlAndBaseline._use, RawHtmlAndBaseline.setUp, RawHtmlAndBaseline.tearDown
+
+    def test_cards_render_open_sections_and_refuse_bad_owners_sources_and_dashes(self):
+        B.todo_graph()                      # load the producer from the REAL repo before re-rooting
+        root = Path(tempfile.mkdtemp(prefix="site-cards-"))
+        (root / "todo" / "01-a").mkdir(parents=True)
+        (root / "todo" / "01-a" / "TODO-01-a.md").write_text(
+            "# A\n\n## Implementation Order\n\n| ⭐ | Order | Deliverable | Depends On | Status |\n"
+            "| --- | :---: | --- | --- | :---: |\n| 💎 | 1 | One | -- | [x] |\n| 💎 | 2 | Two | -- | [/] |\n"
+            "| 💎 | 3 | Three | -- | [ ] |\n\n## 1. One\n\n## 2. Two\n\n## 3. Three\n", encoding="utf-8")
+        (root / "src").mkdir()
+        (root / "src" / "a.c").write_text("int a;\n", encoding="utf-8")
+        (root / "build").mkdir()
+        (root / "build" / "gen.c").write_text("x\n", encoding="utf-8")   # exists on disk, ignored by git
+        (root / ".gitignore").write_text("build/\n", encoding="utf-8")
+        (root / "gh-pages").mkdir()
+        cards = [{"title": "Good", "text": "Works <today>.", "owners": ["todo/01-a/TODO-01-a.md"],
+                  "sources": ["src/a.c", "src", "build/gen.c"]},
+                 {"title": "Bad", "text": "x " + chr(0x2014) + " y", "owners": ["todo/01-a/TODO-99-gone.md"],
+                  "sources": ["src/gone.c"]},
+                 {"title": "Ownerless", "text": "t"}]
+        (root / "gh-pages" / "features.json").write_text(json.dumps({"cards": cards}), encoding="utf-8")
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "f", "--no-verify"]):
+            subprocess.run(["git", *cmd], cwd=root, check=True, env=env, capture_output=True)
+        self._use(root)
+        errors: list[str] = []
+        out = B.feature_cards(FACTS, errors)
+        self.assertIn("2 roadmap sections to go", out)          # [x] counts done; [/] and [ ] are still ahead
+        self.assertIn("Works &lt;today&gt;.", out)               # card text is escaped
+        self.assertIn("/blob/main/todo/01-a/TODO-01-a.md", out)
+        joined = " | ".join(errors)
+        for needle in ("owner is not a roadmap file: todo/01-a/TODO-99-gone.md",
+                       "not a tracked file or directory: src/gone.c", "not a tracked file or directory: build/gen.c",
+                       "text contains an em or en dash", "'Ownerless': names no owning roadmap file"):
+            self.assertIn(needle, joined)
+        self.assertEqual(len(errors), 5, errors)
 
 class RepoMeta(unittest.TestCase):
     def setUp(self):

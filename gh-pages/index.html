@@ -6,7 +6,7 @@
 
     <!-- SEO -->
     <title>Impossible OS: A Modern Operating System with Native Win32 & Linux Compatibility</title>
-    <meta name="description" content="Impossible OS is a modern x86-64 operating system built from scratch with native Win32 API compatibility, Linux binary support, and a Windows 11-inspired desktop. Releasing {{release_date_long}}.">
+    <meta name="description" content="Impossible OS is a modern x86-64 operating system built from scratch, with the Win32 API as its native interface, a Windows 11 style desktop, and Linux binary support on the roadmap. Releasing {{release_date_long}}.">
     <meta name="keywords" content="operating system, OS, x86-64, Win32, Windows compatibility, Linux compatibility, kernel, open source, UEFI, custom OS, hobby OS, desktop operating system, Windows 11, IXFS filesystem, FAT32, AHCI, NVMe, SMP, multi-core, networking, TCP/IP">
     <meta name="author" content="Rizonetech">
     <meta name="robots" content="index, follow">
@@ -15,14 +15,14 @@
     <!-- Open Graph -->
     <meta property="og:type" content="website">
     <meta property="og:title" content="Impossible OS: Modern OS with Win32 & Linux Compatibility">
-    <meta property="og:description" content="A modern x86-64 operating system built from scratch. Native Win32 API, Linux compatibility, Windows 11-inspired desktop. Open source.">
+    <meta property="og:description" content="A modern x86-64 operating system built from scratch. Native Win32 API, a Windows 11 style desktop, Linux compatibility planned. Open source.">
     <meta property="og:url" content="https://impossibleos.co/">
     <meta property="og:site_name" content="Impossible OS">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Impossible OS: Modern OS with Win32 & Linux Compatibility">
-    <meta name="twitter:description" content="A modern x86-64 operating system built from scratch with native Win32 API and Linux binary support.">
+    <meta name="twitter:description" content="A modern x86-64 operating system built from scratch with a native Win32 API, with Linux binary support planned.">
 
     <!-- Structured Data -->
     <script type="application/ld+json">
@@ -32,7 +32,7 @@
         "name": "Impossible OS",
         "operatingSystem": "x86-64",
         "applicationCategory": "OperatingSystem",
-        "description": "A modern x86-64 operating system built from scratch with native Win32 API compatibility and Linux binary support.",
+        "description": "A modern x86-64 operating system built from scratch with the Win32 API as its native interface; Linux binary support is planned.",
         "url": "https://impossibleos.co/",
         "author": {
             "@type": "Organization",
@@ -620,6 +620,18 @@
             line-height: 1.6;
         }
 
+        .feature-status {
+            display: inline-block;
+            margin-top: 12px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-left: 3px solid var(--border-subtle);
+            padding-left: 8px;
+        }
+
+        .feature-status:hover { color: var(--accent-cyan); border-left-color: var(--accent-cyan); }
+
         /* ── Tech Specs ───────────────────────────────────────────────── */
         .specs {
             display: grid;
@@ -895,25 +907,25 @@
         <div class="section-header">
             <span class="section-tag">Why Impossible OS?</span>
             <h2>Three Worlds. One Kernel.</h2>
-            <p>Run Windows apps, Linux binaries, and native Impossible OS programs — all on a single, clean kernel.</p>
+            <p>One kernel for Windows apps, native Impossible OS programs and, next, Linux binaries.</p>
         </div>
         <div class="pillars">
             <div class="pillar">
                 <img src="windows.svg" alt="Windows" class="pillar-icon" width="48" height="48">
                 <h3>Native Win32 Compatibility</h3>
-                <p>Designed to run Windows applications natively — no emulation layer, no virtual machine. <code>CreateFile()</code>, <code>ReadFile()</code>, <code>CreateProcess()</code> — the Win32 API as the native syscall interface. PE32+ executables at full speed.</p>
+                <p>The Win32 API is the kernel's native interface, not an emulation layer or a virtual machine: <code>CreateFile()</code> and <code>ReadFile()</code> go straight to native NT system calls, and PE32+ executables load and run natively. The full Win32 subsystem is still being built.</p>
 
             </div>
             <div class="pillar">
                 <img src="linux.svg" alt="Linux" class="pillar-icon" width="48" height="48">
                 <h3>Linux Binary Support</h3>
-                <p>Designed to run unmodified Linux ELF binaries through a built-in POSIX compatibility layer. <code>open()</code>, <code>read()</code>, <code>fork()</code>, <code>exec()</code> — translated to native kernel calls transparently. No WSL. No containers.</p>
+                <p>Planned: unmodified Linux ELF binaries through a built-in compatibility layer, with <code>open()</code>, <code>read()</code>, <code>fork()</code> and <code>exec()</code> translated to native kernel calls. No WSL, no containers. Not implemented yet.</p>
 
             </div>
             <div class="pillar">
                 <img src="logo.svg" alt="Impossible OS" class="pillar-icon" width="48" height="48">
                 <h3>Built From Scratch</h3>
-                <p>Not a Linux distro. Not a Windows fork. Every line — from the UEFI bootloader to the window manager — written in C and x86-64 assembly. Full control over every byte. Zero legacy bloat.</p>
+                <p>Not a Linux distro. Not a Windows fork. The kernel, the UEFI bootloader and the desktop are original C and x86-64 assembly; mature libraries such as ACPICA are vendored where rewriting them would only add bugs.</p>
                 <span class="pillar-tag">{{stat_lines}} Lines of Code</span>
             </div>
         </div>
@@ -925,55 +937,11 @@
     <div class="container">
         <div class="section-header">
             <span class="section-tag">Features</span>
-            <h2>Everything You Need</h2>
-            <p>A fully-featured desktop operating system with modern hardware support.</p>
+            <h2>What Works Today</h2>
+            <p>What works today, and how far each area is along its roadmap.</p>
         </div>
         <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="28" height="28" style="color: var(--accent-cyan);"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg></div>
-                <h4>IXFS + FAT32 Filesystems</h4>
-                <p>Custom IXFS with journaling, copy-on-write, and 64-bit addressing. Plus full FAT32 read/write for USB drive compatibility.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="28" height="28" style="color: var(--accent-cyan);"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z"/></svg></div>
-                <h4>AHCI & NVMe Storage</h4>
-                <p>DMA-only storage with NCQ command queuing. No legacy IDE polling. Boot from SATA or NVMe at full speed.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="28" height="28" style="color: var(--accent-cyan);"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25A2.25 2.25 0 0 1 5.25 3h13.5A2.25 2.25 0 0 1 21 5.25Z"/></svg></div>
-                <h4>Windows 11 Desktop</h4>
-                <p>Taskbar, Start Menu, window compositing with Mica and Acrylic effects, dirty rectangle optimizer, smooth 60fps rendering.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="28" height="28" style="color: var(--accent-cyan);"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Z"/></svg></div>
-                <h4>SMP Multi-Core</h4>
-                <p>Symmetric multiprocessing with per-CPU run queues, CFS-style scheduler, mutexes, semaphores, RWLocks, seqlocks, and RCU.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="28" height="28" style="color: var(--accent-cyan);"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418"/></svg></div>
-                <h4>TCP/IP Networking</h4>
-                <p>Full network stack: Ethernet, ARP, IPv4, ICMP, UDP, DHCP. TCP and DNS in progress. RTL8139 and VirtIO-net drivers.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="28" height="28" style="color: var(--accent-cyan);"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg></div>
-                <h4>UEFI Secure Boot</h4>
-                <p>Modern UEFI bootloader with GOP framebuffer. No legacy BIOS. No VGA text mode. Clean, secure boot chain from power-on.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg></div>
-                <h4>Windows Registry</h4>
-                <p>Codex Registry — a Windows-compatible registry with HKLM, HKCU hives. <code>RegOpenKeyEx</code>, <code>RegSetValueEx</code> and full persistence.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42"/></svg></div>
-                <h4>GPU-Accelerated GFX</h4>
-                <p>SSE2 SIMD-accelerated graphics with pre-multiplied alpha blending, gradient rendering, TrueType fonts, and glyph caching.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-card-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg></div>
-                <h4>Win32 SDK</h4>
-                <p>Full development kit with headers, libraries, and documentation. Build native apps with <code>CreateFile</code>, <code>ReadFile</code>, <code>WriteFile</code>.</p>
-            </div>
+{{feature_cards}}
         </div>
     </div>
 </section>

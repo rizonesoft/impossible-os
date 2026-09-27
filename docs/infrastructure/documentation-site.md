@@ -50,6 +50,11 @@ The [coverage page](https://impossibleos.co/docs/coverage.html) lists every road
 | Coverage regression | a new roadmap file with no docs page |
 | JavaScript that does not parse | a stray `});` that stops the landing page countdown and hides every section that fades in on scroll |
 | Bad GitHub About-box values | a description with a dash, an `http` homepage, or an invalid topic in `project.json` |
+| Landing page feature card with a dead owner or source | a card in `gh-pages/features.json` naming a renamed roadmap file or deleted source path |
+
+## How are the landing page feature cards kept true?
+
+The cards under "What Works Today" come from `gh-pages/features.json`. Each card has hand-written text that must state only what the code does today (planned work is called planned), the roadmap files that own its future work (`owners`), and the code it describes (`sources`). The line under each card, such as "12 roadmap sections to go", is computed from the owners' Implementation Order tables with the same parser the roadmap graph uses, so it moves on its own as sections ship. A card whose owner or source path no longer exists fails the drift check.
 
 ## How is the GitHub About box kept in sync?
 

@@ -47,6 +47,9 @@ jobs:
         with:
           fetch-depth: 2   # the coverage baseline is checked against the previous commit
 
+      - name: Install PyYAML (the todo-graph producer computes feature-card roadmap status)
+        run: python3 -m pip install --quiet PyYAML
+
       - name: Check published sources for drift
         run: python3 scripts/site/build.py --check
 
