@@ -176,6 +176,8 @@ def load_stats() -> dict[str, str]:
         covers = parse_directives(d.read_text(encoding="utf-8")).get("covers", "")
         covered.update(c.strip() for c in covers.split(",") if c.strip())
     cov = json.loads((DOCS / "test-coverage" / "coverage.json").read_text(encoding="utf-8"))
+    m = COUNT_TOTAL_RE.search((ROOT / "COUNT.md").read_text(encoding="utf-8"))
+    lines = int(m.group(1)) if m else 0
     return {
         "stat_todo_files": str(len(todos)),
         "stat_todo_domains": str(len(domains)),
@@ -183,6 +185,9 @@ def load_stats() -> dict[str, str]:
         "stat_docs_covered": str(len(covered & set(todos))),
         "stat_test_suites": f"{cov['total_suites']:,}",
         "stat_test_assertions": f"{cov['total_assertions']:,}",
+        # The same whole-tree total, floored to thousands, that the README badge shows.
+        "stat_lines": f"{lines // 1000 * 1000:,}+",
+        "stat_lines_k": f"{lines // 1000:,}K+",
     }
 
 
@@ -897,9 +902,12 @@ def check_scripts(files: dict[str, bytes], errors: list[str]) -> None:
         errors.append(f"JavaScript syntax error in {line}")
 
 
+COUNT_TOTAL_RE = re.compile(r"\*\*All lines in tree\*\*\s*\|\s*\*\*\d+\*\*\s*\|\s*\*\*(\d+)\*\*")
+
+
 def check_count_badge(errors: list[str]) -> None:
     count = (ROOT / "COUNT.md").read_text(encoding="utf-8")
-    m = re.search(r"\*\*All lines in tree\*\*\s*\|\s*\*\*\d+\*\*\s*\|\s*\*\*(\d+)\*\*", count)
+    m = COUNT_TOTAL_RE.search(count)
     b = re.search(r"img\.shields\.io/badge/lines-(\d+)k-", (ROOT / "README.md").read_text(encoding="utf-8"))
     if not m or not b:
         errors.append("README/COUNT.md: line-count badge or COUNT.md total not found")
