@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md -->
 # GitHub Repository Setup
 
 > Professional GitHub repository infrastructure for Impossible OS -- CI/CD, templates, security policies, and community assets.

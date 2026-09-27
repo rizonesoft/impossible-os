@@ -18,6 +18,11 @@ on:
       - 'README.md'
       - 'scripts/site/**'
       - 'tools/vendor/**'
+      - 'resources/icons/src/**'
+      - 'resources/icons/color/**'
+      - 'resources/brand/**'
+      - 'resources/backgrounds/**'
+      - 'include/desktop/theme_tokens.h'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -39,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # the coverage baseline is checked against the previous commit
 
       - name: Check published sources for drift
         run: python3 scripts/site/build.py --check

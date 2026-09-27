@@ -119,10 +119,22 @@ def snapshot(source: str) -> Path:
         subprocess.run(["git", "checkout-index", "-z", "--stdin", f"--prefix={tmp}/"], cwd=REPO, check=True,
                        input="\0".join(want).encode(), capture_output=True)
     else:
+        # One `git cat-file --batch` for every blob instead of a `git show` per file
+        # (measured: 797 processes / 3.2 s down to one process / ~0.5 s).
+        proc = subprocess.run(["git", "cat-file", "--batch"], cwd=REPO, check=True, capture_output=True,
+                              input="".join(f"{source}:{f}\n" for f in want).encode())
+        out, pos = proc.stdout, 0
         for f in want:
+            nl = out.index(b"\n", pos)
+            header = out[pos:nl].split()
+            if len(header) != 3:
+                raise RuntimeError(f"snapshot: cannot read {source}:{f}")
+            size = int(header[2])
+            data = out[nl + 1:nl + 1 + size]
+            pos = nl + 1 + size + 1
             dest = tmp / f
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(git("show", f"{source}:{f}", binary=True))
+            dest.write_bytes(data)
     set_root(tmp)
     return tmp
 TEMPLATE_EXTS = {".html", ".js", ".css", ".json", ".xml", ".txt", ".svg", ""}
@@ -332,6 +344,12 @@ class Renderer:
                         child.attrSet("src", self.rewrite_img(page, child.attrGet("src") or ""))
                     elif child.type == "text":
                         plain.append(child.content)
+            if tok.type == "html_block":
+                tok.content = self.rewrite_raw_html(page, tok.content)
+            if tok.type == "inline":
+                for child in tok.children or []:
+                    if child.type == "html_inline":
+                        child.content = self.rewrite_raw_html(page, child.content)
             if tok.type == "fence" and tok.info.strip() == "mermaid":
                 tok.type = "html_block"
                 tok.content = f'<pre class="mermaid">{html.escape(tok.content)}</pre>\n'
@@ -348,6 +366,31 @@ class Renderer:
         page.text = " ".join(plain)
         if not page.title:
             page.title = page.rel
+
+    # A tag scanner, not a bare attribute regex: comments pass through untouched, and
+    # attributes are consumed one name=value pair at a time, so text inside another
+    # attribute's value (title="use href=x") is never mistaken for a link.
+    _VAL = r'(?:"[^"]*"|\'[^\']*\'|[^\s"\'=<>`]+)'
+    TAG_RE = re.compile(r'<!--.*?-->|<([A-Za-z][\w:-]*)((?:\s+[^\s=/>"\']+(?:\s*=\s*' + _VAL + r')?)*)(\s*/?>)', re.S)
+    ATTR_RE = re.compile(r'(\s+)([^\s=/>"\']+)(?:(\s*=\s*)(' + _VAL + r'))?')
+
+    def rewrite_raw_html(self, page: Page, html_text: str) -> str:
+        """Raw HTML href/src get the same rewriting and validation as Markdown links.
+        Values are entity-decoded before use and escaped exactly once on output."""
+        def attr_sub(m: re.Match) -> str:
+            name, value = m.group(2), m.group(4)
+            if value is None or name.lower() not in ("href", "src"):
+                return m.group(0)
+            raw = value[1:-1] if value[:1] in ("\"", "\'") else value
+            url = html.unescape(raw)
+            new = self.rewrite_href(page, url) if name.lower() == "href" else self.rewrite_img(page, url)
+            return f'{m.group(1)}{name}="{html.escape(new, quote=True)}"'
+
+        def tag_sub(m: re.Match) -> str:
+            if m.group(0).startswith("<!--"):
+                return m.group(0)
+            return "<" + m.group(1) + self.ATTR_RE.sub(attr_sub, m.group(2)) + m.group(3)
+        return self.TAG_RE.sub(tag_sub, html_text)
 
     def rewrite_img(self, page: Page, src: str) -> str:
         if not src or re.match(r"^[a-z][a-z0-9+.-]*:", src):
@@ -454,8 +497,51 @@ def check_design_lines(pages: dict[str, Page], errors: list[str]) -> None:
                         errors.append(f"{rel}:{line}: section {num}: dead design anchor docs/design/{fname}#{anchor}")
 
 
+def baseline_reference() -> set[str] | None:
+    """The previously COMMITTED baseline the candidate is measured against: HEAD's
+    copy when the candidate differs from HEAD (a commit being made), otherwise
+    HEAD~1's (CI checking a commit that already landed). None when no prior copy
+    exists (first creation), which is the only way the list may start non-empty."""
+    rel = "docs/.coverage-baseline.json"
+    cand = BASELINE.read_bytes() if BASELINE.exists() else b""
+    for ref in ("HEAD", "HEAD~1"):
+        proc = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=REPO, capture_output=True)
+        if proc.returncode != 0:
+            return None
+        if ref == "HEAD" and proc.stdout == cand and SOURCE in ("worktree", "index"):
+            continue  # unchanged against HEAD: compare with the commit before it
+        return set(json.loads(proc.stdout.decode("utf-8"))["undocumented"])
+    return None
+
+
+def shrink_baseline(data: dict | None, undocumented: list[str]) -> dict:
+    """The --update-baseline result: entries that are still undocumented AND already
+    listed (never an addition), with growth reasons kept only for entries still listed.
+    With no existing file, the baseline is created from the current undocumented set."""
+    comment = ("TODO files with no documentation page yet. Shrink-only: scripts/site/build.py "
+               "--update-baseline removes entries, never adds them (except when creating this file).")
+    if data is None:
+        return {"_comment": comment, "undocumented": sorted(undocumented)}
+    keep = sorted(set(undocumented) & set(data.get("undocumented", [])))
+    reasons = {k: v for k, v in data.get("growth_reasons", {}).items() if k in set(keep)}
+    out = {"_comment": comment, "undocumented": keep}
+    if reasons:
+        out["growth_reasons"] = reasons
+    return out
+
+
 def check_baseline(undocumented: list[str], errors: list[str]) -> None:
     baseline = set(json.loads(BASELINE.read_text(encoding="utf-8"))["undocumented"]) if BASELINE.exists() else set()
+    prior = baseline_reference()
+    reasons = json.loads(BASELINE.read_text(encoding="utf-8")).get("growth_reasons", {}) if BASELINE.exists() else {}
+    if prior is not None:
+        for t in sorted(baseline - prior):
+            if len(str(reasons.get(t, "")).strip()) >= 20:
+                continue  # an explicit, reviewable reason in the baseline file itself
+
+            errors.append(f"coverage: baseline GREW: {t} was added to docs/.coverage-baseline.json; the baseline "
+                          f"only shrinks -- write the docs page instead, or (only when removing a false claim) "
+                          f"record why under \"growth_reasons\" in the baseline file")
     for t in undocumented:
         if t not in baseline:
             errors.append(f"coverage: {t} has no documentation page. Add a docs page with "
@@ -785,10 +871,13 @@ def main() -> int:
     mode.add_argument("--sync", nargs="*", metavar="FILE",
                       help="rewrite project regions (all tracked Markdown, or only FILEs)")
     mode.add_argument("--update-baseline", action="store_true")
+    mode.add_argument("--emit-head", metavar="FILE",
+                      help="post-commit: print FILE as committed at HEAD with its project regions synced")
     mode.add_argument("--sync-head", nargs="+", metavar="FILE",
                       help="post-commit: sync FILEs' regions from the HEAD snapshot, only when the worktree copy is clean")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--ref", default="HEAD", help="commit that --emit-head / --sync-head read (default HEAD)")
     ap.add_argument("--staged", action="store_true",
                     help="read every input from the INDEX (pre-commit), not the working tree")
     ap.add_argument("--skip-stats", action="store_true",
@@ -797,8 +886,8 @@ def main() -> int:
     args.out = args.out.resolve()
     snap = None
     try:
-        if args.sync_head:
-            snap = snapshot("HEAD")
+        if args.sync_head or args.emit_head:
+            snap = snapshot(args.ref)
         elif args.staged:
             snap = snapshot("index")
         return run(args)
@@ -836,6 +925,13 @@ def run(args: argparse.Namespace) -> int:
 
     if args.sync_head:
         return sync_head(args.sync_head, facts, errors)
+    if args.emit_head:
+        text = (ROOT / args.emit_head).read_text(encoding="utf-8")
+        out = sync_regions(text, facts, args.emit_head, errors)
+        for e in errors:
+            print(f"ERROR: {e}", file=sys.stderr)
+        sys.stdout.write(out)
+        return 1 if errors else 0
 
     if args.sync is not None:
         check_regions(facts, errors, write=True, only=args.sync or None)
@@ -847,13 +943,9 @@ def run(args: argparse.Namespace) -> int:
     undocumented = build.undocumented  # type: ignore[attr-defined]
 
     if args.update_baseline:
-        old = set(json.loads(BASELINE.read_text(encoding="utf-8"))["undocumented"]) if BASELINE.exists() else None
-        keep = sorted(set(undocumented) & old) if old is not None else sorted(undocumented)
-        BASELINE.write_text(json.dumps({
-            "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py "
-                        "--update-baseline removes entries, never adds them (except when creating this file).",
-            "undocumented": keep}, indent=2) + "\n", encoding="utf-8")
-        print(f"baseline: {len(keep)} undocumented TODO file(s)")
+        data = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else None
+        BASELINE.write_text(json.dumps(shrink_baseline(data, undocumented), indent=2) + "\n", encoding="utf-8")
+        print(f"baseline: {len(json.loads(BASELINE.read_text(encoding='utf-8'))['undocumented'])} undocumented TODO file(s)")
         return 0
 
     check_regions(facts, errors, write=False, skip_stats=args.skip_stats)

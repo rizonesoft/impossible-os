@@ -420,11 +420,27 @@ README_CLEAN=0
 if [ -f "$README_FILE" ] && git -C "$ROOT" diff --quiet HEAD -- README.md 2>/dev/null; then
     README_CLEAN=1
 fi
+# README_TARGET is the file the badge rewrite edits: the working README when it
+# is clean; otherwise a temp copy of HEAD's README (regions synced), committed
+# below through a TEMPORARY index so the user's working-tree and staged README
+# edits are never touched or swept into the amend (README_PLUMB=1).
+README_TARGET="$README_FILE"
+README_PLUMB=0
+# The one commit every README input and the amend below are derived from.
+BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
 if [ "$README_CLEAN" = "1" ]; then
     python3 "$ROOT/scripts/site/build.py" --sync-head README.md >/dev/null || \
         echo "post-commit: README project-region sync reported a problem (see above)" >&2
+elif [ -n "$BASE" ] && [ -f "$README_FILE" ] && git -C "$ROOT" diff --cached --quiet "$BASE" -- README.md 2>/dev/null; then
+    README_TARGET="$(mktemp)"
+    if python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then
+        README_PLUMB=1
+    else
+        echo "post-commit: README project-region sync reported a problem (see above)" >&2
+        rm -f "$README_TARGET"; README_TARGET="$README_FILE"
+    fi
 else
-    echo "post-commit: README.md has uncommitted edits; skipped region sync, badge and amend for it" >&2
+    echo "post-commit: README.md has STAGED uncommitted edits; skipped its region sync and badge (commit or unstage README, then run: python3 scripts/site/build.py --sync README.md)" >&2
 fi
 
 # Rewrite the README lines-of-code badge from the live tree count, so the
@@ -437,7 +453,7 @@ fi
 # repository; publishing a different one here than the document's own headline
 # is a discrepancy with no visible explanation. The written-here/vendored split
 # is one click away in the Grand Total table.
-if [ "$README_CLEAN" = "1" ] && grep -q 'COUNT-BADGE:START' "$README_FILE"; then
+if { [ "$README_CLEAN" = "1" ] || [ "$README_PLUMB" = "1" ]; } && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
     loc_k=$(( whole_tree_lines / 1000 ))
     badge_url="https://img.shields.io/badge/lines-${loc_k}k-blueviolet"
     awk -v url="$badge_url" '
@@ -445,7 +461,7 @@ if [ "$README_CLEAN" = "1" ] && grep -q 'COUNT-BADGE:START' "$README_FILE"; then
         /COUNT-BADGE:END/   { print "  <img src=\"" url "\" alt=\"Lines of Code\" />"; print; inblk=0; next }
         inblk { next }
         { print }
-    ' "$README_FILE" > "$README_FILE.tmp" && mv "$README_FILE.tmp" "$README_FILE"
+    ' "$README_TARGET" > "$README_TARGET.tmp" && mv "$README_TARGET.tmp" "$README_TARGET"
 fi
 
 [ "${COUNT_ONLY:-}" = "1" ] && exit 0
@@ -467,9 +483,82 @@ fi
 # live-gotcha about the RUN sweeping an operator's files.
 #
 # Use SKIP_COUNT to prevent infinite recursion.
-AMEND_PATHS=("$COUNT_FILE")
-[ "$README_CLEAN" = "1" ] && AMEND_PATHS+=("$README_FILE")
-SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
-  -- "${AMEND_PATHS[@]}" 2>/dev/null
+if [ "$README_PLUMB" = "1" ]; then
+    # Dirty working README: build the amended commit from ONE pinned base commit
+    # (tree, parents, message and author all read from $base), with the generated
+    # COUNT.md and the synced README blob in a throwaway index. update-ref only
+    # moves HEAD if it still equals $base, and the real index is touched only
+    # after that succeeds, so a concurrent commit or a lock failure loses nothing.
+    plumb_amend() {
+        local base="$BASE" tmpidx cb rb tree new msg an ae ad gitdir idx lock cur_r base_r par
+        local -a pargs=()
+        [ -n "$base" ] || return 1
+        cb="$(git -C "$ROOT" hash-object -w "$COUNT_FILE")" || return 1
+        rb="$(git -C "$ROOT" hash-object -w "$README_TARGET")" || return 1
+        tmpidx="$(mktemp)" || return 1; rm -f "$tmpidx"
+        { GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" read-tree "$base" &&
+          GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" update-index --add \
+              --cacheinfo "100644,$cb,COUNT.md" --cacheinfo "100644,$rb,README.md" &&
+          tree="$(GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" write-tree)"; } || { rm -f "$tmpidx"; return 1; }
+        rm -f "$tmpidx"
+        # Parents come from the commit object itself (a shallow boundary makes
+        # rev-list report none); an empty list is allowed only for a true root.
+        while read -r par; do pargs+=(-p "$par"); done < <(git -C "$ROOT" cat-file commit "$base" | awk '/^$/{exit} /^parent /{print $2}')
+        if [ "${#pargs[@]}" -eq 0 ] && [ "$(git -C "$ROOT" rev-list --count "$base" 2>/dev/null)" != "1" ]; then
+            return 1
+        fi
+        msg="$(git -C "$ROOT" log -1 --format=%B "$base")" || return 1
+        an="$(git -C "$ROOT" log -1 --format=%an "$base")" || return 1
+        ae="$(git -C "$ROOT" log -1 --format=%ae "$base")" || return 1
+        ad="$(git -C "$ROOT" log -1 --format=%aD "$base")" || return 1
+        new="$(printf '%s\n' "$msg" | GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
+            git -C "$ROOT" commit-tree "$tree" "${pargs[@]}")" || return 1
+        # Hold the real index lock for the whole transaction: validate, prepare the
+        # new index privately in the lock file, move HEAD with a compare-and-swap,
+        # and only then publish the index by renaming the lock into place. Any
+        # failure discards the lock file and leaves the live index untouched.
+        gitdir="$(git -C "$ROOT" rev-parse --absolute-git-dir)" || return 1
+        idx="$gitdir/index"; lock="$idx.lock"
+        ( set -o noclobber; : > "$lock" ) 2>/dev/null || return 1
+        # We own the lock from here. EXIT is the ONLY cleanup (INT/TERM just exit,
+        # which runs it), and LOCK_OWNED makes it remove the path at most once, so
+        # it can never delete a lock another git process acquired afterwards.
+        LOCK_OWNED="$lock"
+        # Both cleanup paths mask INT/TERM and clear ownership BEFORE unlinking,
+        # so no signal can make the path be removed twice.
+        trap 'trap "" INT TERM; _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"' EXIT
+        trap 'exit 130' INT TERM
+        release_lock() { trap '' INT TERM; local _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"; trap - EXIT INT TERM; }
+        if ! cp "$idx" "$lock"; then release_lock; return 1; fi
+        cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $2}')"
+        base_r="$(git -C "$ROOT" rev-parse --verify -q "$base:README.md")"
+        if [ -z "$cur_r" ] || [ "$cur_r" != "$base_r" ] ||
+           ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index --cacheinfo "100644,$cb,COUNT.md" --cacheinfo "100644,$rb,README.md"; then
+            release_lock; return 1
+        fi
+        # The HEAD swap and the index publish are one step: interrupts are ignored
+        # between them so HEAD and the index can never disagree.
+        trap '' INT TERM
+        if ! git -C "$ROOT" update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
+            release_lock; return 1
+        fi
+        if mv -f "$lock" "$idx"; then
+            LOCK_OWNED=   # published: the path is no longer ours to remove
+            trap - EXIT INT TERM
+        else
+            echo "post-commit: HEAD amended but the index could not be published; run: git reset -q -- COUNT.md README.md" >&2
+            release_lock; return 1
+        fi
+    }
+    if ! plumb_amend; then
+        echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); nothing changed -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
+    fi
+    rm -f "$README_TARGET"
+else
+    AMEND_PATHS=("$COUNT_FILE")
+    [ "$README_CLEAN" = "1" ] && AMEND_PATHS+=("$README_FILE")
+    SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
+      -- "${AMEND_PATHS[@]}" 2>/dev/null
+fi
 
 exit 0

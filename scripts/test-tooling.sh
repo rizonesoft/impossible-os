@@ -835,6 +835,24 @@ else
     t_fail "scripts/tests/test_todo_fence.py not found"
 fi
 
+# The docs-site generator and drift gate (scripts/site/tests/test_build.py): link
+# and anchor rules (tracked files only, same-page and encoded anchors, raw HTML
+# href/src via a tag scanner), project regions, the shrink-only coverage baseline
+# measured against the previous commit, and the generated theme header. These
+# back lint Check 30, which runs on every commit.
+SITE_TEST="$REPO_ROOT/scripts/site/tests/test_build.py"
+if [ -f "$SITE_TEST" ]; then
+    SITE_OUT=$(python3 "$SITE_TEST" 2>&1)
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/site/tests/test_build.py PASS ($(printf '%s\n' "$SITE_OUT" | grep -E '^Ran ' | tail -1))"
+    else
+        t_fail "scripts/site/tests/test_build.py FAIL ($(printf '%s\n' "$SITE_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_site_build" "$SITE_OUT"
+    fi
+else
+    t_fail "scripts/site/tests/test_build.py not found"
+fi
+
 # The alias-staleness promotion check (scripts/tests/test_alias_staleness.py).
 # `scripts/todo_fence.py` is a shim of one-line wrappers, and nothing watched
 # whether a wrapper kept its callers or kept matching its target: four had gone

@@ -85,9 +85,27 @@ One generator owns every published surface, so no fact is maintained in two plac
 - [x] Drift checks: dead doc links and anchors (15 found and fixed on first run), unknown template keys, stale regions, live repo URLs naming a non-canonical owner, README line-count badge vs COUNT.md, `theme_tokens.h` vs `docs/design/tokens.json`
 - [x] Lint Check 30 runs `build.py --check --skip-stats` on every commit (~1 s); `.github/workflows/pages.yml` runs the full `--check`, builds and deploys; Pages switched from the stale `gh-pages` branch to workflow deploys
 - [x] Vendored markdown-it-py 3.0.0 and mdurl 0.1.2 (MIT) under `tools/vendor/`, with PROVENANCE and CREDITS rows and a COUNT.md vendored-tree exclusion
+- [x] Check 30 judges the commit, not the working tree: `--staged` snapshots the index; post-commit syncs from a pinned HEAD snapshot (`--sync-head` / `--emit-head --ref`, batched `cat-file`) (Codex review 2026-09-27)
+- [x] Link and image existence is judged against tracked files only (ignored build artifacts never satisfy a link); same-page and percent-encoded anchors are validated (Codex review)
+- [x] Raw HTML `href`/`src` are rewritten and validated through a tag scanner that skips comments and other attributes' values, decoding entities and escaping once (Codex re-adversarial)
+- [x] The coverage baseline cannot grow: additions are measured against the previously committed baseline (Pages checks out `fetch-depth: 2`); the one exception is re-adding a falsely claimed path with a written `growth_reasons` entry (Codex review)
+- [x] A dirty working README no longer skips the sync: the hook commits a synced README blob through a private index (5 re-adversarial rounds)
+  - Held under the real `index.lock`, with a compare-and-swap on HEAD, real parents (shallow-safe), and signal-safe single-owner lock cleanup.
+- [x] Design-line scope check (`docs/design/scope.json`) and an icon render stamp that binds every SVG source and rendered PNG (`resources/icons/color/SOURCES.sha256`)
+- [x] The Pages workflow triggers on every published input (icon, brand and wallpaper assets, the theme header)
 - [x] Commit: `"site: generated docs site, project facts, coverage and drift gate"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `bash scripts/lint.sh` reports no Check 30 error; the Pages workflow run for the commit is green and `https://impossibleos.co/docs/coverage.html` lists every roadmap file. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (16 tests, wired into `scripts/test-tooling.sh`) | validation: `python3 scripts/site/build.py --check`, lint Check 30, the Pages workflow
+
+> **Notes:**
+> - **What shipped:** the site generator and drift gate (`scripts/site/build.py`, `gen_theme_header.py`), project facts in `project.json`, README regions synced by `.githooks/post-commit`, lint Check 30, and the generated Pages deploy.
+> - **Review hardening:** commit-scoped checks (index and HEAD snapshots), tracked-file link rules including raw HTML, shrink-only baseline against the previous commit, and a transactional README amend under the real index lock.
+> - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md).
+
+> **Verified:** 2026-09-27 | commit `ad3829185` | 13/13 items | build OK | tests 16/16 PASS
+> **Quality reviewed:** 2026-09-27 | Codex 9x (adversarial, consistency, perf, re-adversarial x6) | 6H+10M fixed | scope: N/A (host tooling and docs; no kernel, boot or desktop code)
 
 ## 2. Map Existing Docs Pages to Their Roadmap Files
 
@@ -98,10 +116,20 @@ Many existing pages already document a roadmap file but do not declare it, so co
   - A passing mention or a link does not count
 - [x] Leave a page without a directive when it documents no single roadmap file (indexes, guides)
 - [x] Run `python3 scripts/site/build.py --update-baseline` so the baseline drops every newly covered file
-- [x] Mapped 42 existing pages to 22 roadmap files (2026-09-27); coverage 8 -> 30 of 232; baseline 202
+- [x] Mapped existing pages to their roadmap files (2026-09-27); after review: 45 pages carry directives, coverage 36 of 232, baseline 196
+  - Review removed one false claim (`test-policy.md` does not document the kernel test harness; re-listed with a written reason) and added three missed ones (`bare-metal-gotchas.md`, `github-setup.md`, `docs/design/icons.md`)
 - [x] Commit: `"docs: declare which roadmap files each existing docs page covers"`
 
-**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK` and a higher `N/231 TODO files documented` than before; the coverage page shows the new links. Test on: WSL2 dev host.
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK` and a higher `N/232 TODO files documented` than before; the coverage page shows the new links. Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs directives only) | validation: `python3 scripts/site/build.py --check` reports 36/232 documented with the 196-entry baseline
+
+> **Notes:**
+> - **What shipped:** first-line `covers=` directives on 45 docs pages (42 existing plus 3 design pages), shrinking the baseline from 231 to 196.
+> - **Review:** one false claim removed and three missed mappings added; the removed claim is re-listed with a written `growth_reasons` entry, the only sanctioned baseline addition.
+
+> **Verified:** 2026-09-27 | commit `ad3829185` | 4/4 items | build OK | 36/232 documented
+> **Quality reviewed:** 2026-09-27 | Codex 3x (adversarial, consistency, perf) | 5M fixed | scope: N/A (docs-only)
 
 ## 3. Documentation Page Contract, Template, and create-todo Step
 
@@ -656,7 +684,7 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 > Host-side tests, not kernel tests: `scripts/site/tests/test_build.py` (stdlib `unittest`), wired into `scripts/test-tooling.sh` as a nested suite so CI runs it.
 
-- [/] Create `scripts/site/tests/test_build.py` (9 tests pass 2026-09-27; still missing: duplicate-slug suffixes and the check_baseline / update-baseline cases) with:
+- [x] Create `scripts/site/tests/test_build.py` (16 tests pass 2026-09-27) with:
   - `github_slug("1. Layout at a Glance")` == `"1-layout-at-a-glance"`; duplicate headings get `-1`, `-2` suffixes
   - `page_url("index.md")` == `""`, `page_url("boot/index.md")` == `"boot/"`, `page_url("boot/x.md")` == `"boot/x.html"`
   - `sync_regions()` rewrites a stale `<!-- project:release_date_long -->` region and reports an unknown key as an error
@@ -665,8 +693,8 @@ A page that was right when written goes wrong when its code changes. Neither Win
   - `check_baseline()` errors on a new undocumented file and on a stale baseline entry; `--update-baseline` never adds
   - `hex_to_css("#80FFFFFF")` == `"rgba(255, 255, 255, 0.502)"`; `gen_theme_header.argb("#60CDFF")` == `"0xFF60CDFFu"`
   - `gen_theme_header.check()` is empty on the committed tree
-- [ ] Register the suite in `scripts/test-tooling.sh` (scoped to `scripts/site/**`, `docs/**`, `project.json` via `TEST_TOOLING_CHANGED_PATHS`)
-- [ ] Commit: `"test: site generator unit tests"`
+- [x] Register the suite in `scripts/test-tooling.sh` (runs on every tooling pass; it takes about 0.2 s, so it is not path-scoped)
+- [x] Commit: `"test: site generator unit tests"` (landed with the section 1-2 review)
 
 ## Verification
 

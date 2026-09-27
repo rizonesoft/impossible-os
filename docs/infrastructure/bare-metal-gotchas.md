@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-10-bare-metal-hardening.md -->
 # Bare Metal Gotchas
 
 > Hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs. CLAUDE.md carries the short-form list as a per-turn reminder; the full incident histories live here.

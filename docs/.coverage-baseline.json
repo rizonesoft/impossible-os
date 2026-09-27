@@ -1,10 +1,10 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
+    "todo/00-infrastructure/TODO-03-kernel-test-harness.md",
     "todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md",
     "todo/01-boot-platform/TODO-05-boot-device-discovery.md",
     "todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md",
-    "todo/01-boot-platform/TODO-10-bare-metal-hardening.md",
     "todo/01-boot-platform/TODO-11-interrupt-timer-arch.md",
     "todo/01-boot-platform/TODO-12-early-entropy-random-seed.md",
     "todo/01-boot-platform/TODO-15-visual-post-display.md",
@@ -118,7 +118,6 @@
     "todo/07-networking/TODO-09-email-client.md",
     "todo/07-networking/TODO-10-pdf-viewer.md",
     "todo/07-networking/TODO-11-syslog-forwarding.md",
-    "todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md",
     "todo/08-graphics-ui/TODO-02-text-font-internationalization.md",
     "todo/08-graphics-ui/TODO-04-animation-engine.md",
     "todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md",
@@ -198,5 +197,8 @@
     "todo/18-future-research/TODO-04-secureboot-tpm.md",
     "todo/18-future-research/TODO-05-ai-ml-runtime.md",
     "todo/18-future-research/TODO-06-android-app-compatibility.md"
-  ]
+  ],
+  "growth_reasons": {
+    "todo/00-infrastructure/TODO-03-kernel-test-harness.md": "2026-09-27: docs/infrastructure/test-policy.md claimed this roadmap file but documents the test authoring policy, not the harness (Codex review of the documentation-site mapping of existing pages); the harness still needs its page"
+  }
 }

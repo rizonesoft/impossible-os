@@ -104,5 +104,105 @@ class Links(unittest.TestCase):
             B.DOCS = B.ROOT / "docs"
 
 
+class RawHtmlAndBaseline(unittest.TestCase):
+    def _use(self, root):
+        B.REPO, B.SOURCE, B._FILESET, B._DIRSET = root, "worktree", None, None
+        B.set_root(root)
+
+    def setUp(self):
+        self.saved = (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET)
+
+    def tearDown(self):
+        B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET = self.saved
+        B.set_root(B.ROOT)
+
+    def test_raw_html_links_are_rewritten_and_checked(self):
+        root = fixture_repo()
+        (root / "docs" / "raw.md").write_text('# Raw\n\n<a href="kernel/index.md">k</a> <img src="nope.png">\n', encoding="utf-8")
+        self._use(root)
+        errors: list[str] = []
+        pages, _ = B.load_pages(FACTS, errors)
+        self.assertIn('href="kernel/"', pages["raw.md"].body)
+        self.assertTrue(any("nope.png" in e for e in errors), errors)
+
+    def test_raw_html_attribute_forms(self):
+        root = fixture_repo()
+        (root / "docs" / "forms.md").write_text(
+            "# Forms\n\n<a HREF = 'kernel/index.md'>a</a> <a href=\"https://x.test/?a=1&amp;b=2\">b</a> <a href=missing.md>c</a>\n",
+            encoding="utf-8")
+        self._use(root)
+        errors: list[str] = []
+        pages, _ = B.load_pages(FACTS, errors)
+        body = pages["forms.md"].body
+        self.assertIn('HREF="kernel/"', body)
+        self.assertIn('?a=1&amp;b=2"', body)          # escaped exactly once
+        self.assertNotIn("&amp;amp;", body)
+        self.assertTrue(any("missing.md" in e for e in errors), errors)
+
+    def test_raw_html_ignores_other_attributes_and_comments(self):
+        root = fixture_repo()
+        (root / "docs" / "tricky.md").write_text(
+            '# Tricky\n\n<a title="Use href=kernel/index.md" href="kernel/index.md">x</a> <img data-src="gone.png" src="../build/x.json">\n\n<!-- href=missing.md -->\n',
+            encoding="utf-8")
+        self._use(root)
+        errors: list[str] = []
+        pages, _ = B.load_pages(FACTS, errors)
+        body = pages["tricky.md"].body
+        self.assertIn('title="Use href=kernel/index.md"', body)   # other attribute untouched
+        self.assertIn('href="kernel/"', body)
+        self.assertIn('data-src="gone.png"', body)                # not a src attribute
+        self.assertFalse(any("tricky.md" in e and "missing.md" in e for e in errors), errors)  # comment ignored
+        self.assertTrue(any("build/x.json" in e for e in errors), errors)  # real src still checked
+
+    def test_duplicate_heading_slugs_get_suffixes(self):
+        root = fixture_repo()
+        (root / "docs" / "dup.md").write_text("# Dup\n\n## Setup\n\n## Setup\n\n## Setup\n", encoding="utf-8")
+        self._use(root)
+        pages, _ = B.load_pages(FACTS, [])
+        self.assertTrue({"setup", "setup-1", "setup-2"} <= pages["dup.md"].anchors, pages["dup.md"].anchors)
+
+    def test_baseline_flags_new_undocumented_and_stale_entries(self):
+        root = fixture_repo()
+        (root / "docs" / ".coverage-baseline.json").write_text('{"undocumented": ["todo/01-a/TODO-01-a.md"]}', encoding="utf-8")
+        self._use(root)
+        errors: list[str] = []
+        B.check_baseline(["todo/01-a/TODO-02-new.md"], errors)
+        self.assertTrue(any("TODO-02-new" in e and "no documentation page" in e for e in errors), errors)
+        self.assertTrue(any("TODO-01-a" in e and "stale" in e for e in errors), errors)
+
+    def test_baseline_may_shrink_but_never_grow(self):
+        root = fixture_repo()
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        bl = root / "docs" / ".coverage-baseline.json"
+        bl.write_text('{"undocumented": ["todo/01-a/TODO-01-a.md"]}', encoding="utf-8")
+        for cmd in (["add", "-A"], ["commit", "-q", "-m", "baseline", "--no-verify"]):
+            subprocess.run(["git", *cmd], cwd=root, check=True, env=env, capture_output=True)
+        self._use(root)
+        bl.write_text('{"undocumented": ["todo/01-a/TODO-01-a.md", "todo/01-a/TODO-02-b.md"]}', encoding="utf-8")
+        errors: list[str] = []
+        B.check_baseline(["todo/01-a/TODO-01-a.md", "todo/01-a/TODO-02-b.md"], errors)
+        self.assertTrue(any("GREW" in e and "TODO-02-b" in e for e in errors), errors)
+        bl.write_text('{"undocumented": []}', encoding="utf-8")
+        errors = []
+        B.check_baseline([], errors)
+        self.assertEqual(errors, [])
+        bl.write_text('{"undocumented": ["todo/01-a/TODO-01-a.md", "todo/01-a/TODO-02-b.md"], '
+                      '"growth_reasons": {"todo/01-a/TODO-02-b.md": "a page claimed it falsely; claim removed in review"}}',
+                      encoding="utf-8")
+        errors = []
+        B.check_baseline(["todo/01-a/TODO-01-a.md", "todo/01-a/TODO-02-b.md"], errors)
+        self.assertEqual(errors, [])   # growth with a written reason is allowed
+
+    def test_update_baseline_never_readds_from_an_orphaned_reason(self):
+        data = {"undocumented": ["todo/01-a/TODO-01-a.md"],
+                "growth_reasons": {"todo/01-a/TODO-09-x.md": "left behind after a manual edit",
+                                   "todo/01-a/TODO-01-a.md": "kept because the entry is still listed"}}
+        out = B.shrink_baseline(data, ["todo/01-a/TODO-01-a.md", "todo/01-a/TODO-09-x.md"])
+        self.assertEqual(out["undocumented"], ["todo/01-a/TODO-01-a.md"])        # no re-add
+        self.assertEqual(list(out["growth_reasons"]), ["todo/01-a/TODO-01-a.md"])  # orphan pruned
+        self.assertEqual(B.shrink_baseline(None, ["b", "a"])["undocumented"], ["a", "b"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
