@@ -100,8 +100,9 @@ def fileset() -> tuple[set[str], set[str]]:
 
 
 def set_root(root: Path) -> None:
-    global ROOT, PROJECT_FILE, SITE_SRC, DOCS, TODO, BASELINE
+    global ROOT, PROJECT_FILE, SITE_SRC, DOCS, TODO, BASELINE, _TRACKED
     ROOT = root
+    _TRACKED = None
     PROJECT_FILE, SITE_SRC, DOCS, TODO = root / "project.json", root / "gh-pages", root / "docs", root / "todo"
     BASELINE = DOCS / ".coverage-baseline.json"
     sys.path.insert(0, str(REPO / "scripts" / "site"))
@@ -236,6 +237,8 @@ class Page:
     title: str = ""
     order: int = 1000
     covers: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)   # code the page describes (freshness)
+    reviewed: str = ""                                 # YYYY-MM-DD, bumped when re-checked unchanged
     body: str = ""
     toc: list[tuple[int, str, str]] = field(default_factory=list)
     anchors: set[str] = field(default_factory=set)
@@ -571,6 +574,27 @@ def check_baseline(undocumented: list[str], errors: list[str]) -> None:
 # Site assembly
 # --------------------------------------------------------------------------
 
+_TRACKED: tuple[set[str], set[str]] | None = None
+
+
+def tracked_sources() -> tuple[set[str], set[str]]:
+    """Tracked files and directories of the SOURCE being checked. Stricter than
+    fileset(): an untracked local file has no history, so it can be no source."""
+    global _TRACKED
+    if _TRACKED is None:
+        import freshness
+        freshness.REPO = REPO
+        _TRACKED = freshness.tracked(SOURCE)
+    return _TRACKED
+
+
+def check_sources(where: str, sources: list[str], errors: list[str]) -> None:
+    files, dirs = tracked_sources()
+    for src in sources:
+        if src not in files and src not in dirs:
+            errors.append(f"{where}: source path is not a tracked file or directory: {src}")
+
+
 def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Renderer]:
     pages: dict[str, Page] = {}
     for src in sorted(DOCS.rglob("*.md")):
@@ -581,6 +605,13 @@ def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Rendere
         text = page.src.read_text(encoding="utf-8")
         d = parse_directives(text)
         page.covers = [c.strip() for c in d.get("covers", "").split(",") if c.strip()]
+        page.sources = [c.strip().rstrip("/") for c in d.get("sources", "").split(",") if c.strip()]
+        page.reviewed = d.get("reviewed", "")
+        if page.reviewed:
+            try:
+                _dt.date.fromisoformat(page.reviewed)
+            except ValueError:
+                errors.append(f"docs/{page.rel}: reviewed= must be a YYYY-MM-DD date, got {page.reviewed!r}")
         if "order" in d:
             page.order = int(d["order"])
         if "title" in d:
@@ -659,7 +690,33 @@ def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page) -> st
                .replace("%EDIT%", edit))
 
 
-def coverage_page(pages: dict[str, Page], covered: dict[str, list[str]]) -> Page:
+FRESH_LABEL = {"fresh": "up to date", "stale": "sources changed", "editing": "being updated",
+               "new": "not yet committed", "unknown": "unknown (shallow clone)"}
+
+
+def freshness_table(records) -> str:
+    if not records:
+        return ""
+    stale = sum(1 for r in records if r.state == "stale")
+    rows = []
+    for r in sorted(records, key=lambda r: (r.state != "stale", r.kind, r.name)):
+        name = (f'<a href="{{{{repo_url}}}}/blob/main/{html.escape(r.name)}">{html.escape(r.name[5:])}</a>'
+                if r.kind == "page" else f"Landing page card: {html.escape(r.name)}")
+        srcs = ", ".join(f"<code>{html.escape(x)}</code>" for x in r.sources)
+        state = html.escape(FRESH_LABEL.get(r.state, r.state))
+        if r.state == "stale":
+            state = f'<span class="missing">{state}</span>'
+        rows.append(f"<tr><td>{name}</td><td>{srcs}</td><td>{html.escape(r.baseline_date or '')}</td><td>{state}</td></tr>")
+    return ("<h2 id=\"freshness\">Freshness</h2>"
+            "<p>Pages and landing-page cards that name the code they describe (<code>sources=</code>). A page is flagged "
+            "when that code has changed since the page's content last changed; update it, or bump its "
+            "<code>reviewed=</code> date if it is still accurate.</p>"
+            f"<p><strong>{stale}</strong> of <strong>{len(records)}</strong> flagged.</p>"
+            "<div class=\"table-wrap\"><table><thead><tr><th>Page</th><th>Sources</th><th>Last updated</th>"
+            "<th>State</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>")
+
+
+def coverage_page(pages: dict[str, Page], covered: dict[str, list[str]], records=()) -> Page:
     by_domain: dict[str, list[str]] = {}
     for t in covered:
         parts = t.split("/")
@@ -683,7 +740,8 @@ def coverage_page(pages: dict[str, Page], covered: dict[str, list[str]]) -> Page
             f"<p>Every roadmap file under <code>todo/</code> should have at least one documentation page that declares "
             f"<code>&lt;!-- docs: covers=todo/... --&gt;</code>. This page is generated on every build.</p>"
             f"<p class=\"meter\"><span style=\"width:{pct}%\"></span></p>"
-            f"<p><strong>{done}</strong> of <strong>{total}</strong> roadmap files documented ({pct}%).</p>" + "".join(rows))
+            f"<p><strong>{done}</strong> of <strong>{total}</strong> roadmap files documented ({pct}%).</p>"
+            + freshness_table(records) + "".join(rows))
     p = Page(src=DOCS / "coverage.md", rel="coverage.md", url="coverage.html", title="Documentation coverage",
              order=9999)
     p.body = body
@@ -749,10 +807,12 @@ def feature_cards(facts: dict, errors: list[str]) -> str:
         for o in owners:
             if o not in known:
                 errors.append(f"{where}: owner is not a roadmap file: {o}")
-        tracked, tracked_dirs = fileset()   # the SOURCE being checked, not the disk: a
-        for src in sources:                 # snapshot holds only site paths, and an
-            if src not in tracked and src.rstrip("/") not in tracked_dirs:   # ignored file is no source
-                errors.append(f"{where}: source path is not a tracked file or directory: {src}")
+        check_sources(where, [x.rstrip("/") for x in sources], errors)
+        if card.get("reviewed"):
+            try:
+                _dt.date.fromisoformat(card["reviewed"])
+            except (TypeError, ValueError):
+                errors.append(f"{where}: reviewed must be a YYYY-MM-DD date, got {card['reviewed']!r}")
         for field in ("title", "text"):
             if any(d in card.get(field, "") for d in (chr(0x2014), chr(0x2013))):
                 errors.append(f"{where}: {field} contains an em or en dash")
@@ -847,7 +907,13 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     pages, _ = load_pages(facts, errors)
     check_design_lines(pages, errors)
     covered, undocumented = coverage(pages, errors)
-    cov = coverage_page(pages, covered)
+    for page in pages.values():
+        check_sources(f"docs/{page.rel}", page.sources, errors)
+    import freshness
+    freshness.REPO = REPO
+    records = freshness.check_all({f"docs/{p.rel}": p.sources for p in pages.values() if p.sources}, SOURCE)
+    build.freshness = records  # type: ignore[attr-defined]
+    cov = coverage_page(pages, covered, records)
     tpl = render_template((SITE_SRC / "docs-template.html").read_text(encoding="utf-8"), facts,
                           "gh-pages/docs-template.html", errors)
     all_pages = dict(pages)
@@ -1005,6 +1071,8 @@ def main() -> int:
     mode.add_argument("--sync", nargs="*", metavar="FILE",
                       help="rewrite project regions (all tracked Markdown, or only FILEs)")
     mode.add_argument("--update-baseline", action="store_true")
+    mode.add_argument("--freshness", action="store_true",
+                      help="list every page and card with sources= and whether its code changed since")
     mode.add_argument("--emit-head", metavar="FILE",
                       help="post-commit: print FILE as committed at HEAD with its project regions synced")
     mode.add_argument("--sync-head", nargs="+", metavar="FILE",
@@ -1076,6 +1144,18 @@ def run(args: argparse.Namespace) -> int:
     files = build(facts, errors)
     undocumented = build.undocumented  # type: ignore[attr-defined]
 
+    import freshness
+    records = build.freshness  # type: ignore[attr-defined]
+    if args.freshness:
+        for e in errors:
+            print(f"ERROR: {e}", file=sys.stderr)
+        for r in records:
+            extra = f" ({', '.join(r.changed[:5])})" if r.changed else ""
+            print(f"{r.state:8} {r.baseline_date or '-':10} {r.kind:4} {r.name}{extra}")
+        stale = sum(1 for r in records if r.state == "stale")
+        print(f"freshness: {stale} of {len(records)} stale", file=sys.stderr)
+        return 1 if errors else 0
+
     if args.update_baseline:
         data = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else None
         BASELINE.write_text(json.dumps(shrink_baseline(data, undocumented), indent=2) + "\n", encoding="utf-8")
@@ -1099,6 +1179,13 @@ def run(args: argparse.Namespace) -> int:
             print(f"ERROR: {e}", file=sys.stderr)
         print(f"site: {len(errors)} drift error(s)", file=sys.stderr)
         return 1
+
+    # Warnings, never errors: printed even under --quiet so lint Check 30 can
+    # forward them (a code change is not always a docs change).
+    for r in records:
+        w = freshness.warning(r)
+        if w:
+            print(f"WARN: {w}", file=sys.stderr)
 
     if not args.check:
         if args.out.exists():

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-24-blackbox-service-partition.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-24-blackbox-service-partition.md sources=src/kernel/main/boot_desktop.c,src/kernel/main/boot_progress.c,src/kernel/main/boot_health.c,src/kernel/main/boot_trend.c,src/kernel/firmware_tables_json.c,src/kernel/panic.c reviewed=2026-09-28 -->
 # BlackBox Diagnostic Artifacts (`X:\Diag\`)
 
 The kernel writes structured diagnostic artifacts to the BlackBox service

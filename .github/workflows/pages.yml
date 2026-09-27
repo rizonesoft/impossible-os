@@ -6,24 +6,12 @@ name: Deploy GitHub Pages
 # source (dead doc link, stale project region, stale coverage baseline) fails
 # the deploy instead of publishing.
 
+# Every push to main, not a path list: the freshness table on the coverage page
+# depends on source files anywhere in the tree, and a filter that misses one
+# would publish "up to date" for a page whose code has since changed.
 on:
   push:
     branches: [main]
-    paths:
-      - 'gh-pages/**'
-      - 'docs/**'
-      - 'todo/**'
-      - 'project.json'
-      - 'COUNT.md'
-      - 'README.md'
-      - 'scripts/site/**'
-      - 'tools/vendor/**'
-      - 'resources/icons/src/**'
-      - 'resources/icons/color/**'
-      - 'resources/brand/**'
-      - 'resources/backgrounds/**'
-      - 'include/desktop/theme_tokens.h'
-      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -45,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # the coverage baseline is checked against the previous commit
+          fetch-depth: 0   # full history: the baseline compares against the previous commit, freshness against each page's last change
 
       - name: Install PyYAML (the todo-graph producer computes feature-card roadmap status)
         run: python3 -m pip install --quiet PyYAML

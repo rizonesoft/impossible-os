@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-29-boot-perf-health-observability.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-29-boot-perf-health-observability.md sources=src/kernel/main/boot_trend.c reviewed=2026-09-28 -->
 # `boot-trend.json` Wire Format (schema_version 1)
 
 > Canonical wire format for `X:\Perf\boot-trend.json`. Single source of

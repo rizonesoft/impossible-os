@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_audit_codes.h,src/boot/uefi/boot_sticky.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py reviewed=2026-09-28 -->
 # Boot Policy Audit Schema
 
 > Canonical doc for the policy audit trail feature owned by [TODO-07 boot-entry-store-menu-policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md). Two streams:

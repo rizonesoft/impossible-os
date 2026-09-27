@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md -->
+<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md sources=.github/workflows/build.yml,.github/workflows/release.yml,.github/workflows/pages.yml,.github/workflows/stale.yml,.github/workflows/labeler.yml,scripts/build.sh reviewed=2026-09-28 -->
 # GitHub Repository Setup
 
 > Professional GitHub repository infrastructure for Impossible OS -- CI/CD, templates, security policies, and community assets.

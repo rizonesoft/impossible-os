@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/kernel/main/boot_health_check.c,src/boot/uefi/boot_entries_parser.c,include/boot/boot_health_handoff.h,include/kernel/boot_health_check.h reviewed=2026-09-28 -->
 # Boot Health Gate
 
 > **Owner:** [Per-Entry Health-Gated Mark-Good](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#14-per-entry-health-gated-mark-good). Layered ABOVE

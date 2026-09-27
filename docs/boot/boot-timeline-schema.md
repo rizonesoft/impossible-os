@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-14-boot-diagnostics.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-14-boot-diagnostics.md sources=src/kernel/main/boot_progress.c,tools/boot-timeline/boot_timeline.py reviewed=2026-09-28 -->
 # `boot-timeline.json` Wire Format (schema v1)
 
 > Canonical wire format for the per-boot stage timeline. Single source of

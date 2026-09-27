@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md sources=include/kernel/boot_info.h,src/boot/uefi/boot_info_mirror.h,src/boot/uefi/bootx64.c,tools/boot-info-manifest/dump-kernel.c,src/kernel/main/boot_version.c,include/kernel/boot_version.h reviewed=2026-09-28 -->
 # Boot Protocol Changelog
 
 > History of every `BOOT_INFO_VERSION` bump. Each row links to the

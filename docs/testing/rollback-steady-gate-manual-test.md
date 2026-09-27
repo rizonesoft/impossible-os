@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md sources=src/kernel/test/test_boot_rollback.c,src/kernel/main/boot_rollback.c,resources/boot/boot.conf,scripts/build.sh,src/boot/uefi/Makefile,scripts/debug/rollback-fixtures/run-fixtures.sh reviewed=2026-09-28 -->
 # Manual Test: Anti-Rollback Compositor-Steady Gate
 
 Owner: [Anti-Rollback Raise Timing Hardening](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#16-anti-rollback-raise-timing-hardening) in `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md`.

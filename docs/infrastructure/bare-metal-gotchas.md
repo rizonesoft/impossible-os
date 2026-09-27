@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-10-bare-metal-hardening.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-10-bare-metal-hardening.md sources=src/kernel/cache.c,include/kernel/cache.h,src/kernel/mm/boot_reserved.c,src/boot/uefi/bootx64.c,user/user.ld,include/kernel/mm/user_range.h reviewed=2026-09-28 -->
 # Bare Metal Gotchas
 
 > Hard-won lessons from real hardware debugging. Violating any of these will crash on bare metal while appearing to work fine in VMs. CLAUDE.md carries the short-form list as a per-turn reminder; the full incident histories live here.

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,user/include/test.h,include/kernel/test/test_usermode.h,scripts/test.sh reviewed=2026-09-28 -->
 # User-Mode Test Environment Matrix
 
 Canonical platform-expectation matrix for the user-mode test framework.

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/06-desktop-foundation/TODO-04-control-library.md,todo/08-graphics-ui/TODO-05-widget-library-core.md,todo/08-graphics-ui/TODO-06-widget-dialogs.md order=3 -->
+<!-- docs: covers=todo/06-desktop-foundation/TODO-04-control-library.md,todo/08-graphics-ui/TODO-05-widget-library-core.md,todo/08-graphics-ui/TODO-06-widget-dialogs.md order=3 sources=include/desktop/theme_tokens.h,src/desktop/controls.c reviewed=2026-09-28 -->
 # Controls Specification
 
 Every control in Impossible OS looks and behaves like its Windows 11 (WinUI) counterpart. This page fixes the geometry, colours and states for each one so that the control library, the Win32 common controls and every app draw the same thing. Values are tokens in [`tokens.json`](tokens.json) and `THEME_*` constants in `include/desktop/theme_tokens.h`; sizes are at 100% scale and pass through `DPI_SCALE()`.

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/boot_policy.c,include/kernel/boot_info.h,src/kernel/main/boot_decision.c reviewed=2026-09-28 -->
 # Boot Policy Merge Order
 
 > Companion to [`boot-entry-schema.md`](boot-entry-schema.md). The schema doc pins the on-disk format; this doc pins the precedence ladder that turns a parsed store into a single selected entry id.

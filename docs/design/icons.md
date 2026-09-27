@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md -->
+<!-- docs: covers=todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md sources=resources/icons/src,resources/icons/color,resources/brand/logo.svg,resources/fonts,resources/cursors,scripts/convert-icons.sh reviewed=2026-09-28 -->
 # System Icons
 
 The colour icons are original artwork that reads instantly as Windows 11 while every shape and gradient is our own. This page is the canonical spec. Sources live in [`resources/icons/src/`](../../resources/icons/src/); the rendered PNGs in `resources/icons/color/<size>/` are packed into `icons.ires` by the build.

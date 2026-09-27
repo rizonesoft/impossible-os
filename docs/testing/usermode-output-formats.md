@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-09-28 -->
 # User-Mode Test Output Formats
 
 The user-mode test launcher emits **four** output streams on serial.

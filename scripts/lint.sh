@@ -2797,6 +2797,8 @@ fi
 # docs/, a live repository URL naming an owner other than project.json's, a
 # README line-count badge that disagrees with COUNT.md, and a documentation
 # coverage baseline that is stale or missing a new undocumented TODO file.
+# Pages or feature cards whose sources= changed since their content did are
+# reported as warnings (doc freshness), never errors.
 # ~1s, so it runs on every commit. Computed stat_* regions (TODO counts, test
 # totals) are skipped here because ordinary work moves them; the post-commit
 # hook re-syncs README.md and the Pages workflow checks them. Skip via
@@ -2820,6 +2822,14 @@ else
         sed 's/^/  /' "$SITE_OUT"
         echo -e "${RED}error${NC}: Check 30 (site drift) -- fix the sources above; python3 scripts/site/build.py --sync rewrites project regions"
         ERRORS=$((ERRORS + 1))
+    else
+        # Doc freshness: a page whose sources= changed since the page did. A
+        # warning, never an error (a code change is not always a docs change),
+        # but printed, because a passing check's output is otherwise discarded.
+        while IFS= read -r line; do
+            echo -e "${YELLOW}warn${NC}: Check 30 (doc freshness) ${line#WARN: }"
+            WARNINGS=$((WARNINGS + 1))
+        done < <(grep '^WARN: ' "$SITE_OUT")
     fi
     rm -f "$SITE_OUT"
 fi

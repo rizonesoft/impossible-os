@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-09-28 -->
 # Boot Entry Store Schema
 
 > Canonical specification for `\EFI\ImpossibleOS\bootentries.json`. Authoritative for envelope

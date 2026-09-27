@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md sources=include/kernel/boot_info.h,src/boot/uefi/boot_info_mirror.h,src/boot/uefi/bootx64.c,src/kernel/main/boot_hw.c,tools/boot-info-manifest reviewed=2026-09-28 -->
 # Boot Protocol Reference
 
 > Canonical reference for the Impossible OS bootloader to kernel

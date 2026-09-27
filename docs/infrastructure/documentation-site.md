@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md -->
+<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh reviewed=2026-09-28 -->
 # Documentation Site
 
 The documentation you are reading is generated from the Markdown files in the repository's `docs/` folder and published to [impossibleos.co/docs](https://impossibleos.co/docs/) on every push to `main`. The same generator builds the landing page and the [desktop design mockup](https://impossibleos.co/design/), and it refuses a commit when anything published would disagree with its source.
@@ -48,9 +48,22 @@ The [coverage page](https://impossibleos.co/docs/coverage.html) lists every road
 | Line-count badge disagreeing with COUNT.md | a README edited without the post-commit hook |
 | Stale generated theme header | `include/desktop/theme_tokens.h` older than `docs/design/tokens.json` |
 | Coverage regression | a new roadmap file with no docs page |
+| A `sources=` path that is not a tracked file or directory | a page naming a file that was renamed or never committed |
 | JavaScript that does not parse | a stray `});` that stops the landing page countdown and hides every section that fades in on scroll |
 | Bad GitHub About-box values | a description with a dash, an `http` homepage, or an invalid topic in `project.json` |
 | Landing page feature card with a dead owner or source | a card in `gh-pages/features.json` naming a renamed roadmap file or deleted source path |
+
+## How do we notice when a page goes out of date?
+
+A page that documents code names that code in its directive, and records when it was last checked:
+
+```markdown
+<!-- docs: covers=todo/08-graphics-ui/TODO-10-taskbar.md sources=src/desktop/taskbar.c,include/desktop/taskbar.h reviewed=2026-09-27 -->
+```
+
+A page is stale when its `sources` differ between the commit that last changed the page's content and the tree being checked. The comparison is on content, not history, so a change that was reverted does not count, a file deleted from a source directory does, and a page that was only renamed keeps its old baseline. Landing page feature cards work the same way, each card with its own baseline.
+
+Stale pages are warnings, never errors, because a code change is not always a docs change. Lint Check 30 prints them on every commit, `python3 scripts/site/build.py --freshness` lists every tracked page and its state, and the [coverage page](https://impossibleos.co/docs/coverage.html) shows a freshness table. Editing the page clears the warning; if the page is still accurate, bump its `reviewed=` date, which is a content change. A source must be a tracked file or directory, or the check fails.
 
 ## How are the landing page feature cards kept true?
 
@@ -72,7 +85,7 @@ bash scripts/site/render-brand.sh        # re-render README brand images
 
 ## What is not done yet?
 
-The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): a written contract for what a docs page contains, pages for the remaining roadmap files, a `sources=` freshness warning when the code a page describes changes, a sitemap, last-updated dates, section-level search and per-release snapshots.
+The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): a written contract for what a docs page contains, pages for the remaining roadmap files, a sitemap, last-updated dates, section-level search and per-release snapshots.
 
 ## How does this compare with Windows and Linux?
 

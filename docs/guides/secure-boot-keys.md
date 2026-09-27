@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md sources=scripts/sign-efi.sh,scripts/secure-boot/build-shim.sh,scripts/test-secureboot-smoke.sh,src/boot/uefi/sbat.csv,src/boot/uefi/sbat.asm,include/boot/uki_cmdline_check.h reviewed=2026-09-28 -->
 # Secure Boot Key Management
 
 This guide covers the Impossible OS MOK (Machine Owner Key) pair used to sign

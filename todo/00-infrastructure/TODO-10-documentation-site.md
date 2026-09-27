@@ -67,7 +67,7 @@ file_patterns:
 | 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [ ]   |
 | 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
-| ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [ ]   |
+| ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [x]   |
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, search, release snapshots        | §1         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -145,6 +145,8 @@ Every later section writes pages against this contract, so it must exist first a
   - Windows 11 and Linux comparison: one short paragraph or table, consistent with the TODO's OS Comparison table
   - See also: the roadmap file, related docs pages
 - [ ] Style rules in the contract: one line per paragraph, no em or en dashes, question-shaped H2s where natural, every figure sourced (code, test output, or spec), 400-1500 words per page, split larger topics into linked pages
+- [ ] Freshness rule in the contract: a page that documents code declares `sources=path[,path]` and `reviewed=YYYY-MM-DD`, and the template carries both
+  - The check itself shipped with the doc-freshness section: stale pages warn in lint Check 30 and show on the coverage page.
 - [ ] Add `docs/contributing/_template.md`, a copy-ready skeleton of the contract, and `docs/contributing/index.md`
 - [ ] Map each domain to its docs folder in the contract, adding each missing folder with an `index.md` when its first page lands
   - 00 infrastructure, 01 boot, 02 kernel, 03 memory, 04 hardware, 05 storage, 06 and 09 desktop, 07 networking, 08 graphics
@@ -640,14 +642,31 @@ A page that was right when written goes wrong when its code changes. Neither Win
 > [!TIP]
 > Linux kernel-doc extracts API docs from source comments but cannot tell a narrative page is stale; Microsoft Learn relies on manual review dates. A per-page source list checked against git history catches narrative drift too.
 
-- [ ] Extend the directive with `sources=path[,path]` (files or directories) naming the code a page describes; `build.py` validates that every listed path exists (dead source = error)
-- [ ] Add `--freshness` to `build.py`: for each page with `sources=`, compare the last commit touching any source against the last commit touching the page (`git log -1 --format=%ct`), and list pages whose sources are newer
-- [ ] Report stale pages as warnings in `scripts/lint.sh` Check 30 (never an error: a code change is not always a docs change) and as a "Last reviewed" note on the coverage page
-- [ ] Add `sources=` to every page written in §2 and §4 onward that documents code (docs-only pages need none)
-- [ ] Update `docs/contributing/docs-page-contract.md` with the `sources=` rule
-- [ ] Commit: `"site: doc freshness -- sources= directive and stale-page warning"`
+- [x] Directive gains `sources=path[,path]` and `reviewed=YYYY-MM-DD`
+  - Every source must be a TRACKED file or directory of the tree being checked (`build.py` `tracked_sources` / `check_sources`, via `freshness.tracked`), else an error; `reviewed=` must parse as a date.
+- [x] `scripts/site/freshness.py` and `build.py --freshness` judge each page by content
+  - Stale means the sources differ (`git diff`) between the commit that last changed the page's CONTENT and the tree being checked, so reverts, merges and deletions under a source directory are handled.
+  - The baseline follows renames on the first-parent line with merge diffs; staged renames and a plain `mv` keep the old baseline.
+  - An uncommitted edit of the page is `editing` (not during a merge); a shallow clone is `unknown`.
+- [x] Stale pages are warnings, never errors, shown in lint and on the coverage page
+  - `build.py` prints `WARN:` lines even under `--quiet`, and lint Check 30 forwards them on a passing check.
+  - The coverage page gains a Freshness table; Pages runs on every push with full history, so the table cannot lag behind a path filter.
+- [x] `sources=` and `reviewed=2026-09-28` on the 43 existing pages that document code (4 process pages need none)
+  - Landing page feature cards get the same check with a per-card baseline; pages written by the domain sections add them under the contract rule.
+- [/] The `sources=` rule in `docs/contributing/docs-page-contract.md`: parked on the page-contract section, which writes that file (item "Freshness rule in the contract")
+  - The rule is already documented in `docs/infrastructure/documentation-site.md` and CLAUDE.md.
+- [x] Commit: `"site: doc freshness, sources= directive and stale-page warning"`
 
 **Test checkpoint:** touching a file listed in a page's `sources=` in a scratch commit makes `python3 scripts/site/build.py --freshness` list that page; reverting clears it. Test on: WSL2 dev host.
+
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (class `Freshness`, 16 git-backed cases, plus `FeatureCards`) | validation: `python3 scripts/site/build.py --freshness`, lint Check 30 warnings
+
+> **Notes:**
+> - **What shipped:** `scripts/site/freshness.py` judges each page and feature card by content: stale when its `sources=` differ between the commit that last changed it and the tree being checked.
+> - **How it integrates:** `build.py` validates sources against tracked files, prints `WARN:` lines that lint Check 30 now forwards, adds a Freshness table to the coverage page, and has a `--freshness` listing.
+> - **Downstream:** Pages runs on every push with full history; 43 existing pages and all 9 cards carry `sources=` and `reviewed=`; domain sections add them under the contract rule.
+> - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How do we notice when a page goes out of date?".
+> - **Scope boundary:** warnings only, by design; the page-contract text for `sources=` is parked on the contract section.
 
 ## 23. Site Polish: Sitemap, Last-Updated, Search, Release Snapshots
 
@@ -676,7 +695,7 @@ A page that was right when written goes wrong when its code changes. Neither Win
 | ⭐  | Build fails on dead doc links    | ❌ Not enforced          | ⚠️ Warnings only           | ✅ §1 Check 30 error      |
 | ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21 coverage gate   |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
-| ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ⬜ §22 `sources=`         |
+| ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §23 snapshots          |
 | 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §23 sections |
 
@@ -690,7 +709,7 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 > Host-side tests, not kernel tests: `scripts/site/tests/test_build.py` (stdlib `unittest`), wired into `scripts/test-tooling.sh` as a nested suite so CI runs it.
 
-- [x] Create `scripts/site/tests/test_build.py` (16 tests pass 2026-09-27) with:
+- [x] Create `scripts/site/tests/test_build.py` (36 tests pass 2026-09-28) with:
   - `github_slug("1. Layout at a Glance")` == `"1-layout-at-a-glance"`; duplicate headings get `-1`, `-2` suffixes
   - `page_url("index.md")` == `""`, `page_url("boot/index.md")` == `"boot/"`, `page_url("boot/x.md")` == `"boot/x.html"`
   - `sync_regions()` rewrites a stale `<!-- project:release_date_long -->` region and reports an unknown key as an error
@@ -699,7 +718,9 @@ A page that was right when written goes wrong when its code changes. Neither Win
   - `check_baseline()` errors on a new undocumented file and on a stale baseline entry; `--update-baseline` never adds
   - `hex_to_css("#80FFFFFF")` == `"rgba(255, 255, 255, 0.502)"`; `gen_theme_header.argb("#60CDFF")` == `"0xFF60CDFFu"`
   - `gen_theme_header.check()` is empty on the committed tree
-- [x] Register the suite in `scripts/test-tooling.sh` (runs on every tooling pass; it takes about 0.2 s, so it is not path-scoped)
+  - Scripts that do not parse, GitHub About-box validation and diff, and feature cards (open-section count, escaping, dead owner, untracked source, dash)
+  - Freshness on a throwaway repo: stale then fresh after a revert, deletion under a source directory, committed and uncommitted pure renames, a merge resolution as baseline, raw file names, literal pathspecs, editing vs merge, per-card baselines, `reviewed` bumps, merged card sources
+- [x] Register the suite in `scripts/test-tooling.sh` (runs on every tooling pass; it takes about 2 s, so it is not path-scoped)
 - [x] Commit: `"test: site generator unit tests"` (landed with the section 1-2 review)
 
 ## Verification

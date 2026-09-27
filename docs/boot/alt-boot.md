@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-08-alternate-boot-protocols.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-08-alternate-boot-protocols.md sources=Makefile,scripts/build.sh reviewed=2026-09-28 -->
 # Alternate Boot Protocol Policy
 
 > **Owner:** [Alternate Boot Protocols & Compatibility Boundary](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#1-alternate-boot-protocol-policy).

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md sources=scripts/release/build-manifest.ps1,scripts/release/test-build-manifest.ps1,tools/bootimg/bootimg.bat,scripts/deploy/write-usb.ps1,scripts/release/to-vhdx.ps1,scripts/release/to-iso.ps1 reviewed=2026-09-28 -->
 # Windows Host Tooling -- Release & Inspector Parity
 
 > **Scope:** developer-facing reference for the Windows-host peers of the

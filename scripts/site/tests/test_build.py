@@ -263,6 +263,196 @@ class FeatureCards(unittest.TestCase):
             self.assertIn(needle, joined)
         self.assertEqual(len(errors), 5, errors)
 
+
+class Freshness(unittest.TestCase):
+    """The section-22 contract, on a throwaway repository."""
+
+    def setUp(self):
+        import freshness
+        self.F, self.saved = freshness, freshness.REPO
+        self.root = Path(tempfile.mkdtemp(prefix="fresh-"))
+        freshness.REPO = self.root
+        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        self.git("init", "-q")
+        self.write("src/a.c", "int a;\n")
+        self.write("src/d/b.c", "int b;\n")
+        self.write("docs/p.md", "# P\n")
+        self.commit("page and sources")
+
+    def tearDown(self):
+        self.F.REPO = self.saved
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, env=self.env,
+                              capture_output=True, text=True).stdout
+
+    def write(self, rel, text):
+        (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / rel).write_text(text, encoding="utf-8")
+
+    def commit(self, msg):
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", msg)
+
+    def page(self, source="worktree", path="docs/p.md", sources=("src/a.c", "src/d")):
+        return self.F.check_page(path, list(sources), source, False, self.F.merging())
+
+    def test_source_change_is_stale_and_a_revert_is_not(self):
+        self.assertEqual(self.page().state, "fresh")
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change source")
+        r = self.page("HEAD")
+        self.assertEqual((r.state, r.changed), ("stale", ["src/a.c"]))
+        self.git("revert", "--no-edit", "HEAD")
+        self.assertEqual(self.page("HEAD").state, "fresh")          # content, not history
+
+    def test_deleting_a_file_under_a_source_directory_is_stale(self):
+        self.git("rm", "-q", "src/d/b.c")
+        self.commit("delete")
+        self.assertEqual(self.page("HEAD").changed, ["src/d/b.c"])
+
+    def test_pure_rename_keeps_the_old_baseline(self):
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change source")
+        self.git("mv", "docs/p.md", "docs/q.md")
+        self.commit("rename page only")
+        self.assertEqual(self.page("HEAD", path="docs/q.md").state, "stale")
+
+    def test_editing_the_page_counts_as_review_except_during_a_merge(self):
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change source")
+        self.write("docs/p.md", "# P\n\nUpdated.\n")
+        self.assertEqual(self.page("worktree").state, "editing")
+        self.assertEqual(self.page("index").state, "stale")         # not staged yet
+        self.git("add", "docs/p.md")
+        self.assertEqual(self.page("index").state, "editing")
+        gitdir = self.root / ".git"
+        (gitdir / "MERGE_HEAD").write_text(self.git("rev-parse", "HEAD"), encoding="utf-8")
+        self.assertEqual(self.page("index").state, "stale")         # merged content is not a review
+
+    def test_unstaged_source_change_is_seen_in_worktree_mode(self):
+        self.write("src/a.c", "int a3;\n")
+        self.assertEqual(self.page("worktree").state, "stale")
+        self.assertEqual(self.page("HEAD").state, "fresh")
+
+    def test_shallow_is_unknown_and_uncommitted_page_is_new(self):
+        self.assertEqual(self.F.check_page("docs/p.md", ["src/a.c"], "HEAD", True, False).state, "unknown")
+        self.write("docs/n.md", "# N\n")
+        self.assertEqual(self.page(path="docs/n.md").state, "new")
+
+    def test_tracked_excludes_untracked_files(self):
+        self.write("src/untracked.c", "x\n")
+        files, dirs = self.F.tracked("worktree")
+        self.assertIn("src/a.c", files)
+        self.assertIn("src/d", dirs)
+        self.assertNotIn("src/untracked.c", files)
+
+    def test_each_card_keeps_its_own_baseline(self):
+        cards = [{"title": "A", "text": "a", "sources": ["src/a.c"]}, {"title": "B", "text": "b", "sources": ["src/d"]}]
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.commit("cards")
+        self.write("src/d/b.c", "int b2;\n")
+        self.commit("change B's source")
+        cards[0]["text"] = "a, reworded"
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.commit("edit card A only")
+        states = {r.name: r.state for r in self.F.check_cards("HEAD", False, False)}
+        self.assertEqual(states, {"A": "fresh", "B": "stale"})
+
+    def test_an_uncommitted_pure_rename_keeps_the_old_baseline(self):
+        body = "# P\n\n" + "".join(f"Line {i} of a page long enough to rename.\n" for i in range(20))
+        self.write("docs/p.md", body)
+        self.commit("longer page")
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change source")
+        self.git("mv", "docs/p.md", "docs/q.md")
+        self.assertEqual(self.page("index", path="docs/q.md").state, "stale")
+        self.assertEqual(self.page("worktree", path="docs/q.md").state, "stale")
+        self.git("mv", "docs/q.md", "docs/p.md")
+        (self.root / "docs" / "p.md").rename(self.root / "docs" / "r.md")          # plain mv: r.md untracked
+        self.assertEqual(self.page("worktree", path="docs/r.md").state, "stale")
+        (self.root / "docs" / "r.md").rename(self.root / "docs" / "p.md")
+        self.git("mv", "docs/p.md", "docs/q.md")
+        self.write("docs/q.md", body + "One new line after review.\n")      # rename WITH an edit
+        self.git("add", "docs/q.md")
+        self.assertEqual(self.page("index", path="docs/q.md").state, "editing")
+        self.write("docs/q.md", "# Q\n\nA different page.\n")         # below git's rename threshold
+        self.git("add", "docs/q.md")
+        self.assertEqual(self.page("index", path="docs/q.md").state, "new")
+
+    def test_a_merge_cannot_clear_a_card_by_dropping_its_stale_source(self):
+        cards = self._two_cards_b_stale()
+        cards[1]["sources"] = ["src/a.c"]                          # merge swaps the stale source away
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.git("add", "gh-pages/features.json")
+        states = {r.name: r.state for r in self.F.check_cards("index", False, True)}
+        self.assertEqual(states["B"], "stale")
+
+    def test_a_merge_that_changed_the_page_is_its_baseline(self):
+        self.write("docs/p.md", "# P\n\none\n\ntwo\n\nthree\n")
+        self.commit("three lines")
+        base = self.git("rev-parse", "--abbrev-ref", "HEAD").strip()
+        self.git("checkout", "-q", "-b", "side")
+        self.write("docs/p.md", "# P\n\nONE\n\ntwo\n\nthree\n")
+        self.commit("side edits line one")
+        self.git("checkout", "-q", base)
+        self.write("docs/p.md", "# P\n\none\n\ntwo\n\nTHREE\n")
+        self.commit("main edits line three")
+        self.git("merge", "-q", "--no-edit", "side")                # result differs from both parents
+        self.assertEqual(self.page("HEAD").state, "fresh")
+        self.write("src/a.c", "int a2;\n")
+        self.commit("source only")
+        self.assertEqual(self.page("HEAD").state, "stale")
+
+    def test_unusual_file_names_are_read_raw(self):
+        for name in ("docs/with\ttab.md", "docs/caf\u00e9.md"):
+            self.write(name, "# X\n")
+            self.commit(f"add {name!r}")
+            self.write("src/a.c", self.git("rev-parse", "HEAD"))
+            self.commit("touch source")
+            self.assertEqual(self.page("HEAD", path=name, sources=["src/a.c"]).state, "stale", name)
+
+    def test_sources_are_literal_paths_not_pathspec_magic(self):
+        self.write(":b.c", "x\n")
+        self.write("b.c", "y\n")
+        self.commit("colon and plain")
+        self.write("docs/p.md", "# P\n\nnow covers the colon file\n")
+        self.commit("page")
+        self.write(":b.c", "x2\n")
+        self.commit("change the colon file only")
+        r = self.page("HEAD", sources=[":b.c"])
+        self.assertEqual((r.state, r.changed), ("stale", [":b.c"]))
+
+    def _two_cards_b_stale(self):
+        cards = [{"title": "A", "text": "a", "sources": ["src/a.c"]},
+                 {"title": "B", "text": "b", "sources": ["src/d"], "reviewed": "2026-01-01"}]
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.commit("cards")
+        self.write("src/d/b.c", "int b2;\n")
+        self.commit("change B's source")
+        return cards
+
+    def test_bumping_a_card_reviewed_date_clears_only_that_card(self):
+        cards = self._two_cards_b_stale()
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change A's source too")
+        cards[1]["reviewed"] = "2026-09-28"
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.commit("review B")
+        states = {r.name: r.state for r in self.F.check_cards("HEAD", False, False)}
+        self.assertEqual(states, {"A": "stale", "B": "fresh"})
+
+    def test_a_card_changed_by_a_merge_in_progress_stays_stale(self):
+        cards = self._two_cards_b_stale()
+        cards[1]["text"] = "b, as merged"
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.git("add", "gh-pages/features.json")
+        (self.root / ".git" / "MERGE_HEAD").write_text(self.git("rev-parse", "HEAD"), encoding="utf-8")
+        states = {r.name: r.state for r in self.F.check_cards("index", False, True)}
+        self.assertEqual(states["B"], "stale")
+        self.assertEqual(states["A"], "fresh")
+
 class RepoMeta(unittest.TestCase):
     def setUp(self):
         import repo_meta

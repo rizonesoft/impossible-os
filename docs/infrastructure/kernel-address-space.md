@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md -->
+<!-- docs: covers=todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md sources=include/kernel/mm/memmap.h,include/kernel/mm/user_range.h,src/boot/linker.ld,src/kernel/mm/vmm.c,src/kernel/security/wx.c,src/kernel/smp/ap_trampoline.asm reviewed=2026-09-28 -->
 # Kernel Address Space -- Higher-Half Layout and Direct Map
 
 > Canonical reference for the Impossible OS 64-bit virtual memory map. The machine-readable form of everything

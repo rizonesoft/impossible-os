@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/08-graphics-ui/TODO-03-theme-system.md order=1 -->
+<!-- docs: covers=todo/08-graphics-ui/TODO-03-theme-system.md order=1 sources=include/desktop/theme_tokens.h,resources/backgrounds/src,resources/brand,scripts/site/build.py,scripts/site/render-brand.sh,scripts/site/gen_theme_header.py reviewed=2026-09-28 -->
 # Design System
 
 The Impossible OS desktop follows Windows 11 as closely as a clean-room implementation can: the same layout, spacing, type ramp, corner radii and control shapes, so that anyone who uses Windows 11 is at home immediately. It departs in one deliberate place. The glass is a little frostier: shell surfaces blur the wallpaper a little wider and tint it a little less, with a faint grain, so colour reads through as soft light rather than shapes.

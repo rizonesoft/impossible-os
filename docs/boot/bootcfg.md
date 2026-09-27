@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=tools/bootcfg/bootcfg.py,tools/boot-entry-validate/validate.py,tools/bootcfg/test_bootcfg.py reviewed=2026-09-28 -->
 # bootcfg -- Boot Entry Store Editor
 
 > Host-side CLI tool that edits `\EFI\ImpossibleOS\bootentries.json`
