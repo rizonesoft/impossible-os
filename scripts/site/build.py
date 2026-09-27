@@ -862,6 +862,41 @@ def check_icon_renders(errors: list[str]) -> None:
                       f"{' ...' if len(changed) > 6 else ''}); run: bash scripts/convert-icons.sh and commit the PNGs")
 
 
+INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\b(?:src|type)=)[^>]*>(.*?)</script>", re.S | re.I)
+NODE_SYNTAX_CHECK = r"""
+const vm = require("vm");
+let bad = 0;
+for (const [name, src] of JSON.parse(require("fs").readFileSync(0, "utf8"))) {
+  try { new vm.Script(src, { filename: name }); }
+  catch (e) { bad++; console.log(name + ": " + String(e.message).split("\n")[0]); }
+}
+process.exit(bad ? 1 : 0);
+"""
+
+
+def check_scripts(files: dict[str, bytes], errors: list[str]) -> None:
+    """Every classic script the site ships must PARSE. One syntax error stops the whole
+    block, so a stray brace on the landing page froze the countdown and left every
+    scroll-revealed section invisible, while every link and fact check stayed green.
+    Needs `node` (present locally and on the Actions runner); skipped when absent."""
+    node = shutil.which("node")
+    if not node:
+        return
+    seen: dict[str, str] = {}
+    for rel, data in sorted(files.items()):
+        if rel.endswith(".js"):
+            seen.setdefault(data.decode("utf-8", "replace"), rel)
+        elif rel.endswith(".html"):
+            for i, m in enumerate(INLINE_SCRIPT_RE.finditer(data.decode("utf-8", "replace"))):
+                seen.setdefault(m.group(1), f"{rel} (inline script {i + 1})")
+    batch = json.dumps([[name, src] for src, name in seen.items()])
+    r = subprocess.run([node, "-e", NODE_SYNTAX_CHECK], input=batch, capture_output=True, text=True)
+    if r.returncode not in (0, 1):
+        errors.append(f"script syntax check could not run: {r.stderr.strip()[:200]}")
+    for line in r.stdout.splitlines():
+        errors.append(f"JavaScript syntax error in {line}")
+
+
 def check_count_badge(errors: list[str]) -> None:
     count = (ROOT / "COUNT.md").read_text(encoding="utf-8")
     m = re.search(r"\*\*All lines in tree\*\*\s*\|\s*\*\*\d+\*\*\s*\|\s*\*\*(\d+)\*\*", count)
@@ -963,6 +998,7 @@ def run(args: argparse.Namespace) -> int:
     check_owner_urls(facts, errors)
     check_count_badge(errors)
     check_icon_renders(errors)
+    check_scripts(files, errors)
     check_baseline(undocumented, errors)
     sys.path.insert(0, str(REPO / "scripts" / "site"))
     import gen_theme_header  # noqa: E402  (sibling module; set_root() repoints it at a snapshot)

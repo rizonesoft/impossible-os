@@ -204,5 +204,22 @@ class RawHtmlAndBaseline(unittest.TestCase):
         self.assertEqual(B.shrink_baseline(None, ["b", "a"])["undocumented"], ["a", "b"])
 
 
+class Scripts(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
+    def test_script_syntax_errors_are_reported_and_valid_scripts_pass(self):
+        files = {
+            "index.html": b"<script>const a = 1;\n});</script><script type=\"application/ld+json\">{</script>",
+            "ok.html": b"<script>document.title = 'x';</script><script src=\"x.js\"></script>",
+            "x.js": b"function f( {",
+        }
+        errors: list[str] = []
+        B.check_scripts(files, errors)
+        self.assertEqual(len(errors), 2, errors)                  # JSON-LD and src= tags are not parsed as JS
+        self.assertTrue(any("index.html (inline script 1)" in e for e in errors), errors)
+        self.assertTrue(any(e.endswith("x.js: Unexpected token '{'") or "x.js:" in e for e in errors), errors)
+        errors = []
+        B.check_scripts({"ok.html": files["ok.html"]}, errors)
+        self.assertEqual(errors, [])
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

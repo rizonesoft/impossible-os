@@ -48,6 +48,7 @@ The [coverage page](https://impossibleos.co/docs/coverage.html) lists every road
 | Line-count badge disagreeing with COUNT.md | a README edited without the post-commit hook |
 | Stale generated theme header | `include/desktop/theme_tokens.h` older than `docs/design/tokens.json` |
 | Coverage regression | a new roadmap file with no docs page |
+| JavaScript that does not parse | a stray `});` that stops the landing page countdown and hides every section that fades in on scroll |
 
 ## How do I work on the site?
 
