@@ -584,6 +584,11 @@ assert hasattr(lsp_client, "LspError")
 
 # --- 1c: LspSubprocess lifecycle --------------------------------------------
 t_subprocess_lifecycle() {
+    # Snapshot pre-existing `cat` processes: a host may run its own (WSL's
+    # /pre-start.sh keeps two alive for days), and a global pgrep turned
+    # those into a failure of this test on a clean bridge.
+    local before after
+    before=$(pgrep -x cat | sort)
     python3 -c '
 import sys, time
 sys.path.insert(0, "scripts/lsp-mcp")
@@ -595,9 +600,10 @@ c.shutdown(timeout=2.0)
 time.sleep(0.2)
 assert not c.alive, "cat still alive after shutdown"
 '
-    # Defensive: no stray `cat` processes remain after the Python exits.
+    # Defensive: no NEW `cat` process remains after the Python exits.
     # Using -x for exact match so we dont catch unrelated long command lines.
-    if pgrep -x cat >/dev/null; then
+    after=$(pgrep -x cat | sort)
+    if [ -n "$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep .)" ]; then
         return 1
     fi
     return 0
