@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-03-kernel-test-harness.md -->
 # Test Code Policy -- No Live Boot Infrastructure Calls
 
 > WSL has no working QEMU (CLAUDE memory `feedback_no_qemu_wsl`). I cannot validate runtime behavior here -- the user has to boot on native Windows or bare metal. Tests that mutate live boot state can freeze the kernel between the time they're committed and the time the user notices. **3 incidents to date** (2026-04-07 was a unit test calling `boot_progress("VERIFY_TEST", 0xCAFE)` from `test_boot_init.c`; froze WHPX boot after `BOOT_STEP clears ready on BOOT_DEFERRED`).

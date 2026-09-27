@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md,todo/15-installer-release/TODO-01-release-artifacts.md -->
 # Boot Artifacts: Build, Verify, Write
 
 > Owner: [Release Checklist and Documentation](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#10-release-checklist-and-documentation). Manifest schema: [boot-artifact-manifest.md](boot-artifact-manifest.md). CI matrix: [scripts/ci/boot-matrix.sh](../../scripts/ci/boot-matrix.sh).

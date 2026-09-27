@@ -49,6 +49,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 - -> XREF: `D15 T01 §2, §5` -- release packaging and signing consume the tooling contract but remain release-domain owned
 - -> XREF: `D15 T05 §3, §5` -- contributor and README/community docs consume the canonical setup/build/test/hook contract and must not restate stale commands
 - -> XREF: [`00-infrastructure/TODO-07 §9`](TODO-07-lsp-mcp-bridge.md#9-setup-deps-manifest-makefile-target-docs-boundary-compliance) -- LSP-MCP bridge extends §1's OPTIONAL dep tier with `asm-lsp` / `bash-language-server` / `pyright` / `pwsh`-for-PSES; the dep contract owned here must reflect the additions when §9 lands.
+- -> XREF: `TODO-10-documentation-site.md §1` -- the docs site generator (`scripts/site/`) and lint Check 30; its host-side suite joins `scripts/test-tooling.sh`
 
 ## Outcome
 

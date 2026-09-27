@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md -->
 # Boot Protocol Reference
 
 > Canonical reference for the Impossible OS bootloader to kernel

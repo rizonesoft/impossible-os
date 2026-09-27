@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md -->
 # Hook Message Codes
 
 Hook block/reminder messages are injected into the model's context every time

@@ -73,6 +73,9 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 - [ ] `void startmenu_pins_save(void)`: serialize `g_pins[].path` → CSV → `RegSetValueEx()`
 - [ ] `void startmenu_refresh(void)`: re-run `startmenu_scan_apps()` + `startmenu_pins_load()`; called after app install/uninstall
 - [ ] Right-column quick links: static array of 8 `{ label, path, icon_id }` entries; initialized once in `startmenu_data_init()`
+- [ ] Replace the two-column Start menu layout in `src/desktop/desktop.c` with the Windows 11 layout in `docs/design/shell.md#start-menu`
+  - Search box on top, Pinned 6x3 tile grid with an All button, Recommended two-column list, footer with user and power
+  - Sizes from `THEME_SIZE_START_*`; open/close motion from `THEME_MOTION_START_*` once `08-graphics-ui/TODO-04` tweens exist
 - [ ] Commit: `"startmenu: data loading -- Registry pins, VFS app scan, alphabetical groups, right-column links"`
 
 ## 2. Start Menu Interaction `[Sonnet]`
@@ -137,6 +140,7 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
   - Tooltip `"Battery: 73% -- 2h 14m remaining"` on discharge, `"Plugged in, charging"` on AC; the minutes come from the composite time estimate and read "estimating" while it is `BAT_UNKNOWN`.
   - Click flyout: charge bar, present rate in W, and last-full vs design capacity as a wear indicator; the packed composite is `HKLM\SYSTEM\Battery\Status` (REG_BINARY) so the flyout needs one read, not one per field.
   - The composite is the ONLY source: never read a per-battery ACPI object directly, or a dual-battery machine shows one cell's percentage as the system's.
+- [ ] Quick settings flyout per `docs/design/shell.md#quick-settings`: 3x2 toggle grid, brightness and volume sliders, battery footer, opened by the tray cluster
 - [ ] Commit: `"systray: tray icons -- volume/network/bell/keyboard flyouts, battery conditional, right-to-left draw"`
 
 ## 5. Toast Notifications `[Opus]`
@@ -177,6 +181,7 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
 - [ ] Per-entry dismiss: × hit-test at `(entry_right - 16, entry_y)`; on click → `notify_history_remove(idx)`; re-render
 - [ ] "Clear all" button at top of panel: `notify_history_clear_all()` → delete all Registry entries; `notify_center_open()` re-renders empty state ("All clear ✓")
 - [ ] Relative timestamp: `uint64_t elapsed_s = now_s - entry->timestamp_s`; format: `< 60s` → "Just now"; `< 3600` → "N min ago"; else → "HH:MM"
+- [ ] Notification center shares the flyout with the month calendar per `docs/design/shell.md#notifications-and-calendar` (header, list or empty state, 7-column day grid, accent today)
 - [ ] Commit: `"notify_center: history panel -- Registry 100-entry log, group-by-app, dismiss/clear, slide-in"`
 
 ## 7. Notification Settings `[Sonnet]`

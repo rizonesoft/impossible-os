@@ -46,11 +46,9 @@ Redistributed under `resources/fonts/`. All three are SIL Open Font License 1.1,
 
 Selawik is a trademark of Microsoft Corporation in the United States and/or other countries. The OFL Reserved Font Name clause means a modified derivative may not be distributed under the name "Selawik".
 
-## Assets NOT redistributed
+## Original artwork
 
-**Icons8 color icons** (`resources/icons/color/`) are licensed under the Icons8 Universal Multimedia Licensing Agreement, a paid subscription license that **prohibits redistribution as standalone files**. The PNG files are therefore excluded from version control via `.gitignore` and are not present in this repository. A build without them succeeds: the icon store returns NULL for missing color icons and falls back to monochrome Fluent icons. Obtaining them requires a paid Icons8 account; see [resources/icons/color/LICENSE.md](resources/icons/color/LICENSE.md).
-
-Anyone redistributing a built Impossible OS image that includes these icons is bound by their own Icons8 agreement, not by this project's license.
+The colour icon set (`resources/icons/src/`, rendered into `resources/icons/color/<size>/`) and the Impossible OS logo (`resources/brand/logo.svg`) are original work, licensed under GPL-3.0-only with the rest of the repository. Until 2026-09-27 the colour icons were Icons8 assets under a paid license that forbids redistributing them as standalone files; those files are no longer used and are no longer present on `main`.
 
 ## Ported source files (per-file inventory)
 
@@ -79,6 +77,15 @@ Impossible OS implements behavior defined by external specifications. Implementi
 ## Development tools
 
 Tools used to build or validate Impossible OS are not redistributed with it and impose no attribution obligation on the shipped artifacts. They are acknowledged here as a matter of record: clang, ld.lld and llvm-addr2line (Apache-2.0 WITH LLVM-exception), NASM (BSD-2-Clause), QEMU (GPL-2.0), swtpm and libtpms (used only as a TPM test emulator, never linked or vendored), and OVMF/EDK2 firmware used for testing (BSD-2-Clause-Patent).
+
+### Vendored host tools
+
+Vendored under `tools/vendor/` and used only on the build host to generate the website and documentation site (`scripts/site/build.py`). They are never linked into or shipped with an Impossible OS image. Each directory keeps its upstream license file verbatim.
+
+| Library | Copyright | License | Upstream |
+| --- | --- | --- | --- |
+| markdown-it-py 3.0.0 | Copyright (c) 2020 ExecutableBookProject; port of markdown-it, Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin | MIT | https://github.com/executablebooks/markdown-it-py |
+| mdurl 0.1.2 | Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin; Copyright (c) 2021 Taneli Hukkinen | MIT | https://github.com/executablebooks/mdurl |
 
 ## Sources that cannot be used
 

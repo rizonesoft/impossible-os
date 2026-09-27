@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # Boot Policy Audit Schema
 
 > Canonical doc for the policy audit trail feature owned by [TODO-07 boot-entry-store-menu-policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md). Two streams:

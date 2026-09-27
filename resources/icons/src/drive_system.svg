@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="drive_system-body" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#C9D1DB"/><stop offset="1" stop-color="#8C97A4"/></linearGradient><linearGradient id="drive_system-face" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#5E6A78"/><stop offset="1" stop-color="#3D4753"/></linearGradient><linearGradient id="drive_system-bt" x1="0" y1="0" x2="0" y2="240" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5CE6F7"/><stop offset="1" stop-color="#22B4E8"/></linearGradient><linearGradient id="drive_system-br" x1="0" y1="64" x2="0" y2="362" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#35A6F2"/><stop offset="1" stop-color="#1B6FE0"/></linearGradient><linearGradient id="drive_system-bb" x1="304" y1="0" x2="5" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1558D6"/><stop offset="1" stop-color="#1E7BE4"/></linearGradient><linearGradient id="drive_system-bl" x1="0" y1="304" x2="0" y2="5" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1D79E4"/><stop offset="1" stop-color="#2A9AEE"/></linearGradient></defs>
+<rect x="4" y="14" width="40" height="24" rx="3" fill="url(#drive_system-body)"/>
+<rect x="4.5" y="14.5" width="39" height="23" rx="2.5" fill="none" stroke="#FFFFFF" stroke-opacity=".5"/>
+<rect x="8" y="31" width="32" height="3.6" rx="1.8" fill="url(#drive_system-face)"/>
+<circle cx="37" cy="32.8" r="1.1" fill="#4CE08A"/>
+<g transform="translate(8 17.5) scale(0.0326087)">
+<path d="M96 0H296c11 0 21.3 5.7 27.1 15l39.5 63.2C356.8 69.6 347 64 336 64H128V240H64V32C64 14.3 78.3 0 96 0Z" fill="url(#drive_system-bt)"/>
+<path d="M368 96V296c0 11-5.7 21.3-15 27.1l-63.1 39.5C298.4 356.8 304 347 304 336V128H128V64H336C353.7 64 368 78.3 368 96Z" fill="url(#drive_system-br)"/>
+<path d="M304 128V336c0 17.7-14.3 32-32 32H72c-11 0-21.3-5.7-27.1-15L5.4 289.8C11.2 298.4 21 304 32 304H240V128Z" fill="url(#drive_system-bb)"/>
+<path d="M240 240V304H32C14.3 304 0 289.7 0 272V72c0-11 5.7-21.3 15-27.1L78.2 5.4C69.6 11.2 64 21 64 32V240Z" fill="url(#drive_system-bl)"/>
+</g>
+</svg>

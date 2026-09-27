@@ -71,6 +71,8 @@ Computer, Recycle Bin, Network, User's Files -- pinned to top of icon grid, can'
 - [ ] Special icons have `ICON_SPECIAL_FOLDER` type -- cannot be renamed or deleted
 - [ ] Icons use IRES icon store (48px, already loaded)
 - [ ] Commit
+- [ ] Special folders use the original icon set and grid in `docs/design/shell.md#desktop`: This PC, Recycle Bin (empty/full), user folder, Network, Control Panel
+  - 76x86 cells, 48 px icons, caption labels with the soft shadow; hover and selection fills from the tokens
 
 **Test checkpoint:** Desktop shows 4 special folder icons at top-left. Same look as current 3 icons.
 

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="terminal-body" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#3A4452"/><stop offset="1" stop-color="#1E252E"/></linearGradient></defs>
+<rect x="4" y="7" width="40" height="34" rx="3.5" fill="url(#terminal-body)"/>
+<path d="M7.5 7h33c1.9 0 3.5 1.6 3.5 3.5V13H4v-2.5C4 8.6 5.6 7 7.5 7z" fill="#56616F"/>
+<rect x="4.5" y="7.5" width="39" height="33" rx="3" fill="none" stroke="#FFFFFF" stroke-opacity=".22"/>
+<path d="M11 20.5l6.5 5-6.5 5" fill="none" stroke="#40DAF2" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="20" y="29" width="11" height="3" rx="1.5" fill="#40DAF2"/>
+</svg>

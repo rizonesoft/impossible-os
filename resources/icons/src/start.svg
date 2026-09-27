@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="start-t" x1="0" y1="0" x2="0" y2="240" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5CE6F7"/><stop offset="1" stop-color="#22B4E8"/></linearGradient><linearGradient id="start-r" x1="0" y1="64" x2="0" y2="362" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#35A6F2"/><stop offset="1" stop-color="#1B6FE0"/></linearGradient><linearGradient id="start-b" x1="304" y1="0" x2="5" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1558D6"/><stop offset="1" stop-color="#1E7BE4"/></linearGradient><linearGradient id="start-l" x1="0" y1="304" x2="0" y2="5" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1D79E4"/><stop offset="1" stop-color="#2A9AEE"/></linearGradient><linearGradient id="start-st" x1="0" y1="196" x2="0" y2="240" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#08245F" stop-opacity="0"/><stop offset="1" stop-color="#08245F" stop-opacity="0.42"/></linearGradient><linearGradient id="start-sr" x1="172" y1="0" x2="128" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#08245F" stop-opacity="0"/><stop offset="1" stop-color="#08245F" stop-opacity="0.42"/></linearGradient><linearGradient id="start-sb" x1="0" y1="172" x2="0" y2="128" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#08245F" stop-opacity="0"/><stop offset="1" stop-color="#08245F" stop-opacity="0.42"/></linearGradient><linearGradient id="start-sl" x1="196" y1="0" x2="240" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#08245F" stop-opacity="0"/><stop offset="1" stop-color="#08245F" stop-opacity="0.42"/></linearGradient></defs>
+<g transform="translate(2 2) scale(0.1195652)">
+<path d="M96 0H296c11 0 21.3 5.7 27.1 15l39.5 63.2C356.8 69.6 347 64 336 64H128V240H64V32C64 14.3 78.3 0 96 0Z" fill="url(#start-t)"/>
+<path d="M368 96V296c0 11-5.7 21.3-15 27.1l-63.1 39.5C298.4 356.8 304 347 304 336V128H128V64H336C353.7 64 368 78.3 368 96Z" fill="url(#start-r)"/>
+<path d="M304 128V336c0 17.7-14.3 32-32 32H72c-11 0-21.3-5.7-27.1-15L5.4 289.8C11.2 298.4 21 304 32 304H240V128Z" fill="url(#start-b)"/>
+<path d="M240 240V304H32C14.3 304 0 289.7 0 272V72c0-11 5.7-21.3 15-27.1L78.2 5.4C69.6 11.2 64 21 64 32V240Z" fill="url(#start-l)"/>
+<path d="M64 196H128V240H64Z" fill="url(#start-st)"/>
+<path d="M172 64V128H128V64Z" fill="url(#start-sr)"/>
+<path d="M240 172V128H304V172Z" fill="url(#start-sb)"/>
+<path d="M196 240H240V304H196Z" fill="url(#start-sl)"/>
+<path d="M98 6H294c9 0 17.2 4.3 22.4 11.6" fill="none" stroke="#FFFFFF" stroke-opacity=".5" stroke-width="7" stroke-linecap="round"/>
+</g>
+</svg>

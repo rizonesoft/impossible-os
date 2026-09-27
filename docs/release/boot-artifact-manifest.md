@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md,todo/15-installer-release/TODO-01-release-artifacts.md -->
 # Boot Artifact Manifest Schema
 
 > Schema owner: [Boot Artifact Matrix and Manifest Format](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#1-boot-artifact-matrix-and-manifest-format). Production pipeline owner: [Disk Image, USB & Release Artifacts](../../todo/15-installer-release/TODO-01-release-artifacts.md). Bootloader-side verification owner: [Artifact Signing and Manifest Verification](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#7-artifact-signing-and-manifest-verification). Offline inspector owner: [Offline Artifact Inspector](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#8-offline-artifact-inspector).

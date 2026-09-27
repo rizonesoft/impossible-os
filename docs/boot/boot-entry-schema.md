@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # Boot Entry Store Schema
 
 > Canonical specification for `\EFI\ImpossibleOS\bootentries.json`. Authoritative for envelope

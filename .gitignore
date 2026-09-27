@@ -33,9 +33,8 @@ Thumbs.db
 # OVMF firmware copies
 OVMF_VARS*.fd
 
-# Icons8 color icons (licensed, not redistributable as standalone files)
-resources/icons/color/**/*.png
-!resources/icons/color/LICENSE.md
+# Colour icon PNGs under resources/icons/color/<size>/ are original work rendered
+# from resources/icons/src/ by scripts/convert-icons.sh and ARE committed.
 
 # Windows WSL zone identifiers
 *:Zone.Identifier

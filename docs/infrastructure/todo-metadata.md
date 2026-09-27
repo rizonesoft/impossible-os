@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-06-todo-metadata-layer.md -->
 # TODO Metadata Layer -- Frontmatter Spec
 
 > Canonical spec for the YAML frontmatter block that every TODO file under `todo/**/*.md` carries (post-migration). The frontmatter is the stable identity layer the [`scripts/todo-graph/build.py`](../../scripts/todo-graph/build.py) generator parses into `build/todo-cache.json`, decoupling cross-TODO references from filename-based lookups (which break silently on renumbering).

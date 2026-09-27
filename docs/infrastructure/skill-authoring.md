@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md -->
 # Skill Authoring Lifecycle
 
 > Canonical how-to for adding, editing, and retiring Claude Code skills in this repo. Authority for WHERE skills live and WHICH tool owns them lives in [`ai-system.md`](ai-system.md); this page owns the HOW. Roadmap ownership is [Skill Lifecycle, Templates, and Catalog Rules](../../todo/00-infrastructure/TODO-02-ai-development-system.md#2-skill-lifecycle-templates-and-catalog-rules).

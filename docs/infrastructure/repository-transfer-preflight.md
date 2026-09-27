@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md -->
 # Repository Transfer Preflight Inventory and Risk Register
 
 > Owner: [`todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) §1.

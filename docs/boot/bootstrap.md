@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # Bootstrap & First-Install Entry Seeding
 
 > **Owner:** [Boot Entry Store, Menu & Policy / Bootstrap and First-Install Entry Seeding](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="file_image-page" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E9EDF2"/></linearGradient><linearGradient id="file_image-sky" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#55C1FF"/><stop offset="1" stop-color="#1E88E5"/></linearGradient></defs>
+<path d="M12 4h16.2L38 13.8V42c0 1.1-.9 2-2 2H12c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" fill="url(#file_image-page)"/>
+<path d="M12 4.5h16L37.5 14V42c0 .8-.7 1.5-1.5 1.5H12c-.8 0-1.5-.7-1.5-1.5V6c0-.8.7-1.5 1.5-1.5z" fill="none" stroke="#5C6B7A" stroke-opacity=".35"/>
+<path d="M28.2 4v8c0 1 .8 1.8 1.8 1.8h8z" fill="#D5DBE3"/>
+<rect x="14" y="19" width="20" height="18" rx="2" fill="url(#file_image-sky)"/>
+<path d="M14 33l5.4-5.6 4 3.9 3.1-2.9 7.5 7.1V35c0 1.1-.9 2-2 2H16c-1.1 0-2-.9-2-2z" fill="#3FAE5A"/>
+<path d="M14 33l5.4-5.6 4 3.9" fill="none" stroke="#7FD690" stroke-width="1"/>
+<circle cx="28.5" cy="24" r="2.3" fill="#FFD75E"/>
+</svg>

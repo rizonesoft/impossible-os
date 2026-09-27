@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md -->
 # PCR Allocation and Policy Masks
 
 Single source of truth for which boot event extends which TPM PCR, and which PCRs

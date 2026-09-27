@@ -38,6 +38,7 @@ VENDORED=(
 VENDORED_DIRS=(
     "$ROOT/src/libs"
     "$ROOT/src/kernel/acpica"
+    "$ROOT/tools/vendor"
 )
 
 # Files INSIDE a vendored tree that we authored, so they stay counted. These
@@ -406,6 +407,26 @@ ${impossibility_table}
 *Last updated: ${commit_date} · commit \`${commit_hash}\`*
 EOF
 
+# Re-sync README.md's project regions (release date, repo URL, and the computed
+# stat_* counts such as TODO files and test totals) from the COMMIT JUST MADE
+# (--sync-head reads a HEAD snapshot, never the working tree), and only when the
+# working README equals HEAD's, so the amend below can never carry uncommitted
+# edits or facts derived from uncommitted files. Runs before the badge rewrite,
+# which is the only other writer. Failures are printed, never fatal to a commit.
+README_FILE="$ROOT/README.md"
+# README is rewritten and amended ONLY when its working copy equals the commit
+# just made; otherwise uncommitted README edits would be swept into the amend.
+README_CLEAN=0
+if [ -f "$README_FILE" ] && git -C "$ROOT" diff --quiet HEAD -- README.md 2>/dev/null; then
+    README_CLEAN=1
+fi
+if [ "$README_CLEAN" = "1" ]; then
+    python3 "$ROOT/scripts/site/build.py" --sync-head README.md >/dev/null || \
+        echo "post-commit: README project-region sync reported a problem (see above)" >&2
+else
+    echo "post-commit: README.md has uncommitted edits; skipped region sync, badge and amend for it" >&2
+fi
+
 # Rewrite the README lines-of-code badge from the live tree count, so the
 # README total is never hand-maintained or stale (it drifted to "84k+" while
 # the real count was 6x that). Marker-delimited + idempotent: the block between
@@ -416,8 +437,7 @@ EOF
 # repository; publishing a different one here than the document's own headline
 # is a discrepancy with no visible explanation. The written-here/vendored split
 # is one click away in the Grand Total table.
-README_FILE="$ROOT/README.md"
-if [ -f "$README_FILE" ] && grep -q 'COUNT-BADGE:START' "$README_FILE"; then
+if [ "$README_CLEAN" = "1" ] && grep -q 'COUNT-BADGE:START' "$README_FILE"; then
     loc_k=$(( whole_tree_lines / 1000 ))
     badge_url="https://img.shields.io/badge/lines-${loc_k}k-blueviolet?style=flat-square"
     awk -v url="$badge_url" '
@@ -447,7 +467,9 @@ fi
 # live-gotcha about the RUN sweeping an operator's files.
 #
 # Use SKIP_COUNT to prevent infinite recursion.
+AMEND_PATHS=("$COUNT_FILE")
+[ "$README_CLEAN" = "1" ] && AMEND_PATHS+=("$README_FILE")
 SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
-  -- "$COUNT_FILE" "$README_FILE" 2>/dev/null
+  -- "${AMEND_PATHS[@]}" 2>/dev/null
 
 exit 0

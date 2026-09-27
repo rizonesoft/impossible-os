@@ -1,34 +1,9 @@
-# Icons8 Color Icons -- License Notice
+# Colour Icons: License Notice
 
-The color icon PNG files in this directory are sourced from [Icons8](https://icons8.com)
-under their **Universal Multimedia Licensing Agreement** (paid license).
+The colour icons in this directory are original Impossible OS artwork, authored on 2026-09-27 and licensed under **GPL-3.0-only** like the rest of the repository (see [LICENSE](../../../LICENSE)).
 
-## License Terms
+- **Sources:** hand-written SVGs in [`resources/icons/src/`](../src/), one file per icon on a 48x48 grid.
+- **Rasters:** the PNGs in `16/` through `256/` are rendered from those sources by `bash scripts/convert-icons.sh` and committed, so a build never needs an SVG renderer. `irespack` packs them into `icons.ires` at build time.
+- **Spec:** the grid, palette, light direction and small-size rules are in [docs/design/icons.md](../../../docs/design/icons.md).
 
-- **License type:** Icons8 Paid Subscription
-- **Usage:** Desktop application icons for Impossible OS
-- **Permitted:** Modification, embedding in software, commercial use
-- **Prohibited:** Redistribution as standalone files, sublicensing
-
-## Why are the PNG files not in this repository?
-
-The Icons8 license **prohibits redistribution of Licensed Materials as standalone files**.
-The PNG icon files are therefore excluded from version control via `.gitignore`.
-
-## How to obtain the icons
-
-If you are building Impossible OS and need the color icons:
-
-1. Create a paid [Icons8](https://icons8.com) account
-2. Download the icons listed in `icon_store.h` (system_icon_t enum, color section)
-3. Use the **Fluent Color** style for consistency with the monochrome Fluent icons
-4. Download at sizes: 48, 72, 128, 256px
-5. Place files in `resources/icons/color/{size}/` directories
-
-The OS will still build and run without these icons -- the icon store gracefully
-returns NULL for missing color icons, and the system falls back to monochrome
-alternatives where possible.
-
-## Full License Text
-
-See: https://intercom.help/icons8-7fb7577e8170/en/articles/5534926-universal-multimedia-licensing-agreement
+The Icons8 colour icons this directory used to reference (paid license, not redistributable as standalone files) are no longer used and are no longer present on `main`.

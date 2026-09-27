@@ -81,6 +81,7 @@ Four-zone window: toolbar (Back/Forward/Up/Refresh + address bar), sidebar, file
 - [ ] Status bar: render "N items" or "N items selected, total X KB" via `ttf_draw_string()`
 - [ ] Double-click: if `is_dir` → `filemgr_navigate(entry.full_path)`; else → `file_assoc_open(full_path)`
 - [ ] Up button: strip last path component from `current_path`; `filemgr_navigate(parent_path)`
+- [ ] Lay out File Explorer to `docs/design/shell.md#file-explorer`: tabbed 40 px title bar, 48 px address row, 48 px command bar, 220 px navigation pane, drive tiles with usage bars, 24 px status bar
 - [ ] Commit: `"filemgr: core layout -- 4-zone window, toolbar nav, address bar, vfs_readdir listing, history"`
 
 ## 2. Sidebar `[Sonnet]`

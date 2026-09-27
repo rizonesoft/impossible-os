@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md -->
 # Windows Host Tooling -- Release & Inspector Parity
 
 > **Scope:** developer-facing reference for the Windows-host peers of the

@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # Boot Health Gate
 
 > **Owner:** [Per-Entry Health-Gated Mark-Good](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#14-per-entry-health-gated-mark-good). Layered ABOVE

@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md -->
 # Bare-Metal Boot Lab Inventory
 
 > Owner: [`todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md`](../../todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md) §7. This is the manual-evidence half of the boot certification matrix: the VM suites (§2-§6) automate what they can; real hardware is validated here by an operator and the structured results are attached to the release gate (§9).

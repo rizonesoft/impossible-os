@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="dll_default-page" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E9EDF2"/></linearGradient><linearGradient id="dll_default-gear" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8E99A6"/><stop offset="1" stop-color="#5E6A78"/></linearGradient></defs>
+<path d="M12 4h16.2L38 13.8V42c0 1.1-.9 2-2 2H12c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" fill="url(#dll_default-page)"/>
+<path d="M12 4.5h16L37.5 14V42c0 .8-.7 1.5-1.5 1.5H12c-.8 0-1.5-.7-1.5-1.5V6c0-.8.7-1.5 1.5-1.5z" fill="none" stroke="#5C6B7A" stroke-opacity=".35"/>
+<path d="M28.2 4v8c0 1 .8 1.8 1.8 1.8h8z" fill="#D5DBE3"/>
+<path d="M24.00 22.40 L25.19 22.51 L26.08 20.04 L28.87 21.19 L27.75 23.57 L28.67 24.33 L29.43 25.25 L31.81 24.13 L32.96 26.92 L30.49 27.81 L30.60 29.00 L30.49 30.19 L32.96 31.08 L31.81 33.87 L29.43 32.75 L28.67 33.67 L27.75 34.43 L28.87 36.81 L26.08 37.96 L25.19 35.49 L24.00 35.60 L22.81 35.49 L21.92 37.96 L19.13 36.81 L20.25 34.43 L19.33 33.67 L18.57 32.75 L16.19 33.87 L15.04 31.08 L17.51 30.19 L17.40 29.00 L17.51 27.81 L15.04 26.92 L16.19 24.13 L18.57 25.25 L19.33 24.33 L20.25 23.57 L19.13 21.19 L21.92 20.04 L22.81 22.51ZM26.80 29.00A2.8 2.8 0 1 0 21.20 29.00A2.8 2.8 0 1 0 26.80 29.00Z" fill="url(#dll_default-gear)" fill-rule="evenodd"/>
+</svg>

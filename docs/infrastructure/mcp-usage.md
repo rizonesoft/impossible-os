@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-06-todo-metadata-layer.md,todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md,todo/00-infrastructure/TODO-08-automation-hardening.md -->
 # MCP Usage Discipline
 
 > Canonical guide for when Claude (and Codex, post-Codex-MCP-wiring) should call the project's two MCP servers vs. the built-in Read / Edit / Bash(grep) tools. Written 2026-04-27 in response to the [Automation Hardening MCP Usage Discipline](../../todo/00-infrastructure/TODO-08-automation-hardening.md#6-mcp-usage-discipline----doc--claudemd-pointer) effort: the observed pattern of "Claude greps for symbols when `lsp-bridge.definition` would be one call; Claude walks TODO XREFs by hand instead of calling `todo-graph.backlinks`".

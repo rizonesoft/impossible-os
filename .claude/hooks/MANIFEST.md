@@ -241,7 +241,7 @@ No `hooks/hooks.json` shipped. Plugin contributes commit slash-commands only. Li
 
 No `hooks/hooks.json` shipped. Plugin contributes the agent-creator / plugin-validator / skill-reviewer agents + plugin-dev skills only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
 
-### `remember@claude-plugins-official` 0.8.6
+### `remember@claude-plugins-official` 0.33.0
 
 `hooks/hooks.json`:
 
@@ -250,6 +250,7 @@ No `hooks/hooks.json` shipped. Plugin contributes the agent-creator / plugin-val
 | SessionStart | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/session-start-hook.sh` | Loads the `.remember/` persistent-memory primer (now/today/recent/archive/core buffers) at session start. |
 | UserPromptSubmit | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-hook.sh` | Injects the current timestamp on every prompt submission so the session knows the wall-clock time. Added by the plugin in the 0.7.3 -> 0.8.6 upgrade; enumerating it here is what check 5 of `scripts/audit-hooks.sh` requires. |
 | PostToolUse | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-hook.sh` | Appends to the `.remember/` rolling history buffer after tool calls. |
+| SessionEnd | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/session-end-hook.sh` | Flushes any unsaved session history to `.remember/now.md` when the session ends, ignoring the save cooldown. Added by the plugin in the 0.8.6 -> 0.33.0 upgrade (found by `scripts/audit-hooks.sh` 2026-09-27). |
 
 > Plugin selection lives at `~/.claude/plugins/installed_plugins.json`. The retired `firecrawl@claude-plugins-official` plugin was uninstalled 2026-04-27. When installing or removing a plugin, add or remove the matching `### <name>@<marketplace>` subsection here in the same commit; `audit-hooks.sh` cross-checks the plugin index against the subsection headings.
 

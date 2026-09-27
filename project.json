@@ -1,0 +1,17 @@
+{
+  "name": "Impossible OS",
+  "tagline": "A 64-bit operating system built from scratch for modern x86-64 hardware: UEFI boot, a compositing desktop, and a native Win32 API.",
+  "owner": "rizonesoft",
+  "repo": "impossible-os",
+  "repo_url": "https://github.com/rizonesoft/impossible-os",
+  "site_url": "https://impossibleos.co",
+  "docs_url": "https://impossibleos.co/docs/",
+  "release_date": "2028-08-08",
+  "license": "GPL-3.0-only",
+  "historical_owners": ["rizonetech"],
+  "historical_owner_files": [
+    "docs/infrastructure/repository-transfer-preflight.md",
+    "docs/infrastructure/repository-move-back-runbook.md",
+    "todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md"
+  ]
+}

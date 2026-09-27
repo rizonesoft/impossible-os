@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="folder_pictures-back" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#F0B429"/><stop offset="1" stop-color="#D9920F"/></linearGradient><linearGradient id="folder_pictures-front" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#FFD75E"/><stop offset="1" stop-color="#F5B82E"/></linearGradient><linearGradient id="folder_pictures-g" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#3AA0F5"/><stop offset="1" stop-color="#1565D8"/></linearGradient></defs>
+<path d="M6 8h10.6c.8 0 1.5.3 2.1.9L21.6 12H42c1.1 0 2 .9 2 2v24c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V10c0-1.1.9-2 2-2z" fill="url(#folder_pictures-back)"/>
+<path d="M6 8.5h10.6c.7 0 1.3.3 1.8.8L21.4 12.5" fill="none" stroke="#FFE08A" stroke-opacity=".55"/>
+<rect x="8" y="12.5" width="32" height="8" rx="1" fill="#FFFFFF" fill-opacity=".92"/>
+<path d="M4 17.5c0-1.1.9-2 2-2h36c1.1 0 2 .9 2 2V38c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2z" fill="url(#folder_pictures-front)"/>
+<path d="M6 16h36c.8 0 1.5.7 1.5 1.5" fill="none" stroke="#FFF1B8" stroke-opacity=".9"/>
+<path d="M4.5 17.5V38c0 .8.7 1.5 1.5 1.5h36c.8 0 1.5-.7 1.5-1.5" fill="none" stroke="#B87A0C" stroke-opacity=".28"/>
+<rect x="16" y="21" width="16" height="15" rx="2" fill="url(#folder_pictures-g)"/>
+<path d="M16 32.5l4.6-4.8 3.4 3.3 2.6-2.4 5.4 5.1V34c0 1.1-.9 2-2 2H18c-1.1 0-2-.9-2-2z" fill="#E6F3FF"/>
+<circle cx="27.6" cy="25.4" r="1.9" fill="#FFE08A"/>
+</svg>

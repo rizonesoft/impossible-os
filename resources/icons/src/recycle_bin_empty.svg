@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="recycle_bin_empty-glass" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#CFE2F3" stop-opacity="0.95"/><stop offset="1" stop-color="#8FAECB" stop-opacity="0.95"/></linearGradient><linearGradient id="recycle_bin_empty-rim" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8FA5BF"/><stop offset="1" stop-color="#566D88"/></linearGradient></defs>
+<path d="M10 14h28l-2.6 26.2c-.1 1-1 1.8-2 1.8H14.6c-1 0-1.9-.8-2-1.8z" fill="url(#recycle_bin_empty-glass)"/>
+<path d="M17.5 18.5L18.6 38" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
+<path d="M24 18.5L24 38" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
+<path d="M30.5 18.5L29.4 38" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
+<path d="M10.6 14.5l2.5 25.6c.1.8.7 1.4 1.5 1.4h18.8" fill="none" stroke="#4E6784" stroke-opacity=".6"/>
+<path d="M37.4 14.5l-2.5 25.6c-.1.8-.7 1.4-1.5 1.4" fill="none" stroke="#4E6784" stroke-opacity=".6"/>
+<rect x="7" y="10.5" width="34" height="5" rx="2.5" fill="url(#recycle_bin_empty-rim)"/>
+<path d="M9.5 11.2h29" stroke="#D5E1EE" stroke-opacity=".8" stroke-linecap="round"/>
+</svg>

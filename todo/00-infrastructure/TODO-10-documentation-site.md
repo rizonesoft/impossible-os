@@ -1,0 +1,676 @@
+---
+schema_version: 1
+id: documentation-site
+domain: 00-infrastructure
+status: draft
+title: "TODO-10 -- Documentation Site and Documentation Corpus"
+file_patterns:
+  - "scripts/site/**"
+  - "gh-pages/**"
+  - "docs/**"
+  - "project.json"
+  - "tools/vendor/**"
+  - ".github/workflows/pages.yml"
+---
+
+# TODO-10 -- Documentation Site and Documentation Corpus
+
+> **Goal:** Every roadmap file under `todo/` gets real documentation, published at [impossibleos.co/docs](https://impossibleos.co/docs/) and generated from Markdown in `docs/`, and no published fact (release date, repository owner, counts, design tokens, links) can drift from its source. A TODO file is the plan; its docs page is what a user, contributor or operator reads to understand what shipped.
+
+> [!IMPORTANT]
+> **Current state (2026-09-27):** `scripts/site/build.py` builds the landing page (`gh-pages/` templates) and renders all `docs/**/*.md` into the site; `.github/workflows/pages.yml` runs `--check`, builds and deploys on every push (Pages now deploys from the workflow, not the stale `gh-pages` branch). `project.json` holds project facts; README.md carries `<!-- project:key -->` regions re-synced by `.githooks/post-commit`. Coverage is computed from `<!-- docs: covers=... -->` directives and tracked against the shrink-only baseline `docs/.coverage-baseline.json`. Lint Check 30 fails a commit on a dead doc link or anchor, a stale region, a live repo URL naming the wrong owner, a README line-count badge that disagrees with COUNT.md, a stale `include/desktop/theme_tokens.h`, or a new undocumented roadmap file. What is missing is the content: most roadmap files have no documentation page yet (see the coverage page), there is no written contract for what a docs page contains, and nothing notices when the code a page describes changes.
+
+## Inputs
+
+- [`scripts/site/build.py`](../../scripts/site/build.py) -- the site generator and drift checker
+- [`scripts/site/gen_theme_header.py`](../../scripts/site/gen_theme_header.py) -- `docs/design/tokens.json` to `include/desktop/theme_tokens.h`
+- [`scripts/site/render-brand.sh`](../../scripts/site/render-brand.sh) -- README wordmarks and desktop preview
+- [`gh-pages/docs-template.html`](../../gh-pages/docs-template.html) -- the docs page template
+- [`project.json`](../../project.json) -- single source of project facts
+- [`docs/.coverage-baseline.json`](../../docs/.coverage-baseline.json) -- undocumented roadmap files, shrink-only
+- [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml) -- check, build and deploy
+- [`scripts/lint.sh`](../../scripts/lint.sh) -- Check 30 runs `build.py --check --skip-stats`
+- [`tools/vendor/markdown_it/`](../../tools/vendor/markdown_it/) -- vendored markdown-it-py 3.0.0 (MIT), chosen over a hand-written converter per the vendor-first rule; mdurl 0.1.2 alongside
+- -> XREF: `TODO-09-repository-transfer-rizonetech.md §8` -- the move back to `rizonesoft` and the public flip that made the docs site public
+- -> XREF: `TODO-01-developer-tooling-stack.md` -- host tooling conventions and `scripts/test-tooling.sh`
+- [`.claude/skills/create-todo/SKILL.md`](../../.claude/skills/create-todo/SKILL.md) -- gains a docs-page step in §3
+
+## Outcome
+
+- Every roadmap file has at least one docs page that meets the §3 contract, and `docs/.coverage-baseline.json` is empty.
+- A new roadmap file cannot be committed without its docs page (Check 30 already refuses it once the baseline stops listing it).
+- A docs page that describes code which has since changed is flagged (§22).
+- The site has a sitemap, per-page last-updated dates, better search, and a docs snapshot per release (§23).
+
+## Implementation Order
+
+| ⭐  | Order | Deliverable                                                              | Depends On | Status |
+| --- | :---: | ------------------------------------------------------------------------ | ---------- | :----: |
+| ⭐  |   1   | §1 Site generator, project facts, coverage and drift gate                | --         |  [x]   |
+| 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1         |  [x]   |
+| ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [ ]   |
+| 💎  |   4   | §4 Document: Infrastructure and host tools (17 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [ ]   |
+| 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [ ]   |
+| 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [ ]   |
+| 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [ ]   |
+| 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [ ]   |
+| 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [ ]   |
+| 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [ ]   |
+| 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [ ]   |
+| 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [ ]   |
+| 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [ ]   |
+| 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [ ]   |
+| 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [ ]   |
+| 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [ ]   |
+| 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
+| ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [ ]   |
+| 💎  |  23   | §23 Site polish: sitemap, last-updated, search, release snapshots        | §1         |  [ ]   |
+
+> 💎 = parity work -- matches what Windows 11 and Linux already do.
+> ⭐ = exclusive work -- Impossible OS is superior or first.
+
+---
+
+## 1. Site Generator, Project Facts, Coverage, and Drift Gate
+
+One generator owns every published surface, so no fact is maintained in two places by hand.
+
+- [x] `scripts/site/build.py`: renders `gh-pages/` templates (`{{key}}` from `project.json`) and `docs/**/*.md` into `build/site/` with generated navigation, per-page table of contents, GitHub-style alerts, Mermaid, and a client-side search index
+- [x] `project.json` as the single source of owner, repo URL, site URL and release date (2028-08-08); README `<!-- project:key -->` regions, including computed `stat_*` counts, re-synced by `.githooks/post-commit`
+- [x] Coverage page from `<!-- docs: covers=... -->` directives, with the shrink-only baseline `docs/.coverage-baseline.json` (`--update-baseline` only removes entries)
+- [x] Drift checks: dead doc links and anchors (15 found and fixed on first run), unknown template keys, stale regions, live repo URLs naming a non-canonical owner, README line-count badge vs COUNT.md, `theme_tokens.h` vs `docs/design/tokens.json`
+- [x] Lint Check 30 runs `build.py --check --skip-stats` on every commit (~1 s); `.github/workflows/pages.yml` runs the full `--check`, builds and deploys; Pages switched from the stale `gh-pages` branch to workflow deploys
+- [x] Vendored markdown-it-py 3.0.0 and mdurl 0.1.2 (MIT) under `tools/vendor/`, with PROVENANCE and CREDITS rows and a COUNT.md vendored-tree exclusion
+- [x] Commit: `"site: generated docs site, project facts, coverage and drift gate"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `bash scripts/lint.sh` reports no Check 30 error; the Pages workflow run for the commit is green and `https://impossibleos.co/docs/coverage.html` lists every roadmap file. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+## 2. Map Existing Docs Pages to Their Roadmap Files
+
+Many existing pages already document a roadmap file but do not declare it, so coverage undercounts them.
+
+- [x] Add a first-line `covers=` directive to each existing page under `docs/` (not `docs/design/`, already mapped)
+  - Name every roadmap file the page genuinely documents: it explains the subsystem, format, protocol, tool or procedure that TODO implements
+  - A passing mention or a link does not count
+- [x] Leave a page without a directive when it documents no single roadmap file (indexes, guides)
+- [x] Run `python3 scripts/site/build.py --update-baseline` so the baseline drops every newly covered file
+- [x] Mapped 42 existing pages to 22 roadmap files (2026-09-27); coverage 8 -> 30 of 232; baseline 202
+- [x] Commit: `"docs: declare which roadmap files each existing docs page covers"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK` and a higher `N/231 TODO files documented` than before; the coverage page shows the new links. Test on: WSL2 dev host.
+
+## 3. Documentation Page Contract, Template, and create-todo Step
+
+Every later section writes pages against this contract, so it must exist first and be unambiguous.
+
+- [ ] Write `docs/contributing/docs-page-contract.md` (with `<!-- docs: order=1 -->`) defining what a roadmap docs page contains, in this order:
+  - H1 title naming the subsystem as a user would; the `covers=` directive on line 1
+  - Overview: what it is and why it exists, answer first, 2-4 sentences
+  - How it works: architecture, data flow, key structures, with a Mermaid diagram where a picture helps
+  - Interfaces: public functions, syscalls, file formats, Registry keys or config options, each with its source link (`../../src/...` or `../../include/...`)
+  - Using it: operator or developer guide with commands and expected output
+  - Limits and status: what is not implemented yet, linking the owning roadmap section; never claim unshipped behaviour
+  - Windows 11 and Linux comparison: one short paragraph or table, consistent with the TODO's OS Comparison table
+  - See also: the roadmap file, related docs pages
+- [ ] Style rules in the contract: one line per paragraph, no em or en dashes, question-shaped H2s where natural, every figure sourced (code, test output, or spec), 400-1500 words per page, split larger topics into linked pages
+- [ ] Add `docs/contributing/_template.md`, a copy-ready skeleton of the contract, and `docs/contributing/index.md`
+- [ ] Map each domain to its docs folder in the contract, adding each missing folder with an `index.md` when its first page lands
+  - 00 infrastructure, 01 boot, 02 kernel, 03 memory, 04 hardware, 05 storage, 06 and 09 desktop, 07 networking, 08 graphics
+  - 10 services, 11 apps, 12 sdk, 13 tools, 14 host-tools, 15 release, 16 ports, 18 research
+- [ ] Add a docs-page step to `.claude/skills/create-todo/SKILL.md` (and its README row if the catalog describes steps)
+  - A new roadmap file ships with a docs page from `_template.md` whose Limits section states nothing is implemented yet
+  - Needed because Check 30 refuses an undocumented new roadmap file
+- [ ] Add the contract to `docs/index.md` and link it from `CONTRIBUTING.md`
+- [ ] Commit: `"docs: documentation page contract, template, and create-todo docs step"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; the contract page renders at `/docs/contributing/docs-page-contract.html`; a dry run of the create-todo docs step produces a page that passes the check. Test on: WSL2 dev host.
+
+## 4. Document: Infrastructure and host tools
+
+Write docs pages that meet the §3 contract for the 17 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` (TODO-01 -- Developer Tooling Stack)
+  - `todo/00-infrastructure/TODO-02-ai-development-system.md` (TODO-02 -- AI Development System)
+  - `todo/00-infrastructure/TODO-03-kernel-test-harness.md` (TODO-03 -- Kernel Test Harness)
+- [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/00-infrastructure/TODO-04-usermode-test-framework.md` (TODO-04 -- User-Mode Test Framework)
+  - `todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md` (TODO-05 -- Desktop & UI Test Framework)
+  - `todo/00-infrastructure/TODO-06-todo-metadata-layer.md` (TODO-06 -- TODO Metadata Layer and Derived Graph)
+- [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md` (TODO-07 -- LSP to MCP Bridge)
+  - `todo/00-infrastructure/TODO-08-automation-hardening.md` (TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration))
+  - `todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md` (TODO-09 -- Repository Transfer to rizonetech)
+- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- SDK Build System)
+  - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux))
+  - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver))
+- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-04-crash-decode.md` (TODO-04 -- crash-decode (Post-Mortem Crash Analyzer))
+  - `todo/14-host-tools/TODO-05-serial-analyze.md` (TODO-05 -- serial-analyze (Boot Log Analyzer))
+  - `todo/14-host-tools/TODO-06-disk-inspect.md` (TODO-06 -- disk-inspect (Disk Image Browser))
+- [ ] Pages in `docs/host-tools/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-07-ixfs-fsck.md` (TODO-07 -- ixfs-fsck (Filesystem Consistency Checker))
+  - `todo/14-host-tools/TODO-08-blackbox-log-extractor.md` (TODO-08 -- BlackBox Log Extractor)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: infrastructure and host tools documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 5. Document: Boot platform, part 1
+
+Write docs pages that meet the §3 contract for the 10 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md` (TODO-01 -- Boot Protocol ABI & Handoff Contract)
+  - `todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md` (TODO-02 -- UEFI Bootloader Hardening & Secure Boot)
+  - `todo/01-boot-platform/TODO-03-bootloader-error-recovery.md` (TODO-03 -- Bootloader Error Recovery & ELF Hardening)
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md` (TODO-04 -- Firmware Table & Platform Inventory)
+  - `todo/01-boot-platform/TODO-05-boot-device-discovery.md` (TODO-05 -- Boot Device Discovery & Fallback Chain)
+  - `todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md` (TODO-06 -- Boot Media, Image Pipeline & Installer Handoff)
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` (TODO-07 -- Boot Entry Store, Menu & Policy)
+  - `todo/01-boot-platform/TODO-08-alternate-boot-protocols.md` (TODO-08 -- Alternate Boot Protocols & Compatibility Boundary)
+  - `todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md` (TODO-09 -- CPU Boot Sequencing & AP Hardening)
+- [ ] Pages in `docs/boot/` for the next 1 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-10-bare-metal-hardening.md` (TODO-10 -- Bare Metal Boot Hardening)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: boot platform, part 1 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 6. Document: Boot platform, part 2
+
+Write docs pages that meet the §3 contract for the 10 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md` (TODO-11 -- Interrupt Architecture & Unified Timer Subsystem)
+  - `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md` (TODO-12 -- Early Entropy & Random Seed Handoff)
+  - `todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md` (TODO-13 -- TPM Measured Boot, PCR Replay & Attestation)
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-14-boot-diagnostics.md` (TODO-14 -- Boot Diagnostics, Heartbeat & Spinner)
+  - `todo/01-boot-platform/TODO-15-visual-post-display.md` (TODO-15 -- Visual POST Display (VPD))
+  - `todo/01-boot-platform/TODO-16-nvme-storage.md` (TODO-16 -- NVMe Storage Driver (Boot-Critical))
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-17-xhci-usb-boot.md` (TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical))
+  - `todo/01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md` (TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse)
+  - `todo/01-boot-platform/TODO-19-usb-boot-hardening.md` (TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline)
+- [ ] Pages in `docs/boot/` for the next 1 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md` (TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading))
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: boot platform, part 2 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 7. Document: Boot platform, part 3
+
+Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-21-ab-boot-rollback.md` (TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback)
+  - `todo/01-boot-platform/TODO-22-recovery-partition.md` (TODO-22 -- Recovery Partition & Self-Repair)
+  - `todo/01-boot-platform/TODO-23-boot-watchdog.md` (TODO-23 -- Boot Watchdog & Hang Detection)
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-24-blackbox-service-partition.md` (TODO-24 -- BlackBox Service Partition)
+  - `todo/01-boot-platform/TODO-25-network-pxe-http-boot.md` (TODO-25 -- Network / PXE / HTTP Boot)
+  - `todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md` (TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff)
+- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-27-uefi-advanced.md` (TODO-27 -- UEFI Advanced Features)
+  - `todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md` (TODO-28 -- Boot Validation & Hardware Certification Matrix)
+  - `todo/01-boot-platform/TODO-29-boot-perf-health-observability.md` (TODO-29 -- Boot Performance & Health Observability)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: boot platform, part 3 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 8. Document: Kernel core, part 1
+
+Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-01-kernel-init-sequencing.md` (TODO-01 -- Kernel Init Sequencing)
+  - `todo/02-kernel-core/TODO-02-kernel-configuration-policy.md` (TODO-02 -- Kernel Configuration & Policy Plane)
+  - `todo/02-kernel-core/TODO-03-kernel-libraries.md` (TODO-03 -- Kernel Embedded Libraries)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-04-system-logging.md` (TODO-04 -- System Logging)
+  - `todo/02-kernel-core/TODO-05-object-manager.md` (TODO-05 -- Object Manager)
+  - `todo/02-kernel-core/TODO-06-executive-support-runtime.md` (TODO-06 -- Executive Support Runtime)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-07-irql-model-dpcs.md` (TODO-07 -- IRQL Model & DPCs)
+  - `todo/02-kernel-core/TODO-08-time-filetime-management.md` (TODO-08 -- Time & FILETIME Management)
+  - `todo/02-kernel-core/TODO-09-x86-64-architecture.md` (TODO-09 -- x86-64 Architecture Enhancements)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-10-kernel-security-hardening.md` (TODO-10 -- Kernel Security Hardening)
+  - `todo/02-kernel-core/TODO-11-peb-teb-user-abi.md` (TODO-11 -- PEB / TEB & User-Mode ABI)
+  - `todo/02-kernel-core/TODO-12-native-api-ssdt.md` (TODO-12 -- Native API Layer (Nt/Zw))
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: kernel core, part 1 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 9. Document: Kernel core, part 2
+
+Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md` (TODO-13 -- Atom, NLS & Locale Subsystem)
+  - `todo/02-kernel-core/TODO-14-registry-completion.md` (TODO-14 -- Registry System Completion)
+  - `todo/02-kernel-core/TODO-15-security-reference-monitor.md` (TODO-15 -- Security Reference Monitor)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-16-kernel-notification-facility.md` (TODO-16 -- Kernel Notification Facility)
+  - `todo/02-kernel-core/TODO-17-binary-system.md` (TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF))
+  - `todo/02-kernel-core/TODO-18-kernel-image-module-registry.md` (TODO-18 -- Kernel Image & Module Registry)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-19-code-integrity-trust-policy.md` (TODO-19 -- Code Integrity & Trust Policy)
+  - `todo/02-kernel-core/TODO-20-eif-full-implementation.md` (TODO-20 -- EIF Full Implementation)
+  - `todo/02-kernel-core/TODO-21-process-model-extensions.md` (TODO-21 -- Process Model Extensions)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-22-environment-variables.md` (TODO-22 -- Environment Variables & Process Arguments)
+  - `todo/02-kernel-core/TODO-23-exception-dispatch-seh.md` (TODO-23 -- Exception Dispatch & SEH)
+  - `todo/02-kernel-core/TODO-24-alpc-message-ports.md` (TODO-24 -- ALPC / Message Ports)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: kernel core, part 2 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 10. Document: Kernel core, part 3
+
+Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md` (TODO-25 -- Kernel Resource Accounting & Quotas)
+  - `todo/02-kernel-core/TODO-26-power-management.md` (TODO-26 -- Power Management (S-States, D-States, Thermal & Idle))
+  - `todo/02-kernel-core/TODO-27-crash-dump-generation.md` (TODO-27 -- Crash Dump Generation)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md` (TODO-28: BSOD / Panic Screen & Crash Experience)
+  - `todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md` (TODO-29 -- Kernel Debugger (KD Protocol))
+  - `todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md` (TODO-30 -- System Health & Recovery Orchestrator)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-31-kernel-bulletproofing.md` (TODO-31 -- Kernel Bulletproofing)
+  - `todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md` (TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof)
+  - `todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md` (TODO-33 -- Higher-Half Kernel Relocation)
+- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md` (TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate)
+  - `todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md` (TODO-35 -- Unblocked-Deferral Backfill (2026-07-27 cohort))
+  - `todo/02-kernel-core/TODO-A-SSDT-Master-Table.md` (SSDT Master Table)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: kernel core, part 3 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 11. Document: Memory and concurrency
+
+Write docs pages that meet the §3 contract for the 11 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md` (TODO-01 -- VMM Memory Protection & Diagnostics)
+  - `todo/03-memory-concurrency/TODO-02-memory-security.md` (TODO-02 -- Memory Security Hardening)
+  - `todo/03-memory-concurrency/TODO-03-advanced-allocator.md` (TODO-03 -- Advanced Kernel Allocator)
+- [ ] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md` (TODO-04 -- Pager, Reclaim, and Working Set Manager)
+  - `todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md` (TODO-05 -- Advanced Virtual Memory)
+  - `todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md` (TODO-06 -- Scheduler Enhancement)
+- [ ] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-07-smp-phase2.md` (TODO-07 -- SMP Phase 2)
+  - `todo/03-memory-concurrency/TODO-08-advanced-sync.md` (TODO-08 -- Advanced Synchronisation Primitives)
+  - `todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md` (TODO-09 -- Win32 IPC Extensions & Async I/O)
+- [ ] Pages in `docs/memory/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (TODO-10 -- Concurrency & Memory Diagnostics)
+  - `todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md` (TODO-11: Warm-Kernel-Update Runtime)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: memory and concurrency documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 12. Document: Drivers and hardware, part 1
+
+Write docs pages that meet the §3 contract for the 13 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md` (TODO-01 -- PCI/PCIe, PnP & Resource Manager)
+  - `todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md` (TODO-02 -- APIC Architecture & Advanced Interrupt Routing)
+  - `todo/04-drivers-hardware/TODO-03-acpi-power-management.md` (TODO-03 -- ACPI Full Subsystem & Power Management)
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-04-security-hardware.md` (TODO-04 -- Security Hardware & DMA Safety)
+  - `todo/04-drivers-hardware/TODO-05-kernel-module-system.md` (TODO-05 -- Kernel Module System)
+  - `todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md` (TODO-06 -- Firmware Loader & Device Blob Policy)
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-07-device-manager.md` (TODO-07 -- Device Manager & Driver Diagnostics)
+  - `todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md` (TODO-08 -- Core Built-in Driver Enhancements)
+  - `todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md` (TODO-09 -- Hypervisor Abstraction Layer)
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-10-usb-stack.md` (TODO-10 -- USB Stack Completion)
+  - `todo/04-drivers-hardware/TODO-11-input-system.md` (TODO-11 -- Input System Enhancement)
+  - `todo/04-drivers-hardware/TODO-12-i2c-touchpad.md` (TODO-12 -- I2C/SMBus Bus & Precision Touchpad)
+- [ ] Pages in `docs/hardware/` for the next 1 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md` (TODO-13 -- Storage Controller & Removable Media Drivers)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: drivers and hardware, part 1 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 13. Document: Drivers and hardware, part 2
+
+Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-14-network-drivers.md` (TODO-14 -- Network Drivers)
+  - `todo/04-drivers-hardware/TODO-15-wifi-drivers.md` (TODO-15 -- WiFi Hardware Drivers)
+  - `todo/04-drivers-hardware/TODO-16-bluetooth.md` (TODO-16 -- Bluetooth Full Stack)
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md` (TODO-17 -- GPU & Display Drivers)
+  - `todo/04-drivers-hardware/TODO-18-audio-drivers.md` (TODO-18 -- Audio Drivers)
+  - `todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md` (TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices)
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md` (TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices)
+  - `todo/04-drivers-hardware/TODO-21-game-controller-haptics.md` (TODO-21 -- Game Controllers, HID Force Feedback & Haptics)
+  - `todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md` (TODO-22 -- Camera, Video Capture & Imaging Devices)
+- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md` (TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path)
+  - `todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md` (TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion)
+  - `todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md` (TODO-25 -- Driver Hardware Certification Matrix)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: drivers and hardware, part 2 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 14. Document: Storage and filesystems
+
+Write docs pages that meet the §3 contract for the 14 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-01-block-storage-hardening.md` (TODO-01 -- Block Storage Hardening)
+  - `todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md` (TODO-02 -- NTFS Read/Write Driver)
+  - `todo/05-storage-filesystems/TODO-03-volume-management-automount.md` (TODO-03 -- Volume Management & Auto-mount)
+- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` (TODO-04 -- FAT32 Hardening & VFS Win32 Semantics)
+  - `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md` (TODO-05 -- Win32 File I/O API & IRP Layer)
+  - `todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` (TODO-06 -- IXFS Core Foundation & Win32 Compatibility)
+- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md` (TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise)
+  - `todo/05-storage-filesystems/TODO-08-exfat-readwrite.md` (TODO-08 -- exFAT Read/Write Driver)
+  - `todo/05-storage-filesystems/TODO-09-ext4-readwrite.md` (TODO-09 -- ext4 Read/Write Driver)
+- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-10-btrfs-readonly.md` (TODO-10 -- Btrfs Read-Only Driver)
+  - `todo/05-storage-filesystems/TODO-11-optical-media.md` (TODO-11 -- Optical Media: ISO 9660, Joliet & UDF)
+  - `todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md` (TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only))
+- [ ] Pages in `docs/storage/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md` (TODO-13 -- Partition Management & Storage Tools)
+  - `todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md` (TODO-14 -- Disk Benchmark & I/O Diagnostics)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: storage and filesystems documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 15. Document: Networking
+
+Write docs pages that meet the §3 contract for the 11 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-01-tcp-network-infrastructure.md` (TODO-01 -- TCP Protocol & Network Infrastructure)
+  - `todo/07-networking/TODO-02-dns-sockets.md` (TODO-02 -- DNS Resolver & BSD Sockets API)
+  - `todo/07-networking/TODO-03-http-tls.md` (TODO-03 -- HTTP/HTTPS Client & TLS)
+- [ ] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-04-ipv6-dual-stack.md` (TODO-04 -- IPv6 Dual-Stack)
+  - `todo/07-networking/TODO-05-firewall.md` (TODO-05 -- Network Firewall & Packet Filter)
+  - `todo/07-networking/TODO-06-ntp-status-winsock.md` (TODO-06 -- NTP, Network Status & Win32 Winsock)
+- [ ] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-07-web-browser.md` (TODO-07 -- Web Browser)
+  - `todo/07-networking/TODO-08-ssh-ftp-clients.md` (TODO-08 -- SSH & FTP Clients)
+  - `todo/07-networking/TODO-09-email-client.md` (TODO-09 -- Email Client)
+- [ ] Pages in `docs/networking/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-10-pdf-viewer.md` (TODO-10 -- PDF Viewer & Document Reader)
+  - `todo/07-networking/TODO-11-syslog-forwarding.md` (TODO-11 -- Remote Syslog Forwarding (RFC 5424))
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: networking documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 16. Document: Desktop foundation and graphics, part 1
+
+Write docs pages that meet the §3 contract for the 14 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/06-desktop-foundation/TODO-01-wm-completion.md` (TODO-01 -- Window Manager Completion)
+  - `todo/06-desktop-foundation/TODO-02-compositor-optimization.md` (TODO-02 -- Compositor Optimization)
+  - `todo/06-desktop-foundation/TODO-03-input-system.md` (TODO-03 -- Input System)
+- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/06-desktop-foundation/TODO-04-control-library.md` (TODO-04 -- Control Library Completion)
+  - `todo/06-desktop-foundation/TODO-05-desktop-shell.md` (TODO-05 -- Desktop Shell Completion)
+  - `todo/06-desktop-foundation/TODO-06-desktop-icons.md` (TODO-06 -- Desktop Icon System)
+- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md` (TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation)
+  - `todo/08-graphics-ui/TODO-02-text-font-internationalization.md` (TODO-02 -- Text, Font, and Internationalization Foundation)
+  - `todo/08-graphics-ui/TODO-03-theme-system.md` (TODO-03 -- Theme System)
+- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-04-animation-engine.md` (TODO-04 -- Animation Engine)
+  - `todo/08-graphics-ui/TODO-05-widget-library-core.md` (TODO-05 -- Extended Widget Library: Core Controls)
+  - `todo/08-graphics-ui/TODO-06-widget-dialogs.md` (TODO-06 -- Extended Widget Library: Complex Controls & Dialogs)
+- [ ] Pages in `docs/graphics/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md` (TODO-07 -- UI Accessibility, Automation, and IME Foundation)
+  - `todo/08-graphics-ui/TODO-08-window-manager.md` (TODO-08 -- Window Manager Enhancements)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: desktop foundation and graphics, part 1 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 17. Document: Graphics and UI, part 2
+
+Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-09-desktop-shell-features.md` (TODO-09 -- Desktop Shell Features)
+  - `todo/08-graphics-ui/TODO-10-taskbar.md` (TODO-10 -- Taskbar)
+  - `todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (TODO-11 -- Start Menu, System Tray & Notifications)
+- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-12-clock-time.md` (TODO-12 -- Kernel Time & Taskbar Clock)
+  - `todo/08-graphics-ui/TODO-13-boot-splash-recovery.md` (TODO-13 -- Boot Splash & F8 Recovery)
+  - `todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` (TODO-14 -- Win32 GDI / USER32 Desktop API Stubs)
+- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md` (TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser))
+  - `todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md` (TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router))
+  - `todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (Win32k Shadow SSDT Master Table)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: graphics and ui, part 2 documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 18. Document: Desktop shell
+
+Write docs pages that meet the §3 contract for the 14 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-01-clipboard.md` (TODO-01 -- Clipboard System)
+  - `todo/09-desktop-shell/TODO-02-file-associations-resources.md` (TODO-02 -- File Associations, Shortcuts & System Resources)
+  - `todo/09-desktop-shell/TODO-03-service-manager.md` (TODO-03 -- Service Manager & Core Daemons)
+- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md` (TODO-04 -- Recycle Bin, ZIP & Task Scheduler)
+  - `todo/09-desktop-shell/TODO-05-file-search.md` (TODO-05 -- File Search & Indexing)
+  - `todo/09-desktop-shell/TODO-06-security-accounts.md` (TODO-06 -- Security & User Accounts)
+- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-07-cng-crypto.md` (TODO-07 -- CNG Crypto & Certificate Store)
+  - `todo/09-desktop-shell/TODO-08-terminal.md` (TODO-08 -- Terminal Emulator)
+  - `todo/09-desktop-shell/TODO-09-file-manager.md` (TODO-09 -- File Manager)
+- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-10-notepad.md` (TODO-10 -- Notepad Text Editor)
+  - `todo/09-desktop-shell/TODO-11-control-panel.md` (TODO-11 -- Control Panel & Settings)
+  - `todo/09-desktop-shell/TODO-12-utilities.md` (TODO-12 -- Task Manager, Device Manager & Core Utilities)
+- [ ] Pages in `docs/desktop/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-13-explorer-shell-host.md` (TODO-13 -- Explorer Shell Host (explorer.exe))
+  - `todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md` (TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: desktop shell documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 19. Document: Platform services
+
+Write docs pages that meet the §3 contract for the 15 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-01-audio-system.md` (TODO-01 -- Audio System & Media Player)
+  - `todo/10-platform-services/TODO-02-paint-app.md` (TODO-02 -- Paint App & Image Tools)
+  - `todo/10-platform-services/TODO-03-updates-packages.md` (TODO-03 -- System Updates & IPKG Package Manager)
+- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-04-restore-recovery.md` (TODO-04 -- System Restore, Recovery & Observability)
+  - `todo/10-platform-services/TODO-05-screensaver-widgets-display.md` (TODO-05 -- Screensaver, Widgets & Display)
+  - `todo/10-platform-services/TODO-06-accessibility.md` (TODO-06 -- Accessibility Features)
+- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-07-win32-pe-loader.md` (TODO-07 -- Native Win32 Execution & PE Loader)
+  - `todo/10-platform-services/TODO-08-win32-api-surface.md` (TODO-08 -- Win32 API Surface Completion)
+  - `todo/10-platform-services/TODO-09-compiler-sdk.md` (TODO-09 -- C/C++ Compiler & SDK)
+- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-10-linux-compat.md` (TODO-10 -- Linux ELF Compatibility Layer)
+  - `todo/10-platform-services/TODO-11-installer-iso.md` (TODO-11 -- OS Installer & ISO Build)
+  - `todo/10-platform-services/TODO-12-long-term-features.md` (TODO-12 -- Long-Term Features)
+- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-A-user32-export-master-table.md` (TODO-A -- user32.dll Export Master Table)
+  - `todo/10-platform-services/TODO-B-comctl32-export-master-table.md` (TODO-B -- comctl32.dll Export Master Table)
+  - `todo/10-platform-services/TODO-C-shell32-export-master-table.md` (TODO-C -- shell32.dll Export Master Table)
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: platform services documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 20. Document: Applications and accessories
+
+Write docs pages that meet the §3 contract for the 15 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-01-web-browser.md` (TODO-01 -- Web Browser)
+  - `todo/11-apps/TODO-02-ftp-wget-wifi.md` (TODO-02 -- FTP Client, wget/curl & WiFi)
+  - `todo/11-apps/TODO-03-ssh-client.md` (TODO-03 -- SSH Client)
+- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-04-email-client.md` (TODO-04 -- Email Client)
+  - `todo/11-apps/TODO-05-pdf-viewer.md` (TODO-05 -- PDF Viewer)
+  - `todo/11-apps/TODO-06-video-player.md` (TODO-06 -- Video Player)
+- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-07-collaboration-apps.md` (TODO-07 -- Collaboration & Network Client Apps)
+  - `todo/11-apps/TODO-08-notepad.md` (TODO-08 -- Notepad)
+  - `todo/11-apps/TODO-09-calculator.md` (TODO-09 -- Calculator)
+- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-10-wordpad.md` (TODO-10 -- WordPad (Rich Text Editor))
+  - `todo/11-apps/TODO-11-photos-image-viewer.md` (TODO-11 -- Photos (Image Viewer))
+  - `todo/11-apps/TODO-12-screenshot-archive.md` (TODO-12 -- Screenshot Tool & Archive Manager)
+- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-13-calendar-utilities.md` (TODO-13 -- Calendar, Sticky Notes & Utility Apps)
+  - `todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md` (TODO-01 -- ObBrowse: Object Namespace Browser)
+  - `todo/13-tools-accessories/TODO-02-event-viewer.md` (TODO-02 -- Event Viewer (Log Viewer))
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: applications and accessories documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 21. Document: SDK, release, ports and research
+
+Write docs pages that meet the §3 contract for the 21 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+
+- [ ] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/12-user-platform-sdk/TODO-01-kernel-libraries.md` (TODO-01 -- Kernel Embedded Libraries)
+  - `todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md` (TODO-02 -- Environment Variables & Process ABI)
+  - `todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md` (TODO-03 -- ELF Relocations & Kernel Module System)
+- [ ] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` (TODO-04 -- NTDLL & User-Mode Runtime)
+  - `todo/12-user-platform-sdk/TODO-05-win32-subsystem.md` (TODO-05 -- Win32 Subsystem Server (CSRSS))
+  - `todo/12-user-platform-sdk/TODO-06-sdk-distribution.md` (TODO-06 -- SDK Distribution & Developer Experience)
+- [ ] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md` (TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder)
+  - `todo/15-installer-release/TODO-01-release-artifacts.md` (TODO-01 -- Disk Image, USB & Release Artifacts)
+  - `todo/15-installer-release/TODO-02-unattended-install.md` (TODO-02 -- Unattended Installation & Deployment)
+- [ ] Pages in `docs/release/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/15-installer-release/TODO-03-update-server.md` (TODO-03 -- Update Server Infrastructure)
+  - `todo/15-installer-release/TODO-04-release-qa.md` (TODO-04 -- Release QA & Platform Certification)
+  - `todo/15-installer-release/TODO-05-github-release-community.md` (TODO-05 -- GitHub Releases & Community Launch)
+- [ ] Pages in `docs/ports/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md` (TODO-01 -- Architecture Abstraction Layer)
+  - `todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md` (TODO-02 -- AArch64 Kernel Port)
+  - `todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` (TODO-03 -- SMP Scaling & Processor Groups)
+- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/18-future-research/TODO-01-multi-arch-port.md` (TODO-01 -- ARM64 & RISC-V Architecture Port)
+  - `todo/18-future-research/TODO-02-hypervisor.md` (TODO-02 -- Type-1 Hypervisor (ImpossibleHV))
+  - `todo/18-future-research/TODO-03-gpu-compositor.md` (TODO-03 -- GPU-Accelerated Compositor)
+- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/18-future-research/TODO-04-secureboot-tpm.md` (TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot)
+  - `todo/18-future-research/TODO-05-ai-ml-runtime.md` (TODO-05 -- AI/ML Native Inference Runtime)
+  - `todo/18-future-research/TODO-06-android-app-compatibility.md` (TODO-06 -- Android App Compatibility (Research Spike))
+- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: sdk, release, ports and research documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+## 22. Doc Freshness: `sources=` and a Stale-Page Warning
+
+A page that was right when written goes wrong when its code changes. Neither Windows nor Linux documentation tracks this mechanically.
+
+> [!TIP]
+> Linux kernel-doc extracts API docs from source comments but cannot tell a narrative page is stale; Microsoft Learn relies on manual review dates. A per-page source list checked against git history catches narrative drift too.
+
+- [ ] Extend the directive with `sources=path[,path]` (files or directories) naming the code a page describes; `build.py` validates that every listed path exists (dead source = error)
+- [ ] Add `--freshness` to `build.py`: for each page with `sources=`, compare the last commit touching any source against the last commit touching the page (`git log -1 --format=%ct`), and list pages whose sources are newer
+- [ ] Report stale pages as warnings in `scripts/lint.sh` Check 30 (never an error: a code change is not always a docs change) and as a "Last reviewed" note on the coverage page
+- [ ] Add `sources=` to every page written in §2 and §4 onward that documents code (docs-only pages need none)
+- [ ] Update `docs/contributing/docs-page-contract.md` with the `sources=` rule
+- [ ] Commit: `"site: doc freshness -- sources= directive and stale-page warning"`
+
+**Test checkpoint:** touching a file listed in a page's `sources=` in a scratch commit makes `python3 scripts/site/build.py --freshness` list that page; reverting clears it. Test on: WSL2 dev host.
+
+## 23. Site Polish: Sitemap, Last-Updated, Search, Release Snapshots
+
+- [ ] Emit `sitemap.xml` and `robots.txt` for the landing page, the design page and every docs page, with `lastmod` from git; the Pages workflow must fetch full history (`fetch-depth: 0`) for this
+- [ ] Show "Last updated <date>" in each docs page footer from `git log -1 --format=%cs -- <page>`
+- [ ] Improve search: index H2/H3 text with anchors so a hit jumps to the section, and rank title > heading > body; keep `search.json` under 2 MB
+- [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
+- [ ] Add Open Graph and canonical URL tags to docs pages from `project.json`
+- [ ] Commit: `"site: sitemap, last-updated dates, section search, release doc snapshots"`
+
+**Test checkpoint:** the deployed site serves `https://impossibleos.co/sitemap.xml` listing every docs page; a search for a section heading lands on that section; a test tag build produces a versioned docs tree locally. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
+## OS Comparison
+
+| ⭐  | Feature                          | 🪟 Win11                 | 🐧 Linux                   | 🚀 Impossible OS          |
+| --- | -------------------------------- | ------------------------ | -------------------------- | ------------------------- |
+| 💎  | Docs generated from in-tree text | ⚠️ Learn, separate repos | ✅ Sphinx `Documentation/` | ✅ §1 `docs/` to site     |
+| ⭐  | Build fails on dead doc links    | ❌ Not enforced          | ⚠️ Warnings only           | ✅ §1 Check 30 error      |
+| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21 coverage gate   |
+| ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
+| ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ⬜ §22 `sources=`         |
+| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §23 snapshots          |
+| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §23 sections |
+
+> **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
+> **After §4-§21:** every roadmap file is documented and the baseline is empty.
+> **After §22-§23:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions and search.
+
+---
+
+## Unit Tests
+
+> Host-side tests, not kernel tests: `scripts/site/tests/test_build.py` (stdlib `unittest`), wired into `scripts/test-tooling.sh` as a nested suite so CI runs it.
+
+- [/] Create `scripts/site/tests/test_build.py` (9 tests pass 2026-09-27; still missing: duplicate-slug suffixes and the check_baseline / update-baseline cases) with:
+  - `github_slug("1. Layout at a Glance")` == `"1-layout-at-a-glance"`; duplicate headings get `-1`, `-2` suffixes
+  - `page_url("index.md")` == `""`, `page_url("boot/index.md")` == `"boot/"`, `page_url("boot/x.md")` == `"boot/x.html"`
+  - `sync_regions()` rewrites a stale `<!-- project:release_date_long -->` region and reports an unknown key as an error
+  - `merge_stats()` keeps the original `stat_*` values while other regions are rewritten
+  - A fixture docs tree with a dead relative link and a dead anchor yields exactly those two errors
+  - `check_baseline()` errors on a new undocumented file and on a stale baseline entry; `--update-baseline` never adds
+  - `hex_to_css("#80FFFFFF")` == `"rgba(255, 255, 255, 0.502)"`; `gen_theme_header.argb("#60CDFF")` == `"0xFF60CDFFu"`
+  - `gen_theme_header.check()` is empty on the committed tree
+- [ ] Register the suite in `scripts/test-tooling.sh` (scoped to `scripts/site/**`, `docs/**`, `project.json` via `TEST_TOOLING_CHANGED_PATHS`)
+- [ ] Commit: `"test: site generator unit tests"`
+
+## Verification
+
+- [ ] `python3 scripts/site/build.py --check` -> `site: OK (... N/231 TODO files documented)` with N = 231 at completion
+- [ ] `bash scripts/lint.sh` -> no Check 30 error
+- [ ] `bash scripts/test-tooling.sh --quiet` -> the site suite passes
+- [ ] The latest `Deploy GitHub Pages` run is green and `https://impossibleos.co/docs/` serves the current `main`
+- [ ] `docs/.coverage-baseline.json` lists no files
+- [ ] Commit: `"00-infrastructure/TODO-10: documentation site and corpus complete"`

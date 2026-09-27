@@ -1,9 +1,24 @@
 name: Deploy GitHub Pages
 
+# The published site is GENERATED, never committed: scripts/site/build.py
+# renders the landing templates in gh-pages/ (with project.json facts) and every
+# docs/**/*.md page into build/site/. The --check pass runs first so a drifted
+# source (dead doc link, stale project region, stale coverage baseline) fails
+# the deploy instead of publishing.
+
 on:
   push:
     branches: [main]
-    paths: ['gh-pages/**']
+    paths:
+      - 'gh-pages/**'
+      - 'docs/**'
+      - 'todo/**'
+      - 'project.json'
+      - 'COUNT.md'
+      - 'README.md'
+      - 'scripts/site/**'
+      - 'tools/vendor/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -20,13 +35,16 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check published sources for drift
+        run: python3 scripts/site/build.py --check
+
+      - name: Build site
+        run: python3 scripts/site/build.py --out _site
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -34,8 +52,15 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: gh-pages
+          path: _site
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

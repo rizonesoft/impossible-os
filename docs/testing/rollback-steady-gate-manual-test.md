@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md -->
 # Manual Test: Anti-Rollback Compositor-Steady Gate
 
 Owner: [Anti-Rollback Raise Timing Hardening](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#16-anti-rollback-raise-timing-hardening) in `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md`.

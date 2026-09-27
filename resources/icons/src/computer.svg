@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="computer-frame" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#AEB7C2"/><stop offset="1" stop-color="#7E8895"/></linearGradient><linearGradient id="computer-screen" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#2EB5F0"/><stop offset="0.55" stop-color="#2185E6"/><stop offset="1" stop-color="#155CDE"/></linearGradient><linearGradient id="computer-stand" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8A94A0"/><stop offset="1" stop-color="#5E6A78"/></linearGradient></defs>
+<rect x="4" y="7" width="40" height="28" rx="2.5" fill="url(#computer-frame)"/>
+<rect x="6.5" y="9.5" width="35" height="23" rx="1" fill="url(#computer-screen)"/>
+<path d="M6.5 27c8-6 17-9.5 35-9v14.5H7.5c-.6 0-1-.4-1-1z" fill="#FFFFFF" fill-opacity=".14"/>
+<path d="M6.5 30.5c9-5 20-7.2 35-6.4" fill="none" stroke="#9EE7FF" stroke-opacity=".5" stroke-width="1.2"/>
+<path d="M20 35h8l1 5h-10z" fill="url(#computer-stand)"/>
+<rect x="14" y="39.5" width="20" height="3" rx="1.5" fill="url(#computer-stand)"/>
+<path d="M6.5 7.5h35" stroke="#DDE3EA" stroke-opacity=".8"/>
+</svg>

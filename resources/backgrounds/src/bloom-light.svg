@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3840 2160" width="3840" height="2160">
+  <!-- Impossible OS default wallpaper, light. Original artwork, GPL-3.0-only.
+       Four translucent ribbons fold into the impossible square of the logo,
+       lit from above, floating over a pale morning-sky field. -->
+  <defs>
+    <radialGradient id="bl-field" cx="0.58" cy="0.55" r="0.75">
+      <stop offset="0" stop-color="#f4f9ff"/>
+      <stop offset="0.5" stop-color="#d9e9fc"/>
+      <stop offset="1" stop-color="#b3cdef"/>
+    </radialGradient>
+    <radialGradient id="bl-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bl-r1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7fe6ff"/>
+      <stop offset="0.5" stop-color="#2eb5f0"/>
+      <stop offset="1" stop-color="#155cde"/>
+    </linearGradient>
+    <linearGradient id="bl-r2" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#40daf2"/>
+      <stop offset="1" stop-color="#1b4fd1"/>
+    </linearGradient>
+    <linearGradient id="bl-r3" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#0f3fb8"/>
+      <stop offset="0.6" stop-color="#2185e6"/>
+      <stop offset="1" stop-color="#6fdcff"/>
+    </linearGradient>
+    <linearGradient id="bl-r4" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#1356d6"/>
+      <stop offset="1" stop-color="#52d4ff"/>
+    </linearGradient>
+    <linearGradient id="bl-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="0.35" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="bl-soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="90"/>
+    </filter>
+  </defs>
+
+  <rect width="3840" height="2160" fill="url(#bl-field)"/>
+  <ellipse cx="2230" cy="1190" rx="1500" ry="1050" fill="url(#bl-glow)"/>
+
+  <!-- glow pass -->
+  <g transform="translate(2230 1180) rotate(-12) scale(1.02)" filter="url(#bl-soft)" opacity="0.45">
+    <rect x="-620" y="-700" width="1060" height="330" rx="165" fill="#2eb5f0"/>
+    <rect x="290" y="-620" width="330" height="1060" rx="165" fill="#155cde"/>
+    <rect x="-440" y="290" width="1060" height="330" rx="165" fill="#2185e6"/>
+    <rect x="-620" y="-440" width="330" height="1060" rx="165" fill="#40daf2"/>
+  </g>
+
+  <!-- ribbons: each passes over the next; the last one is redrawn where it
+       crosses the first (clipped to that overlap) so the loop never ends -->
+  <g transform="translate(2230 1180) rotate(-12)">
+    <clipPath id="bl-close"><rect x="-620" y="-440" width="330" height="70"/></clipPath>
+    <g opacity="0.94">
+      <g>
+        <rect x="-620" y="-440" width="330" height="1060" rx="165" fill="url(#bl-r4)"/>
+        <rect x="-620" y="-440" width="330" height="1060" rx="165" fill="url(#bl-sheen)" opacity="0.7"/>
+        <rect x="-618" y="-438" width="326" height="1056" rx="163" fill="none" stroke="#ffffff" stroke-opacity="0.32" stroke-width="4"/>
+      </g>
+      <g>
+        <rect x="-440" y="290" width="1060" height="330" rx="165" fill="url(#bl-r3)"/>
+        <rect x="-440" y="290" width="1060" height="330" rx="165" fill="url(#bl-sheen)" opacity="0.7"/>
+        <rect x="-438" y="292" width="1056" height="326" rx="163" fill="none" stroke="#ffffff" stroke-opacity="0.32" stroke-width="4"/>
+      </g>
+      <g>
+        <rect x="290" y="-620" width="330" height="1060" rx="165" fill="url(#bl-r2)"/>
+        <rect x="290" y="-620" width="330" height="1060" rx="165" fill="url(#bl-sheen)" opacity="0.7"/>
+        <rect x="292" y="-618" width="326" height="1056" rx="163" fill="none" stroke="#ffffff" stroke-opacity="0.32" stroke-width="4"/>
+      </g>
+      <g>
+        <rect x="-620" y="-700" width="1060" height="330" rx="165" fill="url(#bl-r1)"/>
+        <rect x="-620" y="-700" width="1060" height="330" rx="165" fill="url(#bl-sheen)" opacity="0.7"/>
+        <rect x="-618" y="-698" width="1056" height="326" rx="163" fill="none" stroke="#ffffff" stroke-opacity="0.32" stroke-width="4"/>
+      </g>
+      <g clip-path="url(#bl-close)">
+        <rect x="-620" y="-440" width="330" height="1060" rx="165" fill="url(#bl-r4)"/>
+        <rect x="-620" y="-440" width="330" height="1060" rx="165" fill="url(#bl-sheen)" opacity="0.7"/>
+        <rect x="-618" y="-438" width="326" height="1056" rx="163" fill="none" stroke="#ffffff" stroke-opacity="0.32" stroke-width="4"/>
+      </g>
+    </g>
+  </g>
+</svg>

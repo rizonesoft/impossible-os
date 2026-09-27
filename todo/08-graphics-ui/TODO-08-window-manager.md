@@ -87,6 +87,8 @@ Title bar: 32 px, Mica effect (from wallpaper tint), title text `FONT_UI_BOLD` 1
 - [ ] Click routing: close button → `wm_destroy_window()`; min → `wm_minimize()`; max/restore → `wm_maximize()` or `wm_restore()`
 - [ ] Resize cursor: confirm `wm_get_cursor_context()` handles all 8 directions at `WM_RESIZE_MARGIN` px
 - [ ] Drop shadow: `gfx_drop_shadow(screen_surface, win_x-4, win_y-4, win_w+8, win_h+8, 8, WM_CORNER_RADIUS, 0, 4, theme_get()->shadow)` in compositor for focused window
+- [ ] Window chrome to `docs/design/shell.md#window-chrome`: radius 8 (today `WM_CORNER_RADIUS` is 6), active/inactive elevation, 46 px caption buttons with 10 px glyphs, close hover `#C42B1C`
+  - Replace the `WM_COLOR_*` literals in `include/desktop/wm.h` with `THEME_*` tokens
 - [ ] Commit: `"wm: decorations -- Mica titlebar, Fluent chrome buttons, hover states, drop shadow"`
 
 ## 3. Snap Layouts `[Sonnet]`

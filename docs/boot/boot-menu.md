@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # Boot Menu Renderer + Hotkeys + Indicators
 
 > Pre-EBS user-visible boot selector. Owned by [TODO-07 boot entry store + menu + policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md): renderer in the menu-renderer section, indicators + hotkeys + `hide_when_alone` in the indicators section.

@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -1290,4 +1291,4 @@ The MCP SDK is OPTIONAL per [`scripts/setup-deps.sh`](../../scripts/setup-deps.s
 - Source: `scripts/`, `tools/`, `src/kernel/test/`, `include/kernel/test/`
 - Makefile: `Makefile` (root)
 - Build info: `include/build_info.h` (auto-generated)
-- Spec: [UEFI 2.10](../specs/hardware/firmware/uefi-2.10.md)
+- Spec: [UEFI 2.10](../../specs/hardware/firmware/uefi-2.10.md)

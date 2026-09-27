@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md -->
 # Codex Invocation Policy
 
 > When Claude invokes Codex from any path, Claude does NOT pass any flag that overrides the centrally-configured Codex model or reasoning effort. The user controls those values centrally via `~/.codex/config.toml`. The `model` value is pinned by `docs/infrastructure/codex-config-policy.toml` and audited (currently `model = "gpt-5.6-sol"`); the `model_reasoning_effort` value is a user dial (low / medium / high all legitimate) and is NOT pinned or audited. CLAUDE.md "Model Roles" carries the rule; the enforcement mechanics live here.

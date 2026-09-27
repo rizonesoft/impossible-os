@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md -->
 # User-Mode Test Output Formats
 
 The user-mode test launcher emits **four** output streams on serial.

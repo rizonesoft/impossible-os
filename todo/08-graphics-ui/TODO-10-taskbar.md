@@ -72,6 +72,9 @@ title: "TODO-10 -- Taskbar"
 - [ ] `void taskbar_tick(void)` -- called from `desktop_tick()`: advance flash timers; rebuild draw list
 - [ ] `void taskbar_draw_winlist(gfx_surface_t *s, int32_t x, int32_t w)` -- draw all window buttons in region [x, x+w]
 - [ ] Click handler: find entry by mouse x; if `entry->active` → `wm_minimize(win)`; else → `wm_restore(win)` + `wm_focus_window(win)`
+- [ ] Draw the taskbar to the design spec (`docs/design/shell.md#taskbar`): centred group (Start, search box, Task view, apps), 40 px buttons, 24 px icons, idle/focused indicator pill
+  - Every size and colour comes from `include/desktop/theme_tokens.h` (`THEME_SIZE_TASKBAR_*`, `THEME_MAT_*_TASKBAR_*`); no hex literal survives in the taskbar draw path
+  - Acrylic from `gfx_acrylic()` is cached per surface and recomputed only when the region behind the taskbar changes
 - [ ] Commit: `"taskbar: window list -- taskbar_entry, add/remove/active/flash wired from WM events"`
 
 ## 2. Taskbar Button Context Menu `[Sonnet]`

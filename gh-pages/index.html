@@ -6,7 +6,7 @@
 
     <!-- SEO -->
     <title>Impossible OS — A Modern Operating System with Native Win32 & Linux Compatibility</title>
-    <meta name="description" content="Impossible OS is a modern x86-64 operating system built from scratch with native Win32 API compatibility, Linux binary support, and a Windows 11-inspired desktop. Releasing August 8, 2028.">
+    <meta name="description" content="Impossible OS is a modern x86-64 operating system built from scratch with native Win32 API compatibility, Linux binary support, and a Windows 11-inspired desktop. Releasing {{release_date_long}}.">
     <meta name="keywords" content="operating system, OS, x86-64, Win32, Windows compatibility, Linux compatibility, kernel, open source, UEFI, custom OS, hobby OS, desktop operating system, Windows 11, IXFS filesystem, FAT32, AHCI, NVMe, SMP, multi-core, networking, TCP/IP">
     <meta name="author" content="Rizonetech">
     <meta name="robots" content="index, follow">
@@ -837,7 +837,8 @@
             <li><a href="#features">Features</a></li>
             <li><a href="#compatibility">Compatibility</a></li>
             <li><a href="#specs">Specs</a></li>
-            <li data-github><a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a></li>
+            <li><a href="docs/">Docs</a></li>
+            <li data-github><a href="{{repo_url}}" target="_blank" rel="noopener">GitHub</a></li>
             <li><a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE" class="nav-cta" target="_blank" rel="noopener"><span class="heartbeat">❤</span> Donate</a></li>
         </ul>
         <button class="nav-toggle" aria-label="Menu">☰</button>
@@ -857,7 +858,7 @@
         </p>
         <div class="hero-buttons">
 
-            <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener" data-github>
+            <a href="{{repo_url}}" class="btn btn-secondary" target="_blank" rel="noopener" data-github>
                 ⭐ Star on GitHub
             </a>
         </div>
@@ -881,7 +882,7 @@
                     <div class="countdown-text">Seconds</div>
                 </div>
             </div>
-            <p class="release-date">Target release: <strong>August 8, 2028</strong></p>
+            <p class="release-date">Target release: <strong>{{release_date_long}}</strong></p>
         </div>
     </div>
 </section>
@@ -1069,7 +1070,7 @@
             <p>Impossible OS is fully open source. Star the repo, download the alpha, or contribute code.</p>
             <div class="cta-buttons">
 
-                <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener" data-github>View Source on GitHub</a>
+                <a href="{{repo_url}}" class="btn btn-secondary" target="_blank" rel="noopener" data-github>View Source on GitHub</a>
                 <a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE" class="btn btn-donate" target="_blank" rel="noopener"><span class="heartbeat">❤</span> Support the Project</a>
             </div>
         </div>
@@ -1080,8 +1081,8 @@
 <footer>
     <div class="container">
         <div class="footer-links">
-            <a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener" data-github>GitHub</a>
-            <a href="https://github.com/rizonesoft/impossible-os/releases" target="_blank" rel="noopener" data-github>Releases</a>
+            <a href="{{repo_url}}" target="_blank" rel="noopener" data-github>GitHub</a>
+            <a href="{{repo_url}}/releases" target="_blank" rel="noopener" data-github>Releases</a>
             <a href="https://rizonetech.com" target="_blank" rel="noopener">Rizonetech</a>
             <a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE" target="_blank" rel="noopener">Donate</a>
         </div>
@@ -1092,8 +1093,8 @@
 
 <!-- Countdown Script -->
 <script>
-    // Countdown to August 8, 2028 00:00:00 UTC
-    const releaseDate = new Date('2028-08-08T00:00:00Z').getTime();
+    // Countdown to {{release_date_long}} 00:00:00 UTC
+    const releaseDate = new Date('{{release_date_ts}}').getTime();
 
     function updateCountdown() {
         const now = Date.now();
@@ -1132,21 +1133,6 @@
 
     document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
 
-    // Hide GitHub links when the repository is private
-    // (unauthenticated API returns 404 for private repos)
-    fetch('https://api.github.com/repos/rizonesoft/impossible-os', { method: 'HEAD' })
-        .then(res => {
-            if (!res.ok) {
-                document.querySelectorAll('[data-github]').forEach(el => {
-                    el.style.display = 'none';
-                });
-            }
-        })
-        .catch(() => {
-            // Network error — hide GitHub links to be safe
-            document.querySelectorAll('[data-github]').forEach(el => {
-                el.style.display = 'none';
-            });
         });
 </script>
 

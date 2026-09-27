@@ -52,6 +52,7 @@ file_patterns:
 - -> XREF: [`00-infrastructure/TODO-02 section 8 Autonomous-Agent Boundary Policy`](TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) -- org-level Copilot/cloud-agent settings must preserve the no-autonomous-agent stance
 - -> XREF: [`00-infrastructure/TODO-02 section 9 AI Workflow Regression Suite`](TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) -- URL/owner changes must not break the AGENTS authority-byte-compare and AI-policy checks
 - -> XREF: [`00-infrastructure/TODO-06 section 3 Validator`](TODO-06-todo-metadata-layer.md#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- this TODO must keep graph metadata valid
+- -> XREF: `TODO-10-documentation-site.md §1` -- the generated site and drift gate that now enforce the canonical owner in live URLs (`project.json`)
 
 ## Outcome
 

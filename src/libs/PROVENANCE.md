@@ -15,6 +15,8 @@ Reviewed and approved as load-bearing on 2026-07-16 (CLAUDE.md dependency gate).
 | cJSON | 1.7.18 (`CJSON_VERSION_{MAJOR,MINOR,PATCH}`) | https://github.com/DaveGamble/cJSON | MIT | `389812e6` (2026-03-27) |
 | ACPICA | 20260408 (`ACPI_CA_VERSION`) | https://github.com/acpica/acpica | Intel ACPI CA OR BSD-3-Clause OR GPL-2.0 (BSD arm taken) | `077d74a4` (2026-08-17), vendored at `src/kernel/acpica/` |
 | Monocypher | 4.0.2 (source header banner; no version macro) | https://monocypher.org | BSD-2-Clause OR CC0-1.0 | `99910014` (2026-06-12) |
+| markdown-it-py | 3.0.0 (`markdown_it.__version__`) | https://github.com/executablebooks/markdown-it-py (PyPI wheel) | MIT | 2026-09-27, vendored at `tools/vendor/markdown_it/` (host tool, not in the image) |
+| mdurl | 0.1.2 (`mdurl.__version__`) | https://github.com/executablebooks/mdurl (PyPI wheel) | MIT | 2026-09-27, vendored at `tools/vendor/mdurl/` (host tool, not in the image) |
 
 ## License notes
 

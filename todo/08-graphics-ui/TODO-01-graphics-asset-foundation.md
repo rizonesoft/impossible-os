@@ -108,6 +108,9 @@ Unify the current image, icon, and cursor code into one size-selection and theme
 - [ ] Define one icon and cursor theme search order plus fallback rule set so shell, apps, and Win32 wrappers all select assets the same way
 - [ ] Add size and color-policy hooks so monochrome icons, high-contrast assets, and large-cursor modes reuse the same selection engine instead of ad hoc overrides
 - [ ] Keep `image_load*()` as the raster entry point, but add format probing and metadata return paths so callers can reason about animation, intrinsic size, and source type
+- [ ] Wire the 16 new original icons into the shell: `system_icon_t` entries plus the `irespack` accepted list (`docs/design/icons.md`)
+  - Today only the original 10 names are packed, so irespack logs `[SKIP] Unknown icon` for the rest at every size
+  - `icons.ires` is 4.2 MB with 10 icons x 9 sizes; pack only the sizes the shell draws (16, 24, 32, 48, 96) before adding 16 more
 - [ ] Commit: `"gfx: visual asset pipeline -- theme-aware icon/cursor selection, scalable asset metadata, CUR/ANI support"`
 
 **Test checkpoint:** Requesting the same icon at 16/32/64 px returns deterministic best-fit variants; high-contrast and large-cursor modes resolve the expected asset family; serial shows `"GFX: asset resolve theme="` with chosen size and format. Test on: QEMU WHPX + TCG; bare metal.

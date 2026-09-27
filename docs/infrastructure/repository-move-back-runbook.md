@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md -->
 # Repository Move-Back and Public-Visibility Runbook
 
 > Companion to [`repository-transfer-preflight.md`](repository-transfer-preflight.md) (the §1 inventory) and

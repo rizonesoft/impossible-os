@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md -->
 # `firmware-tables.json` Wire Format (schema_version 1)
 
 > Canonical wire format for `X:\Diag\firmware-tables.json` and the

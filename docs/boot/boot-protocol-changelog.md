@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md -->
 # Boot Protocol Changelog
 
 > History of every `BOOT_INFO_VERSION` bump. Each row links to the
@@ -52,7 +53,7 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ### v22 -- A/B-metadata partition range
 
-- **Commit**: ([A/B dual-slot boot](../../todo/01-boot-platform/TODO-21-ab-dual-slot-boot.md))
+- **Commit**: ([A/B dual-slot boot](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md))
 - **Fields added**: `ab_meta_lba` (`uint64_t`), `ab_meta_block_count` (`uint32_t`), `_ab_meta_pad` (`uint32_t`) appended at the v21 tail. Struct size 28528.
 - **Why**: lets the kernel A/B-metadata write path locate the reconciled metadata partition WITHOUT re-deriving GPT state via the weaker kernel `gpt_parse` (which lacks the bootloader's primary+backup reconciliation).
 - **Producers / consumers**: bootloader's `select_active_slot()` publishes; kernel A/B-metadata write path consumes. Both 0 when no A/B metadata partition.

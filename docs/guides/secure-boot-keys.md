@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md -->
 # Secure Boot Key Management
 
 This guide covers the Impossible OS MOK (Machine Owner Key) pair used to sign

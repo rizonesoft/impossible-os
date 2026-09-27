@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # Boot Policy Merge Order
 
 > Companion to [`boot-entry-schema.md`](boot-entry-schema.md). The schema doc pins the on-disk format; this doc pins the precedence ladder that turns a parsed store into a single selected entry id.

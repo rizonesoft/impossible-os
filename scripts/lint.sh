@@ -2789,6 +2789,42 @@ elif [ "$TPM_STACK_TOUCHED" = "1" ]; then
 fi
 
 # ============================================================================
+# Check 30: published surfaces agree with their sources (site / docs drift)
+# ============================================================================
+# scripts/site/build.py --check builds the website + documentation site in
+# memory and fails on: a project.json fact that a Markdown region no longer
+# matches, an unknown {{key}} in a gh-pages/ template, a dead link or anchor in
+# docs/, a live repository URL naming an owner other than project.json's, a
+# README line-count badge that disagrees with COUNT.md, and a documentation
+# coverage baseline that is stale or missing a new undocumented TODO file.
+# ~1s, so it runs on every commit. Computed stat_* regions (TODO counts, test
+# totals) are skipped here because ordinary work moves them; the post-commit
+# hook re-syncs README.md and the Pages workflow checks them. Skip via
+# SKIP_LINT_SITE=1.
+if [ "${SKIP_LINT_SITE:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 30 (site drift) skipped via SKIP_LINT_SITE=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/site/build.py" ] || [ ! -f "$REPO_ROOT/project.json" ]; then
+    # Throwaway fixture repos (scripts/test-tooling.sh) copy lint.sh without the
+    # site generator; there is no published surface to check there.
+    :
+else
+    SITE_OUT=$(mktemp)
+    SITE_RC=0
+    # Under the pre-commit gate, judge the INDEX (what the commit contains), not
+    # the working tree: an uncommitted page must neither satisfy nor block a commit.
+    SITE_SCOPE=""
+    [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] && SITE_SCOPE="--staged"
+    python3 "$REPO_ROOT/scripts/site/build.py" --check --quiet --skip-stats $SITE_SCOPE > "$SITE_OUT" 2>&1 || SITE_RC=$?
+    if [ "$SITE_RC" -ne 0 ]; then
+        sed 's/^/  /' "$SITE_OUT"
+        echo -e "${RED}error${NC}: Check 30 (site drift) -- fix the sources above; python3 scripts/site/build.py --sync rewrites project regions"
+        ERRORS=$((ERRORS + 1))
+    fi
+    rm -f "$SITE_OUT"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

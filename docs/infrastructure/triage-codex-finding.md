@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md -->
 # Triage Codex Finding -- The 3-Option Discipline
 
 > Reference doctrine consumed by `superpowers:receiving-code-review`. Every

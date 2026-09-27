@@ -10,7 +10,6 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | [💾 Storage](storage/index.md)                    | Storage controllers, partitioning, filesystems             |
 | [🌐 Networking](networking/index.md)              | Network drivers and protocols                              |
 | [🎨 Graphics](graphics/index.md)                  | 2D rendering, compositing, desktop shell                   |
-| [🖥️ Hypervisors](hypervisors/index.md)           | Hyper-V, VirtualBox integration                            |
 | [⚙️ Hardware](hardware/index.md)                 | CPU architecture, bus protocols, firmware, interrupts       |
 | [🔧 Infrastructure](infrastructure/index.md)      | Build system, CI/CD, tooling                               |
 | [🚀 Getting Started](getting-started/index.md)    | Setup guides and emulator configuration                    |

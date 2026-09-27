@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md -->
 # User-Mode Test Environment Matrix
 
 Canonical platform-expectation matrix for the user-mode test framework.

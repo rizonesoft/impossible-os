@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<defs><linearGradient id="drive_removable-body" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#3AA0F5"/><stop offset="1" stop-color="#1565D8"/></linearGradient><linearGradient id="drive_removable-metal" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#E6EBF1"/><stop offset="1" stop-color="#A7B2BF"/></linearGradient></defs>
+<rect x="4" y="14" width="30" height="20" rx="3" fill="url(#drive_removable-body)"/>
+<rect x="4.5" y="14.5" width="29" height="19" rx="2.5" fill="none" stroke="#FFFFFF" stroke-opacity=".35"/>
+<path d="M34 17.5h8c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2h-8z" fill="url(#drive_removable-metal)"/>
+<rect x="37" y="20.8" width="3" height="2.4" fill="#5E6A78"/><rect x="37" y="25" width="3" height="2.4" fill="#5E6A78"/>
+<circle cx="9.5" cy="24" r="1.8" fill="#9EE7FF"/>
+</svg>

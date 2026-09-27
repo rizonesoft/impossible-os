@@ -222,6 +222,11 @@ Two things make the desktop read as Windows 11 rather than merely Fluent-shaped:
   - `fluentui-system-icons` (MIT, LICENSE verified 2026-08-29) rasterized into the icon atlas as the `Segoe Fluent Icons` / `Segoe MDL2 Assets` glyph set, same codepoints
   - Alias table: a Win32 `CreateFont("Segoe UI")` resolves to the shipped face; PROVENANCE + CREDITS rows for both with the pinned upstream tag
 - [ ] Log: `[theme] fluent corpus <sha> mode=%s accent=#%06X source=win11-keys`
+- [ ] Reconcile the corpus generator with `docs/design/tokens.json` (the shell design contract, 2026-09-27)
+  - `gen-tokens.py` writes the `color.themes` block of `tokens.json`; materials, sizes, elevation and motion stay hand-authored there as Impossible OS design decisions
+  - `include/desktop/theme_tokens.h` is already generated from `tokens.json` by `scripts/site/gen_theme_header.py` and drift-checked by lint Check 30; `THEME_DARK`/`THEME_LIGHT` (§3) read those constants
+- [ ] Theme switch swaps the default wallpaper: `bloom-dark.jpg` in dark mode, `bloom-light.jpg` in light mode, unless the user set `HKCU\Control Panel\Desktop\WallPaper`
+  - Both ship under `resources/backgrounds/` (sources in `resources/backgrounds/src/`); only `background.jpg` (the dark bloom) reaches the sysroot today
 - [ ] Commit: `"desktop/theme: Fluent token corpus generator, Win11 personalization Registry contract, Selawik + Fluent icon assets"`
 
 **Test checkpoint:** `THEME_DARK.background` equals the generated `SolidBackgroundFillColorBase` dark value byte for byte; writing `AppsUseLightTheme=1` under the Microsoft key and running `theme reload` switches the desktop to light with no Impossible-specific key present; `CreateFont("Segoe UI")` measures text identically to `CreateFont("Selawik")`. Test on: QEMU TCG + KVM; bare metal.

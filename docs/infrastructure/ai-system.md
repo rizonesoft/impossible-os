@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md -->
 # AI Development System -- Ownership Map
 
 > Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` links here from its "Skills" section; [`docs/infrastructure/index.md`](index.md) lists this doc so it is discoverable from the Infrastructure landing page. Roadmap ownership lives in the [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md).

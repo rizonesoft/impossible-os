@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md -->
 # Superpowers Plugin Policy
 
 > Authority: this file. Pointed at from [CLAUDE.md "Plugin skills -- usage notes"](../../CLAUDE.md#plugin-skills----usage-notes) and [docs/infrastructure/ai-system.md](ai-system.md). Implements the skill catalog audit + trigger rows from [TODO-08 Automation Hardening](../../todo/00-infrastructure/TODO-08-automation-hardening.md).
@@ -43,7 +44,7 @@ Where a superpowers skill suggests an action that conflicts with Impossible OS d
 | `.claude/`, `scripts/` (host-side automation) | **Approved** | Optional (single design dispatch usually sufficient) |
 | `todo/`, prose-only edits | **Not applicable** (no code review) | Not applicable |
 
-The reason for the kernel/boot exclusion: same-model self-review (Claude reviewing Claude's own kernel code via subagent) systematically misses bugs that cross-MODEL adversarial review (Claude implementer + Codex GPT-5.5 reviewer) catches. Concrete incidents: the FPU context-switch bugs caught during [TODO-19 review](../../todo/02-kernel-core/TODO-19-fpu-context-switch-x87-sse-avx.md) and the GOP MaxMode + overflow + ordinal findings caught during [TODO-02 GOP review](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#3-gop-resolution-auto-detection) (2026-04-27 re-review caught 5H+1M after the original same-model review had stamped the section verified).
+The reason for the kernel/boot exclusion: same-model self-review (Claude reviewing Claude's own kernel code via subagent) systematically misses bugs that cross-MODEL adversarial review (Claude implementer + Codex GPT-5.5 reviewer) catches. Concrete incidents: the FPU context-switch bugs caught during the FPU context-switch review and the GOP MaxMode + overflow + ordinal findings caught during [TODO-02 GOP review](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#3-gop-resolution-auto-detection) (2026-04-27 re-review caught 5H+1M after the original same-model review had stamped the section verified).
 
 Rule of thumb: if the file path matches `src/kernel/`, `src/boot/`, or `include/kernel/`, the four-dispatch Codex pipeline is non-negotiable. The subagent loop may run *alongside* the Codex pipeline (parallel quality work), but it never replaces a Codex dispatch.
 

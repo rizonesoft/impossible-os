@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md -->
 # bootcfg -- Boot Entry Store Editor
 
 > Host-side CLI tool that edits `\EFI\ImpossibleOS\bootentries.json`

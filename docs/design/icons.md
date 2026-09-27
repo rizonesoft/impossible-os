@@ -1,0 +1,79 @@
+# System Icons
+
+The colour icons are original artwork that reads instantly as Windows 11 while every shape and gradient is our own. This page is the canonical spec. Sources live in [`resources/icons/src/`](../../resources/icons/src/); the rendered PNGs in `resources/icons/color/<size>/` are packed into `icons.ires` by the build.
+
+## At a glance
+
+| Rule | Value |
+| --- | --- |
+| Grid | 48 x 48 viewBox, 2 px outer padding, so live art sits inside 4..44 |
+| View | Front-facing with gentle depth, never isometric |
+| Light | One key light from straight above |
+| Fills | Soft vertical gradients, lighter at the top |
+| Highlight | A 1 px lighter edge along top surfaces |
+| Edges | No black outlines; a 1 px edge at 25 to 60 percent opacity only where a shape would vanish on a light or dark background |
+| Corner radius | 2 px on containers, 3 px on devices and windows, 1 to 1.5 px on small glyphs |
+| Sizes shipped | 16, 24, 32, 48, 64, 72, 96, 128 and 256 px |
+
+## Palette
+
+Folders use a warm manila: the front runs `#FFD75E` to `#F5B82E`, the back and tab `#F0B429` to `#D9920F` (the `#E8A317` family), with a strip of white paper between them.
+
+System objects use the logo blues (`#2EB5F0`, `#2185E6`, `#155CDE`); glyphs on folders run `#3AA0F5` to `#1565D8`.
+
+Neutrals come from a cool grey ramp (`#E6EBF1` through `#3D4753`) for device bodies, the gear and page edges.
+
+The Recycle Bin is frosted glass: a translucent blue-grey body (`#CFE2F3` to `#8FAECB` at 95 percent) with a darker rim (`#8FA5BF` to `#566D88`). The terminal is dark slate (`#3A4452` to `#1E252E`) with a cyan prompt (`#40DAF2`).
+
+## Small-size rules
+
+Every icon is checked at 16 and 24 px on `#202020` and `#F3F3F3` before it lands:
+
+- Glyphs on folders are at least 12 units wide so they survive at 16 px as a coloured blob in the right place.
+- Strokes that carry meaning are at least 1.6 units wide; anything thinner is decoration and may disappear at small sizes.
+- A shape that relies on a light edge for contrast also gets a faint darker edge, so it holds on both light and dark backgrounds.
+- One source file per icon: where detail collapses, simplify the source instead of adding a small-size file.
+
+## The set
+
+| Icon | File | Used for |
+| --- | --- | --- |
+| This PC | `computer.svg` | The This PC desktop icon and Explorer root |
+| Recycle Bin (empty) | `recycle_bin_empty.svg` | Recycle Bin with nothing in it |
+| Recycle Bin (full) | `recycle_bin_full.svg` | Recycle Bin holding deleted items |
+| Folder | `folder_closed.svg` | Any folder |
+| Open folder | `folder_open.svg` | Folder being opened, drag targets |
+| Documents | `folder_documents.svg` | The Documents known folder |
+| Downloads | `folder_downloads.svg` | The Downloads known folder |
+| Pictures | `folder_pictures.svg` | The Pictures known folder |
+| Music | `folder_music.svg` | The Music known folder |
+| Videos | `folder_videos.svg` | The Videos known folder |
+| Desktop | `folder_desktop.svg` | The Desktop known folder |
+| User folder | `user_folder.svg` | The signed-in user's profile folder |
+| File Explorer | `file_explorer.svg` | The File Explorer app, pinned to the taskbar |
+| Network | `network.svg` | Network location and the Network desktop icon |
+| System drive | `drive_system.svg` | The `C:` drive, badged with the OS mark |
+| Removable drive | `drive_removable.svg` | USB sticks and other removable media |
+| Settings | `settings.svg` | The Settings app |
+| Control Panel | `control_panel.svg` | The classic Control Panel |
+| Terminal | `terminal.svg` | The terminal and `cmd.exe` |
+| Generic file | `file_default.svg` | A file with no specific type |
+| Text file | `text_file.svg` | `.txt`, `.log`, `.ini` and similar |
+| Image file | `file_image.svg` | `.png`, `.jpg`, `.bmp` and similar |
+| Archive | `file_archive.svg` | `.zip` and other archives |
+| Application | `exe_default.svg` | `.exe` files with no embedded icon |
+| Library | `dll_default.svg` | `.dll` and `.sys` files |
+| Start | `start.svg` | The Start button on the taskbar |
+
+## The logo and the Start button
+
+The logo in [`resources/brand/logo.svg`](../../resources/brand/logo.svg) keeps the original identity: four 64-unit ribbons on a 368 grid, arranged as a pinwheel whose slanted ends give the octagonal, impossible outline. The redesign keeps the geometry and changes the light: the top ribbon is the lightest cyan, the bottom the deepest blue, and each ribbon darkens where its inner end tucks under the next, which sells the impossible loop. `resources/logo.svg`, `gh-pages/logo.svg` and the boot logo PNGs in `resources/logo/` are copies or renders of this file.
+
+The Start button (`start.svg`) is the same mark inside the standard 2 px padding, and reads at 24 px on both frosted taskbars.
+
+## Adding or changing an icon
+
+1. Edit or add the SVG in `resources/icons/src/`. Give every gradient an id prefixed with the icon name, so several icons can be inlined into one page without collisions.
+2. Run `bash scripts/convert-icons.sh` to re-render all nine sizes, then check the result at 16 and 24 px on a light and a dark background.
+3. Commit the SVG and the regenerated PNGs together.
+4. A new name reaches the shell only once it is in the `irespack` accepted list, the `system_icon_t` enum and the kernel name table. Ten are wired today (`computer`, `control_panel`, `dll_default`, `exe_default`, `file_default`, `folder_closed`, `folder_open`, `recycle_bin_empty`, `recycle_bin_full`, `text_file`); the rest are rendered and committed for the shell work that needs them.

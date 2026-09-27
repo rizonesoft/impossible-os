@@ -1,3 +1,4 @@
+<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md -->
 # Boot Error History Ring -- Schema and Operator Guide
 
 > Wire format and operator-visible decode tables for the multi-attempt
