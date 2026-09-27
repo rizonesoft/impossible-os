@@ -178,6 +178,7 @@ Update all `gfx_drop_shadow()` and `gfx_acrylic()` call sites to pass `theme_get
 - [ ] `wm.c`: `gfx_acrylic(…, theme_get()->surface, opacity, radius)` for dialog acrylic background
 - [ ] `controls.c`: any `gfx_drop_shadow` calls (e.g., tooltip shadow, dropdown shadow) → `theme_get()->shadow`
 - [ ] `desktop.c`: `gfx_mica(…, theme_get()->surface)` for desktop Mica background
+- [ ] Shadows come from the elevation tokens (`THEME_ELEV_*`): control, card, tooltip, flyout, start, window_active, window_inactive, each `[offset_y, blur, alpha]` for `gfx_drop_shadow()`
 - [ ] Commit: `"desktop/theme: wire gfx_drop_shadow+acrylic+mica to theme shadow/surface tokens"`
 
 ## 8. Hot-Reload `[Sonnet]`
@@ -227,6 +228,8 @@ Two things make the desktop read as Windows 11 rather than merely Fluent-shaped:
   - `include/desktop/theme_tokens.h` is already generated from `tokens.json` by `scripts/site/gen_theme_header.py` and drift-checked by lint Check 30; `THEME_DARK`/`THEME_LIGHT` (§3) read those constants
 - [ ] Theme switch swaps the default wallpaper: `bloom-dark.jpg` in dark mode, `bloom-light.jpg` in light mode, unless the user set `HKCU\Control Panel\Desktop\WallPaper`
   - Both ship under `resources/backgrounds/` (sources in `resources/backgrounds/src/`); only `background.jpg` (the dark bloom) reaches the sysroot today
+- [ ] Transparency off (`EnableTransparency=0`) draws every material's tint at full opacity with no blur and no grain (`docs/design/shell.md#materials`)
+- [ ] High contrast and focus visuals: a 2 px `focus_outer` ring outside a 1 px `focus_inner` ring on keyboard focus only; the high-contrast preset replaces every design token (`docs/design/shell.md#accessibility`)
 - [ ] Commit: `"desktop/theme: Fluent token corpus generator, Win11 personalization Registry contract, Selawik + Fluent icon assets"`
 
 **Test checkpoint:** `THEME_DARK.background` equals the generated `SolidBackgroundFillColorBase` dark value byte for byte; writing `AppsUseLightTheme=1` under the Microsoft key and running `theme reload` switches the desktop to light with no Impossible-specific key present; `CreateFont("Segoe UI")` measures text identically to `CreateFont("Selawik")`. Test on: QEMU TCG + KVM; bare metal.

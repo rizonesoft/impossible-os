@@ -236,4 +236,5 @@ Right-click pinned or window button → jump list popup above context menu showi
 - [ ] Right-click pinned cmd.exe → jump list popup appears above context menu with recent entries (after `SYS_JUMPLIST_NOTIFY` calls from cmd.exe)
 - [ ] Enable auto-hide via Control Panel → taskbar slides off bottom; move mouse to bottom 4 px → slides back; 500 ms idle → slides away again
 - [ ] Set taskbar position to "Top" → taskbar moves to screen top; windows reflow below it
+- [ ] Shell matches the design reference: a framebuffer capture of the running shell compared with the matching `impossibleos.co/design/?shot` render (dark and light) passes the perceptual diff of `00-infrastructure/TODO-05 §9` at default threshold
 - [ ] Commit: `"taskbar: full feature set -- window list, peek, pins, jump lists, auto-hide, customization"`

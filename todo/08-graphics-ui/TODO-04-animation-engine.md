@@ -128,6 +128,8 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 - [ ] `gfx_tween_start()`: if `g_anim_speed != 100`: apply speed multiplier to `duration_ms` before storing
 - [ ] `int anim_mgr_enabled(void)` → `g_anim_enabled` -- for callers that want to skip tween setup entirely
 - [ ] Log: `[anim] settings: enabled=%d speed=%u%%`
+- [ ] Shell motion from the design tokens (`docs/design/shell.md`): Start opens over `THEME_MOTION_START_OPEN_MS` (250), rising `THEME_SIZE_START_SLIDE` (48 px) on the decelerate curve; closes over `THEME_MOTION_START_CLOSE_MS` (167) accelerating
+  - Flyouts and menus fade and rise 12 px over `THEME_MOTION_NORMAL_MS`; taskbar indicator width animates over the same; curves are the `motion.ease_*` control points in `docs/design/tokens.json`
 - [ ] Commit: `"gfx/anim: registry controls -- EnableAnimations + AnimationSpeed, snap reduce-motion path"`
 
 ## 5. Window Transition Animations `[Opus]`

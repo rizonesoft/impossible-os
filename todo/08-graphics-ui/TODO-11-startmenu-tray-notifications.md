@@ -140,7 +140,6 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
   - Tooltip `"Battery: 73% -- 2h 14m remaining"` on discharge, `"Plugged in, charging"` on AC; the minutes come from the composite time estimate and read "estimating" while it is `BAT_UNKNOWN`.
   - Click flyout: charge bar, present rate in W, and last-full vs design capacity as a wear indicator; the packed composite is `HKLM\SYSTEM\Battery\Status` (REG_BINARY) so the flyout needs one read, not one per field.
   - The composite is the ONLY source: never read a per-battery ACPI object directly, or a dual-battery machine shows one cell's percentage as the system's.
-- [ ] Quick settings flyout per `docs/design/shell.md#quick-settings`: 3x2 toggle grid, brightness and volume sliders, battery footer, opened by the tray cluster
 - [ ] Commit: `"systray: tray icons -- volume/network/bell/keyboard flyouts, battery conditional, right-to-left draw"`
 
 ## 5. Toast Notifications `[Opus]`
@@ -181,7 +180,8 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
 - [ ] Per-entry dismiss: × hit-test at `(entry_right - 16, entry_y)`; on click → `notify_history_remove(idx)`; re-render
 - [ ] "Clear all" button at top of panel: `notify_history_clear_all()` → delete all Registry entries; `notify_center_open()` re-renders empty state ("All clear ✓")
 - [ ] Relative timestamp: `uint64_t elapsed_s = now_s - entry->timestamp_s`; format: `< 60s` → "Just now"; `< 3600` → "N min ago"; else → "HH:MM"
-- [ ] Notification center shares the flyout with the month calendar per `docs/design/shell.md#notifications-and-calendar` (header, list or empty state, 7-column day grid, accent today)
+- [ ] Notification center to `docs/design/shell.md#notifications-and-calendar`: "Notifications" header with Clear all, the list or a "No new notifications" empty state, above the calendar owned by `08-graphics-ui/TODO-12 §3`
+  - Flyout: 360 px wide, 12 px from the right edge and above the taskbar, `THEME_MAT_*_FLYOUT_*`, `THEME_ELEV_FLYOUT_*`
 - [ ] Commit: `"notify_center: history panel -- Registry 100-entry log, group-by-app, dismiss/clear, slide-in"`
 
 ## 7. Notification Settings `[Sonnet]`
@@ -233,4 +233,5 @@ Start Menu search bar: typing filters pinned + All Programs + right-column links
 - [ ] Set `FOCUS_ALARMS` → `notify_send(…, PRIORITY_NORMAL)` → no toast shown; check serial log confirms history entry still written
 - [ ] Click bell icon → notification center slides in from right; toasts grouped by app with headers; × button dismisses individual; "Clear all" → panel shows "All clear"
 - [ ] Settings page → Notifications: per-app toggle off for one app; send toast from that app → no toast shown
+- [ ] Shell matches the design reference: a framebuffer capture of the running shell compared with the matching `impossibleos.co/design/?shot` render (dark and light) passes the perceptual diff of `00-infrastructure/TODO-05 §9` at default threshold
 - [ ] Commit: `"startmenu+tray+notify: full Start Menu data, search, system tray, toast queue, notification center"`

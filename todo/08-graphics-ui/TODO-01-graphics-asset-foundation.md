@@ -66,6 +66,8 @@ Replace the current "every surface is a `kmalloc` rectangle" assumption with an 
 - [ ] Add stride/alignment invariants and `klog(LOG_INFO, "GFX", ...)` diagnostics for large-surface alloc/free paths
 - [ ] Update current in-tree callers that allocate large temporary graphics buffers (`gfx_drop_shadow`, thumbnail paths, icon/cursor scaling helpers) to use the new allocator helpers instead of open-coded size guesses
 - [ ] Define one central "large surface" threshold and document it in the new helper comments so future shell and Win32 code do not re-invent memory rules
+- [ ] Frosted surfaces are cached layers: taskbar, Start, flyouts and menus keep their blurred backdrop and recompute it only when the region behind them changes (`docs/design/shell.md#materials`)
+  - `gfx_acrylic()` gains the grain term (`THEME_MAT_*_NOISE`, 4-6%) from a fixed tileable noise texture, so the frost reads identically at every frame
 - [ ] Commit: `"gfx: render target foundation -- PMM-safe surfaces, views, cached layer descriptors"`
 
 **Test checkpoint:** Creating and destroying a 3840x2160 off-screen surface succeeds without heap exhaustion; `gfx_surface_view()` addresses the expected sub-rectangle; serial shows `"GFX: surface_ex alloc"` and `"GFX: surface_ex free"` for the large-surface path. Test on: QEMU WHPX + TCG; bare metal.

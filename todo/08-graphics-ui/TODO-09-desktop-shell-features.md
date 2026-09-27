@@ -72,6 +72,8 @@ title: "TODO-09 -- Desktop Shell Features"
 - [ ] Mouse: hover sets `hovered_idx`; 300 ms hover timer → open submenu; click → `item.callback()`; `context_menu_hide()`; outside click → `context_menu_hide()`
 - [ ] Key: Up/Down move `hovered_idx`; Enter → callback + hide; Escape → hide; Right → open submenu; Left → close submenu (return to parent)
 - [ ] `context_menu_tick()` called from `wm_composite()` before drawing; checks hover timer for submenu open
+- [ ] Menu visuals per `docs/design/shell.md#context-menus`: 256 px wide, 4 px padding, 32 px items (16 px glyph, 12 px gap, label, chevron or shortcut hint), full-width 1 px separators
+  - Menu acrylic `THEME_MAT_*_MENU_*` (blur 20, grain 4%), radius 8, `THEME_ELEV_FLYOUT_*`; hover `subtle_fill_hover` with radius 4
 - [ ] Commit: `"desktop: context_menu engine -- Acrylic popup, submenus, keyboard nav, outside-click auto-close"`
 
 ## 2. Desktop Right-Click Menu `[Sonnet]`
@@ -91,6 +93,7 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 - [ ] Refresh: `desktop_icons_init()` re-scans `C:\Users\Default\Desktop\`
 - [ ] New Folder: `dialog_input("New folder name:", "", "New Folder")` → `vfs_mkdir(path)`
 - [ ] New Text Document: `vfs_create("C:\\Users\\Default\\Desktop\\New Text Document.txt", "")` → `desktop_icons_init()`
+- [ ] Desktop menu order per `docs/design/shell.md#context-menus`: View, Sort by, Refresh | New | Display settings, Personalize | Open in Terminal, Show more options (Shift+F10)
 - [ ] Commit: `"desktop: right-click menu -- view/sort/new/refresh/settings using context_menu engine"`
 
 ## 3. Wallpaper Engine `[Sonnet]`
@@ -108,6 +111,8 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 - [ ] Update `desktop_draw_wallpaper()` to use `g_wallpaper_scaled` via `memcpy`; update `desktop_get_wallpaper_surface()` to wrap the new scaled buffer
 - [ ] `background_color` fallback: `gfx_fill_rect(screen, 0, 0, fb_w, fb_h, bg_color)` if wallpaper load fails
 - [ ] `void wallpaper_reload_on_dpi(void)`: `image_scale()` re-scale to new screen dims; called from `WM_DPI_CHANGED` handler
+- [ ] Default wallpaper is the impossible bloom: `resources/backgrounds/bloom-dark.jpg` (dark) and `bloom-light.jpg` (light), Fill mode, per `docs/design/shell.md#desktop`
+  - Ship both to the sysroot (today only `background.jpg`, the dark bloom, is copied); the theme switch in `08-graphics-ui/TODO-03 §9` picks between them
 - [ ] Commit: `"desktop: wallpaper_set() -- image_load+scale, cache, Registry watch, background_color fallback"`
 
 ## 4. DPI Scaling `[Sonnet]`
@@ -126,6 +131,7 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 - [ ] Apply `DPI_SCALE()` to: `WM_TITLEBAR_HEIGHT`, `WM_BTN_WIDTH`, `WM_BTN_HEIGHT`, `TASKBAR_H` (all currently hardcoded); font pixel sizes passed to `ttf_get()`; icon request sizes; control ROW_H and BTN_W
 - [ ] `dpi_init()` called from `desktop_init()` before any window creation
 - [ ] Display Control Panel hook: `ctrl_create_dropdown(…, ["100%","125%","150%","175%","200%"], 5, on_scale_change)` where `on_scale_change` calls `dpi_set()`
+- [ ] Every `THEME_SIZE_*`, `THEME_RADIUS_*` and `THEME_SPACE_*` value in `include/desktop/theme_tokens.h` is a 100% value: shell code wraps each use in `DPI_SCALE()`, and blur radii scale too
 - [ ] Commit: `"desktop: DPI scaling -- g_dpi_pct, DPI_SCALE macro, auto-detect, WM_DPI_CHANGED broadcast"`
 
 ## 5. Screenshot `[Sonnet]`
@@ -198,6 +204,10 @@ Win+A or click notification area → slide-in panel from right (200 ms ease-out-
 - [ ] Focus tile: state = `g_focus_mode`; toggle = cycle `FOCUS_OFF → FOCUS_PRIORITY → FOCUS_ALARMS → FOCUS_OFF`
 - [ ] Volume + Brightness sliders: `ctrl_create_slider(panel_wh, x, y, w, 20, 0, 100, vol, HORIZ, on_vol_change)` -- `on_vol_change` calls `volume_set(v)` stub
 - [ ] Win+A hotkey in `hotkeys.c`: `quick_settings_open()` or `quick_settings_close()` toggle
+- [ ] Quick settings to `docs/design/shell.md#quick-settings`: 360 px flyout anchored 12 px from the right and above the taskbar, flyout acrylic, `THEME_ELEV_FLYOUT_*`
+  - 3x2 toggles (Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility): 96x48 buttons over captions; on = accent fill with `text_on_accent`
+  - Brightness and volume sliders (4 px track, accent fill, 20 px thumb); 48 px footer band with battery on the left, edit and Settings on the right
+  - Opened by the tray cluster button (network, volume, battery glyphs) owned by `08-graphics-ui/TODO-11 §4`
 - [ ] Commit: `"desktop: quick settings panel -- slide-in from right, tiles, night light/focus/volume/scale wired"`
 
 ## 9. Virtual Desktops `[Opus]`

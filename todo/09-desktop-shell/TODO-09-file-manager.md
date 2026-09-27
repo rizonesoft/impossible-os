@@ -82,6 +82,10 @@ Four-zone window: toolbar (Back/Forward/Up/Refresh + address bar), sidebar, file
 - [ ] Double-click: if `is_dir` → `filemgr_navigate(entry.full_path)`; else → `file_assoc_open(full_path)`
 - [ ] Up button: strip last path component from `current_path`; `filemgr_navigate(parent_path)`
 - [ ] Lay out File Explorer to `docs/design/shell.md#file-explorer`: tabbed 40 px title bar, 48 px address row, 48 px command bar, 220 px navigation pane, drive tiles with usage bars, 24 px status bar
+  - Title bar: active tab 220 px minimum on `layer_bg` with top radius 8, then a new-tab button and the 46 px caption buttons; mica when active
+  - Address row: back, forward, up, refresh (36x32), breadcrumb with the location icon, 260 px search field; command bar: accent New, cut/copy/paste/rename/share/delete, Sort, View, overflow
+  - Nav pane: Desktop, Downloads, Documents, Pictures, Music, Videos, separator, This PC, drives, Network; the selected item gets a 3 px accent bar
+  - Content: "Devices and drives" with 48 px drive icons and 6 px accent usage bars, then "Folders" as 48 px folder tiles
 - [ ] Commit: `"filemgr: core layout -- 4-zone window, toolbar nav, address bar, vfs_readdir listing, history"`
 
 ## 2. Sidebar `[Sonnet]`

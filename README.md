@@ -182,7 +182,7 @@ Install the local git hooks (lint on commit, line counts and README sync after c
 
 ## Documentation
 
-The documentation site at [impossibleos.co/docs](https://impossibleos.co/docs/) is generated from the Markdown in [`docs/`](docs/index.md) by [`scripts/site/build.py`](scripts/site/build.py) on every push. The same generator keeps the website and this README honest: project facts come from [`project.json`](project.json), and a drift check fails the commit on a dead link, a stale fact or an undocumented new roadmap file. <!-- project:stat_docs_covered -->30<!-- /project --> of the roadmap files are documented so far; the [coverage page](https://impossibleos.co/docs/coverage.html) tracks the rest.
+The documentation site at [impossibleos.co/docs](https://impossibleos.co/docs/) is generated from the Markdown in [`docs/`](docs/index.md) by [`scripts/site/build.py`](scripts/site/build.py) on every push. The same generator keeps the website and this README honest: project facts come from [`project.json`](project.json), and a drift check fails the commit on a dead link, a stale fact or an undocumented new roadmap file. <!-- project:stat_docs_covered -->32<!-- /project --> of the roadmap files are documented so far; the [coverage page](https://impossibleos.co/docs/coverage.html) tracks the rest.
 
 ## Roadmap
 

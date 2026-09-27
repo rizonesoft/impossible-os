@@ -106,6 +106,8 @@ Render `HH:MM` in `FONT_UI` 12 px right-aligned in system tray area. Update ever
 - [ ] Calendar grid draw: `clock_draw_calendar(s, year, month)`: day-of-week header row; compute first weekday of month (`datetime_to_time()` then `time_to_datetime()`); fill 6×7 grid; today = accent circle; pad with prev/next month days in muted color
 - [ ] `◄`/`►` click: `g_cal_month--/++` with year rollover; `clock_draw_calendar()` re-renders
 - [ ] Clock click in `systray_mouse_handler()`: if hit-test in clock area → `clock_flyout_open()`
+- [ ] Clock and calendar to `docs/design/shell.md#taskbar` and `docs/design/shell.md#notifications-and-calendar`: time over date in the caption style, right-aligned, beside the notification bell
+  - Calendar: month title with previous/next buttons, 7-column grid of 40 px day cells, today as an accent circle, other-month days in `text_tertiary`, below the notification list of `08-graphics-ui/TODO-11 §6`
 - [ ] Commit: `"clock: taskbar clock -- HH:MM tray, 1 s PIT update, Acrylic flyout with calendar grid"`
 
 ## 4. Date/Time Control Panel `[Sonnet]`
