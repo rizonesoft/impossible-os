@@ -96,37 +96,43 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 ## 2. Region Select Overlay `[Opus]`
 
+**Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
+
 > Novel full-screen WM layer with per-pixel clear-region compositing inside a semi-transparent
 > dim overlay -- no prior Impossible OS precedent for an interactive screen-capture overlay.
 
 **Source file:** `src/apps/snip/region_select.c`
 
+- [ ] **Snipping toolbar first** (`docs/design/shell.md#snipping-toolbar`): 48 px flyout-acrylic bar centred 12 px from the top over the `smoke` scrim
+  - Rectangle, Window, Full screen and Freeform toggle buttons, then close (`THEME_SIZE_SNIP_TOOLBAR_HEIGHT`)
+  - The chosen mode drives the selection below
+- [ ] **Freeform mode**: record the pointer path while dragging; capture its bounding box and clear pixels outside the path to transparent
 - [ ] **Overlay window**: `wm_create_window("snip_overlay", 0, 0, fb_w, fb_h, WM_NO_BORDER | WM_NO_TASKBAR)` with `z_order=32767` (above all windows); cursor set to crosshair
-- [ ] **Dim layer**: `gfx_fill_rect(overlay_surf, 0, 0, fb_w, fb_h, 0x80000000)` (50% alpha black) -- composited by WM alpha-blend pass
+- [ ] **Dim layer**: `gfx_fill_rect(overlay_surf, 0, 0, fb_w, fb_h, THEME_<THEME>_SMOKE)` (the design's `smoke` scrim) -- composited by WM alpha-blend pass
 - [ ] **Rubber-band selection**:
   - [ ] `mouse_down` → record `g_sel_x0, g_sel_y0`; set `g_dragging = true`
   - [ ] `mouse_move` while dragging → compute `sel_x = min(x0, cx)`, `sel_y = min(y0, cy)`, `sel_w`, `sel_h`
   - [ ] Each frame: re-draw dim layer; **blit the unmodified backbuffer region** onto the overlay surface at `(sel_x, sel_y)` to make selected area appear clear: `gfx_blit(overlay_surf, sel_x, sel_y, fb + sel_y*fb_w + sel_x, sel_w, sel_h)`
-  - [ ] Draw 1 px white border around selection: `gfx_draw_rect(overlay_surf, sel_x, sel_y, sel_w, sel_h, 0xFFFFFFFF)`
+  - [ ] Draw the selection with the design's selection tokens: `selection_fill` inside and a 1 px `selection_stroke` border (`THEME_<THEME>_SELECTION_*`)
   - [ ] Corner handles: 6×6 px white filled squares at corners + edge midpoints
-- [ ] **Mouse release** → `screenshot_region(sel_x, sel_y, sel_w, sel_h)` (§1 capture); destroy overlay; show post-capture toolbar (§2 below)
+- [ ] **Mouse release** → `screenshot_region(sel_x, sel_y, sel_w, sel_h)` (§1 capture); destroy overlay; raise the capture toast (below)
 - [ ] **Escape key** → destroy overlay; cancel with no capture
-- [ ] **Post-capture toolbar** (small floating panel near top of screen, auto-dismiss after 5 s of no interaction):
-  - [ ] `[📋 Copy]` -- clipboard already set; flash confirm
-  - [ ] `[💾 Save]` -- already saved; show path in tooltip
-  - [ ] `[🖼 Edit in Photos]` -- launch `photos.exe {path}` with edit mode flag
-  - [ ] `[✏ Annotate]` -- launch `sniptool.exe` with the captured image pre-loaded for annotation (§3)
+- [ ] **After capture**: raise a toast per `docs/design/shell.md#toast-notifications`; no separate floating panel
+  - "Screenshot copied to clipboard" with the image thumbnail and saved path
+  - Actions: Save, Edit in Photos (`photos.exe {path}`), Annotate (`sniptool.exe` with the image pre-loaded, §3)
 
 ---
 
 ## 3. Snipping Tool UI `[Sonnet]`
 
+**Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 **Source file:** `src/apps/snip/sniptool.c`; binary: `sniptool.exe`
 
 - [ ] **Main window** `wm_create_window("Snipping Tool", 400, 500, WM_FIXED)`:
-  - [ ] **Mode selector** (radio buttons): `○ Rectangular` `○ Window` `○ Full Screen`; default Rectangular
+  - [ ] **Mode selector**: Rectangle, Window, Full screen and Freeform as toggle buttons (the same modes as the snipping toolbar of `docs/design/shell.md#snipping-toolbar`); default Rectangle
   - [ ] **Delay selector** (dropdown / radio): `0 s | 1 s | 3 s | 5 s`; default 0 s
-  - [ ] `[New]` button → if delay > 0: countdown OSD overlay (`"3… 2… 1…"` centered, 72 pt bold, semi-transparent); then perform capture per selected mode
+  - [ ] `[New]` button → if delay > 0: countdown OSD (`"3… 2… 1…"` centred, display style `THEME_TYPE_DISPLAY_*` 68/92, `text_primary` over the `smoke` scrim); then perform capture per selected mode
   - [ ] Full screen mode → `screenshot_full()` directly; Window mode → `screenshot_window(wm_get_focused())` (minimize Snip Tool first); Rectangular → `snip_region_start()` (§2)
 - [ ] **Recent captures grid** (home screen, below mode/delay bar):
   - [ ] 3-column thumbnail grid; load from `HKCU\Software\Impossible\SnipTool\RecentCaptures\{0..9}` paths; `image_scale(&thumb, &img, 120, 80, IMAGE_FIT_FIT)`; click → open in annotation view
@@ -142,6 +148,8 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 ---
 
 ## 4. Archive Manager `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
 **Source file:** `src/apps/archiver/archiver.c`; binary: `archiver.exe`
 
@@ -177,7 +185,8 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
   - [ ] Register on `*` (all files/folders) as a "Send To" target
   - [ ] `cmd_compress_to_zip(paths[], count)`: `zip_create("{first_file_basename}.zip")` in same directory → `zip_add_file` for each path → `notify_send("Archive created", path, ICON_ZIP, 3000)`
 - [ ] **Progress dialog** (for large archives):
-  - [ ] Modal `wm_create_window("Extracting…", 360, 100, WM_FIXED | WM_NO_CLOSE)` -- `CTRL_PROGRESSBAR` (0–100 %) + `"{current_entry} of {total}"` label + `[Cancel]` button (sets `g_cancel = true`; checked in extract loop)
+    - [ ] Progress: call `ui_dialog_progress()` from `11-apps/TODO-13 §7`; do not build a second progress window
+    - Standard dialog with the progress bar per `docs/design/controls.md#progress`, `"{current_entry} of {total}"` and a Cancel button
 - [ ] **`.tar.gz` read (stretch)**:
   - [ ] Detect `.tar.gz` / `.tgz` magic (`\x1f\x8b` gzip header); decompress via `mz_uncompress` to memory buffer
   - [ ] Parse tar header blocks (512-byte blocks; fields: name[100], size (octal), typeflag); list + extract files only (no symlink creation); read-only (no write support)

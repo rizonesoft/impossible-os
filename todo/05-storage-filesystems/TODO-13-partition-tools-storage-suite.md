@@ -115,6 +115,8 @@ Interactive disk management shell. Commands: `list disk`, `list part <disk>`, `c
 
 ## 4. `chkdsk` CLI + GUI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Run per-filesystem validation and optional repair. Real-time progress output. GUI panel: drive selector, Scan/Fix options, progress bar, results panel, schedule-on-next-boot for system drive.
 
 **Files:** `src/shell/cmd_chkdsk.c` (new/extend), `src/desktop/dlg_chkdsk.c` (new)
@@ -131,6 +133,8 @@ Run per-filesystem validation and optional repair. Real-time progress output. GU
 - [ ] Commit: `"shell: chkdsk CLI + GUI -- per-FS dispatch, progress callback, boot-schedule, results log"`
 
 ## 5. `defrag` CLI + GUI `[Opus]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Fragmentation analysis per filesystem. Journal-safe block relocation engine running on `SCHED_IDLE` thread. TRIM free ranges after compaction. GUI: volume selector, fragmentation %, animated block map, progress + ETA, schedule.
 
@@ -149,6 +153,8 @@ Fragmentation analysis per filesystem. Journal-safe block relocation engine runn
 
 ## 6. `sfc` CLI + GUI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 System File Checker. Build-time: generate a manifest of system files (path, CRC32C, size, version). Runtime: compare live files against manifest; repair from recovery image. GUI: Scan Now, progress bar, results table, log export.
 
 **Files:** `src/shell/cmd_sfc.c` (new), `src/desktop/dlg_sfc.c` (new), `scripts/gen_sfc_manifest.sh` (new)
@@ -165,6 +171,8 @@ System File Checker. Build-time: generate a manifest of system files (path, CRC3
 - [ ] Commit: `"shell: sfc CLI + GUI -- build-time CRC manifest, runtime scan+repair, recovery image, CBS.log"`
 
 ## 7. `recover` CLI + GUI `[Opus]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Deleted file recovery: IXFS (scan inode table for `i_links == 0`), FAT32 (scan `0xE5` entries), data carving (JPEG/PNG/PDF/ZIP signatures). Recovery Wizard GUI: select drive → scan → results table → select → choose destination.
 
@@ -183,6 +191,8 @@ Deleted file recovery: IXFS (scan inode table for `i_links == 0`), FAT32 (scan `
 
 ## 8. Disk Management GUI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Two-panel window: upper table (drives + partitions + health), lower graphical partition bar (proportional colored segments). Partition context menu (create/delete/format/assign letter). SMART status panel.
 
 **Files:** `src/desktop/dlg_diskmgmt.c` (new), `include/desktop/dlg_diskmgmt.h` (new)
@@ -191,14 +201,18 @@ Two-panel window: upper table (drives + partitions + health), lower graphical pa
 > Lower panel: for each disk, draw a horizontal bar scaled to total disk size; each partition is a colored rectangle proportional to its size; label inside rectangle = drive letter + filesystem + size; colors: FAT32=orange, NTFS=blue, IXFS=purple, exFAT=teal, unallocated=dark gray. SMART: read SMART attributes via `atapi_dma_command()` / ATA SMART READ DATA command (CDB: `0xB0 0xD0 LBA_MID=0x4F LBA_HIGH=0xC2`); display Reallocated Sectors, Pending Sectors, Uncorrectable Sectors, Temperature, Power-On Hours in a side panel. Context menu per partition: `Format...`, `Delete Partition`, `Assign Drive Letter`, `Change Label`, `Properties`. Context menu on unallocated space: `New Simple Volume` → opens a wizard.
 
 - [ ] `diskmgmt_enumerate(disk_list_out)`: call `blkdev_enumerate()`; for each: parse GPT/MBR; build `diskmgmt_disk_t { model, total_lba, partitions[], smart_attrs[] }`
-- [ ] Upper table: `WM_PAINT` → draw `ListView`-style rows: disk index, model, total size, health icon (green/yellow/red from SMART); under each disk row: partition sub-rows with letter, fs, size, used%, status
+- [ ] Upper table: `WM_PAINT` → `ListView`-style rows (disk index, model, total size, SMART health); partition sub-rows under each disk
+  - Health is a status glyph plus text ("Healthy", "Caution", "Failing") in `status_success` / `status_caution` / `status_critical` (`docs/design/controls.md#status-colours`)
+  - Partition sub-rows: letter, fs, size, used%, status
 - [ ] Lower bar: `WM_PAINT` → for each disk: draw proportional rectangles; color-coded by filesystem; labels with size; hover tooltip shows full partition info
 - [ ] Context menu: right-click on partition rect → pop-up menu; `Format...` → open `dlg_format_wizard`; `Delete` → confirm dialog → `gpt_partition_delete()`; `Assign Letter` → input dialog → `vfs_mount()`
-- [ ] SMART panel: side panel shows attribute table; Reallocated Sectors > 0 → red; Temperature > 55°C → yellow; Power-On Hours for wear indicator
+- [ ] SMART panel: side panel shows attribute table; Reallocated Sectors > 0 → critical, Temperature > 55°C → caution, each shown as the status glyph and a text label in the `status_*` colour (never colour alone); Power-On Hours for wear indicator
 - [ ] `New Simple Volume` wizard: size slider (min 8 MiB, max free space); filesystem picker; label; drive letter; creates partition + formats
 - [ ] Commit: `"desktop: Disk Management GUI -- partition bar, SMART panel, context menus, New Simple Volume wizard"`
 
 ## 9. `diskuse` CLI + GUI `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Recursive directory size walker. CLI tree output. GUI treemap (rectangles sized by space). "Largest Files" tab. Right-click Open / Delete / Properties on any item.
 
@@ -216,6 +230,8 @@ Recursive directory size walker. CLI tree output. GUI treemap (rectangles sized 
 
 ## 10. Snapshot Manager CLI + GUI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 CRUD wrapper over the IXFS snapshot API. CLI: `snapshot create|list|restore|delete|diff <drive> [name]`. GUI: chronological timeline, diff viewer (added/modified/deleted), auto-schedule.
 
 **Files:** `src/shell/cmd_snapshot.c` (new), `src/desktop/dlg_snapshot.c` (new)
@@ -224,7 +240,11 @@ CRUD wrapper over the IXFS snapshot API. CLI: `snapshot create|list|restore|dele
 > Backend: `ixfs_snapshot_create()`, `ixfs_snapshot_list()`, `ixfs_snapshot_restore()`, `ixfs_snapshot_delete()`, `ixfs_snapshot_diff()` from `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §8`. `snapshot diff` returns a list of `{path, change_type (ADD/MOD/DEL), old_size, new_size}` tuples by comparing inode generation numbers between the snapshot's B-tree and the live filesystem. CLI: plain table output. GUI timeline: horizontal scrollable timeline; each snapshot = labeled dot with creation time and name; click → show diff in right panel; Create (names from timestamp by default) / Restore (requires confirmation) / Delete buttons. Auto-schedule: `HKLM\SYSTEM\Storage\Snapshots\Schedule\{letter}` registry key = `{interval_hours, retain_count, last_snapshot_xid}`; a kernel timer fires the snapshot thread.
 
 - [ ] CLI: `snapshot create <drive> [name]` → `ixfs_snapshot_create(letter, name)` → print snapshot ID; `snapshot list <drive>` → print table (ID, name, creation time, size on disk); `snapshot restore <drive> <id>` → confirm + `ixfs_snapshot_restore()`; `snapshot delete <drive> <id>` → `ixfs_snapshot_delete()`; `snapshot diff <drive> <id1> [id2]` → print diff table
-- [ ] GUI `dlg_snapshot_open(letter)`: left panel: timeline of snapshots with creation times; right panel: diff tree (ADD=green, MOD=yellow, DEL=red) for selected snapshot vs live (or selected vs selected); `Create` button (with optional name input); `Restore` button (with full-volume confirmation dialog); `Delete` button; status bar showing disk space used by all snapshots
+- [ ] GUI `dlg_snapshot_open(letter)`: snapshot timeline on the left, diff tree on the right, Create / Restore / Delete, status bar
+  - Left panel: timeline of snapshots with creation times
+  - Right panel: diff tree for the selected snapshot vs live (or vs another snapshot); change type as glyph plus text (Added, Modified, Deleted) in `status_success` / `status_caution` / `status_critical`
+  - `Create` (optional name input); `Restore` (full-volume confirmation dialog); `Delete` (standard button, confirmation dialog whose default is Cancel, `docs/design/controls.md#status-colours`)
+  - Status bar: disk space used by all snapshots
 - [ ] Auto-schedule: `snapshot_schedule_check(letter)`: if `time_since_last_snapshot > interval_hours`: call `ixfs_snapshot_create()`; prune oldest if `count > retain_count`; write `last_snapshot_xid` to registry
 - [ ] `snapshot_format_size(bytes)` → human-readable string (B/KiB/MiB/GiB) for timeline labels
 - [ ] Commit: `"shell: snapshot manager CLI + GUI -- IXFS snapshot CRUD, diff viewer, auto-schedule, timeline UI"`

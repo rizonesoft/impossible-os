@@ -260,6 +260,8 @@ Observed: `MOUSE 2213ms 1149ms P1` -- 1.1s for PS/2 mouse init even though FADT 
 
 ## 7. Async Font and Icon Loader (Post-Desktop-Ready)
 
+**Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
+
 Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase before `DESKTOP_READY` fires. The desktop is unusable for that 1.3s window. Async load: open with a minimal face + icon placeholders, swap in the full set as each completes.
 
 > [!NOTE]

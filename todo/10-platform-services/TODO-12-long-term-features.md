@@ -300,6 +300,8 @@ Privacy-first, zero-by-default telemetry. All collection requires explicit user 
 
 ## 11. Parental Controls (`parcon.cpl`) `[Sonnet]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 Per-user time limits, app blocking, and activity logging. Admin password required for all changes.
 
 **Kernel enforcement hook:**
@@ -320,7 +322,7 @@ Per-user time limits, app blocking, and activity logging. Admin password require
 
 **`parcon.cpl` applet (admin-only):**
 - [ ] User selector (`CTRL_LISTBOX` of child accounts)
-- [ ] Screen time slider (0–480 min, `CTRL_SCROLLBAR` + label)
+- [ ] Screen time slider (0–480 min, slider per `docs/design/controls.md#slider` + value label; not a scroll bar)
 - [ ] Allowed hours: start/end time pickers (hour/minute dropdowns)
 - [ ] App block list: `CTRL_LISTBOX` + `[Add]` (file picker) + `[Remove]`
 - [ ] Activity report: `CTRL_LISTBOX` of log entries per date

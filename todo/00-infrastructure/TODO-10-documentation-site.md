@@ -461,6 +461,8 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 
 ## 17. Document: Graphics and UI, part 2
 
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
 Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
 - [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive

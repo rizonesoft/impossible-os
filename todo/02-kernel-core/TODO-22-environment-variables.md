@@ -386,6 +386,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 9. Environment Change Notifications
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
+
 - [ ] **`SetEnvironmentVariable` is process-local:** modifies ONLY the caller's own block (§5/§6); never writes Registry, never broadcasts -- persistence + notification are exclusive to `setx` / `sysdm.cpl` (MS Learn).
 - [ ] After a Registry write via `setx` / `sysdm.cpl` (not `SetEnvironmentVariable`), post `WM_SETTINGCHANGE` (`0x001A`, `lParam=L"Environment"`) to `HWND_BROADCAST`; apps refresh via `SendMessageTimeout` with `SMTO_ABORTIFHUNG`.
 - [ ] WM delivery requires the window manager to be running; if WM is not yet started (early boot), skip silently

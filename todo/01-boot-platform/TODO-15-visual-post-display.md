@@ -182,6 +182,8 @@ A zero-dependency pixel font baked into a single header -- renders ASCII text di
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+0M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
+
+**Design:** n/a -- drawn before the compositor exists, on the boot framebuffer; follows the boot splash and boot error screen styles, not the desktop
 Replace `HV_BAR` with a structured pre-splash renderer that draws named stage bars with text labels directly to VRAM. Active from the first instruction after `g_boot_info` is parsed until the splash takes over.
 
 **Files:** `include/kernel/vpd.h` (new), `src/kernel/vpd.c` (new)
@@ -315,6 +317,8 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+1M+0L fixed, 1M deferred | scope: kernel-code-quality
 
 ## 9. Tier 2: Splash-Integrated Progress *(deferred)*
+
+**Design:** [`controls.md#progress`](../../docs/design/controls.md#progress)
 > [!NOTE] Deferred -- the current Tier 1 VPD is a developer diagnostic screen (`postbars=on`). Tier 2 is end-user facing and should be designed after the splash UX is finalized. Revisit when boot reliability is proven on bare metal.
 
 When `postbars=1`, the boot splash status text area shows VPD-style named stages with timing instead of generic "Setting up interrupts..." text.

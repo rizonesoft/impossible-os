@@ -8,112 +8,86 @@ title: "TODO-05 -- Desktop Shell Completion"
 
 # TODO-05 -- Desktop Shell Completion
 
-> **Goal:** Make the desktop shell functional: desktop icon clicks launch apps, right-click menu works, taskbar reflects window state (minimize/restore on click), start menu items launch programs, and power button triggers shutdown. The visual elements exist -- this wires them to actions.
+> **Goal:** Superseded. Every behaviour planned here is owned in `08-graphics-ui/` and built to `docs/design/shell.md`: desktop icons (`TODO-08` §4 plus `06-desktop-foundation/TODO-06` §2), the desktop menu (`TODO-09` §2), the taskbar (`TODO-10` §1) and Start (`TODO-11` §1-§3). Sections below are pointers so no second implementation is built.
 
 ## Inputs
 
 - [`src/desktop/desktop.c`](../../src/desktop/desktop.c) -- taskbar, start menu, desktop icons (visual only)
 - [`src/desktop/wm.c`](../../src/desktop/wm.c) -- window lifecycle, minimize/maximize (from TODO-01)
-- → XREF: `06-desktop-foundation/TODO-01-wm-completion.md` -- minimize/maximize must be implemented first
-- → XREF: `06-desktop-foundation/TODO-04-control-library.md §5` -- context menu engine needed for right-click
+- `08-graphics-ui/TODO-08-window-manager.md` §4, `TODO-09-desktop-shell-features.md` §1-§2, `TODO-10-taskbar.md` §1, `TODO-11-startmenu-tray-notifications.md` §1-§3 -- the canonical owners of everything planned here
 
 ## Outcome
 
-- Desktop icon double-click: opens associated window (Terminal, File Manager placeholder, etc.)
-- Right-click desktop: context menu with Refresh, Display Settings, New Folder
-- Taskbar: clicking a window entry minimizes/restores it, shows active window highlighted
-- Start menu: clicking "Terminal" opens terminal, "About" shows about dialog
-- Power button: triggers `ResetSystem()` or shutdown sequence
-- Settings button: opens Control Panel placeholder
+- No second implementation: each section points at its canonical `08-graphics-ui/` owner, which follows `docs/design/shell.md`.
+- The power menu's shutdown and restart reach UEFI `ResetSystem()`.
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                      | Depends On     | Status |
-| --- | :---: | -------------------------------- | -------------- | :----: |
-| 💎  |   1   | Desktop icon click actions       | --             |  [ ]   |
-| 💎  |   2   | Desktop right-click context menu | D06/TODO-04 §5 |  [ ]   |
-| 💎  |   3   | Taskbar window state sync        | D06/TODO-01 §1 |  [ ]   |
-| 💎  |   4   | Start menu program launch        | --             |  [ ]   |
-| 💎  |   5   | Power and settings buttons       | --             |  [ ]   |
-
+| ⭐  | Order | Deliverable                      | Depends On | Status |
+| --- | :---: | -------------------------------- | ---------- | :----: |
+| 💎  |   1   | Desktop icon click actions       | --         |  [/]   |
+| 💎  |   2   | Desktop right-click context menu | D08 T09 §2 |  [/]   |
+| 💎  |   3   | Taskbar window state sync        | D08 T10 §1 |  [/]   |
+| 💎  |   4   | Start menu program launch        | --         |  [/]   |
+| 💎  |   5   | Power and settings buttons       | --         |  [/]   |
 ---
 
 ## 1. Desktop Icon Click Actions
-Wire desktop icon clicks to launch associated windows/apps.
+
+**Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
+Desktop icon selection and double-click launch are owned by `08-graphics-ui/TODO-08` §4; the five special icons and their targets by `06-desktop-foundation/TODO-06` §2.
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] Double-click detection: track last click time + position, trigger on second click within 500ms and 4px
-- [ ] "Computer" icon → open File Manager (placeholder: show "Coming soon" dialog)
-- [ ] "Recycle Bin" icon → open Recycle Bin window (placeholder)
-- [ ] "Control Panel" icon → open Control Panel (placeholder)
-- [ ] Single-click: select icon (highlight with selection rect)
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §4`, which follows `docs/design/shell.md#desktop`; do not build a second double-click/select path here
+- [ ] Special-icon targets are defined in `06-desktop-foundation/TODO-06` §2 (This PC, Recycle Bin, user folder, Network, Control Panel); this section adds nothing beyond them
 
-**Test checkpoint:** Double-click "Computer" icon -- placeholder dialog opens. Single-click -- icon highlights.
+**Test checkpoint:** Double-click "This PC" opens File Explorer at This PC; single-click shows the selection fill.
 
 ## 2. Desktop Right-Click Context Menu
-Show a context menu when right-clicking on the desktop background.
+
+**Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
+The desktop right-click menu is owned by `08-graphics-ui/TODO-09` §2 on the engine of §1, in the design order: View, Sort by, Refresh | New | Display settings, Personalize | Open in Terminal, Show more options (Shift+F10).
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] Detect right-click on desktop (not on window, not on taskbar)
-- [ ] Show context menu via `menu_show()` (from TODO-04 §5) with items:
-  - "View" → submenu: Large Icons, Medium Icons, Small Icons (placeholder)
-  - separator
-  - "Refresh" → force compositor redraw
-  - "New" → submenu: Folder, Text Document (placeholder)
-  - separator
-  - "Display Settings" → open Display Settings dialog (placeholder)
-  - "Personalize" → open Personalization dialog (placeholder)
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-09-desktop-shell-features.md §2`, which follows `docs/design/shell.md#context-menus`; do not build a second desktop right-click menu here
 
 **Test checkpoint:** Right-click desktop → menu appears. Click "Refresh" → screen redraws. Click outside → menu closes.
 
 ## 3. Taskbar Window State Sync
-Taskbar entries reflect actual window state and allow minimize/restore.
+
+**Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
+Taskbar entries, the running and focused indicator pill, and click-to-minimize/restore are owned by `08-graphics-ui/TODO-10` §1.
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] Taskbar entries track window handles from WM
-- [ ] Active (focused) window: highlighted entry
-- [ ] Click entry of focused window → minimize
-- [ ] Click entry of minimized window → restore + focus
-- [ ] Click entry of unfocused visible window → focus + raise
-- [ ] Window destroy → remove entry from taskbar
-- [ ] Window create → add entry to taskbar
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-10-taskbar.md §1`, which follows `docs/design/shell.md#taskbar`; do not build a second taskbar window list here
 
 **Test checkpoint:** Open terminal + gallery. Click terminal taskbar entry -- minimizes. Click again -- restores. Click gallery entry -- focuses gallery.
 
 ## 4. Start Menu Program Launch
-Start menu items launch actual programs/windows.
+
+**Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
+Start is the Windows 11 layout owned by `08-graphics-ui/TODO-11` §1-§3: search on top, a 6 x 3 Pinned grid with an All apps view, Recommended, and a user and power footer. There is no All Programs list and no right column.
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] "Terminal" → `terminal_open()` (already exists)
-- [ ] "About" → open About dialog (WM dialog with version info)
-- [ ] "All Programs" → expand to show all .exe files in `C:\` (placeholder: show list)
-- [ ] Search bar → filter program list by typed text (future, basic substring match)
-- [ ] Right column: "Computer" → file manager, "Documents" → file manager at path
-- [ ] Close start menu after launching a program
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md §1 and §2`, which follows `docs/design/shell.md#start-menu`; do not build a second Start menu here
 
-**Test checkpoint:** Click Start → click "Terminal" → terminal opens, start menu closes. Click "About" → dialog shows OS version.
+**Test checkpoint:** Click Start → click the Terminal tile → terminal opens and Start closes (08 TODO-11 §2).
 
 ## 5. Power and Settings Buttons
-Wire the bottom buttons in the start menu.
+
+**Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
+The Start footer (user button left, power button right) and its menus are owned by `08-graphics-ui/TODO-11` §2; Settings is reached from its Pinned tile and the user menu.
 
 **Files:** `src/desktop/desktop.c`
 
-- [ ] Settings button → open Settings/Control Panel placeholder window
-- [ ] Power button → show submenu: "Shutdown", "Restart", "Sleep"
-- [ ] Shutdown → call UEFI `ResetSystem(EfiResetShutdown, ...)`
-- [ ] Restart → call UEFI `ResetSystem(EfiResetCold, ...)`
-- [ ] Sleep → placeholder (log "sleep not implemented")
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md §2`, which follows `docs/design/shell.md#start-menu`; do not build a second power or user menu here
+- [ ] `sys_shutdown()` / `sys_reboot()` used by the power menu reach UEFI `ResetSystem(EfiResetShutdown / EfiResetCold, ...)`; Sleep logs "sleep not implemented" until S3 exists
 
-**Test checkpoint:** Click Power → Shutdown submenu. Click "Restart" → machine reboots. Click "Settings" → placeholder window.
+**Test checkpoint:** Power button → context menu Sleep, Shut down, Restart; Restart reboots the machine.
 
 ---
 

@@ -82,6 +82,8 @@ title: "TODO-08 -- Notepad"
 
 ## 2. Text Rendering + Cursor `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 > → XREF: `09-desktop-shell/TODO-10-notepad.md §2`
 
 **Source file:** `src/apps/notepad/notepad_render.c`

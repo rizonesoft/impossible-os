@@ -138,6 +138,8 @@ Send the magic rate sequence (200→100→80 Hz) to the PS/2 mouse to unlock Int
 
 ## 7. Explorer 5-Button Extension (ID 4) `[Sonnet]`
 
+**Design:** n/a -- a hardware button event path; it draws nothing
+
 A second magic sequence (200→200→80 Hz) after the ID-3 sequence upgrades to the Explorer extension (ID 4), adding two side buttons in the upper nibble of packet byte 3.
 
 **Files:** `src/kernel/drivers/mouse.c`, `include/kernel/drivers/mouse.h`
@@ -181,7 +183,9 @@ Apply a configurable 16.16 fixed-point polynomial acceleration curve to relative
 
 ## 10. Layout Switching -- Win+Space, Tray Indicator `[Sonnet]`
 
-Win+Space cycles through installed layouts. A 2-letter indicator in the system tray (`EN`, `FR`, `DE`) updates immediately. Clicking the indicator opens a layout picker popup.
+**Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
+
+Win+Space cycles through installed layouts. The taskbar layout button (three-letter code such as `ENG`, shown only when more than one layout is installed, `docs/design/shell.md#taskbar`) updates immediately. Clicking it opens a menu of layouts (`docs/design/shell.md#context-menus`).
 
 **Files:** `src/kernel/drivers/keyboard.c`, `src/desktop/` (tray indicator component)
 
@@ -190,8 +194,8 @@ Win+Space cycles through installed layouts. A 2-letter indicator in the system t
 
 - [ ] Win+Space hotkey: in global key handler, detect `VK_SPACE` with `MOD_WIN`; call `kbd_cycle_layout()` → advance index in registered layout list; wrap around
 - [ ] `kbd_cycle_layout()` calls `kbd_set_layout(next_code)` and posts `WM_INPUT_LAYOUT_CHANGED(new_code)` to the compositor message queue
-- [ ] Compositor handler: update system-tray 2-letter label to `g_active_layout->code[0..1]`; trigger tray repaint
-- [ ] Tray indicator click: post `WM_SHOW_LAYOUT_PICKER` to shell; shell renders a popup list of `kbd_list_layouts()` entries with radio-button selection
+- [ ] Compositor handler: update the taskbar layout button to the three-letter code of `g_active_layout`; trigger tray repaint
+- [ ] Tray indicator click: post `WM_SHOW_LAYOUT_PICKER` to shell; shell shows a context menu (`context_menu_show()`, `08-graphics-ui/TODO-09 §1`) of `kbd_list_layouts()` entries with the active one checked
 - [ ] `kbd_list_layouts(buf, max)` -- fill array of `{ code, name }` structs from registered layout list
 - [ ] Boot log: `[KBD] Active layout: %s (%s)`
 - [ ] Commit: `"drivers: keyboard layout switching -- Win+Space cycle, WM_INPUT_LAYOUT_CHANGED, tray indicator"`
@@ -217,19 +221,19 @@ Sticky Keys activates after 5 rapid consecutive Shift presses (< 500 ms each); m
 ## OS Comparison
 
 
-| ⭐  | Feature                                     | 🪟 Win11                                                 | 🐧 Linux                                                  | 🚀 Impossible OS                                                    |
-| --- | ------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------- |
-| 💎  | Intellimouse scroll wheel                   | ✅ `mouhid.sys`; `WM_MOUSEWHEEL`                         | ✅ `psmouse`; `INPUT_EV_REL` `REL_WHEEL`                  | ⬜ §6 -- magic init, 4-byte parser, `WM_SCROLL`                     |
-| 💎  | Explorer 5-button (ID 4) side/extra buttons | ✅ `mouhid.sys`; `WM_XBUTTONDOWN`; `XBUTTON1`/`XBUTTON2` | ✅ `psmouse` Explorer; `BTN_SIDE`/`BTN_EXTRA`             | ⬜ §7 -- second magic sequence, `MOUSE_BTN_SIDE`/`EXTRA`            |
-| 💎  | PS/2 packet resync on sync-bit failure      | ✅ `i8042prt.sys` sync recovery                          | ✅ `psmouse` resync logic; `psmouse_resync()`             | ⬜ §5 -- bit-3 validation, single-byte re-scan, `sync_loss_count`   |
-| 💎  | Mouse acceleration + sensitivity curve      | ✅ Enhanced pointer precision; sensitivity slider        | ✅ `libinput` accel profiles (`adaptive`, `flat`)         | ⬜ §8 -- 16.16 fixed-point polynomial, `MouseSensitivity` Registry  |
-| 💎  | Raw input grab                              | ✅ `WM_INPUT` + `SetCapture`; DirectInput raw            | ✅ `evdev` grab (`EVIOCGRAB`); `libinput` grab            | ⬜ §9 -- `mouse_raw_grab()`, `WM_INPUT`, `SYS_MOUSE_GRAB` syscall   |
-| 💎  | Multi-plane keyboard layout                 | ✅ KTT layout files; `ToUnicodeEx`; full                 | ✅ `xkb` layouts; `evdev` key translation                 | ⬜ §1 -- `kbd_layout_t`, 3 planes + dead                            |
-| 💎  | Built-in layouts -- 6 locales + Dvorak      | ✅ 100+ layouts via Windows Update                       | ✅ `xkb` symbols ships 200+ layouts                       | ⬜ §2 -- en-US, en-GB, de-DE, fr-FR, es-ES,                         |
-| 💎  | Dead key compose -- accented characters     | ✅ `ToUnicodeEx` dead key state machine                  | ✅ `xkb` dead keys; `compose` table                       | ⬜ §4 -- `pending_dead_cp`, triple lookup, double-emit fallback     |
-| 💎  | UTF-8 / Unicode codepoint keyboard output   | ✅ `WM_CHAR` sends UTF-16 codepoint; `wchar_t`           | ✅ `evdev` `EV_KEY` + `KEY_*`; `libinput`                 | ⬜ §3 -- `utf8_encode/decode`, `codepoint` in key event,            |
-| 💎  | Layout switching -- hotkey + tray indicator | ✅ Win+Space / Win+Shift+Space; language bar             | ✅ `setxkbmap`; GNOME/KDE layout indicator in             | ⬜ §10 -- Win+Space cycle, `WM_INPUT_LAYOUT_CHANGED`, 2-letter tray |
-| 💎  | Sticky keys + typematic rate / delay        | ✅ Accessibility Settings → Sticky Keys;                 | ✅ `xkb` `StickyKeys`; `typematic_rate` via `setkeycodes` | ⬜ §11 -- 5-tap Shift, latch modifier, PS/2                         |
+| ⭐  | Feature                                     | 🪟 Win11                                                 | 🐧 Linux                                                  | 🚀 Impossible OS                                                   |
+| --- | ------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------ |
+| 💎  | Intellimouse scroll wheel                   | ✅ `mouhid.sys`; `WM_MOUSEWHEEL`                         | ✅ `psmouse`; `INPUT_EV_REL` `REL_WHEEL`                  | ⬜ §6 -- magic init, 4-byte parser, `WM_SCROLL`                    |
+| 💎  | Explorer 5-button (ID 4) side/extra buttons | ✅ `mouhid.sys`; `WM_XBUTTONDOWN`; `XBUTTON1`/`XBUTTON2` | ✅ `psmouse` Explorer; `BTN_SIDE`/`BTN_EXTRA`             | ⬜ §7 -- second magic sequence, `MOUSE_BTN_SIDE`/`EXTRA`           |
+| 💎  | PS/2 packet resync on sync-bit failure      | ✅ `i8042prt.sys` sync recovery                          | ✅ `psmouse` resync logic; `psmouse_resync()`             | ⬜ §5 -- bit-3 validation, single-byte re-scan, `sync_loss_count`  |
+| 💎  | Mouse acceleration + sensitivity curve      | ✅ Enhanced pointer precision; sensitivity slider        | ✅ `libinput` accel profiles (`adaptive`, `flat`)         | ⬜ §8 -- 16.16 fixed-point polynomial, `MouseSensitivity` Registry |
+| 💎  | Raw input grab                              | ✅ `WM_INPUT` + `SetCapture`; DirectInput raw            | ✅ `evdev` grab (`EVIOCGRAB`); `libinput` grab            | ⬜ §9 -- `mouse_raw_grab()`, `WM_INPUT`, `SYS_MOUSE_GRAB` syscall  |
+| 💎  | Multi-plane keyboard layout                 | ✅ KTT layout files; `ToUnicodeEx`; full                 | ✅ `xkb` layouts; `evdev` key translation                 | ⬜ §1 -- `kbd_layout_t`, 3 planes + dead                           |
+| 💎  | Built-in layouts -- 6 locales + Dvorak      | ✅ 100+ layouts via Windows Update                       | ✅ `xkb` symbols ships 200+ layouts                       | ⬜ §2 -- en-US, en-GB, de-DE, fr-FR, es-ES,                        |
+| 💎  | Dead key compose -- accented characters     | ✅ `ToUnicodeEx` dead key state machine                  | ✅ `xkb` dead keys; `compose` table                       | ⬜ §4 -- `pending_dead_cp`, triple lookup, double-emit fallback    |
+| 💎  | UTF-8 / Unicode codepoint keyboard output   | ✅ `WM_CHAR` sends UTF-16 codepoint; `wchar_t`           | ✅ `evdev` `EV_KEY` + `KEY_*`; `libinput`                 | ⬜ §3 -- `utf8_encode/decode`, `codepoint` in key event,           |
+| 💎  | Layout switching -- hotkey + tray indicator | ✅ Win+Space / Win+Shift+Space; language bar             | ✅ `setxkbmap`; GNOME/KDE layout indicator in             | ⬜ §10 -- Win+Space cycle, three-letter taskbar layout button      |
+| 💎  | Sticky keys + typematic rate / delay        | ✅ Accessibility Settings → Sticky Keys;                 | ✅ `xkb` `StickyKeys`; `typematic_rate` via `setkeycodes` | ⬜ §11 -- 5-tap Shift, latch modifier, PS/2                        |
 
 > **After §1–11:** Impossible OS matches Windows 11 and Linux on the complete desktop input stack. No exclusive differentiators are claimed here -- correctness and parity are the goal. The notable design decision: the keyboard outputs Unicode codepoints natively (not scan codes or VK codes) from the driver layer up, matching how modern compositors expect to receive text input and eliminating the legacy ASCII transformation layer that Windows and Linux carry for backward compatibility.
 

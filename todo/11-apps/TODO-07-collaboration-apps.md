@@ -60,6 +60,8 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## 1. VNC Client `[Opus]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 > VNC DES challenge-response auth is security-critical (password derived key, 8-byte random
 > challenge, DES-ECB encryption). `[Opus]` covers §1.2 auth; the rest of the section wires
 > standard TCP protocol flows.
@@ -98,6 +100,8 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## 2. IRC / Chat Client `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 **Source file:** `src/apps/chat/chat.c`; header `include/apps/chat/chat.h`
 
 - [ ] **Connection**: `kern_socket` + `kern_connect(fd, ip, 6667)` (plain) or `tls_connect(fd, host)` for port 6697 (TLS); `dns_resolve(host, &ip)` first
@@ -112,7 +116,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
   - [ ] `PING :token` → immediately send `PONG :{token}\r\n` (keep-alive)
   - [ ] `432`/`433` (nick collision) → append `_` to nick, retry `NICK`
 - [ ] **UI layout**:
-  - [ ] Left sidebar (160 px): `CTRL_LISTVIEW` -- server node + channel nodes; click channel → switch to that scrollback
+  - [ ] Left sidebar (280 px, `docs/design/shell.md#app-window-layout`): `CTRL_LISTVIEW` -- server node + channel nodes; click channel → switch to that scrollback
   - [ ] Message area (scrollable `CTRL_SCROLLBAR_VERT`): each line prefixed with `[HH:MM] <nick>` or `* nick action`; username color set by `hash(nick) % palette_size` (8 pastel colors)
   - [ ] Input field (`CTRL_TEXTBOX`, bottom): Enter → send `PRIVMSG {channel} :{text}\r\n`; up-arrow history (last 16 lines)
   - [ ] Tab completion: press Tab → scan user list for `nick` prefix match → cycle through completions; first Tab: append `: ` after nick
@@ -131,6 +135,8 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## 3. RSS / News Reader `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 **Source file:** `src/apps/news/news.c`; `src/apps/news/rss_parse.c`; header `include/apps/news/news.h`
 
 - [ ] **Feed fetch**: `news_fetch_feed(url, buf, max_len)` → `https_get(url, buf, max_len)` or `http_get()`; accept `application/rss+xml`, `application/atom+xml`, `text/xml`
@@ -140,7 +146,8 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 - [ ] **Storage**: items saved to `C:\Users\{name}\AppData\News\{feed_hash}\{guid_hash}.dat` (VFS write); `feed_hash = crc32(url) % 10000`; `guid_hash = crc32(guid) % 1000000`; `read` flag persisted in filename suffix `_r` (read) vs no suffix (unread)
 - [ ] **Feed registry**: `HKCU\Software\Impossible\News\Feeds\{n}\{URL,Title,LastFetch}` -- enumerate to build feed list
 - [ ] **UI layout**:
-  - [ ] Left sidebar (200 px): `CTRL_LISTVIEW` showing feed name + unread count badge; `[+ Add Feed]` button at top → dialog prompts URL → `news_fetch_feed` once → extract channel/feed title → save to Registry
+  - [ ] Left sidebar (280 px, `docs/design/shell.md#app-window-layout`): `CTRL_LISTVIEW` of feeds with unread counts
+    - `CTRL_LISTVIEW` showing feed name + unread count badge; `[+ Add Feed]` button at top → dialog prompts URL → `news_fetch_feed` once → extract channel/feed title → save to Registry
   - [ ] Item list (middle, `CTRL_LISTVIEW`): title (bold if unread) + date; click → open in reading pane
   - [ ] Reading pane (right): feed title + item title (large TTF); date; description HTML stripped to plain text (same tag-strip logic as email viewer); `[Open in Browser]` button → `file_assoc_open(link_url)` → browser
   - [ ] `[Mark All Read]` button per feed

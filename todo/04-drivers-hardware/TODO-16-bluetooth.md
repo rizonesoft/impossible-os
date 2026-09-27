@@ -19,7 +19,7 @@ title: "TODO-16 -- Bluetooth Full Stack"
 - `src/kernel/drivers/hid_parser.c` (→ XREF: `04-drivers-hardware/TODO-12-i2c-touchpad.md §5`) -- HID report descriptor parser reused by Bluetooth HID profile (§6)
 - → XREF: `04-drivers-hardware/TODO-04-security-hardware.md §2` -- `hwrng_read()` required for SSP pairing nonce (§9) and A2DP SBC bitpool random seed
 - → XREF: `11-apps` domain -- audio routing: when A2DP headphones connect (§8), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
-- → XREF: `09-desktop-shell` domain -- `bluetooth.cpl` (§9) is a control-panel applet; system tray Bluetooth icon is a shell component consuming `bt_manager_get_state()`
+- → XREF: `09-desktop-shell` domain -- `bluetooth.cpl` (§9) is a control-panel applet; the quick settings Bluetooth tile is a shell component consuming `bt_manager_get_state()`
 
 ## Outcome
 
@@ -30,7 +30,7 @@ title: "TODO-16 -- Bluetooth Full Stack"
 - A2DP: Bluetooth headphones stream SBC audio; AVRCP play/pause/volume controls.
 - RFCOMM/SPP: serial-over-Bluetooth for GPS, legacy devices; `/dev/rfcomm0` VFS node.
 - BLE scanning and GATT: battery level from BLE mice/keyboards; Device Information profile.
-- System tray icon; `bluetooth.cpl` paired-device manager; `btctl` shell command.
+- Quick settings Bluetooth tile; `bluetooth.cpl` paired-device manager; `btctl` shell command.
 
 ## Implementation Order
 
@@ -206,7 +206,9 @@ Implement A2DP audio streaming via AVDTP on L2CAP PSM 0x0019: SEP discovery, SBC
 
 ## 9. Bluetooth Manager + Pairing UI + `bluetooth.cpl` `[Opus]`
 
-Implement `bt_manager.c` as the central Bluetooth state controller. Handle SSP Just-Works and Numeric Comparison pairing. Store paired devices in Registry. Show system tray icon. Provide `bluetooth.cpl` settings applet for scan, pair, connect, disconnect, forget.
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
+Implement `bt_manager.c` as the central Bluetooth state controller. Handle SSP Just-Works and Numeric Comparison pairing. Store paired devices in Registry. Feed the quick settings Bluetooth tile. Provide `bluetooth.cpl` settings applet for scan, pair, connect, disconnect, forget.
 
 **Files:** `src/kernel/drivers/bt_manager.c` (new), `include/kernel/drivers/bt_manager.h` (new), `src/desktop/bluetooth_cpl.c` (new)
 
@@ -217,7 +219,8 @@ Implement `bt_manager.c` as the central Bluetooth state controller. Handle SSP J
 - [ ] SSP pairing: on `IO_CAPABILITY_REQUEST` event: reply `IO_CAPABILITY_RESPONSE(capability=NoInputNoOutput, OOB=0, auth=MITM_NOT_REQUIRED)`; on `USER_CONFIRMATION_REQUEST`: if Just-Works, `HCI_USER_CONFIRMATION_REQUEST_REPLY(bd_addr)`; if Numeric Comparison, show passkey dialog then reply; on `SIMPLE_PAIRING_COMPLETE (status=0)`: store link key via `LINK_KEY_REQUEST_REPLY(bd_addr, key[16])`
 - [ ] Paired device Registry: `HKLM\SYSTEM\Bluetooth\PairedDevices\{BD_ADDR}\`: `Name (REG_SZ)`, `Class (REG_DWORD)`, `LinkKey (REG_BINARY, 16 bytes)`, `AutoConnect (REG_DWORD)`
 - [ ] Auto-reconnect: at boot and on Bluetooth enable, iterate paired devices with `AutoConnect=1`; issue `HCI_CREATE_CONNECTION(bd_addr)`
-- [ ] System tray icon: Bluetooth symbol; click → fly-out showing state (`Off / Ready / Connected: DeviceName`); right-click → `Open bluetooth.cpl`
+- [ ] Bluetooth state in quick settings: `bt_manager_get_state()` drives the Bluetooth toggle tile of the quick settings flyout (`08-graphics-ui/TODO-09 §8`, `docs/design/shell.md#quick-settings`)
+  - Label `Off / Ready / <DeviceName>`; right-click the tile → `Open bluetooth.cpl`; no standalone tray icon
 - [ ] `bluetooth.cpl` applet: sections: **Scan** (5 s inquiry, results list: name + type icon + RSSI), **Pair** button → SSP flow, **Connected devices** list with disconnect/forget, **Settings**: discoverable toggle, auto-connect, adapter name
 - [ ] Boot log: `[BT-MGR] Bluetooth ready, %u paired devices loaded from Registry`
 - [ ] Commit: `"desktop: BT manager -- SSP pairing, link key Registry, auto-reconnect, bluetooth.cpl applet"`

@@ -102,6 +102,8 @@ Build the vector/path layer that current shell polish and future Win32k path/SVG
 
 ## 4. Theme-Aware Icon, Cursor, and Scalable Asset Pipeline
 
+**Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons), [`icons.md#the-set`](../../docs/design/icons.md#the-set)
+
 Unify the current image, icon, and cursor code into one size-selection and theme-selection policy that matches modern desktop stacks.
 
 - [ ] Add `gfx_asset_desc_t` / `gfx_asset_variant_t` metadata covering kind, nominal size, DPI scale, theme variant, and source format (PNG, ICO, CUR, ANI, SVG, Xcur, IRES)

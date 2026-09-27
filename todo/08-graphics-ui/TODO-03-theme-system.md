@@ -24,17 +24,17 @@ title: "TODO-03 -- Theme System"
 
 ## Outcome
 
-- `include/desktop/theme.h` exports `theme_t` with 21 named color tokens; `theme_get()` returns singleton.
+- `include/desktop/theme.h` exports `theme_t` with every design colour token and material per theme (`docs/design/tokens.json`); `theme_get()` returns singleton.
 - `src/desktop/theme.c` provides Dark + Light presets, Registry load, `theme_reload()`, computed accent variants.
 - Zero hardcoded `0xRRGGBB` literals remain in `desktop.c`, `wm.c`, `controls.c`, `terminal.c`, `gallery.c`.
-- `gfx_drop_shadow` called with `theme_get()->shadow` everywhere.
+- Shadows use the elevation tokens; acrylic and mica use the theme's materials.
 - Hot-reload: `theme_reload()` re-reads Registry and broadcasts `WM_THEME_CHANGED` → all windows redraw in the same compositor frame.
 
 ## Implementation Order
 
 | ⭐  | Order | Deliverable                                                                                   | Depends On                                                              | Status |
 | --- | :---: | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 `theme_t` struct -- 21 named token fields in `include/desktop/theme.h`                    | Nothing; standalone header                                              |  [ ]   |
+| 💎  |   1   | §1 `theme_t` struct -- design colour tokens + materials in `include/desktop/theme.h`           | Nothing; standalone header                                              |  [ ]   |
 | 💎  |   2   | §2 `theme_get()` singleton -- static global + inline accessor; opaque to callers              | §1 struct definition                                                    |  [ ]   |
 | 💎  |   3   | §3 Built-in presets -- `THEME_DARK` + `THEME_LIGHT` `const theme_t` constants               | §1 struct                                                               |  [ ]   |
 | 💎  |   4   | §4 Registry load -- `theme_load()` reads `HKCU\Software\Impossible\Theme\*`, selects preset  | §3 presets (load picks one then overrides individual fields)            |  [ ]   |
@@ -48,26 +48,30 @@ title: "TODO-03 -- Theme System"
 
 ## 1. `theme_t` Struct `[Sonnet]`
 
-Define 21 named color token fields covering every semantic UI color role. Store in `include/desktop/theme.h`. All fields are `uint32_t` ARGB32 (`0xAARRGGBB`).
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
+
+Define `theme_t` so it carries every theme-dependent token of the design (`docs/design/tokens.json`): one colour field per key of `color.themes.<theme>` with the SAME name, plus the acrylic/mica material parameters per surface. Theme-independent tokens (sizes, radii, spacing, type ramp, elevation, motion) stay compile-time `THEME_SIZE_*` / `THEME_RADIUS_*` / `THEME_SPACE_*` / `THEME_TYPE_*` / `THEME_ELEV_*` / `THEME_MOTION_*` constants from the generated `include/desktop/theme_tokens.h` and are NOT duplicated in the struct. Store in `include/desktop/theme.h`. Colours are `uint32_t` ARGB32 (`0xAARRGGBB`).
 
 **Files:** `include/desktop/theme.h` (new)
 
 > [!NOTE]
-> Keep the struct a plain POD -- no function pointers, no padding. All colors are `uint32_t ARGB32`. Group fields semantically: surface colors, foreground colors, accent colors, component-specific colors. Forward-declare the struct only in this header; all other desktop files `#include "desktop/theme.h"`.
+> Keep the struct a plain POD -- no function pointers. Field names mirror the token keys exactly so a grep for a token finds every use (e.g. `theme_get()->colors.window_bg`, `theme_get()->colors.caption_close_hover`, `theme_get()->mat.flyout.blur`). When a colour token is added to `tokens.json`, the struct gains the field in the same commit (the presets in §3 read the generated constants, so a missing field is a compile error there). All other desktop files `#include "desktop/theme.h"`.
 
-- [ ] `typedef struct theme_t { ... } theme_t;` in `include/desktop/theme.h` with `#pragma once`
-- [ ] Surface group: `uint32_t background, surface, surface_variant`
-- [ ] Foreground group: `uint32_t foreground, foreground_muted`
-- [ ] Accent group: `uint32_t accent, accent_hover, accent_pressed`
-- [ ] Border/shadow group: `uint32_t border, shadow`
-- [ ] Titlebar group: `uint32_t titlebar_active, titlebar_inactive`
-- [ ] Button group: `uint32_t button_bg, button_hover, button_pressed`
-- [ ] State group: `uint32_t selection, error, warning, success`
-- [ ] Scrollbar group: `uint32_t scrollbar_track, scrollbar_thumb`
-- [ ] Total: 21 fields; add `uint8_t mode` (0=dark, 1=light) as metadata field for hot-reload logic
-- [ ] Commit: `"desktop/theme: theme_t struct -- 21 color tokens + mode field"`
+- [ ] `typedef struct theme_colors_t { ... } theme_colors_t;` with one `uint32_t` per colour token, named as in `tokens.json`
+  - Accent: `accent, accent_hover, accent_pressed, text_on_accent`; text: `text_primary, text_secondary, text_tertiary, text_disabled`
+  - Surfaces: `window_bg, window_bg_inactive, card_bg, layer_bg, smoke`; controls: `control_fill, control_fill_hover, control_fill_pressed, control_fill_disabled, control_fill_input_active, subtle_fill_hover, subtle_fill_pressed`
+  - Strokes: `stroke_card, stroke_control, stroke_surface, stroke_divider, control_strong_stroke, control_underline`; focus: `focus_outer, focus_inner`
+  - Shell: `caption_close_hover, caption_close_pressed, taskbar_indicator, taskbar_indicator_idle, desktop_label, desktop_label_shadow, selection_fill, selection_stroke, toggle_knob_off`
+- [ ] `typedef struct { uint32_t tint; uint8_t tint_opacity, luminosity_opacity, blur, noise; } theme_material_t;` and `typedef struct { uint32_t tint; uint8_t tint_opacity, desaturate; } theme_mica_t;`
+- [ ] `theme_t` in `include/desktop/theme.h` (`#pragma once`): colours, per-surface materials, mode and transparency
+  - `typedef struct theme_t { theme_colors_t colors; struct { theme_material_t taskbar, start, flyout, menu; theme_mica_t mica; } mat; uint8_t mode; uint8_t transparency; } theme_t;`
+  - `mode` 0=dark 1=light; `transparency` mirrors `EnableTransparency`
+- [ ] `_Static_assert` that `theme_colors_t` has exactly as many fields as there are colour tokens (count emitted by `gen_theme_header.py` as `THEME_COLOR_TOKEN_COUNT`, add that define to the generator)
+- [ ] Commit: `"desktop/theme: theme_t struct -- colour tokens + materials per theme, named after docs/design/tokens.json"`
 
 ## 2. `theme_get()` Singleton `[Sonnet]`
+
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
 Static global `theme_t g_theme` in `theme.c`. `theme_get()` returns `const theme_t*`. `theme_init()` called once from desktop startup before any drawing occurs.
 
@@ -84,21 +88,25 @@ Static global `theme_t g_theme` in `theme.c`. `theme_get()` returns `const theme
 
 ## 3. Built-in Presets `[Sonnet]`
 
-Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`. Both use `#0078D4` accent. Declared as `extern const theme_t THEME_DARK, THEME_LIGHT` in the header; defined in `theme.c`.
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
+
+Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`, built entirely from the generated `THEME_DARK_*` / `THEME_LIGHT_*` and `THEME_MAT_DARK_*` / `THEME_MAT_LIGHT_*` constants in `include/desktop/theme_tokens.h`. The accent is per theme: `#60CDFF` in dark, `#005FB8` in light (`THEME_DARK_ACCENT`, `THEME_LIGHT_ACCENT`). Declared as `extern const theme_t THEME_DARK, THEME_LIGHT` in the header; defined in `theme.c`.
 
 **Files:** `src/desktop/theme.c` (extend), `include/desktop/theme.h` (extend)
 
 > [!NOTE]
-> Encode colors as `0xFF000000 | 0xRRGGBB` (fully opaque ARGB32). The `shadow` token carries alpha -- dark mode: `0xB4000000` (70% opacity black); light mode: `0x50000000` (31% opacity black). Accent hover/pressed are computed in §5, not hard-coded here; leave them set to `0` in the const presets (they get filled in by `theme_load()`).
+> No hex literal appears in `theme.c`: every field initializer is a `THEME_*` constant, so a change to `docs/design/tokens.json` reaches the presets by regenerating the header (drift-checked by lint Check 30). `accent_hover` / `accent_pressed` come from the tokens for the default accent; §5 recomputes them only when the user picks a custom accent.
 
-- [ ] `THEME_DARK`: `background=0xFF1C1C1C`, `surface=0xFF2C2C2C`, `surface_variant=0xFF3A3A3A`, `foreground=0xFFFFFFFF`, `foreground_muted=0xFF9D9D9D`, `accent=0xFF0078D4`, `border=0xFF454545`, `shadow=0xB4000000`, `titlebar_active=0xFF1C1C1C`, `titlebar_inactive=0xFF2C2C2C`, `button_bg=0xFF3A3A3A`, `button_hover=0xFF4A4A4A`, `button_pressed=0xFF2A2A2A`, `selection=0xFF0078D4`, `error=0xFFCC2929`, `warning=0xFFD98400`, `success=0xFF107C10`, `scrollbar_track=0xFF2C2C2C`, `scrollbar_thumb=0xFF555555`, `mode=0`
-- [ ] `THEME_LIGHT`: `background=0xFFF3F3F3`, `surface=0xFFFFFFFF`, `surface_variant=0xFFEAEAEA`, `foreground=0xFF000000`, `foreground_muted=0xFF666666`, `accent=0xFF0078D4`, `border=0xFFD1D1D1`, `shadow=0x50000000`, `titlebar_active=0xFFEEEEEE`, `titlebar_inactive=0xFFF3F3F3`, `button_bg=0xFFE5E5E5`, `button_hover=0xFFD5D5D5`, `button_pressed=0xFFC5C5C5`, `selection=0xFF0078D4`, `error=0xFFCC2929`, `warning=0xFFD98400`, `success=0xFF107C10`, `scrollbar_track=0xFFF0F0F0`, `scrollbar_thumb=0xFFB0B0B0`, `mode=1`
+- [ ] `THEME_DARK`: every `colors.<token>` = `THEME_DARK_<TOKEN>` (e.g. `window_bg = THEME_DARK_WINDOW_BG` = `#202020`, `accent = THEME_DARK_ACCENT` = `#60CDFF`); `mat.taskbar/start/flyout/menu/mica` from `THEME_MAT_DARK_*`; `mode = 0`
+- [ ] `THEME_LIGHT`: same with `THEME_LIGHT_*` (`window_bg` `#F3F3F3`, `accent` `#005FB8`) and `THEME_MAT_LIGHT_*`; `mode = 1`
 - [ ] `extern const theme_t THEME_DARK;` and `extern const theme_t THEME_LIGHT;` in `include/desktop/theme.h`
-- [ ] Commit: `"desktop/theme: THEME_DARK + THEME_LIGHT built-in presets"`
+- [ ] Commit: `"desktop/theme: THEME_DARK + THEME_LIGHT presets built from the generated design tokens"`
 
 ## 4. Registry Load `[Sonnet]`
 
-`theme_load()` reads `HKCU\Software\Impossible\Theme\Mode` (0=dark, 1=light), `AccentColor` DWORD, `TitlebarActiveColor`, `TitlebarInactiveColor`. Selects the preset, then overrides individual fields if Registry values are present.
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
+
+`theme_load()` selects the dark or light preset, then applies a custom accent if one is set. Until §9 lands it reads `HKCU\Software\Impossible\Theme\Mode` (0=dark, 1=light) and `AccentColor`; §9 moves both to the Windows 11 personalization keys. Titlebar colours are NOT overridable: the title bar is mica / `window_bg_inactive` per `docs/design/shell.md#window-chrome`.
 
 **Files:** `src/desktop/theme.c` (extend)
 
@@ -108,9 +116,7 @@ Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`. Both use `#0078D4
 - [ ] `void theme_load(void)` in `src/desktop/theme.c`:
   - [ ] Open `HKCU\Software\Impossible\Theme` with `RegOpenKeyEx()`
   - [ ] Read `Mode` DWORD → select `THEME_DARK` or `THEME_LIGHT` as base; `g_theme = base_preset`
-  - [ ] Read `AccentColor` DWORD → if present: `g_theme.accent = value`
-  - [ ] Read `TitlebarActiveColor` DWORD → if present: `g_theme.titlebar_active = value`
-  - [ ] Read `TitlebarInactiveColor` DWORD → if present: `g_theme.titlebar_inactive = value`
+  - [ ] Read `AccentColor` DWORD → if present: `g_theme.colors.accent = value` and recompute hover/pressed (§5)
   - [ ] On any `RegOpenKeyEx` failure: `g_theme = THEME_DARK`; log and return
   - [ ] `RegCloseKey()` after all reads
 - [ ] Registry paths above are superseded by the Win11 personalization contract in §9: read the Microsoft keys first, `HKCU\Software\Impossible\Theme\*` only for Impossible-specific overrides
@@ -119,7 +125,9 @@ Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`. Both use `#0078D4
 
 ## 5. Custom Accent Color `[Sonnet]`
 
-After `theme_load()` sets `g_theme.accent`, compute `accent_hover` and `accent_pressed` by clamped lightening and darkening. Done once at load time -- no runtime recomputation.
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
+
+When a custom accent is set, derive `accent_hover` and `accent_pressed` the way the default tokens are derived, so a custom accent behaves like the design's: in dark mode hover = 90% and pressed = 80% of each channel (`#60CDFF` → `#5AB9E6` → `#4FA3CC`); in light mode hover mixes 10% and pressed 20% white into the accent (`#005FB8` → `#196EBF` → `#317DC6`). With the default accent the token values are used as-is. Done once at load time.
 
 **Files:** `src/desktop/theme.c` (extend)
 
@@ -128,37 +136,34 @@ After `theme_load()` sets `g_theme.accent`, compute `accent_hover` and `accent_p
 
 - [ ] `static void theme_compute_accent_variants(void)` in `src/desktop/theme.c`:
   - [ ] Extract `r`, `g`, `b` from `g_theme.accent`
-  - [ ] `accent_hover`: add `0x10` to each channel; clamp to 255; recombine with `0xFF` alpha
-  - [ ] `accent_pressed`: subtract `0x18` from each channel; clamp to 0; recombine with `0xFF` alpha
+  - [ ] Dark: `accent_hover = c * 9 / 10`, `accent_pressed = c * 8 / 10` per channel; light: `accent_hover = c + (255 - c) / 10`, `accent_pressed = c + (255 - c) / 5`; alpha `0xFF`
+  - [ ] Unit check: the default accents reproduce `THEME_*_ACCENT_HOVER` / `_PRESSED` within 1 per channel
 - [ ] Call `theme_compute_accent_variants()` at the end of `theme_load()`
 - [ ] Commit: `"desktop/theme: computed accent_hover/accent_pressed variants from loaded accent"`
 
 ## 6. Migration Pass `[Sonnet]`
 
-Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `wm.c`, `controls.c`, `terminal.c`, and `gallery.c` with `theme_get()->field` references. Add a `static_assert`-style comment guard: after migration, any remaining literal triggers a TODO comment for review.
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
+
+Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `wm.c`, `controls.c`, `terminal.c`, and `gallery.c` with `theme_get()->colors.<token>` references (see the mapping guide). Add a `static_assert`-style comment guard: after migration, any remaining literal triggers a TODO comment for review.
 
 **Files:** `src/desktop/desktop.c`, `src/desktop/wm.c`, `src/desktop/controls.c`, `src/desktop/terminal.c`, `src/desktop/gallery.c`
 
 > [!NOTE]
-> Mapping guide for common literals found in the codebase:
-> - Window background fills → `theme_get()->background`
-> - Control surface fills (button bg, panel bg) → `theme_get()->surface` or `theme_get()->button_bg`
-> - Titlebar background (focused) → `theme_get()->titlebar_active`
-> - Titlebar background (unfocused) → `theme_get()->titlebar_inactive`
-> - Text/label color → `theme_get()->foreground`
-> - Muted/secondary text → `theme_get()->foreground_muted`
-> - Accent highlights, focused rings, selection → `theme_get()->accent`
-> - Button hover state → `theme_get()->button_hover`
-> - Button pressed state → `theme_get()->button_pressed`
-> - Scrollbar track → `theme_get()->scrollbar_track`
-> - Scrollbar thumb → `theme_get()->scrollbar_thumb`
-> - Border/outline → `theme_get()->border`
+> Mapping guide (token names from `docs/design/tokens.json`; sizes and radii go to `THEME_SIZE_*` / `THEME_RADIUS_*` constants at the same time):
+> - Window/client background → `colors.window_bg` (inactive title bar → `colors.window_bg_inactive`)
+> - Button / control rest, hover, pressed, disabled → `colors.control_fill`, `control_fill_hover`, `control_fill_pressed`, `control_fill_disabled`; subtle (toolbar, caption, list) → `subtle_fill_hover` / `subtle_fill_pressed`
+> - Title bar background (focused) → mica (`mat.mica`, `gfx_mica()`); caption close hover → `colors.caption_close_hover`
+> - Text → `colors.text_primary`; secondary → `text_secondary`; tertiary → `text_tertiary`; disabled → `text_disabled`; on accent → `text_on_accent`
+> - Accent fills → `colors.accent`; selection → `selection_fill` + `selection_stroke`; keyboard focus → `focus_outer` + `focus_inner`
+> - Borders → `stroke_control` (controls), `stroke_surface` (windows, flyouts), `stroke_card` (cards), `stroke_divider` (separators)
+> - Scrollbar → `control_strong_stroke`; text box underline → `control_underline`; modal dim → `smoke`
 >
 > Do not change `terminal.c` terminal-emulator ANSI colors (those are VT100 palette, not UI theme). Only replace UI chrome colors (cursor, selection bg, scrollbar, border).
 
 - [ ] `#include "desktop/theme.h"` added to all five files
 - [ ] `desktop.c`: replace background fills, desktop surface, selection highlight
-- [ ] `wm.c`: replace titlebar_active, titlebar_inactive, close/min/max button states, window border, resize handle
+- [ ] `wm.c`: replace title bar fills (mica active, `window_bg_inactive` inactive), caption button states (`subtle_fill_hover`, `caption_close_hover`), window border (`stroke_surface`), resize handle
 - [ ] `controls.c`: replace button_bg, button_hover, button_pressed, label foreground, textbox bg + border, scrollbar track + thumb, checkbox/radio fill, progress bar accent
 - [ ] `terminal.c`: replace terminal chrome (border, scrollbar, cursor color) -- keep ANSI VT100 palette literals untouched
 - [ ] `gallery.c`: replace background, toolbar bg, selection rect
@@ -167,21 +172,24 @@ Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `
 
 ## 7. Theme-Aware Shadow Rendering `[Sonnet]`
 
-Update all `gfx_drop_shadow()` and `gfx_acrylic()` call sites to pass `theme_get()->shadow` and `theme_get()->surface` respectively, so shadow depth and tint respond to dark/light mode.
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system), [`shell.md#materials`](../../docs/design/shell.md#materials)
+
+Update every `gfx_drop_shadow()` call to use the elevation token for its surface (`THEME_ELEV_<NAME>_Y/_BLUR/_ALPHA`: control, card, tooltip, flyout, start, window_active, window_inactive) and every `gfx_acrylic()` / `gfx_mica()` call to pass the theme's material for that surface (`theme_get()->mat.taskbar/start/flyout/menu/mica`), per `docs/design/shell.md#materials`.
 
 **Files:** `src/desktop/wm.c`, `src/desktop/controls.c`, `src/desktop/desktop.c`
 
 > [!NOTE]
-> `gfx_drop_shadow(s, x, y, w, h, radius, corner_radius, offset_x, offset_y, color)` -- pass `theme_get()->shadow` for `color`. `gfx_acrylic(s, x, y, w, h, tint, opacity, blur_radius)` -- pass `theme_get()->surface` for `tint`; opacity stays as-is (window-specific). `gfx_mica(s, x, y, w, h, wallpaper, tint)` -- pass `theme_get()->surface` for `tint`. Dark mode shadow: `0xB4000000` (opaque-ish black); light mode: `0x50000000` (lighter) -- already encoded in the presets (§3), so this section is purely a call-site wiring task.
+> `gfx_drop_shadow(s, x, y, w, h, radius, corner_radius, offset_x, offset_y, color)` -- `offset_y` and `radius` from `THEME_ELEV_<NAME>_Y` / `_BLUR`, `color` black with alpha `THEME_ELEV_<NAME>_ALPHA`, `offset_x` 0 (one key light from above). `gfx_acrylic(s, x, y, w, h, tint, opacity, blur_radius)` -- `tint`, `opacity`, `blur_radius` from the surface's `theme_material_t`; when `theme_get()->transparency` is 0 draw the tint at full opacity instead (§9). `gfx_mica(s, x, y, w, h, wallpaper, tint)` -- `theme_get()->mat.mica`.
 
-- [ ] `wm.c`: `gfx_drop_shadow(…, theme_get()->shadow)` for window shadow
-- [ ] `wm.c`: `gfx_acrylic(…, theme_get()->surface, opacity, radius)` for dialog acrylic background
-- [ ] `controls.c`: any `gfx_drop_shadow` calls (e.g., tooltip shadow, dropdown shadow) → `theme_get()->shadow`
-- [ ] `desktop.c`: `gfx_mica(…, theme_get()->surface)` for desktop Mica background
+- [ ] `wm.c`: window shadow from `THEME_ELEV_WINDOW_ACTIVE_*` / `THEME_ELEV_WINDOW_INACTIVE_*`; dialog backdrop uses mica (`mat.mica`)
+- [ ] `controls.c`: tooltip shadow `THEME_ELEV_TOOLTIP_*`, drop-down and menu shadow `THEME_ELEV_FLYOUT_*`
+- [ ] `desktop.c`: taskbar `mat.taskbar`, Start `mat.start` + `THEME_ELEV_START_*`, flyouts `mat.flyout` + `THEME_ELEV_FLYOUT_*`
 - [ ] Shadows come from the elevation tokens (`THEME_ELEV_*`): control, card, tooltip, flyout, start, window_active, window_inactive, each `[offset_y, blur, alpha]` for `gfx_drop_shadow()`
-- [ ] Commit: `"desktop/theme: wire gfx_drop_shadow+acrylic+mica to theme shadow/surface tokens"`
+- [ ] Commit: `"desktop/theme: shadows from elevation tokens, acrylic and mica from theme materials"`
 
 ## 8. Hot-Reload `[Sonnet]`
+
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
 `theme_reload()` re-reads Registry and recomputes all fields. Broadcasts `WM_THEME_CHANGED` to all open windows via new `wm_post_message_all()`. Each window marks itself dirty and redraws on the next compositor frame.
 
@@ -200,6 +208,8 @@ Update all `gfx_drop_shadow()` and `gfx_acrylic()` call sites to pass `theme_get
 ---
 
 ## 9. Fluent Token Corpus and Win11 Personalization Contract `[Opus]`
+
+**Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
 > **Spawned-by:** root
 
@@ -232,33 +242,33 @@ Two things make the desktop read as Windows 11 rather than merely Fluent-shaped:
 - [ ] High contrast and focus visuals: a 2 px `focus_outer` ring outside a 1 px `focus_inner` ring on keyboard focus only; the high-contrast preset replaces every design token (`docs/design/shell.md#accessibility`)
 - [ ] Commit: `"desktop/theme: Fluent token corpus generator, Win11 personalization Registry contract, Selawik + Fluent icon assets"`
 
-**Test checkpoint:** `THEME_DARK.background` equals the generated `SolidBackgroundFillColorBase` dark value byte for byte; writing `AppsUseLightTheme=1` under the Microsoft key and running `theme reload` switches the desktop to light with no Impossible-specific key present; `CreateFont("Segoe UI")` measures text identically to `CreateFont("Selawik")`. Test on: QEMU TCG + KVM; bare metal.
+**Test checkpoint:** `THEME_DARK.colors.window_bg` equals the generated `SolidBackgroundFillColorBase` dark value byte for byte; writing `AppsUseLightTheme=1` under the Microsoft key and running `theme reload` switches the desktop to light with no Impossible-specific key present; `CreateFont("Segoe UI")` measures text identically to `CreateFont("Selawik")`. Test on: QEMU TCG + KVM; bare metal.
 
 ---
 
 ## OS Comparison
 
 
-| ⭐  | Feature                                                         | 🪟 Win11                                                               | 🐧 Linux                                          | 🚀 Impossible OS                                                          |
-| --- | --------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
-| 💎  | Semantic color token struct                                     | ✅ `COLORREF` + `GetSysColor()` + WinUI3                               | ✅ GTK `GtkStyleContext`; CSS custom properties   | ⬜ §1 -- `theme_t` 21-field POD; inline `theme_get()`                     |
-| 💎  | Dark + Light built-in presets                                   | ✅ Dark/Light system theme; auto-switches at                           | ✅ GTK prefers-color-scheme; GNOME night mode     | ⬜ §3 -- `THEME_DARK` + `THEME_LIGHT` `const theme_t`                     |
-| 💎  | Registry-backed persistence                                     | ✅ `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize` | ✅ `dconf`/`gsettings` key-value store; INI files | ⬜ §4 -- `HKCU\Software\Impossible\Theme\Mode` + `AccentColor` + titlebar |
-| 💎  | Custom accent color                                             | ✅ Settings → Personalization → Accent                                 | ✅ KDE/GNOME accent color pickers; GTK            | ⬜ §5 -- `accent_hover = accent +0x101010` (clamped)                      |
-| 💎  | Migration -- zero hardcoded hex colors in UI source             | ✅ WinUI3 resource brush system; no                                    | ✅ GTK CSS variables; theme engine                | ⬜ §6 -- `rg "0x[0-9A-Fa-f]{6}" src/desktop/` → zero                      |
-| 💎  | Theme-aware shadow + acrylic                                    | ✅ Shadow elevation system in WinUI3;                                  | ✅ GNOME uses elevation system; KDE               | ⬜ §7 -- `gfx_drop_shadow(…, theme_get()->shadow)` -- `0xB4000000` dark   |
-| ⭐  | Hot-reload with zero app restart                                | ✅ Windows redraws all windows live                                    | ⚠️ GTK/Qt apps reload themes live;                | ⬜ §8 -- `⭐` kernel-level broadcast: `wm_post_message_all()` dirty-marks |
-| 💎  | Fluent tokens from Microsoft's corpus + Win11 Registry contract | ✅ WinUI3 resource dictionaries; `Themes\Personalize` + `DWM` keys     | ⚠️ libadwaita named colors; no cross-toolkit key  | ⬜ §9 -- generated `theme_fluent.h`; Microsoft keys; Selawik + icons      |
+| ⭐  | Feature                                                         | 🪟 Win11                                                               | 🐧 Linux                                          | 🚀 Impossible OS                                                             |
+| --- | --------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 💎  | Semantic color token struct                                     | ✅ `COLORREF` + `GetSysColor()` + WinUI3                               | ✅ GTK `GtkStyleContext`; CSS custom properties   | ⬜ §1 -- `theme_t` mirrors the design tokens; inline `theme_get()`           |
+| 💎  | Dark + Light built-in presets                                   | ✅ Dark/Light system theme; auto-switches at                           | ✅ GTK prefers-color-scheme; GNOME night mode     | ⬜ §3 -- `THEME_DARK` + `THEME_LIGHT` `const theme_t`                        |
+| 💎  | Registry-backed persistence                                     | ✅ `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize` | ✅ `dconf`/`gsettings` key-value store; INI files | ⬜ §4 -- `HKCU\Software\Impossible\Theme\Mode` + `AccentColor` + titlebar    |
+| 💎  | Custom accent color                                             | ✅ Settings → Personalization → Accent                                 | ✅ KDE/GNOME accent color pickers; GTK            | ⬜ §5 -- hover/pressed derived like the design tokens)                       |
+| 💎  | Migration -- zero hardcoded hex colors in UI source             | ✅ WinUI3 resource brush system; no                                    | ✅ GTK CSS variables; theme engine                | ⬜ §6 -- `rg "0x[0-9A-Fa-f]{6}" src/desktop/` → zero                         |
+| 💎  | Theme-aware shadow + acrylic                                    | ✅ Shadow elevation system in WinUI3;                                  | ✅ GNOME uses elevation system; KDE               | ⬜ §7 -- shadows from elevation tokens; theme materials -- `0xB4000000` dark |
+| ⭐  | Hot-reload with zero app restart                                | ✅ Windows redraws all windows live                                    | ⚠️ GTK/Qt apps reload themes live;                | ⬜ §8 -- `⭐` kernel-level broadcast: `wm_post_message_all()` dirty-marks    |
+| 💎  | Fluent tokens from Microsoft's corpus + Win11 Registry contract | ✅ WinUI3 resource dictionaries; `Themes\Personalize` + `DWM` keys     | ⚠️ libadwaita named colors; no cross-toolkit key  | ⬜ §9 -- generated `theme_fluent.h`; Microsoft keys; Selawik + icons         |
 
 > **After §1–§8:** Impossible OS has a fully kernel-native theme system with zero external dependencies. The `⭐` hot-reload advantage over Linux is that `wm_post_message_all()` operates at the kernel compositor level -- every window is dirty-marked in a single pass before the next frame, so the entire desktop repaints atomically in one compositor tick regardless of how many windows are open. GTK and Qt apps on Linux each maintain their own theming subscriptions and redraw at different times.
 
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] `theme_get()` called before first window draw in QEMU serial log: `[theme] loaded mode=dark accent=#0078D4`
-- [ ] `THEME_DARK.background == 0xFF1C1C1C` and `THEME_LIGHT.background == 0xFFF3F3F3` (verify in debugger or serial dump)
-- [ ] `accent_hover = 0xFF1088E4` (i.e., `0078D4 + 0x101010`); `accent_pressed = 0xFF0060BC` (i.e., `0078D4 − 0x181818`) -- verify computed values
+- [ ] `theme_get()` called before first window draw in QEMU serial log: `[theme] loaded mode=dark accent=#60CDFF`
+- [ ] `THEME_DARK.colors.window_bg == THEME_DARK_WINDOW_BG` (`#202020`) and `THEME_LIGHT.colors.window_bg == THEME_LIGHT_WINDOW_BG` (`#F3F3F3`); `theme.c` contains no hex literal
+- [ ] Default accents: dark `#60CDFF` / hover `#5AB9E6` / pressed `#4FA3CC`, light `#005FB8` / `#196EBF` / `#317DC6`; a custom accent's computed variants follow the §5 rule
 - [ ] After §6 migration: `rg "0x[0-9A-Fa-f]{6}" src/desktop/wm.c src/desktop/controls.c src/desktop/desktop.c` returns zero non-ANSI-palette hits
-- [ ] Window drop shadows visibly lighter in Light mode than Dark mode (QEMU screenshot comparison)
+- [ ] Window, flyout, Start and tooltip shadows use their `THEME_ELEV_*` values in both themes (QEMU screenshot compared with `impossibleos.co/design/?shot`)
 - [ ] Hot-reload: run `theme light` shell command → entire desktop redraws to light palette without restart; `[theme] reloaded` in serial log; run `theme dark` → reverts
 - [ ] Commit: `"desktop/theme: complete theme system -- tokens, presets, registry, migration, hot-reload"`

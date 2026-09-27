@@ -45,8 +45,8 @@ title: "TODO-05 -- File Search & Indexing"
 | ⭐  |   1   | §1 Search index -- VFS tree walk, PMM flat array, disk cache, background thread + scheduler hook        | `vfs_readdir`, `pmm_alloc_contiguous`, `task_create`, `time_now()` (planned)   |  [ ]   |
 | 💎  |   2   | §2 Query API -- case-insensitive substring match, ranking (score 3/2/1), apps first, `SYS_SEARCH=58`   | §1 index must exist; `SYS_CLIPBOARD_GET=57` highest existing syscall            |  [ ]   |
 | 💎  |   3   | §3 `find` shell command -- `find <query>`, `--type`, `--path`, relevance-sorted output                 | §2 query API                                                                     |  [ ]   |
-| 💎  |   4   | §4 Start Menu integration -- live filter with 150 ms debounce, accent highlight, keyboard nav           | §2 query API; TODO-09 §4 Start Menu search bar scaffold must exist              |  [ ]   |
-| 💎  |   5   | §5 File Manager integration -- toolbar search scoped to current directory subtree                       | §2 query API; File Manager window must have toolbar (future TODO)                |  [ ]   |
+| 💎  |   4   | §4 Start Menu integration -- file index feeds Start search (Documents group), 150 ms debounce           | §2 query API; D08 T11 §3 Start search UI must exist                               |  [ ]   |
+| 💎  |   5   | §5 File Explorer integration -- `search_query_scoped()` for the Explorer search box                    | §2 query API; D09 T09 §6 draws the search box                              |  [ ]   |
 | ⭐  |   6   | §6 Index change notifications -- `vfs_create/delete/rename` dirty hooks, incremental add/remove, 60 s  | §1 index; §2 query; `vfs_create/rename/unlink` (exist)                          |  [ ]   |
 
 ---
@@ -106,37 +106,35 @@ title: "TODO-05 -- File Search & Indexing"
 
 ## 4. Start Menu Integration `[Sonnet]`
 
-Start Menu search bar calls `search_query()` on each keystroke with 150 ms debounce. Live-filters pinned + all-programs list. Matched portion highlighted in accent color. Keyboard nav: down arrow from search → first result; Enter launches.
+**Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
+
+Feeds the file index into Start search. The Start search box, the results layout (best match card plus results grouped by type), the accent match highlight, keyboard navigation and the empty state are owned and drawn by `08-graphics-ui/TODO-11` §3; this section only supplies `search_query()` results (Documents group) with a 150 ms debounce.
 
 **Files:** `src/desktop/startmenu.c` (extend), `include/desktop/startmenu.h` (extend)
 
 > [!NOTE]
-> → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- the search bar scaffold (CTRL_TEXTBOX input, "No results found" state) already exists or is planned there; §5 here wires `search_query()` into that scaffold. **Debounce**: maintain `g_search_debounce_tick` (PIT ticks); on keystroke: `g_search_debounce_tick = system_get_ticks() + DEBOUNCE_TICKS` (150 ms → `DEBOUNCE_TICKS = PIT_TARGET_FREQ * 150 / 1000`); in `startmenu_tick()`: if `system_get_ticks() >= g_search_debounce_tick && g_search_dirty`: call `search_query()` + re-render results. **Accent highlight**: for each result name rendered via `ttf_draw_string()`: find match offset; draw prefix in `theme_get(THEME_TEXT)`, match span in `theme_get(THEME_ACCENT)`, suffix in `theme_get(THEME_TEXT)`. **Keyboard nav**: `WM_KEYDOWN(VK_DOWN)` from search textbox → set focus to first result row; Enter → `file_assoc_open(entry.full_path)` + close Start Menu. **"No results"**: render centered gray text if `search_query()` returns 0.
+> → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §3` -- the Start search UI (search box, best match, grouped results, empty state) is planned there; this section wires `search_query()` into it. **Debounce**: maintain `g_search_debounce_tick` (PIT ticks); on keystroke: `g_search_debounce_tick = system_get_ticks() + DEBOUNCE_TICKS` (150 ms → `DEBOUNCE_TICKS = PIT_TARGET_FREQ * 150 / 1000`); in `startmenu_tick()`: if `system_get_ticks() >= g_search_debounce_tick && g_search_dirty`: call `search_query()` + re-render results. **Rendering**: result rows, the accent match highlight and the best-match card are drawn by `08-graphics-ui/TODO-11 §3` per `docs/design/shell.md#start-menu`; this section only supplies `search_query()` results. **Keyboard nav**: `WM_KEYDOWN(VK_DOWN)` from search textbox → set focus to first result row; Enter → `file_assoc_open(entry.full_path)` + close Start Menu. **"No results"**: render centered gray text if `search_query()` returns 0.
 
 - [ ] `g_search_debounce_tick` + `g_search_dirty` flag in `startmenu.c`
 - [ ] Keystroke handler: set `g_search_dirty=1`; update `g_search_debounce_tick`
 - [ ] `startmenu_do_search(const char *query)` -- `search_query(query, g_search_results, 12)`; trigger re-render
 - [ ] `startmenu_tick()` -- debounce check; call `startmenu_do_search()` when debounce elapsed
-- [ ] Render: accent-highlight matched substring per result name using split `ttf_draw_string()` calls
-- [ ] Keyboard nav: Down from textbox → first result row focus; Enter → launch + close
-- [ ] "No results found" state: gray centered text in results area
-- [ ] Commit: `"startmenu: search integration -- 150ms debounce, accent highlight, keyboard nav, no-results state"`
+- [ ] Hand results to the Start search UI of `08-graphics-ui/TODO-11` §3 as the "Documents" group; do not draw a second results list, highlight or empty state here
+- [ ] Commit: `"startmenu: file index feeds Start search -- 150 ms debounce, Documents result group"`
 
 ## 5. File Manager Integration `[Sonnet]`
 
-Search bar in File Manager toolbar calls `search_query_scoped()` constrained to current directory subtree. Results replace file area: icon + name + full path. Click result → navigate or `file_assoc_open()`.
+Provides `search_query_scoped()` for the File Explorer search box (the 260 px box in the address row, `docs/design/shell.md#file-explorer`), which is drawn and wired by `09-desktop-shell/TODO-09` §6. Results are constrained to the current directory subtree; File Explorer renders them in its details view. Click result → navigate or `file_assoc_open()`.
 
-**Files:** `src/desktop/file_manager.c` (extend -- if exists; else stub in `src/desktop/startmenu.c`)
+**Files:** `src/kernel/search.c` (extend), `include/kernel/search.h` (extend)
 
 > [!NOTE]
-> File Manager may not exist yet as a standalone app. If `src/desktop/file_manager.c` does not exist, stub this section as a forward integration point -- add `search_query_scoped()` declaration and note that the File Manager TODO (future, under `11-apps/`) must call it. If File Manager exists: add a `CTRL_TEXTBOX` to the existing toolbar; on `WM_KEYDOWN(VK_RETURN)` in the search box: call `search_query_scoped(query, current_dir, results, 128)`; replace file area `CTRL_LISTVIEW` content with results (icon from `file_assoc_get_icon()`, name, full path); click result: if `SEARCH_TYPE_FOLDER` → navigate to folder; else → `file_assoc_open(full_path)`. Press Escape or clear box → restore normal directory listing.
+> File Explorer is `src/apps/filemgr/` (`09-desktop-shell/TODO-09`); its §6 calls `search_query_scoped(query, g_current_path, results, max)` with the same 150 ms debounce as Start search. This section owns only the query API and its scoping.
 
-- [ ] Confirm whether `src/desktop/file_manager.c` exists; if not: add comment stub + `search_query_scoped()` API declaration only
-- [ ] If File Manager exists: add toolbar search `CTRL_TEXTBOX`; wire `WM_KEYDOWN(VK_RETURN)` to `search_query_scoped()`
-- [ ] Results in file area: icon from `file_assoc_get_icon(ext)`, name, full path columns
-- [ ] Click result: folder → navigate; file → `file_assoc_open()`; App → `task_create_user(full_path)`
-- [ ] Escape / clear → restore directory listing
-- [ ] Commit: `"file_manager: search integration -- scoped search_query_scoped(), results replace file area, Esc restore"`
+- [ ] `int search_query_scoped(const char *query, const char *root, search_result_t *out, int max)` -- restrict results to `root` and its subtree
+- [ ] Result fields File Explorer needs for its details view: name, full path, size, modified time, type, icon id (`file_assoc_get_icon(ext)`)
+- [ ] Do not draw a search box or results here: `09-desktop-shell/TODO-09` §6 owns that UI
+- [ ] Commit: `"search: search_query_scoped() for File Explorer search"`
 
 ## 6. Index Change Notifications `[Sonnet]`
 

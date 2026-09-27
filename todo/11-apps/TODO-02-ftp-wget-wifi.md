@@ -168,6 +168,8 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 
 ## 5. FTP GUI Client (Dual-Pane, Stretch) `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_LISTVIEW` from `08-graphics-ui/TODO-05`.
 
 - [ ] Window layout: toolbar at top (Connect/Disconnect, address bar showing `ftp://host/path`); two equal-width panes side by side

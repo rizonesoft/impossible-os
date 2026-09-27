@@ -479,6 +479,8 @@ Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests aut
 
 ## 15. Flush Progress on Splash Diagnostic Line
 
+**Design:** n/a -- drawn before the compositor exists, on the boot framebuffer; follows the boot splash and boot error screen styles, not the desktop
+
 Show klog flush progress on the diagnostic subtitle during boot, so slow flushes don't look frozen.
 
 **Files:** `include/kernel/klog.h`, `src/kernel/klog_disk.c`, `src/kernel/main/boot_desktop.c`, `src/kernel/test/test_klog.c`

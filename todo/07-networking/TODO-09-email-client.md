@@ -47,9 +47,9 @@ title: "TODO-09 -- Email Client"
 | 💎  |   3   | §2 POP3 client -- TCP 995 + TLS, STAT/LIST/RETR/DELE, `.eml` local store                              | §1 parser (parse downloaded messages); Mbed TLS (TODO-03)              |  [ ]   |
 | 💎  |   4   | §3 IMAP client -- TCP 993 + TLS, CAPABILITY/SELECT/FETCH/STORE/SEARCH/EXPUNGE/IDLE                    | §3 POP3 as baseline; Mbed TLS; §1 parser for FETCH body                |  [ ]   |
 | 💎  |   5   | §4 Account manager -- settings, multiple accounts, Registry, MX autodiscover wizard                    | §2 SMTP + §3 POP3 + §4 IMAP (all protocol clients must exist to test)  |  [ ]   |
-| 💎  |   6   | §9 Notifications -- 5-min poll thread, desktop toast, tray envelope + unread count                    | §3 POP3 or §4 IMAP (poll needs a working sync function); desktop tray  |  [ ]   |
-| 💎  |   7   | §6 Email GUI -- three-panel layout (sidebar/list/viewer), keyboard shortcuts, folder navigation        | §1 parser (body display); §5 account manager (folder source); §6 notif |  [ ]   |
-| 💎  |   8   | §7 Compose window -- To/CC/BCC/Subject, body markup, attachments, Send/Draft/Discard                   | §2 SMTP (must be able to send); §7 GUI (compose is a sub-window)       |  [ ]   |
+| 💎  |   6   | §9 Notifications -- 5-min poll thread, desktop toast, tray envelope + unread count                    | §3 POP3 or §4 IMAP (poll needs a working sync function); desktop tray  |  [/]   |
+| 💎  |   7   | §6 Email GUI -- three-panel layout (sidebar/list/viewer), keyboard shortcuts, folder navigation        | §1 parser (body display); §5 account manager (folder source); §6 notif |  [/]   |
+| 💎  |   8   | §7 Compose window -- To/CC/BCC/Subject, body markup, attachments, Send/Draft/Discard                   | §2 SMTP (must be able to send); §7 GUI (compose is a sub-window)       |  [/]   |
 | 💎  |   9   | §10 Contacts integration -- `contacts.json`, From: address harvest, autocomplete in compose            | §7 compose (autocomplete target); §1 parser (From: extraction)         |  [ ]   |
 | 💎  |  10   | §8 Search -- full-text local grep, `SEARCH` shell command, IMAP server-side SEARCH forward            | §7 GUI (search box in sidebar); §4 IMAP (server search); §1 parser     |  [ ]   |
 
@@ -143,6 +143,8 @@ TCP port 993 + TLS. Tagged command protocol: `A001 CAPABILITY`, `A002 LOGIN`, `A
 
 ## 5. Email Account Manager `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#text-box-password-box-and-search-box`](../../docs/design/controls.md#text-box-password-box-and-search-box)
+
 Account settings (server host, port, TLS mode, username, password in credential store). Multiple accounts. `HKCU\Software\ImpossibleMail\Accounts\{name}\*` Registry. Account setup wizard with MX autodiscover from domain.
 
 **Files:** `src/apps/mail/accounts.c` (new), `include/apps/mail/accounts.h` (new)
@@ -162,22 +164,20 @@ Account settings (server host, port, TLS mode, username, password in credential 
 
 ## 6. Notifications `[Sonnet]`
 
-Background thread polls POP3/IMAP every 5 minutes. Desktop toast: `"New mail from Alice: Re: Meeting"`. System-tray envelope icon with unread count badge. Update badge on read/delete.
+Background thread polls POP3/IMAP every 5 minutes. The toast, taskbar badge and tray icon are owned by `11-apps/TODO-04 §7` (taskbar badge per `docs/design/shell.md#taskbar`, not a tray badge).
 
 **Files:** `src/apps/mail/notify.c` (new), `src/desktop/taskbar.c` (extend)
 
 > [!NOTE]
-> Poll thread: `mail_poll_thread()` -- `ksleep(300000)` (5 min) between iterations; for each account: if IMAP: `imap_sync()`; if POP3: `pop3_sync()`; compare new `.eml` count to previous; if delta > 0: call `mail_toast(from, subject)`; update `mail_unread_count`. Toast notification: `mail_toast(from_name, subject)` -- draw a 320×72 rounded rectangle at bottom-right corner of desktop, Z-order top; text `"New mail from <from>: <subject>"`; auto-dismiss after 5 s via `ksleep(5000)` in a brief thread; click → open mail app. Tray icon: envelope glyph (📧 or custom IRES icon) in taskbar tray area; small red badge with unread count (draw integer in 10 px font). IDLE integration: IMAP IDLE thread calls `mail_toast()` directly on `* N EXISTS` without waiting for the 5-min timer.
+> Poll thread: `mail_poll_thread()` -- `ksleep(300000)` (5 min) between iterations; for each account: if IMAP: `imap_sync()`; if POP3: `pop3_sync()`; compare new `.eml` count to previous; if delta > 0: call `mail_toast(from, subject)`; update `mail_unread_count`. Toast notification: `mail_toast(from_name, subject)` calls the shared toast pipeline `notify_send_from_app("Mail", ...)` (`08-graphics-ui/TODO-11 §5`, `docs/design/shell.md#toast-notifications`); it never draws its own window. Tray icon: the mail app registers one `tray_icon_t` with `tray_register()` (`08-graphics-ui/TODO-11 §4`), which lives in the overflow chevron flyout; the unread count is its tooltip text, not a hand-drawn badge. IDLE integration: IMAP IDLE thread calls `mail_toast()` directly on `* N EXISTS` without waiting for the 5-min timer.
 
-- [ ] `mail_unread_count` global atomic counter; updated by `pop3_sync()`/`imap_sync()` on new message detection
-- [ ] `mail_poll_thread()`: loop: `ksleep(300000)`; iterate `mail_accounts[]`; call appropriate sync; compute delta; trigger toast
-- [ ] `mail_toast(from_name, subject)`: create desktop overlay window (320×72, bottom-right, no title bar); draw text; `ksleep(5000)` thread → `wm_destroy_window()`; click handler → `mail_app_open()`
-- [ ] `mail_tray_draw(unread)`: in `taskbar.c`; draw envelope icon; if `unread > 0`: draw red badge with count `"N"` (capped display at `"99+"`)
-- [ ] `mail_tray_click()`: open mail app or bring to front if already open
-- [ ] Call `mail_poll_thread()` as a `task_create("mail_poll", ...)` SCHED_IDLE thread from mail app init
+- [/] Superseded: the new-mail toast, taskbar badge and tray icon are implemented by `11-apps/TODO-04 §7`; do not build a second notification path here
+- [ ] `mail_unread_count` global atomic counter updated by `pop3_sync()` / `imap_sync()`; `11-apps/TODO-04 §7` reads it for the badge and toast
 - [ ] Commit: `"apps/mail: notifications -- 5-min poll, toast auto-dismiss, tray envelope badge"`
 
 ## 7. Email GUI `[Opus]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Three-panel layout: sidebar (account tree: Inbox/Sent/Drafts/Trash/custom folders), message list (from, subject, date, read/unread dot, attachment icon), message viewer (formatted header + body). Keyboard: R reply, F forward, Del delete, N new.
 
@@ -186,18 +186,13 @@ Three-panel layout: sidebar (account tree: Inbox/Sent/Drafts/Trash/custom folder
 > [!NOTE]
 > This is `[Opus]` -- the three-panel mail GUI is the most complex UI in the OS to date, with dynamic pane resizing, folder tree with collapse/expand, and a message list with sort-by-column. **Window layout**: 800×600; sidebar width=200 px (fixed); list width=300 px (resizable); viewer fills remaining right. **Sidebar**: folder tree per account; `Inbox (N)` shows unread count; click → load message list for that folder. **Message list**: scrollable using `ctrl_create_scrollbar`; one row per `.eml` in folder; row = read/unread dot + from + subject + date; click → load viewer; unread rows in bold font. **Viewer pane**: render `mail_header_get(msg, "From")` + `"To"` + `"Subject"` + `"Date"` as formatted header block; body = `text/plain` part rendered via `font_draw_string()` with line wrap; if only `text/html`: strip tags (same state machine as browser §1); attachment links at bottom with "Save" button. **Sort**: click column header cycles ASC/DESC by date/from/subject; re-sort `msg_list[]` in-place.
 
-- [ ] `mail_gui_t { int win_handle; int active_account; int active_folder; int active_msg_index; mail_message_t *msg_list; int msg_count; int scroll_offset; int sort_col; int sort_asc; }` in `mail_gui.h`
-- [ ] `mail_gui_open()`: `wm_create_window("Impossible Mail", 100, 60, 800, 600)`; draw 3-pane dividers; load accounts into sidebar; select first account Inbox
-- [ ] `mail_sidebar_draw(gui)`: iterate accounts + folders; draw tree rows; highlight selected; unread counts in `(N)` suffix
-- [ ] `mail_list_load(gui, account, folder_path)`: scan folder via `vfs_readdir()`; sort `.eml` files by mtime; parse envelope headers only (`mail_parse_headers()` on first 4 KB); store in `msg_list[]`
-- [ ] `mail_list_draw(gui)`: draw rows in `[scroll_offset, scroll_offset + visible_rows]`; unread dot (blue circle, 8px) if `\Seen` flag not set; attachment icon if `part_count > 1`; highlight selected row
-- [ ] `mail_viewer_load(gui, eml_path)`: `vfs_read()` full `.eml`; `mail_parse()`; render in viewer pane
-- [ ] `mail_viewer_draw(gui)`: header block (From/To/Subject/Date in fixed layout); body text with word wrap; attachment rows at bottom with filenames + "Save" buttons
-- [ ] `mail_handle_key(gui, key)`: `R` → open compose pre-filled Reply-To; `F` → compose pre-filled Forward; `Del` → move `.eml` to Trash folder + IMAP `STORE \Deleted`; `N` → `mail_compose_open()`; arrows → navigate list
-- [ ] `mail_list_sort(gui, col)`: qsort `msg_list[]` by date/from/subject; toggle `sort_asc`
+- [/] Superseded: the three-pane mail window is implemented by `11-apps/TODO-04 §4` (per `docs/design/shell.md#app-window-layout`); do not build a second mail GUI here
+- [ ] Keyboard shortcuts in that window: `R` reply, `F` forward, `Del` move to Trash (+ IMAP `STORE \\Deleted`); header click sorts by date, from or subject
 - [ ] Commit: `"apps/mail: three-panel GUI -- sidebar/list/viewer, sort, keyboard shortcuts, attachment viewer"`
 
 ## 8. Compose Window `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 To/CC/BCC/Subject fields. Rich-text body (bold/italic/underline via inline markup). Attachment drag-and-drop. Inline spell-check stub. Send/Save Draft/Discard buttons.
 
@@ -206,14 +201,8 @@ To/CC/BCC/Subject fields. Rich-text body (bold/italic/underline via inline marku
 > [!NOTE]
 > Compose window: 640×480 `wm_create_window("New Message", ...)`; toolbar row (Send/Draft/Discard buttons via `ctrl_create_button`); header fields (To/CC/BCC/Subject) as `ctrl_create_textbox`; body as a large `ctrl_create_textbox` (multi-line, scrollable). Reply: pre-fill To = original From; Subject = `"Re: " + original subject`; body = `"\r\n\r\n--- Original ---\r\n" + quoted original body`. Forward: pre-fill Subject = `"Fwd: "`; body = quoted original; no To. Inline markup: `Ctrl+B` → insert `*bold*` markers; `Ctrl+I` → `_italic_`; `Ctrl+U` → `~underline~` (these are plain-text conventions; actual HTML encoding happens in `smtp_send_message()` when building the body part). Attachment drag-and-drop: `ctrl_handle_mouse()` detects a drag event from the desktop file list; capture the file path; add to `attach_list[]`. Spell-check stub: after each word-break char, look up word in a small static dictionary stub; underline unknown words in red -- dictionary is empty initially, so no false positives.
 
-- [ ] `compose_state_t { char to[4][512]; int to_count; char cc[4][512]; int cc_count; char bcc[4][512]; char subject[512]; char body[65536]; char attach_paths[8][2048]; int attach_count; uint8_t is_reply; uint8_t is_draft; }` in `compose.h`
-- [ ] `mail_compose_open(pre_fill)`: create window; create 6 `ctrl_create_textbox` controls (To/CC/BCC/Subject/body); 3 buttons (Send/Draft/Discard); register click callbacks
-- [ ] `compose_on_send(state)`: build `to_list[]` from comma-split To field; call `smtp_send_message(active_account, from, to_list, subject, body, attachments)`; close window on `250` response
-- [ ] `compose_on_draft(state)`: serialize to `.eml` format; write to `C:\Users\Default\AppData\Mail\{account}\Drafts\{timestamp}.eml`
-- [ ] `compose_on_discard(state)`: confirm dialog ("Discard message?"); close window
-- [ ] Keyboard in body: `Ctrl+B/I/U` insert inline markup markers; `Ctrl+Enter` → Send
-- [ ] Attachment panel: drag-drop file path → `attach_list[]`; draw attachment chips (filename × remove-button) below body field
-- [ ] `compose_reply(original_msg)` / `compose_forward(original_msg)`: pre-fill state from original message
+- [/] Superseded: the compose window is implemented by `11-apps/TODO-04 §5`; do not build a second compose window here
+- [ ] Extend that window with CC and BCC fields, `Ctrl+Enter` to send, and a Discard confirmation per `docs/design/controls.md#dialog` (default button: keep editing)
 - [ ] Commit: `"apps/mail: compose window -- To/CC/BCC/Subject, body markup, attachments, reply/forward"`
 
 ## 9. Contacts Integration `[Sonnet]`

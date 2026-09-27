@@ -8,7 +8,7 @@ title: "TODO-04 -- Control Library Completion"
 
 # TODO-04 -- Control Library Completion
 
-> **Goal:** Add the missing essential controls: checkbox, radio button, combobox (dropdown), listbox, and progress bar. Also add a reusable context menu (popup menu) control. The existing 4 controls (button, label, textbox, scrollbar) are production-quality -- these extend the library.
+> **Goal:** Superseded as an implementation plan. The controls planned here are owned by `08-graphics-ui/TODO-05-widget-library-core.md` (check box, radio, progress, combo box), `TODO-06-widget-dialogs.md` (lists) and `TODO-09-desktop-shell-features.md` §1 (the single context menu engine), all drawn to `docs/design/controls.md`. What stays here is adding each control to the control gallery.
 
 ## Inputs
 
@@ -17,104 +17,79 @@ title: "TODO-04 -- Control Library Completion"
 
 ## Outcome
 
-- Checkbox: square with checkmark, label, toggle on click
-- Radio button: circle with dot, grouped (only one active per group)
-- Combobox: text field + dropdown arrow → popup list
-- Listbox: scrollable list of items with selection
-- Progress bar: horizontal fill with percentage
-- Context menu: popup at cursor with items, separators, hover highlight
+- The control gallery showcases check box, radio group, progress bar, list and combo box built by their canonical owners, matching `docs/design/controls.md`.
+- No second control or context-menu implementation exists in this domain.
 
 ## Implementation Order
 
 | ⭐  | Order | Deliverable               | Depends On | Status |
 | --- | :---: | ------------------------- | ---------- | :----: |
-| 💎  |   1   | Checkbox and radio button | --         |  [ ]   |
-| 💎  |   2   | Progress bar              | --         |  [ ]   |
-| 💎  |   3   | Listbox with scrollbar    | --         |  [ ]   |
-| 💎  |   4   | Combobox (dropdown)       | §3         |  [ ]   |
-| 💎  |   5   | Context menu (popup)      | --         |  [ ]   |
-
+| 💎  |   1   | Checkbox and radio button | --         |  [/]   |
+| 💎  |   2   | Progress bar              | --         |  [/]   |
+| 💎  |   3   | Listbox with scrollbar    | --         |  [/]   |
+| 💎  |   4   | Combobox (dropdown)       | §3         |  [/]   |
+| 💎  |   5   | Context menu (popup)      | --         |  [/]   |
 ---
 
 ## 1. Checkbox and Radio Button
-Toggle controls for boolean and exclusive-choice inputs.
+
+**Design:** [`controls.md#check-box-and-radio-button`](../../docs/design/controls.md#check-box-and-radio-button)
+Check boxes and radio buttons are owned by `08-graphics-ui/TODO-05` §1 and §2, drawn to `controls.md` (20 px box with radius 4, 20 px radio with a 12 px dot, accent when checked, two-ring keyboard focus).
 
 **Files:** `src/desktop/controls.c`, `include/desktop/controls.h`
 
-- [ ] `CTRL_CHECKBOX` type: 16x16 square + label, `checked` state
-- [ ] Draw: unchecked = empty square, checked = filled square with checkmark glyph
-- [ ] Click toggles `checked` state, fires `on_change` callback
-- [ ] `CTRL_RADIO` type: 16x16 circle + label, `checked` state, `group_id`
-- [ ] Click on radio: uncheck all others in same `group_id`, check this one
-- [ ] `ctrl_is_checked(ctrl_id)` / `ctrl_set_checked(ctrl_id, bool)`
-- [ ] Colors: accent blue fill when checked, subtle border when unchecked
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-05-widget-library-core.md §1 and §2`, which follows `docs/design/controls.md#check-box-and-radio-button`; do not build a second CTRL_CHECKBOX or CTRL_RADIO here
+- [ ] Showcase: add a check box and a 3-button radio group to the control gallery (`src/desktop/gallery.c`) using the canonical `ctrl_create_checkbox()` / radio API
 
-**Test checkpoint:** Add checkbox + 3 radio buttons to gallery. Click checkbox -- toggles. Click radio -- deselects others.
+**Test checkpoint:** Gallery shows a 20 px check box and a radio group that match `controls.md`; click toggles, radio selection is exclusive.
 
 ## 2. Progress Bar
-Horizontal bar showing completion percentage.
+
+**Design:** [`controls.md#progress`](../../docs/design/controls.md#progress)
+The progress bar is owned by `08-graphics-ui/TODO-05` §4, drawn to `controls.md#progress` (1 px track, 3 px accent indicator, indeterminate sweep).
 
 **Files:** `src/desktop/controls.c`, `include/desktop/controls.h`
 
-- [ ] `CTRL_PROGRESSBAR` type: filled rect proportion of `value / max_value`
-- [ ] `ctrl_set_progress(ctrl_id, value, max_value)` -- update fill
-- [ ] Draw: track background (dark), fill (accent blue), rounded ends
-- [ ] Optional: percentage text centered ("42%")
-- [ ] Indeterminate mode: sliding highlight animation (future, after animation engine)
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-05-widget-library-core.md §4`, which follows `docs/design/controls.md#progress`; do not build a second CTRL_PROGRESSBAR here
+- [ ] Showcase: add a progress bar at 65% and an indeterminate bar to the control gallery using the canonical API
 
 **Test checkpoint:** Add progress bar to gallery at 65%. Call `ctrl_set_progress` to update -- bar fills.
 
 ## 3. Listbox with Scrollbar
-Scrollable vertical list of text items with single-selection.
+
+**Design:** [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
+Scrollable single-selection lists are the `CTRL_LISTVIEW` details mode owned by `08-graphics-ui/TODO-06` §1, drawn to `controls.md#list-tree-and-grid-views` (32 px rows, 3 x 16 accent selection pill).
 
 **Files:** `src/desktop/controls.c`, `include/desktop/controls.h`
 
-- [ ] `CTRL_LISTBOX` type: list of string items (max 256 items, 128 chars each)
-- [ ] `ctrl_listbox_add_item(ctrl_id, text)` -- append item
-- [ ] `ctrl_listbox_get_selected(ctrl_id)` -- return selected index (-1 if none)
-- [ ] Draw: items rendered vertically, selected item highlighted (accent blue bg)
-- [ ] Scroll: automatic vertical scrollbar when items exceed visible height
-- [ ] Click on item → select, fire `on_change` callback
-- [ ] Mouse wheel scrolls list
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-06-widget-dialogs.md §1`, which follows `docs/design/controls.md#list-tree-and-grid-views`; do not build a second list control here
+- [ ] Showcase: add a 20-item list (the canonical `CTRL_LISTVIEW` in details mode) to the control gallery
 
 **Test checkpoint:** Add listbox with 20 items to gallery. Click items -- highlights. Scroll -- list scrolls.
 
 ## 4. Combobox (Dropdown)
-Text field with dropdown arrow that opens a listbox popup.
+
+**Design:** [`controls.md#combo-box-and-drop-down`](../../docs/design/controls.md#combo-box-and-drop-down)
+The combo box is owned by `08-graphics-ui/TODO-05` §5, drawn to `controls.md#combo-box-and-drop-down` (32 px, chevron, menu-acrylic list with the selected item over the box).
 
 **Files:** `src/desktop/controls.c`, `include/desktop/controls.h`
 
-- [ ] `CTRL_COMBOBOX` type: text display area + dropdown arrow button
-- [ ] Click arrow → open popup listbox below the combobox
-- [ ] Select item in popup → close popup, update text display, fire `on_change`
-- [ ] Click outside popup → close popup
-- [ ] `ctrl_combobox_add_item(ctrl_id, text)` -- add option
-- [ ] `ctrl_combobox_get_selected(ctrl_id)` -- get selected index
-- [ ] Popup rendered on top of all controls (z-order above window content)
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-05-widget-library-core.md §5`, which follows `docs/design/controls.md#combo-box-and-drop-down`; do not build a second CTRL_COMBOBOX here
+- [ ] Showcase: add a 5-option combo box to the control gallery using the canonical API
 
 **Test checkpoint:** Add combobox with 5 options to gallery. Click arrow -- dropdown opens. Select item -- closes and shows selection.
 
 ## 5. Context Menu (Popup)
-Reusable popup menu that appears at cursor position on right-click.
+
+**Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
+The one context menu engine is `context_menu_show()` owned by `08-graphics-ui/TODO-09` §1, drawn to `shell.md#context-menus` (256 px wide, 4 px padding, 32 px items, menu acrylic, radius 8). There is no second `menu_*` API.
 
 **Files:** `src/desktop/controls.c` or new `src/desktop/menu.c`
 
-- [ ] `menu_create()` -- create a menu with items
-- [ ] `menu_add_item(menu, label, icon, callback)` -- add clickable item
-- [ ] `menu_add_separator(menu)` -- add horizontal line
-- [ ] `menu_show(menu, x, y)` -- display at position, grab input
-- [ ] `menu_hide()` -- close menu
-- [ ] Draw: acrylic background, rounded corners, hover highlight, item icons
-- [ ] Click item → fire callback, close menu
-- [ ] Click outside → close menu
-- [ ] Escape → close menu
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-09-desktop-shell-features.md §1`, which follows `docs/design/shell.md#context-menus`; do not build a second menu engine (no `menu_create`/`menu_show` API) here
+- [ ] Migrate any existing popup code in `src/desktop/controls.c` / `desktop.c` onto `context_menu_show()` from 08 TODO-09 §1 and delete the duplicate path
 
-**Test checkpoint:** Right-click desktop → context menu with "Refresh", "New Folder", "Display Settings". Click item → menu closes.
+**Test checkpoint:** No `menu_create` / `menu_show` symbols exist; right-click on the desktop opens the 08 TODO-09 §2 menu (View, Sort by, Refresh | New | Display settings, Personalize | Open in Terminal, Show more options).
 
 ---
 

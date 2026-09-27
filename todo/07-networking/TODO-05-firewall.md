@@ -185,6 +185,8 @@ Serialize rules to `HKLM\SYSTEM\Network\Firewall\Rules\Rule0`…`RuleN`. Each su
 
 ## 8. `firewall.cpl` Control Panel Applet `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#tabs`](../../docs/design/controls.md#tabs), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views), [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
 Enable/disable toggle. Rule list with add/remove buttons (inbound/outbound tabs). Log viewer showing last 100 blocked packets.
 
 **Files:** `src/desktop/firewall_cpl.c` (new), `include/desktop/firewall_cpl.h` (new)

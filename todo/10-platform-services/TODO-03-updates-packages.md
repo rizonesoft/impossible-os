@@ -112,12 +112,14 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 
 ## 4. `wuapp.cpl` -- Windows Update Applet `[Sonnet]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 Control Panel Windows Update applet: "Check for updates" button, auto-check toggle + channel (daily/weekly/never), last check timestamp, update history list. Boot background task → toast if update available.
 
 **Files:** `src/apps/control/applets/wuapp.c` (new)
 
 > [!NOTE]
-> `CPlApplet()` inner surface (380×320 px). **Status area** (top): "Your OS is up to date." or "Update available: v{version} ({type})" with accent-color type badge. **"Check for updates" button**: calls `update_check()` in background via `task_create("wuapp_check", ...)` → refresh status on completion. **While checking**: spinner animation (rotating arc via `gfx_draw_arc()` or CSS-style). **Download/Apply flow if AVAILABLE**: "Download and install" button → `update_download()` with inline `CTRL_PROGRESSBAR`; then [Install]; on MAJOR: mandatory restart button. **Auto-check settings**: `CTRL_DROPDOWN` (Daily/Weekly/Never) → `registry_set("HKLM\\SYSTEM\\Update\\AutoCheck", ...)`. **Channel**: `CTRL_DROPDOWN` (Stable/Beta) → `registry_set("HKLM\\SYSTEM\\Update\\Channel", ...)`. **Update history**: `CTRL_LISTVIEW` (Version, Date, Type, Status) from `HKLM\SYSTEM\Update\History\*` subkeys. **Boot auto-check**: `sched_task_add("update_autocheck", update_autocheck_task, CHECK_INTERVAL_S, 1)` in kernel init (reads `AutoCheck` Registry); `update_autocheck_task()`: `update_check()` → if `UPDATE_AVAILABLE`: `notify_send("System Update", "v{version} is available", ICON_UPDATE, ...)`.
+> The page renders inside the Settings and Control Panel frame (`docs/design/shell.md#settings-and-control-panel-frame`) as settings rows and cards (`docs/design/controls.md#cards-and-settings-rows`); no fixed-size surface. **Status card** (top): "Your OS is up to date." or "Update available: v{version} ({type})" with the type as text. **"Check for updates" button**: calls `update_check()` in background via `task_create("wuapp_check", ...)` → refresh status on completion. **While checking**: a progress ring per `docs/design/controls.md#progress`. **Download/Apply flow if AVAILABLE**: "Download and install" button → `update_download()` with inline `CTRL_PROGRESSBAR`; then [Install]; on MAJOR: mandatory restart button. **Auto-check settings** row: combo box (Daily/Weekly/Never) → `registry_set("HKLM\\SYSTEM\\Update\\AutoCheck", ...)`. **Channel** row: combo box (Stable/Beta) → `registry_set("HKLM\\SYSTEM\\Update\\Channel", ...)`. **Update history**: `CTRL_LISTVIEW` (Version, Date, Type, Status) from `HKLM\SYSTEM\Update\History\*` subkeys. **Boot auto-check**: `sched_task_add("update_autocheck", update_autocheck_task, CHECK_INTERVAL_S, 1)` in kernel init (reads `AutoCheck` Registry); `update_autocheck_task()`: `update_check()` → if `UPDATE_AVAILABLE`: `notify_send("System Update", "v{version} is available", ICON_UPDATE, ...)`.
 
 - [ ] `src/apps/control/applets/wuapp.c` implementing `CPlApplet()` `CPL_INIT/INQUIRE/DBLCLK/STOP`
 - [ ] Status area: "Up to date" or "Update available: v{} ({type})"
@@ -178,12 +180,14 @@ Control Panel Windows Update applet: "Check for updates" button, auto-check togg
 
 ## 6. App Installer Wizard `[Sonnet]`
 
+**Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
+
 `src/apps/installer/installer.c`: wizard UI (welcome → path → progress → finish). IPKG parse → files extract → registry entries → shortcuts → file associations. Restore point before install. Requires admin (`privilege_request()`).
 
 **Files:** `src/apps/installer/installer.c` (new), `include/apps/installer.h` (new)
 
 > [!NOTE]
-> Window: 520×400 px fixed. **Page 1 -- Welcome**: app icon (48×48, from `manifest.icon_path` extracted to temp); name (24 px bold); version; description; author; [Next] / [Cancel]. **Page 2 -- Install Path**: `CTRL_TEXTBOX` pre-filled with `manifest.install_path`; [Browse] → `dialog_file_open(dir_mode)`. **Page 3 -- Progress**: `CTRL_PROGRESSBAR(0, total_files)`; file-by-file extract: `zip_extract_file(src, dst)` per `install.ini [Files]` entry; increment progress. Then: registry entries from `[Registry]`; shortcuts via `shortcut_create()`; file assoc via `file_assoc_set()`. **Page 4 -- Finish**: "Installation complete!" or error summary; [Finish] / [Launch]. **Pre-install**: `privilege_request()` → UAC consent; `restore_create("Pre-install %s %s", name, version)`. **Registry on install**: `HKLM\SOFTWARE\{name}\Version`, `InstallPath`, `UninstallCmd = "installer.exe /uninstall {name}"`, `InstallDate` (timestamp), `EstimatedSize` (sum of file sizes). **File association**: `.ipkg` → `installer.exe` registered at app launch.
+> Wizard layout per `docs/design/shell.md#first-run-setup`: the 800 x 600 step layout (illustration or app icon on the left third, the step on the right, accent Next bottom right, Back and Cancel as standard buttons), hosted in a standard window with the normal chrome. App installers are normal 640 x 480 windows with this step layout, never full screen (`docs/design/shell.md#first-run-setup`). **Page 1 -- Welcome**: app icon (48×48, from `manifest.icon_path` extracted to temp); name in the title style (`THEME_TYPE_TITLE_*`, 28/36); version; description; author; [Next] / [Cancel]. **Page 2 -- Install Path**: `CTRL_TEXTBOX` pre-filled with `manifest.install_path`; [Browse] → `dialog_file_open(dir_mode)`. **Page 3 -- Progress**: `CTRL_PROGRESSBAR(0, total_files)`; file-by-file extract: `zip_extract_file(src, dst)` per `install.ini [Files]` entry; increment progress. Then: registry entries from `[Registry]`; shortcuts via `shortcut_create()`; file assoc via `file_assoc_set()`. **Page 4 -- Finish**: "Installation complete!" or error summary; [Finish] / [Launch]. **Pre-install**: `privilege_request()` → UAC consent; `restore_create("Pre-install %s %s", name, version)`. **Registry on install**: `HKLM\SOFTWARE\{name}\Version`, `InstallPath`, `UninstallCmd = "installer.exe /uninstall {name}"`, `InstallDate` (timestamp), `EstimatedSize` (sum of file sizes). **File association**: `.ipkg` → `installer.exe` registered at app launch.
 
 - [ ] `void installer_open(const char *ipkg_path)` -- `wm_create_window()`; parse IPKG; show Page 1
 - [ ] Page 1: icon blit + name/version/desc labels; [Next]/[Cancel]
@@ -216,6 +220,8 @@ Read `HKLM\SOFTWARE\{name}\InstallPath`, reverse install: delete files, remove r
 - [ ] Commit: `"installer: app uninstaller -- file delete, registry cleanup, shortcut remove, empty dir prune"`
 
 ## 8. `appwiz.cpl` -- Programs & Features Applet `[Sonnet]`
+
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
 List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Date. Search/filter. [Uninstall] per row → `uninstaller_run()`. Part of Control Panel. Stub registered in TODO-11 §5.
 

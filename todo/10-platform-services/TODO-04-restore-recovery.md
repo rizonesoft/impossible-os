@@ -67,7 +67,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 
 `struct kernel_event` (type INFO/WARN/ERROR/SECURITY, source[32], message[256], unix_ts). Add `LOG_SECURITY=4` to `klog.h`. `kevent_log()` appends to rolling `X:\Logs\events.log` (max 1 MiB, rotate on overflow). Event Viewer applet: `CTRL_TABSTRIP` filter by type/source, date range, export.
 
-**Files:** `src/kernel/event_log.c` (new), `include/kernel/event_log.h` (new), `src/apps/control/applets/eventvwr.c` (new)
+**Files:** `src/kernel/event_log.c` (new), `include/kernel/event_log.h` (new)
 
 > [!NOTE]
 > Extend `klog.h`: add `LOG_SECURITY = 4` constant. `kevent_log(type, source, msg)`: format as `"{unix_ts}|{type}|{source}|{msg}\n"` → append to VFS file `X:\Logs\events.log`. If file > 1 MiB: rotate: `vfs_rename("events.log", "events.1.log")`; optionally compress via `zip_create("events.1.log.zip")`. Log events at call sites: app install/uninstall → `kevent_log(LOG_INFO, "installer", "Installed %s %s")`. Login → `kevent_log(LOG_SECURITY, "auth", "Login: %s")`. Logout → `kevent_log(LOG_SECURITY, "auth", "Logout: %s")`. Permission denied → `kevent_log(LOG_SECURITY, "vfs", "Access denied: %s by uid %u")`. Crash/panic → `kevent_log(LOG_ERROR, "kernel", "Panic: %s at %p")`. Service start/stop → `kevent_log(LOG_INFO, "service", "%s started/stopped")`. **Rotate task**: `sched_task_add("event_rotate", event_rotate_task, 3600, 1)` (hourly check). **Event Viewer**: `eventvwr.cpl` `CTRL_TABSTRIP` tabs: All Events / Errors / Security / Info. `CTRL_LISTVIEW` (Time, Type, Source, Message). [Filter by date]: `dialog_input()` date range → filter in-memory. [Export]: `dialog_file_save("*.log")` → `vfs_write()` raw log lines. `CTRL_TEXTBOX` source filter.
@@ -77,8 +77,11 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 - [ ] `src/kernel/event_log.c`: `kevent_log()` -- format + VFS append; 1 MiB size check + rotate
 - [ ] `sched_task_add("event_rotate", event_rotate_check, 3600, 1)` in kernel init
 - [ ] Wire `kevent_log()` at: auth login/logout; UAC elevation; permission denied (VFS); service start/stop; app install/uninstall; kernel panic
-- [ ] `eventvwr.cpl`: `CTRL_TABSTRIP` (All/Errors/Security/Info); `CTRL_LISTVIEW` Time+Type+Source+Message; source filter textbox; date range filter; [Export] button
-- [ ] Commit: `"kernel: event log -- kevent_log, LOG_SECURITY, rolling file, rotate; eventvwr.cpl viewer"`
+- [/] Superseded: the event viewer UI is implemented by `13-tools-accessories/TODO-02-event-viewer.md §2` (`eventview.exe`, with a Security filter over this log); do not build a second viewer (`eventvwr.cpl`)
+  - Unique leftovers handed to that owner: date range filter and an [Export] button
+- [ ] Use the log that already ships: `src/kernel/klog_disk.c` writes `X:\Logs\events.jsonl` (JSON Lines, `{"ts","level","tag","msg"}`) and rotates it
+  - `kevent_log()` appends to `events.jsonl` with a `"type"` field (INFO/WARN/ERROR/SECURITY) instead of creating a second pipe-delimited `events.log`; the Event Viewer (`13-tools-accessories/TODO-02`) reads that one file
+- [ ] Commit: `"kernel: event log -- kevent_log, LOG_SECURITY, rolling file, rotate"`
 
 ## 2. Restore Point Creation `[Sonnet]`
 
@@ -117,12 +120,14 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 
 ## 4. `rstrui.cpl` -- System Restore UI `[Sonnet]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 Control Panel System Restore applet: calendar timeline of restore points (description + created-at + estimated size). [Create] button with description input. [Restore] button with confirmation. [Delete] button.
 
 **Files:** `src/apps/control/applets/rstrui.c` (new)
 
 > [!NOTE]
-> `CPlApplet()` inner surface (480×380 px). **Top**: title "System Restore" + subtitle "Undo system changes by reverting to a saved restore point." **Restore point list**: `CTRL_LISTVIEW` 3 columns (Description 220 / Created 140 / Size 80); populated via `restore_list()`; size = `vfs_stat("system_files.zip").size / 1024` in KB. **[Create]**: `dialog_input("Restore point name:", "Manual restore point")` → `restore_create(desc)` → refresh list. **[Restore]**: selected row → `restore_rollback(ts)` (includes confirmation + restart). **[Delete]**: `dialog_confirm("Delete this restore point? This cannot be undone.", YES/NO)` → `restore_delete(ts)` → refresh. **Info bar**: "Last restore: {date}" from `HKLM\SYSTEM\Restore\LastRestore`; "Space used: {N} MB" (sum of all restore point ZIP sizes). [Configure] stub: `dialog_input("Max restore points:", "10")` → `registry_set("HKLM\\SYSTEM\\Restore\\MaxPoints", ...)`.
+> The page renders inside the Settings and Control Panel frame (`docs/design/shell.md#settings-and-control-panel-frame`), no fixed-size surface. **Top**: page title "System Restore" (title style) + description "Undo system changes by reverting to a saved restore point." (caption, `text_secondary`). **Restore point list**: `CTRL_LISTVIEW` 3 columns (Description 220 / Created 140 / Size 80); populated via `restore_list()`; size = `vfs_stat("system_files.zip").size / 1024` in KB. **[Create]**: `dialog_input("Restore point name:", "Manual restore point")` → `restore_create(desc)` → refresh list. **[Restore]**: selected row → `restore_rollback(ts)` (includes confirmation + restart). **[Delete]**: `dialog_confirm("Delete this restore point? This cannot be undone.", YES/NO)` → `restore_delete(ts)` → refresh. **Info bar**: "Last restore: {date}" from `HKLM\SYSTEM\Restore\LastRestore`; "Space used: {N} MB" (sum of all restore point ZIP sizes). [Configure] stub: `dialog_input("Max restore points:", "10")` → `registry_set("HKLM\\SYSTEM\\Restore\\MaxPoints", ...)`.
 
 - [ ] `rstrui.c` implementing `CPlApplet()` messages
 - [ ] `CTRL_LISTVIEW` populated from `restore_list()`; refresh on create/delete
@@ -135,24 +140,30 @@ Control Panel System Restore applet: calendar timeline of restore points (descri
 
 ## 5. First-Boot Setup Wizard `[Sonnet]`
 
+**Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
+
 Runs when `HKLM\SYSTEM\FirstBoot=1`. 6 pages: Welcome, Timezone/Region, Keyboard, Create User Account, Wallpaper, Update Check. Clears flag on [Finish] → boots to desktop.
 
 **Files:** `src/apps/oobe/oobe.c` (new), `include/apps/oobe.h` (new)
 
 > [!NOTE]
-> **Trigger**: in kernel init (after full desktop init): `registry_get("HKLM\\SYSTEM\\FirstBoot")` == "1" → `oobe_start()`. Window: full-screen (1024×768 base), non-resizable, z_order=29000 (above taskbar). Branding image top-left. **Page 1 -- Welcome**: "Welcome to Impossible OS" large heading; "Let's get started." subtitle; [Next]. **Page 2 -- Timezone/Region**: `CTRL_DROPDOWN` timezone (UTC offsets, TZ names); `CTRL_DROPDOWN` region (locale formats); writes `HKLM\SYSTEM\TimeZone` + `HKLM\SYSTEM\Region`. **Page 3 -- Keyboard**: `CTRL_DROPDOWN` keyboard layout; test textbox below; writes `HKLM\SYSTEM\KeyboardLayout`. **Page 4 -- Create User**: username textbox; password + confirm password (masked); `auth_create_user(username, password, PRIV_ADMIN)` (TODO-06); writes `HKLM\SYSTEM\DefaultUser`. **Page 5 -- Wallpaper**: 4-6 wallpaper thumbnails (scan `C:\Impossible\Web\Wallpaper\`); click selects; `wallpaper_set(path)` preview. **Page 6 -- Updates**: "Check for updates automatically?" `CTRL_CHECKBOX` (default on); `update_check()` background if checked; [Finish]. On finish: `registry_set("HKLM\\SYSTEM\\FirstBoot", "0")`; `kevent_log(LOG_INFO, "oobe", "First-boot setup completed: user=%s", username)`.
+> **Trigger**: in kernel init (after full desktop init): `registry_get("HKLM\\SYSTEM\\FirstBoot")` == "1" → `oobe_start()`. Layout per `docs/design/shell.md#first-run-setup`: full-screen dark bloom wallpaper (`bloom-dark.jpg`) under acrylic, z_order=29000 (above taskbar); a centred 800 x 600 card (radius 8, `window_bg`, `THEME_ELEV_START_*`) with an illustration or icon on the left third and the step on the right: title in the title style (28/36), body in the body style, controls per `docs/design/controls.md`, accent Next bottom right and Back as a standard button. **Page 1 -- Welcome**: "Welcome to Impossible OS" title; "Let's get started." subtitle; [Next]. **Page 2 -- Timezone/Region**: `CTRL_DROPDOWN` timezone (UTC offsets, TZ names); `CTRL_DROPDOWN` region (locale formats); writes `HKLM\SYSTEM\TimeZone` + `HKLM\SYSTEM\Region`. **Page 3 -- Keyboard**: `CTRL_DROPDOWN` keyboard layout; test textbox below; writes `HKLM\SYSTEM\KeyboardLayout`. **Page 4 -- Create User**: username textbox; password + confirm password (masked); `auth_create_user(username, password, PRIV_ADMIN)` (TODO-06); writes `HKLM\SYSTEM\DefaultUser`. **Page 5 -- Wallpaper**: 4-6 wallpaper thumbnails (scan `C:\Impossible\Web\Wallpaper\`); click selects; `wallpaper_set(path)` preview. **Page 6 -- Updates**: "Check for updates automatically?" `CTRL_CHECKBOX` (default on); `update_check()` background if checked; [Finish]. On finish: `registry_set("HKLM\\SYSTEM\\FirstBoot", "0")`; `kevent_log(LOG_INFO, "oobe", "First-boot setup completed: user=%s", username)`.
 
-- [ ] `void oobe_start(void)` -- check `HKLM\SYSTEM\FirstBoot`; create full-screen wizard window
-- [ ] Page navigation: [Next]/[Back] buttons; page index 0–5; render page by index
+- [ ] `void oobe_start(void)` -- check `HKLM\SYSTEM\FirstBoot`; create the full-screen wizard (bloom wallpaper under acrylic + centred 800 x 600 card)
+- [ ] Page navigation: accent [Next] bottom right, standard [Back]; page index 0–5; render page by index
 - [ ] Page 2: `CTRL_DROPDOWN` timezone (30+ TZ entries) + region → Registry
 - [ ] Page 3: keyboard layout dropdown + `CTRL_TEXTBOX` test area
 - [ ] Page 4: `CTRL_TEXTBOX` username + password + confirm; `auth_create_user()` on [Next]; show error if mismatch
 - [ ] Page 5: wallpaper thumbnails from `vfs_readdir("C:\\Impossible\\Web\\Wallpaper\\")`; `image_scale()` for 120×80 px previews; click → `wallpaper_set()`
-- [ ] Page 6: auto-update checkbox; background `update_check()` task; [Finish]
+- [ ] Page 6: auto-update toggle switch; background `update_check()` task; [Finish] (accent)
 - [ ] Finish: `registry_set("HKLM\\SYSTEM\\FirstBoot", "0")`; `kevent_log()`; close OOBE; show desktop
 - [ ] Commit: `"oobe: first-boot setup wizard -- timezone, keyboard, user create, wallpaper, update check"`
 
 ## 6. Crash Dump Viewer `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+**Owner of:** the work planned in `02-kernel-core/TODO-27 §8 (unexpected-shutdown prompt)`, which is superseded there so there is one implementation.
 
 On next boot after crash (dump file present in `CrashDumps\`): `notify_send()` prompt "System shut down unexpectedly. [View Report] [Dismiss]". Crash report viewer window: formatted dump (registers, stack, loaded drivers, PMM stats, last serial lines).
 
@@ -180,13 +191,14 @@ Text-mode boot menu (intercept F8 before scheduler): Normal / Safe / Recovery Sh
 **Files:** `src/kernel/recovery.c` (new), `include/kernel/recovery.h` (new)
 
 > [!NOTE]
-> → XREF: `08-graphics-ui/TODO-03 §3` -- F8 keyboard polling at early boot (before APIC/scheduler up); that section wires the key detection; §8 here implements the menu + shell loop. **Text mode**: use direct VGA text mode (`0xB8000`) or serial output (`COM1`) for recovery UI -- no framebuffer dependency, no WM. Menu rendered via `vga_puts_at(row, col, str, attr)` or equivalent. **Recovery shell**: small read-eval loop: `recovery_readline(buf, 256)` (PS/2 poll via `inb(0x60)` + PS/2 scancode decode); parse first token → dispatch table. **Commands**: `ls [path]` → `vfs_readdir()`; `cd path` → update cwd; `cat path` → `vfs_open/read/close()`; `cp src dst`; `mv src dst`; `rm path`; `pwd`; `fsck [drive:]` → `ixfs_fsck()` (TODO-fs); `fdisk` → print GPT partition table via `gpt_read()`; `reg-reset` → overwrite `SYSTEM` hive with `SYSTEM.bak` fallback; `reg-query key` → `registry_get()` + print; `reg-set key val` → `registry_set()`; `backup src dst` → `vfs_copy()` (chunked via kmalloc 4 KiB); `restore ts` → `restore_rollback(ts)`; `reboot` → `EFI_ResetSystem(RESET_COLD)`. **Safe mode** option: set `HKLM\SYSTEM\Boot\SafeMode=1` → `EFI_ResetSystem(RESET_WARM)` → kernel init reads flag → skip non-critical drivers.
+> → XREF: `08-graphics-ui/TODO-03 §3` -- F8 keyboard polling at early boot (before APIC/scheduler up); that section wires the key detection; §8 here implements the menu + shell loop. **Rendering**: the F8 menu itself is owned by `08-graphics-ui/TODO-13 §5` (boot framebuffer + `boot_font`, no WM); this section supplies the options it dispatches to and the recovery shell. The shell renders on the boot framebuffer with `boot_font` (UEFI GOP only: no VGA text mode, `0xB8000` does not exist on UEFI systems) and mirrors to serial (`COM1`). **Recovery shell**: small read-eval loop: `recovery_readline(buf, 256)` (PS/2 poll via `inb(0x60)` + PS/2 scancode decode); parse first token → dispatch table. **Commands**: `ls [path]` → `vfs_readdir()`; `cd path` → update cwd; `cat path` → `vfs_open/read/close()`; `cp src dst`; `mv src dst`; `rm path`; `pwd`; `fsck [drive:]` → `ixfs_fsck()` (TODO-fs); `fdisk` → print GPT partition table via `gpt_read()`; `reg-reset` → overwrite `SYSTEM` hive with `SYSTEM.bak` fallback; `reg-query key` → `registry_get()` + print; `reg-set key val` → `registry_set()`; `backup src dst` → `vfs_copy()` (chunked via kmalloc 4 KiB); `restore ts` → `restore_rollback(ts)`; `reboot` → `EFI_ResetSystem(RESET_COLD)`. **Safe mode** option: set `HKLM\SYSTEM\Boot\SafeMode=1` → `EFI_ResetSystem(RESET_WARM)` → kernel init reads flag → skip non-critical drivers.
 
-- [ ] `void recovery_menu_show(void)` -- VGA text mode menu render; read key; dispatch to option
+- [/] Superseded: the F8 menu is implemented by `08-graphics-ui/TODO-13-boot-splash-recovery.md §5`
+  - Do not build a second menu. This section provides `recovery_dispatch(option)` for the options below, which that menu must list (System Restore, Factory Reset and Startup Repair in addition to its own)
 - [ ] **Normal Boot**: return immediately; kernel continues normal init
 - [ ] **Safe Mode**: `registry_set("HKLM\\SYSTEM\\Boot\\SafeMode", "1")` + `EFI_ResetSystem(RESET_WARM)`
 - [ ] **Recovery Shell**: `recovery_shell_loop()` -- `recovery_readline()` PS/2 poll + scancode → ASCII; parse + dispatch
-- [ ] Implement all 15 shell commands with VGA/serial output
+- [ ] Implement all 15 shell commands with boot-framebuffer (`boot_font`) and serial output
 - [ ] `reg-reset`: `vfs_rename("SYSTEM", "SYSTEM.corrupt")` + `vfs_rename("SYSTEM.bak", "SYSTEM")`
 - [ ] **System Restore**: call `restore_list()` → display numbered list → select → `restore_rollback(ts)`
 - [ ] **Factory Reset**: route to §8
@@ -279,8 +291,8 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] `restore_create("test")` → `C:\Impossible\System\Restore\{ts}\` exists with `manifest.ini` + `system_files.zip` + `registry_backup\`
 - [ ] `restore_list()` returns the created entry; `restore_delete(ts)` removes it
-- [ ] `kevent_log(LOG_SECURITY, "auth", "Login: testuser")` → line appears in `events.log` on VFS
-- [ ] `eventvwr.cpl` opens → Security tab shows the login event with correct timestamp
+- [ ] `kevent_log(LOG_SECURITY, "auth", "Login: testuser")` → line appears in `events.jsonl` on VFS
+- [ ] `eventview.exe` (`13-tools-accessories/TODO-02 §2`) Security filter shows the login event with correct timestamp
 - [ ] F8 at boot → text-mode menu appears; select "Recovery Shell" → `ls C:\` prints directory; `pwd` returns current path
 - [ ] First-boot (`HKLM\SYSTEM\FirstBoot=1`): boot → OOBE wizard appears; complete all pages; reboot → OOBE does not appear again
 - [ ] Crash dump present in `CrashDumps\`: on boot → `notify_send()` prompt shown; [View] → crash viewer window with register tab

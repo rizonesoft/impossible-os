@@ -49,6 +49,8 @@ title: "TODO-04 -- Animation Engine"
 
 ## 1. Core Tween Engine `[Sonnet]`
 
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 `gfx_tween_t` struct with from/to/current, duration_ms, elapsed_ms, easing_fn pointer, on_complete callback, active flag. `gfx_tween_start()` initializes; `gfx_tween_update(delta_ms)` advances and writes interpolated value to `current`; `gfx_tween_value()` returns `current`. All arithmetic in 16.16 fixed-point.
 
 **Files:** `src/kernel/gfx/gfx_animate.c` (new), `include/kernel/gfx/gfx_animate.h` (new)
@@ -65,6 +67,8 @@ title: "TODO-04 -- Animation Engine"
 - [ ] Commit: `"gfx/anim: gfx_tween_t -- start/update/value, 16.16 fixed-point, on_complete callback"`
 
 ## 2. Easing Functions `[Sonnet]`
+
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 9 easing functions, all with signature `int32_t fn(int32_t t)` where `t` is 16.16 (0→65536). LINEAR, IN_QUAD/OUT_QUAD/IN_OUT_QUAD, IN_CUBIC/OUT_CUBIC/IN_OUT_CUBIC, BOUNCE, BACK. Exported as named function pointers.
 
@@ -89,9 +93,15 @@ title: "TODO-04 -- Animation Engine"
 - [ ] `int32_t gfx_ease_back(int32_t t)` -- ease-out with `s = 1.70158`; integer overshoot (output may briefly exceed 65536); clamp applied by caller at completion
 - [ ] Named constants in `gfx_animate.h`: `#define GFX_EASE_LINEAR gfx_ease_linear` (and similarly for all 9)
 - [ ] Unit-testable: `gfx_ease_out_cubic(0) == 0`, `gfx_ease_out_cubic(65536) == 65536`, `gfx_ease_bounce(65536) == 65536`; log these in a `gfx_anim_self_test()` function called once at init
-- [ ] Commit: `"gfx/anim: 9 easing functions -- quad/cubic/bounce/back in 16.16 fixed-point"`
+- [ ] Add the three design easing curves from the motion tokens
+  - `gfx_ease_decelerate`, `gfx_ease_accelerate`, `gfx_ease_standard` as fixed-point cubic-bezier evaluators of the `motion.ease_*` control points in `docs/design/tokens.json` (decelerate `0,0,0,1`, accelerate `1,0,1,1`, standard `0.8,0,0.2,1`)
+  - Extend `scripts/site/gen_theme_header.py` to emit the control points as 16.16 constants (`THEME_EASE_<NAME>_X1/Y1/X2/Y2`) so the curves come from the tokens, not literals
+  - Shell surfaces use ONLY these three curves and the `THEME_MOTION_*_MS` durations; the quad/cubic/bounce/back set stays for app content
+- [ ] Commit: `"gfx/anim: easing functions -- quad/cubic/bounce/back plus the design's decelerate/accelerate/standard curves"`
 
 ## 3. Global Animation Manager `[Sonnet]`
+
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_mgr_cancel(tw)` removes; `anim_mgr_tick(delta_ms)` advances all and auto-removes completed. Wired into `wm_composite()` as first call. delta_ms derived from `system_get_ticks()` diff, capped at 33 ms.
 
@@ -114,6 +124,8 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 
 ## 4. Registry Controls `[Sonnet]`
 
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 `HKCU\Software\Impossible\Theme\EnableAnimations` DWORD (default 1). `AnimationSpeed` DWORD (default 100 = 1×, range 50–200). When `EnableAnimations = 0`: `anim_mgr_add()` snaps tween to final value immediately instead of registering it. `AnimationSpeed` scales the `duration_ms` passed to `gfx_tween_start()`.
 
 **Files:** `src/kernel/gfx/anim_mgr.c` (extend), `include/kernel/gfx/anim_mgr.h` (extend)
@@ -129,12 +141,14 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 - [ ] `int anim_mgr_enabled(void)` → `g_anim_enabled` -- for callers that want to skip tween setup entirely
 - [ ] Log: `[anim] settings: enabled=%d speed=%u%%`
 - [ ] Shell motion from the design tokens (`docs/design/shell.md`): Start opens over `THEME_MOTION_START_OPEN_MS` (250), rising `THEME_SIZE_START_SLIDE` (48 px) on the decelerate curve; closes over `THEME_MOTION_START_CLOSE_MS` (167) accelerating
-  - Flyouts and menus fade and rise 12 px over `THEME_MOTION_NORMAL_MS`; taskbar indicator width animates over the same; curves are the `motion.ease_*` control points in `docs/design/tokens.json`
+  - Flyouts and menus fade and rise `THEME_SIZE_FLYOUT_RISE` (12) px over `THEME_MOTION_NORMAL_MS` (`docs/design/shell.md#materials`); taskbar indicator width animates over the same; curves are the `motion.ease_*` control points in `docs/design/tokens.json`
 - [ ] Commit: `"gfx/anim: registry controls -- EnableAnimations + AnimationSpeed, snap reduce-motion path"`
 
 ## 5. Window Transition Animations `[Opus]`
 
-Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.16 percent, 65536=100%). Open: scale 90→100% + opacity 0→255 (200 ms ease-out-cubic). Close: scale 100→90% + opacity 255→0 (150 ms ease-in-quad). Minimize/restore: slide to/from taskbar button rect (250 ms). Maximize/snap: expand/slide+resize (200 ms). Menu popup: scale-Y 0→100% (150 ms ease-out-quad).
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#materials`](../../docs/design/shell.md#materials), [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
+
+Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.16 percent, 65536=100%). Durations and curves come only from the design motion tokens (`THEME_MOTION_*_MS`, `gfx_ease_decelerate/accelerate/standard`): entering motion decelerates, leaving motion accelerates. Open: scale `THEME_SIZE_WINDOW_OPEN_SCALE_PCT` (96)→100% + opacity 0→255 over `THEME_MOTION_SLOW_MS` (250) decelerate. Close: scale 100→96% + opacity 255→0 over `THEME_MOTION_NORMAL_MS` (167) accelerate (`docs/design/shell.md#window-chrome`). Minimize/restore: slide to/from the taskbar button rect over `THEME_MOTION_SLOW_MS` (250), accelerate out / decelerate in. Maximize/snap: expand/slide+resize over `THEME_MOTION_NORMAL_MS` with the standard curve. Menus and flyouts: fade + rise 12 px over `THEME_MOTION_NORMAL_MS` decelerate (`docs/design/shell.md#materials`).
 
 **Files:** `src/desktop/wm_anim.c` (new), `include/desktop/wm_anim.h` (new), `include/desktop/wm.h` (extend)
 
@@ -143,18 +157,21 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
 
 - [ ] `typedef struct { gfx_tween_t x, y, w, h; gfx_tween_t opacity; gfx_tween_t scale; int32_t taskbar_rx, taskbar_ry, taskbar_rw, taskbar_rh; uint8_t closing; } wm_anim_state_t;` in `include/desktop/wm_anim.h`
 - [ ] Embed `wm_anim_state_t anim` field into `struct wm_window` in `include/desktop/wm.h`
-- [ ] `void wm_anim_open(int handle)`: start `scale` tween 58982→65536 (90→100%), opacity 0→255; both 200 ms ease-out-cubic; register both in anim_mgr
-- [ ] `void wm_anim_close(int handle)`: start `scale` 65536→58982, opacity 255→0; 150 ms ease-in-quad; `anim.closing = 1`; `on_complete` → `wm_destroy_window(handle)`
-- [ ] `void wm_anim_minimize(int handle, int32_t tx, int32_t ty, uint32_t tw, uint32_t th)`: tween x/y/w/h toward taskbar rect; 250 ms ease-in-quad; `on_complete` → hide window (`WM_FLAG_VISIBLE = 0`)
-- [ ] `void wm_anim_restore(int handle)`: store pre-minimize position; tween from taskbar rect back to stored geometry; 250 ms ease-out-cubic; set visible first
-- [ ] `void wm_anim_maximize(int handle)`: tween x/y/w/h to `{0, 0, screen_w, screen_h}`; 200 ms ease-out-cubic
-- [ ] `void wm_anim_snap(int handle, int side)`: `side=LEFT`: tween to `{0, 0, screen_w/2, screen_h}` 200 ms; `side=RIGHT`: `{screen_w/2, 0, screen_w/2, screen_h}`
-- [ ] `void wm_anim_menu_open(int handle)`: tween `scale` in Y axis 0→65536; 150 ms ease-out-quad (scale-Y stub: use `h` tween from 0 to natural height; compositor clips to current `h.current`)
+- [ ] `void wm_anim_open(int handle)`: start `scale` tween 62915→65536 (96→100%), opacity 0→255; both over `THEME_MOTION_SLOW_MS` with `gfx_ease_decelerate`; register both in anim_mgr
+- [ ] `void wm_anim_close(int handle)`: start `scale` 65536→62915 (100→96%), opacity 255→0; `THEME_MOTION_NORMAL_MS` with `gfx_ease_accelerate`; `anim.closing = 1`; `on_complete` → `wm_destroy_window(handle)`
+- [ ] `void wm_anim_minimize(int handle, int32_t tx, int32_t ty, uint32_t tw, uint32_t th)`: tween x/y/w/h toward taskbar rect; `THEME_MOTION_SLOW_MS` with `gfx_ease_accelerate`; `on_complete` → hide window (`WM_FLAG_VISIBLE = 0`)
+- [ ] `void wm_anim_restore(int handle)`: store pre-minimize position; tween from taskbar rect back to stored geometry; `THEME_MOTION_SLOW_MS` with `gfx_ease_decelerate`; set visible first
+- [ ] `void wm_anim_maximize(int handle)`: tween x/y/w/h to the work area (screen minus the 48 px taskbar); `THEME_MOTION_NORMAL_MS` with `gfx_ease_standard`
+- [ ] `void wm_anim_snap(int handle, int side)`: `side=LEFT`: tween to the left half of the work area over `THEME_MOTION_NORMAL_MS` (`gfx_ease_standard`); `side=RIGHT`: `{screen_w/2, 0, screen_w/2, screen_h}`
+- [ ] `void wm_anim_menu_open(int handle)`: opacity 0→255 and y +`THEME_SIZE_FLYOUT_RISE` (12) px → 0 over `THEME_MOTION_NORMAL_MS`, `gfx_ease_decelerate`
+  - Close fades over `THEME_MOTION_FAST_MS`; menus and flyouts never scale (`docs/design/shell.md#materials`, "Flyout and menu motion")
 - [ ] Compositor in `wm.c`: after `anim_mgr_tick()`: for each window: apply `win->anim.x.current`, `y.current`, `w.current`, `h.current`; if `anim.scale.active || anim.opacity.active`: use alpha-blend blit path; else: fast blit
 - [ ] Call `wm_anim_open()` from `wm_create_window()` (after buffer allocation, before first composite)
 - [ ] Commit: `"desktop/wm_anim: window open/close/minimize/restore/maximize/snap/menu animations"`
 
 ## 6. Spring Physics `[Opus]`
+
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 `spring_t` struct with position, velocity, target, stiffness (k), damping (d). `spring_update(sp, delta_ms)` applies Hooke's law as an integer Euler step. `spring_settled(sp)` returns true when velocity and displacement are below threshold. Applied to window bounce on restore and elastic scroll overshoot.
 
@@ -172,6 +189,8 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
 - [ ] Commit: `"gfx/spring: integer Hooke's law spring -- critically-damped default, spring_settled, substep"`
 
 ## 7. Compositor Integration `[Sonnet]`
+
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Non-animating frames skip compositor redraw when no dirty rects. Animating windows force redraw each frame via `anim_mgr_any_active()`. VSync-aware delta capping (33 ms). `EnableAnimations=0` reduce-motion audit confirming instant transitions everywhere.
 
@@ -211,11 +230,11 @@ Non-animating frames skip compositor redraw when no dirty rects. Animating windo
 - [ ] `gfx_anim_self_test()` log at boot: `[anim] init; self-test passed`
 - [ ] Easing: `gfx_ease_linear(32768) == 32768`; `gfx_ease_in_quad(32768) == 16384`; `gfx_ease_out_cubic(65536) == 65536`; `gfx_ease_bounce(65536) == 65536` -- verify via serial log
 - [ ] `anim_mgr_tick()` called first in `wm_composite()`; serial log confirms on first compositor frame
-- [ ] Window open animation visible in QEMU: new window scales 90→100% + fades in over ~200 ms
+- [ ] Window open animation visible in QEMU: new window scales 96→100% + fades in over 250 ms (`THEME_MOTION_SLOW_MS`) on the decelerate curve
 - [ ] Window close animation: scales down + fades out before buffer freed; window destroyed in `on_complete`
 - [ ] Minimize/restore: window slides to/from bottom of screen (taskbar area) with correct easing
 - [ ] `EnableAnimations = 0` in Registry: window open/close snap instantly; zero tweens registered in `anim_mgr`
-- [ ] `AnimationSpeed = 200`: all animations run at 2× duration (200 ms open → 400 ms); `AnimationSpeed = 50`: half duration
+- [ ] `AnimationSpeed = 200`: all animations run at 2× duration (167 ms open → 334 ms); `AnimationSpeed = 50`: half duration
 - [ ] Spring: `spring_settled()` returns true after ~500 ms of decay from `pos=65536*10, target=0, k=65536, d=98304`; verified via serial log in a test init call
 - [ ] Idle CPU: desktop with no open windows and no animations running → compositor early-returns dirty check; CPU usage near baseline
 - [ ] Commit: `"gfx/anim: complete animation engine -- tween, easing, manager, window transitions, spring, compositor"`

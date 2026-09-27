@@ -8,7 +8,7 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 
 # TODO-02 -- Event Viewer (Log Viewer)
 
-> **Goal:** A user-mode GUI tool (`eventview.exe`) that reads `X:\Logs\events.jsonl` and displays kernel events in a colour-coded, filterable table -- like Windows Event Viewer. Shows timestamp, level, subsystem, and message. Filter by level (INFO/WARN/ERROR), subsystem tag, and text search. Essential for diagnosing boot issues, driver failures, and runtime errors without parsing serial logs.
+> **Goal:** A user-mode GUI tool (`eventview.exe`) that reads `X:\Logs\events.jsonl` and displays kernel events in a filterable table -- like Windows Event Viewer. Shows timestamp, level, subsystem, and message. Filter by level (INFO/WARN/ERROR), subsystem tag, and text search. Essential for diagnosing boot issues, driver failures, and runtime errors without parsing serial logs.
 
 > [!IMPORTANT]
 > **Current state:** `events.jsonl` is written by klog during boot (one JSON object per line). No user-mode tool to read it. Logs are only visible via serial output or raw file inspection. The klog ring buffer holds 1000 entries in memory; `events.jsonl` on disk is the persistent record.
@@ -29,7 +29,7 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 
 - `eventview.exe` deployed to `C:\Impossible\System32\`
 - Launchable from shell: `C:\> eventview` or from Start Menu / Control Panel
-- Table view: timestamp, level (colour-coded), subsystem, message
+- Table view: timestamp, level, subsystem, message
 - Filter bar: level dropdown, subsystem dropdown, text search
 - Auto-refresh: tail new entries as they arrive
 - Useful for post-mortem diagnosis and live monitoring
@@ -45,11 +45,13 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 | ⭐  |   3   | Live tail mode and auto-refresh                | §2         |  [ ]   |
 
 > 💎 = parity -- Windows ships Event Viewer; Linux has journalctl.
-> ⭐ = exclusive -- colour-coded JSONL viewer integrated into the OS.
+> ⭐ = exclusive -- JSONL viewer integrated into the OS.
 
 ---
 
 ## 1. Console-Mode Log Viewer
+
+**Design:** n/a -- no desktop UI surface (developer tooling, data export, CLI or device plumbing)
 
 Text-based event log reader -- works before GUI is needed.
 
@@ -65,19 +67,26 @@ Text-based event log reader -- works before GUI is needed.
 
 ## 2. GUI Event Viewer
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Graphical version with filterable table.
 
 - [ ] 800×500 window: toolbar (filters) + scrollable table
-- [ ] Table columns: Time, Level, Subsystem, Message
-- [ ] Level column colour-coded: green/yellow/red/bold-red
+- [ ] Table columns: Time, Level, Subsystem, Message (list view per `docs/design/controls.md#list-tree-and-grid-views`)
+- [ ] Security filter: include `LOG_SECURITY` events from the kernel event log of `10-platform-services/TODO-04 §1` (`X:\Logs\events.log`), which supersedes the `eventvwr.cpl` viewer planned there
+- [ ] Level column: level name as text plus the matching status glyph (info / warning / error) in `status_info` / `status_caution` / `status_critical` per `docs/design/controls.md#status-colours`
+  - Levels use the status glyph plus text in the matching `status_*` colour per `docs/design/controls.md#status-colours` (never colour alone).
 - [ ] Filter bar: level dropdown (All/INFO/WARN/ERROR), subsystem dropdown, text search field
-- [ ] Sort by any column (click header)
+- [ ] Sort by any column (click header), with the sortable 32 px column header of `docs/design/shell.md#file-explorer` (Views)
+- [ ] Date range filter and an [Export] button (standard button, writes the filtered rows to a `.jsonl` file) -- taken over from the superseded `eventvwr.cpl` of `10-platform-services/TODO-04 §1`
 - [ ] Status bar: total entries, filtered count
-- [ ] Commit: `"tools: GUI eventview.exe -- filterable colour-coded event table"`
+- [ ] Commit: `"tools: GUI eventview.exe -- filterable event table"`
 
 ---
 
 ## 3. Live Tail and Auto-Refresh
+
+**Design:** [`controls.md#button`](../../docs/design/controls.md#button)
 
 Watch for new events and update the display.
 
@@ -115,7 +124,7 @@ Watch for new events and update the display.
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
-- [ ] QEMU WHPX: `C:\> eventview` prints colour-coded log table
+- [ ] QEMU WHPX: `C:\> eventview` prints the log table
 - [ ] QEMU WHPX: `eventview --level WARN` filters correctly
 - [ ] GUI version shows table with working filters
 - [ ] Bare metal: eventview reads FAT32-backed events.jsonl correctly

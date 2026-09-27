@@ -21,7 +21,7 @@ title: "TODO-03 -- Service Manager & Core Daemons"
 - `include/registry.h` -- `RegGetValue/RegSetValueEx/RegOpenKeyEx` -- used by §1 service Registry definitions, §9 user Registry hive, §7 RunOnce/Run
 - `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_mkdir`, `vfs_create` -- used by §9 home dir creation, §7 startup scan
 - `include/kernel/smp.h` -- `smp_cpu_count()` -- used by §8 `GetSystemInfo.dwNumberOfProcessors`
-- `include/desktop/notify.h` (TODO-09 §6) -- `notify_send()` -- used by §4 service failure toast and §7 `knotify_send()` drain
+- `include/desktop/notify.h` (08-graphics-ui/TODO-11 §5) -- `notify_send()` -- used by §4 service failure toast and §7 `knotify_send()` drain
 - `include/desktop/shortcut.h` (TODO-02 §5) -- `shortcut_execute()` -- used by §7 autostart `.lnk` execution
 - `include/kernel/klog.h` -- `klog()` -- used throughout for `[svc]` serial log lines
 - → XREF: `02-kernel-core/TODO-02-kernel-configuration-policy.md §5, §10` -- Safe Mode and boot acceptance policy decide which services and autostarts may run
@@ -175,7 +175,7 @@ Kernel-side `struct kernel_notification` queue (source[32], message[256], severi
 **Files:** `src/kernel/knotify.c` (new), `include/kernel/knotify.h` (new)
 
 > [!NOTE]
-> Separate from the desktop `notify_send()` (user-visible toasts in TODO-09): `knotify_send()` is safe to call from any kernel context (interrupt, workqueue, kernel thread) -- it only enqueues into a lock-protected ring buffer. The compositor (or a dedicated desktop poll) drains this ring buffer per frame and calls `notify_send()` for each entry. This decouples the kernel from the desktop notification system. **Queue**: `#define KNOTIFY_QUEUE_SIZE 32`; ring buffer `g_knotify_queue[32]`; `spinlock_t g_knotify_lock`. Severity → icon mapping: `KNOTIFY_INFO` → `ICON_INFO`, `KNOTIFY_WARN` → `ICON_WARNING`, `KNOTIFY_ERROR` → `ICON_ERROR`. Drain: called from `wm_composite()` pre-draw tick: `knotify_drain()` iterates pending entries; calls `notify_send(source, message, icon, 4000)`.
+> Separate from the desktop `notify_send()` (user-visible toasts in `08-graphics-ui/TODO-11` §5): `knotify_send()` is safe to call from any kernel context (interrupt, workqueue, kernel thread) -- it only enqueues into a lock-protected ring buffer. The compositor (or a dedicated desktop poll) drains this ring buffer per frame and calls `notify_send()` for each entry. This decouples the kernel from the desktop notification system. **Queue**: `#define KNOTIFY_QUEUE_SIZE 32`; ring buffer `g_knotify_queue[32]`; `spinlock_t g_knotify_lock`. Severity → icon mapping: `KNOTIFY_INFO` → `ICON_INFO`, `KNOTIFY_WARN` → `ICON_WARNING`, `KNOTIFY_ERROR` → `ICON_ERROR`. Drain: called from `wm_composite()` pre-draw tick: `knotify_drain()` iterates pending entries; calls `notify_send(source, message, icon, 4000)`.
 
 - [ ] `typedef enum { KNOTIFY_INFO=0, KNOTIFY_WARN=1, KNOTIFY_ERROR=2 } knotify_severity_t;`
 - [ ] `typedef struct { char source[32]; char message[256]; knotify_severity_t severity; int64_t timestamp; } kernel_notification_t;`

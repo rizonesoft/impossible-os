@@ -83,6 +83,8 @@ title: "TODO-28: BSOD / Panic Screen & Crash Experience"
 
 ## 1. TTF Font Rendering in Panic Screen
 
+**Design:** n/a -- the crash screen follows its own boot-error-screen design, owned by 02-kernel-core/TODO-28, outside the desktop design system
+
 Use `ttf_draw_string()` when the font manager is initialized, fall back to `printk()` + boot_font when it isn't. The TTF path renders at the current screen resolution with proper antialiasing; the boot_font path is the existing behavior.
 
 **Files:** `src/kernel/panic.c`, `include/font_mgr.h`
@@ -103,6 +105,8 @@ Use `ttf_draw_string()` when the font manager is initialized, fall back to `prin
 ---
 
 ## 2. Improved Layout and Visual Hierarchy
+
+**Design:** n/a -- the crash screen follows its own boot-error-screen design, owned by 02-kernel-core/TODO-28, outside the desktop design system
 
 Redesign the BSOD layout with proper margins, section dividers, and visual hierarchy. Pre-24H2 Windows 11 showed a sad face, short copy, and a troubleshooting QR; 24H2+ moves to a minimal black screen without that QR (OS Comparison row). Impossible OS still targets a richer structured layout than either snapshot.
 
@@ -260,6 +264,8 @@ Windows shows "What failed: ntfs.sys" when it can identify the faulting driver. 
 
 ## 10. Panic Screen Modes (User / Developer / QR)
 
+**Design:** n/a -- the crash screen follows its own boot-error-screen design, owned by 02-kernel-core/TODO-28, outside the desktop design system
+
 Linux DRM panic (6.10+) offers three modes: `user` (simple message), `kmsg` (full log), `qr_code` (data QR). Impossible OS should offer similar flexibility: end users see a clean screen, developers see full diagnostics, QR mode encodes crash data for mobile scanning.
 
 **Files:** `src/kernel/panic.c`, `resources/boot/boot.conf`
@@ -301,6 +307,8 @@ Neither Windows nor Linux provides audio feedback during a kernel panic. Blind u
 ---
 
 ## 12. Keyboard-Driven Recovery Actions at Crash Screen
+
+**Design:** n/a -- the crash screen follows its own boot-error-screen design, owned by 02-kernel-core/TODO-28, outside the desktop design system
 
 The current BSOD only offers auto-restart or halt. Neither Windows nor Linux offers interactive recovery choices at crash time. Impossible OS can offer F-key recovery actions: Safe Mode, disable last driver, recovery shell.
 

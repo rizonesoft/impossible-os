@@ -275,12 +275,9 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
   5. Call `dump_sink_clear()` -- zero the `DumpPresent` flag
   6. Set Registry `HKLM\SYSTEM\LastCrashDump` = the `.dmp` path and `HKLM\SYSTEM\CrashPending = 1`
 
-- [ ] On desktop startup: check `HKLM\SYSTEM\CrashPending == 1`; if true:
-  - Display a dialog: `"Impossible OS shut down unexpectedly.\n\nCrash dump saved to {path}.\n\n[View Report]  [Submit Report]  [Close]"`
-  - `[View Report]`: launch `dmpanalyze.exe {path}` (§9)
-  - `[Submit Report]` (opt-in): HTTP POST the minidump to the crash server URL from `HKLM\SYSTEM\CrashReporting\ServerUrl` (default empty = disabled)
-  - `[Close]`: dismiss; set `HKLM\SYSTEM\CrashPending = 0`
-- [ ] Dialog does not block shell startup; shown as a non-intrusive banner in the system tray notification area
+- [/] Superseded: the unexpected-shutdown prompt is owned by `10-platform-services/TODO-04 §6`; do not build a second dialog or tray banner here
+  - It is a persistent toast with View and Dismiss actions plus the `crashview` report window (`docs/design/shell.md#toast-notifications`)
+- [ ] Clear `HKLM\SYSTEM\CrashPending` when that prompt is dismissed; the opt-in Submit Report action (HTTP POST of the minidump to `HKLM\SYSTEM\CrashReporting\ServerUrl`, empty = disabled) is added to the crashview window
 
 - [ ] Keep at most 5 `.dmp` files in `X:\Crash\`; oldest is deleted when the 6th would be created
 - [ ] `HKLM\SYSTEM\CrashDumps\MaxFiles` (REG_DWORD, default 5) controls the limit

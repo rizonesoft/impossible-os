@@ -99,7 +99,7 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
 
 ## 3. Network Statistics API `[Sonnet]`
 
-Add per-interface RX/TX byte/packet/error counters to `net_interface`. `net_stats(iface, &stats)` API. System-tray icon (🌐 connected / ⚠ disconnected) with IP tooltip. Task Manager "Network" tab hook.
+Add per-interface RX/TX byte/packet/error counters to `net_interface`. `net_stats(iface, &stats)` API. Link state drives the network glyph of the system cluster (`08-graphics-ui/TODO-11 §4`, `systray_update_net_glyph()`), whose tooltip shows the IP; no separate tray icon. Task Manager "Network" tab hook.
 
 **Files:** `include/kernel/net/net.h` (extend), `src/kernel/net/ip.c` + `udp.c` (extend), `src/desktop/taskbar.c` (extend)
 
@@ -110,7 +110,7 @@ Add per-interface RX/TX byte/packet/error counters to `net_interface`. `net_stat
 - [ ] `net_status(netif, &status)`: set `connected = (netif->ip4 != 0)`; set `link_speed_mbps` from driver (constant 100 for RTL8139, 1000 for VirtIO; stored in `netif->link_speed_mbps`)
 - [ ] `net_stats(netif, &stats_out)`: copy counter fields from `net_interface` into caller struct
 - [ ] Counter increments: `ip.c` `ipv4_handle()` → `netif->rx_bytes += len; netif->rx_packets++`; `eth_send()` → `netif->tx_bytes += len; netif->tx_packets++`
-- [ ] Tray icon in `taskbar.c`: `net_draw_tray_icon()` -- if connected: draw 🌐 glyph (blue globe or bar icon from IRES); if disconnected: draw ⚠ icon; tooltip popup on hover
+- [ ] Publish link state for the taskbar system cluster: `net_on_state_change()` → `systray_update_net_glyph()` (`08-graphics-ui/TODO-11 §4`); the network glyph and its quick-settings tile are drawn there, not by a second tray icon in `taskbar.c`
 - [ ] `net_tray_refresh_timer()`: called every 2 s; compute `rx_kbps = (rx_bytes_delta * 1000) / (2000ms)`; update tooltip string
 - [ ] Task Manager hook: expose `net_stats()` result in `/sys/net` (§8); Task Manager reads that file for the network graph
 - [ ] Commit: `"net/stats: per-interface RX/TX counters, net_stats() API, tray icon with IP tooltip, 2s refresh"`

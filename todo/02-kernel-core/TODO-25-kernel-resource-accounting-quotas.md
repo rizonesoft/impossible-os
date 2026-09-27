@@ -347,6 +347,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 10. Tests, Leak Sweeps, and Dashboards
 
+**Design:** n/a -- no desktop UI surface (developer tooling, data export, CLI or device plumbing)
+
 - [/] Unit tests: charge/return, rollback, concurrent charges ship in `test_quota.c`; ALPC quota under `TEST_CAT_IPC`. Duplicate-handle and registry quota have no charge point yet. -> XREF: `§13`, `§6`
 - [x] Boot leak sweep compares outstanding USER-block quota across every test CATEGORY (`quota_sweep_close`), gated on positive per-type usage deltas through a `quota_leaked` counter the test driver folds into FAILED.
 - [x] `quota_dump()` renders live USER blocks (id, SID digest, per-type usage/peak/limit/failures) on serial; `quota_dump_crash()` is the panic form (try-lock, preallocated rows, header-only fallback), wired into `panic.c`.

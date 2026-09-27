@@ -46,7 +46,7 @@ title: "TODO-10 -- PDF Viewer & Document Reader"
 | 💎  |   5   | §5 Font handling -- embedded TrueType/Type1, ToUnicode CMap, stb_truetype render, system fallback | §4 (Tf operator is the font context for text rendering)              |  [ ]   |
 | 💎  |   6   | §6 Image rendering -- XObject images + inline, FlateDecode+DCTDecode, CMYK→RGB, fb_blit         | §4 (Do operator invokes image XObject); §2 (stream decompression)    |  [ ]   |
 | 💎  |   7   | §7 Page renderer -- rasterize to bitmap, composite text+graphics+images, DPI scaling             | §5 fonts + §6 images (all content types must render before compositor) |  [ ]   |
-| 💎  |   8   | §8 PDF viewer app -- scroll, zoom, navigation, thumbnail sidebar, text search, print            | §7 (renderer must produce pixel buffers before viewer can display)   |  [ ]   |
+| 💎  |   8   | §8 PDF viewer app -- scroll, zoom, navigation, thumbnail sidebar, text search, print            | §7 (renderer must produce pixel buffers before viewer can display)   |  [/]   |
 | 💎  |   9   | §9 PDF from HTTP -- `https_get` pipe to viewer, pdf:/https: URL, no disk write                  | §8 (viewer app must be ready to accept in-memory buffer); TODO-03    |  [ ]   |
 | 💎  |  10   | §10 PDF forms stub -- AcroForm detection, field widgets, FDF/XFDF export                        | §8 viewer (form fields rendered as overlay on top of page bitmap)    |  [ ]   |
 
@@ -190,6 +190,8 @@ Rasterize content stream to an in-memory ARGB32 bitmap at requested DPI (screen=
 
 ## 8. PDF Viewer App `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Scrollable single-page view. Zoom 50–400% + fit-to-width + fit-to-page. Page navigation (prev/next buttons, Go-to-page input). Thumbnail sidebar. Text selection + copy. Ctrl+F text search with highlight. Print via framebuffer. `pdfview filename.pdf` shell command.
 
 **Files:** `src/apps/pdfview/pdfview_app.c` (new)
@@ -197,15 +199,10 @@ Scrollable single-page view. Zoom 50–400% + fit-to-width + fit-to-page. Page n
 > [!NOTE]
 > Viewer window: `wm_create_window("PDF Viewer", 50, 30, 1000, 720)`. Toolbar: Prev/Next buttons (`ctrl_create_button`), page number text box + "/ N" label, zoom dropdown (50%/75%/100%/125%/150%/200%/400%/Fit-Width/Fit-Page), Ctrl+F search box. Main canvas: scrollable frame; when page is rendered: blit `pdf_render_buf_t.pixels` to the canvas at the computed scroll offset. **Zoom**: compute `display_dpi = 96 × zoom_factor`; re-render on zoom change (cache last rendered page). **Scroll**: `scroll_offset_x`, `scroll_offset_y` in pixels; mouse wheel → `scroll_offset_y ±= 60 px`. **Thumbnail sidebar** (100 px wide): render each page at 24 DPI (fast); draw as small bitmaps; click → navigate. Cache up to 16 thumbnail bitmaps. **Text selection**: record glyph positions during `op_Tj`; on mouse drag: collect glyphs whose bounding boxes intersect the drag rectangle; highlight by drawing transparent blue rect over each glyph box; Ctrl+C → concatenate Unicode codepoints → clipboard. **Text search**: `pdf_search_page(doc, n, term, results[])` → scan glyph list for string matches; highlight matches with yellow rect.
 
-- [ ] `pdfview_state_t { pdf_doc_t doc; int cur_page; float zoom; int scroll_x, scroll_y; pdf_render_buf_t cur_render; pdf_render_buf_t thumbs[16]; int thumb_valid[MAX_PAGES]; }` in `pdfview_app.c`
-- [ ] `pdfview_open(path)`: `pdf_open()`; `pdf_build_page_map()`; render page 0 at 96 DPI; open window
-- [ ] `pdfview_draw(state)`: blit `cur_render.pixels` at `(100 + scroll_x, 40 + scroll_y)` in window; draw scrollbars; draw toolbar; draw thumbnails
-- [ ] `pdfview_goto_page(state, n)`: render page n at current zoom DPI; reset scroll; update page-number textbox
-- [ ] `pdfview_zoom(state, factor)`: `state->zoom = factor`; `display_dpi = 96 × factor`; re-render current page
-- [ ] `pdfview_fit_width(state)`: `zoom = window_canvas_w / page_w_px_at_96dpi`; re-render
-- [ ] `pdfview_search(state, term)`: iterate pages; `pdf_search_page()`; show first match; draw highlight rects
-- [ ] `pdfview_print(state)`: render page at 300 DPI; scale to framebuffer dimensions; `fb_blit()` full-screen; wait for keypress; restore desktop
-- [ ] `cmd_pdfview(argc, argv)`: parse filename; `pdfview_open()`; register in shell command table; also register as `.pdf` file association
+- [/] Superseded: the viewer window, command bar, canvas, zoom, navigation and status bar are implemented by `11-apps/TODO-05 §6` (and search by §7); do not build a second viewer window here
+- [ ] Thumbnail sidebar in that viewer: a 280 px side panel of page thumbnails (`docs/design/shell.md#app-window-layout`), click to go to the page
+- [ ] Print: `pdfview_print(state)` renders the page at 300 DPI and hands it to the print path; reachable from the viewer command bar
+- [ ] `cmd_pdfview(argc, argv)` shell command that opens `pdfview.exe` with the file
 - [ ] Commit: `"apps/pdfview: viewer app -- zoom/scroll/navigation, thumbnail sidebar, text search, print"`
 
 ## 9. PDF from HTTP `[Sonnet]`
@@ -226,12 +223,14 @@ Scrollable single-page view. Zoom 50–400% + fit-to-width + fit-to-page. Page n
 
 ## 10. PDF Forms Stub `[Sonnet]`
 
+**Design:** [`controls.md#text-box-password-box-and-search-box`](../../docs/design/controls.md#text-box-password-box-and-search-box), [`controls.md#check-box-and-radio-button`](../../docs/design/controls.md#check-box-and-radio-button), [`controls.md#combo-box-and-drop-down`](../../docs/design/controls.md#combo-box-and-drop-down)
+
 Detect `AcroForm` dictionary in catalog. Render form fields (text, checkbox, radio, dropdown) as interactive widgets over the page bitmap. Export filled form data as `FDF`/`XFDF`.
 
 **Files:** `src/apps/pdfview/pdf_forms.c` (new)
 
 > [!NOTE]
-> AcroForm detection: `pdf_dict_get(catalog, "AcroForm")` → non-NULL. Field array: `AcroForm[Fields]` → array of indirect refs to field dicts. Field dict: `/FT` (field type: `Tx` text, `Btn` button, `Ch` choice), `/T` (partial name), `/V` (current value), `/Rect` (bounding box in page space), `/P` (page ref). Rendering: after `pdfview_draw()` blits the page bitmap, iterate fields for the current page; for each field: transform `/Rect` from PDF user space to screen coordinates; draw a white rectangle with a 1 px black border; for `Tx` fields: render `/V` string with stb_truetype at 10 px; for `Btn/checkbox`: if `/V` == `/Yes` draw ✓ else draw empty box; for `Ch/dropdown`: render current value + dropdown arrow. Interactivity: mouse click inside a field rect → `ctrl_create_textbox` overlay for `Tx` fields; checkbox click toggles `/V`. FDF export: write `%FDF-1.2` header + `FDF` dict with `Fields` array of `{/T name /V value}` dicts.
+> AcroForm detection: `pdf_dict_get(catalog, "AcroForm")` → non-NULL. Field array: `AcroForm[Fields]` → array of indirect refs to field dicts. Field dict: `/FT` (field type: `Tx` text, `Btn` button, `Ch` choice), `/T` (partial name), `/V` (current value), `/Rect` (bounding box in page space), `/P` (page ref). Rendering: after `pdfview_draw()` blits the page bitmap, iterate fields for the current page; for each field: transform `/Rect` from PDF user space to screen coordinates; draw a text box per `docs/design/controls.md#text-box-password-box-and-search-box` (control fill, stroke and underline tokens); for `Tx` fields: render `/V` string with stb_truetype at 10 px; for `Btn/checkbox`: if `/V` == `/Yes` draw ✓ else draw empty box; for `Ch/dropdown`: render current value + dropdown arrow. Interactivity: mouse click inside a field rect → `ctrl_create_textbox` overlay for `Tx` fields; checkbox click toggles `/V`. FDF export: write `%FDF-1.2` header + `FDF` dict with `Fields` array of `{/T name /V value}` dicts.
 
 - [ ] `pdf_field_t { char name[128]; char value[512]; uint8_t field_type; float rect[4]; uint32_t page_n; }` + `pdf_fields[128]` + `field_count`
 - [ ] `pdf_load_form_fields(doc)` → count: `pdf_dict_get(catalog, "AcroForm")`; iterate `Fields` array; for each: resolve field dict; extract `/FT`, `/T`, `/V`, `/Rect`, `/P`; populate `pdf_fields[]`

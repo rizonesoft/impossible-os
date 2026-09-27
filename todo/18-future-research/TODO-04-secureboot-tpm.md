@@ -181,6 +181,8 @@ bare-metal deployment.
 
 ## 4. AES-256-XTS Full Disk Encryption (FDE) `[Opus]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 > Novel: full disk encryption sealed to TPM PCR policy. No prior Impossible OS FDE.
 > Security-critical: volume key exposure = data loss. AES-256-XTS is the NIST-standard
 > mode for disk encryption (IEEE P1619).

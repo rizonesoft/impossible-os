@@ -103,6 +103,8 @@ Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impo
 
 ## 2. SDK GUI Headers `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 GUI-facing headers for Win32 window/GDI programs and IxUI native apps. These complement the C headers and are pulled in when `<windows.h>` is included.
 
 - [ ] `sdk/include/impossible/window.h` -- `CreateWindowExA/W`, `DestroyWindow`, `ShowWindow`, `SetWindowTextA/W`, `GetClientRect`, `MoveWindow`; `SW_*`, `WS_*`, `WS_EX_*` style constants; `WNDCLASSEX` struct; `RegisterClassExA/W`, `UnregisterClassA/W`

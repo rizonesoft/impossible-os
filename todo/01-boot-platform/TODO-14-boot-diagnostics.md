@@ -249,6 +249,8 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 ---
 
 ## 7. System-Wide Multi-Instance Spinner *(deferred -- desktop polish, single spinner works)*
+
+**Design:** [`controls.md#progress`](../../docs/design/controls.md#progress)
 Extend the existing single-instance `spinner.h` to support up to 8 simultaneous named spinner instances for use across the desktop.
 
 **Files:** `include/kernel/spinner.h`, `src/kernel/spinner.c`
@@ -522,6 +524,8 @@ Section 5 captures `struct panic_evidence` at physical `0x80000` and the next bo
 ---
 
 ## 16. Boot Timeline Export Formats (SVG and Chrome Trace)
+
+**Design:** n/a -- no desktop UI surface (developer tooling, data export, CLI or device plumbing)
 
 > **Spawned-by:** §12 (split)
 > **Verified:** 2026-08-30 | commit `e919cafc3` | 3/4 items | build OK | 32845 kernel + 17 user tests | lint 0 errors | renderer 30 self-check + 71 test assertions

@@ -11,7 +11,7 @@ title: "TODO-10 -- Notepad Text Editor"
 > **Goal:** Build Notepad -- the primary text editor and fallback file association for `.txt`/`.md`/`.c`/`.h`/`.asm` -- as the first real app that exercises the full widget stack. Built on a PMM-backed gap buffer with O(1) insert/delete, full keyboard + mouse editing, clipboard integration, find & replace, undo/redo, and stretch features (line numbers, syntax highlighting, font zoom).
 
 > [!IMPORTANT]
-> **Already exists**: `ttf_draw_string(s, f, x, y, text, color)` + `ttf_measure_width(f, text)` + `ttf_get(slot, px)` in `font_mgr.h`. `FONT_MONO=2` (Cascadia Code). `vfs_open/read/write`, `vfs_stat`, `vfs_create` for file I/O. `pmm_alloc_contiguous(pages)` + `pmm_free_contiguous(addr, pages)` for large buffers. `gfx_fill_rect()`, `gfx_surface_t`, `system_get_ticks()` (cursor blink). **Forward deps**: `CTRL_MENUBAR` (TODO-05 §2), `CTRL_STATUSBAR` (TODO-05 §3), `dialog_file_open/save()` (TODO-05 §3), `dialog_input()` (TODO-05 §2) for Go to Line. `clipboard_set/get(CLIP_TEXT)` (TODO-01 §1). **No `src/apps/` yet** -- TODO-09 creates it; Notepad lives at `src/apps/notepad/notepad.c`. **Missing**: gap buffer, text rendering loop, ANSI parser, undo stack, find/replace. Complete sections in order: gap buffer → text rendering → undo/redo → file menu → editing features → find & replace → stretch features.
+> **Already exists**: `ttf_draw_string(s, f, x, y, text, color)` + `ttf_measure_width(f, text)` + `ttf_get(slot, px)` in `font_mgr.h`. `FONT_MONO=2` (Cascadia Code). `vfs_open/read/write`, `vfs_stat`, `vfs_create` for file I/O. `pmm_alloc_contiguous(pages)` + `pmm_free_contiguous(addr, pages)` for large buffers. `gfx_fill_rect()`, `gfx_surface_t`, `system_get_ticks()` (cursor blink). **Forward deps**: `CTRL_MENUBAR` (08-graphics-ui/TODO-06 §4), `CTRL_STATUSBAR` (08-graphics-ui/TODO-06 §5), `dialog_file_open/save()` and `dialog_input()` (08-graphics-ui/TODO-06 §8) for Go to Line. `clipboard_set/get(CLIP_TEXT)` (TODO-01 §1). **No `src/apps/` yet** -- TODO-09 creates it; Notepad lives at `src/apps/notepad/notepad.c`. **Missing**: gap buffer, text rendering loop, ANSI parser, undo stack, find/replace. Complete sections in order: gap buffer → text rendering → undo/redo → file menu → editing features → find & replace → stretch features.
 
 ## Inputs
 
@@ -20,10 +20,10 @@ title: "TODO-10 -- Notepad Text Editor"
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free_contiguous()` -- §1 gap buffer allocation + doubling
 - `include/kernel/fs/vfs.h` -- `vfs_open/read/write`, `vfs_create`, `vfs_stat` -- §3 file load/save
 - `include/kernel/drivers/pit.h` -- `system_get_ticks()`, `PIT_TARGET_FREQ` -- §2 cursor blink 500 ms toggle
-- `include/desktop/controls.h` (TODO-05 §2/§3) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `dialog_file_open/save()`, `dialog_input()` -- §2 file menu
+- `include/desktop/controls.h` (08-graphics-ui/TODO-06 §4/§5) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `dialog_file_open/save()`, `dialog_input()` -- §2 file menu
 - `include/kernel/clipboard.h` (TODO-01 §1) -- `clipboard_set/get(CLIP_TEXT)` -- §4 Ctrl+C/X/V
 - `include/desktop/wm.h` -- `wm_create_window()`, `WM_KEYDOWN`, `WM_MOUSE_DOWN/MOVE` -- §2 keyboard + mouse events
-- `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- §4 right-click context menu
+- `include/desktop/context_menu.h` (08-graphics-ui/TODO-09 §1) -- `context_menu_show()` -- §4 right-click context menu
 - → XREF: `08-graphics-ui/TODO-06-widget-dialogs.md §2` -- `CTRL_MENUBAR`, `dialog_file_open/save` must be complete before §2 File Menu; `CTRL_STATUSBAR` before §3
 - → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §1` -- `.txt` default file association registered there; Notepad is the launch target
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- `theme_get(THEME_ACCENT)` for selection bg, match highlights, syntax colors
@@ -45,14 +45,16 @@ title: "TODO-10 -- Notepad Text Editor"
 | ⭐  |   1   | §1 Gap buffer -- `text_buffer_t`, O(1) insert/delete, PMM backing, doubling, load/save           | `pmm_alloc_contiguous` (exists); `vfs_read/write` (exists)                             |  [ ]   |
 | 💎  |   2   | §2 Text rendering -- visible-line loop, `ttf_draw_string`, I-beam blink, keyboard nav            | §1 gap buffer; `ttf_draw_string` + `ttf_measure_width` (exist); `system_get_ticks()`  |  [ ]   |
 | 💎  |   3   | §6 Undo/redo -- 200-action stack, every insert/delete logged, Ctrl+Z/Y                           | §1 gap buffer (must be wired from day 1); §2 rendering (visible state after undo)     |  [ ]   |
-| 💎  |   4   | §3 File menu -- `CTRL_MENUBAR`, New/Open/Save/Save As, `modified` flag, "Save changes?" dialog   | §1 gap buffer (load/save); `CTRL_MENUBAR` + `dialog_file_open/save` (TODO-05)         |  [ ]   |
-| 💎  |   5   | §4 Editing features -- mouse cursor, click+drag select, Ctrl+A/C/X/V, scrollbar, word wrap, status bar | §1-§3; `clipboard_set/get(CLIP_TEXT)` (TODO-01); `CTRL_STATUSBAR` (TODO-05)    |  [ ]   |
-| 💎  |   6   | §5 Find & Replace -- Ctrl+F find toolbar, Ctrl+H dialog, match highlight, Ctrl+G Go to line      | §1-§4; `dialog_input()` (TODO-05); §3 selection (Replace All uses select + paste)     |  [ ]   |
+| 💎  |   4   | §3 File menu -- `CTRL_MENUBAR`, New/Open/Save/Save As, `modified` flag, "Save changes?" dialog   | §1 gap buffer (load/save); `CTRL_MENUBAR` + `dialog_file_open/save` (D08 T06 §4, §8)         |  [ ]   |
+| 💎  |   5   | §4 Editing features -- mouse cursor, click+drag select, Ctrl+A/C/X/V, scrollbar, word wrap, status bar | §1-§3; `clipboard_set/get(CLIP_TEXT)` (TODO-01); `CTRL_STATUSBAR` (D08 T06 §5)    |  [ ]   |
+| 💎  |   6   | §5 Find & Replace -- Ctrl+F find toolbar, Ctrl+H dialog, match highlight, Ctrl+G Go to line      | §1-§4; `dialog_input()` (D08 T06 §8); §3 selection (Replace All uses select + paste)     |  [ ]   |
 | 💎  |   7   | §7 Stretch -- line number gutter, `.c/.h/.asm/.md` syntax highlight, Ctrl++/−/0 font zoom        | §1-§6; `theme_get(THEME_ACCENT)` (TODO-01)                                             |  [ ]   |
 
 ---
 
 ## 1. Gap Buffer `[Opus]`
+
+**Design:** n/a -- the gap buffer is a data structure with no visual surface
 
 `text_buffer_t` (buf, buf_size, gap_start, gap_end). PMM 64 KiB initial allocation. `text_insert/delete` O(1). `text_move_cursor` shifts gap via memcpy. `text_get_line/line_count`. `text_load/save_file`.
 
@@ -79,6 +81,8 @@ title: "TODO-10 -- Notepad Text Editor"
 
 ## 2. Text Rendering & Cursor `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Render visible lines via `ttf_draw_string(FONT_MONO)`. I-beam cursor blink 500 ms PIT toggle. Arrow keys, Home/End, Ctrl+Home/End, Page Up/Down. Selection highlight (inverted bg).
 
 **Files:** `src/apps/notepad/notepad.c` (new), `include/apps/notepad.h` (new)
@@ -100,6 +104,8 @@ Render visible lines via `ttf_draw_string(FONT_MONO)`. I-beam cursor blink 500 m
 
 ## 3. Undo/Redo `[Sonnet]`
 
+**Design:** n/a -- the undo/redo stack has no visual surface; its menu items are drawn in §4
+
 200-action stack. Every insert/delete recorded as `(type, position, text)`. Ctrl+Z undoes; Ctrl+Y redoes.
 
 **Files:** `src/apps/notepad/notepad.c` (extend), `include/apps/notepad.h` (extend)
@@ -120,12 +126,14 @@ Render visible lines via `ttf_draw_string(FONT_MONO)`. I-beam cursor blink 500 m
 
 ## 4. File Menu `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
+
 `CTRL_MENUBAR`: File → New/Open/Save/Save As. `modified` flag on any edit. Window title with `*` suffix. "Save changes?" dialog on New/Open/close-if-modified.
 
 **Files:** `src/apps/notepad/notepad.c` (extend)
 
 > [!NOTE]
-> Forward dep on `CTRL_MENUBAR` and `dialog_file_open/save()` from TODO-05. Menu structure: **File** → `{ "New", notepad_new }, { "Open...", notepad_open }, { "---" }, { "Save", notepad_save }, { "Save As...", notepad_save_as }, { "---" }, { "Exit", notepad_exit }`. **Edit** → `{ "Undo", undo_apply }, { "Redo", redo_apply }, { "---" }, { "Cut", notepad_cut }, { "Copy", notepad_copy }, { "Paste", notepad_paste }, { "---" }, { "Find...", notepad_find_open }, { "Replace...", notepad_replace_open }, { "Go To...", notepad_goto_line }, { "---" }, { "Select All", notepad_select_all } `. **View** → `{ "Word Wrap", notepad_toggle_wordwrap }, { "---" }, { "Zoom In", notepad_zoom_in }, { "Zoom Out", notepad_zoom_out }, { "Restore Default Zoom", notepad_zoom_reset }`. **notepad_new()**: if `modified` → `dialog_input("Save changes to <filename>?", "YN")` → yes: `notepad_save()`; clear buffer; `filepath=""`. **notepad_save()**: if `filepath == ""` → `notepad_save_as()`; else: `text_save_file(buf, filepath)`. **notepad_open()**: "Save changes?" if modified; `dialog_file_open("Open", "Text Files (*.txt)\0*.txt\0All Files\0*.*\0")` → path → `text_load_file(buf, path)`.
+> Forward dep on `CTRL_MENUBAR` and `dialog_file_open/save()` from `08-graphics-ui/TODO-06` §4 and §8. Menu structure: **File** → `{ "New", notepad_new }, { "Open...", notepad_open }, { "---" }, { "Save", notepad_save }, { "Save As...", notepad_save_as }, { "---" }, { "Exit", notepad_exit }`. **Edit** → `{ "Undo", undo_apply }, { "Redo", redo_apply }, { "---" }, { "Cut", notepad_cut }, { "Copy", notepad_copy }, { "Paste", notepad_paste }, { "---" }, { "Find...", notepad_find_open }, { "Replace...", notepad_replace_open }, { "Go To...", notepad_goto_line }, { "---" }, { "Select All", notepad_select_all } `. **View** → `{ "Word Wrap", notepad_toggle_wordwrap }, { "---" }, { "Zoom In", notepad_zoom_in }, { "Zoom Out", notepad_zoom_out }, { "Restore Default Zoom", notepad_zoom_reset }`. **notepad_new()**: if `modified` → `dialog_input("Save changes to <filename>?", "YN")` → yes: `notepad_save()`; clear buffer; `filepath=""`. **notepad_save()**: if `filepath == ""` → `notepad_save_as()`; else: `text_save_file(buf, filepath)`. **notepad_open()**: "Save changes?" if modified; `dialog_file_open("Open", "Text Files (*.txt)\0*.txt\0All Files\0*.*\0")` → path → `text_load_file(buf, path)`.
 
 - [ ] `notepad_setup_menubar(notepad_t *np)` -- register `CTRL_MENUBAR` with File/Edit/View menus + callbacks
 - [ ] `void notepad_new(notepad_t *np)` -- save-changes prompt if `modified`; clear buffer; reset filepath
@@ -138,6 +146,8 @@ Render visible lines via `ttf_draw_string(FONT_MONO)`. I-beam cursor blink 500 m
 - [ ] Commit: `"notepad: file menu -- New/Open/Save/SaveAs via CTRL_MENUBAR + dialogs, modified flag, * title, exit guard"`
 
 ## 5. Editing Features `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#scroll-bar`](../../docs/design/controls.md#scroll-bar), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 Mouse click sets cursor. Click+drag selection. Ctrl+A. Ctrl+C/X/V clipboard. Vertical scrollbar. Word wrap toggle (View menu). Status bar: `Ln N, Col N | UTF-8 | CRLF`.
 
@@ -159,16 +169,18 @@ Mouse click sets cursor. Click+drag selection. Ctrl+A. Ctrl+C/X/V clipboard. Ver
 
 ## 6. Find & Replace `[Sonnet]`
 
+**Design:** [`controls.md#text-box-password-box-and-search-box`](../../docs/design/controls.md#text-box-password-box-and-search-box), [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
 Ctrl+F: find toolbar slides in below menu bar (search field, Prev/Next, close ×). Ctrl+H: find+replace dialog (case-sensitive toggle, Replace, Replace All). Ctrl+G: Go to line. Accent-colored match highlight.
 
 **Files:** `src/apps/notepad/notepad.c` (extend)
 
 > [!NOTE]
-> **Find toolbar** (not a dialog -- slides in below menubar, 28 px high): `CTRL_TEXTBOX` + "‹ Prev" + "Next ›" buttons + "✕" close; no modal blocking. `find_matches[]` array of match offsets (`uint32_t matches[512]`; `int match_count`). `notepad_find_all(query)` scans logical buffer; for each match: store start offset. Render: during `notepad_render()`: for each visible char that falls within a match range: fill cell bg with `theme_get(THEME_ACCENT)` at 40% alpha before drawing glyph. **Prev/Next**: advance `g_current_match`; `notepad_offset_to_cursor()` for that match; scroll viewport to show cursor. **Ctrl+H dialog** (`dialog_input`-style, 380×200 modal): search field, replace field, case-sensitive checkbox (`CTRL_CHECKBOX`), Replace button (replace current match → find next), Replace All (iterate all matches, replace in reverse order to preserve offsets). **Replace All**: replace from last match to first (reverse) to avoid index shifts. **Ctrl+G**: `dialog_input("Go to line:", "", buf, 8)` → `n = atoi(buf)`; clamp to `[1, line_count]`; `text_move_to()` to start of that line.
+> **Find toolbar** (not a dialog -- slides in below the menu bar, 40 px high to hold 32 px controls per `docs/design/controls.md`): `CTRL_TEXTBOX` + "‹ Prev" + "Next ›" buttons + "✕" close; no modal blocking. `find_matches[]` array of match offsets (`uint32_t matches[512]`; `int match_count`). `notepad_find_all(query)` scans logical buffer; for each match: store start offset. Render: during `notepad_render()`: for each visible char that falls within a match range: fill cell bg with `theme_get(THEME_ACCENT)` at 40% alpha before drawing glyph. **Prev/Next**: advance `g_current_match`; `notepad_offset_to_cursor()` for that match; scroll viewport to show cursor. **Ctrl+H dialog** (`dialog_input`-style, 380×200 modal): search field, replace field, case-sensitive checkbox (`CTRL_CHECKBOX`), Replace button (replace current match → find next), Replace All (iterate all matches, replace in reverse order to preserve offsets). **Replace All**: replace from last match to first (reverse) to avoid index shifts. **Ctrl+G**: `dialog_input("Go to line:", "", buf, 8)` → `n = atoi(buf)`; clamp to `[1, line_count]`; `text_move_to()` to start of that line.
 
 - [ ] `uint32_t g_matches[512]`; `int g_match_count`; `int g_current_match`
 - [ ] `void notepad_find_all(notepad_t *np, const char *query, int case_sensitive)` -- scan; fill `g_matches[]`
-- [ ] Find toolbar: 28 px strip below menubar; `CTRL_TEXTBOX` + Prev/Next/× buttons; on text change → `notepad_find_all()`
+- [ ] Find toolbar: 40 px strip below the menu bar holding 32 px controls; `CTRL_TEXTBOX` + Prev/Next/× buttons; on text change → `notepad_find_all()`
 - [ ] Match highlight in render: check if char offset falls in `g_matches[i]..g_matches[i]+qlen` → accent bg
 - [ ] Prev/Next: cycle `g_current_match`; `notepad_offset_to_cursor()`; scroll to cursor
 - [ ] `void notepad_replace_one(notepad_t *np, const char *replacement)` -- delete match; insert replacement; undo record
@@ -179,14 +191,16 @@ Ctrl+F: find toolbar slides in below menu bar (search field, Prev/Next, close ×
 
 ## 7. Stretch Features `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Line number gutter (12 px, right-aligned, muted color). Tokenizer-based syntax highlight for `.c/.h/.asm/.md` (keywords/strings/comments via theme tokens). Ctrl++/−/0 font zoom.
 
 **Files:** `src/apps/notepad/notepad.c` (extend), `src/apps/notepad/syntax.c` (new)
 
 > [!NOTE]
-> **Line numbers**: when enabled (View → Line Numbers toggle): render a 48 px left gutter; for each visible line: `ttf_draw_string(s, font, gutter_x, row_y, line_num_str, THEME_TEXT_MUTED)`; right-aligned (measure width, right-pad). Adjust `text_x` to `gutter_w + 4`. **Syntax highlight**: `syntax_highlight(line_buf, tokens_out, max_tokens)` for file extensions `.c/.h` and `.asm` and `.md`. Returns array of `syntax_token_t { int start; int len; uint32_t color; }`. Render: draw char spans in `token.color` instead of default fg. C keywords: `if/else/while/for/return/int/void/static/const/struct/typedef/uint32_t/...` → `THEME_KEYWORD`. Strings `"..."` → `THEME_STRING`. Line comments `//...` + block `/* */` → `THEME_COMMENT`. Numbers → `THEME_NUMBER`. Markdown: `# ` header → bold accent; `**bold**` → bold; `` `code` `` → monospace background. Assembly: `mov/jmp/call/push/pop/ret/...` → keyword color; registers `eax/rbx/...` → accent; `;` comment → comment color. **Font zoom**: `Ctrl++` → `np->font_px = min(np->font_px + 2, 48)`; `Ctrl+-` → `max(font_px - 2, 8)`; `Ctrl+0` → reset to Registry default; `ttf_get(FONT_MONO, np->font_px)` → update `np->font`; recalc `cell_h`; `notepad_resize()`.
+> **Line numbers**: when enabled (View → Line Numbers toggle): render a 48 px left gutter; for each visible line: `ttf_draw_string(s, font, gutter_x, row_y, line_num_str, text_secondary token)`; right-aligned (measure width, right-pad). Adjust `text_x` to `gutter_w + 4`. **Syntax highlight**: `syntax_highlight(line_buf, tokens_out, max_tokens)` for file extensions `.c/.h` and `.asm` and `.md`. Returns array of `syntax_token_t { int start; int len; uint32_t color; }`. Render: draw char spans in `token.color` instead of default fg. C keywords: `if/else/while/for/return/int/void/static/const/struct/typedef/uint32_t/...` → `THEME_KEYWORD`. Strings `"..."` → `THEME_STRING`. Line comments `//...` + block `/* */` → `THEME_COMMENT`. Numbers → `THEME_NUMBER`. Markdown: `# ` header → bold accent; `**bold**` → bold; `` `code` `` → monospace background. Assembly: `mov/jmp/call/push/pop/ret/...` → keyword color; registers `eax/rbx/...` → accent; `;` comment → comment color. **Font zoom**: `Ctrl++` → `np->font_px = min(np->font_px + 2, 48)`; `Ctrl+-` → `max(font_px - 2, 8)`; `Ctrl+0` → reset to Registry default; `ttf_get(FONT_MONO, np->font_px)` → update `np->font`; recalc `cell_h`; `notepad_resize()`.
 
-- [ ] Line number gutter: 48 px left strip; right-aligned `Ln %d` per visible line; `THEME_TEXT_MUTED` color
+- [ ] Line number gutter: 48 px left strip; right-aligned `Ln %d` per visible line; `text_secondary` colour (`THEME_DARK_TEXT_SECONDARY` / `THEME_LIGHT_TEXT_SECONDARY`)
 - [ ] `void syntax_highlight(const char *line, const char *ext, syntax_token_t *tokens, int *count)` -- dispatch by `ext`
 - [ ] `syntax_highlight_c(line, tokens, count)` -- keyword/string/comment/number tokenizer (no full parser)
 - [ ] `syntax_highlight_asm(line, tokens, count)` -- instruction keywords, registers, `;` comments

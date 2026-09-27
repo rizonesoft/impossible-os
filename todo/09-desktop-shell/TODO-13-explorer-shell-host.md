@@ -43,22 +43,30 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 
 ## 1. Binary layout and boot
 
+**Design:** n/a -- process, loader and boot wiring for explorer.exe; the visible shell it hosts is specified under the taskbar, desktop and start-menu sections
+
 - [ ] Place built `explorer.exe` on the image at `C:\Windows\explorer.exe` (same leaf name as Windows; parent may be `Impossible` vs `Windows` only where the image policy already standardizes, document in commit if parent path differs).
 - [ ] Desktop init: if not installer mode, `pe_exec("C:\\Windows\\explorer.exe")` (or documented canonical path) after compositor ready.
 - [ ] Commit: `"desktop: explorer shell host PE on disk + boot wire"`
 
 ## 2. Shell32 dependency gate
 
+**Design:** n/a -- process, loader and boot wiring for explorer.exe; the visible shell it hosts is specified under the taskbar, desktop and start-menu sections
+
 - [ ] Enumerate required exports from [`../10-platform-services/TODO-C-shell32-export-master-table.md`](../10-platform-services/TODO-C-shell32-export-master-table.md) Tier 1 and Tier 1b; fail boot with klog if any row still `[ ]` when enabling strict gate (optional debug flag).
 - [ ] Commit: `"desktop: explorer shell32 export gate"`
 
 ## 3. Taskbar and desktop integration
+
+**Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
 - [ ] Register shell host window class; create invisible or minimal root window for message pump if required by WM.
 - [ ] Subscribe to WM events needed by taskbar (`08-graphics-ui/TODO-10-taskbar.md` XREF) without duplicating filemgr UI.
 - [ ] Commit: `"desktop: explorer taskbar integration"`
 
 ## 4. ShellExecute open-verb wiring
+
+**Design:** n/a -- process, loader and boot wiring for explorer.exe; the visible shell it hosts is specified under the taskbar, desktop and start-menu sections
 
 Wires `ShellExecute` through the file-manager open verb and the association store so double-click opens files via the registered handler app. Extends `02-kernel-core/TODO-14-registry-completion.md` HKCR defaults.
 
@@ -70,6 +78,8 @@ Wires `ShellExecute` through the file-manager open verb and the association stor
 ---
 
 ## 5. Boot-time explorer default
+
+**Design:** n/a -- process, loader and boot wiring for explorer.exe; the visible shell it hosts is specified under the taskbar, desktop and start-menu sections
 
 Sets `explorer.exe` as the default shell on boot unless the installer override flag is present. Owned by the service-manager init path.
 

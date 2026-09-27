@@ -11,7 +11,7 @@ title: "TODO-01 -- Clipboard System"
 > **Goal:** Build the kernel clipboard from scratch -- PMM-backed buffer, format enum, syscalls, Ctrl+C/X/V wiring with SIGINT passthrough for terminals, Win32 `SetClipboardData/GetClipboardData` stubs, clipboard history (Win+V popup, 25-entry ring), and multi-format support. This is the P0 prerequisite before text editing, copy/paste in File Manager, terminal selection, and all Win32 clipboard APIs work.
 
 > [!IMPORTANT]
-> **Already exists**: `kmalloc(size)` in `include/kernel/mm/heap.h` (≤ 4 KB allocations). `pmm_alloc_contiguous(count)` in `include/kernel/mm/pmm.h` (> 4 KB, page-aligned). `CTRL_TEXTBOX` in `include/desktop/controls.h` (text input widget -- Ctrl+C/V wired here). `wm_get_focused_handle()` from TODO-11 §2 (needed by §7 to identify target control). `context_menu_show()` + `wm_create_window()` (TODO-07/TODO-06) for Win+V history popup. `time_now()` from TODO-10 §1 for history timestamps. Win32 clipboard stubs table in TODO-11's `user32` layer. **Missing**: everything clipboard-related -- no `clipboard_set`, no `CLIP_*` enum, no `SYS_CLIPBOARD_*`, no history, no Ctrl+C/X/V global dispatch. **Syscalls**: `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` (next free after `SYS_TIME=55`). Complete sections in order: kernel buffer → Win32 stubs → multi-format → keyboard wiring → history.
+> **Already exists**: `kmalloc(size)` in `include/kernel/mm/heap.h` (≤ 4 KB allocations). `pmm_alloc_contiguous(count)` in `include/kernel/mm/pmm.h` (> 4 KB, page-aligned). `CTRL_TEXTBOX` in `include/desktop/controls.h` (text input widget -- Ctrl+C/V wired here). `wm_get_focused_handle()` from TODO-11 §2 (needed by §7 to identify target control). `context_menu_show()` (08-graphics-ui/TODO-09 §1) + `wm_create_window()` for Win+V history popup. `time_now()` from TODO-10 §1 for history timestamps. Win32 clipboard stubs table in TODO-11's `user32` layer. **Missing**: everything clipboard-related -- no `clipboard_set`, no `CLIP_*` enum, no `SYS_CLIPBOARD_*`, no history, no Ctrl+C/X/V global dispatch. **Syscalls**: `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` (next free after `SYS_TIME=55`). Complete sections in order: kernel buffer → Win32 stubs → multi-format → keyboard wiring → history.
 
 ## Inputs
 
@@ -20,7 +20,7 @@ title: "TODO-01 -- Clipboard System"
 - `include/kernel/sched/syscall.h` -- `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` added in §1
 - `include/desktop/controls.h` -- `CTRL_TEXTBOX` -- §2 keyboard wiring dispatches Ctrl+C/V to active textbox control
 - `include/desktop/wm.h` -- `wm_get_focused_handle()` (TODO-11 §2), `wm_post_message_all()` -- §7 uses focused window to route copy/paste; §8 Win+V opens popup above focused window
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()` -- §5 history popup slide-in animation
+- `include/kernel/gfx/anim_mgr.h` (08-graphics-ui/TODO-04) -- `anim_mgr_add()` -- §5 history popup slide-in animation
 - `include/gfx.h` -- `gfx_acrylic()`, `gfx_fill_rounded_rect()` -- §4 history popup background
 - `include/desktop/win32/user32.h` (TODO-11) -- `SetClipboardData/GetClipboardData` stub table -- §5 wires Win32 CF_* format IDs to `CLIP_*` enum
 - `include/kernel/time.h` (TODO-10 §1) -- `time_now()` -- §4 history entry timestamps
@@ -64,7 +64,7 @@ title: "TODO-01 -- Clipboard System"
 - [ ] `int clipboard_get(clip_format_t fmt, void *buf, uint32_t max)` -- format check; memcpy; return bytes or -1
 - [ ] `int clipboard_has(clip_format_t fmt)` -- quick format check
 - [ ] `void clipboard_clear(void)` -- free data; reset to `CLIP_NONE`
-- [ ] `void clipboard_set_bitmap(const uint32_t *pixels, uint32_t w, uint32_t h)` -- pack w+h header + pixel data; `clipboard_set(CLIP_IMAGE, ...)`; called from screenshot (TODO-07 §5)
+- [ ] `void clipboard_set_bitmap(const uint32_t *pixels, uint32_t w, uint32_t h)` -- pack w+h header + pixel data; `clipboard_set(CLIP_IMAGE, ...)`; called from screenshot (08-graphics-ui/TODO-09 §5)
 - [ ] `#define SYS_CLIPBOARD_SET 56`, `#define SYS_CLIPBOARD_GET 57` in `syscall.h`; add dispatch handlers; wire into syscall table
 - [ ] `spinlock_t g_clipboard_lock` -- protect `g_clipboard` in `clipboard_set/get/clear`
 - [ ] Commit: `"clipboard: kernel buffer -- clip_format_t, set/get/has/clear, PMM/kmalloc alloc, SYS_CLIPBOARD_SET/GET=56/57"`
@@ -112,19 +112,22 @@ Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused con
 
 ## 4. Clipboard History `[Sonnet]`
 
+**Design:** [`shell.md#clipboard-history`](../../docs/design/shell.md#clipboard-history), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 `src/desktop/clip_history.c`: ring buffer of last 25 entries (deep copy + format + timestamp + source app name). Maintained on every `clipboard_set()`. Win+V → popup listing recent entries (truncated text or image thumbnail). Click → restore to active clipboard + send Ctrl+V to focused window. "Clear all". Registry: `HKLM\SYSTEM\Clipboard\HistoryEnabled` (default 1), `MaxItems` (default 25).
 
 **Files:** `src/desktop/clip_history.c` (new), `include/desktop/clip_history.h` (new)
 
 > [!NOTE]
-> Ring buffer: `clip_history_entry_t g_history[CLIP_HISTORY_MAX]` + `g_history_head`, `g_history_count`. On `clipboard_set()`: if `HistoryEnabled`: deep-copy data into new `clip_history_entry_t.data` (kmalloc/PMM same rules as §1); record `format`, `timestamp = time_now()`, `source_app_name = current_task->name`. Oldest entry freed when ring wraps. **Win+V popup**: `wm_create_window(NULL, fb_w/2 - 160, fb_h/2 - 200, 320, 400, WM_FLAG_VISIBLE)` at z_order=35000; Acrylic bg; list entries newest-first; text entries: truncated at 48 chars + trailing `…`; image entries: scaled 40×40 px thumbnail. **Click to restore**: `clipboard_set(entry->format, entry->data, entry->size)`; `clipboard_handle_paste()` to insert into focused control; close popup. **"Clear all" button**: `clip_history_clear()` -- free all entries; rebuild empty popup. Win+V hotkey: in global hotkey dispatch table (TODO-06 `hotkeys.c`): `MOD_WIN + KEY_V` → `clip_history_popup_toggle()`.
+> Ring buffer: `clip_history_entry_t g_history[CLIP_HISTORY_MAX]` + `g_history_head`, `g_history_count`. On `clipboard_set()`: if `HistoryEnabled`: deep-copy data into new `clip_history_entry_t.data` (kmalloc/PMM same rules as §1); record `format`, `timestamp = time_now()`, `source_app_name = current_task->name`. Oldest entry freed when ring wraps. **Win+V popup** per `docs/design/shell.md#clipboard-history`: `wm_create_window()` `THEME_SIZE_CLIPBOARD_WIDTH` (360) wide, up to `THEME_SIZE_CLIPBOARD_MAX_HEIGHT` (480) tall, beside the caret (or 12 px above the taskbar at the right) at z_order=35000; flyout acrylic, radius 8; header "Clipboard" + "Clear all"; one card per entry with a "..." menu (Pin, Delete); list entries newest-first; text entries clipped to three lines with a trailing ellipsis; image entries as a thumbnail scaled to the card width, up to 96 px tall. **Click to restore**: `clipboard_set(entry->format, entry->data, entry->size)`; `clipboard_handle_paste()` to insert into focused control; close popup. **"Clear all" button**: `clip_history_clear()` -- free all entries; rebuild empty popup. Win+V hotkey: in global hotkey dispatch table (TODO-06 `hotkeys.c`): `MOD_WIN + KEY_V` → `clip_history_popup_toggle()`.
 
 - [ ] `typedef struct { clip_format_t format; uint8_t *data; uint32_t size; uint8_t from_pmm; int64_t timestamp; char app_name[32]; } clip_history_entry_t;` in `clip_history.h`
 - [ ] `#define CLIP_HISTORY_MAX 25`
 - [ ] `void clip_history_init(void)`: read `HKLM\SYSTEM\Clipboard\HistoryEnabled` + `MaxItems`; set `g_history_enabled`, `g_history_max` (clamp to 25)
 - [ ] `void clip_history_push(const clipboard_t *cb)`: if `!g_history_enabled` return; alloc new entry; deep copy; advance ring head; free overwritten entry's data
 - [ ] Hook into `clipboard_set()`: after updating `g_clipboard`: `clip_history_push(&g_clipboard)`
-- [ ] `void clip_history_popup_open(void)`: create Acrylic window at z_order=35000; render list of entries (newest first); draw truncated text or 40×40 thumbnail
+- [ ] `void clip_history_popup_open(void)`: flyout-material window (`THEME_MAT_*_FLYOUT_*`, radius 8, `THEME_ELEV_FLYOUT_*`) at z_order=35000; entries as cards (`card_bg`, `stroke_card`, radius 8) newest first; truncated text or 40×40 thumbnail
+  - Panel geometry per `docs/design/shell.md#clipboard-history`: 360 px wide, up to 480 px tall, beside the caret (or 12 px above the taskbar at the right), flyout acrylic, radius 8, one card per item with a "..." menu for Pin and Delete
 - [ ] `void clip_history_popup_close(void)`: `wm_destroy_window(popup_wh)`
 - [ ] Entry click: `clipboard_set(entry->format, entry->data, entry->size)`; `clipboard_handle_paste()`; `clip_history_popup_close()`
 - [ ] "Clear all" button: `clip_history_clear()` → free all entries; zero ring; re-render popup to empty state

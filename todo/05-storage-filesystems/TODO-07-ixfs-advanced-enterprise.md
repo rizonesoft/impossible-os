@@ -292,6 +292,8 @@ Multi-device IXFS volume with SSD fast tier + HDD capacity tier. Background prom
 
 ## 14. Volume Health Dashboard `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Disk Manager panel with superblock health, journal state, checksum failures, fragmentation, snapshot count, dedup ratio, encryption count, and one-click actions.
 
 **Files:** `src/desktop/disk_manager.c` (extend), `src/kernel/fs/ixfs/ixfs_health.c` (new)

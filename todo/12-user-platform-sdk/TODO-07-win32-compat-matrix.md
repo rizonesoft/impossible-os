@@ -232,6 +232,8 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## 8. Tier 6 -- MessageBox & Basic GUI `[Sonnet]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
 > Gate: `12-user-platform-sdk/TODO-05 §1–3`, `10-platform-services/TODO-08 §10`
 
 **~5 additional functions** adds: `MessageBoxA`, `MessageBoxW`, `LoadIconA`, `LoadCursorA`, `GetSystemMetrics`

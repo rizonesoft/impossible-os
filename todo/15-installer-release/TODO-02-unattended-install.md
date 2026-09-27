@@ -147,6 +147,8 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ## 3. `sysprep.exe` (Generalize + OOBE Seal) `[Opus]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog); the OOBE it seals the image for is [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
+
 > Novel: machine SID generation and hardware-specific data removal. No prior Impossible
 > OS sysprep. Security-sensitive: SID uniqueness must be guaranteed across cloned VMs.
 

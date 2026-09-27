@@ -75,6 +75,8 @@ TCP port 21 control connection. `ftp_connect(host, user, pass)` sends USER/PASS.
 
 ## 2. FTP Shell + GUI Integration `[Sonnet]`
 
+**Design:** n/a -- the ftp> prompt runs in the terminal (its visuals are the terminal's); the GUI client is owned by `11-apps/TODO-02 §5`
+
 Interactive `ftp host` with subcommands (ls, cd, get, put, mget, mput, pwd, mkdir, rmdir, delete, bye). `wget ftp://host/path` anonymous download. `ftp://` URL support in File Manager address bar.
 
 **Files:** `src/shell/cmd_ftp.c` (new), `src/apps/browser/browser.c` (extend for ftp:// stub)

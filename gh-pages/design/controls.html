@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controls · {{name}} Design</title>
+<meta name="description" content="Live reference for every {{name}} control in dark and light themes, generated from the design tokens.">
+<link rel="icon" type="image/png" href="../icon.png">
+<style>
+/* Generated from docs/design/tokens.json by scripts/site/build.py. */
+{{design_tokens_css}}
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font: 400 14px/20px var(--font-ui); background: #111; color: #fff; -webkit-font-smoothing: antialiased; }
+header { padding: 20px 24px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; background: #0b0b0b; border-bottom: 1px solid #2a2a2a; }
+header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+header a { color: #60cdff; text-decoration: none; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+.theme { background: var(--window-bg); color: var(--text-primary); padding: 24px; }
+.theme > h2 { margin: 0 0 16px; font-size: 20px; line-height: 28px; font-weight: 600; }
+section { padding: 16px 0 20px; border-top: 1px solid var(--stroke-divider); }
+section h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+section h3 a { color: var(--text-secondary); font-weight: 400; font-size: 12px; margin-left: 8px; text-decoration: none; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.cap { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+svg.g { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Button */
+.btn { height: var(--size-control-height); min-width: var(--size-control-min-width); padding: 0 var(--size-control-padding-x); border-radius: var(--radius-control);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: inherit; color: var(--text-primary);
+  background: var(--control-fill); border: 1px solid var(--stroke-control); box-shadow: var(--elev-control); }
+.btn.hover { background: var(--control-fill-hover); }
+.btn.pressed { background: var(--control-fill-pressed); color: var(--text-secondary); box-shadow: none; }
+.btn.disabled { background: var(--control-fill-disabled); color: var(--text-disabled); box-shadow: none; }
+.btn.accent { background: var(--accent); color: var(--text-on-accent); border-color: transparent; }
+.btn.accent.hover { background: var(--accent-hover); }
+.btn.accent.pressed { background: var(--accent-pressed); }
+.btn.subtle { background: transparent; border-color: transparent; box-shadow: none; min-width: 0; }
+.btn.subtle.hover { background: var(--subtle-fill-hover); }
+.btn.subtle.pressed { background: var(--subtle-fill-pressed); }
+.focus { outline: 2px solid var(--focus-outer); outline-offset: 3px; box-shadow: 0 0 0 1px var(--focus-inner); }
+
+/* Toggle */
+.tg { display: inline-flex; align-items: center; gap: 12px; }
+.tg i { position: relative; width: var(--size-toggle-width); height: var(--size-toggle-height); border-radius: var(--radius-toggle);
+  border: 1px solid var(--control-strong-stroke); background: var(--control-fill); }
+.tg i::after { content: ""; position: absolute; top: 50%; left: 4px; width: var(--size-toggle-knob); height: var(--size-toggle-knob); margin-top: calc(var(--size-toggle-knob) / -2);
+  border-radius: 50%; background: var(--toggle-knob-off); }
+.tg.hover i::after { width: var(--size-toggle-knob-hover); height: var(--size-toggle-knob-hover); margin-top: calc(var(--size-toggle-knob-hover) / -2); left: 3px; }
+.tg.on i { background: var(--accent); border-color: var(--accent); }
+.tg.on i::after { left: auto; right: 4px; background: var(--text-on-accent); }
+
+/* Check box + radio */
+.cb { display: inline-flex; align-items: center; gap: 8px; }
+.cb i { width: var(--size-check-box); height: var(--size-check-box); border-radius: var(--radius-check-box); border: 1px solid var(--control-strong-stroke);
+  background: var(--control-fill); display: grid; place-items: center; color: var(--text-on-accent); }
+.cb.on i, .cb.mixed i { background: var(--accent); border-color: var(--accent); }
+.cb.dis i { border-color: var(--text-disabled); background: transparent; }
+.cb.dis { color: var(--text-disabled); }
+.rb { display: inline-flex; align-items: center; gap: 8px; }
+.rb i { width: var(--size-radio); height: var(--size-radio); border-radius: 50%; border: 1px solid var(--control-strong-stroke); background: var(--control-fill); display: grid; place-items: center; }
+.rb.on i { background: var(--accent); border-color: var(--accent); }
+.rb.on i::after { content: ""; width: var(--size-radio-dot); height: var(--size-radio-dot); border-radius: 50%; background: var(--text-on-accent); }
+.rb.on.hover i::after { width: 14px; height: 14px; }
+
+/* Slider */
+.sl { position: relative; width: 200px; height: var(--size-slider-thumb); }
+.sl .t { position: absolute; left: 0; right: 0; top: 50%; height: var(--size-slider-track); margin-top: -2px; border-radius: 2px; background: var(--control-strong-stroke); }
+.sl .f { position: absolute; left: 0; top: 50%; height: var(--size-slider-track); margin-top: -2px; border-radius: 2px; background: var(--accent); }
+.sl .th { position: absolute; top: 0; width: var(--size-slider-thumb); height: var(--size-slider-thumb); margin-left: -10px; border-radius: 50%;
+  background: var(--window-bg); box-shadow: 0 0 0 1px var(--stroke-control); display: grid; place-items: center; }
+.sl .th::after { content: ""; width: var(--size-slider-thumb-inner); height: var(--size-slider-thumb-inner); border-radius: 50%; background: var(--accent); }
+
+/* Text box */
+.tb { position: relative; width: 220px; height: var(--size-control-height); border-radius: var(--radius-control); background: var(--control-fill);
+  border: 1px solid var(--stroke-control); display: flex; align-items: center; padding: 0 10px; gap: 8px; overflow: hidden; }
+.tb::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--size-text-box-underline); background: var(--control-underline); }
+.tb.focused { background: var(--control-fill-input-active); }
+.tb.focused::after { height: var(--size-text-box-underline-focused); background: var(--accent); }
+.tb .ph { color: var(--text-secondary); }
+.tb .x { margin-left: auto; color: var(--text-secondary); }
+
+/* Combo + menu + list */
+.cmb { width: 220px; justify-content: space-between; }
+.fly { width: 220px; padding: 4px; border-radius: var(--radius-overlay); background: var(--layer-bg); box-shadow: var(--elev-flyout), 0 0 0 1px var(--stroke-surface);
+  backdrop-filter: blur(20px); }
+.it { position: relative; height: var(--size-list-item-height); display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: var(--radius-control); }
+.it.hover { background: var(--subtle-fill-hover); }
+.it.sel { background: var(--subtle-fill-hover); }
+.it.sel::before { content: ""; position: absolute; left: 0; top: 50%; width: var(--size-selection-pill-width); height: var(--size-selection-pill-height); margin-top: -8px; border-radius: 2px; background: var(--accent); }
+.it em { margin-left: auto; font-style: normal; font-size: 12px; color: var(--text-secondary); }
+.sep { height: 1px; background: var(--stroke-divider); margin: 4px -4px; }
+
+/* Tabs */
+.tabs { display: flex; align-items: flex-end; height: 40px; background: var(--window-bg-inactive); padding: 0 8px; border-radius: var(--radius-control) var(--radius-control) 0 0; }
+.tab { height: var(--size-tab-height); padding: 0 12px; min-width: 140px; display: flex; align-items: center; gap: 8px; font-size: 12px; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
+.tab.sel { background: var(--layer-bg); background-color: var(--window-bg); box-shadow: inset 0 1px 0 var(--stroke-control); }
+.tab.hover { background: var(--subtle-fill-hover); }
+.tab .x { margin-left: auto; opacity: .7; }
+
+/* Progress */
+.pb { position: relative; width: 220px; height: var(--size-progress-bar); }
+.pb::before { content: ""; position: absolute; left: 0; right: 0; top: 1px; height: var(--size-progress-track); background: var(--control-strong-stroke); }
+.pb i { position: absolute; left: 0; top: 0; height: var(--size-progress-bar); border-radius: 2px; background: var(--accent); }
+.pb.ind i { width: 30%; animation: ind 2s var(--ease-standard) infinite; }
+@keyframes ind { from { left: -30%; } to { left: 100%; } }
+.ring { width: 32px; height: 32px; border-radius: 50%; border: 3px solid transparent; border-top-color: var(--accent); border-right-color: var(--accent); animation: spin 1.3s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scroll bar */
+.sb { position: relative; width: 14px; height: 120px; }
+.sb i { position: absolute; right: 4px; top: 20px; width: var(--size-scrollbar-collapsed); height: 40px; border-radius: 1px; background: var(--control-strong-stroke); }
+.sb.exp i { width: var(--size-scrollbar-expanded); right: 4px; border-radius: 3px; }
+
+/* Tooltip */
+.tt { display: inline-block; max-width: var(--size-tooltip-max-width); padding: 5px 8px; font-size: 12px; line-height: 16px; border-radius: var(--radius-tooltip);
+  background: var(--layer-bg); background-color: var(--window-bg); box-shadow: var(--elev-tooltip), 0 0 0 1px var(--stroke-surface); }
+
+/* Dialog */
+.smoke { position: relative; padding: 24px; background: var(--smoke); border-radius: var(--radius-overlay); }
+.dlg { width: 100%; max-width: var(--size-dialog-max-width); min-width: min(100%, var(--size-dialog-min-width)); margin: 0 auto; border-radius: var(--radius-dialog); overflow: hidden;
+  background: var(--window-bg); box-shadow: var(--elev-window-active), 0 0 0 1px var(--stroke-surface); }
+.dlg .body { padding: var(--size-dialog-padding); }
+.dlg .body h4 { margin: 0 0 12px; font-size: 20px; line-height: 28px; font-weight: 600; }
+.dlg .foot { height: var(--size-dialog-footer-height); display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 var(--size-dialog-padding);
+  background: var(--layer-bg); border-top: 1px solid var(--stroke-card); }
+.dlg .foot .btn { flex: 0 0 140px; }
+
+/* Card + settings row */
+.card { border-radius: var(--radius-card); background: var(--card-bg); border: 1px solid var(--stroke-card); box-shadow: var(--elev-card); }
+.srow { min-height: var(--size-settings-card-min-height); display: flex; align-items: center; gap: 16px; padding: 0 16px; }
+.srow + .srow { border-top: 1px solid var(--stroke-divider); }
+.srow .txt { flex: 1; }
+.srow .txt div:last-child { font-size: 12px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<header><h1>{{name}} controls</h1><span class="cap" style="color:#9a9a9a">Every value comes from <code>docs/design/tokens.json</code>. Spec: <a href="../docs/design/controls.html">controls</a> · <a href="./">desktop mockup</a></span></header>
+<div class="cols" id="cols"></div>
+
+<template id="tpl">
+  <h2></h2>
+  <section><h3>Button <a href="../docs/design/controls.html#button">spec</a></h3>
+    <div class="row"><span class="btn">Standard</span><span class="btn hover">Hover</span><span class="btn pressed">Pressed</span><span class="btn disabled">Disabled</span></div>
+    <div class="row" style="margin-top:12px"><span class="btn accent">Accent</span><span class="btn accent hover">Hover</span><span class="btn accent pressed">Pressed</span><span class="btn subtle hover"><svg class="g" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>Subtle</span><span class="btn focus">Keyboard focus</span></div></section>
+  <section><h3>Toggle switch <a href="../docs/design/controls.html#toggle-switch">spec</a></h3>
+    <div class="row"><span class="tg"><i></i>Off</span><span class="tg hover"><i></i>Hover</span><span class="tg on"><i></i>On</span></div></section>
+  <section><h3>Check box and radio button <a href="../docs/design/controls.html#check-box-and-radio-button">spec</a></h3>
+    <div class="row"><span class="cb"><i></i>Unchecked</span><span class="cb on"><i><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M3 8.5l3 3 7-7"/></svg></i>Checked</span><span class="cb mixed"><i><svg class="g" viewBox="0 0 16 16" style="width:10px"><path d="M3 8h10"/></svg></i>Mixed</span><span class="cb dis"><i></i>Disabled</span></div>
+    <div class="row" style="margin-top:12px"><span class="rb"><i></i>Option</span><span class="rb on"><i></i>Selected</span><span class="rb on hover"><i></i>Hover</span></div></section>
+  <section><h3>Slider <a href="../docs/design/controls.html#slider">spec</a></h3>
+    <div class="row"><div class="sl"><div class="t"></div><div class="f" style="width:60%"></div><div class="th" style="left:60%"></div></div></div></section>
+  <section><h3>Text box <a href="../docs/design/controls.html#text-box-password-box-and-search-box">spec</a></h3>
+    <div class="row"><div class="tb"><span class="ph">Placeholder</span></div><div class="tb focused">Focused text<span class="x">✕</span></div></div></section>
+  <section><h3>Combo box and menu <a href="../docs/design/controls.html#combo-box-and-drop-down">spec</a></h3>
+    <div class="row" style="align-items:flex-start"><span class="btn cmb">Medium<svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M4 6l4 4 4-4"/></svg></span>
+      <div class="fly"><div class="it">Small</div><div class="it sel">Medium</div><div class="it hover">Large</div><div class="sep"></div><div class="it">Custom<em>Ctrl+K</em></div></div></div></section>
+  <section><h3>List and tabs <a href="../docs/design/controls.html#list-tree-and-grid-views">spec</a></h3>
+    <div style="width:260px"><div class="it">Desktop</div><div class="it sel">Downloads</div><div class="it hover">Documents</div></div>
+    <div class="tabs" style="margin-top:12px"><div class="tab sel">This PC<span class="x">✕</span></div><div class="tab hover">Downloads</div><div class="tab">Pictures</div></div></section>
+  <section><h3>Progress <a href="../docs/design/controls.html#progress">spec</a></h3>
+    <div class="row"><div class="pb"><i style="width:45%"></i></div><div class="pb ind"><i></i></div><div class="ring"></div></div></section>
+  <section><h3>Scroll bar and tooltip <a href="../docs/design/controls.html#scroll-bar">spec</a></h3>
+    <div class="row"><div class="sb"><i></i></div><div class="sb exp"><i></i></div><span class="tt">Tooltips appear after 400 ms</span></div></section>
+  <section><h3>Dialog <a href="../docs/design/controls.html#dialog">spec</a></h3>
+    <div class="smoke"><div class="dlg"><div class="body"><h4>Save changes?</h4>Your changes to boot.conf will be lost if you close without saving.</div>
+      <div class="foot"><span class="btn accent">Save</span><span class="btn">Don't save</span><span class="btn">Cancel</span></div></div></div></section>
+  <section><h3>Settings rows <a href="../docs/design/controls.html#cards-and-settings-rows">spec</a></h3>
+    <div class="card"><div class="srow"><svg class="g" viewBox="0 0 16 16" style="width:20px;height:20px"><circle cx="8" cy="8" r="5"/></svg><div class="txt"><div>Transparency effects</div><div>Frosted glass on the taskbar, Start and flyouts</div></div><span class="tg on"><i></i>On</span></div>
+      <div class="srow"><svg class="g" viewBox="0 0 16 16" style="width:20px;height:20px"><path d="M3 13l10-10"/></svg><div class="txt"><div>Accent colour</div><div>Used on buttons, toggles and selection</div></div><span class="btn cmb" style="width:140px">Automatic<svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M4 6l4 4 4-4"/></svg></span></div></div></section>
+</template>
+<script>
+  ['dark', 'light'].forEach(function (t) {
+    var col = document.createElement('div');
+    col.className = 'theme'; col.dataset.theme = t;
+    col.appendChild(document.getElementById('tpl').content.cloneNode(true));
+    col.querySelector('h2').textContent = t === 'dark' ? 'Dark' : 'Light';
+    document.getElementById('cols').appendChild(col);
+  });
+</script>
+</body>
+</html>

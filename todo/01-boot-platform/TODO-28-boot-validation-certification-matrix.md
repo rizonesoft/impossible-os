@@ -210,6 +210,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## 9. Release Gate and Dashboard
 
+**Design:** n/a -- no desktop UI surface (developer tooling, data export, CLI or device plumbing)
+
 - [ ] Generate `build/reports/boot-cert.html`.
 - [ ] Define required gates for nightly, release candidate, and stable.
 - [ ] Fail release packaging when required gates fail.

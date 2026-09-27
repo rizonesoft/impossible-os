@@ -399,6 +399,61 @@ def coverage(pages: dict[str, Page], errors: list[str]) -> tuple[dict[str, list[
     return covered, undocumented
 
 
+UI_TRIGGER_RE = re.compile(
+    r"src/desktop/|include/desktop/|\btaskbar\b|\bstart menu\b|quick settings|context menu|\btitle ?bar\b|"
+    r"caption button|desktop icon|wallpaper|file explorer|notification center|\bacrylic\b|\bmica\b", re.I)
+DESIGN_LINE_RE = re.compile(r"^\*\*Design( deviation)?:\*\*\s*(.+)$", re.M)
+DESIGN_REF_RE = re.compile(r"docs/design/([a-z0-9_-]+\.md)(?:#([A-Za-z0-9_-]+))?")
+
+
+def todo_sections(text: str):
+    """Yield (number, title, body, first_line) for each `## N.` section."""
+    heads = list(re.finditer(r"^## (\d+)\. (.+)$", text, re.M))
+    ends = [m.start() for m in re.finditer(r"^## ", text, re.M)]
+    for m in heads:
+        nxt = min((e for e in ends if e > m.start()), default=len(text))
+        yield int(m.group(1)), m.group(2).strip(), text[m.end():nxt], text.count("\n", 0, m.start()) + 1
+
+
+def check_design_lines(pages: dict[str, Page], errors: list[str]) -> None:
+    """Every OPEN roadmap section in design scope (docs/design/scope.json: the shell
+    files, plus any section whose title names a UI surface) must carry a
+    `**Design:**` line citing the spec anchors it implements, so an implementer --
+    or the unattended run -- builds the design rather than the section's own older
+    wording. `**Design:** n/a -- <reason>` opts a section out; `**Design deviation:**
+    <reason>` records a deliberate departure. Every cited file and anchor must exist,
+    in or out of scope."""
+    scope = json.loads((DOCS / "design" / "scope.json").read_text(encoding="utf-8"))
+    shell_files = set(scope["shell_files"])
+    title_re = re.compile(scope["ui_title_pattern"])
+    known = set(todo_files())
+    for f in sorted(shell_files - known):
+        errors.append(f"docs/design/scope.json: shell file does not exist: {f}")
+    for rel in todo_files():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for num, title, body, line in todo_sections(text):
+            lines = DESIGN_LINE_RE.findall(body)
+            is_open = re.search(r"^\s*- \[[ /]\]", body, re.M)
+            in_scope = rel in shell_files or title_re.search(title)
+            if is_open and in_scope and not lines:
+                errors.append(f"{rel}:{line}: section {num} ({title}) is in design scope but has no **Design:** line "
+                              f"(cite docs/design/<file>.md#<anchor>, or '**Design:** n/a -- <reason>')")
+            for kind, value in lines:
+                if value.lower().startswith("n/a"):
+                    if len(value) < 12:
+                        errors.append(f"{rel}:{line}: section {num}: '**Design:** n/a' needs a reason")
+                    continue
+                refs = DESIGN_REF_RE.findall(value)
+                if not refs and not kind:
+                    errors.append(f"{rel}:{line}: section {num}: **Design:** line cites no docs/design/*.md reference")
+                for fname, anchor in refs:
+                    page = pages.get(f"design/{fname}")
+                    if page is None:
+                        errors.append(f"{rel}:{line}: section {num}: docs/design/{fname} does not exist")
+                    elif anchor and anchor not in page.anchors:
+                        errors.append(f"{rel}:{line}: section {num}: dead design anchor docs/design/{fname}#{anchor}")
+
+
 def check_baseline(undocumented: list[str], errors: list[str]) -> None:
     baseline = set(json.loads(BASELINE.read_text(encoding="utf-8"))["undocumented"]) if BASELINE.exists() else set()
     for t in undocumented:
@@ -608,6 +663,7 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
             files[rel] = data
     # 2. Docs.
     pages, _ = load_pages(facts, errors)
+    check_design_lines(pages, errors)
     covered, undocumented = coverage(pages, errors)
     cov = coverage_page(pages, covered)
     tpl = render_template((SITE_SRC / "docs-template.html").read_text(encoding="utf-8"), facts,

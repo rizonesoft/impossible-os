@@ -197,6 +197,8 @@ Recognise two-finger scroll, pinch-to-zoom, three-finger swipe, tap-to-click, tw
 
 ## 9. Touchpad Control Panel (`mouse.cpl` Touchpad Tab) `[Sonnet]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 Extend `mouse.cpl` with a "Touchpad" settings tab: enable/disable toggle, tap-to-click, scroll direction, scroll speed slider, gesture toggles, palm rejection sensitivity. All settings → Registry `HKLM\SYSTEM\Input\Touchpad\*`; gesture engine hot-reloads on change.
 
 **Files:** `src/desktop/mouse_cpl.c` (extend or new), `include/desktop/mouse_cpl.h`

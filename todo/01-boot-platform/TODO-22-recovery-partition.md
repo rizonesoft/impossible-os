@@ -214,6 +214,8 @@ If UEFI NVRAM boot entries are lost (firmware reset, battery pull), rebuild them
 
 ## 7. Recovery UI
 
+**Design:** n/a -- drawn before the compositor exists, on the boot framebuffer; follows the boot splash and boot error screen styles, not the desktop
+
 User-visible recovery interface with clear status.
 
 - [ ] Text-mode UI showing: `"Impossible OS Recovery"`, slot status, available actions

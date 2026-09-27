@@ -8,7 +8,7 @@ title: "TODO-09 -- Desktop Shell Features"
 
 # TODO-09 -- Desktop Shell Features
 
-> **Goal:** Complete the full suite of desktop-level shell features -- context menu engine, desktop right-click menu, wallpaper engine with fit modes, DPI scaling, PrintScreen screenshot, night light compositor LUT, Focus/DND mode, quick settings slide-in panel, and virtual desktops. This brings the desktop to Windows 11 feature parity on the shell layer.
+> **Goal:** Complete the full suite of desktop-level shell features -- context menu engine, desktop right-click menu, wallpaper engine with fit modes, DPI scaling, PrintScreen screenshot, night light compositor LUT, Focus/DND mode, quick settings flyout, and virtual desktops. This brings the desktop to Windows 11 feature parity on the shell layer.
 
 > [!IMPORTANT]
 > **Already exists**: `image_fit_t` (STRETCH/FILL/FIT/CENTER/TILE), `image_scale(dst, src, w, h, mode)`, `image_save_png(img, path)`, `image_load(img, path)`, `desktop_draw_wallpaper()`, `desktop_get_wallpaper_surface()`, `desktop_copy_wallpaper_rect()` -- wallpaper plumbing is partially done; §3 completes `wallpaper_set(path, mode)` and Registry watch. `fb_get_width/height()` for screen dims. `rtc_read(struct rtc_time *t)` in `include/kernel/drivers/rtc.h` for screenshot timestamp. `wm_post_message_all()` (TODO-01) for broadcasting `WM_DPI_CHANGED`. `gfx_acrylic()` for context menu background. **Missing**: context menu engine, `g_dpi_pct`/`DPI_SCALE`, screenshot API, night light LUT, quick settings panel, virtual desktops. TODO-09 notifications (toast) is a forward dependency for screenshot toast and DND mode -- use a `desktop_toast(msg, icon)` stub that logs to serial if TODO-09 is not yet live. Complete sections in order: wallpaper → DPI → context menu engine → desktop right-click → screenshot → night light → focus/DND → quick settings → virtual desktops.
@@ -22,7 +22,7 @@ title: "TODO-09 -- Desktop Shell Features"
 - `include/desktop/wm.h` -- `wm_composite()`, `wm_mark_dirty()`, `wm_create_window()`, `z_order` -- used by §1 context menu overlay and §7 virtual desktops
 - `include/gfx.h` -- `gfx_acrylic()`, `gfx_fill_rounded_rect()`, `gfx_drop_shadow()` -- used by §1 context menu and §6 quick settings
 - `include/desktop/theme.h` (TODO-01) -- `theme_get()`, `WM_THEME_CHANGED` -- §3 wallpaper reload triggered here; `WM_DPI_CHANGED` added in §4
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `GFX_EASE_OUT_CUBIC` -- §6 quick settings slide-in + §7 vdesk fade
+- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `gfx_ease_decelerate/accelerate` -- quick settings open + vdesk fade
 - `include/registry.h` -- `RegGetValue/SetValueEx` -- used by §3 wallpaper, §4 DPI, §5 screenshot path, §8 night light, §9 focus mode
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- desktop right-click (§2) and quick settings (§6) depend on WM overlay being live; `wm_post_message_all()` used for `WM_DPI_CHANGED`
 - Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (taskbar) -- §7 virtual desktops needs per-desktop taskbar button group
@@ -35,7 +35,7 @@ title: "TODO-09 -- Desktop Shell Features"
 - `context_menu_show(x, y, items[], count)` renders Acrylic popup with submenus; used throughout the shell.
 - PrintScreen → full/window capture → `image_save_png` to Pictures; clipboard copy; toast.
 - Night light LUT applied in `wm_composite()` at strength 0–100.
-- Quick settings panel slides in from right (Win+A); Night Light / Focus / Volume / Brightness tiles.
+- Quick settings flyout (Win+A) anchored above the taskbar per `docs/design/shell.md#quick-settings`: six toggles, brightness and volume sliders, footer.
 - Up to 8 virtual desktops; Win+Ctrl+D/F4/←/→; Task View overlay (Win+Tab).
 
 ## Implementation Order
@@ -49,26 +49,35 @@ title: "TODO-09 -- Desktop Shell Features"
 | 💎  |   5   | §5 Screenshot -- PrintScreen hook, full + window capture, `image_save_png`, clipboard, toast stub  | §3 wallpaper done (compositor back buffer is clean wallpaper+windows frame) |  [ ]   |
 | 💎  |   6   | §8 Night light -- compositor LUT (warm RGB shift), Registry schedule, kernel timer                  | §5 (compositor is confirmed stable before adding LUT pass)                  |  [ ]   |
 | 💎  |   7   | §9 Focus / DND -- Registry-backed mode enum, toast suppression filter, quick-settings tile hook     | §6 night light (both are quick-settings tiles; wire together)               |  [ ]   |
-| 💎  |   8   | §6 Quick settings panel -- slide-in from right, tiles grid, Wi-Fi/BT stubs, night light/DND/volume | §6+§7 night light + focus (tiles must be wired); §3 context menu (for panel) |  [ ]   |
+| 💎  |   8   | §6 Quick settings flyout -- anchored 360 px, six toggles, brightness/volume sliders, footer       | §6+§7 night light + focus (tiles must be wired); §3 context menu (for panel) |  [ ]   |
 | ⭐  |   9   | §7 Virtual desktops -- 8 desktops, per-desktop Z-order, Win+Ctrl keys, Task View overlay           | §8 quick settings (task view is another overlay; patterns established)      |  [ ]   |
 
 ---
 
 ## 1. Context Menu Engine `[Opus]`
 
-`context_menu_show(x, y, items[], count)`: Acrylic blur background, 8 px rounded corners, 24 px item height, drop shadow. `struct menu_item` (label, icon_id, callback, submenu_ptr, separator/disabled/checked). Keyboard: up/down, Enter, Escape, submenu on hover. Auto-close on outside click.
+**Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-04 §5`, which is superseded there so the shell has one implementation.
+
+`context_menu_show(x, y, items[], count)` per `docs/design/shell.md#context-menus`: `THEME_SIZE_CONTEXT_MENU_WIDTH` (256) wide, 4 px inner padding, menu acrylic (`theme_get()->mat.menu`), `THEME_RADIUS_OVERLAY` (8) corners, `THEME_ELEV_FLYOUT_*` shadow, `THEME_SIZE_CONTEXT_MENU_ITEM_HEIGHT` (32) items; opens with a fade + 12 px rise over `THEME_MOTION_NORMAL_MS`. `struct menu_item` (label, icon_id, callback, submenu_ptr, separator/disabled/checked). Keyboard: up/down, Enter, Escape, submenu on hover. Auto-close on outside click.
 
 **Files:** `src/desktop/context_menu.c` (new), `include/desktop/context_menu.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` -- the context menu engine is a novel overlay architecture: it must (1) render above all application windows, (2) auto-close on any click outside its bounds, (3) support cascading submenus (a child overlay spawned at the ▶ item's right edge on hover after 300 ms), and (4) capture keyboard input globally while open -- none of which exist in Impossible OS. **Popup window**: `wm_create_window(NULL, cx, cy, popup_w, popup_h, WM_FLAG_VISIBLE)` at z_order=25000; no decoration. **Acrylic**: `gfx_acrylic(s, 0, 0, w, h, theme_get()->surface, 200, 12)` as background. **Item height**: `DPI_SCALE(24)`. **Outside-click close**: in `wm_handle_mouse()`, if any context menu open and click is not in any context menu window: `context_menu_hide()`. **Submenu**: `struct menu_item.submenu_ptr` → pointer to another `context_menu_t`; on hover > 300 ms: `context_menu_show_sub(parent, item_idx)`; child spawns at right edge of parent + item's y. **Checked items**: draw Fluent checkmark icon at left if `item.checked`. Max nesting depth: 3.
+> This is `[Opus]` -- the context menu engine is a novel overlay architecture: it must (1) render above all application windows, (2) auto-close on any click outside its bounds, (3) support cascading submenus (a child overlay spawned at the ▶ item's right edge on hover after 300 ms), and (4) capture keyboard input globally while open -- none of which exist in Impossible OS. **Popup window**: `wm_create_window(NULL, cx, cy, popup_w, popup_h, WM_FLAG_VISIBLE)` at z_order=25000; no decoration. **Acrylic**: `gfx_acrylic()` with `theme_get()->mat.menu` (tint, tint_opacity, blur, noise; tint only when transparency is off). **Item height**: `DPI_SCALE(THEME_SIZE_CONTEXT_MENU_ITEM_HEIGHT)` (32). **Outside-click close**: in `wm_handle_mouse()`, if any context menu open and click is not in any context menu window: `context_menu_hide()`. **Submenu**: `struct menu_item.submenu_ptr` → pointer to another `context_menu_t`; on hover > 300 ms: `context_menu_show_sub(parent, item_idx)`; child spawns at right edge of parent + item's y. **Checked items**: draw Fluent checkmark icon at left if `item.checked`. Max nesting depth: 3.
 
 - [ ] `struct menu_item { char label[128]; uint32_t icon_id; void (*callback)(void); void *submenu_ptr; uint8_t flags; }` -- `flags`: `MENU_SEPARATOR=1`, `MENU_DISABLED=2`, `MENU_CHECKED=4`, `MENU_SUBMENU=8`
 - [ ] `typedef struct { struct menu_item items[32]; int count; int popup_wh; int hovered_idx; } context_menu_t;` in `context_menu.h`
 - [ ] `void context_menu_show(int32_t x, int32_t y, struct menu_item items[], int count)` → create popup window; acrylic bg; render items
 - [ ] `void context_menu_hide(void)` -- destroy popup + any open submenus
 - [ ] `int context_menu_is_open(void)` → non-zero if any menu popup visible
-- [ ] Draw: per item: icon (16 px); label `FONT_UI 13 px`; checkmark if checked; ▶ if submenu; separator as 1 px `theme_get()->border`; disabled items in `theme_get()->foreground_muted`; hover: `theme_get()->button_hover` background fill
+- [ ] Draw: per 32 px item: 16 px glyph, 12 px gap, label in the body style (14/20) `text_primary`
+  - checkmark if checked
+  - chevron if submenu, else shortcut hint in `text_secondary`
+  - separators 1 px `stroke_divider` running to the menu edges
+  - disabled in `text_disabled`
+  - hover `subtle_fill_hover` with radius 4
 - [ ] Mouse: hover sets `hovered_idx`; 300 ms hover timer → open submenu; click → `item.callback()`; `context_menu_hide()`; outside click → `context_menu_hide()`
 - [ ] Key: Up/Down move `hovered_idx`; Enter → callback + hide; Escape → hide; Right → open submenu; Left → close submenu (return to parent)
 - [ ] `context_menu_tick()` called from `wm_composite()` before drawing; checks hover timer for submenu open
@@ -78,7 +87,11 @@ title: "TODO-09 -- Desktop Shell Features"
 
 ## 2. Desktop Right-Click Menu `[Sonnet]`
 
-Right-click on wallpaper → context menu: View submenu (icon size), Sort By submenu, Refresh, New submenu (Folder/Text/Shortcut), Paste, Display Settings, Personalize.
+**Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-05 §2`, which is superseded there so the shell has one implementation.
+
+Right-click on wallpaper → the desktop menu in the order fixed by `docs/design/shell.md#context-menus`: View ›, Sort by ›, Refresh | New › (Folder, Text Document, Shortcut) | Display settings, Personalize | Open in Terminal, Show more options (Shift+F10). Paste and the other classic verbs live under Show more options.
 
 **Files:** `src/desktop/desktop.c` (extend), `src/desktop/desktop_rightclick.c` (new)
 
@@ -88,7 +101,7 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 - [ ] `static struct menu_item desktop_menu[]` + view/sort/new submenu arrays in `desktop_rightclick.c`
 - [ ] `void desktop_show_context_menu(int32_t x, int32_t y)` -- calls `context_menu_show()` with desktop menu
 - [ ] Right-click handler in `desktop_handle_mouse()`: if no window at cursor → `desktop_show_context_menu()`
-- [ ] View submenu callbacks: set icon size (small=32, medium=48, large=64); persist to `HKCU\Software\Impossible\Shell\Desktop\IconSize`
+- [ ] View submenu callbacks: set icon size (small=32 in 64x70 cells, medium=48 in 76x86, large=96 in 120x132; `THEME_SIZE_DESKTOP_*`, `docs/design/shell.md#desktop`); persist to `HKCU\Software\Impossible\Shell\Desktop\IconSize`
 - [ ] Sort By callbacks: `desktop_icons_sort(SORT_NAME|SORT_SIZE|SORT_TYPE|SORT_DATE)` stub
 - [ ] Refresh: `desktop_icons_init()` re-scans `C:\Users\Default\Desktop\`
 - [ ] New Folder: `dialog_input("New folder name:", "", "New Folder")` → `vfs_mkdir(path)`
@@ -98,15 +111,17 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 
 ## 3. Wallpaper Engine `[Sonnet]`
 
-`wallpaper_set(path, mode)`: load via `image_load()`, scale via `image_scale(mode)`, cache scaled bitmap. Registry watch: `HKCU\Software\Impossible\Theme\Wallpaper` + `WallpaperMode` → auto-reload on change. `background_color` fallback. Display Control Panel: thumbnail + fit-mode dropdown.
+**Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop)
+
+`wallpaper_set(path, mode)`: load via `image_load()`, scale via `image_scale(mode)`, cache scaled bitmap. Registry watch: `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (the Windows 11 keys, per `08-graphics-ui/TODO-03 §9`) → auto-reload on change; when no wallpaper is set, the default bloom for the current theme is used. `background_color` fallback. Display Control Panel: thumbnail + fit-mode dropdown.
 
 **Files:** `src/desktop/wallpaper.c` (new), `include/desktop/wallpaper.h` (new), `src/desktop/desktop.c` (extend)
 
 > [!NOTE]
-> Existing `desktop_draw_wallpaper()` draws a pre-loaded wallpaper; `wallpaper_set()` is the new entrypoint that replaces the hardcoded wallpaper load. **Cache strategy**: scale to exact screen resolution `(fb_get_width(), fb_get_height())` once; store as `uint32_t *g_wallpaper_scaled` (allocated via `pmm_alloc_contiguous(w*h*4)`). On every `desktop_draw_wallpaper()` call: `memcpy(screen, g_wallpaper_scaled, w*h*4)` (O(n) blit; no per-frame decode). Registry watch: poll `HKCU\Software\Impossible\Theme\Wallpaper` every 5 s in a background tick (called from `desktop_tick()`); if value changes: free old buffer, reload, re-scale. `background_color`: if `image_load()` fails: fill screen with `RegGetValue("BackgroundColor", DWORD)`. Acrylic/Mica consumers (`gfx_mica`, acrylic_cache) are automatically updated because they read `desktop_get_wallpaper_surface()` each time.
+> Existing `desktop_draw_wallpaper()` draws a pre-loaded wallpaper; `wallpaper_set()` is the new entrypoint that replaces the hardcoded wallpaper load. **Cache strategy**: scale to exact screen resolution `(fb_get_width(), fb_get_height())` once; store as `uint32_t *g_wallpaper_scaled` (allocated via `pmm_alloc_contiguous(w*h*4)`). On every `desktop_draw_wallpaper()` call: `memcpy(screen, g_wallpaper_scaled, w*h*4)` (O(n) blit; no per-frame decode). Registry watch: poll `HKCU\Control Panel\Desktop\WallPaper` every 5 s in a background tick (called from `desktop_tick()`); if value changes: free old buffer, reload, re-scale. `background_color`: if `image_load()` fails: fill screen with `RegGetValue("BackgroundColor", DWORD)`. Acrylic/Mica consumers (`gfx_mica`, acrylic_cache) are automatically updated because they read `desktop_get_wallpaper_surface()` each time.
 
 - [ ] `void wallpaper_set(const char *path, image_fit_t mode)` in `wallpaper.c`: `image_load()`; `image_scale()` to screen dims; store in `g_wallpaper_scaled`; `wm_mark_dirty()`
-- [ ] `void wallpaper_init(void)`: read `HKCU\Software\Impossible\Theme\Wallpaper` + `WallpaperMode`; call `wallpaper_set()`; fallback to `background_color` DWORD on error
+- [ ] `void wallpaper_init(void)`: read `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (default: the theme's bloom in Fill mode); call `wallpaper_set()`; fallback to `background_color` DWORD on error
 - [ ] `void wallpaper_tick(void)`: called from `desktop_tick()` every 5 s; `RegGetValue()` and compare to last loaded path; reload if changed
 - [ ] Update `desktop_draw_wallpaper()` to use `g_wallpaper_scaled` via `memcpy`; update `desktop_get_wallpaper_surface()` to wrap the new scaled buffer
 - [ ] `background_color` fallback: `gfx_fill_rect(screen, 0, 0, fb_w, fb_h, bg_color)` if wallpaper load fails
@@ -117,12 +132,14 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 
 ## 4. DPI Scaling `[Sonnet]`
 
+**Design:** [`shell.md#display-scaling`](../../docs/design/shell.md#display-scaling)
+
 `g_dpi_pct` global (default 100). `DPI_SCALE(x)` macro. Auto-detect: ≥2560×1440→150%, ≥3840×2160→200%. Read from `HKCU\Software\Impossible\Display\ScaleFactor`. Apply to font sizes, icon sizes, chrome heights, control heights. `WM_DPI_CHANGED` broadcast. Display Control Panel dropdown.
 
 **Files:** `include/desktop/dpi.h` (new), `src/desktop/dpi.c` (new), `include/desktop/wm.h` (extend)
 
 > [!NOTE]
-> `DPI_SCALE(x)` is `(int)((x) * g_dpi_pct / 100)`. All sizing uses this macro: `WM_TITLEBAR_HEIGHT = DPI_SCALE(32)`, `TASKBAR_H = DPI_SCALE(48)`, `font_size = DPI_SCALE(base_size)`. `WM_DPI_CHANGED` message constant: add to `wm.h` after `WM_THEME_CHANGED`; `wm_post_message_all(WM_DPI_CHANGED, g_dpi_pct, 0)`. Auto-detect: in `dpi_init()`: if `fb_get_width() >= 3840` → 200; else if >= 2560 → 150; else 100; override with Registry if present. Live change: `dpi_set(pct)` -- update `g_dpi_pct`; call `wm_post_message_all(WM_DPI_CHANGED, pct, 0)`; each window re-measures its controls; `wallpaper_reload_on_dpi()`. Font sizes: `ttf_get(FONT_UI, DPI_SCALE(13))` -- pass DPI-scaled size to font manager.
+> `DPI_SCALE(x)` is `(int)((x) * g_dpi_pct / 100)`. All sizing uses this macro: `WM_TITLEBAR_HEIGHT = DPI_SCALE(32)`, `TASKBAR_H = DPI_SCALE(48)`, `font_size = DPI_SCALE(base_size)`. `WM_DPI_CHANGED` message constant: add to `wm.h` after `WM_THEME_CHANGED`; `wm_post_message_all(WM_DPI_CHANGED, g_dpi_pct, 0)`. Auto-detect: in `dpi_init()`: if `fb_get_width() >= 3840` → 200; else if >= 2560 → 150; else 100; override with Registry if present. Live change: `dpi_set(pct)` -- update `g_dpi_pct`; call `wm_post_message_all(WM_DPI_CHANGED, pct, 0)`; each window re-measures its controls; `wallpaper_reload_on_dpi()`. Font sizes come from the type ramp: `ttf_get(FONT_UI, DPI_SCALE(THEME_TYPE_BODY_SIZE))` (14) etc. -- pass DPI-scaled ramp sizes to the font manager.
 
 - [ ] `extern int g_dpi_pct;` + `#define DPI_SCALE(x) ((int)((x) * g_dpi_pct / 100))` in `include/desktop/dpi.h`
 - [ ] `void dpi_init(void)`: auto-detect from framebuffer dims; override from Registry; set `g_dpi_pct`
@@ -135,6 +152,8 @@ Right-click on wallpaper → context menu: View submenu (icon size), Sort By sub
 - [ ] Commit: `"desktop: DPI scaling -- g_dpi_pct, DPI_SCALE macro, auto-detect, WM_DPI_CHANGED broadcast"`
 
 ## 5. Screenshot `[Sonnet]`
+
+**Design:** [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
 Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy compositor back buffer → `image_save_png()` to `C:\Users\Default\Pictures\Screenshot_%Y%m%d_%H%M%S.png`. Alt+PrintScreen → crop to active window rect. Win+PrintScreen → save to file + toast. PrintScreen alone → kernel clipboard (bitmap).
 
@@ -153,6 +172,8 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 
 ## 6. Night Light `[Sonnet]`
 
+**Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
+
 `night_light_set_active(enabled, strength_pct)`: apply warm RGB shift LUT in `wm_composite()`. `R_out=R, G_out=G*(1-0.3*s), B_out=B*(1-0.6*s)`. Registry: `HKCU\Software\Impossible\Display\NightLight\Enabled`, `Strength` (0–100), `ScheduleStart/End` (HH:MM). Kernel timer checks schedule every minute.
 
 **Files:** `src/desktop/night_light.c` (new), `include/desktop/night_light.h` (new), `src/desktop/wm.c` (extend compositor)
@@ -170,7 +191,9 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 
 ## 7. Focus / Do Not Disturb `[Sonnet]`
 
-`HKCU\Software\Impossible\Shell\FocusMode` (0=off, 1=priority, 2=alarms-only). Priority: suppress non-priority toasts. Alarms-only: suppress all toasts. Quick settings tile toggle. Auto-enable during fullscreen apps (`DetectFullscreen` flag).
+**Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
+
+`HKCU\Software\Impossible\Shell\FocusMode` (0=off, 1=priority, 2=alarms-only). Priority: suppress non-priority toasts. Alarms-only: suppress all toasts. Toggled from the bell in the notifications header (Do not disturb) and the Focus row under the calendar, per `docs/design/shell.md#notifications-and-calendar`; also in Settings. Auto-enable during fullscreen apps (`DetectFullscreen` flag).
 
 **Files:** `src/desktop/focus_mode.c` (new), `include/desktop/focus_mode.h` (new)
 
@@ -188,36 +211,40 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 
 ## 8. Quick Settings Panel `[Sonnet]`
 
-Win+A or click notification area → slide-in panel from right (200 ms ease-out-cubic). Tiles grid: Wi-Fi stub, Bluetooth stub, Night Light toggle, Volume slider, Brightness slider, Display Scale picker. Pinned quick actions row. Slide-out on outside click or Escape.
+**Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
+
+Per `docs/design/shell.md#quick-settings`: Win+A or a click on the tray's system cluster opens a `THEME_SIZE_FLYOUT_WIDTH` (360) flyout anchored 12 px from the right edge and 12 px above the taskbar (content-height, not a full-height sidebar), flyout acrylic, radius 8, `THEME_ELEV_FLYOUT_*`; it fades and rises 12 px over `THEME_MOTION_NORMAL_MS`. Contents: a 3 x 2 grid of toggles (Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility), brightness and volume sliders, and a 48 px footer band (battery left; edit and Settings right). Closes on outside click or Escape.
 
 **Files:** `src/desktop/quick_settings.c` (new), `include/desktop/quick_settings.h` (new)
 
 > [!NOTE]
-> Panel window: `wm_create_window(NULL, fb_w - PANEL_W, 0, PANEL_W, fb_h - TASKBAR_H, WM_FLAG_VISIBLE)` at z_order=30000; `PANEL_W = DPI_SCALE(360)`. Acrylic background. Slide-in: `wm_anim_state_t.x` tween from `fb_w` to `fb_w - PANEL_W`; 200 ms `GFX_EASE_OUT_CUBIC`. Tile grid: 3 columns × 2 rows of toggle tiles (88×60 px each); tile: rounded-rect background (`theme_get()->surface_variant` off, `theme_get()->accent` on); icon centered (24 px); label below (10 px). Volume/Brightness: `ctrl_create_slider()` -- wire Volume to `volume_set()` stub, Brightness to `brightness_set()` stub. Night Light tile: toggles `night_light_set_active()`; Focus tile: cycles `focus_mode_set()`. Scale picker: inline dropdown showing "100%/125%/150%/200%" calling `dpi_set()`. Outside click: `qs_mouse_handler()` checks if click is outside panel bounds; if so → `quick_settings_close()`. Escape key closes.
+> Flyout window: `wm_create_window(NULL, fb_w - 360 - 12, fb_h - 48 - 12 - QS_H, 360, QS_H, WM_FLAG_VISIBLE)` at z_order=30000, `QS_H` from content (24 px top padding + 2 tile rows + 2 sliders + footer). Flyout acrylic (`mat.flyout`). Open: opacity 0→255 and y +12 px → 0 over `THEME_MOTION_NORMAL_MS` with `gfx_ease_decelerate`. Tile grid: 3 columns x 2 rows, each a 96 x 48 button (`radius.control`) over a caption label, 12 px gaps; off = `control_fill` + `stroke_control`, on = `accent` with the glyph in `text_on_accent`; hover `control_fill_hover` / `accent_hover`. Volume/Brightness: `ctrl_create_slider()` per `docs/design/controls.md#slider` -- wire Volume to `volume_set()` stub, Brightness to `brightness_set()` stub. Night light tile toggles `night_light_set_active()`. Footer band: 8% black (dark) / 35% white (light). Outside click: `qs_mouse_handler()` → `quick_settings_close()`. Escape closes. Display scale lives in Settings, not here.
 
-- [ ] `void quick_settings_open(void)`: create panel window at z_order=30000; slide-in tween; build tile + slider controls
-- [ ] `void quick_settings_close(void)`: slide-out tween (200 ms); `on_complete` → `wm_destroy_window(panel_wh)`
+- [ ] `void quick_settings_open(void)`: create the anchored 360 px flyout at z_order=30000; fade + 12 px rise; build tile + slider controls
+- [ ] `void quick_settings_close(void)`: fade out over `THEME_MOTION_FAST_MS`; `on_complete` → `wm_destroy_window(panel_wh)`
 - [ ] `int quick_settings_is_open(void)` -- for hotkey toggle
-- [ ] Tile implementation: `qs_tile_t { uint32_t icon_id; char label[32]; int (*get_state)(void); void (*toggle)(void); }` + array of 6 tiles
+- [ ] Tile implementation: `qs_tile_t { uint32_t icon_id; char label[32]; int (*get_state)(void); void (*toggle)(void); }` + the 6 tiles in spec order: Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility
 - [ ] Wi-Fi tile: state = `net_is_connected()` (from TODO-01 networking); toggle = stub log
 - [ ] Night Light tile: state = `night_light_enabled()`; toggle = `night_light_set_active(!enabled, 60)`
-- [ ] Focus tile: state = `g_focus_mode`; toggle = cycle `FOCUS_OFF → FOCUS_PRIORITY → FOCUS_ALARMS → FOCUS_OFF`
+- [ ] Bluetooth, Airplane mode, Energy saver, Accessibility tiles: state from their owners (stubs log until the owner lands); Accessibility opens a sub-page, not a toggle
 - [ ] Volume + Brightness sliders: `ctrl_create_slider(panel_wh, x, y, w, 20, 0, 100, vol, HORIZ, on_vol_change)` -- `on_vol_change` calls `volume_set(v)` stub
 - [ ] Win+A hotkey in `hotkeys.c`: `quick_settings_open()` or `quick_settings_close()` toggle
 - [ ] Quick settings to `docs/design/shell.md#quick-settings`: 360 px flyout anchored 12 px from the right and above the taskbar, flyout acrylic, `THEME_ELEV_FLYOUT_*`
   - 3x2 toggles (Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility): 96x48 buttons over captions; on = accent fill with `text_on_accent`
   - Brightness and volume sliders (4 px track, accent fill, 20 px thumb); 48 px footer band with battery on the left, edit and Settings on the right
   - Opened by the tray cluster button (network, volume, battery glyphs) owned by `08-graphics-ui/TODO-11 §4`
-- [ ] Commit: `"desktop: quick settings panel -- slide-in from right, tiles, night light/focus/volume/scale wired"`
+- [ ] Commit: `"desktop: quick settings flyout -- anchored 360 px, six toggles, sliders, footer"`
 
 ## 9. Virtual Desktops `[Opus]`
 
-Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (150 ms fade). Per-desktop window Z-order group. Win+Ctrl+D create, Win+Ctrl+F4 close, Win+Ctrl+←/→ switch. Task View overlay (Win+Tab): thumbnail grid.
+**Design:** [`shell.md#task-view`](../../docs/design/shell.md#task-view)
+
+Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (cross-fade over `THEME_MOTION_FAST_MS` each way). Per-desktop window Z-order group. Win+Ctrl+D create, Win+Ctrl+F4 close, Win+Ctrl+←/→ switch. Task View (Win+Tab) per `docs/design/shell.md#task-view`: the desktop dims with `smoke` over a strong wallpaper blur; every window of the current desktop appears as a thumbnail (Alt+Tab thumbnail rules, close button on hover); a bottom strip shows the virtual desktops as 16:9 cards with names plus a "New desktop" card, the current one with the accent ring.
 
 **Files:** `src/desktop/vdesk.c` (new), `include/desktop/vdesk.h` (new), `src/desktop/wm.c` (extend)
 
 > [!NOTE]
-> This is `[Opus]` -- virtual desktops require a novel architecture for Impossible OS: each desktop is an independent Z-order group (windows on the inactive desktop are hidden from the compositor), and `vdesk_switch()` must fade out the current desktop and fade in the new one atomically. **Per-desktop window assignment**: add `uint8_t desktop_idx` to `struct wm_window`. Compositor: skip windows where `win->desktop_idx != g_current_desktop` (they are invisible). **Switch**: `vdesk_switch(idx)`: set `g_switch_from = g_current_desktop`; `gfx_tween_start(&vdesk_fade, 255, 0, 75, GFX_EASE_LINEAR)` (fade out in 75 ms); `on_complete`: set `g_current_desktop = idx`; `gfx_tween_start(&vdesk_fade, 0, 255, 75, GFX_EASE_LINEAR)` (fade in). During fade: compositor applies `vdesk_fade.current / 255.0` alpha to all windows. **Task View**: `wm_create_window(NULL, 0, 0, fb_w, fb_h, WM_FLAG_VISIBLE)` at z_order=40000; dark acrylic full-screen; render `g_desktop_count` rows of desktop thumbnails (each thumbnail is a scaled composite of that desktop's windows rendered offscreen); click thumbnail → `vdesk_switch(idx)`.
+> This is `[Opus]` -- virtual desktops require a novel architecture for Impossible OS: each desktop is an independent Z-order group (windows on the inactive desktop are hidden from the compositor), and `vdesk_switch()` must fade out the current desktop and fade in the new one atomically. **Per-desktop window assignment**: add `uint8_t desktop_idx` to `struct wm_window`. Compositor: skip windows where `win->desktop_idx != g_current_desktop` (they are invisible). **Switch**: `vdesk_switch(idx)`: set `g_switch_from = g_current_desktop`; `gfx_tween_start(&vdesk_fade, 255, 0, THEME_MOTION_FAST_MS, gfx_ease_accelerate)` (fade out); `on_complete`: set `g_current_desktop = idx`; `gfx_tween_start(&vdesk_fade, 0, 255, THEME_MOTION_FAST_MS, gfx_ease_decelerate)` (fade in). During fade: compositor applies `vdesk_fade.current / 255.0` alpha to all windows. **Task View**: `wm_create_window(NULL, 0, 0, fb_w, fb_h, WM_FLAG_VISIBLE)` at z_order=40000; dark acrylic full-screen; render `g_desktop_count` rows of desktop thumbnails (each thumbnail is a scaled composite of that desktop's windows rendered offscreen); click thumbnail → `vdesk_switch(idx)`.
 
 - [ ] `uint8_t desktop_idx` field in `struct wm_window` (default 0 = first desktop)
 - [ ] `int g_current_desktop = 0`, `int g_desktop_count = 1`, `gfx_tween_t vdesk_fade` in `vdesk.c`
@@ -225,7 +252,10 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (1
 - [ ] `void vdesk_destroy(int idx)`: move all windows on `idx` to desktop 0; `g_desktop_count--`; if current was idx: `vdesk_switch(0)`
 - [ ] `void vdesk_switch(int idx)`: bounds check; fade-out tween → change `g_current_desktop` → fade-in tween
 - [ ] Compositor: skip `win->desktop_idx != g_current_desktop`; during fade: `gfx_fill_rect_alpha(screen, 0,0, fw, fh, 0xFF000000, 255 - vdesk_fade.current)` after composite
-- [ ] `void taskview_open(void)`: create fullscreen dark overlay; render desktop thumbnails (each: render that desktop's windows at 1/4 scale offscreen; blit as thumbnail); click → `vdesk_switch()`; Win+Tab or Escape → `taskview_close()`
+- [ ] `void taskview_open(void)`: fullscreen overlay of `smoke` over a strong blur of the wallpaper
+  - grid of per-window thumbnails for the current desktop (158 px tall, icon + title above, close on hover, `focus_outer` ring on the keyboard selection)
+  - click → focus window + close
+- [ ] Task View desktop strip: 16:9 cards (name below, current desktop with the accent ring) + a "New desktop" card; click a card → `vdesk_switch()`; Win+Tab or Escape → `taskview_close()`
 - [ ] Hotkeys in `hotkeys.c`: `MOD_WIN+MOD_CTRL+D` → `vdesk_create()` + `vdesk_switch(new)`; `MOD_WIN+MOD_CTRL+F4` → `vdesk_destroy(g_current)`; `MOD_WIN+MOD_CTRL+LEFT/RIGHT` → `vdesk_switch(current ± 1)`; `MOD_WIN+Tab` → `taskview_open()`
 - [ ] New window: assigned to `g_current_desktop` by default; `wm_create_window()` sets `win->desktop_idx = g_current_desktop`
 - [ ] Commit: `"desktop: virtual desktops -- 8 desktops, fade switch, per-desktop compositor, Task View overlay"`
@@ -243,7 +273,7 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (1
 | 💎  | Screenshot           | ✅ PrintScreen to clipboard; Win+PrintScreen →                                | ✅ `scrot`/`gnome-screenshot`; KDE Spectacle; PrtSc to              | ⬜ §5 -- `rtc_read()` timestamp filename; `image_save_png()` to         |
 | 💎  | Night light          | ✅ Settings → System → Night                                                  | ✅ `redshift`/`gammastep`; GNOME built-in night light;              | ⬜ §6 -- integer `g_nl_g_scale/b_scale` per-pixel LUT in                |
 | 💎  | Focus / DND          | ✅ Windows Focus Assist; priority-only; alarms-only;                          | ✅ GNOME DND (`org.gnome.desktop.notifications`); KDE DND           | ⬜ §7 -- `FOCUS_OFF/PRIORITY/ALARMS` enum; compositor fullscreen detect |
-| 💎  | Quick settings panel | ✅ Win+A; Fluent slide-in panel; tiles                                        | ✅ GNOME quick settings (since 43);                                 | ⬜ §8 -- z_order=30000; acrylic; 6 tiles; sliders                       |
+| 💎  | Quick settings panel | ✅ Win+A; Fluent slide-in panel; tiles                                        | ✅ GNOME quick settings (since 43);                                 | ⬜ §8 -- anchored 360 px flyout; 6 tiles; sliders                       |
 | ⭐  | Virtual desktops     | ✅ Win+Ctrl+D/F4/←/→; Task View (Win+Tab); per-desktop                        | ✅ GNOME workspaces; KDE virtual desktops;                          | ⬜ §9 -- `⭐` fade composited in kernel                                 |
 
 > **After §1–§9:** Impossible OS matches Windows 11 on every desktop shell feature. The `⭐` virtual desktop fade is composited in the kernel's software renderer -- a single `gfx_fill_rect_alpha` pass over the already-composited frame buffer -- meaning the transition is frame-perfect with no GPU needed and no per-window alpha manipulation.
@@ -257,6 +287,6 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (1
 - [ ] PrintScreen → serial log `[screenshot] saved: C:\Users\Default\Pictures\Screenshot_...png`; file exists in VFS; Alt+PrintScreen → only focused window captured
 - [ ] Night light: `night_light_set_active(1, 80)` → visible warm tint in QEMU; pixels have reduced blue/green; disable → full color restored
 - [ ] Focus mode: set FOCUS_ALARMS; `desktop_toast(…, PRIORITY_NORMAL)` → no toast, serial log confirms suppressed
-- [ ] Quick settings: Win+A → panel slides in from right over 200 ms; Night Light tile click → toggles; Focus tile cycles modes; Escape → slides out
+- [ ] Quick settings: Win+A → the 360 px flyout rises 12 px and fades in above the taskbar at the right; six toggles in spec order; Night light tile toggles; Escape → closes
 - [ ] Virtual desktops: Win+Ctrl+D → new desktop created; Win+Ctrl+→ → fade transition to desktop 2; window on desktop 1 not visible; Win+Tab → Task View overlay shows both desktops as thumbnails; click desktop 1 thumbnail → switches back
 - [ ] Commit: `"desktop: complete shell features -- context menu, wallpaper, DPI, screenshot, night light, quick settings, virtual desktops"`

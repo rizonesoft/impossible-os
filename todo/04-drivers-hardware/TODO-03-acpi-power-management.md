@@ -49,7 +49,7 @@ title: "TODO-03 -- ACPI Full Subsystem & Power Management"
 | 💎  |   4   | §4 Thermal monitoring (`IA32_THERM_STATUS`, Task Mgr)  | §1 (TjMax from AML), APIC Thermal LVT                                                       |  [ ]   |
 | 💎  |   5   | §5 Battery status (`_BST`/`_BIF`)                      | §1                                                                                          |  [ ]   |
 | 💎  |   6   | §6 CPU frequency scaling (DVFS, `_PSS` P-states)       | §1, `cpufreq_register_driver` (`03-memory-concurrency/TODO-06-scheduler-enhancement.md §9`) |  [ ]   |
-| 💎  |   7   | §7 Power profiles -- Balanced/Performance/Power Saver  | §4, §6, §8                                                                                  |  [ ]   |
+| 💎  |   7   | §7 Power profiles -- Balanced/Performance/Power Saver  | §4, §6, §8                                                                                  |  [/]   |
 | 💎  |   8   | §8 ACPI C-states idle (`hlt`/`mwait`, `_CST`)          | §1, §7 (policy)                                                                             |  [ ]   |
 | 💎  |   9   | §9 S3 suspend/resume -- trampoline, state save/restore | §1, §2 (flush), APIC re-init                                                                |  [ ]   |
 | 💎  |  10   | §10 Hibernate (S4) -- hiberfil.sys, bootloader restore | §9 (S3 path), filesystem                                                                    |  [ ]   |
@@ -147,6 +147,8 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
 
 ## 3. ACPI Power Button SCI `[Sonnet]`
 
+**Design:** n/a -- a hardware button event path; it draws nothing
+
 Configure the System Control Interrupt from FADT `SCI_INT`, route via IOAPIC as level-triggered, install an ISR. On PM1a `PWRBTN_STS` assertion, initiate the clean shutdown sequence in §9. Support short-press (shutdown) vs. long-press (force power-off) distinction via press duration timer.
 
 **Files:** `src/kernel/acpi/acpi_button.c` (new), `include/kernel/acpi/acpi_button.h` (new)
@@ -223,16 +225,8 @@ Three named power profiles -- Balanced, Performance, Power Saver -- configure th
 
 **Files:** `src/kernel/acpi/acpi_power_profile.c` (new), `include/kernel/acpi/acpi_power_profile.h` (new)
 
-- [ ] Define `power_profile_t { const char *name; const char *cpufreq_governor; uint32_t idle_latency_budget_ns; uint32_t display_timeout_s; }`
-- [ ] Built-in profiles:
-  - `Balanced`: governor=`"powersave"`, `idle_latency_ns=500000` (500 µs), display timeout=5 min
-  - `Performance`: governor=`"performance"`, `idle_latency_ns=50000` (50 µs, no C3), display timeout=never
-  - `Power Saver`: governor=`"powersave"`, `idle_latency_ns=UINT32_MAX` (all C-states), display timeout=1 min
-- [ ] `power_profile_apply(profile)`: call `cpufreq_set_governor(profile->cpufreq_governor)`; set `g_idle_latency_budget_ns = profile->idle_latency_budget_ns`; set display timeout
-- [ ] Active profile read from `HKLM\SYSTEM\Power\Profile` (`REG_SZ`); apply at boot and on Registry change
-- [ ] `powercfg.cpl` stub: shell command `powercfg /setactive Balanced|Performance|PowerSaver`
-- [ ] System tray power icon reflects active profile + battery percentage (consolidated display)
-- [ ] Boot log: `[POWER] Profile: %s (governor=%s, idle_budget=%u µs)`
+- [/] Superseded: power plans (Balanced / Performance / Power Saver, their Registry storage, `powercfg` and the Settings page) are implemented by `02-kernel-core/TODO-26 §18`, the authoritative owner; do not build a second plan model here
+- [ ] Expose `cpufreq_set_governor()` and the C-state latency budget as the hooks `02-kernel-core/TODO-26 §18` drives; no profile table or Registry key here
 - [ ] Commit: `"acpi: power profiles -- Balanced/Performance/PowerSaver, Registry, powercfg stub"`
 
 ---

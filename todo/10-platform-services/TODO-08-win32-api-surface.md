@@ -265,6 +265,8 @@ Create `src/win32/gdi32.c`. Maps GDI primitives to the kernel `gfx_*` and `ttf_*
 
 ## 12. Shell & Icon API (`shell32.dll`) `[Sonnet]`
 
+**Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
+
 Create `src/win32/shell32.c`.
 
 - [ ] Per-export rows: [`TODO-C-shell32-export-master-table.md`](TODO-C-shell32-export-master-table.md) (Tier 1 icons and paths; Tier 1b `ShellExecute` and path helpers). Mark rows `[x]` with the same Done gate as Section 10.

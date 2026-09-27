@@ -23,9 +23,9 @@ title: "TODO-06 -- Security & User Accounts"
 - `include/kernel/sched/syscall.h` -- syscall table -- `SYS_PRIVILEGE_REQUEST=59` added in §10
 - `include/kernel/klog.h` -- `klog()` -- throughout
 - `include/gfx.h` -- `gfx_blur_rect()`, `gfx_fill_rect()`, `gfx_blit_alpha()` -- §5/§7 login + lock screen backgrounds
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_TEXTBOX`, `CTRL_BUTTON`, `ctrl_textbox_set_masked()` -- §5 password field
+- `include/desktop/controls.h` -- `CTRL_TEXTBOX`, `CTRL_BUTTON`, `ctrl_textbox_set_masked()` -- §5 password field
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_z_order()` -- §5 full-screen login window
-- `include/desktop/startmenu.h` (TODO-09) -- Start Menu user avatar area -- §9 user switching entry point
+- `include/desktop/startmenu.h` (08-graphics-ui/TODO-11 §2) -- Start footer user button -- §9 user switching entry point
 - `include/kernel/boot_splash.h` -- `boot_splash_progress()` -- §5 login screen replaces boot splash at handoff
 - → XREF: `09-desktop-shell/TODO-03-service-manager.md §1` -- user account stub there is superseded by §1/§5 here; TODO-03 §1 is a forward reference to this TODO
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- wallpaper engine provides `wallpaper_set()` called in §7 after successful login
@@ -55,12 +55,12 @@ title: "TODO-06 -- Security & User Accounts"
 | 💎  |   3   | §1 User account system -- `user_account_t`, Registry CRUD, Admin + Guest first boot                   | §2 password hashing; Registry (exists)                                                |  [ ]   |
 | 💎  |   4   | §3 Authentication API -- `auth_login/logout/get_current_user`, `HKU\{name}` hive load/unload          | §1 account system; Registry hive load                                                 |  [ ]   |
 | 💎  |   5   | §4 User home directories -- `vfs_mkdir` on `auth_create_user()`, `%USERPROFILE%`, shell CWD            | §1 account system; `vfs_mkdir` (exists)                                               |  [ ]   |
-| 💎  |   6   | §5 Login screen UI -- full-screen blurred bg, OS logo, avatar, bullet-masked textbox, sign-in button   | §3 auth API; TODO-05 `CTRL_TEXTBOX`; `gfx_blur_rect()` (exists); WM z-order         |  [ ]   |
-| 💎  |   7   | §6 Login flow -- multi-avatar strip, shake animation, lockout, auto-login, profile load                | §5 login UI; §3 auth; TODO-07 `wallpaper_set()`; TODO-02 animation engine            |  [ ]   |
+| 💎  |   6   | §5 Login screen UI -- full-screen blurred bg, OS logo, avatar, bullet-masked textbox, sign-in button   | §3 auth API; `CTRL_TEXTBOX` (exists); `gfx_blur_rect()` (exists); WM z-order         |  [ ]   |
+| 💎  |   7   | §6 Login flow -- multi-avatar strip, shake animation, lockout, auto-login, profile load                | §5 login UI; §3 auth; D08 T09 §3 `wallpaper_set()`; D08 T04 animation engine            |  [ ]   |
 | 💎  |   8   | §7 Lock screen -- Win+L overlay, blurred desktop capture, clock, password resume same session          | §6 login flow; compositor back-buffer blur                                            |  [ ]   |
 | 💎  |   9   | §8 User switching -- Start Menu avatar → Switch/Sign out, fast-user-switch session stub                | §6 login flow; TODO-09 Start Menu user area                                           |  [ ]   |
 | ⭐  |  10   | §9 File permissions -- wire `ixfs_check_perm()` into `vfs_open/write/exec`; FAT32 fallback            | §1 user accounts (uid available); `ixfs_check_perm()` (exists in ixfs.h)            |  [ ]   |
-| ⭐  |  11   | §10 UAC elevation -- `privilege_request(reason)` consent dialog, process token, `SYS_PRIVILEGE_REQUEST=59` | §3 auth API; §9 permissions; TODO-05 dialog; `task_t` priv token                |  [ ]   |
+| ⭐  |  11   | §10 UAC elevation -- `privilege_request(reason)` consent dialog, process token, `SYS_PRIVILEGE_REQUEST=59` | §3 auth API; §9 permissions; D08 T06 §8 dialog; `task_t` priv token                |  [ ]   |
 
 ---
 
@@ -146,34 +146,38 @@ On `auth_create_user()`: create `C:\Users\{name}\{Desktop,Documents,Downloads,Pi
 
 ## 6. Login Screen UI `[Sonnet]`
 
-Full-screen window before desktop loads: blurred wallpaper background, OS logo, user avatar (circular), username label, password field (bullet-masked), [Sign in →] button. Bottom-left: Power (⏻), Network (🌐), Accessibility (♿) icons.
+**Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
+
+Full-screen sign-in before the desktop loads, per `docs/design/shell.md#lock-and-sign-in-screens`: the wallpaper under a strong acrylic blur; a `THEME_SIZE_LOGIN_AVATAR` (192) circular avatar; the user name in the title style (28/36); a `THEME_SIZE_LOGIN_FIELD_WIDTH` (296) password box (`controls.md#text-box-password-box-and-search-box`, bullet-masked) with an accent submit arrow button inside its right end. Other users are listed bottom-left as 48 px avatars; accessibility, network and power buttons sit bottom-right. No OS logo on this screen.
 
 **Files:** `src/desktop/login_screen.c` (new), `include/desktop/login_screen.h` (new)
 
 > [!NOTE]
-> Displayed before desktop init: `login_screen_show()` called from `kernel_main()` after `auth_first_boot_setup()`. For single user with `auto_login=1`: skip to desktop immediately (`desktop_start()`). Full-screen window: `wm_create_window(0, 0, screen_w, screen_h, "login", WM_FLAG_FULLSCREEN | WM_FLAG_NO_DECORATIONS)`; `wm_set_z_order(win, 32767)` (topmost). Background: capture framebuffer; `gfx_blur_rect(fb, 0, 0, screen_w, screen_h, 20)`. OS logo: `gfx_blit(logo_surface, center_x - 64, center_y - 200)`. Avatar: circular `gfx_draw_circle_clip(avatar_surface, ax, ay, 64)` -- if no avatar image: draw colored circle with initial letter. Password `CTRL_TEXTBOX`: `ctrl_textbox_set_masked(textbox, 1)` -- renders `•` per char. Sign-in button: `CTRL_BUTTON` with callback → `auth_login(username, password_buf)`. Bottom icons: 3 × 40 px icon buttons at `(16, screen_h - 56)`.
+> Displayed before desktop init: `login_screen_show()` called from `kernel_main()` after `auth_first_boot_setup()`. For single user with `auto_login=1`: skip to desktop immediately (`desktop_start()`). Full-screen window: `wm_create_window(0, 0, screen_w, screen_h, "login", WM_FLAG_FULLSCREEN | WM_FLAG_NO_DECORATIONS)`; `wm_set_z_order(win, 32767)` (topmost). Background: the lock wallpaper through `gfx_acrylic()` with the start material's blur (`THEME_MAT_*_START_BLUR`), rendered once at show. Avatar: circular `gfx_draw_circle_clip(avatar_surface, ax, ay, THEME_SIZE_LOGIN_AVATAR / 2)` centred horizontally above the name -- if no avatar image: a circle in the accent gradient with the initial letter. Password `CTRL_TEXTBOX`: `ctrl_textbox_set_masked(textbox, 1)` -- renders `•` per char. Sign-in button: `CTRL_BUTTON` with callback → `auth_login(username, password_buf)`. Bottom icons: 3 × 40 px icon buttons at `(16, screen_h - 56)`.
 
 - [ ] `void login_screen_show(void)` -- create full-screen window; blur background; render layout; event loop
 - [ ] `void login_screen_hide(void)` -- destroy login window; transfer focus to desktop
-- [ ] Background blur: `gfx_blur_rect()` on a captured background; rendered once at show
-- [ ] Avatar: circular clip; fallback initial-letter colored circle
+- [ ] Background: the wallpaper under the strong acrylic blur; rendered once at show
+- [ ] Avatar: 192 px circular clip; fallback initial-letter circle; name below in the title style; 296 px password box with the accent submit arrow inside its right end
 - [ ] Password textbox: `ctrl_textbox_set_masked(textbox, 1)` -- bullet substitution
 - [ ] Sign-in button callback: call `auth_login()`; on `AUTH_OK`: `login_screen_hide()` + `desktop_start()`; on fail: trigger shake (§7)
-- [ ] Power icon: `sys_shutdown()` / `sys_reboot()` via existing syscalls
+- [ ] Bottom-right buttons (accessibility, network, power; subtle buttons with 16 px glyphs): power opens Sleep / Shut down / Restart via `sys_shutdown()` / `sys_reboot()`
 - [ ] Route the Start Menu power button (`desktop.c` `acpi_shutdown()` direct call) through the SeShutdownPrivilege-gated `sys_shutdown()` syscall, not the raw ACPI primitive -> XREF: 02-kernel-core/TODO-15 §8
-- [ ] Network icon: show network status flyout stub (forward ref to TODO-09 tray)
-- [ ] Commit: `"login: login screen UI -- blurred bg, avatar, bullet password, sign-in button, power/network icons"`
+- [ ] Network button: opens the network part of quick settings (`08-graphics-ui/TODO-09` §8) as a flyout above the button
+- [ ] Commit: `"login: sign-in screen -- acrylic wallpaper, 192 px avatar, 296 px password box, bottom-right system buttons"`
 
 ## 7. Login Flow `[Sonnet]`
 
-Multi-user avatar strip. On failure: shake animation + "Incorrect password" in red. Lockout after 5 failures (30 s cooldown). Auto-login bypass. On success: load wallpaper, pinned apps, `HKU\{name}` Registry.
+**Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
+
+Other users as 48 px avatars in a bottom-left list (`docs/design/shell.md#lock-and-sign-in-screens`); selecting one swaps the centred avatar and name. On failure: shake animation + "The password is incorrect. Try again." in `caption_close_hover` below the box. Lockout after 5 failures (30 s cooldown). Auto-login bypass. On success: load wallpaper, pinned apps, `HKU\{name}` Registry.
 
 **Files:** `src/desktop/login_screen.c` (extend)
 
 > [!NOTE]
-> **Multi-user**: `auth_list_users(users, 8)` → render avatar strip horizontally (click to select active user); selected user highlighted with accent underline. Selected username populates the username label; password field focused. **Shake animation**: on `AUTH_ERR_INVALID`: `anim_mgr_add()` tween on `x_offset` of password row; easing = `EASE_BACK` (overshoot); amplitude ±8 px; duration 400 ms; clear password field. **"Incorrect password"**: red label below textbox, auto-hide after 3 s. **Lockout**: on `AUTH_ERR_LOCKED`: disable sign-in button; show countdown "Try again in Xs" (update every second via `sched_task_add("login_unlock", ..., 1, 1)`). **Auto-login**: `auth_first_boot_setup()` or `auth_login_check_autologin()` → single user with `AutoLogin=1`: call `auth_login(name, "")` with empty password directly. **Profile load**: `auth_login()` loads `HKU\{name}` hive → `wallpaper_set()` reads `HKU\{name}\Software\Impossible\Wallpaper` → `desktop_load_pinned_apps()`.
+> **Multi-user**: `auth_list_users(users, 8)` → bottom-left vertical list of 48 px avatars with names (subtle-button hover, selected user with `subtle_fill_hover`). Selected username populates the username label; password field focused. **Shake animation**: on `AUTH_ERR_INVALID`: `anim_mgr_add()` tween on `x_offset` of password row; easing = `EASE_BACK` (overshoot); amplitude ±8 px; duration 400 ms; clear password field. **Incorrect password**: caption text in `caption_close_hover` below the box, auto-hide after 3 s. **Lockout**: on `AUTH_ERR_LOCKED`: disable sign-in button; show countdown "Try again in Xs" (update every second via `sched_task_add("login_unlock", ..., 1, 1)`). **Auto-login**: `auth_first_boot_setup()` or `auth_login_check_autologin()` → single user with `AutoLogin=1`: call `auth_login(name, "")` with empty password directly. **Profile load**: `auth_login()` loads `HKU\{name}` hive → `wallpaper_set()` reads `HKU\{name}\Software\Impossible\Wallpaper` → `desktop_load_pinned_apps()`.
 
-- [ ] `login_screen_show()` multi-user: `auth_list_users()` → avatar strip; click handler sets active user
+- [ ] `login_screen_show()` multi-user: `auth_list_users()` → bottom-left 48 px avatar list; click sets the active user
 - [ ] Shake animation: `anim_mgr_add()` on `password_row_x_offset`; `EASE_BACK`; 400 ms; clear password field
 - [ ] `login_screen_tick()` -- called from desktop tick; updates lockout countdown label
 - [ ] Lockout display: disabled sign-in button + countdown label; re-enable when lockout expires
@@ -183,33 +187,37 @@ Multi-user avatar strip. On failure: shake animation + "Incorrect password" in r
 
 ## 8. Lock Screen `[Sonnet]`
 
-Win+L: overlay (clock, blurred desktop behind, "Enter password"). Resume same session on correct password. Distinct from sign-out -- no app restart.
+**Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
+
+Win+L shows the lock screen of `docs/design/shell.md#lock-and-sign-in-screens`: the wallpaper at full brightness, the time centred in the top third at `THEME_SIZE_LOCK_CLOCK` (96, semibold), the date below in the subtitle style, network and battery glyphs bottom-right. Any key or click lifts the image with an upward slide over `THEME_MOTION_SLOW_MS` to reveal the sign-in view (§6 layout) for the current user. Resume the same session on correct password; no app restart.
 
 **Files:** `src/desktop/lock_screen.c` (new), `include/desktop/lock_screen.h` (new)
 
 > [!NOTE]
-> Lock screen is different from login screen: it overlays the running desktop (blurs current back-buffer in place) and restores the same session on unlock -- no `desktop_stop()` call. `lock_screen_show()`: create full-screen overlay window with `z_order=32767`; `gfx_blur_rect(g_compositor_backbuf, 0, 0, screen_w, screen_h, 20)` → use as background; render clock (HH:MM, updates every second); username + avatar (circular); password textbox. Win+L hotkey: registered in global hotkey table (TODO-06 §8) → `lock_screen_show()`. On correct password (`auth_verify_password()`): `lock_screen_hide()` → desktop immediately visible (no reload). On failure: shake animation (reuse login_screen shake pattern). Auto-lock: `HKLM\SOFTWARE\Impossible\Screen\LockAfterSeconds` (default 300 s idle) → `lock_screen_show()` via scheduler task.
+> Lock screen is different from login screen: it overlays the running desktop (blurs current back-buffer in place) and restores the same session on unlock -- no `desktop_stop()` call. `lock_screen_show()`: create full-screen overlay window with `z_order=32767`; draw the lock wallpaper unblurred with the clock and date; on key or click, slide the image up and draw the §6 sign-in view (acrylic-blurred wallpaper, avatar, password box) for the current user. The desktop behind is never shown or blurred. Win+L hotkey: registered in global hotkey table (TODO-06 §8) → `lock_screen_show()`. On correct password (`auth_verify_password()`): `lock_screen_hide()` → desktop immediately visible (no reload). On failure: shake animation (reuse login_screen shake pattern). Auto-lock: `HKLM\SOFTWARE\Impossible\Screen\LockAfterSeconds` (default 300 s idle) → `lock_screen_show()` via scheduler task.
 
-- [ ] `void lock_screen_show(void)` -- overlay; blur current back-buffer; render clock + avatar + password field
+- [ ] `void lock_screen_show(void)` -- overlay; unblurred wallpaper + 96 px clock + date + bottom-right glyphs; key/click → slide up to the sign-in view
   - Also the actuator for power-button action `4` (lock), which resolves and is refused today because nothing can lock -> XREF: `02-kernel-core/TODO-26-power-management.md` §7 (item: "`4` = lock screen")
 - [ ] `void lock_screen_hide(void)` -- destroy overlay; compositor back-buffer restored
 - [ ] Win+L: global hotkey dispatch entry → `lock_screen_show()`
 - [ ] Clock update: `sched_task_add("lock_clock", lock_screen_update_clock, 1, 1)` while locked
 - [ ] Auto-lock: scheduler task checks idle ticks; `lock_screen_show()` if exceeded `LockAfterSeconds`
 - [ ] Incorrect password: shake animation + "Incorrect password" label
-- [ ] Commit: `"security: lock screen -- Win+L, blur overlay, clock, password resume session, auto-lock"`
+- [ ] Commit: `"security: lock screen -- Win+L, wallpaper clock, slide to sign-in, resume session, auto-lock"`
 
 ## 9. User Switching `[Sonnet]`
 
-Start Menu user avatar → "Switch user" or "Sign out". Session keep-alive stub for fast user switching.
+**Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu), [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
+
+The Start footer's user button and its menu are drawn by `08-graphics-ui/TODO-11` §2; this section supplies the account actions behind it (Lock, Sign out, Switch user) and the session keep-alive stub for fast user switching.
 
 **Files:** `src/desktop/startmenu.c` (extend)
 
 > [!NOTE]
-> Start Menu bottom-left: current user avatar (32 px circular) + display name. Click → popup: "Switch user", "Sign out", "Lock" (Win+L). **Sign out**: `auth_logout()` → `login_screen_show()`. **Switch user**: `auth_logout()` → `login_screen_show()` (all existing apps close; full session teardown -- fast user switching is stretch). **Fast user switch stretch**: keep current `task_t` tree in suspended state; `auth_login()` spawns new desktop session in separate task group; Win+Ctrl+Left/Right toggles between sessions. Keep as stub: `fast_user_switch_suspend()` / `fast_user_switch_resume()` declared but unimplemented.
+> The Start footer user button (32 px avatar + display name, drawn by `08-graphics-ui/TODO-11` §2) opens a context menu; this section provides its actions: "Lock" (Win+L), "Sign out", and one entry per other user ("Switch user"). **Sign out**: `auth_logout()` → `login_screen_show()`. **Switch user**: `auth_logout()` → `login_screen_show()` (all existing apps close; full session teardown -- fast user switching is stretch). **Fast user switch stretch**: keep current `task_t` tree in suspended state; `auth_login()` spawns new desktop session in separate task group; Win+Ctrl+Left/Right toggles between sessions. Keep as stub: `fast_user_switch_suspend()` / `fast_user_switch_resume()` declared but unimplemented.
 
-- [ ] Start Menu: add user avatar (32 px) + display name at bottom-left; `auth_get_current_user()`
-- [ ] Click → context menu: "Switch user", "Sign out", "Lock"
+- [ ] Provide `auth_get_current_user()` display name + avatar path to the Start footer (`08-graphics-ui/TODO-11` §2); do not draw a second user button here
+- [ ] Account actions for the footer's user menu: Lock, Sign out, one entry per other user
 - [ ] "Sign out" → `auth_logout()`; "Lock" → `lock_screen_show()`; "Switch user" → `auth_logout()` + `login_screen_show()`
 - [ ] `fast_user_switch_suspend(uint16_t uid)` + `fast_user_switch_resume(uint16_t uid)` stubs in `auth.h` (not yet implemented)
 - [ ] Commit: `"desktop: user switching -- Start Menu avatar, sign out, switch user, lock entry points"`
@@ -235,17 +243,21 @@ Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths
 
 ## 11. UAC-Equivalent Elevation `[Opus]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
 `privilege_request(reason)` shows consent dialog ("Allow this app to make changes?", reason text, Yes/No). Non-admin processes get `PRIV_USER` token. Admin operations blocked without consent. `SYS_PRIVILEGE_REQUEST=59`.
 
 **Files:** `src/kernel/auth.c` (extend), `include/kernel/sched/task.h` (extend), `include/kernel/sched/syscall.h` (extend), `src/desktop/login_screen.c` (extend)
 
 > [!NOTE]
-> `[Opus]` due to: security-critical privilege separation (non-admin token model), kernel-side consent decision (consent dialog must run in desktop context but decision stored in kernel), and cross-process privilege grant (elevate calling task's token after admin consent). **Task token**: add `uint8_t priv_level` + `uint16_t owner_uid` fields to `task_t`; set at `task_create_user()` to `auth_get_current_user()->privilege`. `privilege_request(reason)`: kernel dispatches to desktop `privilege_consent_dialog(reason)` (a modal dialog on top of everything, `z_order=31000`); dialog shows: gray overlay backdrop (dim 40%), OS shield icon (🛡), reason text, "Administrator password" label + password field if current user is non-admin, [Yes]/[No] buttons. If admin: verify admin password; if already admin: just Yes/No. On Yes: elevate calling task's `priv_level` to `PRIV_ADMIN` for the duration of the operation (stored in task, reset on `SYS_EXIT`). `SYS_PRIVILEGE_REQUEST=59`: user-mode syscall → kernel calls `privilege_request(reason_str)` → blocks until dialog responds → returns `1` (granted) or `0` (denied).
+> `[Opus]` due to: security-critical privilege separation (non-admin token model), kernel-side consent decision (consent dialog must run in desktop context but decision stored in kernel), and cross-process privilege grant (elevate calling task's token after admin consent). **Task token**: add `uint8_t priv_level` + `uint16_t owner_uid` fields to `task_t`; set at `task_create_user()` to `auth_get_current_user()->privilege`. `privilege_request(reason)`: kernel dispatches to desktop `privilege_consent_dialog(reason)` (a modal dialog on top of everything, `z_order=31000`); dialog shows: the `smoke` scrim over the whole screen, the shield icon (to be added to the icon set), reason text, "Administrator password" label + password field if current user is non-admin, [Yes]/[No] buttons. If admin: verify admin password; if already admin: just Yes/No. On Yes: elevate calling task's `priv_level` to `PRIV_ADMIN` for the duration of the operation (stored in task, reset on `SYS_EXIT`). `SYS_PRIVILEGE_REQUEST=59`: user-mode syscall → kernel calls `privilege_request(reason_str)` → blocks until dialog responds → returns `1` (granted) or `0` (denied).
 
 - [ ] Add `uint8_t priv_level` + `uint16_t owner_uid` to `task_t` struct in `task.h`
 - [ ] `task_create_user()`: set `task->priv_level = auth_get_current_user()->privilege`; `task->owner_uid = auth_get_current_uid()`
 - [ ] `int privilege_request(const char *reason)` -- desktop modal dialog; block kernel side with semaphore until response
-- [ ] Consent dialog: 480×280 px, `z_order=31000`; gray overlay; shield icon (Unicode or IRES); reason text; password field (if non-admin); Yes/No buttons
+- [ ] Consent dialog per `docs/design/controls.md#dialog`: 320-548 px card, radius 8, over a full-screen `smoke` scrim, `z_order=31000`
+  - title "Do you want to allow this app to make changes to your device?", app name + reason text; password box (if non-admin); Yes (accent) / No buttons in the 80 px footer
+  - Shield: the Fluent shield glyph at `THEME_SIZE_SHIELD_GLYPH` (16) tinted `accent`, per `docs/design/icons.md#which-icons-go-where` (a glyph, not a colour icon); never a Unicode emoji
 - [ ] On Yes + correct password: `current_task->priv_level = PRIV_ADMIN`; return 1
 - [ ] On No or wrong password: return 0
 - [ ] `#define SYS_PRIVILEGE_REQUEST 59` in `syscall.h`; `sys_privilege_request(reason_ptr)` handler
@@ -277,8 +289,8 @@ Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths
 - [ ] First boot: Admin + Guest accounts created; `HKLM\...\Initialized` flag set; second boot: no duplicate creation
 - [ ] `auth_login("Admin", "")` → `AUTH_OK`; `auth_get_current_user()` → uid=1, PRIV_ADMIN
 - [ ] `auth_login("Admin", "wrong")` five times → `AUTH_ERR_LOCKED` on sixth attempt; after 30 s → `AUTH_ERR_INVALID` again
-- [ ] Login screen appears before desktop; password field shows bullets; correct password → desktop loads with user wallpaper
-- [ ] Win+L → lock screen overlays desktop; correct password → desktop resumes without restarting apps
+- [ ] Sign-in appears before the desktop: acrylic wallpaper, 192 px avatar, 296 px password box with bullets, other users bottom-left, system buttons bottom-right; correct password → desktop loads with the user wallpaper
+- [ ] Win+L → lock screen (wallpaper, 96 px clock, date); key press slides to sign-in; correct password → desktop resumes without restarting apps
 - [ ] Start Menu bottom-left shows avatar + "Admin"; click → "Sign out" → login screen shown
 - [ ] Create file as Guest user → attempt to write as uid=2 to Admin's `C:\Users\Admin\Documents\` → `VFS_ERR_PERMISSION` returned
 - [ ] `privilege_request("Install driver")` → consent dialog shown; click No → returns 0; click Yes + correct admin pass → returns 1

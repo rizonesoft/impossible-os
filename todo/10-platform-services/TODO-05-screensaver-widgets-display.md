@@ -55,6 +55,8 @@ title: "TODO-05 -- Screensaver, Widgets & Display"
 
 ## 1. Screensaver System `[Sonnet]`
 
+**Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
+
 Idle detection: track `g_last_input_ticks` in WM input handler. PIT tick comparison: `system_get_ticks() - g_last_input_ticks > idle_timeout_ticks`. On timeout → `scr_launch(type)`. API: `scr_entry_fn(msg, surface)` with `SCR_INIT / SCR_FRAME / SCR_CLOSE`. Any input → `scr_dismiss()`.
 
 **Files:** `src/desktop/screensaver.c` (new), `include/desktop/screensaver.h` (new)
@@ -64,7 +66,7 @@ Idle detection: track `g_last_input_ticks` in WM input handler. PIT tick compari
 > - **Blank**: `SCR_FRAME` → `gfx_clear(s, 0xFF000000)`.
 > - **Starfield**: 200 star structs `{x, y, z}` init on `SCR_INIT`; each frame: advance `z`; project to screen; `gfx_put_pixel()` with brightness by depth.
 > - **Matrix**: 40 column structs `{x, y, speed}`; each frame: draw green FONT_MONO chars scrolling down; fade trail with alpha blend.
-> - **Bouncing Logo**: load `image_t` ImpossibleOS logo on `SCR_INIT`; each frame: advance position by velocity; flip velocity on edge collision; change accent color on corner hit; `gfx_blit()`.
+> - **Bouncing Logo**: load the canonical logo mark `resources/logo/os_logo_128.png` (rendered from `resources/brand/logo.svg`) on `SCR_INIT`; each frame: advance position by velocity; flip velocity on edge collision; `gfx_blit()`. The mark is drawn unmodified: its colours are fixed (`docs/design/icons.md#the-logo-and-the-start-button`), so no recolouring on corner hits.
 > - **Clock**: `SCR_FRAME` → black fill → compute H/M/S hands from `system_get_ticks()`; `gfx_draw_line()` for each hand; hour numbers via `ttf_draw_string(FONT_UI, 14px)`.
 
 - [ ] Add `uint64_t g_last_input_ticks` to `wm.c`; update in mouse/keyboard event handlers
@@ -74,13 +76,15 @@ Idle detection: track `g_last_input_ticks` in WM input handler. PIT tick compari
 - [ ] Blank: `gfx_clear(s, 0xFF000000)` on every SCR_FRAME
 - [ ] Starfield: 200-star `{float x,y,z}` array; depth projection; brightness from z
 - [ ] Matrix: 40-column `{int x,y; int speed; char chars[20]}` array; FONT_MONO green cascade
-- [ ] Bouncing Logo: `image_load()` logo PNG on SCR_INIT; velocity bounce off screen edges; accent color on corner
+- [ ] Bouncing Logo: `image_load()` of `os_logo_128.png` on SCR_INIT; velocity bounce off screen edges; logo drawn unmodified
 - [ ] Clock: hand angles from `uptime() % 43200` etc.; `gfx_draw_line()` h/m/s hands; `ttf_draw_string()` numerals
 - [ ] Registry: `HKCU\Software\Impossible\Screensaver\Type` (0–4); `IdleTimeout` (minutes, default 5)
 - [ ] `scr_check_idle()` called from compositor tick loop
 - [ ] Commit: `"desktop: screensaver -- idle tracking, scr_entry_fn API, Blank/Starfield/Matrix/Logo/Clock"`
 
 ## 2. Screensaver → Lock Screen `[Sonnet]`
+
+**Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
 After dismiss: if `HKCU\Software\Impossible\Screensaver\RequirePassword=1` (default) → call `lock_screen_show()` (TODO-06 §7) instead of resuming desktop directly. Screensaver runs over locked desktop.
 
@@ -97,24 +101,28 @@ After dismiss: if `HKCU\Software\Impossible\Screensaver\RequirePassword=1` (defa
 
 ## 3. Desktop Widget Framework `[Sonnet]`
 
+**Design:** [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows), [`shell.md#materials`](../../docs/design/shell.md#materials)
+
 `struct widget` (id, `wgt_fn` fn, rect, z_order, visible). Lifecycle: `WGT_INIT / WGT_RENDER / WGT_TICK / WGT_CLICK / WGT_CLOSE`. `widget_manager_tick()` from compositor loop. Drawn above wallpaper, below all windows. Draggable. `gfx_acrylic` background. Registry positions.
 
 **Files:** `src/desktop/widget_manager.c` (new), `include/desktop/widget_manager.h` (new)
 
 > [!NOTE]
-> `typedef void (*wgt_fn_t)(int msg, struct widget *w, gfx_surface_t *s, void *event_data)`. `struct widget { int id; wgt_fn_t fn; int x, y, w, h; int z_order; int visible; int dragging; int drag_ox, drag_oy; }`. Global `g_widgets[16]` table; `g_widget_count`. **Rendering order**: compositor draws wallpaper → calls `widget_manager_render(compositor_surface)` → widgets are composited in z_order ascending → then windows are drawn on top. **Widget render**: for each visible widget: `gfx_acrylic(s, w->x, w->y, w->w, w->h, radius=8, alpha=180)` as background; then `w->fn(WGT_RENDER, w, sub_surface, NULL)`. **Tick**: every compositor frame: `w->fn(WGT_TICK, w, NULL, NULL)` for each widget needing animation updates. **Mouse events**: if click lands in widget rect and NOT in any window rect → `w->fn(WGT_CLICK, w, NULL, &mouse_event)`. **Drag**: `WM_MOUSE_DOWN` on widget title area (top 20 px): enter drag mode; `WM_MOUSE_MOVE`: `w->x += delta_x; w->y += delta_y`; `WM_MOUSE_UP`: save to Registry `HKCU\Software\Impossible\Widgets\{id}\{x,y}`. **Registry load**: on `widget_manager_init()`: for each registered widget: read `HKCU\...\{id}\x` + `y` + `visible`; restore positions. **Add/remove**: right-click desktop → context menu → "Widgets" submenu → check/uncheck each widget type.
+> `typedef void (*wgt_fn_t)(int msg, struct widget *w, gfx_surface_t *s, void *event_data)`. `struct widget { int id; wgt_fn_t fn; int x, y, w, h; int z_order; int visible; int dragging; int drag_ox, drag_oy; }`. Global `g_widgets[16]` table; `g_widget_count`. **Rendering order**: compositor draws wallpaper → calls `widget_manager_render(compositor_surface)` → widgets are composited in z_order ascending → then windows are drawn on top. **Widget render**: for each visible widget: `gfx_acrylic()` with the flyout material of the current theme (`THEME_MAT_<THEME>_FLYOUT_*`: tint, tint opacity, blur, grain) and `THEME_RADIUS_CARD` (8), plus a 1 px `stroke_card` outline, as background; then `w->fn(WGT_RENDER, w, sub_surface, NULL)`. **Tick**: every compositor frame: `w->fn(WGT_TICK, w, NULL, NULL)` for each widget needing animation updates. **Mouse events**: if click lands in widget rect and NOT in any window rect → `w->fn(WGT_CLICK, w, NULL, &mouse_event)`. **Drag**: `WM_MOUSE_DOWN` on widget title area (top 20 px): enter drag mode; `WM_MOUSE_MOVE`: `w->x += delta_x; w->y += delta_y`; `WM_MOUSE_UP`: save to Registry `HKCU\Software\Impossible\Widgets\{id}\{x,y}`. **Registry load**: on `widget_manager_init()`: for each registered widget: read `HKCU\...\{id}\x` + `y` + `visible`; restore positions. **Add/remove**: right-click desktop → context menu → "Widgets" submenu → check/uncheck each widget type.
 
 - [ ] `include/desktop/widget_manager.h`: `struct widget`, `wgt_fn_t`, `WGT_*` message constants, `widget_manager_init/tick/render/add/remove()` prototypes
 - [ ] `g_widgets[16]` table; `widget_manager_init()` -- register built-in widgets, restore Registry positions
-- [ ] `widget_manager_render(gfx_surface_t *compositor_surface)` -- z_order sort + `gfx_acrylic` bg + per-widget render
+- [ ] `widget_manager_render(gfx_surface_t *compositor_surface)` -- z_order sort + flyout-material acrylic card bg (tokens above) + per-widget render
 - [ ] `widget_manager_tick()` -- per-widget `WGT_TICK` dispatch; called from compositor loop
 - [ ] Mouse hit-test: check if click inside widget rect AND not inside any window; dispatch `WGT_CLICK`
 - [ ] Drag: `WM_MOUSE_DOWN` on widget → set `dragging=1`; `MOUSE_MOVE` → update `x/y`; `MOUSE_UP` → `registry_set()` positions
-- [ ] Right-click desktop "Widgets" submenu toggle via `context_menu_show()` (TODO-07)
+- [ ] Widgets on/off toggle switch in the Personalize settings page; the desktop context menu (`docs/design/shell.md#context-menus`, owner `08-graphics-ui/TODO-09 §2`) has no Widgets entry and must not gain one without a spec change
 - [ ] Call `widget_manager_render()` + `widget_manager_tick()` from compositor main loop
 - [ ] Commit: `"desktop: widget framework -- struct widget, WGT lifecycle, acrylic bg, drag, Registry positions"`
 
 ## 4. Built-in Widgets `[Sonnet]`
+
+**Design:** [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
 Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** (200×100, rolling 60-s bar), **RAM Monitor** (200×80, PMM filled bar), **Mini Calendar** (200×180, month grid), **Quick Notes** (200×150, editable text).
 
@@ -146,7 +154,8 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 - [ ] `display_get_current_mode()` -- return `boot_info->gop_modes[boot_info->gop_mode_selected]`
 - [ ] Boot write: `HKLM\HARDWARE\Display\{Width,Height,BitsPerPixel,DPI}` from current GOP mode
 - [ ] `desk.cpl` update: call `display_enum_modes()` → populate `CTRL_DROPDOWN`; current mode pre-selected
-- [ ] `desk.cpl` DPI slider (50–200 DPI range): `registry_set("HKLM\\HARDWARE\\Display\\DPI")`; toast to restart
+- [ ] `desk.cpl` Scale row: a combo box (100/125/150/175/200%) that calls `dpi_set_scale(pct)` of `08-graphics-ui/TODO-09 §4` (the single DPI owner, `HKCU\\Software\\Impossible\\Display\\ScaleFactor`)
+  - Applies live via `WM_DPI_CHANGED`, no restart and no second DPI Registry key
 - [ ] `display_set_mode()` stub: write pending W×H to Registry; show "Restart to apply" notification
 - [ ] Stretch: VirtIO-GPU `VIRTIO_GPU_CMD_SET_SCANOUT` for live resolution switch
 - [ ] Commit: `"kernel: display_enum_modes -- GOP mode list, boot Registry write, desk.cpl dropdown, DPI setting"`
@@ -189,10 +198,10 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 - [ ] Leave system idle for `IdleTimeout` minutes → screensaver launches (Starfield animates on screen)
 - [ ] Press any key during screensaver → `RequirePassword=1` → lock screen appears; correct password → desktop resumes
 - [ ] Matrix screensaver: green FONT_MONO columns falling; Bouncing Logo: logo bounces off edges; Clock: hands rotate correctly
-- [ ] Right-click desktop → Widgets → enable Clock widget → analog clock appears on desktop above wallpaper but behind windows
+- [ ] Personalize → Widgets toggle on → enable Clock widget → analog clock appears on desktop above wallpaper but behind windows
 - [ ] CPU meter widget shows CPU% changing as tasks run
 - [ ] Drag clock widget to new position → persists after restart (Registry stores position)
 - [ ] Quick Notes widget: click → type text → close and reopen → text preserved (Registry)
 - [ ] Control Panel → Display (`desk.cpl`) → Resolution dropdown shows all GOP modes from boot_info
-- [ ] DPI slider change → "Restart to apply" notification shown; `HKLM\HARDWARE\Display\DPI` updated
+- [ ] Scale change in `desk.cpl` → layout rescales immediately; `HKCU\Software\Impossible\Display\ScaleFactor` updated
 - [ ] Commit: `"desktop: screensaver, widget framework+5 built-ins, display management, multi-monitor stubs -- complete"`

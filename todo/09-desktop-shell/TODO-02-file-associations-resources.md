@@ -11,19 +11,19 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 > **Goal:** Build the plumbing that makes double-click work -- extension-to-app Registry mapping, first-boot defaults, Open With dialog, INI-format `.lnk` shortcuts with desktop integration, Recycle Bin icon state, system sounds (WAV player), and a font manager app.
 
 > [!IMPORTANT]
-> **Already exists**: `icon_for_extension(const char *ext)` in `icon_store.h` -- returns `system_icon_t` for any file extension. `RegOpenKeyEx/RegSetValueEx/RegGetValue` + `HKCR` support in `registry.h`. `vfs_open/read/write/create` in `vfs.h`. `task_exec(data, size)` in `task.h`. `context_menu_show()` (TODO-07 §1) for right-click menus. `dialog_input()` + `CTRL_LISTVIEW` (TODO-05) for Open With dialog. `ttf_get()` + `ttf_draw_string()` in `font_mgr.h` for font preview. `gfx_blit_alpha()` for shortcut arrow overlay. `notify_send()` (TODO-09 §5) for install success toasts. **Missing**: `file_assoc_*`, `shortcut_*`, `trash_*`, WAV player, font manager app, `ttf_mgr_reload()`. **WAV audio**: depends on `04-drivers-hardware/TODO-18-audio-drivers.md` (AC97/HDA driver); §7 implements the WAV parser + player stub that logs to serial if the audio driver is not yet live. Complete sections in order: extension mapping → default associations → shortcut files → desktop shortcut integration → recycle bin → Open With dialog → system sounds → font manager.
+> **Already exists**: `icon_for_extension(const char *ext)` in `icon_store.h` -- returns `system_icon_t` for any file extension. `RegOpenKeyEx/RegSetValueEx/RegGetValue` + `HKCR` support in `registry.h`. `vfs_open/read/write/create` in `vfs.h`. `task_exec(data, size)` in `task.h`. `context_menu_show()` (08-graphics-ui/TODO-09 §1) for right-click menus. `dialog_input()` (08-graphics-ui/TODO-06 §8) + `CTRL_LISTVIEW` (08-graphics-ui/TODO-06 §1) for Open With dialog. `ttf_get()` + `ttf_draw_string()` in `font_mgr.h` for font preview. `gfx_blit_alpha()` for shortcut arrow overlay. `notify_send()` (TODO-09 §5) for install success toasts. **Missing**: `file_assoc_*`, `shortcut_*`, `trash_*`, WAV player, font manager app, `ttf_mgr_reload()`. **WAV audio**: depends on `04-drivers-hardware/TODO-18-audio-drivers.md` (AC97/HDA driver); §7 implements the WAV parser + player stub that logs to serial if the audio driver is not yet live. Complete sections in order: extension mapping → default associations → shortcut files → desktop shortcut integration → recycle bin → Open With dialog → system sounds → font manager.
 
 ## Inputs
 
-- `include/icon_store.h` -- `icon_for_extension(ext)`, `icon_get()`, `ICON_TRASH_EMPTY/FULL` -- used by §1 and §6 trash icon state
+- `include/icon_store.h` -- `icon_for_extension(ext)`, `icon_get()`, `ICON_RECYCLE_BIN_EMPTY/FULL` (the `recycle_bin_empty` / `recycle_bin_full` icons of `docs/design/icons.md`) -- used by §1 and §6 Recycle Bin icon state
 - `include/registry.h` -- `RegOpenKeyEx`, `RegSetValueEx`, `RegGetValue`, `HKCR` macros -- used by §1 HKCR reads and §2 first-boot writes
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_readdir` -- used by §4 .lnk parsing, §8 font scan
 - `include/kernel/sched/task.h` -- `task_exec(data, size)` -- used by §1 `file_assoc_open()` and §4 `shortcut_execute()`
-- `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- used by §6 recycle bin right-click and §3 Open With
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §3 Open With app list and §8 font list
+- `include/desktop/context_menu.h` (08-graphics-ui/TODO-09 §1) -- `context_menu_show()` -- used by §6 recycle bin right-click and §3 Open With
+- `include/desktop/controls.h` (08-graphics-ui/TODO-06) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §3 Open With app list and §8 font list
 - `include/font_mgr.h` -- `ttf_get()`, `ttf_draw_string()` -- used by §8 font preview rendering
 - `include/gfx.h` -- `gfx_blit_alpha()`, `gfx_fill_rounded_rect()`, `gfx_draw_line()` -- used by §5 shortcut arrow overlay and §7 system sounds UI stub
-- `include/desktop/notify.h` (TODO-09 §5) -- `notify_send()` -- §8 font install success toast
+- `include/desktop/notify.h` (08-graphics-ui/TODO-11 §5) -- `notify_send()` -- §8 font install success toast
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §1` -- Start Menu reads `.lnk` files from `C:\Users\Default\AppData\StartMenu\`; §5 must create those default shortcuts on first boot
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md §3` -- desktop icons double-click calls `file_assoc_open()` from §1
 - → XREF: `04-drivers-hardware/TODO-18-audio-drivers.md` (AC97/HDA audio) -- §7 WAV player requires audio output driver; use serial log stub until driver is live
@@ -47,8 +47,8 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 | 💎  |   1   | §1 Extension-to-app mapping -- `file_assoc_get_app/icon/set/open` via HKCR                        | `RegGetValue` (exists); `icon_for_extension` (exists); `task_exec` (exists)     |  [ ]   |
 | 💎  |   2   | §2 Default associations on first boot -- write HKCR defaults for built-in file types              | §1 API must exist before writing default entries that §1 will later read        |  [ ]   |
 | 💎  |   3   | §4 Shortcut files (.lnk) -- INI parse/execute/create; `shortcut_execute()` stub                   | §1 (`.lnk` association → `shortcut_execute()`); `vfs_read` (exists)             |  [ ]   |
-| 💎  |   4   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §3 shortcut parse; TODO-07 desktop icon rendering                               |  [ ]   |
-| 💎  |   5   | §6 Recycle Bin icon states -- `trash_count()`, ICON_TRASH_EMPTY/FULL, right-click menu            | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; §4 context menu     |  [ ]   |
+| 💎  |   4   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §3 shortcut parse; D08 T08 §4 desktop icon rendering                            |  [ ]   |
+| 💎  |   5   | §6 Recycle Bin icon states -- `trash_count()`, ICON_RECYCLE_BIN_EMPTY/FULL, right-click menu      | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; §4 context menu     |  [ ]   |
 | 💎  |   6   | §3 Open With dialog -- app list popup, "Always use" writes HKCR default                           | §2 defaults (app list sourced from HKCR); §5 context menu (`context_menu_show`) |  [ ]   |
 | 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime                  | §6 (first-boot associations must be stable); audio TODO-10 forward ref          |  [ ]   |
 | 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                           |  [ ]   |
@@ -90,6 +90,8 @@ Register built-in defaults at first boot: `.txt/.log/.ini/.c/.h/.asm/.md` → `n
 
 ## 3. Open With Dialog `[Sonnet]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
 `file_assoc_open_with_dialog(filepath)`: popup listing all registered apps from HKCR + "Browse…" button. Option "Always use this app for .{ext} files" writes new HKCR default. Called when `file_assoc_open()` finds no association.
 
 **Files:** `src/desktop/file_assoc_openwith.c` (new), `include/desktop/file_assoc.h` (extend)
@@ -97,7 +99,8 @@ Register built-in defaults at first boot: `.txt/.log/.ini/.c/.h/.asm/.md` → `n
 > [!NOTE]
 > App list: enumerate `HKCR` subkeys where key has `\shell\open\command` → extract app name + icon. Show in a `CTRL_LISTVIEW` (single-column, icon + app name, 320×280 px modal window). "Browse…" button: `dialog_file_open("*.exe;*.eif", "C:\\Impossible\\System32\\", app_path, MAX_PATH)`. "Always use" checkbox: if checked → `file_assoc_set(ext, prog_id, cmd)` when user clicks OK. "Just once" → launch without saving. Cancel → do nothing. Modal: block using `dialog_input` pattern (inner message loop from TODO-11 §6).
 
-- [ ] `void file_assoc_open_with_dialog(const char *filepath)` -- create 360×320 px modal window; populate `CTRL_LISTVIEW` with HKCR app scan
+- [ ] `void file_assoc_open_with_dialog(const char *filepath)` -- dialog per `docs/design/controls.md#dialog` (card within 320-548 px, radius 8, smoke scrim, 80 px footer with an accent "Always" / "Just once" pair)
+  - populate `CTRL_LISTVIEW` with HKCR app scan
 - [ ] `void file_assoc_scan_all_apps(app_entry_t *out, int *count)` -- enumerate HKCR keys with `shell\open\command`; fill array
 - [ ] "Browse…" button → `dialog_file_open()` → add to list
 - [ ] "Always use" checkbox state persists across OK click
@@ -127,9 +130,10 @@ Desktop renderer detects `.lnk` files; uses `Icon=` field + `Description=` as la
 **Files:** `src/desktop/desktop_icons.c` (extend), `src/desktop/shortcut.c` (extend)
 
 > [!NOTE]
-> Arrow overlay: after drawing the icon bitmap, draw a 10×10 px sub-glyph using Fluent icon codepoints (U+E0F5 shortcut arrow) at the lower-left corner of the icon cell. Use `ttf_draw_char(s, FONT_UI_ICON, lx, ly, 0xE0F5, 0xFFFFFFFF)` with a 1 px drop shadow for legibility. **Icon selection**: `shortcut_parse()` gives `icon_path`; if non-empty: `image_load(icon_path)` and display; else: `icon_for_extension(target_ext)`. Start Menu integration: `startmenu_scan_apps()` (TODO-09 §1) already scans `C:\Impossible\Bin\`; add scan of `C:\Users\Default\AppData\StartMenu\` for `.lnk` files → `shortcut_parse()` → use `Description` as app name, `Icon` field for icon. **First-boot shortcuts**: `shortcut_defaults_init()` creates 4 `.lnk` files in `C:\Users\Default\AppData\StartMenu\` and 4 on `C:\Users\Default\Desktop\` (Terminal, Notepad, Settings, File Manager); guarded by `HKLM\SYSTEM\FirstBoot\ShortcutsInit` flag.
+> Arrow overlay: after drawing the icon bitmap, draw the shortcut overlay. The overlay geometry is `docs/design/shell.md#desktop`: a square `THEME_SIZE_SHORTCUT_OVERLAY_RATIO_PCT` (33%) of the icon size at its bottom-left, white with a 1 px `stroke_surface` and radius 2, holding the curved arrow glyph in `accent`.
 
-- [ ] Arrow overlay in `desktop_icon_draw(s, icon)`: after `icon_draw_scaled()`; draw Fluent arrow glyph at `(icon_x, icon_y + icon_h - 10)` if `is_shortcut`
+- [ ] Arrow overlay in `desktop_icon_draw(s, icon)` if `is_shortcut`, drawn after `icon_draw_scaled()`
+  - A white square 33% of the icon size (`THEME_SIZE_SHORTCUT_OVERLAY_RATIO_PCT`) at its bottom-left, 1 px `stroke_surface`, radius 2, curved arrow glyph in `accent`
 - [ ] `is_shortcut` detection: `kstrcmpi(ext, "lnk") == 0`; load `shortcut_t` to get icon + label
 - [ ] Desktop icon double-click: if `.lnk` → `shortcut_execute(filepath)` instead of `file_assoc_open()`
 - [ ] `startmenu_scan_apps()`: add `C:\Users\Default\AppData\StartMenu\` scan; parse `.lnk`; use `Description` as name
@@ -138,22 +142,20 @@ Desktop renderer detects `.lnk` files; uses `Icon=` field + `Description=` as la
 
 ## 6. Recycle Bin Desktop Icon States `[Sonnet]`
 
-`ICON_TRASH_EMPTY` when `trash_count()==0`, `ICON_TRASH_FULL` otherwise. Refresh on every `trash_delete()` / `trash_empty()`. Right-click → context menu: "Open Recycle Bin", "Empty Recycle Bin" (confirm dialog). `HKLM\SYSTEM\Recycle\MaxSize` (default 1 GiB) auto-purges oldest items when over limit.
+**Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 
-**Files:** `src/desktop/trash.c` (new), `include/desktop/trash.h` (new), `src/desktop/desktop_icons.c` (extend)
+`ICON_RECYCLE_BIN_EMPTY` (`recycle_bin_empty`) when `trash_count()==0`, `ICON_RECYCLE_BIN_FULL` (`recycle_bin_full`) otherwise. Refresh on every `trash_delete()` / `trash_empty()`. Right-click → context menu: "Open Recycle Bin", "Empty Recycle Bin" (confirm dialog). `HKLM\SYSTEM\Recycle\MaxSize` (default 1 GiB) auto-purges oldest items when over limit.
+
+**Files:** `src/desktop/desktop_icons.c` (extend); the trash API is `include/kernel/trash.h` from `09-desktop-shell/TODO-04 §1`
 
 > [!NOTE]
-> Trash directory: `C:\Recycle\` (already defined in OS filesystem layout). `trash_delete(filepath)`: move file to `C:\Recycle\{original_name}_{timestamp}`; store metadata `.{filename}.meta` containing original path + timestamp. `trash_empty()`: iterate `C:\Recycle\`; delete each file + `.meta`; `wm_mark_dirty()`. `trash_count()`: `vfs_readdir("C:\\Recycle\\")` counting non-`.meta` files. `trash_restore(filename)`: read `.meta`; move back to original path. **Auto-purge**: on `trash_delete()`: compute total size; if > `MaxSize` → delete oldest (by timestamp in `.meta`) until under limit. **Desktop icon**: registered as a special desktop icon in `desktop_icons_init()`; `is_trash = 1` flag; `desktop_icon_draw()` uses `ICON_TRASH_FULL` if `trash_count() > 0` else `ICON_TRASH_EMPTY`.
+> Storage, metadata and auto-purge are owned by `09-desktop-shell/TODO-04 §1` (`C:\Recycle\trash_NNNNNNNN\` slots with `_meta` INI files). This section only reads `trash_count()` to pick the icon and calls `trash_empty()` from the menu.
 
-- [ ] `int trash_delete(const char *filepath)` -- move to `C:\Recycle\`; write `.meta` file; return 0 or -errno
-- [ ] `int trash_restore(const char *name)` -- read `.meta`; `vfs_rename()` back; delete `.meta`
-- [ ] `void trash_empty(void)` -- delete all files in `C:\Recycle\`; `wm_mark_dirty()`
-- [ ] `int trash_count(void)` -- count non-`.meta` files in `C:\Recycle\`
-- [ ] `uint64_t trash_total_size(void)` -- sum file sizes; used for MaxSize enforcement
-- [ ] Desktop trash icon: registered in `desktop_icons_init()` at fixed position (bottom-right); `icon_id` updated on every `trash_delete/empty/restore` call
+- [/] Superseded: the trash core (`trash_delete/restore/empty/count/size`, meta files, MaxSize auto-purge) is implemented by `09-desktop-shell/TODO-04 §1` (`include/kernel/trash.h`); do not build a second one here
+- [ ] Desktop Recycle Bin icon: second in the default desktop order (top-left column) per `docs/design/shell.md#desktop`
+  - `icon_id` swaps between `recycle_bin_empty` and `recycle_bin_full` on every trash change reported by `09-desktop-shell/TODO-04 §1`
 - [ ] Right-click trash icon → `context_menu_show()`: "Open Recycle Bin" (opens File Manager at `C:\Recycle\`), "Empty Recycle Bin" → `dialog_input`-style confirm → `trash_empty()`
-- [ ] `HKLM\SYSTEM\Recycle\MaxSize` DWORD read in `trash_delete()` for auto-purge; default 1 GiB (1073741824)
-- [ ] Commit: `"trash: recycle bin -- trash_delete/restore/empty/count, auto-purge, desktop icon states, right-click menu"`
+- [ ] Commit: `"desktop: Recycle Bin icon states and right-click menu over the TODO-04 trash core"`
 
 ## 7. System Sounds `[Sonnet]`
 
@@ -169,7 +171,7 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 - [ ] `int wav_play(const char *path)` -- `vfs_open()` + `vfs_read()`; `wav_parse_header()`; `audio_write_pcm(pcm_samples, sample_count)` stub; return 0
 - [ ] `typedef enum { SOUND_STARTUP, SOUND_CLICK, SOUND_ERROR, SOUND_NOTIFY, SOUND_SHUTDOWN, SOUND_RECYCLE } sound_event_t;`
 - [ ] `void system_sound_play(sound_event_t ev)` -- check `HKLM\SYSTEM\Sound\SystemSounds` DWORD; if disabled: return; map event → WAV path; `wav_play()`
-- [ ] Wire: `boot_splash_finish()` → `system_sound_play(SOUND_STARTUP)`; `notify_send()` (TODO-09) → `system_sound_play(SOUND_NOTIFY)` if sound enabled; `MessageBox(MB_ICONERROR)` → `SOUND_ERROR`; `trash_delete()` → `SOUND_RECYCLE`
+- [ ] Wire: `boot_splash_finish()` → `system_sound_play(SOUND_STARTUP)`; `notify_send()` (08-graphics-ui/TODO-11 §5) → `system_sound_play(SOUND_NOTIFY)` if sound enabled; `MessageBox(MB_ICONERROR)` → `SOUND_ERROR`; `trash_delete()` → `SOUND_RECYCLE`
 - [ ] Build: add `resources/sounds/` with stub silent WAV files (44-byte header + 1 sample); replace with real assets later
 - [ ] Commit: `"system_sounds: WAV parser, PCM output stub, SOUND_* events wired to splash/notify/dialog"`
 
@@ -216,7 +218,8 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 - [ ] Open With dialog lists notepad.exe + imgview.exe; select imgview; check "Always use"; OK → `file_assoc_has(".unknown_ext")` now 1
 - [ ] Create `test.lnk` with `Target=C:\\Impossible\\System32\\notepad.exe`; `shortcut_execute("test.lnk")` → notepad launches
 - [ ] Desktop shows `.lnk` files with arrow overlay in lower-left corner of icon
-- [ ] `trash_delete("C:\\Users\\Default\\Documents\\test.txt")` → file in `C:\Recycle\`; trash icon switches to ICON_TRASH_FULL; `trash_count()` → 1; right-click → "Empty Recycle Bin" → confirm → `trash_count()` → 0; icon → ICON_TRASH_EMPTY
+- [ ] `trash_delete("C:\\Users\\Default\\Documents\\test.txt")` → file in `C:\Recycle\`
+  - Recycle Bin icon switches to ICON_RECYCLE_BIN_FULL; `trash_count()` → 1; right-click → "Empty Recycle Bin" → confirm → `trash_count()` → 0; icon → ICON_RECYCLE_BIN_EMPTY
 - [ ] `system_sound_play(SOUND_ERROR)` → serial log `[sound] play: error.wav (N samples) -- audio not ready` (stub path before audio driver live)
 - [ ] Font manager: launches via double-click on `.ttf` or from Start Menu; lists fonts in `C:\Impossible\Fonts\`; preview pane shows 4-size text; Install button copies a new TTF and refreshes list
 - [ ] Commit: `"file-assoc+shortcuts+resources: extension mapping, .lnk, trash, sounds, fontmgr complete"`

@@ -71,6 +71,8 @@ title: "TODO-21 -- Game Controllers, HID Force Feedback & Haptics"
 
 ## 6. Battery, LED and Player Index
 
+**Design:** n/a -- no desktop UI surface (developer tooling, data export, CLI or device plumbing)
+
 - [ ] Query battery where supported.
 - [ ] Drive player LEDs and lightbar policy where supported.
 - [ ] Commit: `"drivers/input: controller battery and LEDs"`

@@ -1,0 +1,25 @@
+{
+  "_comment": "Which roadmap sections must carry a **Design:** line (scripts/site/build.py check_design_lines, lint Check 30). Every OPEN section of a file in shell_files, plus every open section anywhere whose TITLE matches ui_title_pattern. Cite docs/design/*.md#anchor; '**Design:** n/a -- <reason>' for a section with nothing visual; '**Design deviation:** <reason>' for a deliberate departure.",
+  "shell_files": [
+    "todo/06-desktop-foundation/TODO-01-wm-completion.md",
+    "todo/06-desktop-foundation/TODO-04-control-library.md",
+    "todo/06-desktop-foundation/TODO-05-desktop-shell.md",
+    "todo/06-desktop-foundation/TODO-06-desktop-icons.md",
+    "todo/08-graphics-ui/TODO-03-theme-system.md",
+    "todo/08-graphics-ui/TODO-04-animation-engine.md",
+    "todo/08-graphics-ui/TODO-05-widget-library-core.md",
+    "todo/08-graphics-ui/TODO-06-widget-dialogs.md",
+    "todo/08-graphics-ui/TODO-08-window-manager.md",
+    "todo/08-graphics-ui/TODO-09-desktop-shell-features.md",
+    "todo/08-graphics-ui/TODO-10-taskbar.md",
+    "todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md",
+    "todo/08-graphics-ui/TODO-13-boot-splash-recovery.md",
+    "todo/09-desktop-shell/TODO-08-terminal.md",
+    "todo/09-desktop-shell/TODO-09-file-manager.md",
+    "todo/09-desktop-shell/TODO-10-notepad.md",
+    "todo/09-desktop-shell/TODO-11-control-panel.md",
+    "todo/09-desktop-shell/TODO-12-utilities.md",
+    "todo/09-desktop-shell/TODO-13-explorer-shell-host.md"
+  ],
+  "ui_title_pattern": "(\\bGUI\\b|\\bUI\\b|Chrome\\b|Toolbar|Menus\\b|MenuBar|Dialogs?\\b|Popup|\\bPlayer\\b|Viewer|Panic Screen|Crash Screen|Lock Screen|Login Screen|Wizard|OOBE|\\bTray\\b|Taskbar|Start Menu|\\bIcons?\\b|Widgets?\\b|\\bTheme\\b|Theming|Taskbar Clock|Calendar App|Applet|\\.cpl\\b|Control Panel|Cursor\\b|Magnifier|Screensaver|Splash|Spinner|Button\\b|Checkbox|Slider|Dropdown|ComboBox|Tab Strip|ListView|TreeView|StatusBar|Tooltip|Progress Bar|Visualisation|Dashboard|Alt\\+Tab|Snap Layouts|Wallpaper|Quick Settings|Context Menu|Decorations|Aero Peek|Jump Lists|Pinned Apps|Login Flow|On-Screen Keyboard|\\bPanel\\b|Compose Window|Window App|Visual Hierarchy|Toast|Notification Center|Volume Control Popup)"
+}

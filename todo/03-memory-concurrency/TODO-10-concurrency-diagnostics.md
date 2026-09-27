@@ -164,6 +164,8 @@ Instrument every kernel memory read and write with `__tsan_read*` / `__tsan_writ
 
 ## 7. Graphical Deadlock Visualisation `[Opus]`
 
+**Design:** n/a -- a LOCKDEP-only debug overlay drawn straight to the framebuffer before the compositor; never shipped in a user build
+
 When lockdep detects a cycle (§4), instead of a serial text dump, draw the dependency graph directly onto the framebuffer: thread boxes connected by directed arrows, cycle edges highlighted in red, non-cycle edges grey, lock class names labelling each edge. This makes the deadlock immediately readable without a serial log reader.
 
 **Files:** `src/kernel/sched/lockdep.c`, `src/desktop/gfx_deadlock.c` (new), `include/desktop/gfx_deadlock.h` (new)
@@ -174,7 +176,7 @@ When lockdep detects a cycle (§4), instead of a serial text dump, draw the depe
 - [ ] Define `deadlock_graph_t { node_t nodes[LOCKDEP_MAX_HELD]; edge_t edges[LOCKDEP_MAX_EDGES]; int cycle_mask; }` -- built from the lockdep cycle detection output
 - [ ] `lockdep_fire_cycle()` populates `deadlock_graph_t` and calls `gfx_deadlock_draw(&graph)`
 - [ ] `gfx_deadlock_draw()`: clear a 640×480 overlay region; lay out thread nodes in a circle; draw `gfx_fill_rect` box per node, thread name label via `gfx_draw_text`
-- [ ] Draw edges: `gfx_draw_line(src_centre, dst_centre)` with an arrowhead; cycle edges in `0xFF2020` (red); non-cycle edges in `0x808080` (grey)
+- [ ] Draw edges: `gfx_draw_line(src_centre, dst_centre)` with an arrowhead; cycle edges 2 px in `status_critical` and labelled "cycle" with the critical status glyph (never colour alone); non-cycle edges 1 px in `control_strong_stroke`
 - [ ] Label each edge with the lock class name and `FILE:LINE` source location
 - [ ] Call `fb_swap()` to flush immediately -- visible before any shell/log output
 - [ ] Gate on `#ifdef LOCKDEP`; no GFX calls in release builds

@@ -30,7 +30,7 @@ title: "TODO-06 -- Video Player"
 - `10-platform-services/TODO-01-audio-system.md §2` -- `audio_mixer_stream_add(pcm, samples, vol)`, `audio_mixer_stream_stop(handle)` from `include/audio_mixer.h`
 - `include/kernel/timer.h` -- `system_get_ticks()` (monotonic ms counter), `sleep_ms(ms)`
 - `include/gfx.h` -- `gfx_surface_create()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_scale_blit()`
-- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_SCROLLBAR` (seek bar via `CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`
+- `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_SLIDER` (seek and volume sliders per `docs/design/controls.md#slider`), `CTRL_TEXTBOX`
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_fullscreen()`, `wm_mark_dirty()`
 - `include/desktop/file_assoc.h` -- `file_assoc_set(ext, prog_id, path)` (→ XREF `09-desktop-shell/TODO-02 §1`)
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
@@ -157,6 +157,8 @@ title: "TODO-06 -- Video Player"
 
 ## 4. Player UI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 **Source file:** `src/apps/player/player_ui.c`
 
 - [ ] **Window**: `wm_create_window("Impossible Player -- {filename}", 800, 520)` (resizable)
@@ -166,16 +168,17 @@ title: "TODO-06 -- Video Player"
   - [ ] `gfx_scale_blit(canvas, x, y, dst_w, dst_h, ring[ring_tail].pixels, vid_w, vid_h)` on each new frame
 - [ ] **Controls bar** (fixed 48 px, shows on hover in fullscreen):
   - [ ] `[⏮]` rewind 10 s; `[⏯]` play/pause toggle; `[⏭]` forward 10 s; `[⏹]` stop
-  - [ ] Seek bar: `CTRL_SCROLLBAR_HORIZ`, range 0–`plm_get_duration()`, step = 1 s; click/drag → `vp_seek()`; updates as video plays
+  - [ ] Seek bar: `CTRL_SLIDER` (`docs/design/controls.md#slider`), range 0–`plm_get_duration()`, step = 1 s; click/drag → `vp_seek()`; updates as video plays
   - [ ] Time display `CTRL_TEXTBOX` (read-only): `{mm:ss} / {mm:ss}`, updated each frame
-  - [ ] Volume slider: `CTRL_SCROLLBAR_HORIZ` (range 0–100); change → `audio_mixer_set_stream_volume(handle, val × 255 / 100)`
+  - [ ] Volume slider: `CTRL_SLIDER` (range 0–100); change → `audio_mixer_set_stream_volume(handle, val × 255 / 100)`
   - [ ] 🔊 mute toggle button
 - [ ] **Fullscreen** (F11 or double-click canvas):
   - [ ] `wm_set_fullscreen(win, TRUE)` -- hides title bar
   - [ ] Controls bar hidden; auto-show on mouse move; auto-hide after 3 s of no mouse activity (`hide_timer_ms`)
   - [ ] Cursor hidden after 3 s in fullscreen; restored on mouse move
   - [ ] F11 or Escape exits fullscreen
-- [ ] **OSD (On-Screen Display)**: brief semi-transparent overlay in top-left showing action text (`"▶ Playing"`, `"⏸ Paused"`, `"⏩ +10s"`) for 1.5 s after each control action
+- [ ] **OSD (On-Screen Display)**: after each control action show the action (`"Playing"`, `"Paused"`, `"+10s"`
+  - With a monochrome Fluent glyph) in the volume overlay pill style of `docs/design/shell.md#volume-and-brightness-overlay` (flyout acrylic, 196 x 48), centred near the top of the video, fading 2 s after the last action
 
 ---
 
@@ -200,7 +203,8 @@ title: "TODO-06 -- Video Player"
 
 **Source file:** `src/apps/player/playlist.c`
 
-- [ ] **Playlist sidebar** (toggle with `P` key or `View → Playlist`): 220 px wide panel on right side; `CTRL_LISTVIEW` showing filenames (no path); double-click → jump to that item; highlighted = currently playing
+- [ ] **Playlist sidebar** (`P` key or `View → Playlist`): 280 px panel on the right (`docs/design/shell.md#app-window-layout`)
+  - Separated by a 1 px `stroke_divider`; `CTRL_LISTVIEW` of filenames (no path); double-click → jump to that item; the playing item is selected
 - [ ] **File→Open Multiple**: open-file dialog allowing multi-select; add all selected files to playlist
 - [ ] **Add / Remove**: right-click context menu on playlist item: `Remove`, `Move Up`, `Move Down`; drag-to-reorder (stretch)
 - [ ] **Next / Previous**: `[⏭]`/ `[⏮]` toolbar buttons advance/rewind playlist; also `Media → Next Track` / `Prev Track` menu items; end of file → auto-advance to next playlist item
@@ -254,7 +258,7 @@ title: "TODO-06 -- Video Player"
 | 💎  | MPEG-1 video decode                      | ✅ Windows Media Player     | ✅ VLC / mpv          | ⬜ §1 -- pl_mpeg single-header port                  |
 | 💎  | YCbCr → RGB                              | ✅ WMP (GPU)                | ✅ VLC (libyuv)       | ⬜ §2 -- SSE2 4-pixel-at-a-time                      |
 | 💎  | A/V synchronisation + drift correction   | ✅ WMP                      | ✅ mpv (audio-driven) | ⬜ §3 -- 3-frame ring buffer, ±200 ms                |
-| 💎  | Seek bar + time display + volume         | ✅ WMP                      | ✅ VLC                | ⬜ §4 -- CTRL_SCROLLBAR seek, OSD                    |
+| 💎  | Seek bar + time display + volume         | ✅ WMP                      | ✅ VLC                | ⬜ §4 -- slider seek, OSD pill                       |
 | ⭐  | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app          | ✅ VLC / mpv          | ⬜ §4 -- `wm_set_fullscreen`, hide_timer_ms          |
 | 💎  | Playlist with loop + shuffle             | ✅ WMP                      | ✅ VLC                | ⬜ §6 -- CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
 | ⭐  | SRT subtitle overlay with TTF text       | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in)     | ⬜ §7 -- (Stretch) -- ; `ttf_draw_string` +          |

@@ -84,11 +84,13 @@ Text-based namespace tree -- works before GUI is needed.
 
 ## 3. GUI ObBrowse with Tree View
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
+
 Graphical version with split-pane layout.
 
 - [ ] Create `src/apps/obbrowse/obbrowse_gui.c`:
   - 640×480 window: left pane (tree), right pane (detail)
-  - Left pane: expandable tree of directories (click `+` to expand)
+  - Left pane: tree view of directories per `docs/design/controls.md#list-tree-and-grid-views` (32 px rows, 16 px indent per level, a 12 px chevron that rotates 90 degrees on expand; no `+`/`-` boxes)
   - Right pane: list of objects in selected directory (name, type, handle count)
   - Populate root on launch: `\Device`, `\KernelObjects`, `\BaseNamedObjects`, `\DosDevices`, `\Sessions`
   - Lazy expansion: only enumerate children when user clicks to expand
@@ -100,9 +102,13 @@ Graphical version with split-pane layout.
 
 ## 4. Object Detail and Type Icons
 
+**Design:** [`icons.md#which-icons-go-where`](../../docs/design/icons.md#which-icons-go-where)
+
 Enhanced display with per-type icons and security info.
 
-- [ ] Icon per object type: Directory (folder), Event (flag), Mutant (lock), File (document), Process (gear), Thread (arrow), SymbolicLink (shortcut arrow)
+- [ ] Icon per object type: a monochrome Fluent glyph for every type, Directory and File included (`docs/design/icons.md#which-icons-go-where`: developer tools use glyphs)
+  - Event, Mutant, Process, Thread and SymbolicLink use monochrome Fluent System Icons glyphs (flag, lock, apps, arrow, link) tinted `text_primary`
+  - Kernel object types use monochrome Fluent glyphs, not colour icons, per `docs/design/icons.md#which-icons-go-where` (developer tools)
 - [ ] Detail panel when object selected: Name, Type, Ref Count, Handle Count, Flags
 - [ ] Security tab (if security descriptor present): Owner SID, DACL ACEs
 - [ ] Commit: `"tools: obbrowse.exe type icons + security display"`

@@ -202,6 +202,73 @@ svg.g { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-widt
 body.shot .hud { display: none; }
 body.shot *, body.shot *::before, body.shot *::after { transition: none !important; }
 @media (max-width: 760px) { .win { display: none; } .start { width: 94vw; margin-left: -47vw; } .pinned { --cols: 4; } .tb-search { display: none; } }
+
+/* ---- extra surfaces (shown by URL hash) ---------------------------------- */
+.scene { display: none; }
+.scene.show { display: block; }
+.toasts { position: fixed; right: 12px; bottom: calc(var(--size-taskbar-height) + 12px); display: flex; flex-direction: column; gap: var(--size-toast-gap); z-index: 70; }
+.toast { width: var(--size-toast-width); padding: 12px 16px 14px; border-radius: var(--radius-overlay); box-shadow: var(--elev-flyout), inset 0 0 0 1px var(--stroke-surface); }
+.toast .top { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.toast .top img { width: 16px; height: 16px; }
+.toast b { display: block; font-weight: 600; }
+.toast .acts { display: flex; gap: 8px; margin-top: 12px; }
+.toast .acts span { flex: 1; height: 32px; display: grid; place-items: center; border-radius: var(--radius-control); background: var(--control-fill); box-shadow: inset 0 0 0 1px var(--stroke-control); }
+.alttab { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 24px; display: flex; gap: 16px; border-radius: var(--radius-overlay); box-shadow: var(--elev-start), inset 0 0 0 1px var(--stroke-surface); z-index: 80; }
+.alttab .w { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.alttab .w div:first-child { display: flex; gap: 8px; align-items: center; }
+.alttab .w img { width: 16px; height: 16px; }
+.alttab .th { height: var(--size-alt-tab-thumb-height); border-radius: var(--radius-control); background: var(--window-bg); box-shadow: 0 0 0 1px var(--stroke-surface); }
+.alttab .w.sel .th { outline: 2px solid var(--focus-outer); outline-offset: 4px; }
+.snapfly { position: fixed; z-index: 80; padding: 8px; display: grid; grid-template-columns: repeat(3, var(--size-snap-flyout-tile)); gap: 8px; border-radius: var(--radius-overlay); box-shadow: var(--elev-flyout), inset 0 0 0 1px var(--stroke-surface); }
+.lay { height: 48px; display: grid; gap: 2px; padding: 2px; border-radius: var(--radius-control); }
+.lay i { border-radius: 3px; background: var(--control-fill); box-shadow: inset 0 0 0 1px var(--stroke-control); }
+.lay i.hot { background: var(--accent); }
+.taskview { position: fixed; inset: 0 0 var(--size-taskbar-height); z-index: 60; background: var(--smoke); -webkit-backdrop-filter: blur(60px); backdrop-filter: blur(60px); }
+.taskview .grid { position: absolute; top: 14%; left: 50%; transform: translateX(-50%); display: flex; gap: 32px; }
+.taskview .desks { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; gap: 16px; }
+.taskview .vd { width: 176px; font-size: 12px; text-align: center; }
+.taskview .vd div { height: 99px; margin-bottom: 6px; border-radius: var(--radius-control); background: #000 var(--wallpaper) center / cover; }
+.taskview .vd.cur div { outline: 2px solid var(--accent); outline-offset: 3px; }
+.full { position: fixed; inset: 0; z-index: 90; color: #fff; }
+.lock { background: var(--wallpaper) center / cover; text-align: center; }
+.lock .time { margin-top: 12vh; font-size: var(--size-lock-clock); line-height: 1; font-weight: 600; text-shadow: 0 2px 12px rgba(0,0,0,.35); }
+.lock .date { margin-top: 12px; font-size: 20px; line-height: 28px; font-weight: 600; text-shadow: 0 2px 8px rgba(0,0,0,.35); }
+.signin { background: var(--wallpaper) center / cover; }
+.signin::before { content: ""; position: absolute; inset: 0; -webkit-backdrop-filter: blur(60px) saturate(120%); backdrop-filter: blur(60px) saturate(120%); background: rgba(0,0,0,.2); }
+.signin .c { position: relative; margin-top: 18vh; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.signin .av { width: var(--size-login-avatar); height: var(--size-login-avatar); border-radius: 50%; display: grid; place-items: center; font-size: 72px; font-weight: 600; background: linear-gradient(135deg, #40daf2, #155cde); }
+.signin .name { font-size: 28px; line-height: 36px; font-weight: 600; }
+.signin .pw { width: var(--size-login-field-width); height: 32px; display: flex; align-items: center; padding: 0 4px 0 10px; border-radius: var(--radius-control); background: rgba(255,255,255,.7); color: #5d5d5d; }
+.signin .pw b { margin-left: auto; width: 28px; height: 24px; border-radius: 3px; display: grid; place-items: center; background: var(--accent); color: var(--text-on-accent); }
+.corner { position: absolute; bottom: 24px; display: flex; gap: 16px; }
+.boot { background: #000; }
+.boot img { position: absolute; left: 50%; top: 40%; width: var(--size-boot-logo); transform: translate(-50%, -50%); }
+.boot .spin { position: absolute; left: 50%; top: 70%; width: var(--size-boot-spinner); height: var(--size-boot-spinner); margin: -20px 0 0 -20px; border-radius: 50%; border: 3px dotted #fff; animation: rot 1.4s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.oobe { background: #000 url(../wallpapers/bloom-dark.jpg) center / cover; color: var(--text-primary); }
+.oobe .card { position: absolute; left: 50%; top: 50%; width: 800px; height: 600px; max-width: 94vw; max-height: 90vh; transform: translate(-50%, -50%); display: grid; grid-template-columns: 1fr 2fr;
+  border-radius: var(--radius-overlay); background: var(--window-bg); box-shadow: var(--elev-start), 0 0 0 1px var(--stroke-surface); overflow: hidden; }
+.oobe .art { display: grid; place-items: center; background: var(--layer-bg); }
+.oobe .art img { width: 128px; }
+.oobe .step { padding: 48px 40px; display: flex; flex-direction: column; gap: 12px; }
+.oobe h2 { margin: 0; font-size: 28px; line-height: 36px; font-weight: 600; }
+.oobe .it { height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: var(--radius-control); position: relative; }
+.oobe .it.sel::before { content: ""; position: absolute; left: 0; top: 8px; width: 3px; height: 16px; border-radius: 2px; background: var(--accent); }
+.oobe .next { margin-top: auto; display: flex; justify-content: flex-end; gap: 8px; }
+.oobe .next span { min-width: 96px; height: 32px; padding: 0 12px; display: grid; place-items: center; border-radius: var(--radius-control); background: var(--control-fill); box-shadow: inset 0 0 0 1px var(--stroke-control); }
+.oobe .next span.a { background: var(--accent); color: var(--text-on-accent); box-shadow: none; }
+.settings .wbody { grid-template-columns: var(--size-nav-pane-width) 1fr; }
+.settings .navi { height: var(--size-nav-item-height); }
+.settings .page { padding: 20px 32px; overflow: hidden; }
+.settings h2 { margin: 0 0 20px; font-size: 28px; line-height: 36px; font-weight: 600; }
+.srow { min-height: var(--size-settings-card-min-height); display: flex; align-items: center; gap: 16px; padding: 0 16px; background: var(--card-bg); border: 1px solid var(--stroke-card); border-radius: var(--radius-control); margin-bottom: 4px; }
+.srow .t { flex: 1; } .srow .t div:last-child { font-size: 12px; color: var(--text-secondary); }
+.tgl { width: 40px; height: 20px; border-radius: 10px; background: var(--accent); position: relative; }
+.tgl::after { content: ""; position: absolute; right: 4px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-on-accent); }
+.osd { position: fixed; left: 50%; bottom: calc(var(--size-taskbar-height) + 24px); width: var(--size-osd-width); height: var(--size-osd-height); margin-left: calc(var(--size-osd-width) / -2); z-index: 70;
+  display: flex; align-items: center; gap: 12px; padding: 0 16px; border-radius: 24px; box-shadow: var(--elev-flyout), inset 0 0 0 1px var(--stroke-surface); }
+.osd .tr { flex: 1; height: 4px; border-radius: 2px; background: var(--control-strong-stroke); position: relative; }
+.osd .tr i { position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--accent); }
 </style>
 </head>
 <body>
@@ -361,6 +428,44 @@ body.shot *, body.shot *::before, body.shot *::after { transition: none !importa
   <div class="it"><svg class="g" viewBox="0 0 16 16"><rect x="2" y="4" width="12" height="9" rx="1.5"/><path d="M5 2h6"/></svg>Show more options<em>Shift+F10</em></div>
 </section>
 
+
+<!-- Extra surfaces, opened by URL hash: #toast #alttab #snap #taskview #lock #signin #boot #oobe #settings #osd -->
+<div class="scene" id="s-toast"><div class="toasts">
+  <div class="toast acrylic mat-flyout"><div class="top"><img src="../icons/settings.svg" alt="">Settings</div><b>Updates are ready</b>Restart now or schedule a time that suits you.<div class="acts"><span>Schedule</span><span>Restart now</span></div></div>
+  <div class="toast acrylic mat-flyout"><div class="top"><img src="../icons/terminal.svg" alt="">Terminal</div><b>Build finished</b>=== BUILD OK === in 41 seconds.</div>
+</div></div>
+<div class="scene" id="s-alttab"><div class="alttab acrylic mat-menu">
+  <div class="w sel"><div><img src="../icons/file_explorer.svg" alt="">File Explorer</div><div class="th" style="width:260px"></div></div>
+  <div class="w"><div><img src="../icons/terminal.svg" alt="">Terminal</div><div class="th" style="width:240px;background:#0c0c0c"></div></div>
+  <div class="w"><div><img src="../icons/settings.svg" alt="">Settings</div><div class="th" style="width:220px"></div></div>
+</div></div>
+<div class="scene" id="s-snap"><div class="snapfly acrylic mat-menu" style="right:calc(50% - 360px);top:calc(46% - 250px)">
+  <div class="lay" style="grid-template-columns:1fr 1fr"><i class="hot"></i><i></i></div>
+  <div class="lay" style="grid-template-columns:2fr 1fr"><i></i><i></i></div>
+  <div class="lay" style="grid-template-columns:1fr 1fr 1fr"><i></i><i></i><i></i></div>
+  <div class="lay" style="grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr"><i></i><i></i><i></i><i></i></div>
+  <div class="lay" style="grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr"><i style="grid-row:span 2"></i><i></i><i></i></div>
+  <div class="lay" style="grid-template-columns:1fr 2fr 1fr"><i></i><i></i><i></i></div>
+</div></div>
+<div class="scene" id="s-taskview"><div class="taskview">
+  <div class="grid alttab" style="position:absolute;transform:translateX(-50%);top:14%;left:50%;background:none;box-shadow:none">
+    <div class="w sel"><div><img src="../icons/file_explorer.svg" alt="">File Explorer</div><div class="th" style="width:320px;height:200px"></div></div>
+    <div class="w"><div><img src="../icons/terminal.svg" alt="">Terminal</div><div class="th" style="width:300px;height:200px;background:#0c0c0c"></div></div>
+  </div>
+  <div class="desks"><div class="vd cur"><div></div>Desktop 1</div><div class="vd"><div></div>Desktop 2</div><div class="vd"><div style="background:var(--control-fill);display:grid;place-items:center;font-size:28px">+</div>New desktop</div></div>
+</div></div>
+<div class="scene" id="s-lock"><div class="full lock"><div class="time">16:02</div><div class="date">Sunday, 27 September</div>
+  <div class="corner" style="right:32px"><svg class="g" viewBox="0 0 16 16"><path d="M1.5 6a9.5 9.5 0 0 1 13 0M3.5 8.3a6.5 6.5 0 0 1 9 0M5.6 10.6a3.4 3.4 0 0 1 4.8 0"/></svg><svg class="g" viewBox="0 0 16 16"><rect x="1.5" y="5" width="11.5" height="7" rx="1.5"/><path d="M14.5 7.5v2"/></svg></div></div></div>
+<div class="scene" id="s-signin"><div class="full signin"><div class="c"><div class="av">I</div><div class="name">Impossible User</div><div class="pw">Password<b>→</b></div></div>
+  <div class="corner" style="left:32px;flex-direction:column;gap:12px;font-size:14px"><span>Impossible User</span><span>Guest</span></div>
+  <div class="corner" style="right:32px"><svg class="g" viewBox="0 0 16 16"><circle cx="8" cy="3" r="1.3"/><path d="M3 5.5l5 1 5-1M8 6.5v3l-2.5 5M8 9.5l2.5 5"/></svg><svg class="g" viewBox="0 0 16 16"><path d="M1.5 6a9.5 9.5 0 0 1 13 0M3.5 8.3a6.5 6.5 0 0 1 9 0"/></svg><svg class="g" viewBox="0 0 16 16"><path d="M8 2v6M4.5 4.2a5 5 0 1 0 7 0"/></svg></div></div></div>
+<div class="scene" id="s-boot"><div class="full boot"><img src="../brand/logo.svg" alt=""><div class="spin"></div></div></div>
+<div class="scene" id="s-oobe"><div class="full oobe"><div class="card"><div class="art"><img src="../brand/logo.svg" alt=""></div>
+  <div class="step"><h2>Is this the right country or region?</h2><div style="color:var(--text-secondary)">Choose where you are. You can change this later in Settings.</div>
+  <div style="margin-top:12px"><div class="it">South Africa</div><div class="it sel" style="background:var(--subtle-fill-hover)">United Kingdom</div><div class="it">United States</div></div>
+  <div class="next"><span>Back</span><span class="a">Yes</span></div></div></div></div></div>
+<div class="scene" id="s-osd"><div class="osd acrylic mat-flyout"><svg class="g" viewBox="0 0 16 16"><path d="M2 6h2.5L8 3v10l-3.5-3H2zM10.5 5.5a3.5 3.5 0 0 1 0 5"/></svg><div class="tr"><i></i></div>62</div></div>
+
 <!-- Taskbar -->
 <footer class="taskbar acrylic mat-taskbar" aria-label="Taskbar">
   <div class="tb-center">
@@ -385,7 +490,7 @@ body.shot *, body.shot *::before, body.shot *::after { transition: none !importa
   </div>
 </footer>
 
-<div class="hud acrylic mat-menu"><span>{{name}} desktop design</span><button id="theme">Light theme</button><a href="../docs/design/">Spec</a><a href="{{repo_url}}/tree/main/docs/design">Source</a></div>
+<div class="hud acrylic mat-menu"><span>{{name}} desktop design</span><button id="theme">Light theme</button><a href="controls.html">Controls</a><a href="../docs/design/">Spec</a><a href="{{repo_url}}/tree/main/docs/design">Source</a></div>
 
 <script>
 (function () {
@@ -455,6 +560,19 @@ body.shot *, body.shot *::before, body.shot *::after { transition: none !importa
   }
   days.innerHTML = h;
   var open = (location.hash || '').slice(1);
+  var scene = document.getElementById('s-' + open);
+  if (scene) {
+    scene.classList.add('show');
+  }
+  if (open === 'settings') {
+    var w = document.getElementById('win');
+    w.classList.add('settings');
+    w.querySelector('.tab').innerHTML = '<img src="../icons/settings.svg" alt="">Settings';
+    w.querySelector('.chrome').style.display = 'none';
+    w.querySelector('.nav').innerHTML = '<div class="it sel navi"><img src="../icons/computer.svg" alt="">System</div><div class="it navi"><img src="../icons/network.svg" alt="">Network &amp; internet</div><div class="it navi"><img src="../icons/folder_pictures.svg" alt="">Personalisation</div><div class="it navi"><img src="../icons/user_folder.svg" alt="">Accounts</div><div class="it navi"><img src="../icons/control_panel.svg" alt="">Apps</div>';
+    w.querySelector('.content').outerHTML = '<div class="page"><h2>Personalisation</h2><div class="srow"><div class="t"><div>Background</div><div>Picture, solid colour or slideshow</div></div>Impossible bloom</div><div class="srow"><div class="t"><div>Transparency effects</div><div>Frosted glass on the taskbar, Start and flyouts</div></div><div class="tgl"></div></div><div class="srow"><div class="t"><div>Accent colour</div><div>Buttons, toggles and selection</div></div>Automatic</div></div>';
+    w.querySelector('.status').style.display = 'none';
+  }
   if (open === 'ctx') {
     var m = document.getElementById('ctx'); m.style.left = (innerWidth - 300) + 'px'; m.style.top = '140px'; m.classList.add('show');
   } else if (panels[open]) { toggle(open); }

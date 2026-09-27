@@ -95,17 +95,18 @@ Tokenizer → token stream (start tag, end tag, text, comment, DOCTYPE) → DOM 
 
 ## 3. Tab Management `[Sonnet]`
 
+**Design:** [`controls.md#tabs`](../../docs/design/controls.md#tabs)
+
 `struct browser_tab_t` (URL, DOM root, scroll position, history stack, security state). Tab bar rendered across the top of the browser window. Ctrl+T new tab, Ctrl+W close, Ctrl+Tab cycle. Up to 16 tabs.
 
 **Files:** `src/apps/browser/tabs.c` (new), `include/apps/browser/browser.h` (extend)
 
 > [!NOTE]
-> Tab bar height: 28 px. Each tab: title (first 20 chars of `<title>` tag or URL hostname), close × button, active tab highlighted. Tab switch: on click: `active_tab = i`; redraw full window. Each `browser_tab_t` has its own `page_buf` and DOM tree root -- switching tabs swaps which buffer/tree is rendered. Memory limit per tab: max 4 MB page buffer (4× `pmm_alloc_contiguous(1 MB)`); DOM node pool of 4096 nodes. New tab (Ctrl+T): `tabs[tab_count++] = new_tab("about:blank")`; clamp to 16. Close tab (Ctrl+W): free page_buf + `dom_free_tree()`; shift remaining tabs down. `browser_t` gains `browser_tab_t *tabs[16]; int tab_count; int active_tab;`.
+> The tab strip itself is drawn by the browser chrome of `11-apps/TODO-01 §7` with `CTRL_TABSTRIP` per `docs/design/controls.md#tabs` (32 px tabs in a 40 px bar); this section owns the tab data model. Tab title: first 20 chars of `<title>` or the URL hostname. Tab switch: on click: `active_tab = i`; redraw full window. Each `browser_tab_t` has its own `page_buf` and DOM tree root -- switching tabs swaps which buffer/tree is rendered. Memory limit per tab: max 4 MB page buffer (4× `pmm_alloc_contiguous(1 MB)`); DOM node pool of 4096 nodes. New tab (Ctrl+T): `tabs[tab_count++] = new_tab("about:blank")`; clamp to 16. Close tab (Ctrl+W): free page_buf + `dom_free_tree()`; shift remaining tabs down. `browser_t` gains `browser_tab_t *tabs[16]; int tab_count; int active_tab;`.
 
 - [ ] `browser_tab_t { char url[2048]; char title[64]; dom_node_t *dom_root; char *page_buf; size_t page_len; int scroll_offset; char history[32][2048]; int history_pos; uint8_t is_https; uint8_t cert_ok; }` in `browser.h`
 - [ ] Migrate `browser_t` fields to `browser_tab_t`; `browser_t` gains tab array
-- [ ] `tab_bar_draw(browser, win)`: iterate tabs; draw tab button (title + ×); highlight active
-- [ ] `tab_bar_click(browser, x, y)` → handled: if click on × of tab i: `tab_close(browser, i)`; if click on tab body: `browser->active_tab = i`
+- [/] Superseded: the tab bar drawing and hit-testing are implemented by `11-apps/TODO-01 §7` (browser chrome, `CTRL_TABSTRIP`); do not build a second tab bar here. That chrome calls `tab_new` / `tab_close` / `browser_active_tab` below
 - [ ] `tab_new(browser)`: allocate `browser_tab_t`; init; navigate to `about:blank`; redraw tab bar
 - [ ] `tab_close(browser, i)`: free `page_buf` (pmm_free) + `dom_free_tree(dom_root)`; shift; if active tab closed: activate previous; clamp
 - [ ] `browser_active_tab(browser)` → `browser_tab_t*`: `return &browser->tabs[browser->active_tab]`
@@ -185,6 +186,8 @@ Detect `<script>` blocks in the DOM. Display `[JavaScript disabled]` inline plac
 
 ## 8. Bookmarks Manager `[Sonnet]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
+
 `C:\Users\Default\AppData\Browser\bookmarks.json` (title + URL + timestamp). Ctrl+D add/edit. Bookmarks dropdown menu. HTML import (`NETSCAPE BOOKMARK FILE`) and export.
 
 **Files:** `src/apps/browser/bookmarks.c` (new), `include/apps/browser/bookmarks.h` (new)
@@ -203,6 +206,8 @@ Detect `<script>` blocks in the DOM. Display `[JavaScript disabled]` inline plac
 - [ ] Commit: `"apps/browser: bookmarks -- JSON save/load, Ctrl+D add/edit, dropdown menu, HTML import/export"`
 
 ## 9. Download Manager `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#progress`](../../docs/design/controls.md#progress), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
 `<a href>` right-click → "Save As" queues a download. Progress list window (filename, size, %, KB/s, pause/cancel). Resume on reconnect via HTTP `Range:` header. Saves to `C:\Users\Default\Downloads\`.
 

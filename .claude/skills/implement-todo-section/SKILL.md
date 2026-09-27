@@ -24,7 +24,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 ## Workflow
 
-1. **Read the section** -- full text, notes, test checkpoint, warning boxes.
+1. **Read the section** -- full text, notes, test checkpoint, warning boxes. **If the section carries a `**Design:**` line, read every cited `docs/design/*.md` anchor too: the design spec is AUTHORITATIVE.** Where the section's own wording (an older size, colour, layout, flow or test value) disagrees with the spec, build the spec and correct the stale item text in the same commit; never build the old wording. Values come from `include/desktop/theme_tokens.h` (`THEME_*`), never new literals. A deliberate departure needs a `**Design deviation:** <reason>` line in the section AND a matching change to the spec, or it is a defect.
    One full read per pass is orientation; every LATER read of the TODO or a
    big source in this pass is a slice: `Read(offset, limit)` around the
    section text / IO-table row / function being edited, and after an edit

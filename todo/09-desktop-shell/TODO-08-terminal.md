@@ -49,11 +49,13 @@ title: "TODO-08 -- Terminal Emulator"
 | 💎  |   4   | §4 Scrollback & selection -- 2000-row history, wheel scroll, scrollbar, click+drag, Ctrl+Shift+C/V     | §1 grid; §2 rendering; TODO-01 `clipboard_set/get()` (forward dep for copy/paste)      |  [ ]   |
 | 💎  |   5   | §5 Resize handling -- `terminal_resize(w, h)`, recalc visible cols/rows, `SIGWINCH=28` to shell        | §1 grid; `signal_send()` (exists); `#define SIGWINCH 28` added to `signal.h`           |  [ ]   |
 | 💎  |   6   | §6 Registry settings -- FontName, FontSize, CursorStyle, CursorBlink, Opacity, ScrollbackLines         | §1-§5 all complete; Registry (exists); `WM_THEME_CHANGED` (TODO-01 theme)              |  [ ]   |
-| 💎  |   7   | §7 Advanced features -- tabs, Acrylic bg, split panes, hyperlink detect + Ctrl+click                   | §1–§6 complete; `gfx_acrylic()` (exists); `anim_mgr_add()` (TODO-02)                  |  [ ]   |
+| 💎  |   7   | §7 Advanced features -- tabs, Acrylic bg, split panes, hyperlink detect + Ctrl+click                   | §1–§6 complete; `gfx_acrylic()` (exists); `anim_mgr_add()` (D08 T04)                  |  [ ]   |
 
 ---
 
 ## 1. Terminal Cell Grid `[Opus]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 `terminal_cell_t` (Unicode codepoint `uint32_t`, `fg_color`, `bg_color`, attrs byte). `terminal_t` struct (200-col × 2000-row PMM grid, cursor, viewport, ANSI parser state, selection, shell pipe). Spawn `shell.exe` via `task_create_user`; pipe shell stdout → `terminal_put_char()` → grid; pipe WM keyboard events → shell stdin.
 
@@ -76,6 +78,8 @@ title: "TODO-08 -- Terminal Emulator"
 
 ## 2. Character Rendering `[Sonnet]`
 
+**Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 `terminal_render(t, surface)`: iterate visible rows, fill cell background if non-default, `ttf_draw_char(FONT_MONO)`; handle `\n`, `\r`, `\b`, `\t`; cursor block/underline/bar with 500 ms blink.
 
 **Files:** `src/desktop/terminal.c` (extend)
@@ -93,6 +97,8 @@ title: "TODO-08 -- Terminal Emulator"
 - [ ] Commit: `"terminal: cell renderer -- bg fill, ttf_draw_char, inverse/underline/blink attrs, scroll-up, cursor blink"`
 
 ## 3. ANSI Escape Parser `[Sonnet]`
+
+**Design:** n/a -- the escape-sequence parser is a state machine; colours it produces come from the terminal_* tokens applied in §2
 
 State machine: Normal → ESC → CSI → collect params → command. SGR (m): reset, bold, underline, inverse, 8+8 ANSI colors (30-37/40-47/90-97). Cursor: H, A/B/C/D, J, K. `\e[?25h/l` show/hide cursor. `\e[s`/`\e[u` save/restore. Stretch: `\e[38;5;Nm` 256-color.
 
@@ -114,6 +120,8 @@ State machine: Normal → ESC → CSI → collect params → command. SGR (m): r
 
 ## 4. Scrollback & Text Selection `[Sonnet]`
 
+**Design:** [`controls.md#scroll-bar`](../../docs/design/controls.md#scroll-bar), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
+
 2000-row scrollback buffer above visible area. Mouse wheel scrolls viewport ±3 rows. Proportional scrollbar on right. Click+drag text selection (inverted colors). Ctrl+Shift+C copy to clipboard; Ctrl+Shift+V paste from clipboard → shell stdin.
 
 **Files:** `src/desktop/terminal.c` (extend)
@@ -134,6 +142,8 @@ State machine: Normal → ESC → CSI → collect params → command. SGR (m): r
 
 ## 5. Resize Handling `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
+
 On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/rows`. Preserves history. Sends `SIGWINCH=28` to shell.
 
 **Files:** `src/desktop/terminal.c` (extend), `include/kernel/ipc/signal.h` (extend), `include/desktop/terminal.h` (extend)
@@ -149,6 +159,8 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
 
 ## 6. Registry Settings `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#materials`](../../docs/design/shell.md#materials)
+
 `HKCU\Software\Impossible\Terminal\`: FontName (default "Cascadia Code"), FontSize (14), CursorStyle (block/underline/bar), CursorBlink (1), Opacity (100 → Acrylic if < 100), ScrollbackLines (2000). Read on creation; reapply on `WM_THEME_CHANGED`.
 
 **Files:** `src/desktop/terminal.c` (extend)
@@ -158,28 +170,33 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
 
 - [ ] `void terminal_load_settings(terminal_t *t)` -- read Registry keys; apply font/cursor/opacity/scrollback; write defaults if absent
 - [ ] `#define CURSOR_BLOCK 0`, `CURSOR_UNDERLINE 1`, `CURSOR_BAR 2`
-- [ ] `t->opacity` < 100 → enable Acrylic: `gfx_acrylic(s, 0, 0, w, h, 20)` as first render step
+- [ ] Default background is the window material (mica, `docs/design/shell.md#materials`)
+  - only a user-lowered `Opacity` < 100 switches to acrylic via `gfx_acrylic()` with the menu material (`THEME_MAT_*_MENU_*`) at the chosen opacity, per `docs/design/shell.md#materials` "Terminal", matching Windows Terminal's opt-in acrylic
 - [ ] `WM_THEME_CHANGED` handler → `terminal_load_settings()`; `ttf_get()` with new font size; recalc `cell_w/h`
 - [ ] `terminal_resize()` called after font size change (cell dimensions changed → visible cols/rows change)
 - [ ] Commit: `"terminal: Registry settings -- FontName/Size/CursorStyle/Blink/Opacity/Scrollback, WM_THEME_CHANGED"`
 
 ## 7. Advanced Features `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`controls.md#tabs`](../../docs/design/controls.md#tabs)
+
+**Design deviation:** a user-lowered terminal `Opacity` (< 100) draws acrylic instead of the window mica, for Windows Terminal parity; this is the one sanctioned exception, recorded in `docs/design/shell.md#materials` ("Terminal": menu-material acrylic at the chosen opacity).
+
 Multi-tab strip (each tab = independent `terminal_t` + scrollback). Acrylic transparency background. Split panes (H/V independent sessions). Hyperlink detection (`https?://` → Ctrl+click opens browser).
 
 **Files:** `src/desktop/terminal.c` (extend), `src/desktop/terminal_tabs.c` (new)
 
 > [!NOTE]
-> **Tabs**: `terminal_tab_t { terminal_t *term; char title[32]; }` array of up to 8 tabs; tab bar = 24 px strip at top of terminal window; each tab drawn as `CTRL_BUTTON`-style rounded tab with title; click → switch active tab (hide old terminal surface, show new). "+" button at end → `terminal_create()` new session. Close tab: ×button on each tab → `terminal_destroy()`; if last tab: close terminal window. Tab title updated from shell process name or OSC 0 escape (`\e]0;title\a`). **Acrylic bg**: if `t->opacity < 100`: `gfx_acrylic(surface, 0, 0, w, h, 20)` before cell rendering; existing `acrylic_cache` from WM dialog pattern reused. **Split panes**: Ctrl+Shift+E → split active terminal vertically (50/50); Ctrl+Shift+O → split horizontally; each pane = independent `terminal_t`; resize pane by dragging divider; max 4 panes. **Hyperlinks**: in `terminal_render()`: scan cell runs for `https?://` prefix; if found: set `TERM_ATTR_UNDERLINE` for URL span; on `WM_MOUSE_MOVE` over underlined URL span: `cursor_set_shape(CURSOR_HAND)`; Ctrl+click → `file_assoc_open(url)` (opens in default browser via TODO-02 file associations).
+> **Tabs**: `terminal_tab_t { terminal_t *term; char title[32]; }` array of up to 8 tabs; tabs live IN the 40 px title bar as on Windows Terminal and File Explorer (`docs/design/shell.md#file-explorer`, `controls.md#tabs`): `THEME_SIZE_TAB_HEIGHT` (32) tabs, the selected tab on `layer_bg` with radius 8 top corners joining the terminal surface, a new-tab button after the last tab, caption buttons at the right; click → switch active tab (hide old terminal surface, show new). "+" button at end → `terminal_create()` new session. Close tab: ×button on each tab → `terminal_destroy()`; if last tab: close terminal window. Tab title updated from shell process name or OSC 0 escape (`\e]0;title\a`). **Acrylic bg**: if `t->opacity < 100`: `gfx_acrylic(surface, 0, 0, w, h, 20)` before cell rendering; existing `acrylic_cache` from WM dialog pattern reused. **Split panes**: Ctrl+Shift+E → split active terminal vertically (50/50); Ctrl+Shift+O → split horizontally; each pane = independent `terminal_t`; resize pane by dragging divider; max 4 panes. **Hyperlinks**: in `terminal_render()`: scan cell runs for `https?://` prefix; if found: set `TERM_ATTR_UNDERLINE` for URL span; on `WM_MOUSE_MOVE` over underlined URL span: `cursor_set_shape(CURSOR_HAND)`; Ctrl+click → `file_assoc_open(url)` (opens in default browser via TODO-02 file associations).
 
 - [ ] `typedef struct { terminal_t *term; char title[32]; int active; } terminal_tab_t;` in `terminal_tabs.c`
-- [ ] Tab bar render: 24 px strip; draw each tab label; active tab = accent underline; + and × buttons
+- [ ] Tab bar render in the 40 px title bar per `controls.md#tabs`: selected tab on `layer_bg` (no accent underline), close glyph on selected/hovered tab, new-tab button, then the 46 px caption buttons
 - [ ] `terminal_new_tab()` -- `terminal_create()` + add to `g_tabs[]`; `terminal_switch_tab(idx)`
 - [ ] OSC 0 parser in ANSI state machine: `\e]0;title\a` → update tab title
 - [ ] Split pane: `terminal_split(term, SPLIT_H/SPLIT_V)` -- allocate second `terminal_t`; divide window rect; resize both on drag
 - [ ] Hyperlink scan in render: `url_scan_row(row_cells, col_start, col_end)` → returns start/end col of URL; set UNDERLINE + `TERM_ATTR_HYPERLINK` flag
 - [ ] Ctrl+click handler: detect `TERM_ATTR_HYPERLINK` cell → collect URL string → `file_assoc_open(url)` (TODO-02 forward ref)
-- [ ] Acrylic: if `t->opacity < 100` in render: `gfx_acrylic(s, 0, 0, w, h, 20)` as first pass
+- [ ] Acrylic: if `t->opacity < 100` in render: `gfx_acrylic()` with `THEME_MAT_*_MENU_*` at `t->opacity`; otherwise mica
 - [ ] Commit: `"terminal: advanced -- multi-tab, Acrylic bg, split panes H/V, hyperlink detect+Ctrl+click"`
 
 ---

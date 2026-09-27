@@ -8,7 +8,7 @@ title: "TODO-02 -- Compositor Optimization"
 
 # TODO-02 -- Compositor Optimization
 
-> **Goal:** Replace the full-screen redraw compositor with dirty-rect tracking so only changed regions are redrawn. Target: 60fps compositing on 1280x720, <5ms per frame on idle desktop (only clock ticks).
+> **Goal:** Dirty-rect compositing is owned by `08-graphics-ui/TODO-08-window-manager.md` §8; sections 1-4 here are superseded pointers with only their unique leftovers, and §5 (terminal boot bleed) stays owned here. Original aim: replace the full-screen redraw compositor with dirty-rect tracking so only changed regions are redrawn. Target: 60fps compositing on 1280x720, <5ms per frame on idle desktop (only clock ticks).
 
 > [!IMPORTANT]
 > The existing compositor (`wm_composite()`) redraws the entire screen every frame. Infrastructure for dirty rects exists (`drag_dirty_*` fields) but isn't used. This TODO makes the compositor production-grade.
@@ -30,10 +30,10 @@ title: "TODO-02 -- Compositor Optimization"
 
 | ⭐  | Order | Deliverable                               | Depends On | Status |
 | --- | :---: | ----------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Dirty rect tracking infrastructure        | --         |  [ ]   |
-| 💎  |   2   | Partial wallpaper restore                 | §1         |  [ ]   |
-| 💎  |   3   | Per-window damage and compositor loop     | §1, §2     |  [ ]   |
-| ⭐  |   4   | Frame timing and VSync                    | §3         |  [ ]   |
+| 💎  |   1   | Dirty rect tracking infrastructure        | --         |  [/]   |
+| 💎  |   2   | Partial wallpaper restore                 | §1         |  [/]   |
+| 💎  |   3   | Per-window damage and compositor loop     | §1, §2     |  [/]   |
+| ⭐  |   4   | Frame timing and VSync                    | §3         |  [/]   |
 | 💎  |   5   | Terminal render clipping (boot bleed fix) | §3         |  [ ]   |
 
 ---
@@ -43,26 +43,19 @@ Add a dirty rect list that accumulates regions needing redraw each frame.
 
 **Files:** `src/desktop/wm.c`, `include/desktop/wm.h`
 
-- [ ] `struct wm_dirty_rect { int16_t x, y, w, h; }` -- single dirty region
-- [ ] `wm_dirty_rects[64]` -- per-frame dirty list (ring buffer)
-- [ ] `wm_mark_dirty(x, y, w, h)` -- add region to dirty list
-- [ ] `wm_dirty_merge()` -- merge overlapping rects to reduce overdraw
-- [ ] Window move: mark old rect + new rect as dirty
-- [ ] Window resize: mark old rect + new rect
-- [ ] Window create/destroy: mark window rect
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §8`, which follows `docs/design/shell.md#materials`; do not build a second dirty-rect tracker here
 
 **Test checkpoint:** Add logging: `compositor: N dirty rects this frame`. Idle desktop should show 0-1 rects (clock only). Dragging a window should show 2 rects.
 
 ## 2. Partial Wallpaper Restore
+
+**Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop)
 Redraw only the wallpaper pixels under dirty rects, not the entire screen.
 
 **Files:** `src/desktop/desktop.c`, `src/desktop/wm.c`
 
-- [ ] `desktop_draw_wallpaper_rect(x, y, w, h)` already exists -- verify it works for partial restore
-- [ ] For each dirty rect: blit wallpaper region first, then overlay windows
-- [ ] Handle rects that span taskbar area (48px bottom)
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §8`, which follows `docs/design/shell.md#desktop`; do not build a second partial-composite path here
+- [ ] On the canonical partial-composite path, restore only the dirty wallpaper region via `desktop_draw_wallpaper_rect(x, y, w, h)`; verify it handles rects that cross the 48 px taskbar (`THEME_SIZE_TASKBAR_HEIGHT`)
 
 **Test checkpoint:** Move a window -- wallpaper behind old position is restored without full-screen redraw.
 
@@ -71,11 +64,9 @@ Replace full-screen `wm_composite()` with dirty-rect-driven compositing.
 
 **Files:** `src/desktop/wm.c`
 
-- [ ] For each dirty rect: restore wallpaper → draw intersecting windows (z-order) → draw taskbar if intersecting → draw start menu if intersecting
-- [ ] Per-window `content_dirty` flag: set when app writes to window framebuffer
-- [ ] Window content change only marks that window's screen rect as dirty
-- [ ] Cursor: track old/new cursor position, mark both as dirty
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §8`, which follows `docs/design/shell.md#materials`; do not build a second compositor loop here
+- [ ] Per-window `content_dirty` flag: an app write to a window framebuffer calls `wm_mark_window_dirty()` (08 TODO-08 §8) for that window only
+- [ ] Cursor moves mark the old and new cursor rects through the same `wm_mark_window_dirty()` union, not a full redraw
 
 **Test checkpoint:** Idle desktop with clock: compositor redraws only the clock region (~60x20px). Open terminal, type -- only terminal rect redrawn.
 
@@ -84,11 +75,8 @@ Measure frame times and optionally sync to display refresh.
 
 **Files:** `src/desktop/wm.c`
 
-- [ ] Frame time measurement: TSC delta between composite calls
-- [ ] Log: `compositor: avg Xms/frame (Y fps)` on debug builds
-- [ ] VSync: if Bochs VGA, wait for vblank before page flip
-- [ ] Frame budget: skip composite if <16ms since last frame (60fps cap)
-- [ ] Commit
+- [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §8`, which follows `docs/design/shell.md#materials`; do not build a second frame-time instrumentation here
+- [ ] VSync: on adapters that expose vblank (Bochs VGA), wait for vblank before the page flip; the 16 ms frame-time warning itself is 08 TODO-08 §8
 
 **Test checkpoint:** Serial log shows frame timing. Idle: <1ms. Drag: <5ms. No visual tearing.
 

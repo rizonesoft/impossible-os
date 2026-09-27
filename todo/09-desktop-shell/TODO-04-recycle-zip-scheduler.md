@@ -11,7 +11,7 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 > **Goal:** Build three independent infrastructure pieces that unlock production-quality core apps: a fully-featured Recycle Bin (counter-keyed trash with meta sidecars + restore window), a miniz-backed ZIP archive API with shell commands, and a 16-slot task scheduler with PIT tick + built-in recurring tasks and an `at` command.
 
 > [!IMPORTANT]
-> **Already exists**: `vfs_unlink(path)`, `vfs_rename(old, new)`, `vfs_stat(path, stat)`, `vfs_readdir`, `vfs_create`, `vfs_read/write` in `vfs.h`. `registry_flush()` in `registry.h`. `kmalloc/kfree` in `heap.h`. `klog(level, subsystem, fmt, ...)` in `klog.h`. `system_get_ticks()` + `PIT_TARGET_FREQ=100` for scheduler timing. `time_now()` (TODO-10 §1) for deletion timestamps. `shortcut_execute()` (TODO-02 §5) for `at` command execution. `dialog_input()` + `CTRL_LISTVIEW` (TODO-05) for recycle bin window app. `context_menu_show()` (TODO-07 §1) for right-click items. **Scope overlap**: §1 Recycle Bin core supersedes the lighter stub described in TODO-02 §6 -- implement only once here; TODO-02 §6 becomes a forward reference to this TODO. **Missing**: `src/libs/` directory, miniz, `trash_*`, `zip_*`, `sched_task*`. Complete sections in order: recycle bin core → bin window app → miniz integration → ZIP API → ZIP shell commands → task scheduler → built-in tasks → `at` command.
+> **Already exists**: `vfs_unlink(path)`, `vfs_rename(old, new)`, `vfs_stat(path, stat)`, `vfs_readdir`, `vfs_create`, `vfs_read/write` in `vfs.h`. `registry_flush()` in `registry.h`. `kmalloc/kfree` in `heap.h`. `klog(level, subsystem, fmt, ...)` in `klog.h`. `system_get_ticks()` + `PIT_TARGET_FREQ=100` for scheduler timing. `time_now()` (TODO-10 §1) for deletion timestamps. `shortcut_execute()` (TODO-02 §5) for `at` command execution. `dialog_input()` (08-graphics-ui/TODO-06 §8) + `CTRL_LISTVIEW` (08-graphics-ui/TODO-06 §1) for recycle bin window app. `context_menu_show()` (08-graphics-ui/TODO-09 §1) for right-click items. **Scope overlap**: §1 Recycle Bin core supersedes the lighter stub described in TODO-02 §6 -- implement only once here; TODO-02 §6 becomes a forward reference to this TODO. **Missing**: `src/libs/` directory, miniz, `trash_*`, `zip_*`, `sched_task*`. Complete sections in order: recycle bin core → bin window app → miniz integration → ZIP API → ZIP shell commands → task scheduler → built-in tasks → `at` command.
 
 ## Inputs
 
@@ -21,8 +21,8 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 - `include/kernel/drivers/pit.h` -- `system_get_ticks()`, `PIT_TARGET_FREQ` -- used by §6 scheduler tick
 - `include/kernel/time.h` (TODO-10 §1) -- `time_now()`, `time_to_datetime()` -- used by §1 deletion timestamp and §9 `at` HH:MM parse
 - `include/kernel/klog.h` -- `klog()` -- used throughout for operation logs
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §4 recycle bin window table
-- `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- used by §2 right-click item menu
+- `include/desktop/controls.h` (08-graphics-ui/TODO-06) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §4 recycle bin window table
+- `include/desktop/context_menu.h` (08-graphics-ui/TODO-09 §1) -- `context_menu_show()` -- used by §2 right-click item menu
 - `include/desktop/shortcut.h` (TODO-02 §5) -- `shortcut_execute()` -- used by §8 `at` command execution
 - → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §6` -- §1 is the full implementation that replaces the stub; TODO-02 §6 trash icon states wire to `trash_count()` from here
 - → XREF: `09-desktop-shell/TODO-03-service-manager.md §9` -- `registryd` and `ntpd` built-in daemons (TODO-03) consume `registry_flush()` and `ntp_sync()`; §8 built-in scheduled tasks are a complementary general-purpose scheduling layer for one-shot and timed callbacks
@@ -43,7 +43,7 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 | ⭐  | Order | Deliverable                                                                               | Depends On                                                                 | Status |
 | --- | :---: | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Recycle bin core -- `trash_delete/restore/restore_all/empty/count/size`, meta INI      | `vfs_rename/unlink/stat`, `time_now()` (both exist/planned)               |  [ ]   |
-| 💎  |   2   | §2 Recycle bin window -- `CTRL_LISTVIEW` table, toolbar, right-click restore/delete       | §1 core must exist; TODO-05 `CTRL_LISTVIEW`; TODO-07 `context_menu_show` |  [ ]   |
+| 💎  |   2   | §2 Recycle Bin as a File Explorer location -- details view, command bar, restore/delete | §1 core must exist; D08 T06 §1 `CTRL_LISTVIEW`; D08 T09 §1 `context_menu_show` |  [ ]   |
 | 💎  |   3   | §3 miniz integration -- vendor at `src/libs/miniz/`, kmalloc redirect, freestanding build | `kmalloc/kfree` (exist); no other deps                                    |  [ ]   |
 | 💎  |   4   | §4 ZIP kernel API -- `zip_create/add_file/extract/extract_file/list` over miniz            | §3 miniz must be compiled and linkable                                    |  [ ]   |
 | 💎  |   5   | §5 ZIP shell commands -- `zip`, `unzip`, `unzip -l`                                        | §4 ZIP API                                                                 |  [ ]   |
@@ -76,23 +76,26 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 
 ## 2. Recycle Bin Window App `[Sonnet]`
 
-File-Manager-like window: `CTRL_LISTVIEW` table (Name, Original Location, Date Deleted, Size). Toolbar: "Empty Recycle Bin" (confirm) + "Restore all". Right-click item → Restore / Delete permanently. Double-click → preview. `Ctrl+A` select all.
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
+
+As on Windows 11, the Recycle Bin opens as a File Explorer location, not a separate window style: the File Explorer frame of `docs/design/shell.md#file-explorer` (40 px tabbed title bar, 48 px address row reading "Recycle Bin", 48 px command bar, 220 px navigation pane, 24 px status bar) hosted by `09-desktop-shell/TODO-09`, with a details view (Name, Original Location, Date Deleted, Size). The command bar shows "Empty Recycle Bin" (a subtle command-bar button per `shell.md#app-window-layout`, confirm dialog per `controls.md#dialog`), "Restore all items" and, with a selection, "Restore the selected items". Right-click item → Restore / Delete (context menu engine). Double-click → Properties. `Ctrl+A` select all.
 
 **Files:** `src/desktop/recycle_bin_app.c` (new), `include/desktop/recycle_bin_app.h` (new)
 
 > [!NOTE]
-> Window: 720×480 px. Toolbar (48 px height): "Empty Recycle Bin" button (shows `dialog_input`-style confirm → `trash_empty()`; updates list); "Restore all" button → `trash_restore_all()`; updates list. `CTRL_LISTVIEW` in details mode (4 columns): Name (200 px), Original Location (220 px), Date Deleted (140 px), Size (80 px). Populate: `trash_get_entries(entries, 512)` → `ctrl_listview_add_row()` for each. Sorting: click column header → sort by that field (name/path/date/size). **Right-click item**: `context_menu_show()`: "Restore" → `trash_restore(entry->trash_name)` + remove row; "Delete Permanently" → `vfs_unlink(slot_path)` + `vfs_unlink(meta_path)` + remove row. **Double-click**: if file is image: `file_assoc_open(original_path_preview)` (open from trash slot path). Ctrl+A: select all rows. Opened by: desktop trash icon double-click (`file_assoc_open("C:\\Recycle\\")` routes here) or Start Menu shortcut.
+> Frame: the File Explorer window of `09-desktop-shell/TODO-09` §1 in its default size. Command bar (48 px, subtle buttons): "Empty Recycle Bin" button (shows `dialog_input`-style confirm → `trash_empty()`; updates list); "Restore all" button → `trash_restore_all()`; updates list. `CTRL_LISTVIEW` in details mode (4 columns): Name (240 px), Original Location (220 px), Date Deleted (160 px), Size (80 px right-aligned), per the details-view rules of `docs/design/shell.md#file-explorer`. Populate: `trash_get_entries(entries, 512)` → `ctrl_listview_add_row()` for each. Sorting: click column header → sort by that field (name/path/date/size). **Right-click item**: `context_menu_show()`: "Restore" → `trash_restore(entry->trash_name)` + remove row; "Delete Permanently" → `vfs_unlink(slot_path)` + `vfs_unlink(meta_path)` + remove row. **Double-click**: if file is image: `file_assoc_open(original_path_preview)` (open from trash slot path). Ctrl+A: select all rows. Opened by: desktop trash icon double-click (`file_assoc_open("C:\\Recycle\\")` routes here) or Start Menu shortcut.
 
-- [ ] `void recycle_bin_open(void)` -- create 720×480 px window; build toolbar + `CTRL_LISTVIEW`; `trash_get_entries()` to populate
+- [ ] `void recycle_bin_open(void)` -- open a File Explorer window at the Recycle Bin location (`filemgr_navigate("shell:RecycleBinFolder")`)
+  - the location provider supplies the command-bar buttons and a details-mode `CTRL_LISTVIEW` populated by `trash_get_entries()`
 - [ ] `void recycle_bin_refresh(void)` -- `trash_get_entries()`; rebuild listview rows
-- [ ] Toolbar: "Empty Recycle Bin" → confirm dialog ("Are you sure? This will permanently delete N items.") → `trash_empty()` → `recycle_bin_refresh()`
+- [ ] Command bar: "Empty Recycle Bin" → confirm dialog (`controls.md#dialog`) ("Are you sure? This will permanently delete N items.") → `trash_empty()` → `recycle_bin_refresh()`
 - [ ] "Restore all" → `trash_restore_all()` → `recycle_bin_refresh()`
 - [ ] Right-click handler: `context_menu_show()` with Restore + Delete Permanently options
 - [ ] Date formatting: `time_to_datetime(entry->deleted_at, 0, &dt)` + `time_format(&dt, buf, 16, "%d/%m/%Y %H:%M")`
 - [ ] Size formatting: `format_bytes(entry->size, buf)` → "4 KB" / "1.2 MB" etc.
 - [ ] Column sort: click header → toggle `g_sort_column`; `qsort`-style sort of `trash_entry_t[]`; rebuild rows
 - [ ] `Ctrl+A` key handler: `ctrl_listview_select_all(listview_handle)`
-- [ ] Commit: `"recycle_bin: window app -- CTRL_LISTVIEW table, toolbar restore/empty, right-click, date+size format"`
+- [ ] Commit: `"recycle_bin: File Explorer location -- details view, command bar restore/empty, right-click, date+size format"`
 
 ## 3. miniz ZIP Library Integration `[Sonnet]`
 

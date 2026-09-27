@@ -38,7 +38,7 @@ title: "TODO-04 -- Email Client"
 - `include/kernel/cng/cng_keystore.h` -- `cng_keystore_get_kek()`, `cng_key_store_import()`, `cng_key_store_get()` (→ XREF `09-desktop-shell/TODO-07 §4`)
 - `include/desktop/controls.h` -- `ctrl_create_button`, `ctrl_create_textbox`, `ctrl_create_listview`, `ctrl_create_scrollbar`
 - `include/desktop/wm.h` -- `wm_create_window()`
-- `include/desktop/systray.h` (→ XREF `08-graphics-ui/TODO-09 §5`) -- `tray_register()`, `tray_unregister()`
+- `include/desktop/systray.h` (→ XREF `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4`) -- `tray_register()`, `tray_unregister()`
 - `include/kernel/scheduler_tasks.h` (→ XREF `09-desktop-shell/TODO-04 §8`) -- `sched_task_add(name, cb, interval_s, enabled)`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`, `reg_delete_key`
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`, `vfs_unlink`
@@ -129,22 +129,33 @@ title: "TODO-04 -- Email Client"
 
 ## 4. Three-Panel Email GUI `[Opus]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+**Owner of:** the work planned in `07-networking/TODO-09 §7`, which is superseded there so there is one implementation.
+
 > → XREF: `07-networking/TODO-09-email-client.md §8`
 
 **Source file:** `src/apps/mail/mail.c`; window title `Mail`
 
-Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills remainder
+Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | message list 350 px | viewer fills remainder; panes separated by 1 px `stroke_divider`
 
 - [ ] **Sidebar** (`CTRL_LISTVIEW` in tree mode): per-account nodes expandable to Inbox / Sent / Drafts / Trash / Junk; unread count shown in parentheses next to Inbox; click folder → refresh message list
-- [ ] **Message List** (scrollable `CTRL_LISTVIEW`): columns -- read/unread dot (● blue = unread), From (truncated), Subject, Date, attachment clip icon (📎 if `.eml` has `Content-Type: multipart`); click row → load viewer; double-click → open in separate window; right-click → context menu (Reply / Forward / Delete / Mark as Spam / Mark as Read)
+- [ ] **Message List** (scrollable `CTRL_LISTVIEW`): unread, From, Subject, Date, attachment columns
+  - Unread: bold From and Subject plus a 3 x 16 accent pill at the row start, never colour alone
+  - Attachment: Fluent attach glyph if the `.eml` is `Content-Type: multipart`
+  - Click row → load viewer; double-click → open in a separate window; right-click → context menu (Reply / Forward / Delete / Mark as Spam / Mark as Read)
 - [ ] **Message Viewer**: header bar: From, To, Date, Subject in styled TTF; attachment list if multipart (click attachment → `vfs_open` + launch or save dialog); body: plain text rendered via `ttf_draw_string()` word-wrapped to panel width; HTML body stripped to plain text (remove tags, preserve whitespace, decode `&amp;`/`&lt;`/`&gt;`/`&nbsp;`); external images blocked by default (link "Show images" → re-render)
-- [ ] **Toolbar**: `[✏ Compose]` `[↩ Reply]` `[↪ Forward]` `[🗑 Delete]` `[🔄 Sync]`; search bar on right (type → filter message list by From + Subject)
+- [ ] **Toolbar**: command bar (48 px) of subtle buttons with Fluent glyphs: New mail, Reply, Forward, Delete, Sync; search bar on right (type → filter message list by From + Subject)
 - [ ] **Status bar**: shows `Inbox -- {n} messages, {k} unread` | sync status (`Last synced: {time}` or `Syncing...`)
 - [ ] Load messages from VFS `C:\Users\{name}\AppData\Mail\{account}\{folder}\` on folder select; parse `.eml` file headers for list display; full body loaded only when message is opened
 
 ---
 
 ## 5. Compose Window `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+**Owner of:** the work planned in `07-networking/TODO-09 §8`, which is superseded there so there is one implementation.
 
 > → XREF: `07-networking/TODO-09-email-client.md §9`
 
@@ -181,14 +192,20 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 7. Auto-Check + Notifications + Tray `[Sonnet]`
 
+**Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
+
+**Owner of:** the work planned in `07-networking/TODO-09 §6`, which is superseded there so there is one implementation.
+
 > → XREF: `07-networking/TODO-09-email-client.md §7` -- base spec.
 
 **Source file:** `src/apps/mail/mail_notify.c`; `mail_systray.c`
 
 - [ ] **Auto-check**: `sched_task_add("mail_check", mail_check_cb, 300, 1)` (300 s = 5 min) at app startup; `mail_check_cb()` calls `pop3_connect()` → `pop3_fetch_new()` → returns new-message count
 - [ ] **Toast notification**: on `new_count > 0`: `notify_send("New mail", "New email from {From}: {Subject}", ICON_MAIL, 5000)` via `SYS_NOTIFY_SEND=54`; show at most one toast per check cycle even if multiple new messages (bundle: `"3 new messages from {From1}, {From2}…"`)
-- [ ] **Taskbar badge** (unread count): `SYS_TASKBAR_SET_PROGRESS` (id 52) -- repurpose or add new syscall `SYS_TASKBAR_SET_BADGE=60`; badge displays unread count as red circle overlay on taskbar icon; cleared when user opens Inbox
-- [ ] **System tray icon**: register `tray_icon_t { .icon_id=ICON_MAIL_ENVELOPE, .tooltip="Mail -- {n} unread", .click_cb=mail_show_window }` via `tray_register()` at startup; `tray_unregister()` on exit; update tooltip on each check; animated envelope on new mail for 3 s
+- [ ] **Taskbar badge** (unread count): call the taskbar badge API owned by `08-graphics-ui/TODO-10` per `docs/design/shell.md#taskbar` (accent pill, 16 px tall, "99+" above 99)
+  - Add the badge there once the spec defines it, and do not add a `SYS_TASKBAR_SET_BADGE` syscall here
+- [ ] **System tray icon**: register `tray_icon_t { .icon_id=ICON_MAIL_ENVELOPE, .tooltip="Mail -- {n} unread", .click_cb=mail_show_window }` via `tray_register()` at startup; `tray_unregister()` on exit
+  - Update tooltip on each check; the icon lives in the overflow chevron flyout (`08-graphics-ui/TODO-11 §4`); new mail is announced by the toast, not an animated icon
 - [ ] **Sync on open**: when `mail.exe` window is focused, trigger immediate `mail_check_cb()` outside the 5-min schedule
 
 ---

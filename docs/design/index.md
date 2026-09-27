@@ -12,7 +12,9 @@ The Impossible OS desktop follows Windows 11 as closely as a clean-room implemen
 | [`tokens.json`](tokens.json) | The canonical tokens: colours for dark and light, acrylic and mica materials, sizes, radii, spacing, type ramp, elevation and motion. |
 | [`include/desktop/theme_tokens.h`](../../include/desktop/theme_tokens.h) | Generated from `tokens.json` by `scripts/site/gen_theme_header.py`. Never edited by hand. |
 | [`shell.md`](shell.md) | The shell specification: desktop, taskbar, Start, flyouts, menus and window chrome, with every measurement. |
+| [`controls.md`](controls.md) | The controls: buttons, toggles, check boxes, sliders, text fields, lists, tabs, progress, scroll bars, tooltips, dialogs, menus and cards. |
 | [`icons.md`](icons.md) | The icon system: grid, light, palette, small-size rules and the full icon list. |
+| [`scope.json`](scope.json) | Which roadmap sections must carry a `**Design:**` line (the shell TODO files, plus any section whose title names a UI surface). |
 | [`gh-pages/design/index.html`](../../gh-pages/design/index.html) | The interactive mockup, published at [impossibleos.co/design](https://impossibleos.co/design/). Its CSS variables are generated from `tokens.json` at build time. |
 | [`resources/backgrounds/src/`](../../resources/backgrounds/src/bloom-dark.svg) | The default "impossible bloom" wallpapers, dark and light, as SVG sources. |
 | [`resources/brand/`](../../resources/brand/logo.svg) | The logo mark, the README wordmarks and the desktop preview. |
@@ -23,6 +25,7 @@ Every published surface is derived from one source, and a check fails the commit
 
 - `scripts/site/build.py --check` (lint Check 30) regenerates `theme_tokens.h` in memory and fails if the committed header differs from `tokens.json`.
 - The mockup never hard-codes a colour, size or duration: its `:root` block is generated from `tokens.json` on every Pages build, so the web reference and the C header cannot disagree.
+- **Roadmap sections cite the design.** Every open TODO section that draws UI starts with a `**Design:**` line citing the anchors it implements; Check 30 refuses a missing line or a dead anchor. The spec is authoritative: when a section's own older wording disagrees, the implementer builds the spec and corrects the section in the same commit, and a deliberate departure needs a `**Design deviation:**` line plus a spec change.
 - `scripts/site/render-brand.sh` re-renders the wordmarks and the README desktop screenshot from their sources after a design change.
 
 ## How do I change the design?

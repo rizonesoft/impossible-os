@@ -77,7 +77,7 @@ All major image formats are registered to `photos.exe`.
 
 - [ ] `wm_create_window("Photos", 900, 650, WM_RESIZABLE)` -- main window
 - [ ] On open: `image_load(&g_img, path)` → `image_scale(&g_display, &g_img, canvas_w, canvas_h, IMAGE_FIT_FIT)` → `gfx_blit(surface, 0, 0, display.pixels, display.width, display.height)`
-- [ ] Neutral background: `gfx_fill_rect(surface, 0, 0, canvas_w, canvas_h, 0xFF1E1E1E)` (dark gray) before blit -- letterbox/pillarbox bands are always visible
+- [ ] Neutral background: `gfx_fill_rect(surface, 0, 0, canvas_w, canvas_h, THEME_<THEME>_WINDOW_BG)` (the current theme's `window_bg`, dark or light) before blit -- letterbox/pillarbox bands are always visible
 - [ ] Center the scaled image: compute x offset = `(canvas_w - display.w) / 2`, y offset = `(canvas_h - display.h) / 2`
 - [ ] On window resize (`WM_RESIZE`): re-run `image_scale` if fit-to-window mode is active; skip if zoom is manually set
 - [ ] Status bar (bottom 24 px): `"{filename}  {w} × {h} px  {file_size_kb} KB"`
@@ -114,9 +114,11 @@ All major image formats are registered to `photos.exe`.
 
 ## 4. Toolbar + Menus `[Sonnet]`
 
+**Design:** [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#button`](../../docs/design/controls.md#button), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
+
 **Source file:** `src/apps/photos/photos_ui.c`
 
-- [ ] **Toolbar** (40 px top strip):
+- [ ] **Command bar** (`THEME_SIZE_COMMAND_BAR_HEIGHT` (48) per `docs/design/shell.md#app-window-layout`):
   - [ ] `[◀]` Previous, `[▶]` Next (§3 folder nav)
   - [ ] `[🔍+]` Zoom In, `[🔍−]` Zoom Out, `[⊡]` Fit to Window (sets `g_fit_mode = true`)
   - [ ] `[↺]` Rotate Left (−90°), `[↻]` Rotate Right (+90°) → §7 rotate
@@ -128,7 +130,7 @@ All major image formats are registered to `photos.exe`.
   - [ ] `View`: Zoom In/Out/100%/Fit, Thumbnail Strip (toggle), EXIF Panel (toggle), Slideshow, Fullscreen (F11 → `wm_set_fullscreen`)
 - [ ] **Set as Wallpaper**:
   - [ ] `reg_set_string("HKCU\\Control Panel\\Desktop\\Wallpaper", filepath)`
-  - [ ] `reg_set_string("HKCU\\Control Panel\\Desktop\\WallpaperStyle", "2")` (2 = stretch; 6 = fit; 10 = fill)
+  - [ ] `reg_set_string("HKCU\\Control Panel\\Desktop\\WallpaperStyle", "10")` (10 = Fill, the design default per `docs/design/shell.md#desktop`; 2 = stretch and 6 = fit stay user choices in Personalize)
   - [ ] Call `desktop_draw_wallpaper()` to reload immediately
   - [ ] Toast: `"Wallpaper updated"`
 
@@ -149,6 +151,8 @@ All major image formats are registered to `photos.exe`.
 
 ## 6. EXIF Metadata Panel `[Opus]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 > Novel TIFF/IFD inline reader -- no prior Impossible OS precedent for EXIF parsing.
 
 **Source file:** `src/apps/photos/exif.c`; header `include/apps/photos/exif.h`
@@ -161,7 +165,7 @@ All major image formats are registered to `photos.exe`.
   - [ ] Follow `ExifIFD` sub-IFD; extract: `0x829A` ExposureTime (rational), `0x829D` FNumber (rational), `0x8827` ISOSpeedRatings, `0x920A` FocalLength (rational), `0x9003` DateTimeOriginal
   - [ ] Follow `0x8825` GPSInfoIFD if present; extract `0x0002`/`0x0004` GPSLatitude/Longitude (rational array × 3)
   - [ ] Rational: `uint32 numerator / uint32 denominator`; format as `"{num}/{den}"` or convert to float for display
-- [ ] **Side panel UI** (240 px right strip, toggled by `View→EXIF Panel` or `P` key):
+- [ ] **Side panel UI** (280 px right panel per `docs/design/shell.md#app-window-layout`, toggled by `View→EXIF Panel` or `P` key):
   - [ ] `[×]` close button; label+value rows (bold label, plain value); `CTRL_SCROLLBAR_VERT` if overflow
   - [ ] Rows: Make, Model, Date Taken, Exposure, F-number (`f/{val:.1f}`), ISO, Focal Length (`{val} mm`), GPS (decimal degrees or "Not available")
   - [ ] Non-JPEG or missing APP1 marker: show `"No EXIF data available"`

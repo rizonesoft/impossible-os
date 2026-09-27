@@ -19,7 +19,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 - `include/gfx.h` -- `gfx_mica()`, `gfx_drop_shadow()`, `gfx_fill_rounded_rect()` for decoration rendering
 - `include/font_mgr.h` -- `FONT_UI_BOLD`, `FONT_UI` for title and status text
 - `include/desktop/desktop.h` -- `desktop_get_wallpaper_surface()` for Mica titlebar tint source
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()->titlebar_active/inactive/accent/button_hover` for decoration colors
+- `include/desktop/theme.h` (TODO-01) -- `theme_get()->colors` (`window_bg_inactive`, `subtle_fill_*`, `caption_close_hover`, `stroke_surface`, `focus_outer`) + `mat.mica` for decoration colours
 - `include/kernel/gfx/wm_anim.h` (TODO-02) -- `wm_anim_minimize/restore/maximize/snap` for animated transitions
 - `include/kernel/sched/task.h` -- `task_create_user(entry, name)` for desktop icon double-click launch
 - `include/registry.h` -- Registry persistence for window state + desktop icon positions
@@ -29,11 +29,11 @@ title: "TODO-08 -- Window Manager Enhancements"
 ## Outcome
 
 - `wm_minimize/maximize/restore/snap()` implemented with animated transitions.
-- Title bar: 32 px, Mica tint, `FONT_UI_BOLD` 13 px title, Fluent chrome buttons (×/─/⬜/❐), Windows 11 hover states.
+- Title bar per `docs/design/shell.md#window-chrome`: 32 px, mica, caption-style title, 46 px caption buttons with 10 px glyphs, `caption_close_hover` close; radius 8 windows with elevation shadows.
 - Snap layouts popup on maximize-button hover; Win+←/→ keyboard snap.
 - Desktop icons load from `C:\Users\Default\Desktop\`; double-click launches; drag repositions.
 - Global hotkeys: Win+D, Win+M, Win+L, Alt+F4 + Win+number taskbar launch.
-- Alt+Tab overlay with 96×64 window thumbnails, fade in/out 150 ms.
+- Alt+Tab overlay with 158 px tall thumbnails and a focus ring on the selection (`docs/design/shell.md#alttab`).
 - Compositor dirty-rect union + frame-skip when idle (> 16 ms frame warning to serial).
 
 ## Implementation Order
@@ -52,6 +52,10 @@ title: "TODO-08 -- Window Manager Enhancements"
 ---
 
 ## 1. Minimize / Maximize / Restore `[Sonnet]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-01 §1`, which is superseded there so the shell has one implementation.
 
 Add `WM_FLAG_MINIMIZED=0x40`, `WM_FLAG_MAXIMIZED=0x80`, `WM_FLAG_SNAPPED=0x100` to `wm.h`. Add `saved_x/y/w/h` fields to `struct wm_window`. Implement `wm_minimize/maximize/restore`. Persist window state in Registry. Double-click title bar toggles maximize.
 
@@ -73,61 +77,80 @@ Add `WM_FLAG_MINIMIZED=0x40`, `WM_FLAG_MAXIMIZED=0x80`, `WM_FLAG_SNAPPED=0x100` 
 
 ## 2. Window Decorations `[Sonnet]`
 
-Title bar: 32 px, Mica effect (from wallpaper tint), title text `FONT_UI_BOLD` 13 px left-aligned. Chrome buttons: ×/─/⬜(❐) via Fluent icon codepoints, 46×32 px, right-aligned. Hover: × = `#C42B1C` fill, others = `theme_get()->button_hover`. Resize handle: 4 px invisible edge margin mapped to `cursor_shape_t` via `wm_get_cursor_context`.
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-01 §2`, which is superseded there so the shell has one implementation.
+
+Per `docs/design/shell.md#window-chrome`: corner radius `THEME_RADIUS_WINDOW` (8) with a 1 px `stroke_surface` outline; shadow `THEME_ELEV_WINDOW_ACTIVE_*` when focused and `THEME_ELEV_WINDOW_INACTIVE_*` otherwise; maximized windows drop the radius and shadow. Title bar `THEME_SIZE_CAPTION_HEIGHT` (32): mica (`theme_get()->mat.mica`) when active, `window_bg_inactive` when not; title in the caption style (12/16) in `text_primary` (inactive `text_secondary`), after a 16 px app icon. Caption buttons `THEME_SIZE_CAPTION_BUTTON_WIDTH` (46) wide, full caption height, with `THEME_SIZE_CAPTION_GLYPH` (10) glyphs drawn at 1 px stroke; hover `subtle_fill_hover`, press `subtle_fill_pressed`; close hover `caption_close_hover` / press `caption_close_pressed` with a white glyph. Resize grab zone `THEME_SIZE_RESIZE_MARGIN` (5) outside the visible edge.
 
 **Files:** `src/desktop/wm.c` (extend titlebar drawing)
 
 > [!NOTE]
-> Titlebar Mica: `gfx_mica(win_surface, 0, 0, win_w, 32, desktop_get_wallpaper_surface(), theme_get()->titlebar_active)` for focused window; use `theme_get()->titlebar_inactive` for unfocused. Title text: `gfx_draw_string(ttf_get(FONT_UI_BOLD, 13), title, 12, 10, theme_get()->foreground)`. Chrome button layout: `close_x = win_w - 46`, `max_x = win_w - 92`, `min_x = win_w - 138` (each 46 px wide). Button icon: render Fluent codepoints for ×=`\uE8BB`, ─=`\uE921`, ⬜=`\uE922`, ❐=`\uE923`. Hover detection: in `wm_handle_mouse()`, check if `(mx, my)` falls in each button rect. Close hover: `gfx_fill_rect(titlebar, close_x, 0, 46, 32, 0xFFC42B1C)`. Min/max hover: `gfx_fill_rect_alpha(titlebar, mx, 0, 46, 32, theme_get()->button_hover, 255)`. Resize handle: existing `wm_get_cursor_context()` already returns resize cursor shapes -- confirm it uses `WM_RESIZE_MARGIN = 5` and covers all 8 edge+corner directions.
+> Titlebar Mica: `gfx_mica(win_surface, 0, 0, win_w, 32, desktop_get_wallpaper_surface(), theme_get()->mat.mica)` for the focused window; unfocused windows fill `theme_get()->colors.window_bg_inactive`. Title text: 16 px app icon at x=12, then `gfx_draw_string(ttf_get(FONT_UI, THEME_TYPE_CAPTION_SIZE), title, 36, 8, text_primary)`. Chrome button layout: `close_x = win_w - 46`, `max_x = win_w - 92`, `min_x = win_w - 138`. Glyphs: 10 x 10 line drawings at 1 px stroke, centred in each 46 x 32 button (minimize: horizontal line; maximize: square with 1.5 px corner radius; restore: two offset squares; close: X). Hover detection: in `wm_handle_mouse()`, check `(mx, my)` against each button rect. Close hover: `gfx_fill_rect(titlebar, close_x, 0, 46, 32, theme_get()->colors.caption_close_hover)` and draw the glyph white. Min/max hover: `subtle_fill_hover`.
 
 - [ ] Mica titlebar: `gfx_mica()` called in `wm_composite()` per visible decorated window; active/inactive variants
-- [ ] `FONT_UI_BOLD` 13 px title text left-aligned at `(12, 10)` within titlebar rect
-- [ ] Chrome buttons: Fluent codepoints for ×/─/⬜/❐; maximized window: ⬜ → ❐ icon
-- [ ] Hover fill: close=`#C42B1C`; min/max = `theme_get()->button_hover`; press = `theme_get()->button_pressed`
+- [ ] 16 px app icon at x=12 and title text in the caption style (`THEME_TYPE_CAPTION_SIZE`, 12) at x=36, vertically centred, `text_primary` (inactive `text_secondary`)
+- [ ] Caption buttons: 10 px line-drawn glyphs at 1 px stroke (`THEME_SIZE_CAPTION_GLYPH`); maximized window shows the restore glyph
+- [ ] Hover fill: close = `caption_close_hover` (press `caption_close_pressed`) with a white glyph; min/max = `subtle_fill_hover` (press `subtle_fill_pressed`)
 - [ ] Click routing: close button → `wm_destroy_window()`; min → `wm_minimize()`; max/restore → `wm_maximize()` or `wm_restore()`
 - [ ] Resize cursor: confirm `wm_get_cursor_context()` handles all 8 directions at `WM_RESIZE_MARGIN` px
-- [ ] Drop shadow: `gfx_drop_shadow(screen_surface, win_x-4, win_y-4, win_w+8, win_h+8, 8, WM_CORNER_RADIUS, 0, 4, theme_get()->shadow)` in compositor for focused window
-- [ ] Window chrome to `docs/design/shell.md#window-chrome`: radius 8 (today `WM_CORNER_RADIUS` is 6), active/inactive elevation, 46 px caption buttons with 10 px glyphs, close hover `#C42B1C`
+- [ ] Drop shadow from the elevation tokens: `THEME_ELEV_WINDOW_ACTIVE_Y/_BLUR/_ALPHA` (16/32/94) for the focused window, `THEME_ELEV_WINDOW_INACTIVE_*` (8/16/48) for the rest; corner radius `THEME_RADIUS_WINDOW`; none when maximized
+- [ ] Window chrome to `docs/design/shell.md#window-chrome`: radius 8 (today `WM_CORNER_RADIUS` is 6), active/inactive elevation, 46 px caption buttons with 10 px glyphs, close hover `caption_close_hover`
   - Replace the `WM_COLOR_*` literals in `include/desktop/wm.h` with `THEME_*` tokens
 - [ ] Commit: `"wm: decorations -- Mica titlebar, Fluent chrome buttons, hover states, drop shadow"`
 
 ## 3. Snap Layouts `[Sonnet]`
 
-Hover maximize button → 4-zone layout popup (50/50 LR, 50/50 TB, 66/33 wide-narrow, 33/33/33). Click zone → snap. Win+← snap left half, Win+→ right half, Win+↑ maximize, Win+↓ restore/minimize. Edge-drag preview: semi-transparent zone overlay while dragging near screen edge.
+**Design:** [`shell.md#snap-layouts`](../../docs/design/shell.md#snap-layouts)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-01 §3`, which is superseded there so the shell has one implementation.
+
+Per `docs/design/shell.md#snap-layouts`: hovering the maximize button for `THEME_MOTION_SNAP_HOVER_DELAY_MS` (500), or pressing Win+Z, opens a menu-acrylic flyout below the button with SIX layouts: halves, 2/3 + 1/3, thirds, quarters, 1/2 + two quarters, 1/4 + 1/2 + 1/4. Each layout is a `THEME_SIZE_SNAP_FLYOUT_TILE` (72) wide miniature whose zones are `radius.control` rectangles in `control_fill`; the hovered zone fills with `accent`. Click zone → snap. Win+← left half, Win+→ right half, Win+↑ maximize, Win+↓ restore/minimize. Dragging a window to a screen edge previews the zone as a translucent accent-tinted rectangle with `THEME_RADIUS_WINDOW`.
 
 **Files:** `src/desktop/wm_snap.c` (new), `include/desktop/wm.h` (extend)
 
 > [!NOTE]
-> Snap layout popup: when mouse enters the maximize button rect for > 300 ms (hover timer same as tooltip): create a borderless overlay window at z_order=9999 showing 4 zones as colored rectangles (120×80 px popup, 4 zone cells each 56×36 px with 4 px gap). Zone rects (usable area = screen minus taskbar): SNAP_LR_LEFT=`{0,0, uw/2, uh}`, SNAP_LR_RIGHT=`{uw/2,0, uw/2, uh}`, SNAP_WIDE=`{0,0, uw*2/3, uh}`, SNAP_NARROW=`{uw*2/3,0, uw/3, uh}`, SNAP_TOP=`{0,0, uw, uh/2}`, SNAP_BOTTOM=`{0,uh/2, uw, uh/2}`. `wm_snap(handle, zone_rect)`: save current rect; `wm_move/resize`; set `WM_FLAG_SNAPPED`; `wm_anim_snap(handle, side)`. Keyboard: register Win+←/→/↑/↓ in hotkey table (§5); dispatch to `wm_snap()` or `wm_maximize/restore`. Edge-drag preview: in `wm_handle_mouse()` while dragging, if cursor within 8 px of screen edge: render semi-transparent zone highlight; on drop → `wm_snap()`.
+> Snap layout flyout: when the pointer stays over the maximize button for `THEME_MOTION_SNAP_HOVER_DELAY_MS` (500), or on Win+Z: create a borderless menu-acrylic overlay (radius 8, `THEME_ELEV_FLYOUT_*`) at z_order=9999 below the button, laid out as a 3 x 2 grid of 72 px layout tiles with 8 px gaps and 12 px padding. Zones use the work area (screen minus the 48 px taskbar): halves, 2/3 + 1/3, thirds, quarters, 1/2 + two quarters, 1/4 + 1/2 + 1/4 (`snap_layout_t` table of zone rects in work-area fractions). `wm_snap(handle, zone_rect)`: save current rect; `wm_move/resize`; set `WM_FLAG_SNAPPED`; `wm_anim_snap(handle, zone_rect)`. Keyboard: register Win+←/→/↑/↓ and Win+Z in the hotkey table (§5).
 
 - [ ] `void wm_snap(int handle, int32_t zx, int32_t zy, uint32_t zw, uint32_t zh)` in `wm_snap.c`: save rect; move+resize; set `WM_FLAG_SNAPPED`; animate
-- [ ] Snap layout popup: hover timer on maximize button; borderless overlay window; 4 zone cells; click zone → `wm_snap(handle, zone_rect)`; mouse-leave → close popup
-- [ ] Edge-drag preview: in `wm_handle_mouse()` drag path: if `mx < 8` → highlight left-half zone; `mx > fb_w - 8` → right-half; `my < 8` → maximize zone; draw semi-transparent `gfx_fill_rect_alpha` overlay
+- [ ] Snap layout flyout: 500 ms hover on maximize (or Win+Z); six 72 px layout tiles in a 3 x 2 grid; hovered zone `accent`; click zone → `wm_snap(handle, zone_rect)`; mouse-leave or Escape → close
+- [ ] Edge-drag preview: in `wm_handle_mouse()` drag path: if `mx < 8` → highlight left-half zone
+  - `mx > fb_w - 8` → right-half
+  - `my < 8` → maximize zone
+  - draw the zone preview: `accent` at low alpha with a 1 px accent outline and `THEME_RADIUS_WINDOW` corners
 - [ ] `wm_restore()` from snapped state: return to `saved_x/y/w/h` (same as from maximized)
 - [ ] Keyboard snap: Win+← → left half; Win+→ → right half; Win+↑ → `wm_maximize`; Win+↓ → `wm_restore` (registered in §5 hotkey table)
-- [ ] Commit: `"wm: snap layouts -- 4-zone hover popup, Win+arrow keyboard snap, edge-drag preview"`
+- [ ] Commit: `"wm: snap layouts -- six-layout flyout, Win+Z and Win+arrow keyboard snap, edge-drag preview"`
 
 ## 4. Desktop Icons `[Sonnet]`
 
-`struct desktop_icon` (name, path, icon_id, x, y). Load from `C:\Users\Default\Desktop\` at startup via `vfs_readdir()`. Draw icon (48 px) + label below. Single-click select, double-click launch via `task_create_user`. Drag to reposition with grid snap (16 px). Right-click → context menu (TODO-07). Registry persistence for icon positions.
+**Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-05 §1 and TODO-06 §1, §3, §4`, which is superseded there so the shell has one implementation.
+
+`struct desktop_icon` (name, path, icon_id, x, y). Load from `C:\Users\Default\Desktop\` at startup via `vfs_readdir()`. Per `docs/design/shell.md#desktop`: icons sit in a column-major grid from the top-left, `THEME_SIZE_DESKTOP_MARGIN` (8) from the screen edges, in `THEME_SIZE_DESKTOP_CELL_WIDTH` x `THEME_SIZE_DESKTOP_CELL_HEIGHT` (76 x 86) cells; each draws a `THEME_SIZE_DESKTOP_ICON` (48) icon 6 px from the top of the cell and a two-line caption label in `desktop_label` with the `desktop_label_shadow` shadow. Hover: 12% white fill + 16% white 1 px stroke; selection: `selection_fill` + `selection_stroke`; radius 4. Single-click select, double-click launch via `task_create_user`. Drag to reposition snaps to the 76 x 86 cell grid. Right-click → context menu (TODO-07). Registry persistence for icon positions.
 
 **Files:** `src/desktop/desktop_icons.c` (new), `include/desktop/desktop_icons.h` (new), `src/desktop/desktop.c` (extend)
 
 > [!NOTE]
-> `struct desktop_icon { char name[128]; char path[256]; uint32_t icon_id; int32_t x, y; uint8_t selected; }`. Max 64 icons. Load: `vfs_readdir("C:\\Users\\Default\\Desktop\\", entries[], &count)`; for each entry: look up icon from `icon_store` by file extension (`.exe`→app icon, `.txt`→document icon, etc.); default position: grid layout 80×80 px starting from top-left. Draw: `icon_store_draw(icon_id, 48, icon_cx, icon_y)` then `gfx_draw_string(name, label_x, label_y, ...)` with `theme_get()->foreground`; selection: `gfx_fill_rect_alpha(sel_rect, theme_get()->selection, 100)`. Launch: `task_create_user(entry_point, name)` -- for now: `sys_exec(path)` wrapper. Registry: `HKCU\Software\Impossible\Shell\Desktop\Icons\{name}\X` + `Y` DWORD; read at load, write on drag-drop.
+> `struct desktop_icon { char name[128]; char path[256]; uint32_t icon_id; int32_t col, row; uint8_t selected; }`. Max 64 icons. Load: `vfs_readdir("C:\\Users\\Default\\Desktop\\", entries[], &count)`; for each entry: look up icon from `icon_store` by file extension (`.exe`→app icon, `.txt`→`text_file`, etc.); default position: next free cell in column-major order (x = 8 + col*76, y = 8 + row*86, rows per column = (screen_h - 48 - 16) / 86). Draw: `icon_store_draw(icon_id, 48, cell_x + 14, cell_y + 6)` then the caption label centred below in `desktop_label` with a `desktop_label_shadow` shadow; selection: `selection_fill` + `selection_stroke` rect with radius 4. Launch: `task_create_user(entry_point, name)` -- for now: `sys_exec(path)` wrapper. Registry: `HKCU\Software\Impossible\Desktop\IconPositions` stores `col,row` per name.
 
 - [ ] `struct desktop_icon` + `desktop_icon_t` + max-64 array in `desktop_icons.c`
 - [ ] `void desktop_icons_init(void)` -- `vfs_readdir("C:\\Users\\Default\\Desktop\\", ...)`; populate icon array; read Registry positions; called from `desktop_init()`
 - [ ] `void desktop_icons_draw(gfx_surface_t *s)` -- draw all icons over wallpaper; called from `desktop_draw()` before `wm_composite()`
 - [ ] Mouse: single-click → select (clear others); double-click → `desktop_icon_launch()`; click on empty → deselect all
 - [ ] `desktop_icon_launch(icon)`: `task_create_user(NULL, icon->path)` -- spawns process with `icon->path` as argv[0]
-- [ ] Drag: mouse-down on icon → set `dragging = 1`; mouse-move → update `icon->x/y` + redraw; mouse-up → grid snap `x = (x/16)*16`, `y = (y/16)*16`; save to Registry
-- [ ] Grid snap on initial layout: columns from left `100 + col*80`; rows from top `100 + row*80`
-- [ ] Commit: `"desktop: icons -- load from Desktop/, draw/select/launch, drag+16px grid snap, Registry"`
+- [ ] Drag: mouse-down on icon → set `dragging = 1`; mouse-move → update `icon->x/y` + redraw; mouse-up → snap to the nearest free 76 x 86 cell (`col = (x - 8 + 38) / 76`, `row = (y - 8 + 43) / 86`); save `col,row` to Registry
+- [ ] Initial layout: column-major from the top-left, `x = 8 + col*76`, `y = 8 + row*86`, filling each column down to the taskbar before starting the next
+- [ ] Commit: `"desktop: icons -- load from Desktop/, 76x86 column-major grid, select/launch, drag cell snap, Registry"`
 
 ## 5. Keyboard Shortcuts & Task Switching `[Sonnet]`
 
-Global hotkey dispatch table. Win+D (show-desktop toggle), Win+M (minimize all), Win+Shift+M (restore all), Win+L (lock screen stub), Alt+F4 (close focused), Win+←/→/↑/↓ (snap), Win+number (launch/focus pinned taskbar app by position).
+**Design:** [`shell.md#alttab`](../../docs/design/shell.md#alttab)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-01 §4`, which is superseded there so the shell has one implementation.
+
+Global hotkey dispatch table. Win+D (show-desktop toggle), Win+M (minimize all), Win+Shift+M (restore all), Win+L (lock screen stub), Alt+F4 (close focused), Win+←/→/↑/↓ (snap), Win+Z (snap layouts), Win+number (launch/focus pinned taskbar app by position).
 
 **Files:** `src/desktop/hotkeys.c` (new), `include/desktop/hotkeys.h` (new), `src/desktop/desktop.c` (extend keyboard handler)
 
@@ -137,7 +160,7 @@ Global hotkey dispatch table. Win+D (show-desktop toggle), Win+M (minimize all),
 - [ ] `struct hotkey_entry` + `hotkey_table[32]` + `hotkeys_init()` in `hotkeys.c`
 - [ ] Win+D toggle: minimize-all + set `g_show_desktop`; second press restore from saved list
 - [ ] Win+M / Win+Shift+M: iterate `wm_state.windows[]`; minimize/restore
-- [ ] Win+L: `lock_screen()` stub -- clear framebuffer to black, draw "Press Enter to unlock" text
+- [ ] Win+L: `lock_screen()` owned by `09-desktop-shell/TODO-06 §8` (`docs/design/shell.md#lock-and-sign-in-screens`); until it lands, log `[hotkeys] lock requested` and do nothing (no placeholder screen)
 - [ ] Alt+F4: `wm_destroy_window(wm_get_focused())`
 - [ ] Win+←/→/↑/↓: dispatch to `wm_snap()` / `wm_maximize()` / `wm_restore()` from §3
 - [ ] Win+1..9: stub for taskbar pinned apps (no-op until TODO-08 taskbar provides the pin list)
@@ -146,24 +169,34 @@ Global hotkey dispatch table. Win+D (show-desktop toggle), Win+M (minimize all),
 
 ## 6. Alt+Tab Task Switcher `[Opus]`
 
-Centered overlay panel with 96×64 px window thumbnails from compositor back buffer. Focused thumbnail enlarged + drop shadow. Cycle with Alt+Tab / Alt+Shift+Tab. Release Alt → focus selected window. Animate overlay in/out 150 ms fade.
+**Design:** [`shell.md#alttab`](../../docs/design/shell.md#alttab)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-01 §4`, which is superseded there so the shell has one implementation.
+
+Per `docs/design/shell.md#alttab`: a row of window thumbnails centred on screen over a menu-acrylic panel (radius 8, `THEME_ELEV_START_*`, 24 px padding). Each thumbnail is `THEME_SIZE_ALT_TAB_THUMB_HEIGHT` (158) tall, width by aspect ratio, `radius.control`, with the app icon (16) and title (caption style) above it; the selected window gets a 2 px `focus_outer` ring 4 px outside the thumbnail (no enlarging). Appears after 100 ms of Alt+Tab held; cycle with Tab / Shift+Tab; Escape cancels; release Alt → focus selected window. Fade in/out over `THEME_MOTION_FAST_MS`.
 
 **Files:** `src/desktop/alttab.c` (new), `include/desktop/alttab.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` -- the Alt+Tab switcher requires capturing per-window screenshots from the compositor back buffer, which has no prior implementation in Impossible OS. **Thumbnail capture**: in `wm_composite()`, after compositing each visible window: `memcpy(win->thumbnail, framebuffer_region, 96*64*4)` scaled from full window via `image_scale()`; store in `win->thumbnail[96*64]` buffer (allocated via `pmm_alloc_contiguous(96*64*4)` in `wm_create_window()`). Update only if window is not minimized and has been dirty since last thumbnail. **Overlay panel**: `wm_create_window(NULL, panel_x, panel_y, panel_w, 120, WM_FLAG_VISIBLE)` at z_order=20000; acrylic blur background; iterate visible non-minimized windows; draw thumbnails in a row; focused thumbnail scales to 108×72 with a drop shadow. Fade: `gfx_tween_start(&overlay_fade, 0, 255, 150, GFX_EASE_OUT_QUAD)`; `anim_mgr_add()`. Alt release detection: in keyboard handler, when `MOD_ALT` released while switcher open: `wm_focus_window(selected_handle)`; close overlay. Alt+Shift+Tab cycles backwards.
+> This is `[Opus]` -- the Alt+Tab switcher requires capturing per-window screenshots from the compositor back buffer, which has no prior implementation in Impossible OS. **Thumbnail capture**: in `wm_composite()`, after compositing each visible window: scale the window surface to 158 px tall (width by aspect ratio, capped at 280) via `image_scale()` into `win->thumbnail` (allocated via `pmm_alloc_contiguous(280*158*4)` in `wm_create_window()`). Update only if window is not minimized and has been dirty since last thumbnail. **Overlay panel**: `wm_create_window(NULL, panel_x, panel_y, panel_w, 120, WM_FLAG_VISIBLE)` at z_order=20000; acrylic blur background; iterate visible non-minimized windows; draw thumbnails in a row; the selected thumbnail keeps its 158 px size and gets a 2 px `focus_outer` ring 4 px outside it (`docs/design/shell.md#alttab`). Fade: `gfx_tween_start(&overlay_fade, 0, 255, 150, GFX_EASE_OUT_QUAD)`; `anim_mgr_add()`. Alt release detection: in keyboard handler, when `MOD_ALT` released while switcher open: `wm_focus_window(selected_handle)`; close overlay. Alt+Shift+Tab cycles backwards.
 
-- [ ] Add `uint32_t *thumbnail; uint8_t thumb_dirty;` fields to `struct wm_window`; allocate `pmm_alloc_contiguous(96*64*4)` in `wm_create_window()`
-- [ ] In `wm_composite()`: after compositing a dirty window, update its thumbnail via `image_scale(&thumb, &win_surface, 96, 64)`; set `thumb_dirty = 0`
+- [ ] Add `uint32_t *thumbnail; uint16_t thumb_w; uint8_t thumb_dirty;` fields to `struct wm_window`; allocate `pmm_alloc_contiguous(280*158*4)` in `wm_create_window()`
+- [ ] In `wm_composite()`: after compositing a dirty window, update its thumbnail via `image_scale(&thumb, &win_surface, thumb_w, 158)` (`thumb_w` from the aspect ratio, max 280); set `thumb_dirty = 0`
 - [ ] `void alttab_open(void)`: build visible window list; compute panel dimensions; create overlay window at z_order=20000; populate with thumbnails; `anim_mgr_add()` fade-in tween; `g_alttab_open = 1`
-- [ ] `void alttab_cycle(int direction)`: `selected = (selected + direction + count) % count`; redraw overlay with enlarged selected thumbnail
+- [ ] `void alttab_cycle(int direction)`: `selected = (selected + direction + count) % count`; redraw overlay with the focus ring on the selected thumbnail
 - [ ] `void alttab_confirm(void)`: `wm_focus_window(windows[selected])`; `alttab_close()`
 - [ ] `void alttab_close(void)`: `anim_mgr_add()` fade-out tween; `on_complete` → `wm_destroy_window(overlay_wh)` + free thumbnails; `g_alttab_open = 0`
-- [ ] Hotkey wiring: in `hotkeys.c`: `MOD_ALT + Tab scancode (0x0F)` → `alttab_open()` or `alttab_cycle(+1)`; `MOD_ALT + MOD_SHIFT + Tab` → `alttab_cycle(-1)` ; Alt release → `alttab_confirm()`
-- [ ] Overlay layout: thumbnails in a row, 112 px apart; focused: 108×72 + 4 px `gfx_drop_shadow`; panel width = `min(count * 112 + 32, screen_w - 64)`; centered horizontally + vertically
+- [ ] Hotkey wiring: in `hotkeys.c`: `MOD_ALT + Tab scancode (0x0F)` → `alttab_open()` (shown after 100 ms held) or `alttab_cycle(+1)`; Escape → cancel; `MOD_ALT + MOD_SHIFT + Tab` → `alttab_cycle(-1)` ; Alt release → `alttab_confirm()`
+- [ ] Overlay layout: thumbnails 158 px tall in a row, 16 px apart, icon + title row (24 px) above each
+  - selected: 2 px `focus_outer` ring 4 px outside
+  - panel padding 24
+  - panel width = `min(sum + 48, screen_w - 64)`, wrapping to more rows when needed
+  - centred
 - [ ] Commit: `"desktop: Alt+Tab switcher -- compositor thumbnails, overlay panel, fade, focus on release"`
 
 ## 7. Drag and Drop `[Opus]`
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
 Intra-desktop: drag desktop icon to reposition (§4 extends). File drag from File Manager to desktop (create shortcut/copy). Window title-bar drag → move (exists, verify). Window edge/corner drag → resize (exists, verify). Visual drag ghost: semi-transparent copy of the dragged element rendered at cursor position.
 
@@ -182,6 +215,10 @@ Intra-desktop: drag desktop icon to reposition (§4 extends). File drag from Fil
 - [ ] Commit: `"desktop: drag+drop -- ghost window, file drag to desktop, drag_start/end/tick protocol"`
 
 ## 8. Compositor Performance `[Opus]`
+
+**Design:** [`shell.md#materials`](../../docs/design/shell.md#materials)
+
+**Owner of:** the work planned in `06-desktop-foundation/TODO-02 §1, §3, §4`, which is superseded there so the shell has one implementation.
 
 Dirty-rect union: only re-composite screen regions touched by changed windows. Frame skip: if no dirty rects and no active animations (`!anim_mgr_any_active()`), skip `wm_composite()` entirely. Measure frame time: warn if > 16 ms (60 fps threshold) to serial.
 
@@ -209,11 +246,11 @@ Dirty-rect union: only re-composite screen regions touched by changed windows. F
 | ⭐  | Feature                     | 🪟 Win11                                                              | 🐧 Linux                                                           | 🚀 Impossible OS                                                               |
 | --- | --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | 💎  | Min/max/restore             | ✅ DWM animated; `WM_SYSCOMMAND SC_MINIMIZE/MAXIMIZE/RESTORE`; window | ✅ Mutter/KWin animated; window state via                          | ⬜ §1 `WM_FLAG_MINIMIZED/MAXIMIZED`, `saved_x/y/w/h`, Registry `{title}\State` |
-| 💎  | Mica titlebar               | ✅ DWM Mica material; `DWMWA_USE_IMMERSIVE_DARK_MODE`; Fluent         | ⚠️ KDE Breeze blur titlebar; GNOME                                 | ⬜ §2 -- `gfx_mica()` per window titlebar; Fluent                              |
-| 💎  | Snap layouts                | ✅ Windows 11 Snap Layouts; PowerToys                                 | ✅ KWin tiling; GNOME extension snap;                              | ⬜ §3 -- hover-timer popup at maximize button                                  |
-| 💎  | Desktop icons               | ✅ Windows desktop icons; drag reposition;                            | ✅ GNOME/KDE desktop icons; drag reposition;                       | ⬜ §4 -- `vfs_readdir("C:\\Users\\Default\\Desktop\\")`; 16 px grid snap       |
+| 💎  | Mica titlebar               | ✅ DWM Mica material; `DWMWA_USE_IMMERSIVE_DARK_MODE`; Fluent         | ⚠️ KDE Breeze blur titlebar; GNOME                                 | ⬜ §2 -- `gfx_mica()` per window titlebar; 10 px glyph                         |
+| 💎  | Snap layouts                | ✅ Windows 11 Snap Layouts; PowerToys                                 | ✅ KWin tiling; GNOME extension snap;                              | ⬜ §3 -- six-layout flyout, Win+Z                                              |
+| 💎  | Desktop icons               | ✅ Windows desktop icons; drag reposition;                            | ✅ GNOME/KDE desktop icons; drag reposition;                       | ⬜ §4 -- `vfs_readdir("C:\\Users\\Default\\Desktop\\")`; 76 x 86 cell grid     |
 | 💎  | Global hotkeys              | ✅ All these hotkeys built into                                       | ✅ GNOME/KDE global hotkey service; `xbindkeys`/`ydotool`          | ⬜ §5 -- kernel-level `hotkey_table[]` dispatch before focused-window          |
-| 💎  | Alt+Tab                     | ✅ DWM live thumbnails; Alt+Tab overlay;                              | ✅ Mutter/KWin Alt+Tab with live window                            | ⬜ §6 -- compositor thumbnail per window; 96×64                                |
+| 💎  | Alt+Tab                     | ✅ DWM live thumbnails; Alt+Tab overlay;                              | ✅ Mutter/KWin Alt+Tab with live window                            | ⬜ §6 -- compositor thumbnail per window; 158 px tall                          |
 | ⭐  | Drag-and-drop ghost         | ✅ Windows drag ghost (DragDrop COM                                   | ✅ GTK `GtkDragSource`; X11 `XdndEnter`; drag                      | ⬜ §7 -- `⭐` kernel-native: borderless z_order=15000 ghost                    |
 | ⭐  | Compositor dirty-rect union | ✅ DWM dirty-region tracking (hardware-accelerated; GPU               | ✅ Mutter/KWin damage tracking; Wayland `wl_surface.damage_buffer` | ⬜ §8 -- `⭐` software dirty-rect union with                                   |
 
@@ -226,8 +263,8 @@ Dirty-rect union: only re-composite screen regions touched by changed windows. F
 - [ ] Maximize: click maximize button → window fills screen minus 48 px taskbar area; saved rect stored; button changes to ❐ restore icon
 - [ ] Restore: click restore button → window returns to saved size/position with animation
 - [ ] Mica: titlebar shows wallpaper blur tint; focused window brighter than unfocused window
-- [ ] Snap layouts: hover maximize button 300 ms → 4-zone popup appears; click left zone → window snaps to left half; Win+→ snaps to right half
-- [ ] Desktop icons: `C:\Users\Default\Desktop\` with a `.txt` file → icon appears on desktop; double-click → launches process; drag icon 80 px right → snaps to grid; position saved in Registry
+- [ ] Snap layouts: hover maximize button 500 ms (or Win+Z) → six-layout flyout appears; click a left-half zone → window snaps to the left half; Win+→ snaps to right half
+- [ ] Desktop icons: `C:\Users\Default\Desktop\` with a `.txt` file → icon appears on desktop; double-click → launches process; drag icon one cell right → snaps to the next 76 x 86 cell; position saved in Registry
 - [ ] Win+D: all windows minimize; second Win+D → all restore; serial log shows `[hotkeys] Win+D: show-desktop toggle`
 - [ ] Alt+Tab: 3 windows open; Alt+Tab → overlay appears with 3 thumbnails; Tab cycles selection; release Alt → focus moves to selected window; overlay fades out
 - [ ] File drag from File Manager (future): `drag_start()` with `DRAG_FILES`; ghost window follows cursor; drop on desktop → shortcut created

@@ -251,6 +251,8 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ## 5. Vectored Exception Handling (VEH) `[Opus]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#status-colours`](../../docs/design/controls.md#status-colours)
+
 > Novel exception dispatch chain. No prior Impossible OS VEH exists. Kernel delivers
 > exceptions via `NtRaiseException`; ntdll dispatches VEH → SEH → VCH (Vectored Continue
 > Handlers, walked when dispatch continues execution -- via VEH or a frame handler -- before

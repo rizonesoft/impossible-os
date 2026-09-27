@@ -155,9 +155,11 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ## 4. Toolbar + Menus `[Sonnet]`
 
+**Design:** [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#button`](../../docs/design/controls.md#button), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
+
 **Source file:** `src/apps/wordpad/wordpad_ui.c`
 
-- [ ] **Format toolbar** (40 px fixed height):
+- [ ] **Format command bar** (`THEME_SIZE_COMMAND_BAR_HEIGHT` (48) per `docs/design/shell.md#app-window-layout`; Bold/Italic/Underline are toggle buttons per `docs/design/controls.md#button`):
   - [ ] Font family `CTRL_COMBOBOX` (120 px wide): lists all loaded TTF fonts from `font_mgr_list()`; change → `doc_apply_char_fmt(doc, sel, {.font_name=selected}, MASK_FONT)`
   - [ ] Font size `CTRL_COMBOBOX` (60 px): common sizes 8/9/10/11/12/14/16/18/20/24/28/36/48/72 + typed; change → apply `font_size_pt`
   - [ ] `[B]` (Ctrl+B), `[I]` (Ctrl+I), `[U]` (Ctrl+U), `[S]` (Ctrl+S for strikethrough) toggle buttons -- show pressed state when cursor is in formatted run; click → toggle on selection
@@ -171,7 +173,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
   - [ ] `View`: Word Wrap (toggle), Ruler (toggle), Status Bar (toggle), Zoom submenu
   - [ ] `Insert`: Date/Time (`time_now()` → formatted string `YYYY-MM-DD HH:MM` inserted at cursor), horizontal rule (insert `─────` string)
   - [ ] `Format`: Font dialog (extended version of toolbar controls in a dialog), Paragraph dialog (indent + spacing + alignment fields), Bullets (toggle simple bullet list: prepend `• ` to each selected para)
-- [ ] **Status bar** (20 px): `Page {n} of {total}` left; `{cursor_line}, {cursor_col}` center; `{encoding}` right
+- [ ] **Status bar** (`THEME_SIZE_STATUS_BAR_HEIGHT` (24), caption style): `Page {n} of {total}` left; `{cursor_line}, {cursor_col}` center; `{encoding}` right
 
 ---
 

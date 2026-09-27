@@ -59,6 +59,8 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 
 ## 1. Win32 Shell Icon Index Map `[Sonnet]`
 
+**Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons), [`icons.md#the-set`](../../docs/design/icons.md#the-set)
+
 `shell32_icon_map[]` and `imageres_icon_map[]` tables mapping Windows shell32.dll / imageres.dll icon indices to `system_icon_t`. `icon_t *win32_shell_icon(int dll, int index)`. Used by `LoadIcon(NULL, MAKEINTRESOURCE(...))` and any Win32 app that hardcodes shell icon indices.
 
 **Files:** `src/desktop/win32/win32_icons.c` (new), `include/desktop/win32/win32_icons.h` (new)
@@ -185,6 +187,8 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 
 ## 7. USER32 Cursor, Icon & System Metrics `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
+
 `LoadCursor(NULL, IDC_ARROW/IDC_WAIT/IDC_IBEAM/IDC_HAND/IDC_SIZEALL/etc.)` → `CURSOR_*` enum. `SetCursor(hCursor)` → `cursor_set_shape()`. `LoadIcon(NULL, IDI_*)` → `win32_shell_icon` lookup. `GetSystemMetrics(SM_*)` → WM/display state.
 
 **Files:** `src/desktop/win32/user32_sys.c` (new), `include/desktop/win32/user32.h` (extend)
@@ -197,12 +201,15 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `HCURSOR SetCursor(HCURSOR hCursor)` -- `cursor_set_shape((cursor_shape_t)hCursor)`; return previous
 - [ ] `HICON LoadIconA(void *hInst, uintptr_t icon_name)` -- `icon_name` is `IDI_*`; call `win32_idi_to_sysicon()`; return `icon_bitmap_t *` as `HICON`
 - [ ] `int GetSystemMetrics(int nIndex)` -- dispatch table for SM_CX/CYSCREEN, SM_CYCAPTION, SM_CXBORDER, SM_CXFULLSCREEN, SM_CYFULLSCREEN; default: return 0
+  - Values come from the design tokens, DPI-scaled: `SM_CYCAPTION` = `DPI_SCALE(THEME_SIZE_CAPTION_HEIGHT)` (32), `SM_CXBORDER` = `THEME_SIZE_WINDOW_BORDER` (1), `SM_CYFULLSCREEN` = screen height minus `THEME_SIZE_TASKBAR_HEIGHT` (48) and the caption (`docs/design/shell.md#window-chrome`)
 - [ ] `HWND GetDesktopWindow(void)` -- return 0 (desktop is not a real window in our model; stub returns 0)
 - [ ] `HWND GetForegroundWindow(void)` → `wm_get_focused_handle()`
 - [ ] `int SetForegroundWindow(HWND hWnd)` → `wm_focus_window(hWnd)`
 - [ ] Commit: `"user32: cursor/icon/metrics -- LoadCursor/SetCursor IDC_* map, LoadIcon IDI_*, GetSystemMetrics SM_*"`
 
 ## 8. USER32 Dialogs `[Sonnet]`
+
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
 `MessageBoxA(hWnd, text, caption, uType)` → `MessageBox()` (TODO-05). `GetOpenFileNameA`/`GetSaveFileNameA` (OPENFILENAME struct) → `dialog_file_open/save`. `ChooseColorA` (CHOOSECOLOR struct) → `dialog_color`.
 

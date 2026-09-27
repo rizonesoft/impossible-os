@@ -11,7 +11,7 @@ title: "TODO-11 -- Control Panel & Settings"
 > **Goal:** Build the Control Panel -- a Windows CPL-compatible settings hub that ties all underlying APIs together (theme, DPI, network, time, user accounts, audio, power) into one discoverable place, with a Win32-compatible `cpl.h` that lets Win32 `.cpl` applets run natively.
 
 > [!IMPORTANT]
-> **Already exists**: `cpuid_get()->brand` (49-char brand string) + `cpuid_get()->vendor` in `cpuid.h`. `pmm_get_total_frames()` in `pmm.h` (total RAM = frames × 4096). `acpi_get_cpu_count()` + `smp_cpu_count()`. `uptime()` → uint64 seconds in `timer.h`. `vfs_readdir` for `.cpl` file scanning. `registry_get/set` for all per-applet settings. `icon_draw_scaled()` for sidebar icons. **Forward deps (must exist before respective applet)**: `wallpaper_set()` (TODO-07 §2), `g_dpi_pct`/`DPI_SCALE` (TODO-07 §5), `CTRL_SLIDER` (TODO-04 §2), `CTRL_CHECKBOX` (TODO-04 §2), `ntp_sync()` (TODO-04 §1 scheduled task), `auth_create/delete_user/change_password()` (TODO-06 §1), `firewall_enable/rule_add()` (07-networking/TODO-05), `audio_set_volume()` (future audio TODO), `shortcut_execute()` (TODO-02 §5). **Missing**: `cpl.h` entirely, `src/apps/control/`, all applet `.c` files. Complete sections in order: CPL framework → host app → core applets → additional applets → settings search.
+> **Already exists**: `cpuid_get()->brand` (49-char brand string) + `cpuid_get()->vendor` in `cpuid.h`. `pmm_get_total_frames()` in `pmm.h` (total RAM = frames × 4096). `acpi_get_cpu_count()` + `smp_cpu_count()`. `uptime()` → uint64 seconds in `timer.h`. `vfs_readdir` for `.cpl` file scanning. `registry_get/set` for all per-applet settings. `icon_draw_scaled()` for sidebar icons. **Forward deps (must exist before respective applet)**: `wallpaper_set()` (08-graphics-ui/TODO-09 §3), `g_dpi_pct`/`DPI_SCALE` (08-graphics-ui/TODO-09 §4), `CTRL_SLIDER` (08-graphics-ui/TODO-05 §3), `CTRL_CHECKBOX` (08-graphics-ui/TODO-05 §1), `ntp_sync()` (TODO-04 §1 scheduled task), `auth_create/delete_user/change_password()` (TODO-06 §1), `firewall_enable/rule_add()` (07-networking/TODO-05), `audio_set_volume()` (future audio TODO), `shortcut_execute()` (TODO-02 §5). **Missing**: `cpl.h` entirely, `src/apps/control/`, all applet `.c` files. Complete sections in order: CPL framework → host app → core applets → additional applets → settings search.
 
 ## Inputs
 
@@ -24,9 +24,9 @@ title: "TODO-11 -- Control Panel & Settings"
 - `include/icon_store.h` -- `icon_draw_scaled()` -- sidebar applet icons
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_circle()`, accent color wheel in `desk.cpl`
 - `include/font_mgr.h` -- `ttf_draw_string()`, `ttf_measure_width()` -- all applet labels
-- `include/desktop/controls.h` (TODO-04 §2) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- all applets
+- `include/desktop/controls.h` (08-graphics-ui/TODO-05) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- all applets
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_title()` -- §2 host window + applet sub-windows
-- `include/desktop/desktop.h` -- `wallpaper_set()` (TODO-07 §2 fwd) -- `desk.cpl`
+- `include/desktop/desktop.h` -- `wallpaper_set()` (08-graphics-ui/TODO-09 §3 fwd) -- `desk.cpl`
 - `include/kernel/auth.h` (TODO-06) -- `auth_create/delete_user/change_password/list_users()` -- `nusrmgr.cpl`
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §2` -- `wallpaper_set()` needed for `desk.cpl`
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- `g_dpi_pct` + DPI hot-change for `desk.cpl`
@@ -38,24 +38,26 @@ title: "TODO-11 -- Control Panel & Settings"
 ## Outcome
 
 - Win32-compatible `include/cpl.h` with `CPL_*` messages, `NEWCPLINFO`, `CPlApplet` function pointer.
-- Control Panel host app (`src/apps/control/`) with category sidebar + applet grid; scans `C:\Impossible\System32\` for `.cpl` files; Win+I shortcut.
+- Control Panel host app (`src/apps/control/`) in the Settings frame (280 px nav pane + settings rows, `docs/design/shell.md#settings-and-control-panel-frame`); scans `C:\Impossible\System32\` for `.cpl` files; Win+I shortcut.
 - 9 core applets: `sysdm`, `desk`, `ncpa`, `mmsys`, `timedate`, `powercfg`, `main` (mouse), `intl`, `taskbar.cpl`.
 - 4 additional applets: `nusrmgr`, `appwiz`, `firewall`, `datetime` alias.
 - Settings search bar: in-process name+description match, Enter opens first result.
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                      | Depends On                                                                              | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 CPL framework -- `cpl.h`, `CPL_*` messages, `NEWCPLINFO`, `CPlApplet` fn ptr                  | no deps (pure interface definition)                                                     |  [ ]   |
-| 💎  |   2   | §2 Host app -- `src/apps/control/`, category sidebar, applet grid, `.cpl` scan, Win+I            | §1 CPL framework; `vfs_readdir`, `icon_draw_scaled`, `wm_create_window` (exist)        |  [ ]   |
-| 💎  |   3   | §3 Core applets -- `sysdm/desk/ncpa/mmsys/timedate/powercfg/main/intl/taskbar.cpl`               | §1 CPL; §2 host; all forward dep APIs (see notes per applet)                           |  [ ]   |
-| 💎  |   4   | §4 Additional applets -- `nusrmgr/appwiz/firewall/datetime.cpl`                                  | §1 CPL; §2 host; TODO-06 auth (nusrmgr); TODO-05-firewall.md (firewall.cpl)           |  [ ]   |
-| ⭐  |   5   | §5 Settings search -- search bar, in-process name+desc filter, Enter opens first match           | §2 host (applet registry in memory); all applets registered                             |  [ ]   |
+| ⭐  | Order | Deliverable                                                                            | Depends On                                                                      | Status |
+| --- | :---: | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 CPL framework -- `cpl.h`, `CPL_*` messages, `NEWCPLINFO`, `CPlApplet` fn ptr        | no deps (pure interface definition)                                             |  [ ]   |
+| 💎  |   2   | §2 Host app -- Settings frame: 280 px nav pane, settings rows, `.cpl` scan, Win+I      | §1 CPL framework; `vfs_readdir`, `icon_draw_scaled`, `wm_create_window` (exist) |  [ ]   |
+| 💎  |   3   | §3 Core applets -- `sysdm/desk/ncpa/mmsys/timedate/powercfg/main/intl/taskbar.cpl`     | §1 CPL; §2 host; all forward dep APIs (see notes per applet)                    |  [ ]   |
+| 💎  |   4   | §4 Additional applets -- `nusrmgr/appwiz/firewall/datetime.cpl`                        | §1 CPL; §2 host; TODO-06 auth (nusrmgr); TODO-05-firewall.md (firewall.cpl)     |  [ ]   |
+| ⭐  |   5   | §5 Settings search -- search bar, in-process name+desc filter, Enter opens first match | §2 host (applet registry in memory); all applets registered                     |  [ ]   |
 
 ---
 
 ## 1. CPL Framework `[Sonnet]`
+
+**Design:** n/a -- the Win32 CPL message and struct contract; the visible host and applets are §2 and §3
 
 `include/cpl.h` matching Windows `cpl.h`: `CPL_INIT/GETCOUNT/INQUIRE/NEWINQUIRE/DBLCLK/STOP/EXIT` messages; `NEWCPLINFO` struct; `CPlApplet` function pointer; Win32-compatible flag values.
 
@@ -72,32 +74,36 @@ title: "TODO-11 -- Control Panel & Settings"
 
 ## 2. Control Panel Host App `[Sonnet]`
 
-`src/apps/control/control.c`; two-panel layout (category sidebar + applet grid). Scan `C:\Impossible\System32\` for `.cpl` files + compiled-in applets. Group by category. `CPL_DBLCLK` → render UI. Win+I opens.
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
+`src/apps/control/control.c`; the Settings and Control Panel frame of `docs/design/shell.md#settings-and-control-panel-frame`: a `THEME_SIZE_NAV_PANE_WIDTH` (280) navigation pane (user card, search box, `THEME_SIZE_NAV_ITEM_HEIGHT` (36) category items with the 3 x 16 accent pill on the selected one) beside the content (page title in the title style, then applets as settings rows per `controls.md#cards-and-settings-rows`). Scan `C:\Impossible\System32\` for `.cpl` files + compiled-in applets. Group by category. `CPL_DBLCLK` → render UI. Win+I opens.
 
 **Files:** `src/apps/control/control.c` (new), `include/apps/control.h` (extend)
 
 > [!NOTE]
-> Window: 900×600 px. Left panel: 200 px category sidebar with category name + icon; click → filter applet grid to that category. Right panel: applet grid (icon + name + description); each applet = 160×100 px cell with `icon_draw_scaled(ICON_SIZE_48)` + `ttf_draw_string()` name + small description. **Categories**: "System", "Personalization", "Network and Internet", "Hardware and Sound", "User Accounts", "Date and Time", "Programs". **Back button**: when an applet is open (showing its UI full-right-panel): click Back → close applet panel; return to grid. **CPL dispatch**: `control_open_applet(idx)`: `applet->fn(hwnd, CPL_DBLCLK, 0, applet->lData)` -- applet renders its own UI into the right panel sub-surface. Each applet gets a `gfx_surface_t *sub` passed as hwnd (cast); it renders to this surface. **Win+I hotkey**: global hotkey table entry (TODO-06 §8) → `control_open()`. **Compiled-in applets**: `g_cpl_entries[]` static array populated at init; `control_scan_cpl_dir()` adds any `.cpl` files found in `C:\Impossible\System32\` by calling `cpl_load_and_run()`. **Keyboard nav**: arrow keys move focus between applet cells; Enter = open; Escape = Back.
+> Window: 980×640 px with the standard chrome. Left: 280 px navigation pane -- user card (avatar + name), search box, then 36 px category items (16 px glyph + label, `radius.control` hover). Right: the category title (28/36), then one settings row per applet (at least `THEME_SIZE_SETTINGS_CARD_MIN_HEIGHT` 64 px: 20 px glyph, name, caption description in `text_secondary`, chevron at the right), rows 4 px apart within a group and 24 px between groups. **Categories**: "System", "Personalization", "Network and Internet", "Hardware and Sound", "User Accounts", "Date and Time", "Programs". **Back button**: when an applet is open (showing its UI full-right-panel): click Back (the arrow left of the page title) → close the applet page; return to the category rows. **CPL dispatch**: `control_open_applet(idx)`: `applet->fn(hwnd, CPL_DBLCLK, 0, applet->lData)` -- applet renders its own UI into the right panel sub-surface. Each applet gets a `gfx_surface_t *sub` passed as hwnd (cast); it renders to this surface. **Win+I hotkey**: global hotkey table entry (TODO-06 §8) → `control_open()`. **Compiled-in applets**: `g_cpl_entries[]` static array populated at init; `control_scan_cpl_dir()` adds any `.cpl` files found in `C:\Impossible\System32\` by calling `cpl_load_and_run()`. **Keyboard nav**: arrow keys move focus between applet cells; Enter = open; Escape = Back.
 
 - [ ] `cpl_entry_t g_cpl_entries[32]` + `g_cpl_count` -- compiled-in + scanned
 - [ ] `void control_init(void)` -- populate `g_cpl_entries` with compiled-in applets + scan dir
-- [ ] `void control_open(void)` -- `wm_create_window(80, 50, 900, 600, "Control Panel", ...)`
-- [ ] `void control_render_sidebar(s, x, y, w, h)` -- category list; active highlight
-- [ ] `void control_render_grid(s, x, y, w, h, category_filter)` -- 160×100 px applet cells; icon + name + desc
+- [ ] `void control_open(void)` -- `wm_create_window(..., 980, 640, "Settings", ...)` with the standard window chrome
+- [ ] `void control_render_nav(s, x, y, w, h)` -- 280 px pane: user card, search box, 36 px category items, accent pill on the selected item
+- [ ] `void control_render_rows(s, x, y, w, h, category_filter)` -- page title + one settings row per applet (glyph, name, description, chevron)
 - [ ] `void control_open_applet(int idx)` -- `CPL_DBLCLK`; render applet's UI sub-surface in right panel
-- [ ] Back button: `g_active_applet = -1`; re-render grid
+- [ ] Back button: `g_active_applet = -1`; re-render the category rows
 - [ ] Win+I hotkey: registered in global hotkey table → `control_open()`
-- [ ] Keyboard nav: arrow keys cycle cells; Enter → `control_open_applet(focused)`; Escape → Back
-- [ ] Commit: `"control: host app -- category sidebar, applet grid, CPL_DBLCLK dispatch, Win+I hotkey, keyboard nav"`
+- [ ] Keyboard nav: arrow keys move between rows; Enter → `control_open_applet(focused)`; Escape → Back
+- [ ] Commit: `"control: settings frame -- 280 px nav pane, settings rows, CPL_DBLCLK dispatch, Win+I hotkey, keyboard nav"`
 
 ## 3. Core Applets `[Sonnet]`
+
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
 Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), `mmsys.cpl` (Sound), `timedate.cpl` (Date/Time), `powercfg.cpl` (Power), `main.cpl` (Mouse), `intl.cpl` (Region), `taskbar.cpl` (Taskbar).
 
 **Files:** `src/apps/control/applets/` (new directory, one `.c` per applet)
 
 > [!NOTE]
-> Each applet is a `.c` file exposing a `CPlApplet_t` function registered in `g_cpl_entries[]`. All use `CTRL_SLIDER`/`CTRL_CHECKBOX`/`CTRL_DROPDOWN` (TODO-04 forward deps) and `registry_get/set` for persistence. Details per applet:
+> Each applet is a `.c` file exposing a `CPlApplet_t` function registered in `g_cpl_entries[]`. All use `CTRL_SLIDER`/`CTRL_CHECKBOX`/`CTRL_DROPDOWN` (08-graphics-ui/TODO-05 forward deps) and `registry_get/set` for persistence. Details per applet:
 >
 > **`sysdm.cpl` -- System Properties**: render OS version (`"Impossible OS 1.0"`), CPU brand (`cpuid_get()->brand`), CPU count (`acpi_get_cpu_count()`), installed RAM (`pmm_get_total_frames() * 4096 / (1024*1024)` MiB), system uptime (`uptime()` → `"Xd Xh Xm"`), hostname (Registry `HKLM\SYSTEM\ComputerName`); "Computer Name" editable text field + Apply.
 >
@@ -115,7 +121,7 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 >
 > **`intl.cpl` -- Region**: date format dropdown (MM/DD/YYYY, DD/MM/YYYY, YYYY/MM/DD); time format dropdown (12h/24h); decimal separator text field (`.` or `,`); thousands separator; currency symbol field; all persist to `HKCU\Control Panel\International\*`.
 >
-> **`taskbar.cpl` -- Taskbar**: height preset dropdown (Small=28/Medium=40/Large=52 px); position dropdown (Bottom/Top/Left/Right); auto-hide `CTRL_CHECKBOX`; all write to `HKCU\...\Taskbar\*` + broadcast `WM_TASKBAR_CHANGED`.
+> **`taskbar.cpl` -- Taskbar**: the taskbar is fixed at `THEME_SIZE_TASKBAR_HEIGHT` (48) and docked to the bottom (`docs/design/shell.md#taskbar`), so there is no height or position setting; the page has an auto-hide toggle switch (`controls.md#toggle-switch`) writing `HKCU\...\Taskbar\AutoHide` + broadcast `WM_TASKBAR_CHANGED`. The page also offers the Windows 11 options in `docs/design/shell.md#taskbar` "Taskbar settings": Alignment (Centre default, Left), Search (Hide, icon only, icon and label, box default) and Task view (on by default).
 
 - [ ] `src/apps/control/applets/sysdm.c` -- OS/CPU/RAM/uptime/hostname; Computer Name field + Apply
 - [ ] `src/apps/control/applets/desk.c` -- GOP mode list; DPI dropdown; wallpaper picker; accent color swatches; Dark/Light toggle
@@ -127,11 +133,13 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 - [ ] `src/apps/control/applets/powercfg.c` -- screen/sleep sliders; Shutdown/Restart/Sleep buttons; battery stub
 - [ ] `src/apps/control/applets/main.c` -- cursor theme scan + picker; size/speed sliders; hand-swap toggle
 - [ ] `src/apps/control/applets/intl.c` -- date/time/decimal/thousands/currency fields; Registry write
-- [ ] `src/apps/control/applets/taskbar.c` -- height/position/auto-hide; `WM_TASKBAR_CHANGED` broadcast
+- [ ] `src/apps/control/applets/taskbar.c` -- auto-hide toggle only (fixed 48 px bottom taskbar); `WM_TASKBAR_CHANGED` broadcast
 - [ ] Register all 9 in `g_cpl_entries[]` with name, description, icon_id, and category
 - [ ] Commit: `"control: core applets -- sysdm/desk/ncpa/mmsys/timedate/powercfg/main/intl/taskbar.cpl"`
 
 ## 4. Additional Applets `[Sonnet]`
+
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
 `nusrmgr.cpl` (User Accounts), `appwiz.cpl` (Programs), `firewall.cpl` (Firewall), `datetime.cpl` (alias for `timedate.cpl`).
 
@@ -155,19 +163,21 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 
 ## 5. Settings Search `[Sonnet]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 Search bar at top of Control Panel filters all applet names + descriptions live. In-process substring match (no search index). Enter opens first result.
 
 **Files:** `src/apps/control/control.c` (extend)
 
 > [!NOTE]
-> Search bar: `CTRL_TEXTBOX` spanning top of right panel (full width, 28 px); always visible. `control_search(query)` -- iterate `g_cpl_entries[]`; for each: `kstrcasestr(entry->name, query) || kstrcasestr(entry->desc, query)` → include in results; set `g_search_results[]` filtered array. Render: when search active (`query` non-empty): show filtered applet grid instead of category grid; sidebar categories greyed out; clear button (×) → reset. Enter key: open first result (`g_search_results[0]`). No debounce needed (in-process match is instant, < 32 entries). Highlight matched portion in applet name label using accent color (split `ttf_draw_string()`).
+> Search box: the search box in the navigation pane under the user card (32 px, `controls.md#text-box-password-box-and-search-box`); always visible. `control_search(query)` -- iterate `g_cpl_entries[]`; for each: `kstrcasestr(entry->name, query) || kstrcasestr(entry->desc, query)` → include in results; set `g_search_results[]` filtered array. Render: when search active (`query` non-empty): show matching applets as settings rows under a "Search results" title; clear button (×) → reset. Enter key: open first result (`g_search_results[0]`). No debounce needed (in-process match is instant, < 32 entries). Highlight matched portion in applet name label using accent color (split `ttf_draw_string()`).
 
-- [ ] `CTRL_TEXTBOX` search bar at top of right panel; × clear button
+- [ ] Search box in the navigation pane under the user card; clear button when it has text
 - [ ] `void control_search(const char *query)` -- iterate `g_cpl_entries`; substring match on name + desc; fill `g_search_results[]`
-- [ ] Render: if query non-empty → render `g_search_results[]` grid; else → category-filtered grid
+- [ ] Render: if query non-empty → `g_search_results[]` as settings rows; else → the selected category's rows
 - [ ] Enter key → `control_open_applet(g_search_results[0].idx)`
 - [ ] Accent highlight: split name render at match position; draw match span in `theme_get(THEME_ACCENT)`
-- [ ] × button clears query; restores normal grid
+- [ ] Clear button clears the query; restores the category rows
 - [ ] Commit: `"control: settings search -- inline name+desc filter, accent highlight, Enter opens first match"`
 
 ---
@@ -178,7 +188,7 @@ Search bar at top of Control Panel filters all applet names + descriptions live.
 | ⭐  | Feature                                          | 🪟 Win11                                              | 🐧 Linux                                        | 🚀 Impossible OS                                                              |
 | --- | ------------------------------------------------ | ----------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------- |
 | 💎  | CPL framework                                    | ✅ Full Win32 CPL ABI; `.cpl`                         | ❌ No CPL equivalent; GNOME uses                | ⬜ §1 -- `⭐` Win32-identical message IDs and                                 |
-| 💎  | Host app                                         | ✅ Control Panel + Settings app                       | ✅ GNOME Control Center; KDE System             | ⬜ §2 -- two-panel 900×600 layout; `.cpl` scan                                |
+| 💎  | Host app                                         | ✅ Control Panel + Settings app                       | ✅ GNOME Control Center; KDE System             | ⬜ §2 -- Settings frame, 980×640; `.cpl` scan                                 |
 | 💎  | System applet                                    | ✅ System Properties (`sysdm.cpl`); full hardware     | ✅ GNOME About; `lshw`; `neofetch`; no          | ⬜ §3 `sysdm.cpl`; `cpuid_get()->brand`, `pmm_get_total_frames()`, `uptime()` |
 | 💎  | Display applet                                   | ✅ Display Settings; resolution; DPI 100-500%;        | ✅ GNOME Display; KDE Display; Night            | ⬜ §3 -- `desk.cpl`; GOP mode list; DPI                                       |
 | 💎  | Date/Time applet                                 | ✅ `timedate.cpl`; analog clock; auto-sync; timezone; | ✅ GNOME Date&Time; `timedatectl`; NTP via      | ⬜ §3 -- `timedate.cpl`; analog clock via `gfx_draw_line()`                   |
@@ -191,7 +201,7 @@ Search bar at top of Control Panel filters all applet names + descriptions live.
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Win+I → Control Panel opens; category sidebar visible; applet grid shows named icons
+- [ ] Win+I → Settings frame opens: 280 px nav pane (user card, search, categories), page title, applets as settings rows
 - [ ] Click "System" category → only System applets shown; click `sysdm.cpl` → CPU brand string, RAM in MiB, uptime displayed
 - [ ] `desk.cpl` → wallpaper picker shows thumbnail; select image → desktop wallpaper updates; Dark/Light toggle → theme changes live
 - [ ] `timedate.cpl` → analog clock shows correct time updating each second; timezone dropdown populated; "Sync with NTP" button triggers NTP sync
@@ -200,6 +210,6 @@ Search bar at top of Control Panel filters all applet names + descriptions live.
 - [ ] `nusrmgr.cpl` → shows Admin + Guest accounts; "Add User" → create new account; "Remove" → confirm → deleted
 - [ ] `appwiz.cpl` → lists apps from `HKLM\...\Uninstall\*`; Uninstall button triggers uninstall command
 - [ ] Search bar: type "time" → only `timedate.cpl` + `intl.cpl` shown; Enter → `timedate.cpl` opens
-- [ ] Search bar: type "xyz_nonexistent" → empty grid; type matches "desk" → "Display" applet highlighted; clear × → full grid restored
+- [ ] Search box: type "xyz_nonexistent" → no rows and an empty-state line; type "desk" → "Display" row with the match in the accent colour; clear → category rows restored
 - [ ] `ShellExecute("desk.cpl")` from shell → same `desk.cpl` applet opens inside Control Panel
 - [ ] Commit: `"control: Control Panel and Settings -- all CPL applets complete"`

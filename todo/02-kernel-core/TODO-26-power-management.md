@@ -478,6 +478,8 @@ Evaluate the ACPI battery and AC-adapter objects and publish each one into the �
 
 ## 7. Power & Sleep Button Event Dispatch
 
+**Design:** n/a -- a hardware button event path; it draws nothing
+
 > **Spawned-by:** root
 
 The thread-level consumer the §1 SCI ISR was deliberately split against: `acpi_sci_process()` acknowledges `PWRBTN_STS` / `SLPBTN_STS` and counts them in hard-IRQ context precisely because it may not log or act there, and it already XREFs `acpi_power_button_event()` as the missing half. Lid handling moved to §31 and human-presence detection to §32: both need prerequisites this half does not.
@@ -877,7 +879,7 @@ Implement the OSPM thermal policy engine per ACPI spec chapter 11. This is the k
 - [ ] Fan hysteresis: do not turn off fan until temperature drops 3 C below the `_ACx` threshold (prevent rapid on/off cycling)
 - [ ] If fan device supports `_FPS` (Fan Performance States): set fan speed as a percentage instead of on/off
 - [ ] Write `HKLM\HARDWARE\Thermal\Zone<N>\Temperature`, `CriticalTemp`, `PassiveTemp` on each poll
-- [ ] System tray: temperature indicator when any zone is above `_PSV`
+- [ ] Thermal throttling above `_PSV`: raise one caution toast (`docs/design/shell.md#toast-notifications`) and set the battery glyph tooltip of the system cluster; no separate tray icon
 - [ ] `powercfg /energy` includes thermal zone status in energy report
 - [ ] Boot log: `[THERMAL] Zone %s: _CRT=%u C, _HOT=%u C, _PSV=%u C, _AC0=%u C, polling=%u ms`
 - [ ] Commit: `"kernel/pm: ACPI thermal zones -- _TMP/_CRT/_HOT/_PSV/_ACx, passive/active cooling"`
@@ -1005,6 +1007,8 @@ Before changing system or device power state, query all affected drivers and all
 ---
 
 ## 18. Power Plan UI & `powercfg`
+
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 - [ ] Stored under `HKLM\SYSTEM\PowerPlans\{GUID}\`:
   - `Name` (REG_SZ): `"Balanced"`, `"Power Saver"`, `"High Performance"`
   - `SleepTimeout` (REG_DWORD): seconds to S3 on idle (0=never)
@@ -1046,7 +1050,9 @@ Before changing system or device power state, query all affected drivers and all
   - Reduces visual effects (compositor effects budget), pauses background sync tasks, caps CPU to `MaxProcessorState=50%`
 - [ ] Adaptive Energy Saver: `pm_energy_saver_auto()` -- monitors 60 s rolling CPU utilization; auto-enables for light tasks (< 15% avg), auto-disables for heavy workloads (> 50% avg); Registry `AdaptiveEnergySaver` (default 1)
 - [ ] `powercfg /energysaver on|off|auto` -- CLI control
-- [ ] System tray: leaf icon when Energy Saver active; tooltip shows reason ("Battery below 20%" or "Adaptive -- light workload")
+- [ ] Energy Saver state feeds quick settings and the system cluster; no separate tray icon
+  - The Energy saver tile of quick settings (`08-graphics-ui/TODO-09 §8`) shows it on
+  - The battery glyph tooltip of the system cluster (`08-graphics-ui/TODO-11 §4`) gives the reason ("Battery below 20%" or "Adaptive -- light workload")
 - [ ] Commit: `"kernel/pm: powercfg shell command, power plan Registry schema, Energy Saver, Power Options UI"`
 
 **Test checkpoint:** `pm_apply_plan(GUID_BALANCED)` reads Registry values. `powercfg /list` shows 3 default plans. `powercfg /setactive` switches governor. Energy Saver auto-enables at low charge. `powercfg /availablesleepstates` lists supported S-states. Test on: QEMU TCG.

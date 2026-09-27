@@ -70,6 +70,8 @@ Sequential read/write, random 4 KiB read/write, mixed 70/30, queue-depth sweep (
 
 ## 2. Disk Benchmark GUI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Drive selector, queue depth picker, Start button. Real-time bar chart updating after each sub-test. Latency histogram panel. Run history table. Export to timestamped text file.
 
 **Files:** `src/desktop/dlg_diskbench.c` (new), `include/desktop/dlg_diskbench.h` (new)

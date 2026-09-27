@@ -165,13 +165,17 @@ title: "TODO-05 -- PDF Viewer"
 
 ## 6. PDF Viewer UI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+**Owner of:** the work planned in `07-networking/TODO-10 §8 (viewer window)`, which is superseded there so there is one implementation.
+
 **Source file:** `src/apps/pdfview/pdfview_ui.c`
 
 - [ ] **Window**: `wm_create_window("PDF Viewer -- {filename}", W, H)` (resizable)
-- [ ] **Toolbar** (fixed 40 px height):
+- [ ] **Command bar** (`THEME_SIZE_COMMAND_BAR_HEIGHT` (48) per `docs/design/shell.md#app-window-layout`, subtle buttons with Fluent glyphs):
   - [ ] `[←]` prev page; `[→]` next page; page input `CTRL_TEXTBOX` (4-char wide, numeric); `of {total}` label
   - [ ] Zoom `CTRL_TEXTBOX` showing current % (`"100%"`); `[−]` / `[+]` 10% steps; dropdown: `Fit Width`, `Fit Page`, 50%, 75%, 100%, 125%, 150%, 200%
-  - [ ] `[🔍]` search button (Ctrl+F); `[📄]` open-file button
+  - [ ] search button (Fluent search glyph, Ctrl+F); open-file button (Fluent open glyph)
 - [ ] **Canvas area** (fills remaining window below toolbar):
   - [ ] Centered page surface with 4-px `gfx_drop_shadow()` halo on white background
   - [ ] `CTRL_SCROLLBAR_VERT` on right; range = page height − canvas height; updated on page render
@@ -186,7 +190,7 @@ title: "TODO-05 -- PDF Viewer"
   - [ ] Ctrl+scroll → zoom ±10%
   - [ ] Page Up / Page Down → prev/next page; arrow keys → scroll 40 px per step
   - [ ] Enter in page input box → jump to that page (clamp to 1–total)
-- [ ] **Status bar** (20 px): `{filename}` left; `Page {n} of {total}` center; `{zoom}%` right
+- [ ] **Status bar** (`THEME_SIZE_STATUS_BAR_HEIGHT` (24), caption style): `{filename}` left; `Page {n} of {total}` center; `{zoom}%` right
 - [ ] Page surface cached per render: re-render only on zoom change or page navigation
 
 ---
@@ -198,7 +202,7 @@ title: "TODO-05 -- PDF Viewer"
 - [ ] **Search bar** (slides in below toolbar on Ctrl+F): `CTRL_TEXTBOX` + `[▲ Prev]` `[▼ Next]` `[✕ Close]`; focus on open
 - [ ] **Text extraction**: `pdf_extract_text(page_n, text_spans[], &span_count)` -- re-run content stream tokenizer for page, collecting `{ text_str, x, y, w, h }` for each Tj/TJ result; store in per-page span cache
 - [ ] **Search**: on query submit → iterate all pages → `strcasestr(span.text, query)` → record hits as `{ page_n, span_idx, match_offset }` list
-- [ ] **Highlight overlay**: render match spans as semi-transparent yellow `gfx_fill_rect(surface, x, y, w, h, RGBA(255,220,0,100))` overlaid after normal page render; active match uses brighter orange
+- [ ] **Highlight overlay**: render match spans with the `selection_fill` token (`THEME_<THEME>_SELECTION_FILL`) overlaid after normal page render; the active match adds a 1 px `selection_stroke` outline; no literal colours
 - [ ] **Navigation**: `[▼ Next]` cycles through matches (wraps to page 1 after last); `[▲ Prev]` reverses; jumps to the match's page and scrolls it into viewport; match count shown `"3 of 17"`
 - [ ] Clear overlay when search bar closed or query cleared
 
@@ -265,6 +269,6 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **Image rendering:** PDF with embedded JPEG image; `image_load_mem` called; image blitted to page surface at correct position and scale
 - [ ] **UI:** `pdfview.exe test.pdf` opens window; toolbar shows `Page 1 of N`; `[→]` advances to page 2; `[←]` returns to page 1; zoom `[+]` increases %; Fit Width button fills canvas width
 - [ ] **Scroll:** page taller than window; vertical scrollbar appears; mouse wheel scrolls; text stays sharp at scrolled positions
-- [ ] **Text search:** Ctrl+F → type search term; first match highlighted in yellow; `[▼]` advances to next match; status shows `"2 of 5"`; close clears overlay
+- [ ] **Text search:** Ctrl+F → type search term; first match highlighted with `selection_fill` and a 1 px `selection_stroke`; `[▼]` advances to next match; status shows `"2 of 5"`; close clears overlay
 - [ ] **File association:** `.pdf` registered; File Manager double-click on test.pdf opens `pdfview.exe`
 - [ ] Commit: `"apps: PDF viewer -- parser, renderer, text/image, search, file assoc"`

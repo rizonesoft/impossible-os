@@ -80,6 +80,8 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ## 1. Calendar App (Recurring Events + ICS Export) `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 > Base calendar grid, add-event dialog, and taskbar flyout are specified in
 > `09-desktop-shell/TODO-12-utilities.md §7` -- implement those first.
 > This section adds **recurring events** and **`.ics` export** only.
@@ -111,10 +113,12 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Source file:** `src/apps/sticky/sticky.c`; binary: `sticky.exe`
 
-- [ ] **Note window**: `wm_create_window("Note_{id}", x, y, w, h, WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_NO_TITLEBAR | WM_FLAG_RESIZABLE)`
-  - [ ] Colored header strip (24 px) with `[+ New]` and `[✕]` buttons; click+drag header to move
+- [ ] **Note window**: `wm_create_window("Note_{id}", x, y, w, h, WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_RESIZABLE)` with the standard window chrome of `docs/design/shell.md#window-chrome` (radius 8, elevation, resize margin)
+  - [ ] Caption per `docs/design/shell.md#window-chrome`: `THEME_SIZE_CAPTION_HEIGHT` (32) tinted with the note colour
+    - A `[+ New]` subtle button on the left and the standard 46 px caption buttons with the `caption_close_hover` close hover; drag the caption to move
   - [ ] Below header: full-window multiline `CTRL_TEXTBOX` on same background color
-  - [ ] 6 color presets (header strip swatch row): yellow `0xFFFACD`, pink `0xFFB6C1`, blue `0xADD8E6`, green `0x90EE90`, purple `0xE6E6FA`, gray `0xD3D3D3`
+  - [ ] 6 note colour presets (swatch row): yellow, pink, blue, green, purple, gray
+    - Note colours are the `note_*` tokens (`THEME_*_NOTE_YELLOW`, `_GREEN`, `_PINK`, `_PURPLE`, `_BLUE`, `_GRAY`, `_CHARCOAL`) from `docs/design/tokens.json`; no literals
   - [ ] Color selection → update header strip + textbox background; save `Color` to Registry immediately
 - [ ] **Auto-save**: on every keystroke with 500 ms debounce (suppress rapid writes): `reg_set_string("HKCU\\Software\\Impossible\\StickyNotes\\{id}\\Text", text)`
 - [ ] **Registry schema** per note: `HKCU\Software\Impossible\StickyNotes\{id}\{Text, Color, X, Y, W, H}` (id = monotonically incrementing counter, stored in `HKCU\..\NextId`)
@@ -152,6 +156,8 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ---
 
 ## 4. On-Screen Keyboard `[Sonnet]`
+
+**Design:** [`controls.md#button`](../../docs/design/controls.md#button), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
 **Source file:** `src/apps/osk/osk.c`; binary: `osk.exe`
 
@@ -222,6 +228,8 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ---
 
 ## 7. Shared Help / About Dialog `[Sonnet]`
+
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
 **Source file:** `src/apps/common/ui_dialogs.c`; header `include/desktop/ui_dialogs.h`
 

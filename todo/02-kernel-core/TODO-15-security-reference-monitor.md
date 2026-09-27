@@ -588,11 +588,13 @@ title: "TODO-15 -- Security Reference Monitor"
     /priv    -- print all privileges with Enabled/Disabled/Removed status
     /all     -- equivalent to /user /groups /priv
   ```
-- [ ] System tray right-click → "Token Info" → flyout showing: current user, integrity level badge (colour-coded: Low=yellow, Medium=green, High=orange, System=red), admin status, elevation type, top 5 privileges
+- [ ] Token Info tray icon: registered with `tray_register()` (overflow chevron flyout, `08-graphics-ui/TODO-11 §4`)
+  - Click → a flyout (flyout material, `docs/design/shell.md#quick-settings` geometry) showing current user, integrity level as text, admin status, elevation type, top 5 privileges
+  - Integrity level is shown as text plus a status glyph per `docs/design/controls.md#status-colours` (never colour alone)
 - [ ] Useful for developers to verify elevation state without opening a terminal
 - [ ] Commit: `"kernel/security: whoami.exe and token tray popout"`
 
-**Test checkpoint:** `whoami /all` in QEMU serial console shows: user SID (`S-1-5-18` for system), group list with attributes (Enabled/Disabled/DenyOnly), and privilege table with status column. Output columns are tab-aligned. `whoami /priv` shows at least 20 privilege entries. Tray popout (stretch): right-click tray → "Token Info" → flyout renders. Serial log: `"[SRM] whoami: user=%s groups=%u privs=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `whoami /all` in QEMU serial console shows: user SID (`S-1-5-18` for system), group list with attributes (Enabled/Disabled/DenyOnly), and privilege table with status column. Output columns are tab-aligned. `whoami /priv` shows at least 20 privilege entries. Tray popout (stretch): Token Info icon in the overflow flyout → flyout renders. Serial log: `"[SRM] whoami: user=%s groups=%u privs=%u"`. Test on: QEMU WHPX + TCG.
 
 > **Notes:**
 > - Deferred (cascade): the CLI calls Win32 `OpenProcessToken`/`GetTokenInformation`, which are the §10 wrapper layer -- deferred at design review pending the advapi32 trampoline + per-thread kernel Win32 last-error facility.

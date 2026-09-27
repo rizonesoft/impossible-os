@@ -240,6 +240,8 @@ Implement 802.11 Power Save Poll (PS-Poll) after association: set the Power Mana
 
 ## 10. `ncpa.cpl` WiFi Tab + `netsh wlan` Commands `[Sonnet]`
 
+**Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
+
 Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/Disconnect, passphrase dialog, signal strength bars, Forget network. Add `netsh wlan show networks` and `netsh wlan connect ssid=...` shell commands.
 
 **Files:** `src/desktop/ncpa_cpl.c` (extend or new WiFi tab), `src/shell/cmd_netsh.c` (extend)

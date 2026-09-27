@@ -90,7 +90,8 @@ Never bypass the gate via `SKIP_PHASE1_BLOCK`. Verification reads are SLICES (`R
 
 9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references. **Dispatch `Agent(subagent_type="parity-research-analyst", ...)` in implemented-code mode BY DEFAULT** (Sonnet; skip only for sections with no user-visible parity surface -- pure tooling/docs) to research Win11/Linux behavior and surface parity + false-completeness gaps on the shipped code; fold its sourced findings into this step and step 10. Advisory only -- you decide what to fix now or file as a concrete owner item.
 
-10. **Feature completeness + adjacent completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises, and the "one missing piece away from real" pattern:
+10. **Design conformance (sections with a `**Design:**` line)** -- compare the shipped UI against every cited `docs/design/*.md` anchor and the mockup (`impossibleos.co/design/`): sizes, colours, materials, motion, states, light AND dark. Any hex literal or size literal that should be a `THEME_*` token, or any behaviour that differs from the spec without a `**Design deviation:**` line, is a finding.
+10b. **Feature completeness + adjacent completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises, and the "one missing piece away from real" pattern:
     - Did the section technically land, but miss the next obvious adjacent capability a real user or caller would hit?
     - Are exports, registrations, tables, docs, tests, or TODO/XREF ownership still missing?
     - Does Win11 or Linux already cover a nearby case that this section still ignores?

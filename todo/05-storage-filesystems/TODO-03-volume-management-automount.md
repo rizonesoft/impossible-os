@@ -43,7 +43,7 @@ title: "TODO-03 -- Volume Management & Auto-mount"
 | ⭐  |   1   | §1 Filesystem probe chain + drive-letter assignment + Registry population                  | Existing FS drivers (IXFS, NTFS, FAT32)        |  [ ]   |
 | 💎  |   2   | §2 Boot mount sequence -- rewire `boot_storage.c` to use `vfs_probe()`                     | §1 (probe API exists)                          |  [ ]   |
 | ⭐  |   3   | §3 USB hot-plug volume arrival -- auto-mount + desktop toast + File Manager sidebar        | §1, TODO-09 §8 hot-plug events                 |  [ ]   |
-| 💎  |   4   | §4 USB safe removal -- tray right-click, flush+unmount, force-unmount after 5 s            | §3 (drive mounted), TODO-01 §7 `cache_flush()` |  [ ]   |
+| 💎  |   4   | §4 USB safe removal -- overflow tray icon, flush+unmount, force-unmount after 5 s          | §3 (drive mounted), TODO-01 §7 `cache_flush()` |  [ ]   |
 | 💎  |   5   | §5 Manual `mount` / `umount` shell commands                                                | §1 (probe), §4 (unmount path)                  |  [ ]   |
 | 💎  |   6   | §6 Win32 volume query APIs -- `GetLogicalDrives`, `GetVolumeInformation`, `QueryDosDevice` | §1 (Registry populated)                        |  [ ]   |
 | 💎  |   7   | §7 Optical drive -- ATAPI detect, ISO 9660 mount, tray-open, autorun stub                  | §1 (probe chain), ATAPI driver                 |  [ ]   |
@@ -111,7 +111,8 @@ Implement safe-remove: tray icon right-click menu → flush + journal + unmount 
 > [!NOTE]
 > Safe-remove sequence: (1) `cache_flush(dev)` (block cache §TODO-01); (2) `vfs_journal_flush(letter)` for NTFS/IXFS (clear dirty flag); (3) `vfs_unmount(letter)`; (4) `usb_msc_power_down(dev)` (port power off); (5) toast `"Safe to remove %c:\\"`. If any file handle is still open after step 1: wait up to 5 s, retrying every 500 ms; if still open at 5 s, force-close handles and proceed. C: (system drive) must be blocked from unmount with an error toast.
 
-- [ ] Tray icon right-click: for each mounted removable drive (DriveType=2 in Registry): add `"Safely Remove %c:\\"` menu item; click → `vfs_safe_remove(letter)`
+- [ ] Safe removal tray icon: registered with `tray_register()` while any removable drive is mounted (overflow chevron flyout, `08-graphics-ui/TODO-11 §4`)
+  - Click → context menu (`docs/design/shell.md#context-menus`) with one `"Eject %c:\\"` item per removable drive (DriveType=2); click → `vfs_safe_remove(letter)`
 - [ ] `vfs_safe_remove(letter)`: if `letter == 'C'`: toast error `"Cannot remove the system drive"`; return. Else: flush cache; flush journal; check open handles; if open: start 5 s timeout, show progress toast; force close after timeout; `vfs_unmount(letter)`; `usb_msc_power_down(dev)`; `vfs_probe_registry_delete(letter)`; `desktop_sidebar_remove_drive(letter)`; toast `"Safe to remove %c:\\"` 
 - [ ] Force-unmount: close all VFS nodes with `vfs_node_t.ref_count > 0` for the drive; log `[VFS] Force-unmount %c: after timeout -- %u handles closed`
 - [ ] Commit: `"fs: USB safe removal -- cache/journal flush, handle drain, force-unmount, port power-off"`
@@ -192,7 +193,7 @@ Implement `NtFsControlFile` FSCTL codes needed by backup software and system too
 | ⭐  | In-kernel probe chain + dynamic drive-letter assignment + Registry write     | ⚠️ `mountmgr.sys` assigns letters; probe in                  | ⚠️ `udev` rules in user space;                               | ⬜ §1 -- priority probe: IXFS→NTFS→FAT32→exFAT→ext4→Btrfs→ISO; auto-assign + |
 | 💎  | Boot-time partition scan + auto-mount of all filesystems                     | ✅ `IoInitSystem`, `mountmgr.sys`; all partitions enumerated | ✅ `init` + `udev` + `/etc/fstab`;                           | ⚠️ §2 -- Partial -- ; replaces hardcoded                                     |
 | ⭐  | USB hot-plug: in-kernel probe + auto-assign + desktop toast + sidebar update | ⚠️ `mountmgr.sys` mount + Explorer notification              | ⚠️ `udev` → `udisks2` daemon →                               | ⬜ §3 -- single kernel path: probe→mount→Registry→toast→sidebar, no          |
-| 💎  | USB safe removal                                                             | ✅ `SafelyRemoveHardware` tray; Safely Remove finalizes      | ✅ `umount` + `udisksctl power-off`; requires                | ⬜ §4 -- tray right-click → cache_flush +                                    |
+| 💎  | USB safe removal                                                             | ✅ `SafelyRemoveHardware` tray; Safely Remove finalizes      | ✅ `umount` + `udisksctl power-off`; requires                | ⬜ §4 -- overflow tray icon → cache_flush +                                  |
 | 💎  | `mount` / `umount` shell commands                                            | ✅ `mountvol.exe`; no `mount` command natively               | ✅ `mount`/`umount`; standard POSIX tools                    | ⬜ §5 -- `mount` (table) + `mount E:                                         |
 | 💎  | Win32 volume query APIs                                                      | ✅ Full Win32 API; backed by                                 | ❌ Not applicable (POSIX `statfs`/`statvfs` equivalents)     | ⬜ §6 -- Registry-backed implementations of all five                         |
 | 💎  | Optical drive                                                                | ✅ `cdfs.sys` ISO 9660 + Joliet;                             | ✅ `isofs.ko`; ISO 9660/Joliet/Rock Ridge; `eject`           | ⬜ §7 -- `iso9660.c`, Joliet, ATAPI eject command,                           |
@@ -206,7 +207,7 @@ Implement `NtFsControlFile` FSCTL codes needed by backup software and system too
 - [ ] Boot: serial log shows `[VFS] Mounted C: (IXFS, ...)`, `[VFS] Mounted D: (NTFS, ...)` for each partition; `[VFS] Boot mount complete: N drives`
 - [ ] `mount` (no args) in shell: prints drive table with all mounted drives, filesystems, labels, sizes
 - [ ] USB hot-plug (QEMU `usb-storage` device): serial shows `[VFS] Hot-plug: mounted E: (FAT32)`; desktop toast appears; File Manager sidebar updates
-- [ ] USB safe removal: tray right-click → `Safely Remove E:` → serial shows flush + unmount + `[VFS] Hot-plug: unmounted E:`; toast `"Safe to remove E:\"`
+- [ ] USB safe removal: overflow flyout safe-removal icon → `Eject E:` → serial shows flush + unmount + `[VFS] Hot-plug: unmounted E:`; toast `"Safe to remove E:\"`
 - [ ] `umount E:` shell: unmounts; `umount C:` → prints error `Cannot unmount system drive`
 - [ ] `GetLogicalDrives()` returns correct bitmask after mount/unmount sequence
 - [ ] `GetVolumeInformationW(L"C:\\")` returns `"IXFS"` as filesystem name and correct label

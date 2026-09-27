@@ -57,6 +57,8 @@ title: "TODO-09 -- Calculator"
 
 ## 1. Standard Calculator UI `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 > → XREF: `09-desktop-shell/TODO-12-utilities.md §3` -- window size, button layout, display area, button rendering detail.
 
 **Source file:** `src/apps/calc/calc.c`; header `include/apps/calc/calc.h`
@@ -65,14 +67,15 @@ title: "TODO-09 -- Calculator"
 - [ ] **Display area** (top 80 px, right-aligned):
   - [ ] Small operation preview line: `"{operand} {op}"` e.g. `"42 +"` (12 px font, gray)
   - [ ] Current number: right-aligned in display box, 28 px font; shrink font at 12+ digits
-- [ ] **Button grid** (5 rows × 4 columns, 40×40 px each, 4 px gap):
+- [ ] **Button grid** (5 rows × 4 columns, buttons grow to fill the window on a 2 px gap, minimum `THEME_SIZE_KEYPAD_BUTTON_MIN` (40) square):
   - [ ] Row 1 (memory): `MC` `MR` `M+` `M−` `MS`
   - [ ] Row 2 (clear): `%` `CE` `C` `⌫`
   - [ ] Row 3 (functions): `1/x` `x²` `√x` `÷`
   - [ ] Row 4–6 (number pad): `7 8 9 ×` / `4 5 6 −` / `1 2 3 +`
   - [ ] Row 7: `± 0 . =`
-- [ ] **Button rendering**: `gfx_fill_rounded_rect(s, bx, by, 40, 40, 6, bg_color)` where `bg_color` cycles through 3 states: normal (`0xFF2D2D2D` dark), hover (`0xFF3C3C3C`), pressed (`0xFF1A1A1A`); operator buttons use accent color; `=` uses blue accent; memory row uses lighter gray
-- [ ] **Mode toolbar** (above display): `[Standard]` `[Scientific]` `[Programmer]` tab buttons (24 px tall); active tab underlined; clicking switches mode and resizes window
+- [ ] **Button rendering**: buttons per `docs/design/controls.md#button` with `THEME_RADIUS_CONTROL` (4) corners and token fills only
+  - Digits are standard buttons, operator and function keys are subtle buttons, `=` is the accent button, memory row buttons are subtle (`docs/design/shell.md#app-window-layout`); no hex literals
+- [ ] **Mode selector** (above display): `[Standard]` `[Scientific]` `[Programmer]` as tabs per `docs/design/controls.md#tabs` (`THEME_SIZE_TAB_HEIGHT`, 32); clicking switches mode and resizes window
 - [ ] **History toggle** `[⌛]` button top-right → expand window to 560 px wide, show history panel on right (§3)
 
 ---
@@ -102,11 +105,11 @@ title: "TODO-09 -- Calculator"
   - [ ] `M+`: `g_memory += parse(display)`
   - [ ] `M−`: `g_memory -= parse(display)`
   - [ ] `MC` (Memory Clear): `g_memory = 0`; clear `M` indicator
-- [ ] **History panel** (right 240 px when visible, `CTRL_SCROLLBAR_VERT` on right edge):
+- [ ] **History panel** (right 280 px when visible, per `docs/design/shell.md#app-window-layout`, `CTRL_SCROLLBAR_VERT` on right edge):
   - [ ] Ring buffer of 20 `struct hist_entry { char expr[48], result[32] }` entries; oldest overwritten
-  - [ ] Each entry renders: expression (gray, 11 px) above result (white, 16 px); separator line
+  - [ ] Each entry renders: expression (caption style, `text_secondary`) above result (body large style, `text_primary`); `stroke_divider` separator
   - [ ] Scroll: mouse wheel or scrollbar
-  - [ ] **Click history entry** → `clipboard_set(CLIP_TEXT, entry.result, strlen(entry.result))` + flash accent color for 300 ms as confirmation
+  - [ ] **Click history entry** → `clipboard_set(CLIP_TEXT, entry.result, strlen(entry.result))` + flash the entry with `subtle_fill_pressed` for `THEME_MOTION_SLOW_MS` (250) as confirmation
   - [ ] History persists to `HKCU\Software\Impossible\Calculator\History\{0..19}` on window close; restored on open
 - [ ] **History recording**: after every successful `=` (no error), prepend `"{display_before_op} {op} {display_op2} = {result}"` to ring buffer
 

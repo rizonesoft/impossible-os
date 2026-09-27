@@ -146,6 +146,8 @@ Implement `lspci` and `lsusb` as built-in shell commands outputting Linux-compat
 
 ## 7. Device Manager GUI `[Opus]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
 Build the Device Manager window: a tree view of PCI devices grouped by class, with a detail panel showing BDF, vendor/device name, driver health badge, IRQ number, and live interrupt rate (auto-refreshed every 1 second). Accessible from the Start menu and system tray context menu.
 
 **Files:** `src/desktop/devmgr.c` (new), `include/desktop/devmgr.h` (new)

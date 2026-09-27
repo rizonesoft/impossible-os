@@ -71,6 +71,18 @@ The logo in [`resources/brand/logo.svg`](../../resources/brand/logo.svg) keeps t
 
 The Start button (`start.svg`) is the same mark inside the standard 2 px padding, and reads at 24 px on both frosted taskbars.
 
+## Which icons go where?
+
+- **Colour icons** (this set, `resources/icons/src/`) represent user-facing objects: files, folders, drives, apps, places and system items on the desktop, in File Explorer, in Start and on the taskbar.
+- **Monochrome glyphs** come from Fluent System Icons (MIT, vendored as fonts in `resources/fonts/`): commands, toolbar and command-bar buttons, menu items, tray and status glyphs, and object types in developer tools (for example kernel object types in ObBrowse). They are tinted with `text_primary` or `text_secondary`, never recoloured per item.
+- **Elevation shield** (UAC) is the Fluent shield glyph at `size.shield_glyph` (16), tinted `accent`, placed before the label of any button that elevates.
+- **Status** glyphs follow the [status colours](controls.md#status-colours) rule.
+- No other third-party icon set is used, and no colour icon is copied from Windows.
+
+## What about cursors?
+
+Cursors are a deliberate decision, not a gap: the system keeps the existing Adwaita cursor set (`resources/cursors/`, credited in CREDITS.md) for now. A Windows 11 style cursor redesign is future work; until it exists, no section draws its own cursors.
+
 ## Adding or changing an icon
 
 1. Edit or add the SVG in `resources/icons/src/`. Give every gradient an id prefixed with the icon name, so several icons can be inlined into one page without collisions.

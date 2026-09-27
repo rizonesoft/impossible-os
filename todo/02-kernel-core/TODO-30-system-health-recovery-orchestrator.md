@@ -108,6 +108,8 @@ title: "TODO-30 -- System Health & Recovery Orchestrator"
 
 ## 9. Health Notifications and Dashboards
 
+**Design:** [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications), [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame)
+
 - [ ] Publish health transitions through TODO-27.
 - [ ] Emit ETW/klog records with bucket, subsystem, action, and result.
 - [ ] Feed panic screen last-known health state.

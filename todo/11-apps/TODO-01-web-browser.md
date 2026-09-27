@@ -90,7 +90,7 @@ title: "TODO-01 -- Web Browser"
 - [ ] Scroll: mouse wheel → `scroll_y += 40`; `CTRL_SCROLLBAR` on right edge
 - [ ] Back/forward: `url_history[16]` ring; `←` / `→` buttons
 - [ ] Status bar: `CTRL_LABEL` at bottom: `"Loading…"` / `"200 OK"` / `"Error: -errno"`
-- [ ] HTTPS: 🔒 padlock icon (Fluent `lock_closed_20`) in status bar when URL starts with `https://`
+- [ ] HTTPS: 🔒 padlock icon (monochrome Fluent System Icons glyph `lock_closed_20`, vendored, tinted `text_primary`) in status bar when URL starts with `https://`
 - [ ] Commit: `"apps: text-only web browser (~500 lines)"`
 
 ---
@@ -194,18 +194,22 @@ Evaluate before investing in §2–§5. A port may deliver a full browser faster
 
 ## 7. Browser Chrome `[Sonnet]`
 
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+**Owner of:** the work planned in `07-networking/TODO-07 §3 (tab bar drawing)`, which is superseded there so there is one implementation.
+
 Multi-tab UI, toolbar, bookmarks bar, and context menu. Built on top of §1 (text browser) or §6 (port).
 
 - [ ] **Tab bar**: `CTRL_TABSTRIP` (from `08-graphics-ui/TODO-05`, max 16 tabs); each tab has: `{ char title[64]; char url[512]; dom_node_t *dom_root; int32_t scroll_y; }` -- switching tabs restores DOM + scroll position without re-fetching
 - [ ] New tab button `[+]`: opens `browser_new_tab()` → blank page; `browser_navigate(url)` fetches into active tab
 - [ ] Close tab `×` on each tab header; last tab close → exit app or show new-tab page
-- [ ] **Toolbar** (fixed strip below tab bar, height 40 px):
+- [ ] **Command bar** (below the tab bar, `THEME_SIZE_COMMAND_BAR_HEIGHT` (48) per `docs/design/shell.md#app-window-layout`, subtle buttons with Fluent glyphs):
   - `[←]` back (disabled if history empty) → pop history stack
   - `[→]` forward (disabled if no forward entries)
   - `[↺]` refresh → re-fetch current URL; re-parse + re-layout
-  - `[🏠]` home → navigate to `HKCU\Software\Impossible\Browser\HomePage`
+  - `[Home]` (Fluent home glyph) → navigate to `HKCU\Software\Impossible\Browser\HomePage`
   - Address bar: `CTRL_TEXTBOX` fills remaining toolbar width; shows current URL; Enter → `browser_navigate()`; focus → select all text
-  - 🔒 padlock (`lock_closed_20` Fluent icon, green) if current URL is `https://`; 🔓 (`lock_open_20`, gray) for HTTP
+  - 🔒 padlock (`lock_closed_20` Fluent glyph, tinted `text_primary`) if current URL is `https://`; 🔓 (`lock_open_20`, tinted `text_secondary`) for HTTP; no colour alone; a certificate error adds the `status_critical` glyph and text per `docs/design/controls.md#status-colours`
 - [ ] **Bookmarks bar** (optional strip below toolbar, height 32 px, hidden if empty):
   - Load from `HKCU\Software\Impossible\Browser\Bookmarks` (REG_MULTI_SZ: `title|url` per entry)
   - Each entry: `CTRL_BUTTON`-style clickable label; right-click → "Remove bookmark"

@@ -219,6 +219,8 @@ Windows message loop -- the heart of Win32 UI. Wraps the kernel message queue in
 **Test checkpoint:** `NtUserRegisterClassEx` + `NtUserCreateWindowEx` + `NtUserGetMessage` loop processes WM_PAINT. `NtUserPostMessage(WM_QUIT)` exits the loop. `NtUserSendMessage` cross-thread delivers and returns result. `NtUserSetTimer` fires WM_TIMER at correct interval.
 
 ## 9. USER Input and Cursor Syscalls
+
+**Design:** n/a -- syscall plumbing; the visible cursor set is outside the design system for now
 Keyboard and mouse input, cursor management.
 
 - [ ] `NtUserGetKeyState(vKey)` → shadow SSDT 0x1070
@@ -365,6 +367,8 @@ Window long values (GWL_STYLE, GWL_EXSTYLE), class properties, per-window user d
 **Test checkpoint:** `NtUserSetWindowLong(GWL_STYLE)` changes window style. `NtUserEnumWindows` iterates all top-level windows. `NtUserWindowFromPoint` returns correct HWND at cursor. `NtUserSetLayeredWindowAttributes(alpha=128)` makes window translucent.
 
 ## 19. USER Dialog, Caret, and Drawing Helpers
+
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 Dialog box creation/management, caret (text cursor), and drawing utility functions (DrawEdge, DrawFrameControl, DrawText).
 
 - [ ] `NtUserCreateDialogParam` / `NtUserDialogBoxParam` (0x11D0-0x11D4): create modeless/modal dialogs from template

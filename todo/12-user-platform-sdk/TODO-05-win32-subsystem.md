@@ -333,6 +333,8 @@ process in future iteration)
 
 ## 8. Common Dialog Boxes `[Sonnet]`
 
+**Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
 **Source:** `src/user/csrss/comdlg.c`; header `include/win32/comdlg.h`
 
 > Delegates to `08-graphics-ui/TODO-05 §8` dialog implementations via function pointers

@@ -115,7 +115,9 @@ The installer runs as a user-mode PE process rather than a special kernel mode. 
 
 ## 3. Installer GUI Wizard `[Sonnet]`
 
-Seven IxUI wizard screens. Each screen occupies the full window (800×600). Navigation: `[Back]` / `[Next]` / `[Install]` / `[Reboot]` buttons in a fixed bottom strip.
+**Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
+
+Seven IxUI wizard screens laid out per `docs/design/shell.md#first-run-setup`: full-screen dark bloom wallpaper (`bloom-dark.jpg`) under acrylic, a centred 800 x 600 card (radius 8, `window_bg`, `THEME_ELEV_START_*`) with an illustration or icon on the left third and the step on the right (title style 28/36, body style, controls per `docs/design/controls.md`). Navigation: accent `[Next]` / `[Install]` / `[Reboot]` bottom right, standard `[Back]` beside it.
 
 **Screen A -- Welcome:**
 - [ ] Title: "Install Impossible OS v1.0" (large `ttf_draw_string`)
@@ -142,7 +144,8 @@ Seven IxUI wizard screens. Each screen occupies the full window (800×600). Navi
 **Screen E -- Review:**
 - [ ] Summary table: target disk name + size, partitioning plan, filesystem types
 - [ ] Warning: "All data on the selected disk will be erased"
-- [ ] `[⚠ Install]` button (red accent) → triggers §4–7 in sequence
+- [ ] `[Install]` accent button → triggers §4–7 in sequence; the destructive nature is stated in the step text and a confirmation dialog (`docs/design/controls.md#dialog`)
+  - Destructive actions are standard buttons behind a confirmation dialog whose default is the safe choice (`docs/design/controls.md#status-colours`); do not use `caption_close_hover` red for buttons
 
 **Screen F -- Progress:**
 - [ ] `CTRL_LABEL` status line: "Partitioning disk…" / "Formatting ESP…" / "Copying files…" / "Installing bootloader…"
@@ -235,6 +238,8 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 ---
 
 ## 8. Post-Install First Boot + OOBE Trigger `[Sonnet]`
+
+**Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
 - [ ] After §7 completes: write `HKLM\SYSTEM\FirstBoot = 1` to installed registry hive (signals OOBE wizard on first boot)
 - [ ] Write `HKLM\SYSTEM\InstallerMode = 0` to installed registry hive (ensures normal boot path next time)
