@@ -2,6 +2,8 @@
 <!-- The monitor is This PC's (computer.svg) at 80 percent: same shapes and gradients, so the two
      desktop icons always agree. Below it, a cable to three networked devices. -->
 <defs><linearGradient id="network-frame" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#AEB7C2"/><stop offset="1" stop-color="#7E8895"/></linearGradient><linearGradient id="network-screen" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#2EB5F0"/><stop offset="0.55" stop-color="#2185E6"/><stop offset="1" stop-color="#155CDE"/></linearGradient><linearGradient id="network-stand" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8A94A0"/><stop offset="1" stop-color="#5E6A78"/></linearGradient></defs>
+<!-- The cable is drawn first, so it runs out from under the stand instead of over it. -->
+<path d="M24 27V35M11 38.6V35h26v3.6" fill="none" stroke="url(#network-stand)" stroke-width="1.6" stroke-linejoin="round"/>
 <g transform="translate(4.8 -3.4) scale(.8)">
 <rect x="4" y="7" width="40" height="28" rx="2.5" fill="url(#network-frame)"/>
 <rect x="6.5" y="9.5" width="35" height="23" rx="1" fill="url(#network-screen)"/>
@@ -11,7 +13,6 @@
 <rect x="14" y="39.5" width="20" height="3" rx="1.5" fill="url(#network-stand)"/>
 <path d="M6.5 7.5h35" stroke="#DDE3EA" stroke-opacity=".8"/>
 </g>
-<path d="M24 30.6V35M11 38v-3h26v3" fill="none" stroke="url(#network-stand)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
 <rect x="7.2" y="38" width="7.6" height="5.4" rx="1.3" fill="url(#network-screen)"/>
 <rect x="20.2" y="38" width="7.6" height="5.4" rx="1.3" fill="url(#network-screen)"/>
 <rect x="33.2" y="38" width="7.6" height="5.4" rx="1.3" fill="url(#network-screen)"/>
