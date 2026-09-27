@@ -178,7 +178,7 @@ Memory flows from the physical page allocator through the page tables to `kmallo
 | VirtualBox | A 64-bit EFI VM, or `scripts/machines/run-vbox.bat` on Windows |
 | Real hardware | Write `build/system-disk.img` to USB with `bash scripts/deploy/write-usb.sh` |
 
-Serial output lands in `build/serial.log`. The full launcher matrix is in the [machine matrix](docs/infrastructure/machine-matrix.md), and local git hooks are covered in [local CI hooks](docs/infrastructure/development-tooling.md#local-ci-hooks).
+Install the local git hooks (lint on commit, line counts and README sync after commit) with `bash scripts/install-hooks.sh`. Serial output lands in `build/serial.log`. The full launcher matrix is in the [machine matrix](docs/infrastructure/machine-matrix.md), and local git hooks are covered in [local CI hooks](docs/infrastructure/development-tooling.md#local-ci-hooks).
 
 ## Documentation
 

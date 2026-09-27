@@ -273,3 +273,9 @@ Carry the baselines forward. A measurement without one is an anecdote.
   - OBSERVED, 2026-09-05 20:01, while checking the tree was quiet before re-running the smoke matrix alone. `pgrep -f "qemu-system" >/dev/null && echo "QEMU STILL RUNNING"` printed `QEMU STILL RUNNING` with nothing of the kind running -- the shell's own `-c` string contains the pattern.
   - Harmless here because the next command proved the tree was quiet by passing, but the identical shape is already recorded in the skill body as a launch guard that aborted every time it ran.
   - The rule the repo already has -- confirm a probe reports NOT-running when nothing runs -- is exactly what I skipped, on a probe written to answer "is anything running".
+
+- [ ] Two pre-push tooling tests fail on the WSL2 host independent of the change being pushed, so every tooling push needs a manual flake triage
+  - OBSERVED, 2026-09-27, both attended pushes of the repo move and docs-site work: `scripts/todo-graph/tests/test_build.sh` case "identity gate: the success-path reap mutation did not leak, so 22ed proves nothing" failed on both pushes, the first of which touched only an owner URL in `scripts/todo-graph/render.py`.
+  - `scripts/tests/test_todo_fence.py` case "s48 dense `<a>` scales linearly" failed once under full-suite load (13.2x over a 4x size step, 2.17 s) and passed alone (705 assertions); it asserts a wall-clock ratio, which host load can break.
+  - Nested logs: `.claude/overnight/artifacts/nested-test_build-20260927-164729.log` (line 480) and `nested-test_todo_fence-20260927-164752.log`.
+  - Possible fix, not applied: make 22ed wait on the reap event rather than a sleep window, and give s48 a retry or a CPU-time basis instead of wall-clock.
