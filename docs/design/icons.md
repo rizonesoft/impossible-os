@@ -24,7 +24,7 @@ System objects use the logo blues (`#2EB5F0`, `#2185E6`, `#155CDE`); glyphs on f
 
 Neutrals come from a cool grey ramp (`#E6EBF1` through `#3D4753`) for device bodies, the gear and page edges.
 
-The Recycle Bin is frosted glass: a translucent blue-grey body (`#CFE2F3` to `#8FAECB` at 95 percent) with a darker rim (`#8FA5BF` to `#566D88`). The terminal is dark slate (`#3A4452` to `#1E252E`) with a cyan prompt (`#40DAF2`).
+The Recycle Bin is clear glass, as on Windows 11: the dark interior (`#4E6680` to `#8CA6C2`) shows through an open elliptical rim (`#E8F0F8` to `#7D93AD`), and the glass is tinted and lit from the left (`#E4F0FB` at 92 percent to `#93B0D0` at 90 percent) with faint ribs; the full bin shows crumpled paper through the glass and above the rim. The terminal is dark slate (`#3A4452` to `#1E252E`) with a cyan prompt (`#40DAF2`).
 
 ## Small-size rules
 
@@ -52,7 +52,7 @@ Every icon is checked at 16 and 24 px on `#202020` and `#F3F3F3` before it lands
 | Desktop | `folder_desktop.svg` | The Desktop known folder |
 | User folder | `user_folder.svg` | The signed-in user's profile folder |
 | File Explorer | `file_explorer.svg` | The File Explorer app, pinned to the taskbar |
-| Network | `network.svg` | Network location and the Network desktop icon |
+| Network | `network.svg` | Network location and the Network desktop icon: a monitor with a globe in front |
 | System drive | `drive_system.svg` | The `C:` drive, badged with the OS mark |
 | Removable drive | `drive_removable.svg` | USB sticks and other removable media |
 | Settings | `settings.svg` | The Settings app |

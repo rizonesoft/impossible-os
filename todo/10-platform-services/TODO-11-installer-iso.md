@@ -117,7 +117,7 @@ The installer runs as a user-mode PE process rather than a special kernel mode. 
 
 **Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
-Seven IxUI wizard screens laid out per `docs/design/shell.md#first-run-setup`: full-screen dark bloom wallpaper (`bloom-dark.jpg`) under acrylic, a centred 800 x 600 card (radius 8, `window_bg`, `THEME_ELEV_START_*`) with an illustration or icon on the left third and the step on the right (title style 28/36, body style, controls per `docs/design/controls.md`). Navigation: accent `[Next]` / `[Install]` / `[Reboot]` bottom right, standard `[Back]` beside it.
+Seven IxUI wizard screens laid out per `docs/design/shell.md#first-run-setup`: full-screen dark silk wallpaper (`silk-dark.jpg`) under acrylic, a centred 800 x 600 card (radius 8, `window_bg`, `THEME_ELEV_START_*`) with an illustration or icon on the left third and the step on the right (title style 28/36, body style, controls per `docs/design/controls.md`). Navigation: accent `[Next]` / `[Install]` / `[Reboot]` bottom right, standard `[Back]` beside it.
 
 **Screen A -- Welcome:**
 - [ ] Title: "Install Impossible OS v1.0" (large `ttf_draw_string`)

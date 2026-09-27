@@ -1,15 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
-<defs><linearGradient id="recycle_bin_full-p1" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9DEE5"/></linearGradient><linearGradient id="recycle_bin_full-glass" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#CFE2F3" stop-opacity="0.95"/><stop offset="1" stop-color="#8FAECB" stop-opacity="0.95"/></linearGradient><linearGradient id="recycle_bin_full-rim" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8FA5BF"/><stop offset="1" stop-color="#566D88"/></linearGradient></defs>
-<path d="M12 13.5l3-6.5 5.5 2 3.6-4.5 5.2 3.6 5.4-1.3 2.3 6.7z" fill="url(#recycle_bin_full-p1)" stroke="#8A96A6" stroke-opacity=".6"/>
-<path d="M16 8.6l2.4 4.2M24 5.2l1 5.5M29.5 8.3l-2.7 4.4" stroke="#AAB4C1" stroke-width="1"/>
-<path d="M10 14h28l-2.6 26.2c-.1 1-1 1.8-2 1.8H14.6c-1 0-1.9-.8-2-1.8z" fill="url(#recycle_bin_full-glass)"/>
-<path d="M13.2 30l6-3.2 5 3 5.8-3.4 5.8 3.1-1 11.2c-.1.9-.8 1.3-1.6 1.3H15c-.8 0-1.5-.4-1.6-1.3z" fill="#FFFFFF" fill-opacity=".85"/>
-<path d="M16 34l4 2.4M26 32.5l3.6 3" stroke="#B7C1CD" stroke-width="1"/>
-<path d="M17.5 18.5L18.6 38" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
-<path d="M24 18.5L24 38" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
-<path d="M30.5 18.5L29.4 38" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
-<path d="M10.6 14.5l2.5 25.6c.1.8.7 1.4 1.5 1.4h18.8" fill="none" stroke="#4E6784" stroke-opacity=".6"/>
-<path d="M37.4 14.5l-2.5 25.6c-.1.8-.7 1.4-1.5 1.4" fill="none" stroke="#4E6784" stroke-opacity=".6"/>
-<rect x="7" y="10.5" width="34" height="5" rx="2.5" fill="url(#recycle_bin_full-rim)"/>
-<path d="M9.5 11.2h29" stroke="#D5E1EE" stroke-opacity=".8" stroke-linecap="round"/>
+<defs><linearGradient id="recycle_bin_full-inside" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#4E6680"/><stop offset="1" stop-color="#8CA6C2"/></linearGradient><linearGradient id="recycle_bin_full-back" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#7C96B2" stop-opacity=".55"/><stop offset="1" stop-color="#A9C0D8" stop-opacity=".35"/></linearGradient><linearGradient id="recycle_bin_full-glass" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#E4F0FB" stop-opacity=".92"/><stop offset="0.45" stop-color="#C3D8EE" stop-opacity=".62"/><stop offset="1" stop-color="#93B0D0" stop-opacity=".9"/></linearGradient><linearGradient id="recycle_bin_full-rim" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#E8F0F8"/><stop offset="1" stop-color="#7D93AD"/></linearGradient><clipPath id="recycle_bin_full-mouth"><path d="M8.4 12.4 13.2 41c.2 1.3 4.9 2.3 10.8 2.3s10.6-1 10.8-2.3l4.8-28.6z"/></clipPath></defs>
+<path d="M8.4 12.4 13.2 41c.2 1.3 4.9 2.3 10.8 2.3s10.6-1 10.8-2.3l4.8-28.6z" fill="url(#recycle_bin_full-back)"/>
+<ellipse cx="24" cy="12.4" rx="15.6" ry="4" fill="url(#recycle_bin_full-inside)"/>
+<path d="M8.4 12.4C8.4 14.6 15.4 16.4 24 16.4s15.6-1.8 15.6-4L34.8 41c-.2 1.3-4.9 2.3-10.8 2.3s-10.6-1-10.8-2.3z" fill="url(#recycle_bin_full-glass)"/>
+<g clip-path="url(#recycle_bin_full-mouth)" opacity=".78">
+<path d="M13.5 20.5l5.2-4.6 4.4 3.1 5.6-4.2 5.4 4.8-1.2 20.2H15z" fill="#F6F8FB"/>
+<path d="M18.7 15.9l4.4 3.1 5.6-4.2M16.4 27.8l6.1 1.7 5.8-2.6M20.2 35.1l7.2 1.1" fill="none" stroke="#B9C6D6" stroke-width=".9" stroke-linejoin="round"/>
+</g>
+<g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-opacity=".75" stroke-width="1.2">
+<path d="M14.6 18.2 17.2 39.6"/><path d="M20.4 18.9 21.4 40.8"/><path d="M27.6 18.9 26.6 40.8"/><path d="M33.4 18.2 30.8 39.6"/>
+</g>
+<path d="M8.9 13.6 13.4 40.7M39.1 13.6 34.6 40.7" fill="none" stroke="#56708E" stroke-opacity=".75" stroke-width=".9"/>
+<path d="M13.3 41.1c.8 1.2 5.2 2.1 10.7 2.1s9.9-.9 10.7-2.1" fill="none" stroke="#56708E" stroke-opacity=".75" stroke-width=".9"/>
+<ellipse cx="24" cy="12.4" rx="15.6" ry="4" fill="none" stroke="url(#recycle_bin_full-rim)" stroke-width="1.8"/>
+<path d="M15.6 12.9l3.1-4.9 3.9 2.6 3.6-5 4.2 3.6 3.1-1.5-1.7 6.1c-3 .9-6.6 1.2-10.2 1.1s-5.3-.7-6-2z" fill="#FFFFFF"/>
+<path d="M18.7 8l3.9 2.6 3.6-5 4.2 3.6M20.9 13.6l3.4-2.5 3.2 2.6" fill="none" stroke="#BCC8D8" stroke-width=".9" stroke-linejoin="round"/>
+<path d="M11.6 10.4C15 9.4 19.3 8.9 24 8.9" fill="none" stroke="#FFFFFF" stroke-opacity=".85" stroke-linecap="round"/>
 </svg>

@@ -236,8 +236,8 @@ Two things make the desktop read as Windows 11 rather than merely Fluent-shaped:
 - [ ] Reconcile the corpus generator with `docs/design/tokens.json` (the shell design contract, 2026-09-27)
   - `gen-tokens.py` writes the `color.themes` block of `tokens.json`; materials, sizes, elevation and motion stay hand-authored there as Impossible OS design decisions
   - `include/desktop/theme_tokens.h` is already generated from `tokens.json` by `scripts/site/gen_theme_header.py` and drift-checked by lint Check 30; `THEME_DARK`/`THEME_LIGHT` (§3) read those constants
-- [ ] Theme switch swaps the default wallpaper: `bloom-dark.jpg` in dark mode, `bloom-light.jpg` in light mode, unless the user set `HKCU\Control Panel\Desktop\WallPaper`
-  - Both ship under `resources/backgrounds/` (sources in `resources/backgrounds/src/`); only `background.jpg` (the dark bloom) reaches the sysroot today
+- [ ] Theme switch swaps the default wallpaper: `silk-dark.jpg` in dark mode, `silk-light.jpg` in light mode, unless the user set `HKCU\Control Panel\Desktop\WallPaper`
+  - Both ship under `resources/backgrounds/` (sources in `resources/backgrounds/src/`); only `background.jpg` (the dark silk) reaches the sysroot today
 - [ ] Transparency off (`EnableTransparency=0`) draws every material's tint at full opacity with no blur and no grain (`docs/design/shell.md#materials`)
 - [ ] High contrast and focus visuals: a 2 px `focus_outer` ring outside a 1 px `focus_inner` ring on keyboard focus only; the high-contrast preset replaces every design token (`docs/design/shell.md#accessibility`)
 - [ ] Commit: `"desktop/theme: Fluent token corpus generator, Win11 personalization Registry contract, Selawik + Fluent icon assets"`

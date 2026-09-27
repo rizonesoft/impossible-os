@@ -113,7 +113,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop)
 
-`wallpaper_set(path, mode)`: load via `image_load()`, scale via `image_scale(mode)`, cache scaled bitmap. Registry watch: `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (the Windows 11 keys, per `08-graphics-ui/TODO-03 §9`) → auto-reload on change; when no wallpaper is set, the default bloom for the current theme is used. `background_color` fallback. Display Control Panel: thumbnail + fit-mode dropdown.
+`wallpaper_set(path, mode)`: load via `image_load()`, scale via `image_scale(mode)`, cache scaled bitmap. Registry watch: `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (the Windows 11 keys, per `08-graphics-ui/TODO-03 §9`) → auto-reload on change; when no wallpaper is set, the default silk wallpaper for the current theme is used. `background_color` fallback. Display Control Panel: thumbnail + fit-mode dropdown.
 
 **Files:** `src/desktop/wallpaper.c` (new), `include/desktop/wallpaper.h` (new), `src/desktop/desktop.c` (extend)
 
@@ -121,13 +121,13 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 > Existing `desktop_draw_wallpaper()` draws a pre-loaded wallpaper; `wallpaper_set()` is the new entrypoint that replaces the hardcoded wallpaper load. **Cache strategy**: scale to exact screen resolution `(fb_get_width(), fb_get_height())` once; store as `uint32_t *g_wallpaper_scaled` (allocated via `pmm_alloc_contiguous(w*h*4)`). On every `desktop_draw_wallpaper()` call: `memcpy(screen, g_wallpaper_scaled, w*h*4)` (O(n) blit; no per-frame decode). Registry watch: poll `HKCU\Control Panel\Desktop\WallPaper` every 5 s in a background tick (called from `desktop_tick()`); if value changes: free old buffer, reload, re-scale. `background_color`: if `image_load()` fails: fill screen with `RegGetValue("BackgroundColor", DWORD)`. Acrylic/Mica consumers (`gfx_mica`, acrylic_cache) are automatically updated because they read `desktop_get_wallpaper_surface()` each time.
 
 - [ ] `void wallpaper_set(const char *path, image_fit_t mode)` in `wallpaper.c`: `image_load()`; `image_scale()` to screen dims; store in `g_wallpaper_scaled`; `wm_mark_dirty()`
-- [ ] `void wallpaper_init(void)`: read `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (default: the theme's bloom in Fill mode); call `wallpaper_set()`; fallback to `background_color` DWORD on error
+- [ ] `void wallpaper_init(void)`: read `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (default: the theme's silk wallpaper in Fill mode); call `wallpaper_set()`; fallback to `background_color` DWORD on error
 - [ ] `void wallpaper_tick(void)`: called from `desktop_tick()` every 5 s; `RegGetValue()` and compare to last loaded path; reload if changed
 - [ ] Update `desktop_draw_wallpaper()` to use `g_wallpaper_scaled` via `memcpy`; update `desktop_get_wallpaper_surface()` to wrap the new scaled buffer
 - [ ] `background_color` fallback: `gfx_fill_rect(screen, 0, 0, fb_w, fb_h, bg_color)` if wallpaper load fails
 - [ ] `void wallpaper_reload_on_dpi(void)`: `image_scale()` re-scale to new screen dims; called from `WM_DPI_CHANGED` handler
-- [ ] Default wallpaper is the impossible bloom: `resources/backgrounds/bloom-dark.jpg` (dark) and `bloom-light.jpg` (light), Fill mode, per `docs/design/shell.md#desktop`
-  - Ship both to the sysroot (today only `background.jpg`, the dark bloom, is copied); the theme switch in `08-graphics-ui/TODO-03 §9` picks between them
+- [ ] Default wallpaper is the impossible silk: `resources/backgrounds/silk-dark.jpg` (dark) and `silk-light.jpg` (light), Fill mode, per `docs/design/shell.md#desktop`
+  - Ship both to the sysroot (today only `background.jpg`, the dark silk, is copied); the theme switch in `08-graphics-ui/TODO-03 §9` picks between them
 - [ ] Commit: `"desktop: wallpaper_set() -- image_load+scale, cache, Registry watch, background_color fallback"`
 
 ## 4. DPI Scaling `[Sonnet]`

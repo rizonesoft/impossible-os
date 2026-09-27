@@ -10,8 +10,8 @@
 /* Generated from docs/design/tokens.json by scripts/site/build.py. */
 {{design_tokens_css}}
 
-[data-theme="dark"]  { --wallpaper: url(../wallpapers/bloom-dark.jpg);  --mica-fallback: rgba(32,32,32,.86); --glyph: #fff; }
-[data-theme="light"] { --wallpaper: url(../wallpapers/bloom-light.jpg); --mica-fallback: rgba(243,243,243,.86); --glyph: #1b1b1b; }
+[data-theme="dark"]  { --wallpaper: url(../wallpapers/silk-dark.jpg);  --mica-fallback: rgba(32,32,32,.86); --glyph: #fff; }
+[data-theme="light"] { --wallpaper: url(../wallpapers/silk-light.jpg); --mica-fallback: rgba(243,243,243,.86); --glyph: #1b1b1b; }
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
@@ -245,7 +245,7 @@ body.shot *, body.shot *::before, body.shot *::after { transition: none !importa
 .boot img { position: absolute; left: 50%; top: 40%; width: var(--size-boot-logo); transform: translate(-50%, -50%); }
 .boot .spin { position: absolute; left: 50%; top: 70%; width: var(--size-boot-spinner); height: var(--size-boot-spinner); margin: -20px 0 0 -20px; border-radius: 50%; border: 3px dotted #fff; animation: rot 1.4s linear infinite; }
 @keyframes rot { to { transform: rotate(360deg); } }
-.oobe { background: #000 url(../wallpapers/bloom-dark.jpg) center / cover; color: var(--text-primary); }
+.oobe { background: #000 url(../wallpapers/silk-dark.jpg) center / cover; color: var(--text-primary); }
 .oobe .card { position: absolute; left: 50%; top: 50%; width: 800px; height: 600px; max-width: 94vw; max-height: 90vh; transform: translate(-50%, -50%); display: grid; grid-template-columns: 1fr 2fr;
   border-radius: var(--radius-overlay); background: var(--window-bg); box-shadow: var(--elev-start), 0 0 0 1px var(--stroke-surface); overflow: hidden; }
 .oobe .art { display: grid; place-items: center; background: var(--layer-bg); }
@@ -377,7 +377,7 @@ body.shot *, body.shot *::before, body.shot *::after { transition: none !importa
     <div class="sm-head"><h3>Recommended</h3><button class="pill">More<svg class="g" viewBox="0 0 16 16" style="width:10px"><path d="M6 4l4 4-4 4"/></svg></button></div>
     <div class="recs">
       <div class="rec"><img src="../icons/text_file.svg" alt=""><div>boot.conf<small>17m ago</small></div></div>
-      <div class="rec"><img src="../icons/file_image.svg" alt=""><div>bloom-dark.jpg<small>1h ago</small></div></div>
+      <div class="rec"><img src="../icons/file_image.svg" alt=""><div>silk-dark.jpg<small>1h ago</small></div></div>
       <div class="rec"><img src="../icons/file_archive.svg" alt=""><div>system-disk.zip<small>Yesterday at 21:14</small></div></div>
       <div class="rec"><img src="../icons/text_file.svg" alt=""><div>release-notes.txt<small>Sep 24</small></div></div>
       <div class="rec"><img src="../icons/terminal.svg" alt=""><div>build.ps1<small>Sep 22</small></div></div>
@@ -570,7 +570,7 @@ body.shot *, body.shot *::before, body.shot *::after { transition: none !importa
     w.querySelector('.tab').innerHTML = '<img src="../icons/settings.svg" alt="">Settings';
     w.querySelector('.chrome').style.display = 'none';
     w.querySelector('.nav').innerHTML = '<div class="it sel navi"><img src="../icons/computer.svg" alt="">System</div><div class="it navi"><img src="../icons/network.svg" alt="">Network &amp; internet</div><div class="it navi"><img src="../icons/folder_pictures.svg" alt="">Personalisation</div><div class="it navi"><img src="../icons/user_folder.svg" alt="">Accounts</div><div class="it navi"><img src="../icons/control_panel.svg" alt="">Apps</div>';
-    w.querySelector('.content').outerHTML = '<div class="page"><h2>Personalisation</h2><div class="srow"><div class="t"><div>Background</div><div>Picture, solid colour or slideshow</div></div>Impossible bloom</div><div class="srow"><div class="t"><div>Transparency effects</div><div>Frosted glass on the taskbar, Start and flyouts</div></div><div class="tgl"></div></div><div class="srow"><div class="t"><div>Accent colour</div><div>Buttons, toggles and selection</div></div>Automatic</div></div>';
+    w.querySelector('.content').outerHTML = '<div class="page"><h2>Personalisation</h2><div class="srow"><div class="t"><div>Background</div><div>Picture, solid colour or slideshow</div></div>Impossible silk</div><div class="srow"><div class="t"><div>Transparency effects</div><div>Frosted glass on the taskbar, Start and flyouts</div></div><div class="tgl"></div></div><div class="srow"><div class="t"><div>Accent colour</div><div>Buttons, toggles and selection</div></div>Automatic</div></div>';
     w.querySelector('.status').style.display = 'none';
   }
   if (open === 'ctx') {
