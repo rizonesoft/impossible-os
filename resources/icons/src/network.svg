@@ -1,18 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
-<defs><linearGradient id="network-frame" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#B4BDC8"/><stop offset="1" stop-color="#7E8895"/></linearGradient><linearGradient id="network-screen" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#3AC0F2"/><stop offset="1" stop-color="#1B6BE0"/></linearGradient><linearGradient id="network-stand" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8A94A0"/><stop offset="1" stop-color="#5E6A78"/></linearGradient><radialGradient id="network-globe" cx="0.36" cy="0.30" r="0.78" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8BE3FF"/><stop offset="0.45" stop-color="#2E9BF6"/><stop offset="1" stop-color="#1348C9"/></radialGradient><radialGradient id="network-shine" cx="0.5" cy="0.5" r="0.5" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.75"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient><clipPath id="network-sphere"><circle cx="35" cy="35" r="9.4"/></clipPath></defs>
-<rect x="3" y="5" width="34" height="24" rx="2.2" fill="url(#network-frame)"/>
-<rect x="5.2" y="7.2" width="29.6" height="19.6" rx="0.9" fill="url(#network-screen)"/>
-<path d="M5.2 23c7-4.6 16-7 29.6-6.4v10.2H6.1c-.5 0-.9-.4-.9-.9z" fill="#FFFFFF" fill-opacity=".14"/>
-<path d="M17 29h6l.8 4.2h-7.6z" fill="url(#network-stand)"/>
-<rect x="12.5" y="32.6" width="15" height="2.6" rx="1.3" fill="url(#network-stand)"/>
-<path d="M3.6 5.5h32.8" stroke="#E2E7ED" stroke-opacity=".8"/>
-<circle cx="35" cy="35" r="10.1" fill="#FFFFFF" fill-opacity=".92"/>
-<circle cx="35" cy="35" r="9.4" fill="url(#network-globe)"/>
-<g clip-path="url(#network-sphere)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-opacity=".7" stroke-width="1">
-<ellipse cx="35" cy="35" rx="4" ry="9.4"/>
-<path d="M25.6 35h18.8"/>
-<path d="M26.8 30c5 1.8 11.4 1.8 16.4 0M26.8 40c5-1.8 11.4-1.8 16.4 0" stroke-opacity=".55"/>
+<!-- The monitor is This PC's (computer.svg) at 80 percent: same shapes and gradients, so the two
+     desktop icons always agree. Below it, a cable to three networked devices. -->
+<defs><linearGradient id="network-frame" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#AEB7C2"/><stop offset="1" stop-color="#7E8895"/></linearGradient><linearGradient id="network-screen" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#2EB5F0"/><stop offset="0.55" stop-color="#2185E6"/><stop offset="1" stop-color="#155CDE"/></linearGradient><linearGradient id="network-stand" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="#8A94A0"/><stop offset="1" stop-color="#5E6A78"/></linearGradient></defs>
+<g transform="translate(4.8 -3.4) scale(.8)">
+<rect x="4" y="7" width="40" height="28" rx="2.5" fill="url(#network-frame)"/>
+<rect x="6.5" y="9.5" width="35" height="23" rx="1" fill="url(#network-screen)"/>
+<path d="M6.5 27c8-6 17-9.5 35-9v14.5H7.5c-.6 0-1-.4-1-1z" fill="#FFFFFF" fill-opacity=".14"/>
+<path d="M6.5 30.5c9-5 20-7.2 35-6.4" fill="none" stroke="#9EE7FF" stroke-opacity=".5" stroke-width="1.2"/>
+<path d="M20 35h8l1 5h-10z" fill="url(#network-stand)"/>
+<rect x="14" y="39.5" width="20" height="3" rx="1.5" fill="url(#network-stand)"/>
+<path d="M6.5 7.5h35" stroke="#DDE3EA" stroke-opacity=".8"/>
 </g>
-<ellipse cx="31.6" cy="30.2" rx="4.4" ry="2.8" fill="url(#network-shine)" transform="rotate(-24 31.6 30.2)"/>
-<circle cx="35" cy="35" r="9.1" fill="none" stroke="#0E3A9E" stroke-opacity=".4" stroke-width=".7"/>
+<path d="M24 30.6V35M11 38v-3h26v3" fill="none" stroke="url(#network-stand)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="7.2" y="38" width="7.6" height="5.4" rx="1.3" fill="url(#network-screen)"/>
+<rect x="20.2" y="38" width="7.6" height="5.4" rx="1.3" fill="url(#network-screen)"/>
+<rect x="33.2" y="38" width="7.6" height="5.4" rx="1.3" fill="url(#network-screen)"/>
+<path d="M7.8 38.6h6.4M20.8 38.6h6.4M33.8 38.6h6.4" stroke="#FFFFFF" stroke-opacity=".35" stroke-width=".6"/>
 </svg>
