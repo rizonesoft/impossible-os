@@ -49,6 +49,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]   # the real checkout; every git call runs here
 ROOT = REPO                                  # where inputs are READ; set_root() moves it to a snapshot
 sys.path.insert(0, str(REPO / "tools" / "vendor"))
+sys.path.insert(0, str(REPO / "scripts"))
+import todo_fence  # noqa: E402  (the shared `## N.` heading rule)
 
 from markdown_it import MarkdownIt  # noqa: E402  (vendored, path set above)
 
@@ -450,12 +452,21 @@ DESIGN_REF_RE = re.compile(r"docs/design/([a-z0-9_-]+\.md)(?:#([A-Za-z0-9_-]+))?
 
 
 def todo_sections(text: str):
-    """Yield (number, title, body, first_line) for each `## N.` section."""
-    heads = list(re.finditer(r"^## (\d+)\. (.+)$", text, re.M))
-    ends = [m.start() for m in re.finditer(r"^## ", text, re.M)]
-    for m in heads:
-        nxt = min((e for e in ends if e > m.start()), default=len(text))
-        yield int(m.group(1)), m.group(2).strip(), text[m.end():nxt], text.count("\n", 0, m.start()) + 1
+    """Yield (number, title, body, first_line) for each `## N.` section.
+
+    Headings and boundaries come from the shared rule in `scripts/todo_fence.py`
+    (fence-aware, CommonMark indent), the same one the graph producer uses, so a
+    `## 9.` inside a code sample is never a section here either."""
+    scan = todo_fence.scan_text(text)
+    lines, mask = scan.lines, scan.mask
+    for i, line in enumerate(lines):
+        if mask[i]:
+            continue
+        head = todo_fence.classify_heading(line)
+        if head.kind != "ok" or not head.title:
+            continue
+        end = next((j for j in range(i + 1, len(lines)) if not mask[j] and todo_fence.is_h2(lines[j])), len(lines))
+        yield head.n, head.title.strip(), "\n".join(lines[i + 1:end]), i + 1
 
 
 def check_design_lines(pages: dict[str, Page], errors: list[str]) -> None:
