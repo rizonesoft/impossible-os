@@ -24,7 +24,7 @@ System objects use the logo blues (`#2EB5F0`, `#2185E6`, `#155CDE`); glyphs on f
 
 Neutrals come from a cool grey ramp (`#E6EBF1` through `#3D4753`) for device bodies, the gear and page edges.
 
-The Recycle Bin is clear glass, as on Windows 11: the dark interior (`#4E6680` to `#8CA6C2`) shows through an open elliptical rim (`#E8F0F8` to `#7D93AD`), and the glass is tinted and lit from the left (`#E4F0FB` at 92 percent to `#93B0D0` at 90 percent) with one soft reflection band and no ribs; the full bin holds soft crumpled paper balls that rest on each other from the bottom up to the brim, seen through the glass, the top one sitting in the opening. The terminal is dark slate (`#3A4452` to `#1E252E`) with a cyan prompt (`#40DAF2`).
+The Recycle Bin is clear glass, as on Windows 11: the dark interior (`#4E6680` to `#8CA6C2`) shows through an open elliptical rim (`#E8F0F8` to `#7D93AD`), and the glass is tinted and lit from the left (`#E4F0FB` at 92 percent to `#93B0D0` at 90 percent) with one soft reflection band and no ribs; the full bin holds crumpled paper balls (lumpy outlines, many small flat facets catching the light unevenly, and crease lines) that rest on each other from the bottom up to the brim, seen through a lighter glass, the top one sitting in the opening. The terminal is dark slate (`#3A4452` to `#1E252E`) with a cyan prompt (`#40DAF2`).
 
 ## Small-size rules
 
