@@ -339,8 +339,8 @@ Define the return path before it is needed. Moving back later should be a planne
   - gitleaks 8.30.1 over all 5,917 commits found no true secret (13 hits, all false positives).
   - Pages `https_enforced` now `true` (cert approved); the `Default Branch Security` admin bypass (RepositoryRole 5) the org move dropped is restored.
   - Secret scanning + push protection enabled; `rizonetech/impossible-os` returns 301 to the new path; live owner refs swept in 36 files.
-- [/] Flip the `www.impossibleos.co` CNAME to `rizonesoft.github.io` (owner: operator, DNS provider access).
-  - Not blocking: `www` still 301s to the apex because every `*.github.io` host resolves to the same Pages edge.
+- [x] Flipped the `www.impossibleos.co` CNAME to `rizonesoft.github.io` (operator, 2026-09-27).
+  - Verified: `www.impossibleos.co` resolves via `rizonesoft.github.io` and `https://www.impossibleos.co/` returns 301 to `https://impossibleos.co/`.
 
 **Test checkpoint:** The runbook documents every move-back + public-visibility step in operator-runnable form; `docs/infrastructure/repository-move-back-runbook.md` exists and a reader can follow trigger -> readiness -> transfer -> re-point -> domain -> visibility-flip -> redirect-verify without gaps. The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order (the actual execution is the future operator action).
 
