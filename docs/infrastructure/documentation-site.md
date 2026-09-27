@@ -63,7 +63,7 @@ A page that documents code names that code in its directive, and records when it
 
 A page is stale when its `sources` differ between the commit that last changed the page's content and the tree being checked. The comparison is on content, not history, so a change that was reverted does not count, a file deleted from a source directory does, and a page that was only renamed keeps its old baseline. Landing page feature cards work the same way, each card with its own baseline.
 
-Stale pages are warnings, never errors, because a code change is not always a docs change. Lint Check 30 prints them on every commit, `python3 scripts/site/build.py --freshness` lists every tracked page and its state, and the [coverage page](https://impossibleos.co/docs/coverage.html) shows a freshness table. Editing the page clears the warning; if the page is still accurate, bump its `reviewed=` date, which is a content change. A source must be a tracked file or directory, or the check fails.
+Stale pages are warnings, never errors, because a code change is not always a docs change. A page whose history git cannot read, in a shallow clone or because git failed, is reported as unknown with the reason, and a git failure also prints a warning. Lint Check 30 prints them on every commit, `python3 scripts/site/build.py --freshness` lists every tracked page and its state, and the [coverage page](https://impossibleos.co/docs/coverage.html) shows a freshness table. Editing the page clears the warning; if the page is still accurate, bump its `reviewed=` date, which is a content change. A source must be a tracked file or directory, or the check fails.
 
 ## How are the landing page feature cards kept true?
 

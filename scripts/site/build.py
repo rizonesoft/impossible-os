@@ -279,6 +279,11 @@ def parse_directives(text: str) -> dict[str, str]:
     return found
 
 
+def directive_sources(text: str) -> list[str]:
+    """The `sources=` list of a page's directive, normalised (no trailing slash)."""
+    return [c.strip().rstrip("/") for c in parse_directives(text).get("sources", "").split(",") if c.strip()]
+
+
 class Renderer:
     def __init__(self, facts: dict, pages: dict[str, Page], errors: list[str]):
         self.facts = facts
@@ -605,7 +610,7 @@ def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Rendere
         text = page.src.read_text(encoding="utf-8")
         d = parse_directives(text)
         page.covers = [c.strip() for c in d.get("covers", "").split(",") if c.strip()]
-        page.sources = [c.strip().rstrip("/") for c in d.get("sources", "").split(",") if c.strip()]
+        page.sources = directive_sources(text)
         page.reviewed = d.get("reviewed", "")
         if page.reviewed:
             try:
@@ -694,6 +699,13 @@ FRESH_LABEL = {"fresh": "up to date", "stale": "sources changed", "editing": "be
                "new": "not yet committed", "unknown": "unknown (shallow clone)"}
 
 
+def fresh_label(r) -> str:
+    """The state as shown to a reader; an unknown state says WHY."""
+    if r.state == "unknown" and getattr(r, "error", ""):
+        return f"unknown: {r.error}"
+    return FRESH_LABEL.get(r.state, r.state)
+
+
 def freshness_table(records) -> str:
     if not records:
         return ""
@@ -703,7 +715,7 @@ def freshness_table(records) -> str:
         name = (f'<a href="{{{{repo_url}}}}/blob/main/{html.escape(r.name)}">{html.escape(r.name[5:])}</a>'
                 if r.kind == "page" else f"Landing page card: {html.escape(r.name)}")
         srcs = ", ".join(f"<code>{html.escape(x)}</code>" for x in r.sources)
-        state = html.escape(FRESH_LABEL.get(r.state, r.state))
+        state = html.escape(fresh_label(r))
         if r.state == "stale":
             state = f'<span class="missing">{state}</span>'
         rows.append(f"<tr><td>{name}</td><td>{srcs}</td><td>{html.escape(r.baseline_date or '')}</td><td>{state}</td></tr>")
@@ -798,9 +810,14 @@ def feature_cards(facts: dict, errors: list[str]) -> str:
         errors.append(f"gh-pages/{FEATURES_FILE}: unreadable ({e})")
         return ""
     known = set(todo_files())
+    titles = [c.get("title") for c in cards]
+    for t in {t for t in titles if titles.count(t) > 1}:
+        errors.append(f"gh-pages/{FEATURES_FILE}: duplicate card title {t!r} (titles identify cards for freshness)")
     out = []
     for card in cards:
         where = f"gh-pages/{FEATURES_FILE}: card {card.get('title', '?')!r}"
+        if not isinstance(card.get("title"), str) or not card["title"].strip():
+            errors.append(f"{where}: every card needs a non-empty string title")
         owners, sources = card.get("owners") or [], card.get("sources") or []
         if not owners:
             errors.append(f"{where}: names no owning roadmap file")
@@ -911,7 +928,11 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
         check_sources(f"docs/{page.rel}", page.sources, errors)
     import freshness
     freshness.REPO = REPO
-    records = freshness.check_all({f"docs/{p.rel}": p.sources for p in pages.values() if p.sources}, SOURCE)
+    page_sources = {f"docs/{p.rel}": p.sources for p in pages.values() if p.sources}
+    if SOURCE in ("worktree", "index") and freshness.merging():
+        page_sources = freshness.with_head_sources(
+            page_sources, [f"docs/{p.rel}" for p in pages.values()], directive_sources, SOURCE)
+    records = freshness.check_all(page_sources, SOURCE)
     build.freshness = records  # type: ignore[attr-defined]
     cov = coverage_page(pages, covered, records)
     tpl = render_template((SITE_SRC / "docs-template.html").read_text(encoding="utf-8"), facts,
@@ -1150,10 +1171,12 @@ def run(args: argparse.Namespace) -> int:
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
         for r in records:
-            extra = f" ({', '.join(r.changed[:5])})" if r.changed else ""
+            extra = f" ({', '.join(r.changed[:5])})" if r.changed else f" ({r.error})" if r.error else ""
             print(f"{r.state:8} {r.baseline_date or '-':10} {r.kind:4} {r.name}{extra}")
         stale = sum(1 for r in records if r.state == "stale")
-        print(f"freshness: {stale} of {len(records)} stale", file=sys.stderr)
+        unknown = sum(1 for r in records if r.state == "unknown")
+        print(f"freshness: {stale} of {len(records)} stale" + (f", {unknown} unknown" if unknown else ""),
+              file=sys.stderr)
         return 1 if errors else 0
 
     if args.update_baseline:

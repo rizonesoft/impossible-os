@@ -262,6 +262,14 @@ class FeatureCards(unittest.TestCase):
                        "text contains an em or en dash", "'Ownerless': names no owning roadmap file"):
             self.assertIn(needle, joined)
         self.assertEqual(len(errors), 5, errors)
+        dup = [{"title": "Twin", "text": "a", "owners": ["todo/01-a/TODO-01-a.md"]},
+               {"title": "Twin", "text": "b", "owners": ["todo/01-a/TODO-01-a.md"]}, {"title": "", "text": "c"}]
+        (root / "gh-pages" / "features.json").write_text(json.dumps({"cards": dup}), encoding="utf-8")
+        errors = []
+        B.feature_cards(FACTS, errors)
+        joined = " | ".join(errors)
+        self.assertIn("duplicate card title 'Twin'", joined)
+        self.assertIn("non-empty string title", joined)
 
 
 class Freshness(unittest.TestCase):
@@ -388,6 +396,128 @@ class Freshness(unittest.TestCase):
         self.git("add", "gh-pages/features.json")
         states = {r.name: r.state for r in self.F.check_cards("index", False, True)}
         self.assertEqual(states["B"], "stale")
+
+    def test_a_merge_cannot_clear_a_page_by_dropping_its_sources(self):
+        import build
+        self.write("docs/p.md", "<!-- docs: sources=src/a.c,src/d -->\n# P\n")
+        self.commit("directive")
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change a")
+        self.write("docs/p.md", "<!-- docs: sources=src/d -->\n# P\n")    # merged-in directive drops src/a.c
+        self.git("add", "docs/p.md")
+        (self.root / ".git" / "MERGE_HEAD").write_text(self.git("rev-parse", "HEAD"), encoding="utf-8")
+        for merged in ({"docs/p.md": ["src/d"]}, {}):                          # partial and complete removal
+            srcs = self.F.with_head_sources(merged, ["docs/p.md"], build.directive_sources)
+            self.assertEqual(srcs["docs/p.md"][0], "src/a.c")
+            self.assertEqual(self.F.check_all(srcs, "index")[0].state, "stale")
+
+    def test_unborn_head_reports_new_instead_of_raising(self):
+        empty = Path(tempfile.mkdtemp(prefix="fresh-empty-"))
+        subprocess.run(["git", "init", "-q"], cwd=empty, check=True)
+        self.F.REPO = empty
+        self.assertEqual([r.state for r in self.F.check_all({"docs/p.md": ["src"]}, "worktree")], ["new"])
+
+    def test_card_sources_with_a_trailing_slash_still_detect_changes(self):
+        self.write("gh-pages/features.json", json.dumps({"cards": [{"title": "D", "text": "d", "sources": ["src/a.c/"]}]}))
+        self.commit("card")
+        self.write("src/a.c", "int a9;\n")                              # a FILE source written with a slash
+        self.commit("change")
+        self.assertEqual(self.F.check_cards("HEAD", False, False)[0].state, "stale")
+
+    def test_card_history_is_read_only_up_to_each_boundary(self):
+        for i in range(12):
+            self.write("gh-pages/features.json", json.dumps({"cards": [{"title": "A", "text": f"v{i}"}]}))
+            self.commit(f"card v{i}")
+        calls = []
+        real = self.F._BlobReader.read
+        self.F._BlobReader.read = lambda me, spec: (calls.append(spec), real(me, spec))[1]
+        try:
+            self.assertEqual(self.F.check_cards("HEAD", False, False)[0].state, "fresh")
+        finally:
+            self.F._BlobReader.read = real
+        self.assertLessEqual(len(calls), 3, calls)                       # not all 12 versions
+
+    def test_a_stable_card_keeps_its_baseline_across_many_versions(self):
+        cards = [{"title": "Stable", "text": "s"}, {"title": "Busy", "text": "v0"}]
+        self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+        self.commit("cards")
+        first = self.git("rev-parse", "HEAD").strip()
+        for i in range(1, 15):
+            cards[1]["text"] = f"v{i}"
+            self.write("gh-pages/features.json", json.dumps({"cards": cards}))
+            self.commit(f"busy v{i}")
+        spawned = []
+        real = self.F._BlobReader.__init__
+        self.F._BlobReader.__init__ = lambda me: (spawned.append(1), real(me))[1]
+        try:
+            recs = {r.name: r for r in self.F.check_cards("HEAD", False, False)}
+        finally:
+            self.F._BlobReader.__init__ = real
+        self.assertEqual(recs["Stable"].baseline, first)
+        self.assertEqual(len(spawned), 1)                                # one batch process for all versions
+
+    def test_a_dead_card_reader_is_unknown_not_new(self):
+        self.write("gh-pages/features.json", json.dumps({"cards": [{"title": "A", "text": "a", "sources": ["src/a.c"]}]}))
+        self.commit("card")
+        real = self.F._BlobReader.read
+
+        def dying(me, spec):
+            me.proc.kill()
+            me.proc.wait()
+            return real(me, spec)
+        self.F._BlobReader.read = dying
+        try:
+            recs = self.F.check_cards("HEAD", False, False)
+        finally:
+            self.F._BlobReader.read = real
+        self.assertEqual([r.state for r in recs], ["unknown"])
+        self.assertIn("could not be checked", self.F.warning(recs[0]))
+
+    def test_unknown_reporting_names_the_cause(self):
+        import build
+        failed = self.F.Record("page", "docs/p.md", ["src"], state="unknown", error="git log failed")
+        shallow = self.F.Record("page", "docs/p.md", ["src"], state="unknown")
+        self.assertEqual(build.fresh_label(failed), "unknown: git log failed")
+        self.assertEqual(build.fresh_label(shallow), "unknown (shallow clone)")
+        self.assertIn("unknown: git log failed", build.freshness_table([failed]))
+
+    def test_a_git_failure_is_unknown_with_a_warning_not_new(self):
+        self.git("config", "diff.orderFile", str(self.root / "missing-order-file"))
+        r = self.page("HEAD")
+        self.assertEqual(r.state, "unknown")
+        self.assertIn("could not be checked", self.F.warning(r))
+
+    def test_a_merge_rename_still_restores_head_sources(self):
+        import build
+        body = "".join(f"Line {i} of a long page.\n" for i in range(20))
+        self.write("docs/p.md", "<!-- docs: sources=src/a.c,src/d -->\n# P\n" + body)
+        self.commit("directive")
+        self.write("src/a.c", "int a2;\n")
+        self.commit("change a")
+        self.git("mv", "docs/p.md", "docs/q.md")
+        self.write("docs/q.md", "<!-- docs: sources=src/d -->\n# P\n" + body)   # renamed AND drops src/a.c
+        self.git("add", "docs/q.md")
+        (self.root / ".git" / "MERGE_HEAD").write_text(self.git("rev-parse", "HEAD"), encoding="utf-8")
+        for merged in ({"docs/q.md": ["src/d"]}, {}):
+            srcs = self.F.with_head_sources(merged, ["docs/q.md"], build.directive_sources, "index")
+            self.assertIn("src/a.c", srcs["docs/q.md"])
+            self.assertEqual(self.F.check_all(srcs, "index")[0].state, "stale")
+
+    def test_long_history_baseline_is_the_newest_content_change(self):
+        for i in range(30):
+            self.write("docs/p.md", f"# P\n\nrevision {i}\n")
+            self.commit(f"rev {i}")
+        head = self.git("rev-parse", "HEAD").strip()
+        calls = []
+        real = self.F._git
+        self.F._git = lambda *a, **k: (calls.append(a[0]), real(*a, **k))[1]
+        try:
+            commit, path, date = self.F.content_baseline("docs/p.md", "HEAD")
+        finally:
+            self.F._git = real
+        self.assertEqual((commit, path), (head, "docs/p.md"))
+        self.assertEqual(calls, ["log"])                                  # one bounded query, not a full walk
+        self.assertRegex(date, r"^\d{4}-\d{2}-\d{2}$")
 
     def test_a_merge_that_changed_the_page_is_its_baseline(self):
         self.write("docs/p.md", "# P\n\none\n\ntwo\n\nthree\n")

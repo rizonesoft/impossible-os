@@ -653,13 +653,18 @@ A page that was right when written goes wrong when its code changes. Neither Win
   - The coverage page gains a Freshness table; Pages runs on every push with full history, so the table cannot lag behind a path filter.
 - [x] `sources=` and `reviewed=2026-09-28` on the 43 existing pages that document code (4 process pages need none)
   - Landing page feature cards get the same check with a per-card baseline; pages written by the domain sections add them under the contract rule.
+- [x] Post-ship review fixes (4 rounds), each with a git-backed regression test
+  - A merge cannot clear a page or card by dropping or renaming its sources: HEAD's directive sources still count (`with_head_sources`, rename-aware).
+  - Duplicate or empty card titles are errors; card sources share the page normalisation (no trailing slash).
+  - An unborn HEAD reports `new`; a git failure (log or the card `cat-file --batch` reader) reports `unknown` with the reason and a warning, never `new`.
+  - Bounded history: one `git log -n1` per page (widened only past pure renames) and one `cat-file --batch` process for every card version.
 - [/] The `sources=` rule in `docs/contributing/docs-page-contract.md`: parked on the page-contract section, which writes that file (item "Freshness rule in the contract")
   - The rule is already documented in `docs/infrastructure/documentation-site.md` and CLAUDE.md.
 - [x] Commit: `"site: doc freshness, sources= directive and stale-page warning"`
 
 **Test checkpoint:** touching a file listed in a page's `sources=` in a scratch commit makes `python3 scripts/site/build.py --freshness` list that page; reverting clears it. Test on: WSL2 dev host.
 
-> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (class `Freshness`, 16 git-backed cases, plus `FeatureCards`) | validation: `python3 scripts/site/build.py --freshness`, lint Check 30 warnings
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (class `Freshness`, 25 git-backed cases, plus `FeatureCards`) | validation: `python3 scripts/site/build.py --freshness`, lint Check 30 warnings
 
 > **Notes:**
 > - **What shipped:** `scripts/site/freshness.py` judges each page and feature card by content: stale when its `sources=` differ between the commit that last changed it and the tree being checked.
@@ -667,6 +672,9 @@ A page that was right when written goes wrong when its code changes. Neither Win
 > - **Downstream:** Pages runs on every push with full history; 43 existing pages and all 9 cards carry `sources=` and `reviewed=`; domain sections add them under the contract rule.
 > - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How do we notice when a page goes out of date?".
 > - **Scope boundary:** warnings only, by design; the page-contract text for `sources=` is parked on the contract section.
+
+> **Verified:** 2026-09-28 | commit `b5ffa270b` | 5/6 items | build OK | tests 46/46 PASS
+> **Quality reviewed:** 2026-09-28 | Codex 14x (design, test-coverage, adversarial x4, re-adversarial x2, consistency x3, perf x3) | 29M fixed, 0 open | scope: N/A (host tooling and docs; no kernel, boot or desktop code)
 
 ## 23. Site Polish: Sitemap, Last-Updated, Search, Release Snapshots
 
@@ -709,7 +717,7 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 > Host-side tests, not kernel tests: `scripts/site/tests/test_build.py` (stdlib `unittest`), wired into `scripts/test-tooling.sh` as a nested suite so CI runs it.
 
-- [x] Create `scripts/site/tests/test_build.py` (36 tests pass 2026-09-28) with:
+- [x] Create `scripts/site/tests/test_build.py` (46 tests pass 2026-09-28) with:
   - `github_slug("1. Layout at a Glance")` == `"1-layout-at-a-glance"`; duplicate headings get `-1`, `-2` suffixes
   - `page_url("index.md")` == `""`, `page_url("boot/index.md")` == `"boot/"`, `page_url("boot/x.md")` == `"boot/x.html"`
   - `sync_regions()` rewrites a stale `<!-- project:release_date_long -->` region and reports an unknown key as an error

@@ -16,7 +16,8 @@ States:
               is a review of it (not during a merge: merged-in content is not a
               review, so a merge falls through to the normal comparison)
   new      -- the page has no committed history yet
-  unknown  -- the clone is shallow, so the baseline cannot be found
+  unknown  -- the baseline cannot be found: the clone is shallow, or git
+              failed (then `error` says why and a warning is printed)
 
 Warnings only, never errors: a code change is not always a docs change. The fix
 for a stale page is to update it; if it is still accurate, bump its `reviewed=`
@@ -42,6 +43,7 @@ class Record:
     baseline: str | None = None   # commit that last changed the content
     baseline_date: str | None = None
     changed: list[str] = field(default_factory=list)
+    error: str = ""               # why the state is "unknown" when it is not a shallow clone
 
 
 def _git(*args: str, ok=(0,)) -> subprocess.CompletedProcess:
@@ -91,17 +93,32 @@ def content_baseline(path: str, rev: str) -> tuple[str, str] | None:
     resolution, or content arriving from the other side) show as a change
     against the main line; plain `log` prints no diff for merges and would pick
     an older commit. `-z` keeps unusual file names raw instead of C-quoted."""
-    out = _git("log", "--first-parent", "-m", "-M", "--follow", "-z", "--name-status",
-               "--format=%x01%H", rev, "--", path).stdout
-    for chunk in out.split("\x01"):
-        fields = chunk.split("\0")
-        if len(fields) < 3:
-            continue
-        commit, status, paths = fields[0], fields[1].strip(), [f for f in fields[2:] if f]
-        if not paths or status == "R100":
-            continue
-        return commit, paths[-1]
+    # BOUNDED: ask for one record first; almost every page's latest record IS
+    # its baseline. Widen only when every record returned was a pure rename.
+    # A git failure raises (via _git) rather than reading as "no history".
+    for n in (1, 16, 0):
+        args = ["log", "--first-parent", "-m", "-M", "--follow", "-z", "--name-status", "--format=%x01%H%x02%cs"]
+        out = _git(*(args + ([f"-n{n}"] if n else []) + [rev, "--", path])).stdout
+        records = [r for r in out.split("\x01") if r]
+        for rec in records:
+            found = _baseline_record(rec)
+            if found:
+                return found
+        if not n or len(records) < n:
+            return None
     return None
+
+
+def _baseline_record(raw: str) -> tuple[str, str, str] | None:
+    """(commit, path, date) if this log record changed the page's content."""
+    fields = raw.split("\0")
+    if len(fields) < 3 or "\x02" not in fields[0]:
+        return None
+    commit, date = fields[0].split("\x02", 1)
+    status, paths = fields[1].strip(), [f for f in fields[2:] if f]
+    if not paths or status == "R100":
+        return None
+    return commit, paths[-1], date
 
 
 def _blob_in(source: str, path: str) -> str | None:
@@ -158,6 +175,13 @@ def _date(commit: str) -> str:
 
 
 def check_page(path: str, sources: list[str], source: str, shallow: bool, in_merge: bool) -> Record:
+    try:
+        return _check_page(path, sources, source, shallow, in_merge)
+    except RuntimeError as e:          # git could not answer: unknown, and said so, never "new"
+        return Record("page", path, sources, state="unknown", error=str(e))
+
+
+def _check_page(path: str, sources: list[str], source: str, shallow: bool, in_merge: bool) -> Record:
     rec = Record("page", path, sources)
     if shallow:
         rec.state = "unknown"
@@ -176,12 +200,11 @@ def check_page(path: str, sources: list[str], source: str, shallow: bool, in_mer
         if base is None:
             rec.state = "new"
             return rec
-        rec.baseline, rec.baseline_date = base[0], _date(base[0])
+        rec.baseline, rec.baseline_date = base[0], base[2]
         rec.changed = sources_changed(rec.baseline, sources, source)
         rec.state = "stale" if rec.changed else "fresh"
         return rec
-    rec.baseline, _then_path = base
-    rec.baseline_date = _date(rec.baseline)
+    rec.baseline, _then_path, rec.baseline_date = base
     # EDITING is an UNCOMMITTED change to the page (worktree or index against
     # HEAD). A committed revision is never "editing"; nor is content brought in
     # by a merge in progress, which nobody has reviewed.
@@ -212,7 +235,10 @@ def _cards_at(rev: str | None) -> dict[str, dict]:
 def _card_key(card: dict) -> dict:
     # `reviewed` is part of the card: bumping it is how a still-accurate card is
     # re-reviewed, so it must move the card's baseline like any other edit.
-    return {k: card.get(k) for k in ("title", "text", "owners", "sources", "reviewed")}
+    key = {k: card.get(k) for k in ("title", "text", "owners", "sources", "reviewed")}
+    if isinstance(key["sources"], list):     # same normalisation as page directives and card validation
+        key["sources"] = [x.rstrip("/") if isinstance(x, str) else x for x in key["sources"]]
+    return key
 
 
 def check_cards(source: str, shallow: bool, in_merge: bool) -> list[Record]:
@@ -222,8 +248,28 @@ def check_cards(source: str, shallow: bool, in_merge: bool) -> list[Record]:
     now = {"worktree": lambda: _cards_at(None), "index": _cards_from_index}.get(source, lambda: _cards_at(source))()
     history = [] if shallow else _git("log", "--first-parent", "--format=%H", _base_rev(source), "--",
                                       FEATURES).stdout.split()
-    versions = [(c, _cards_at(c)) for c in history]            # newest first
-    head_cards = versions[0][1] if versions else {}
+    cache: dict[str, dict] = {}
+    reader = _BlobReader() if history else None
+
+    def version(i: int) -> dict:                                # fetched LAZILY, newest first,
+        if history[i] not in cache:                             # through ONE cat-file process
+            cache[history[i]] = _parse_cards(reader.read(f"{history[i]}:{FEATURES}"))
+        return cache[history[i]]
+
+    try:
+        try:
+            head_cards = version(0) if history else {}
+            recs = _judge_cards(now, history, version, head_cards, source, shallow, in_merge)
+        finally:
+            if reader:
+                reader.close()
+    except RuntimeError as e:                 # history unreadable: unknown, and said so
+        return [Record("card", t, list(c.get("sources") or []), state="unknown", error=str(e))
+                for t, c in now.items()]
+    return recs
+
+
+def _judge_cards(now, history, version, head_cards, source, shallow, in_merge) -> list[Record]:
     out = []
     for title, card in now.items():
         rec = Record("card", title, list(card.get("sources") or []))
@@ -245,8 +291,8 @@ def check_cards(source: str, shallow: bool, in_merge: bool) -> list[Record]:
             # the merge adds, so dropping a stale source cannot clear the warning.
             rec.sources = list(dict.fromkeys(list(target.get("sources") or []) + rec.sources))
         base = None
-        for commit, cards in versions:                          # walk back while the card is unchanged
-            if target is None or cards.get(title) != target:
+        for i, commit in enumerate(history):                    # walk back while the card is unchanged;
+            if target is None or version(i).get(title) != target:   # stops at its boundary
                 break
             base = commit
         if base is None:
@@ -260,6 +306,55 @@ def check_cards(source: str, shallow: bool, in_merge: bool) -> list[Record]:
     return out
 
 
+class _BlobReader:
+    """A persistent `git cat-file --batch`: one process for every historical
+    version read, instead of one `git show` per version."""
+
+    def __init__(self):
+        self.proc = subprocess.Popen(["git", "cat-file", "--batch"], cwd=REPO,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def read(self, spec: str) -> str | None:
+        """The object's text, None ONLY for git's explicit "<spec> missing"; any
+        other shape (EOF, a malformed header, a short payload) is a failure and
+        raises, so a dead reader can never read as "this card is new"."""
+        try:
+            self.proc.stdin.write(spec.encode("utf-8", "surrogateescape") + b"\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            raise RuntimeError(f"git cat-file --batch is not running: {e}") from e
+        line = self.proc.stdout.readline()
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == b"missing":
+            return None
+        if len(parts) != 3 or not parts[2].isdigit():
+            raise RuntimeError(f"git cat-file --batch gave an unexpected reply: {line[:80]!r}")
+        size = int(parts[2])
+        data = self.proc.stdout.read(size + 1)                   # content + trailing LF
+        if len(data) != size + 1 or not data.endswith(b"\n"):
+            raise RuntimeError(f"git cat-file --batch returned {len(data)} of {size + 1} bytes")
+        return data[:-1].decode("utf-8", "replace")
+
+    def close(self):
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        rc = self.proc.wait()
+        if rc not in (0, None):
+            raise RuntimeError(f"git cat-file --batch exited with status {rc}")
+
+
+def _parse_cards(text: str | None) -> dict[str, dict]:
+    if not text:
+        return {}
+    try:
+        cards = json.loads(text).get("cards", [])
+    except (ValueError, AttributeError):
+        return {}
+    return {c.get("title"): _card_key(c) for c in cards if isinstance(c, dict)}
+
+
 def _cards_from_index() -> dict[str, dict]:
     r = _git("show", f":{FEATURES}", ok=(0, 128))
     if r.returncode:
@@ -271,9 +366,39 @@ def _cards_from_index() -> dict[str, dict]:
     return {c.get("title"): _card_key(c) for c in cards}
 
 
+def has_head() -> bool:
+    return _git("rev-parse", "--verify", "--quiet", "HEAD^{commit}", ok=(0, 1, 128)).returncode == 0
+
+
+def head_text(path: str) -> str | None:
+    r = _git("show", f"HEAD:{path}", ok=(0, 128))
+    return r.stdout if r.returncode == 0 else None
+
+
+def with_head_sources(page_sources: dict[str, list[str]], pages: list[str], parse,
+                      source: str = "index") -> dict[str, list[str]]:
+    """During a merge, add each page's HEAD `sources=` to what the merged tree
+    declares: a merged-in directive that drops a changed source (or all of them)
+    is not a review, so it must not clear the page. A page the merge renamed is
+    looked up under its HEAD name."""
+    out = dict(page_sources)
+    for path in pages:
+        text = head_text(path)
+        if text is None:
+            moved = uncommitted_rename(path, source)
+            text = head_text(moved[0]) if moved else None
+        head = parse(text or "")
+        if head:
+            out[path] = list(dict.fromkeys(head + out.get(path, [])))
+    return out
+
+
 def check_all(pages: dict[str, list[str]], source: str) -> list[Record]:
     """`pages` maps a repo-relative docs path to its declared sources."""
     from concurrent.futures import ThreadPoolExecutor
+    if source in ("worktree", "index") and not has_head():
+        # Before the first commit there is no history to compare against.
+        return [Record("page", p, s, state="new") for p, s in sorted(pages.items())]
     shallow, in_merge = is_shallow(), merging()
     with ThreadPoolExecutor(max_workers=8) as pool:   # git calls are I/O-bound subprocesses
         recs = list(pool.map(lambda kv: check_page(kv[0], kv[1], source, shallow, in_merge), sorted(pages.items())))
@@ -281,6 +406,8 @@ def check_all(pages: dict[str, list[str]], source: str) -> list[Record]:
 
 
 def warning(rec: Record) -> str | None:
+    if rec.state == "unknown" and rec.error:
+        return f"{rec.name}: freshness could not be checked ({rec.error})"
     if rec.state != "stale":
         return None
     shown = ", ".join(rec.changed[:3]) + (f" and {len(rec.changed) - 3} more" if len(rec.changed) > 3 else "")
