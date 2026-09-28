@@ -32,3 +32,15 @@ One page per kernel-core roadmap file, each following the [page contract](../con
 | [Environment Variables](environment-variables.md) | Per-task environment, argv, expansion, SearchPath |
 | [Exception Dispatch and SEH](exception-dispatch-seh.md) | CONTEXT capture, fault triage, unwinding, kernel __try/__except |
 | [ALPC and Message Ports](alpc-message-ports.md) | Ports, connect and accept, send-wait-receive, impersonation |
+| [Kernel Resource Accounting and Quotas](kernel-resource-accounting-quotas.md) | Quota types, chain charging, ledger, pressure and stall telemetry |
+| [Power Management](power-management.md) | Sleep states, C1 idle, buttons, PCI D-states, stop-the-world rendezvous |
+| [Crash Dump Generation](crash-dump-generation.md) | KeBugCheckEx, CONTEXT capture, module list, MDMP format |
+| [Panic Screen and Crash Experience](panic-screen-crash-experience.md) | Blue screen, panic evidence, stack trace, auto-restart |
+| [Kernel Debugger (KD Protocol)](kernel-debugger-kd.md) | Serial transport, debugger dispatch hook, planned WinDbg stub |
+| [System Health and Recovery Orchestrator](system-health-recovery.md) | Planned health registry, failure buckets, recovery actions |
+| [Kernel Bulletproofing](kernel-bulletproofing.md) | Five-layer invariant defense, static asserts, guard pages |
+| [Kernel Logging v2](kernel-logging-v2.md) | Planned per-CPU lockless rings, priority lanes, fatal path |
+| [Higher-Half Kernel Relocation](higher-half-kernel.md) | Canonical layout, direct map, parked relocation, low ceiling |
+| [Serial Log Cleanliness](serial-log-cleanliness.md) | Log badges, smoke patterns, DPC overrun roll-up |
+| [Unblocked-Deferral Backfill](unblocked-deferral-backfill.md) | 2026-07-27 cohort of reopened deferred work |
+| [SSDT Master Table](ssdt-master-table.md) | Service-number ledger, Done column, /audit-ssdt |

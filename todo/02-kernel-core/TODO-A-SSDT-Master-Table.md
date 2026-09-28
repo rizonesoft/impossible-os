@@ -165,9 +165,9 @@ title: "SSDT Master Table"
 | 0x009D | NtNotifyChangeKey          | §15 | T14 §3 (stub: watchers not impl) | [/]  |
 | 0x009E | NtNotifyChangeMultipleKeys | §14 | T14 §4                           | [ ]  |
 | 0x009F | NtRenameKey                | §15 | T12 §15 (nt_registry.c)          | [x]  |
-| 0x00A0 | NtSaveKey                  | §15 | T12 §15 (nt_registry.c)          | [x]  |
-| 0x00A1 | NtSaveKeyEx                | §15 | T12 §15 (nt_registry.c)          | [x]  |
-| 0x00A2 | NtRestoreKey               | §15 | T12 §15 (nt_registry.c)          | [x]  |
+| 0x00A0 | NtSaveKey                  | §15 | T12 §15 (body deferred)          | [/]  |
+| 0x00A1 | NtSaveKeyEx                | §15 | T12 §15 (body deferred)          | [/]  |
+| 0x00A2 | NtRestoreKey               | §15 | T12 §15 (body deferred)          | [/]  |
 | 0x00A3 | NtLoadKey                  | §15 | T12 §15 (nt_registry.c)          | [x]  |
 | 0x00A4 | NtLoadKeyEx                | §15 | T12 §15 (nt_registry.c)          | [x]  |
 | 0x00A5 | NtUnloadKey                | §15 | T12 §15 (nt_registry.c)          | [x]  |
@@ -660,6 +660,6 @@ title: "SSDT Master Table"
 
 > **Total: 477 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 146/477 wired** (30.6%) -- **126 complete `[x]`** (26.4%) + **20 partial/stub `[/]`** (4.2%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete), Namespace (6/6 -- §17 complete: directory + symlink). Run `/audit-ssdt` to refresh.
+> **Implementation progress: 214/477 wired** (44.9%) -- **155 complete `[x]`** (32.5%) + **59 partial/stub `[/]`** (12.4%), 263 `[ ]`; recounted from the rows 2026-09-28 after downgrading `NtSaveKey`/`NtSaveKeyEx`/`NtRestoreKey` (their handler returns `STATUS_NOT_SUPPORTED` past the privilege check; body owned by `02-kernel-core/TODO-35` §2). The line had read 146/126/20; `[x]` labels elsewhere are unaudited until the next `/audit-ssdt`. Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete), Namespace (6/6 -- §17 complete: directory + symlink). Run `/audit-ssdt` to refresh.
 
 **Test checkpoint:** `ssdt_dispatch(0x0FFF)` (unregistered MAIN slot) returns `STATUS_NOT_IMPLEMENTED`; `ssdt_dispatch(0x2000)` (invalid table id) returns `STATUS_INVALID_PARAMETER`; `ssdt_dispatch(valid_index)` calls the correct handler. Serial at init: `"SSDT initialized: %u main slots (last=...)"`.

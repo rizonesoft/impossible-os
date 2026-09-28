@@ -60,7 +60,7 @@ file_patterns:
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [x]   |
 | 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [x]   |
 | 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [x]   |
-| 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [ ]   |
+| 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [x]   |
 | 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [ ]   |
 | 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [ ]   |
@@ -442,26 +442,40 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md` (TODO-25 -- Kernel Resource Accounting & Quotas)
-  - `todo/02-kernel-core/TODO-26-power-management.md` (TODO-26 -- Power Management (S-States, D-States, Thermal & Idle))
-  - `todo/02-kernel-core/TODO-27-crash-dump-generation.md` (TODO-27 -- Crash Dump Generation)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md` (TODO-28: BSOD / Panic Screen & Crash Experience)
-  - `todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md` (TODO-29 -- Kernel Debugger (KD Protocol))
-  - `todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md` (TODO-30 -- System Health & Recovery Orchestrator)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-31-kernel-bulletproofing.md` (TODO-31 -- Kernel Bulletproofing)
-  - `todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md` (TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof)
-  - `todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md` (TODO-33 -- Higher-Half Kernel Relocation)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md` (TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate)
-  - `todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md` (TODO-35 -- Unblocked-Deferral Backfill (2026-07-27 cohort))
-  - `todo/02-kernel-core/TODO-A-SSDT-Master-Table.md` (SSDT Master Table)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: kernel core, part 3 documentation pages"`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md` (TODO-25 -- Kernel Resource Accounting & Quotas): `kernel-resource-accounting-quotas.md`
+  - `todo/02-kernel-core/TODO-26-power-management.md` (TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)): `power-management.md`
+  - `todo/02-kernel-core/TODO-27-crash-dump-generation.md` (TODO-27 -- Crash Dump Generation): `crash-dump-generation.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md` (TODO-28: BSOD / Panic Screen & Crash Experience): `panic-screen-crash-experience.md`
+  - `todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md` (TODO-29 -- Kernel Debugger (KD Protocol)): `kernel-debugger-kd.md`
+  - `todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md` (TODO-30 -- System Health & Recovery Orchestrator): `system-health-recovery.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-31-kernel-bulletproofing.md` (TODO-31 -- Kernel Bulletproofing): `kernel-bulletproofing.md`
+  - `todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md` (TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof): `kernel-logging-v2.md`
+  - `todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md` (TODO-33 -- Higher-Half Kernel Relocation): `higher-half-kernel.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md` (TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate): `serial-log-cleanliness.md`
+  - `todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md` (TODO-35 -- Unblocked-Deferral Backfill (2026-07-27 cohort)): `unblocked-deferral-backfill.md`
+  - `todo/02-kernel-core/TODO-A-SSDT-Master-Table.md` (SSDT Master Table): `ssdt-master-table.md`
+- [x] TODO-33 was claimed by `docs/infrastructure/kernel-address-space.md`, a design doc outside the contract (no limits or comparison part, over 2,000 words), so it gained a contract page; the other eleven had no page
+  - Every quoted symbol, constant and serial string was checked in the tree and every roadmap fragment against its heading's slug; drafts named a nonexistent `panic_had_prior_crash()` (it is `panic_had_previous_crash()`) and a `KiDebugRoutine` variable (the hook is `ki_set_debug_routine()`).
+  - Figures are sourced: the SSDT ledger counts were recounted from its rows, and the higher-half page quotes `__kernel_end` = `0x7da000` from `llvm-nm-19 build/kernel.exe` at `f26c21502` rather than the roadmap's July headroom figure.
+- [x] Added the twelve pages to `docs/kernel/index.md` Roadmap Overviews, then ran `python3 scripts/site/build.py --update-baseline` (154 to 143 entries; TODO-33 was never in the baseline)
+- [x] Roadmap drift found while writing, fixed in place in TODO-28, 29, 31 and TODO-A
+  - TODO-28 put `panic.c` at 975 lines with a Selawik TTF font (3,528 lines, console bitmap font); TODO-29 put `serial.c` at ~110 lines fixed at 38400 baud (2,347 lines, keeps the firmware divisor).
+  - TODO-31 quoted `SSDT_MAIN_COUNT = 475` (477); TODO-A's progress line read 146/477 wired while its rows count 214; review downgraded `NtSaveKey`/`NtSaveKeyEx`/`NtRestoreKey` (handler returns `STATUS_NOT_SUPPORTED`), leaving 155 `[x]` and 59 `[/]`.
+- [x] Commit: `"docs: kernel core, part 3 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 89/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** twelve contract-shaped overview pages in `docs/kernel/`, one per kernel-core roadmap file 25 to 35 plus the SSDT ledger, each listed in `docs/kernel/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
+> - **Status honesty:** five of the twelve roadmaps (KD, health orchestrator, logging v2, serial-log gate, deferral backfill) are almost wholly unbuilt, and their pages say so in the first paragraph rather than describing the plan as behaviour.
+> - **Found on the way:** roadmap text had drifted from the code in TODO-28, 29, 31, 34 and TODO-A, and was corrected in place, including TODO-34's smoke gate (shipped in `6fbf3719a`) and TODO-31's `kernel_config_t` guards; no new work needed filing.
 
 ---
 

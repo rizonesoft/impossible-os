@@ -50,7 +50,7 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 | --- | :---: | ---------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | Mark expected test-path log output at emission       | --         |  [ ]   |
 | 💎  |   2   | Log-cleanliness gate in the kernel test runner       | §1         |  [ ]   |
-| 💎  |   3   | Smoke test fails on any `[FAIL]` in its own log      | --         |  [ ]   |
+| 💎  |   3   | Smoke test fails on any `[FAIL]` in its own log      | --         |  [x]   |
 | ⭐  |   4   | Surface the platform blind spots in the run summary  | §2         |  [ ]   |
 | 💎  |   5   | Rate-limit the repeat-offender warnings (86% of vol) | --         |  [/]   |
 
@@ -111,10 +111,13 @@ attribute a line to a suite and would re-introduce the same "which of these fort
 while its own log held `[FAIL] BOOT-BUDGET: EXEC -> DESKTOP_READY took 1139ms (target 100ms)` and 32 `[WARN]` lines. This is
 the specific reason an operator's reasonable assumption -- that smoke testing after each section would catch these -- did not hold.
 
-- [ ] Fail the smoke run on ANY `[FAIL]` in the captured log, not only the nine fatal strings; the nine stay as the fast-path early abort.
-- [ ] Allowlist the environment-class `[FAIL]`/`[WARN]` lines by exact reason, sharing the §2 baseline file so the two gates cannot drift apart.
-- [ ] Decide and document whether `[FAIL] BOOT-BUDGET` should gate a smoke run at all, or be demoted to `[WARN]` because a wall-clock budget is platform-dependent by nature; today it is a `[FAIL]` that nothing reads, which is the worst of both.
-- [ ] Commit: `"smoke: fail on unexpected [FAIL] output, not just the fatal allowlist"`
+- [x] Fail the smoke run on ANY `[FAIL]` in the captured log, not only the nine fatal strings; the nine stay as the fast-path early abort.
+  - Shipped in `6fbf3719a`: `scripts/test-smoke.sh` collects every `[FAIL]` line not matched by the baseline into `UNEXPECTED_FAILS` and fails the run (reconciled 2026-09-28 by the TODO-10 section 10 docs review).
+- [x] Allowlist the environment-class `[FAIL]`/`[WARN]` lines by exact reason, sharing the §2 baseline file so the two gates cannot drift apart.
+  - `scripts/log-baseline.txt` is that single file; its header reserves it for the §2 runner gate too, and each entry names its owner.
+- [x] Decide and document whether `[FAIL] BOOT-BUDGET` should gate a smoke run at all, or be demoted to `[WARN]` because a wall-clock budget is platform-dependent by nature; today it is a `[FAIL]` that nothing reads, which is the worst of both.
+  - Decided in the baseline: `BOOT-BUDGET:` is baselined (`scripts/log-baseline.txt`) with an XREF to `01-boot-platform/TODO-29` §18, so a missed wall-clock budget does not gate a smoke run.
+- [x] Commit: `"smoke: fail on unexpected [FAIL] output, not just the fatal allowlist"` (landed as `6fbf3719a`, "test,hooks: CI-parity tier, smoke log-cleanliness gate, kernel-wide smoke trigger")
 
 **Test checkpoint:** a smoke run whose log contains an unexpected `[FAIL]` exits non-zero and prints the offending line; a run containing only baselined lines still passes; the nine fatal patterns still abort early rather than waiting for the timeout. Test on: QEMU KVM, QEMU TCG; bare metal.
 

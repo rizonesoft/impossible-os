@@ -1,17 +1,6 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
-    "todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md",
-    "todo/02-kernel-core/TODO-26-power-management.md",
-    "todo/02-kernel-core/TODO-27-crash-dump-generation.md",
-    "todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md",
-    "todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md",
-    "todo/02-kernel-core/TODO-30-system-health-recovery-orchestrator.md",
-    "todo/02-kernel-core/TODO-31-kernel-bulletproofing.md",
-    "todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md",
-    "todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md",
-    "todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md",
-    "todo/02-kernel-core/TODO-A-SSDT-Master-Table.md",
     "todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md",
     "todo/03-memory-concurrency/TODO-02-memory-security.md",
     "todo/03-memory-concurrency/TODO-03-advanced-allocator.md",

@@ -29,7 +29,7 @@ title: "TODO-31 -- Kernel Bulletproofing"
 - `user/user.ld` -- user ELF load address 0x800000
 - `src/kernel/mm/vmm.c` -- USER_PD_INDEX for user-mode pages
 - `src/kernel/mm/pmm.c` -- pmm_mark_region_used for user range
-- `include/kernel/nt/service_numbers.h` -- SSDT_MAIN_COUNT = 475
+- `include/kernel/nt/service_numbers.h` -- SSDT_MAIN_COUNT = 477 (line 672, measured 2026-09-28)
 - → XREF: `TODO-02-kernel-configuration-policy.md §2, §10` -- `kernel_config_t` layout, versioning, and fixed-size field invariants must adopt the same 5-layer defense
 - -> XREF: `TODO-12-native-api-ssdt.md §1-§5` -- NTSTATUS, SSDT, GDT all depend on these invariants
 - -> XREF: `TODO-11-peb-teb-user-abi.md` §6--§5 -- PEB/TEB offsets are Windows ABI contracts (bulletproofing extends pattern to those structs when implemented)
@@ -106,7 +106,8 @@ The UEFI bootloader (bootx64.c) and kernel (boot_info.h) each define `struct boo
 - [x] Unit test: `test_boot_config_layout()` verifies sizeof, cmdline offset, config_found offset, and config_found == 1
 - [x] Canary: cmdline ASCII check doubles as canary -- non-printable bytes mean struct shifted
 - [x] Documentation: field offset table comment (30 lines) in boot_info.h with byte positions for all fields
-- [ ] Extend the same 5-layer pattern to `kernel_config_t` after TODO-02 §2 lands: add `_Static_assert` size/version guards in `include/kernel/config.h`, a Phase 0 sanity log, unit coverage in `test_kernel_config.c`, and documentation for fixed-size fields and string buffers
+- [x] Extend the same 5-layer pattern to `kernel_config_t` after TODO-02 §2 lands: size/version asserts in `config.h`, a Phase 0 sanity log, unit coverage, field documentation
+  - Already shipped, reconciled 2026-09-28: `include/kernel/config.h` asserts `sizeof(kernel_config_t) == KERNEL_CONFIG_SIZE_V1` and field offsets, `kernel_config_publish()` logs `[CONF] snapshot ready` in Phase 0 (`src/kernel/config.c`), and `test_cfg_snapshot_published()` checks magic, version and size.
 
 **Test checkpoint:** Add a field without shrinking _reserved -> static assert fires. `sizeof(boot_config) != 512` -> compile error. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
