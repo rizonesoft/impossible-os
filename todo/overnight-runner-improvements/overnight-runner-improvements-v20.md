@@ -71,6 +71,11 @@ Carry the baselines forward. A measurement without one is an anecdote.
 
 <!-- The run files here. Nothing yet: v20 opened at close-out, before the next arm. -->
 
+- [ ] create-todo's docs-page step still allows the provisional minimal page "until the docs page contract lands"; the contract has landed, so the step should now point at it and its template
+  - OBSERVED 2026-09-28 implementing TODO-10 section 3: the item "Add a docs-page step to `.claude/skills/create-todo/SKILL.md`" is control-plane (`.claude/skills/**`), which the unattended run may not edit, so it is parked `[/]` operator-gated in that section.
+  - MECHANISM, confirmed at source: `.claude/skills/create-todo/SKILL.md:87` already requires a page with `covers=` (Check 30 enforces it via `check_baseline()` in `scripts/site/build.py`), but its fallback allows a short Overview-only page, which is now below the `docs/contributing/docs-page-contract.md` bar.
+  - Fix shape: UPGRADE the existing step rather than adding a second one: copy `docs/contributing/_template.md` into the folder the contract's folder map names, set `covers=`, state nothing is implemented yet, run `build.py --check`; delete the "until the docs page contract lands" fallback.
+
 - [ ] Arming accepts a REVOKED OAuth token: the run then dies at launch and the circuit breaker disarms it, two minutes after the operator walked away
   - OBSERVED 2026-09-28 15:40-15:41, attended arm with `--force --hours 48`: both the watchdog launch (`run-20260928-154004`) and the main launch (`run-20260928-154104`) ended in 5 s with `Failed to authenticate. API Error: 401 OAuth access token is invalid.`, then `Circuit breaker tripped: consecutive unproductive runs -- STOPPING and disarming.`
   - MECHANISM, confirmed at source: `arm-sequencer.sh:199-217` checks that `~/.conclave/secrets/claude-oauth-token.env` exists and carries a `CLAUDE_CODE_OAUTH_TOKEN=` line; nothing checks the token authenticates. Its own `expires_at` was 2027-09-13, so the token was revoked, not expired, and a date check would not catch it either.

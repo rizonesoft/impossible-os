@@ -36,7 +36,7 @@ file_patterns:
 - [`tools/vendor/markdown_it/`](../../tools/vendor/markdown_it/) -- vendored markdown-it-py 3.0.0 (MIT), chosen over a hand-written converter per the vendor-first rule; mdurl 0.1.2 alongside
 - -> XREF: `TODO-09-repository-transfer-rizonetech.md §8` -- the move back to `rizonesoft` and the public flip that made the docs site public
 - -> XREF: `TODO-01-developer-tooling-stack.md` -- host tooling conventions and `scripts/test-tooling.sh`
-- [`.claude/skills/create-todo/SKILL.md`](../../.claude/skills/create-todo/SKILL.md) -- gains a docs-page step in §3
+- [`.claude/skills/create-todo/SKILL.md`](../../.claude/skills/create-todo/SKILL.md) -- its docs-page step moves to the §3 contract (operator-gated, control plane)
 
 ## Outcome
 
@@ -53,7 +53,7 @@ file_patterns:
 | --- | :---: | ------------------------------------------------------------------------ | ---------- | :----: |
 | ⭐  |   1   | §1 Site generator, project facts, coverage and drift gate                | --         |  [x]   |
 | 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1         |  [x]   |
-| ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [ ]   |
+| ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [x]   |
 | 💎  |   4   | §4 Document: Infrastructure and host tools (17 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [ ]   |
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [ ]   |
@@ -146,7 +146,7 @@ Many existing pages already document a roadmap file but do not declare it, so co
 
 Every later section writes pages against this contract, so it must exist first and be unambiguous.
 
-- [ ] Write `docs/contributing/docs-page-contract.md` (with `<!-- docs: order=1 -->`) defining what a roadmap docs page contains, in this order:
+- [x] Wrote `docs/contributing/docs-page-contract.md` (`order=1`, `sources=scripts/site/build.py`) defining what a roadmap docs page contains, in this order:
   - H1 title naming the subsystem as a user would; the `covers=` directive on line 1
   - Overview: what it is and why it exists, answer first, 2-4 sentences
   - How it works: architecture, data flow, key structures, with a Mermaid diagram where a picture helps
@@ -155,20 +155,31 @@ Every later section writes pages against this contract, so it must exist first a
   - Limits and status: what is not implemented yet, linking the owning roadmap section; never claim unshipped behaviour
   - Windows 11 and Linux comparison: one short paragraph or table, consistent with the TODO's OS Comparison table
   - See also: the roadmap file, related docs pages
-- [ ] Style rules in the contract: one line per paragraph, no em or en dashes, question-shaped H2s where natural, every figure sourced (code, test output, or spec), 400-1500 words per page, split larger topics into linked pages
-- [ ] Freshness rule in the contract: a page that documents code declares `sources=path[,path]` and `reviewed=YYYY-MM-DD`, and the template carries both
+- [x] Style rules in the contract: one line per paragraph, no em or en dashes, question-shaped H2s where natural, every figure sourced (code, test output, or spec), 400-1500 words per page, split larger topics into linked pages
+  - Plus link-not-copy: point at the header, section or spec instead of pasting a struct or table
+- [x] Freshness rule in the contract: a page that documents code declares `sources=path[,path]` and `reviewed=YYYY-MM-DD`, and the template carries both
+  - The template ships them blank (`covers= sources= reviewed=`), which the parser accepts, so it renders without a false coverage claim
   - The check itself shipped with the doc-freshness section: stale pages warn in lint Check 30 and show on the coverage page.
-- [ ] Add `docs/contributing/_template.md`, a copy-ready skeleton of the contract, and `docs/contributing/index.md`
-- [ ] Map each domain to its docs folder in the contract, adding each missing folder with an `index.md` when its first page lands
+- [x] Added `docs/contributing/_template.md`, a copy-ready skeleton of the contract, and `docs/contributing/index.md`
+- [x] Mapped each domain to its docs folder in the contract (a table), adding each missing folder with an `index.md` when its first page lands
   - 00 infrastructure, 01 boot, 02 kernel, 03 memory, 04 hardware, 05 storage, 06 and 09 desktop, 07 networking, 08 graphics
-  - 10 services, 11 apps, 12 sdk, 13 tools, 14 host-tools, 15 release, 16 ports, 18 research
-- [ ] Add a docs-page step to `.claude/skills/create-todo/SKILL.md` (and its README row if the catalog describes steps)
+  - 10 services, 11 and 13 apps (as §20 places them), 12 sdk, 14 host-tools, 15 release, 16 ports, 17 hardening (no roadmap files yet), 18 research; design specs stay in `docs/design/`
+- [/] Upgrade create-todo's existing docs-page step (`.claude/skills/create-todo/SKILL.md:87`) to the contract and template, dropping its provisional fallback: operator-gated (control plane), filed in `overnight-runner-improvements-v20.md`
   - A new roadmap file ships with a docs page from `_template.md` whose Limits section states nothing is implemented yet
   - Needed because Check 30 refuses an undocumented new roadmap file
-- [ ] Add the contract to `docs/index.md` and link it from `CONTRIBUTING.md`
-- [ ] Commit: `"docs: documentation page contract, template, and create-todo docs step"`
+- [x] Added the contract to `docs/index.md` (category row and quick link) and linked it from `CONTRIBUTING.md` (new "Documentation Pages" subsection under Code Style)
+- [x] Commit: `"docs: documentation page contract, template, and create-todo docs step"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; the contract page renders at `/docs/contributing/docs-page-contract.html`; a dry run of the create-todo docs step produces a page that passes the check. Test on: WSL2 dev host.
+
+> **Test runner:** `python3 scripts/site/tests/test_build.py PageContract` (via `scripts/test-tooling.sh`) | 4 tests, 0 failures; validation: `python3 scripts/site/build.py --check` prints `site: OK`
+
+> **Notes:**
+> - Shipped `docs/contributing/docs-page-contract.md` (parts, directive keys, freshness, style, folder map, add-a-page steps), `_template.md` and `index.md`, linked from `docs/index.md` and `CONTRIBUTING.md`.
+> - The template ships a blank directive (`covers= sources= reviewed=`) and `../contributing/` links, so it renders unclaimed and still resolves after being copied into any `docs/<folder>/`.
+> - `PageContract` tests pin every `todo/NN-*` domain to one folder and check every page destination in §4-§21 against it; §21's two release files moved from `docs/sdk/` to `docs/release/`.
+> - Dry run: a template copy covering `TODO-03-kernel-test-harness.md` passed the check apart from the expected stale-baseline entry, which the contract's step 4 now clears first.
+> - Scope boundary: the create-todo step upgrade is parked operator-gated (control plane); `overnight-runner-improvements-v20.md` carries it.
 
 ---
 
@@ -657,12 +668,13 @@ Write docs pages that meet the §3 contract for the 21 roadmap files below. Read
   - `todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` (TODO-04 -- NTDLL & User-Mode Runtime)
   - `todo/12-user-platform-sdk/TODO-05-win32-subsystem.md` (TODO-05 -- Win32 Subsystem Server (CSRSS))
   - `todo/12-user-platform-sdk/TODO-06-sdk-distribution.md` (TODO-06 -- SDK Distribution & Developer Experience)
-- [ ] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
+- [ ] Page in `docs/sdk/` for the next roadmap file, with its `covers=` directive
   - `todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md` (TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder)
+- [ ] Pages in `docs/release/` for the next 3 roadmap files, each with its `covers=` directive
   - `todo/15-installer-release/TODO-01-release-artifacts.md` (TODO-01 -- Disk Image, USB & Release Artifacts)
   - `todo/15-installer-release/TODO-02-unattended-install.md` (TODO-02 -- Unattended Installation & Deployment)
-- [ ] Pages in `docs/release/` for the next 3 roadmap files, each with its `covers=` directive
   - `todo/15-installer-release/TODO-03-update-server.md` (TODO-03 -- Update Server Infrastructure)
+- [ ] Pages in `docs/release/` for the next 2 roadmap files, each with its `covers=` directive
   - `todo/15-installer-release/TODO-04-release-qa.md` (TODO-04 -- Release QA & Platform Certification)
   - `todo/15-installer-release/TODO-05-github-release-community.md` (TODO-05 -- GitHub Releases & Community Launch)
 - [ ] Pages in `docs/ports/` for the next 3 roadmap files, each with its `covers=` directive

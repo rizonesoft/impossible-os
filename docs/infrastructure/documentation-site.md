@@ -35,6 +35,8 @@ A docs page declares which roadmap files it documents on its first line:
 
 The [coverage page](https://impossibleos.co/docs/coverage.html) lists every roadmap file under `todo/NN-domain/` with its pages. `docs/.coverage-baseline.json` records the files that are not documented yet. It only shrinks: `--update-baseline` removes entries that gained a page, and a roadmap file that is neither documented nor in the baseline fails the check. A new roadmap file therefore ships with its docs page. The one sanctioned way to add an entry is when a review removes a false claim: the path goes back into the list together with a written reason under `growth_reasons` in the same file, so the exception is visible in the diff; `--update-baseline` keeps reasons only for entries still listed and never re-adds anything.
 
+What a page must contain, where it goes and how to start one is set by the [Documentation Page Contract](../contributing/docs-page-contract.md) and its [template](../contributing/_template.md).
+
 ## What does the drift check catch?
 
 `python3 scripts/site/build.py --check` runs as lint Check 30 on every commit (with `--skip-stats`) and in full in the Pages workflow. It fails on:

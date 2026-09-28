@@ -121,6 +121,10 @@ This is the most common source of bugs. **Read carefully:**
 > The kernel heap is only **2 MiB**. Using `kmalloc()` for anything larger than
 > a few KB causes silent heap exhaustion. When in doubt, use PMM.
 
+### Documentation Pages
+
+Every roadmap file under `todo/` has a docs page under `docs/`, and a new roadmap file cannot be committed without one. Pages follow the [Documentation Page Contract](docs/contributing/docs-page-contract.md): start from [the template](docs/contributing/_template.md), put the page in its domain's folder, and run `python3 scripts/site/build.py --check` before committing.
+
 ---
 
 ## 💬 Commit Messages

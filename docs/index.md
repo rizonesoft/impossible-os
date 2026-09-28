@@ -13,6 +13,7 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | [⚙️ Hardware](hardware/index.md)                 | CPU architecture, bus protocols, firmware, interrupts       |
 | [🔧 Infrastructure](infrastructure/index.md)      | Build system, CI/CD, tooling                               |
 | [🚀 Getting Started](getting-started/index.md)    | Setup guides and emulator configuration                    |
+| [✍️ Contributing to the Docs](contributing/index.md) | Page contract, template and folder map for docs pages     |
 | [📋 Specs](../specs/index.md)                        | External reference specifications                          |
 
 ## 🗺️ Quick Links
@@ -24,4 +25,5 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | Set up CI/CD                    | [Infrastructure → GitHub Setup](infrastructure/github-setup.md)               |
 | Read a hardware spec            | [Specs](../specs/index.md)                                                       |
 | Contribute to the project       | [CONTRIBUTING.md](https://github.com/rizonesoft/impossible-os/blob/main/CONTRIBUTING.md) |
+| Write a docs page               | [Documentation Page Contract](contributing/docs-page-contract.md)              |
 | Find work items                 | [TODO Index](https://github.com/rizonesoft/impossible-os/blob/main/todo/TODO-00-INDEX.md) |

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -712,6 +713,55 @@ class VerifyLive(unittest.TestCase):
         self.assertEqual(self.V.live_path("index.html"), "")
         self.assertEqual(self.V.live_path("docs/index.html"), "docs/")
         self.assertEqual(self.V.live_path("logo.svg"), "logo.svg")
+
+
+class PageContract(unittest.TestCase):
+    """docs/contributing/: the folder map must track the roadmap's domains, and the
+    template must render without claiming to document anything."""
+    CONTRACT = B.REPO / "docs" / "contributing" / "docs-page-contract.md"
+    TEMPLATE = B.REPO / "docs" / "contributing" / "_template.md"
+
+    def test_folder_map_lists_every_domain(self):
+        text = self.CONTRACT.read_text(encoding="utf-8")
+        domains = sorted(d.name for d in (B.REPO / "todo").iterdir()
+                         if d.is_dir() and d.name[:2].isdigit() and d.name[2] == "-")
+        self.assertTrue(domains)
+        missing = [d for d in domains if not re.search(rf"^\| `{re.escape(d)}` +\| `docs/[a-z-]+/` +\|$", text, re.M)]
+        self.assertEqual(missing, [], "domains with no row in the contract's folder map")
+
+    def test_roadmap_sections_follow_the_folder_map(self):
+        # TODO-10's per-domain sections name the docs/ folder each page goes in;
+        # they must agree with the contract, or two authors place one page twice.
+        mapping = dict(re.findall(r"^\| `(\d\d-[a-z-]+)` +\| `(docs/[a-z-]+/)` +\|$",
+                                  self.CONTRACT.read_text(encoding="utf-8"), re.M))
+        roadmap = (B.REPO / "todo" / "00-infrastructure" / "TODO-10-documentation-site.md").read_text(encoding="utf-8")
+        folder, checked, wrong = None, 0, []
+        for line in roadmap.splitlines():
+            m = re.match(r"- \[.\] Pages? in `(docs/[a-z-]+/)`", line)
+            if m:
+                folder = m.group(1)
+                continue
+            f = re.match(r"  - `todo/(\d\d-[a-z-]+)/", line)
+            if f and folder:
+                checked += 1
+                if mapping.get(f.group(1)) != folder:
+                    wrong.append((f.group(1), folder))
+            elif not line.startswith("  "):
+                folder = None
+        self.assertGreater(checked, 150)
+        self.assertEqual(wrong, [])
+
+    def test_template_claims_nothing(self):
+        d = B.parse_directives(self.TEMPLATE.read_text(encoding="utf-8"))
+        self.assertEqual((d.get("covers"), d.get("sources"), d.get("reviewed")), ("", "", ""))
+        self.assertEqual(B.directive_sources(self.TEMPLATE.read_text(encoding="utf-8")), [])
+
+    def test_template_links_survive_a_copy(self):
+        # The template is copied into other docs/<folder>/ directories, so a
+        # folder-relative link would go dead there; ../contributing/ works from any.
+        links = re.findall(r"\]\(([^)#]+)", self.TEMPLATE.read_text(encoding="utf-8"))
+        self.assertTrue(links)
+        self.assertEqual([l for l in links if not l.startswith(("../contributing/", "https://"))], [])
 
 
 if __name__ == "__main__":
