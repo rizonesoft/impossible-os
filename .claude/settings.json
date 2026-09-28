@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
   "permissions": {
     "allow": [
       "Bash(grep -n \"bus fault\\\\|crash\\\\|hang\\\\|timeout\" /home/derickpayne/impossible-os/src/kernel/drivers/*.c)",

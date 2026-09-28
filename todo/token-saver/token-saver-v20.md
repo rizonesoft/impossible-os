@@ -54,6 +54,12 @@ Carried with baselines. A measurement without one is an anecdote.
   - MEASURED `run-20260903-160406.log:423-436`: 5 dispatch+wait pairs (10 calls, ~4m20s) against a design review returning 404s. Fix shape: the broker counts transport failures (not findings) and tells the run to defer after 2.
   - SHIPPED 2026-09-28 (attended), under test: `scripts/overnight/codex-outage-check.py`, called by the broker, exits 75 when the last 2 completed legs in 20 minutes failed at the backend (HTTP status, stream disconnect, model at capacity; not app-server crashes, local ENOENT or review errors, classified over 3,422 legs). `scripts/overnight/tests/test_codex_outage_check.py`, 13 cases including the real 2026-09-03 artifacts. Measure: dispatches refused per outage (target 1-2, baseline 5).
 
+- [ ] MODEL MIGRATION when Sonnet 5.5 and Haiku 5.5 ship: every move is gated by `scripts/overnight/agent-replay.py` (decided 2026-09-28)
+  - MEASURED dispatch mix (`.claude/state/subagent-log.jsonl`): `general-purpose` 639 (613 in September, all interactive or workflow, none from the run; unpinned, so it inherits Opus), `kernel-quality-auditor` 251 (Opus), `overnight-log-explorer` 218, `kernel-explorer` 163, `concurrency-evidence-mapper` 132, `fork` 108 (inherits by design), `Explore` 106 (built-in).
+  - Sonnet 5.5: every `model: sonnet` agent moves with the CLI alias, no edit. Replay `kernel-quality-auditor` Sonnet 5.5 against Opus on `scripts/overnight/replay/kernel-quality-auditor.jsonl` (105 tasks, 42 high or critical) and move it only on PASS. SHIPPED 2026-09-28: `general-purpose` and `Explore` default to Sonnet via `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` in `.claude/settings.json` (docs: frontmatter and per-call `model` still win; forks inherit). Measure: `general-purpose` model in new session transcripts.
+  - Haiku 5.5 candidates, each only on its own PASS: `git-historian` (task set built, 20 tasks), `gh-query-runner`, `todo-validation-mapper`, `xref-dependency-mapper`, `ssdt-auditor`. The last four still need task builders with deterministic oracles (`query.py`, `validate.py`, the SSDT master tables).
+  - Harness verified 2026-09-28: one `git-historian` Sonnet task HIT in 21.7 s for $0.24; one auditor Sonnet task, $0.81 and 354 s, correctly scored a MISS after the scorer stopped crediting a 430-line region the auditor had cited as correct. Budget a full auditor pair at roughly 105 x ($0.80 + the Opus cost) before running it.
+
 ## Found live this cycle
 
 <!-- The run files here. Nothing yet: v20 opened at close-out, before the next arm. -->
