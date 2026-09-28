@@ -123,7 +123,7 @@ This is the most common source of bugs. **Read carefully:**
 
 ### Documentation Pages
 
-Every roadmap file under `todo/` has a docs page under `docs/`, and a new roadmap file cannot be committed without one. Pages follow the [Documentation Page Contract](docs/contributing/docs-page-contract.md): start from [the template](docs/contributing/_template.md), put the page in its domain's folder, and run `python3 scripts/site/build.py --check` before committing.
+Every roadmap file under `todo/` needs a docs page under `docs/`. A new roadmap file cannot be committed without one; files written before the rule are listed in `docs/.coverage-baseline.json`, which only shrinks as their pages land. Pages follow the [Documentation Page Contract](docs/contributing/docs-page-contract.md): start from [the template](docs/contributing/_template.md), put the page in its domain's folder, and run `python3 scripts/site/build.py --check` before committing.
 
 ---
 
