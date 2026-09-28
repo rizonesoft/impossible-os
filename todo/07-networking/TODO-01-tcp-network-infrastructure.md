@@ -11,15 +11,15 @@ title: "TODO-01 -- TCP Protocol & Network Infrastructure"
 > **Goal:** Build TCP on top of the working Ethernet/ARP/IPv4/UDP/DHCP stack, introduce a `net_interface` manager to replace the single global `net_cfg`, add a loopback interface, and implement stateful connection tracking as the backing layer for the network firewall. TCP is the foundation every higher-level protocol (HTTP, DNS, SSH, TLS) depends on.
 
 > [!IMPORTANT]
-> Ethernet, ARP, IPv4 (`ipv4_send`/`ipv4_handle`/`ipv4_checksum`), ICMP, UDP, and DHCP are complete in `src/kernel/net/`. `IP_PROTO_TCP=6` is already defined in `include/kernel/net/net.h`. The current stack uses a single global `struct net_config net_cfg` -- §5 replaces this with `struct net_interface` / `netif_*` API while keeping backward compatibility for existing callers via a `netif_get_default()` shim. §5 (netif) must land before §6 (loopback) and §7 (connection tracking) because both register as interfaces. The TCP implementation in §1–§4 builds on `ipv4_send()` directly; the pseudo-header checksum follows the same pattern as the existing UDP checksum in `src/kernel/net/udp.c`.
+> Ethernet, ARP, IPv4 (`ipv4_send`/`ipv4_handle`/`ipv4_checksum`), ICMP, UDP, and DHCP are complete in `src/kernel/net/`. `IP_PROTO_TCP=6` is already defined in `include/kernel/net/net.h`. The current stack uses a single global `struct net_config net_cfg` -- §5 replaces this with `struct net_interface` / `netif_*` API while keeping backward compatibility for existing callers via a `netif_get_default()` shim. §5 (netif) must land before §6 (loopback) and §7 (connection tracking) because both register as interfaces. The TCP implementation in §1–§4 builds on `ipv4_send()` directly; the pseudo-header checksum is new code: `udp_send()` in `src/kernel/net/udp.c` sends a zero checksum and nothing verifies one on receive, so there is no existing pattern to copy (`ipv4_checksum()` in `ip.c` is the ones-complement helper to reuse).
 
 ## Inputs
 
-- `src/kernel/net/udp.c` + `include/kernel/net/net.h` -- `udp_send()`, `udp_handle()`, pseudo-header checksum pattern; `ipv4_send()` / `ipv4_handle()` for the TX/RX path; `net_cfg` for current IP/MAC -- all used by §1
+- `src/kernel/net/udp.c` + `include/kernel/net/net.h` -- `udp_send()`, `udp_handle()` (zero UDP checksum today, no pseudo-header code to copy); `ipv4_send()` / `ipv4_handle()` for the TX/RX path; `net_cfg` for current IP/MAC -- all used by §1
 - `src/kernel/net/ip.c` -- `ipv4_handle()` dispatches on `protocol` field; add `case IP_PROTO_TCP: tcp_handle(...)` here for §1
 - `include/kernel/net/net.h` -- `struct net_config` → replaced/extended by `struct net_interface` in §5; all existing callers shim through `netif_get_default()`
-- Related (no stable XREF target): `07-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
-- Related (no stable XREF target): `10-platform-services/TODO-xx-firewall` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
+- Related: `07-networking/TODO-02-dns-sockets.md` and `07-networking/TODO-03-http-tls.md` -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
+- Related: `07-networking/TODO-05-firewall.md` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
 
 > [!IMPORTANT]
 > **Vendor-vs-build is UNDECIDED for this file and must be settled before §1 is implemented.** Every section below specifies TCP from scratch, down to header bit layouts, the 11-state machine, retransmission and congestion control. **lwIP is BSD-3-Clause (verified 2026-08-17 against its `COPYING`) and therefore GPL-3.0-compatible**, and it has two decades of real-network hardening behind exactly this code. TCP is the canonical example of a protocol where a fresh implementation buys a long tail of interop bugs that only show against real peers.
@@ -40,13 +40,13 @@ title: "TODO-01 -- TCP Protocol & Network Infrastructure"
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                                       | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | :----: |
-| 💎  |   1   | §5 `net_interface` manager -- `struct net_interface`, `netif_register/get_default`, `net_cfg` shim | Existing `net_cfg`; `eth_send()`; RTL8139 driver registered at boot |  [ ]   |
-| 💎  |   2   | §6 Loopback interface -- `lo`, 127/8 detection in `ipv4_send()`, short-circuit RX    | §5 (`netif_register()` needed to add `lo`)                       |  [ ]   |
-| 💎  |   3   | §1 TCP header + checksum -- `tcp_header`, TCP flags, pseudo-header CRC, `ip_receive` routing | §5 (`netif_get_default()` for source IP in pseudo-header)        |  [ ]   |
-| 💎  |   4   | §2 TCP state machine -- `tcp_connection`, 32-slot table, 11 RFC 793 states, transitions | §3 (TCP header parser needed before state machine can fire)      |  [ ]   |
-| 💎  |   5   | §3 TCP API -- `tcp_connect`, `tcp_send`, `tcp_recv`, `tcp_close`, ephemeral ports     | §4 (state machine must be complete before API calls are safe)    |  [ ]   |
-| 💎  |   6   | §4 TCP robustness -- retransmit timer, window validation, Nagle, slow-start, OOO hold | §5 (API layer provides the send path robustness hooks)           |  [ ]   |
-| 💎  |   7   | §7 Connection tracking -- 4-tuple hash table, create on SYN/UDP, expire on FIN/RST   | §4 (TCP state machine fires CT creates/deletes)                  |  [ ]   |
+| 💎  |   5   | §5 `net_interface` manager -- `struct net_interface`, `netif_register/get_default`, `net_cfg` shim | Existing `net_cfg`; `eth_send()`; RTL8139 driver registered at boot |  [ ]   |
+| 💎  |   6   | §6 Loopback interface -- `lo`, 127/8 detection in `ipv4_send()`, short-circuit RX    | §5 (`netif_register()` needed to add `lo`)                       |  [ ]   |
+| 💎  |   1   | §1 TCP header + checksum -- `tcp_header`, TCP flags, pseudo-header CRC, `ip_receive` routing | §5 (`netif_get_default()` for source IP in pseudo-header)        |  [ ]   |
+| 💎  |   2   | §2 TCP state machine -- `tcp_connection`, 32-slot table, 11 RFC 793 states, transitions | §1 (TCP header parser needed before state machine can fire)      |  [ ]   |
+| 💎  |   3   | §3 TCP API -- `tcp_connect`, `tcp_send`, `tcp_recv`, `tcp_close`, ephemeral ports     | §2 (state machine must be complete before API calls are safe)    |  [ ]   |
+| 💎  |   4   | §4 TCP robustness -- retransmit timer, window validation, Nagle, slow-start, OOO hold | §3 (API layer provides the send path robustness hooks)           |  [ ]   |
+| 💎  |   7   | §7 Connection tracking -- 4-tuple hash table, create on SYN/UDP, expire on FIN/RST   | §2 (TCP state machine fires CT creates/deletes)                  |  [ ]   |
 
 ---
 
@@ -65,6 +65,10 @@ Define `struct tcp_header`. Declare TCP flag constants. Implement the TCP pseudo
 - [ ] `tcp_handle(src_ip, data, len)` stub (logs "TCP segment received" + verify checksum; dispatch to state machine in §2)
 - [ ] Add `case IP_PROTO_TCP` branch in `ipv4_handle()` (`src/kernel/net/ip.c`)
 - [ ] Log: `[TCP] RX %u.%u.%u.%u:%u → :%u seq=%u flags=0x%x len=%u`
+- [ ] Validate IPv4 and UDP receive lengths before TCP rides on them: `ipv4_handle()` rejects IHL < 5 or `total_len < hdr_len`; `udp_handle()` bounds `hdr->length` to `[8, len]`
+  - Found 2026-09-29 by the networking docs pass (`00-infrastructure/TODO-10` section 15). `ip.c:121-128`: `payload_len = total_len - hdr_len` is `uint32_t`, so IHL 15 with `total_len` 20 wraps to ~4 GiB and reaches `icmp_handle()`/`udp_handle()`; IHL below 5 hands IP header bytes up as payload.
+  - `udp.c:32`: `ntohs(hdr->length) - UDP_HEADER_SIZE` wraps for a length below 8 and is never checked against the received `len`, so one broadcast datagram to port 68 makes `dhcp_handle()` parse options past the frame (`dhcp.c:183-196`). Remote, unauthenticated, on-link.
+  - Also verify the IPv4 header checksum on receive (`ipv4_checksum()` exists) and drop packets not addressed to this host or broadcast; add a negative unit test for each malformed shape.
 - [ ] Commit: `"net/tcp: TCP header, flag constants, pseudo-header checksum, IP_PROTO_TCP routing"`
 
 ## 2. TCP Connection State Machine `[Opus]`

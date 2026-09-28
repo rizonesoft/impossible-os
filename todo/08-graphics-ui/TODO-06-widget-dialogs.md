@@ -11,7 +11,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 > **Goal:** Add the 7 complex controls and the complete dialog system needed to build the File Manager, Notepad, Registry Editor, and Control Panel: ListView (details + icon-grid), TreeView (hierarchical expand/collapse), Toolbar (icon buttons + overflow), MenuBar (horizontal menu + popup dropdowns), StatusBar (multi-pane), GroupBox + Separator (visual grouping), Tooltip (hover popup + animation), and the full dialog system (Win32-compatible `MessageBox`, file Open/Save, input, color picker, `SYS_MSGBOX` syscall).
 
 > [!IMPORTANT]
-> `CTRL_MAX_PER_WINDOW = 32` means each control counts against the per-window slot budget -- ListView and TreeView must store row/node data **outside** the `struct control` union. Use `pmm_alloc_contiguous()` for data arrays > 4 KB (e.g., more than ~170 rows @ 24 bytes each). Each control stores only a pointer + metadata in the union; the data buffer is freed in a new `ctrl_destroy(wh, id)` destructor. Dropdown floating popup mechanism (z_order=9999, borderless `wm_create_window`) is established in TODO-04 §5 -- use the same pattern for Toolbar overflow, MenuBar dropdowns, and Tooltip popups. `anim_mgr_add()` from TODO-02 drives the Tooltip fade-in. All colors via `theme_get()` -- no hardcoded hex. `tools/convert_icon.py` exists and handles the icon-to-C-array conversion for msgbox icons. SYS_ table currently ends at `SYS_MUNMAP=38`; socket syscalls 39–50 are allocated in TODO-02-dns-sockets.md; `SYS_MSGBOX = 51`. Complete sections in order: GroupBox → StatusBar → Toolbar → Tooltip → ListView → TreeView → MenuBar → Dialog system.
+> `CTRL_MAX_PER_WINDOW = 32` means each control counts against the per-window slot budget -- ListView and TreeView must store row/node data **outside** the `struct control` union. Use `pmm_alloc_contiguous()` for data arrays > 4 KB (e.g., more than ~170 rows @ 24 bytes each). Each control stores only a pointer + metadata in the union; the data buffer is freed in a new `ctrl_destroy(wh, id)` destructor. Dropdown floating popup mechanism (z_order=9999, borderless `wm_create_window`) is established in TODO-04 §5 -- use the same pattern for Toolbar overflow, MenuBar dropdowns, and Tooltip popups. `anim_mgr_add()` from TODO-02 drives the Tooltip fade-in. All colors via `theme_get()` -- no hardcoded hex. `tools/convert_icon.py` exists and handles the icon-to-C-array conversion for msgbox icons. The legacy SYS_ table uses 1-26 and 33-48 today (`include/kernel/sched/syscall.h`), and `07-networking/TODO-02-dns-sockets.md` §7 will take the next 12 numbers for sockets, so `SYS_MSGBOX` takes the next free number at implementation time, not a fixed one (allocation policy: `02-kernel-core/TODO-12-native-api-ssdt.md` §33). Complete sections in order: GroupBox → StatusBar → Toolbar → Tooltip → ListView → TreeView → MenuBar → Dialog system.
 
 ## Inputs
 
@@ -21,7 +21,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - `include/desktop/theme.h` (TODO-01) -- `theme_get()` for all colors; `accent_hover`, `surface_variant`, `border`, `shadow`
 - `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()` + `gfx_ease_decelerate` for Tooltip fade-in tween
 - `include/desktop/wm.h` -- `wm_create_window()` + `z_order` overlay for Toolbar overflow, MenuBar dropdowns, Tooltip; `wm_create_window()` for modal dialog
-- `include/kernel/sched/syscall.h` -- extend with `SYS_MSGBOX = 51` for user-mode MessageBox access
+- `include/kernel/sched/syscall.h` -- extend with `SYS_MSGBOX` (next free number) for user-mode MessageBox access
 - `scripts/convert-icons.sh` + `resources/icons/src/` -- message box icons join the original icon set (`docs/design/icons.md`)
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md` -- `CTRL_DROPDOWN` overlay pattern + `CTRL_SCROLLBAR` used by ListView/TreeView; must be complete before this TODO starts
 - Related (no stable XREF target): `08-graphics-ui/TODO-07-*` (context menu) -- MenuBar popup dropdown may be refactored to share context menu engine once it exists; this TODO implements a self-contained popup
@@ -37,21 +37,21 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - Tooltip per `docs/design/controls.md#tooltip`: appears after `THEME_MOTION_TOOLTIP_DELAY_MS` (400) of hover; applied to all chrome buttons.
 - `MessageBox()` Win32-compatible (exact `MB_*`/`ID*` constants), modal overlay, embedded icons.
 - `dialog_file_open/save`, `dialog_input`, `dialog_color` dialog implementations.
-- `SYS_MSGBOX = 51`; `msgbox` shell command.
+- `SYS_MSGBOX` (next free legacy number); `msgbox` shell command.
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                   | Depends On                                                                          | Status |
-| --- | :---: | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §6 GroupBox + Separator -- visual-only border + line controls; zero interaction               | Nothing; standalone                                                                 |  [ ]   |
-| 💎  |   2   | §5 StatusBar -- multi-pane bottom bar; text + icon per pane                                   | §6 (GroupBox establishes the visual-only control extension pattern)                 |  [ ]   |
-| 💎  |   3   | §3 Toolbar -- flat icon buttons, toggle state, separator, overflow `>>` chevron popup         | TODO-04 overlay pattern (z_order=9999 from dropdown) re-used for chevron            |  [ ]   |
-| 💎  |   4   | §7 Tooltip -- 400 ms hover delay, themed layer popup, applied to all chrome                   | §3 toolbar (toolbar buttons are first tooltip recipients); TODO-02 `anim_mgr_add()` |  [ ]   |
-| 💎  |   5   | §1 ListView -- details mode (columns + sort + multi-select) + icon-grid mode + scrollbar      | §4 tooltip (list items receive tooltips); external data buffer pattern              |  [ ]   |
-| 💎  |   6   | §2 TreeView -- hierarchical nodes, expand/collapse, indent, scrollbar, keyboard nav           | §5 ListView (same external data + scrollbar integration pattern)                    |  [ ]   |
-| 💎  |   7   | §4 MenuBar -- horizontal menu bar, popup dropdown, Alt-navigation, accelerators               | §3 toolbar (popup uses same z_order overlay); TODO-04 dropdown pattern              |  [ ]   |
-| 💎  |   8   | §8 Dialog system -- `MessageBox`, file Open/Save, input dialog, color picker, `SYS_MSGBOX=51` | §5+§6 (file dialog uses ListView + TreeView); §3 (nav toolbar); §7 modal            |  [ ]   |
-| 💎  |   9   | §9 Info bar control -- severity strip with glyph, action, close                               | §8                                                                                  |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                | Depends On                                                                          | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §6 GroupBox + Separator -- visual-only border + line controls; zero interaction            | Nothing; standalone                                                                 |  [ ]   |
+| 💎  |   2   | §5 StatusBar -- multi-pane bottom bar; text + icon per pane                                | §6 (GroupBox establishes the visual-only control extension pattern)                 |  [ ]   |
+| 💎  |   3   | §3 Toolbar -- flat icon buttons, toggle state, separator, overflow `>>` chevron popup      | TODO-04 overlay pattern (z_order=9999 from dropdown) re-used for chevron            |  [ ]   |
+| 💎  |   4   | §7 Tooltip -- 400 ms hover delay, themed layer popup, applied to all chrome                | §3 toolbar (toolbar buttons are first tooltip recipients); TODO-02 `anim_mgr_add()` |  [ ]   |
+| 💎  |   5   | §1 ListView -- details mode (columns + sort + multi-select) + icon-grid mode + scrollbar   | §4 tooltip (list items receive tooltips); external data buffer pattern              |  [ ]   |
+| 💎  |   6   | §2 TreeView -- hierarchical nodes, expand/collapse, indent, scrollbar, keyboard nav        | §5 ListView (same external data + scrollbar integration pattern)                    |  [ ]   |
+| 💎  |   7   | §4 MenuBar -- horizontal menu bar, popup dropdown, Alt-navigation, accelerators            | §3 toolbar (popup uses same z_order overlay); TODO-04 dropdown pattern              |  [ ]   |
+| 💎  |   8   | §8 Dialog system -- `MessageBox`, file Open/Save, input dialog, color picker, `SYS_MSGBOX` | §5+§6 (file dialog uses ListView + TreeView); §3 (nav toolbar); §7 modal            |  [ ]   |
+| 💎  |   9   | §9 Info bar control -- severity strip with glyph, action, close                            | §8                                                                                  |  [ ]   |
 
 ---
 
@@ -213,7 +213,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
-Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, 32 px status glyphs in the status colours (`docs/design/controls.md#dialog`), modal dimming, word-wrap). `dialog_file_open/save` (TreeView + ListView + TextBox + Dropdown). `dialog_input`. `dialog_color` (hue wheel + SV square + hex TextBox). `SYS_MSGBOX = 51` syscall. `msgbox` shell command.
+Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, 32 px status glyphs in the status colours (`docs/design/controls.md#dialog`), modal dimming, word-wrap). `dialog_file_open/save` (TreeView + ListView + TextBox + Dropdown). `dialog_input`. `dialog_color` (hue wheel + SV square + hex TextBox). `SYS_MSGBOX` (next free number) syscall. `msgbox` shell command.
 
 **Files:** `src/desktop/dialogs.c` (new), `include/desktop/dialogs.h` (new), icon assets + build pipeline (new), `include/kernel/sched/syscall.h` (extend)
 
@@ -237,9 +237,9 @@ Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, 32 px status glyp
 - [ ] `char* dialog_file_save(const char *filter, const char *default_name)` → path or NULL: same layout as open; TextBox pre-filled with `default_name`; warns if file exists (nested `MessageBox`)
 - [ ] `char* dialog_input(const char *title, const char *prompt, const char *default_text)` → text or NULL: 400×150; label + `ctrl_create_textbox` + OK/Cancel
 - [ ] `uint32_t dialog_color(uint32_t initial)` → ARGB32 or 0 on cancel: 300×320; rasterize hue ring + SV square at init; mouse-drag updates `H/S/V`; live preview rect; hex `ctrl_create_textbox`; OK/Cancel
-- [ ] `#define SYS_MSGBOX 51` in `include/kernel/sched/syscall.h`; `sys_msgbox()` handler in `syscall.c` dispatches to `MessageBox()` on desktop thread (post to desktop event queue)
+- [ ] `#define SYS_MSGBOX` at the next free number in `include/kernel/sched/syscall.h`; `sys_msgbox()` handler in `syscall.c` dispatches to `MessageBox()` on desktop thread (post to desktop event queue)
 - [ ] Shell command: `msgbox "title" "text" [ok|yesno|okcancel]` → prints returned ID to stdout
-- [ ] Commit: `"desktop/dialogs: MessageBox Win32-compat, file open/save, input, color picker, SYS_MSGBOX=51"`
+- [ ] Commit: `"desktop/dialogs: MessageBox Win32-compat, file open/save, input, color picker, SYS_MSGBOX"`
 
 ---
 
@@ -275,9 +275,9 @@ A reusable status strip for pages and dialogs (update available, restore point c
 | 💎  | MessageBox                                       | ✅ `MessageBoxW` exact same constants; modal                    | ✅ GTK `gtk_message_dialog_new`; Qt `QMessageBox`; parent      | ⬜ §8 -- exact Win32 MB_*/ID* values; `smoke` scrim                        |
 | ⭐  | Color picker                                     | ✅ Windows color dialog; Settings accent                        | ✅ GTK `GtkColorChooserDialog`; Qt `QColorDialog`; hue         | ⬜ §8 -- `⭐` hue wheel rasterized at                                      |
 | 💎  | File Open/Save dialog                            | ✅ `GetOpenFileNameW`; IFileOpenDialog Shell API; breadcrumb    | ✅ GTK `GtkFileChooserDialog`; Qt `QFileDialog`; bookmarks     | ⬜ §8 -- TreeView left + ListView right                                    |
-| ⭐  | `SYS_MSGBOX = 51`                                | ✅ User-mode `MessageBoxW` via `user32.dll`; `msg`              | ❌ No kernel-level MessageBox syscall; all                     | ⬜ §8 -- `⭐` kernel-dispatched MessageBox via syscall                     |
+| ⭐  | `SYS_MSGBOX`                                     | ✅ User-mode `MessageBoxW` via `user32.dll`; `msg`              | ❌ No kernel-level MessageBox syscall; all                     | ⬜ §8 -- `⭐` kernel-dispatched MessageBox via syscall                     |
 
-> **After §1–§8:** Impossible OS has a production-quality widget library and dialog system entirely in kernel-native code. The `⭐` differentiators are: (1) `dialog_color()` rasterizes the hue wheel at init time -- no external color picker library needed; (2) `SYS_MSGBOX = 51` lets any user-mode program pop a MessageBox with a single syscall -- a pattern Linux has no equivalent for (GTK/Qt are userspace-only).
+> **After §1–§8:** Impossible OS has a production-quality widget library and dialog system entirely in kernel-native code. The `⭐` differentiators are: (1) `dialog_color()` rasterizes the hue wheel at init time -- no external color picker library needed; (2) `SYS_MSGBOX` (next free number) lets any user-mode program pop a MessageBox with a single syscall -- a pattern Linux has no equivalent for (GTK/Qt are userspace-only).
 
 ## Verification
 
@@ -293,5 +293,5 @@ A reusable status strip for pages and dialogs (update available, restore point c
 - [ ] File open dialog: `dialog_file_open("*.txt", "C:\\")` → TreeView shows directory tree; ListView shows files; click folder in TreeView → ListView updates; select file + OK → returns path
 - [ ] Color picker: `dialog_color(0xFF0078D4)` → hue ring + SV square appear; drag in ring → changes hue; live preview updates; hex TextBox shows hex color; OK returns ARGB32
 - [ ] `msgbox "Test" "Hello" ok` → dialog appears in QEMU; close → exit code 1 (IDOK)
-- [ ] `SYS_MSGBOX = 51` in `syscall.h`; user-mode call triggers desktop-thread MessageBox
+- [ ] `SYS_MSGBOX` in `syscall.h` (next free number); user-mode call triggers desktop-thread MessageBox
 - [ ] Commit: `"desktop: complete widget library -- ListView/TreeView/Toolbar/MenuBar/StatusBar/GroupBox/Tooltip/dialogs"`

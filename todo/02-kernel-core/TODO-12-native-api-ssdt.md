@@ -95,6 +95,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9 |  [/]   |
 | 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
 | 💎  |  32   | Post-ship follow-up backfill (2026-07-31 cohort)               | --                 |  [/]   |
+| 💎  |  33   | Legacy `SYS_*` number allocation across roadmaps               | §4                 |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -1326,6 +1327,23 @@ From the stamped section 13:
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 > **Deferred:** [H] all 5 items re-scoped 2026-09-03 rather than implemented: a Codex design review of items 1-2 (canonical-path sync + serialization) found the fix needs a VFS-namespace-layer redesign spanning open resolution through rename publication and every `vfs_rename_ex` caller, not a local `nt_file.c` lock -- and, in reviewing a candidate global-mutex primitive, surfaced a real pre-existing defect in `mutex_t` (17th+ waiter permanently stranded). Items 3-5 (tail-pack path, variable-length unveil_entry, ACCESS_MASK enforcement) are blocked on the kernel image `.text` budget (95 bytes at this HEAD; item 5's design was written but not built, since items 3/4 already establish the ceiling is the binding constraint here). No code changed; this commit is bookkeeping only. -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §18 (items 1-2), `03-memory-concurrency/TODO-08-advanced-sync.md` §11 (the mutex defect), `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (items 3-5)
+
+---
+
+## 33. Legacy `SYS_*` Number Allocation Across Roadmaps
+
+> **Spawned-by:** root
+
+Roadmaps outside this file reserve fixed legacy `INT 0x80` numbers for services they have not built, and those reservations collide with each other and with the live table. Measured 2026-09-29 by the networking docs pass (`00-infrastructure/TODO-10` section 15): 37 distinct `SYS_<NAME>=NN` reservations above 48 across 22 roadmap files, including `SYS_MSGBOX` at both 51 and 71 and two claims each on 60 and 61, while `include/kernel/sched/syscall.h` already uses 1-26 and 33-48. Whichever roadmap lands second silently breaks the first one's user-mode ABI. The networking and dialog roadmaps were switched to symbolic names in that pass; the rest still carry fixed numbers.
+
+-> XREF (reciprocal; these already point here): `07-networking/TODO-02-dns-sockets.md` §7 (socket syscalls), `08-graphics-ui/TODO-06-widget-dialogs.md` §8 (`SYS_MSGBOX`).
+
+- [ ] Decide and record where new user-mode services go: the NT SSDT (`NtXxx`, this file's goal) or further legacy `INT 0x80` numbers, and on what condition the legacy table is frozen
+- [ ] Replace every remaining fixed `SYS_<NAME>=NN` reservation in `todo/` with a symbolic name plus a pointer to that decision (22 files at measurement; `grep -rnE "SYS_[A-Z_]+ *= *[0-9]{2}" todo/` lists them)
+- [ ] Add a lint check that refuses a fixed legacy number in `todo/` above the highest `SYS_*` in `syscall.h`, so a new reservation cannot reappear
+- [ ] Commit: `"todo: legacy syscall numbers allocated from the live table, not reserved in roadmaps"`
+
+**Test checkpoint:** the grep above returns no reservation above the live maximum; the new lint check fails on a planted `SYS_TEST=99` line and passes after it is removed. Test on: WSL2 dev host.
 
 ---
 

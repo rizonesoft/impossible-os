@@ -11,7 +11,7 @@ title: "TODO-04 -- IPv6 Dual-Stack"
 > **Goal:** Add full IPv6 support alongside IPv4: IPv6 header + ethertype routing, `ipv6_send()`/`ipv6_receive()`, ICMPv6 Neighbor Discovery Protocol (NDP) with NS/NA/RS/RA, EUI-64 link-local autoconfiguration, SLAAC global address, DHCPv6 client, dual-stack socket API (`AF_INET6`), DNS AAAA query activation, NDP neighbor cache with STALE/PROBE/FAILED state machine, and `ifconfig` IPv6 display. IPv6 is a production requirement -- many corporate and mobile networks are IPv6-only, and all modern OSes (Windows, Linux, macOS, Android) support dual-stack by default.
 
 > [!IMPORTANT]
-> IPv4 (`ipv4_send`/`ipv4_handle`), ARP, TCP, UDP, and DNS are complete prerequisites. The `ethernet_receive()` switch in `src/kernel/net/ethernet.c` already dispatches on `ethertype`; add `case 0x86DD` without touching IPv4 dispatch. The DNS AAAA stub from TODO-02 §5 (`dns_resolve6()` returning -ENOTSUP) is activated here in §8 -- do not re-implement, only wire. The dual-stack socket API in §9 extends the socket layer from TODO-02 §3; do not duplicate socket fd table logic. NDP neighbor cache (§3) must exist before SLAAC (§6) and DHCPv6 (§7) can register addresses with a reachable gateway.
+> IPv4 (`ipv4_send`/`ipv4_handle`), ARP, TCP, UDP, and DNS are complete prerequisites. The `net_rx()` switch in `src/kernel/net/ethernet.c` already dispatches on `ethertype`; add `case 0x86DD` without touching IPv4 dispatch. The DNS AAAA stub from TODO-02 §4 (`dns_resolve6()` returning -ENOTSUP) is activated here in §8 -- do not re-implement, only wire. The dual-stack socket API in §9 extends the socket layer from TODO-02 §5; do not duplicate socket fd table logic. NDP neighbor cache (§3) must exist before SLAAC (§6) and DHCPv6 (§7) can register addresses with a reachable gateway.
 
 ## Inputs
 
@@ -20,11 +20,11 @@ title: "TODO-04 -- IPv6 Dual-Stack"
 - `src/kernel/net/udp.c` -- `udp_send()`/`udp_receive()`; DHCPv6 uses UDP ports 546/547 over IPv6
 - `src/kernel/net/icmp.c` -- ICMPv4 reference; ICMPv6 is a new `src/kernel/net/icmp6.c`
 - `include/kernel/net/net.h` -- add IPv6 constants, `struct ipv6_header`, NDP structs, extend `net_interface` from TODO-01 §5 with `ip6_local[16]` (link-local) and `ip6_global[16]` (SLAAC/DHCPv6)
-- `src/kernel/net/socket.c` + `include/kernel/net/socket.h` -- extend with `AF_INET6`, `struct sockaddr_in6`, `IPV6_V6ONLY` from TODO-02 §3 socket layer
-- `src/kernel/net/dns.c` -- activate `dns_resolve6()` AAAA stub (from TODO-02 §5); wire AAAA + A dual query into `dns_resolve_dual()`
+- `src/kernel/net/socket.c` + `include/kernel/net/socket.h` -- extend with `AF_INET6`, `struct sockaddr_in6`, `IPV6_V6ONLY` from TODO-02 §5 socket layer
+- `src/kernel/net/dns.c` -- activate `dns_resolve6()` AAAA stub (from TODO-02 §4); wire AAAA + A dual query into `dns_resolve_dual()`
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) needs `ip6_local`/`ip6_global` fields added here
-- → XREF: `07-networking/TODO-02-dns-sockets.md` -- DNS AAAA stub (§5) and socket layer (§3–§8) are direct prerequisites and extension points
-- → XREF: `07-networking/TODO-03-http-tls.md` -- `https_get()`/`https_post()` will work over IPv6 once §2 dual-stack sockets are in place (no code change to HTTP layer needed)
+- → XREF: `07-networking/TODO-02-dns-sockets.md` -- DNS AAAA stub (§4) and socket layer (§5-§8) are direct prerequisites and extension points
+- → XREF: `07-networking/TODO-03-http-tls.md` -- `https_get()`/`https_post()` will work over IPv6 once §9 dual-stack sockets are in place (no code change to HTTP layer needed)
 
 ## Outcome
 
@@ -57,7 +57,7 @@ title: "TODO-04 -- IPv6 Dual-Stack"
 
 ## 1. IPv6 Header + Ethertype Routing `[Sonnet]`
 
-Define `struct ipv6_header`. Add IPv6 constants. Route `ethertype 0x86DD` frames to `ipv6_receive()` in `ethernet_receive()`.
+Define `struct ipv6_header`. Add IPv6 constants. Route `ethertype 0x86DD` frames to `ipv6_receive()` in `net_rx()`.
 
 **Files:** `include/kernel/net/net.h` (extend), `src/kernel/net/ethernet.c` (extend)
 
@@ -189,19 +189,19 @@ Activate the `dns_resolve6()` stub from TODO-02 §4. Wire `dns_resolve_dual()` t
 **Files:** `src/kernel/net/dns.c` (extend), `user/lib/socket.c` (extend)
 
 > [!NOTE]
-> The DNS AAAA query builder and response parser are already in place from TODO-02 §5 -- they stored results in `dns_cache_entry_t.ip6[16]` and returned -ENOTSUP. Activation here: remove the `-ENOTSUP` guard in `dns_resolve6()`; use `netif->dns6` (from SLAAC §6 / DHCPv6 §7) as the DNS server for AAAA queries if it is non-zero; otherwise fall back to `netif->dns` (IPv4 DNS). The `dns_resolve_dual()` function already sends both A + AAAA queries -- now it returns the AAAA result in `ip6_out` if non-zero, and the caller uses it for IPv6 connections. Preference rule: if `netif->ip6_global` is zero (no IPv6 connectivity), force `ip4` result even if AAAA was received; this prevents using IPv6 DNS results when the data plane is IPv4-only.
+> The DNS AAAA query builder and response parser are already in place from TODO-02 §4 -- they stored results in `dns_cache_entry_t.ip6[16]` and returned -ENOTSUP. Activation here: remove the `-ENOTSUP` guard in `dns_resolve6()`; use `netif->dns6` (from SLAAC §6 / DHCPv6 §7) as the DNS server for AAAA queries if it is non-zero; otherwise fall back to `netif->dns` (IPv4 DNS). The `dns_resolve_dual()` function already sends both A + AAAA queries -- now it returns the AAAA result in `ip6_out` if non-zero, and the caller uses it for IPv6 connections. Preference rule: if `netif->ip6_global` is zero (no IPv6 connectivity), force `ip4` result even if AAAA was received; this prevents using IPv6 DNS results when the data plane is IPv4-only.
 
 - [ ] Remove `-ENOTSUP` early return from `dns_resolve6()`; complete the 16-byte rdata extraction path
 - [ ] `dns_resolve6(hostname, ip6_out)` → 0 or -errno: send AAAA query to `netif->dns6` if non-zero, else to IPv4 DNS via `netif->dns`; parse 16-byte rdata; populate `ip6_out`; insert into cache
 - [ ] `dns_resolve_dual(hostname, ip4_out, ip6_out)`: prefer AAAA if `netif->ip6_global != ::` else force ip4
-- [ ] Extend `dns_cache_entry_t.has_aaaa` flag: already planned in TODO-02 §5; confirm it is used to cache AAAA alongside A
+- [ ] Extend `dns_cache_entry_t.has_aaaa` flag: already planned in TODO-02 §4; confirm it is used to cache AAAA alongside A
 - [ ] `getaddrinfo(hostname, service, hints, &res)` in `user/lib/socket.c`: call `dns_resolve_dual()`; build `addrinfo` list with `AF_INET6` entry first (if has_aaaa), `AF_INET` entry second; `ai_addrlen` = `sizeof(struct sockaddr_in6)` for IPv6 entries
 - [ ] Log: `[DNS] AAAA activated: %s → %x..%x (via %s DNS server)`
 - [ ] Commit: `"net/dns: AAAA activation -- remove ENOTSUP, resolve_dual prefers AAAA when IPv6 active, getaddrinfo dual"`
 
 ## 9. Dual-Stack Socket API `[Opus]`
 
-Extend the socket layer (TODO-02 §3) with `AF_INET6`, `struct sockaddr_in6`, `IPV6_V6ONLY` socket option, `connect(fd, ::1, port)` IPv6 loopback, and `bind(fd, ::, port)` dual-stack listen.
+Extend the socket layer (TODO-02 §5) with `AF_INET6`, `struct sockaddr_in6`, `IPV6_V6ONLY` socket option, `connect(fd, ::1, port)` IPv6 loopback, and `bind(fd, ::, port)` dual-stack listen.
 
 **Files:** `src/kernel/net/socket.c` (extend), `include/kernel/net/socket.h` (extend), `user/include/socket.h` (extend)
 

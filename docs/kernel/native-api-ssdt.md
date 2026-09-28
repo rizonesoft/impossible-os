@@ -59,6 +59,7 @@ Kernel code calls a `ZwXxx` alias directly, for example `ZwClose(handle)`. User 
 - **Registry, token, timer, ALPC, debug and directory handlers** are partly done, waiting on their owning roadmap files ([Native API roadmap](../../todo/02-kernel-core/TODO-12-native-api-ssdt.md)).
 - **User-buffer validation is incomplete**: some handlers write through caller pointers without probing them, for example the `IO_STATUS_BLOCK` in `NtFlushBuffersFile` ([`nt_file.c`](../../src/kernel/nt/nt_file.c)); a shared checked write-back helper is planned in [section 6](../../todo/02-kernel-core/TODO-12-native-api-ssdt.md#6-ntcreatefile--ntopenfile--ntclose--ntreadfile--ntwritefile).
 - **Calls with more than four arguments**: the `SYSCALL` entry passes only the four register arguments and sets the fifth and sixth to zero, instead of reading them from the user stack at `[RSP+0x28]` as Windows does ([`syscall_entry.asm`](../../src/kernel/sched/syscall_entry.asm)). A handler that needs more must take a packed structure; reading stack arguments is planned in [section 3](../../todo/02-kernel-core/TODO-12-native-api-ssdt.md#3-int-0x2e-compatibility-path).
+- **Legacy system call numbers**: many roadmaps still reserve fixed `INT 0x80` numbers above the live table, and several reserve the same number; one allocation rule and a lint check are planned in [Legacy `SYS_*` Number Allocation Across Roadmaps](../../todo/02-kernel-core/TODO-12-native-api-ssdt.md#33-legacy-sys_-number-allocation-across-roadmaps).
 
 ## How does it compare with Windows 11 and Linux?
 

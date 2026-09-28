@@ -21,8 +21,8 @@ title: "TODO-11 -- Remote Syslog Forwarding (RFC 5424)"
 - `src/kernel/net/udp.c` -- existing UDP send function
 - `include/kernel/klog.h` -- `log_level_t` enum for severity mapping
 - `src/kernel/registry.c` -- Registry API for reading syslog server config
-- → XREF: `TODO-04-system-logging.md` -- original home was TODO-02 §7 (moved here)
-- → XREF: `TODO-01-kernel-init-sequencing.md` -- `klog_disk_enable()` is Phase 2 gate
+- → XREF: `02-kernel-core/TODO-04-system-logging.md` -- original home was TODO-02 §7 (moved here)
+- → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md` -- `klog_disk_enable()` is Phase 2 gate
 
 ---
 
@@ -50,7 +50,7 @@ title: "TODO-11 -- Remote Syslog Forwarding (RFC 5424)"
 - [ ] Map klog levels to RFC 5424 severity: `DEBUG→7`, `INFO→6`, `WARN→4`, `ERROR→3`, `FATAL→2`
 - [ ] Facility: `LOG_KERN (0)` -- PRI = facility × 8 + severity
 - [ ] Format each packet: `<PRI>1 TIMESTAMP HOSTNAME APPNAME - - - MSG`
-  - TIMESTAMP: ISO 8601 from RTC (`2026-04-02T01:55:00Z`)
+  - TIMESTAMP: ISO 8601 UTC from the wall clock (`KeQuerySystemTime()`) at send time, e.g. `2026-04-02T01:55:00Z`; `klog_entry_t.timestamp` counts 10 ms units since boot, not wall time
   - HOSTNAME: `ImpossibleOS` (or from Registry if configured)
   - APPNAME: subsystem tag from klog entry
 - [ ] Implement `syslog_send(const klog_entry_t *entry)` -- formats + sends via `udp_send()`

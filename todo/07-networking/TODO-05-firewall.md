@@ -11,19 +11,19 @@ title: "TODO-05 -- Network Firewall & Packet Filter"
 > **Goal:** Build a stateful packet filter engine (`struct fw_rule`, 64-rule ordered table, first-match-wins), wire it into `ipv4_handle()`/`ipv4_send()` and the IPv6 receive/send paths, integrate with the connection tracking table (TODO-01 §7) for automatic inbound allow of established sessions, ship a default allow-outbound/block-inbound ruleset loaded from the Registry at boot, add per-rule atomic hit counters exposed via `/sys/firewall`, a firewall CLI (`fw list/add/remove/flush/enable/disable`), Registry persistence, and a `firewall.cpl` Control Panel applet. The firewall is the security boundary that separates the OS from untrusted network traffic.
 
 > [!IMPORTANT]
-> Connection tracking (TODO-01 §7) must be complete before stateful integration (§2) can be built -- the CT table's 256-slot 4-tuple hash is the core data structure consulted by `fw_check()` for inbound auto-allow. The firewall hook in §3 modifies `ipv4_handle()` and `ipv4_send()` in `src/kernel/net/ip.c` -- both functions have a single call site for inbound/outbound; the hook is a single `if (fw_check(...) == FW_BLOCK) return;` guard. IPv6 filtering (§5) reuses the same engine but queries `ipv6_receive()`/`ipv6_send()` from TODO-04. Registry uses Win32 API (`RegSetValueEx`, `RegGetValue`, `HKLM`) from `include/registry.h`.
+> Connection tracking (TODO-01 §7) must be complete before stateful integration (§3) can be built -- the CT table's 256-slot 4-tuple hash is the core data structure consulted by `fw_check()` for inbound auto-allow. The firewall hook in §2 modifies `ipv4_handle()` and `ipv4_send()` in `src/kernel/net/ip.c` -- both functions have a single call site for inbound/outbound; the hook is a single `if (fw_check(...) == FW_BLOCK) return;` guard. IPv6 filtering (§5) reuses the same engine but queries `ipv6_receive()`/`ipv6_send()` from TODO-04. Registry uses Win32 API (`RegSetValueEx`, `RegGetValue`, `HKLM`) from `include/registry.h`.
 
 ## Inputs
 
-- `src/kernel/net/ip.c` -- `ipv4_handle()` (inbound hook point) and `ipv4_send()` (outbound hook point); §3 adds `fw_check()` calls at the start of each
+- `src/kernel/net/ip.c` -- `ipv4_handle()` (inbound hook point) and `ipv4_send()` (outbound hook point); §2 adds `fw_check()` calls at the start of each
 - `src/kernel/net/ip6.c` + `src/kernel/net/icmp6.c` -- `ipv6_receive()`/`ipv6_send()` hook points for IPv6 filter (§5); same `fw_check()` call pattern
-- `src/kernel/net/conntrack.c` + `include/kernel/net/net.h` -- connection tracking 4-tuple hash table from TODO-01 §7; `ct_lookup(src_ip, src_port, dst_ip, dst_port, proto)` used in §2 inbound auto-allow
+- `src/kernel/net/conntrack.c` + `include/kernel/net/net.h` -- connection tracking 4-tuple hash table from TODO-01 §7; `ct_lookup(src_ip, src_port, dst_ip, dst_port, proto)` used in §3 inbound auto-allow
 - `include/registry.h` -- `RegSetValueEx`, `RegGetValue`, `RegCreateKeyEx`, `RegDeleteKey`, `HKLM` for §7 persistence
 - `src/kernel/fs/sysfs.c` (or VFS `/sys/` mount point) -- expose `/sys/firewall` read-only file for §9 hit counter dump
 - `src/shell/` -- `cmd_fw.c` (new) for §6 CLI; register in shell command table
 - `src/desktop/controls.c` + desktop compositing -- `firewall.cpl` applet UI in §8
-- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- §7 stateful connection tracking table (`ct_lookup()`) is mandatory for §2 inbound established auto-allow
-- → XREF: `07-networking/TODO-04-ipv6-dual-stack.md` -- `ipv6_receive()`/`ipv6_send()` hook points needed by §5 IPv6 filter; ICMPv6 ALLOW rule in default ruleset (§6)
+- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- §7 stateful connection tracking table (`ct_lookup()`) is mandatory for §3 inbound established auto-allow
+- → XREF: `07-networking/TODO-04-ipv6-dual-stack.md` -- `ipv6_receive()`/`ipv6_send()` hook points needed by §5 IPv6 filter; ICMPv6 ALLOW rule in default ruleset (§4)
 
 ## Outcome
 
@@ -41,14 +41,14 @@ title: "TODO-05 -- Network Firewall & Packet Filter"
 | ⭐  | Order | Deliverable                                                                                      | Depends On                                                                 | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Packet filter engine -- `fw_rule`, 64-rule table, `fw_check()`, add/remove/set-default API   | Nothing -- standalone engine                                                |  [ ]   |
-| 💎  |   2   | §3 IP layer hook -- `fw_check()` in `ipv4_handle` + `ipv4_send`; stealth drop; debug log        | §1 (engine must exist before hooks call it)                                |  [ ]   |
-| 💎  |   3   | §2 Stateful CT integration -- CT lookup before rule scan; inbound established auto-allow         | §1 engine + §2 hook wired; TODO-01 §7 CT table                             |  [ ]   |
+| 💎  |   2   | §2 IP layer hook -- `fw_check()` in `ipv4_handle` + `ipv4_send`; stealth drop; debug log        | §1 (engine must exist before hooks call it)                                |  [ ]   |
+| 💎  |   3   | §3 Stateful CT integration -- CT lookup before rule scan; inbound established auto-allow         | §1 engine + §2 hook wired; TODO-01 §7 CT table                             |  [ ]   |
 | 💎  |   4   | §4 Default ruleset -- allow-out/block-in policy; ICMP/DHCP/DHCPv6/DNS/NTP allow rules           | §1–§3 (engine + CT integration must work before default rules are loaded)  |  [ ]   |
-| 💎  |   5   | §9 Per-rule hit counters -- atomic `u64 hits`, `/sys/firewall` VFS file                         | §1 (`fw_rule` struct must be frozen before adding counter field)           |  [ ]   |
-| 💎  |   6   | §5 IPv6 firewall -- dual-prefix `fw_rule`, hook in `ipv6_receive()`/`ipv6_send()`               | §1–§4 (IPv4 path must be proven before extending to IPv6); TODO-04         |  [ ]   |
-| 💎  |   7   | §6 Firewall CLI -- `fw list/add/remove/flush/enable/disable/status`                              | §1 (rule API); §5 hit counters (for `fw list` counter column)              |  [ ]   |
-| 💎  |   8   | §7 Registry persistence -- rules to `HKLM\SYSTEM\Network\Firewall\Rules`; load at boot          | §6 CLI (rule struct finalized); Registry API from `include/registry.h`     |  [ ]   |
-| 💎  |   9   | §8 `firewall.cpl` Control Panel applet -- toggle, rule CRUD, blocked-packet log viewer          | §7 Registry (applet reads/writes same keys); §6 CLI logic reused           |  [ ]   |
+| 💎  |   9   | §9 Per-rule hit counters -- atomic `u64 hits`, `/sys/firewall` VFS file                         | §1 (`fw_rule` struct must be frozen before adding counter field)           |  [ ]   |
+| 💎  |   5   | §5 IPv6 firewall -- dual-prefix `fw_rule`, hook in `ipv6_receive()`/`ipv6_send()`               | §1–§4 (IPv4 path must be proven before extending to IPv6); TODO-04         |  [ ]   |
+| 💎  |   6   | §6 Firewall CLI -- `fw list/add/remove/flush/enable/disable/status`                              | §1 (rule API); §9 hit counters (for `fw list` counter column)              |  [ ]   |
+| 💎  |   7   | §7 Registry persistence -- rules to `HKLM\SYSTEM\Network\Firewall\Rules`; load at boot          | §6 CLI (rule struct finalized); Registry API from `include/registry.h`     |  [ ]   |
+| 💎  |   8   | §8 `firewall.cpl` Control Panel applet -- toggle, rule CRUD, blocked-packet log viewer          | §7 Registry (applet reads/writes same keys); §6 CLI logic reused           |  [ ]   |
 
 ---
 

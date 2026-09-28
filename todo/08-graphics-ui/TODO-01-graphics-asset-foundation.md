@@ -140,6 +140,9 @@ Move preview generation and thumbnail reuse into one shared service so File Mana
 - [ ] Icon raster cache: an icon is rasterised once per (content hash, pixel size, scale, theme, accent) and reused; on disk like Windows' `iconcache.db`, so it survives reboots
   - First use renders and stores; later uses read the cache; a theme or accent change re-renders only the icons currently on screen, lazily; entries for sources that no longer exist are evicted
   - Invariant with a unit test: an unchanged icon is never rasterised twice for the same key
+- [ ] Fix the stb_image realloc shim before thumbnails decode user files: define `STBI_REALLOC_SIZED` and copy `min(old, new)` bytes (`src/kernel/image.c:136-163`)
+  - Found 2026-09-29 by the Codex review of the networking docs pass (`00-infrastructure/TODO-10` section 15), verified at source: `pmm_track_size()` returns 0 for a `kmalloc` block, so `stbi_realloc_wrapper()` copies `new_size` bytes out of the smaller old buffer.
+  - stb_image sizes its PNG IDAT buffer at max(first chunk, 4096) and doubles it through that path (`include/stb_image.h:5184-5191`), so a PNG whose first IDAT chunk fits in 4 KiB and whose later chunks outgrow it makes the kernel read past a heap block. Test: such a multi-IDAT PNG decodes correctly.
 - [ ] Commit: `"gfx: thumbnail cache -- preview API, async generation contract, deterministic invalidation"`
 
 **Test checkpoint:** Re-requesting the same thumbnail hits the cache; modifying the source file invalidates and rebuilds the cached preview; serial shows `"GFX: thumb cache hit"` and `"GFX: thumb cache rebuild"` for the expected path. Test on: QEMU WHPX + TCG; bare metal.

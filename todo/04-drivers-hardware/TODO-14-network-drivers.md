@@ -173,6 +173,9 @@ Verify all five NIC modules end-to-end: each NIC sends an ARP request and receiv
 - [ ] VirtualBox test: set VM NIC to `Intel PRO/1000 MT Desktop`; boot; e1000 module loads; `ping` succeeds
 - [ ] Document `NOTICE.md` verification: every ported file listed with SPDX identifier and upstream source
 - [ ] RTL8139 RX DPC-first: after TODO-07 §12 drain-on-lower lands, move `rtl8139_irq_body` RX drain into a KDPC + adopt `KeSynchronizeExecution`. → XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §10 + §12
+- [ ] RTL8139 Rx ring: wrap `rx_offset` at the 8 KiB ring length, not `RX_BUF_SIZE` (9708), and drop a header length below 4 instead of wrapping `pkt_len` (`rtl8139.c:465-476`)
+  - Found 2026-09-29 by the networking docs pass. RCR sets no RBLEN bits (`rtl8139.c:360`), so the chip's ring is 8192 bytes and WRAP mode lets a frame run past it into the 1516-byte tail; the chip then continues at offset `x - 8192`, but `rx_offset %= RX_BUF_SIZE` keeps software at `x`, so later reads start at the wrong place.
+  - `pkt_len = hdr->length - 4` on `uint16_t` wraps for a length below 4 and is clamped to the caller's buffer, delivering stale ring bytes as a frame. The bad-status path also resyncs from CBR without writing CAPR.
 - [ ] Commit: `"docs: network driver test guide -- e1000, virtio-net, rtl8169 QEMU/VBox test commands"`
 
 ## 8. WiFi 802.11 MAC Layer Stub `[Opus]`

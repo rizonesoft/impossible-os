@@ -65,7 +65,7 @@ file_patterns:
 | 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [x]   |
-| 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [ ]   |
+| 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [x]   |
 | 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [ ]   |
 | 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [ ]   |
 | 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [ ]   |
@@ -670,25 +670,46 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 11 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/07-networking/TODO-01-tcp-network-infrastructure.md` (TODO-01 -- TCP Protocol & Network Infrastructure)
-  - `todo/07-networking/TODO-02-dns-sockets.md` (TODO-02 -- DNS Resolver & BSD Sockets API)
-  - `todo/07-networking/TODO-03-http-tls.md` (TODO-03 -- HTTP/HTTPS Client & TLS)
-- [ ] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/07-networking/TODO-04-ipv6-dual-stack.md` (TODO-04 -- IPv6 Dual-Stack)
-  - `todo/07-networking/TODO-05-firewall.md` (TODO-05 -- Network Firewall & Packet Filter)
-  - `todo/07-networking/TODO-06-ntp-status-winsock.md` (TODO-06 -- NTP, Network Status & Win32 Winsock)
-- [ ] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/07-networking/TODO-07-web-browser.md` (TODO-07 -- Web Browser)
-  - `todo/07-networking/TODO-08-ssh-ftp-clients.md` (TODO-08 -- SSH & FTP Clients)
-  - `todo/07-networking/TODO-09-email-client.md` (TODO-09 -- Email Client)
-- [ ] Pages in `docs/networking/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/07-networking/TODO-10-pdf-viewer.md` (TODO-10 -- PDF Viewer & Document Reader)
-  - `todo/07-networking/TODO-11-syslog-forwarding.md` (TODO-11 -- Remote Syslog Forwarding (RFC 5424))
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: networking documentation pages"`
+- [x] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-01-tcp-network-infrastructure.md` (TODO-01 -- TCP Protocol & Network Infrastructure): `tcp-network-infrastructure.md`
+  - `todo/07-networking/TODO-02-dns-sockets.md` (TODO-02 -- DNS Resolver & BSD Sockets API): `dns-sockets.md`
+  - `todo/07-networking/TODO-03-http-tls.md` (TODO-03 -- HTTP/HTTPS Client & TLS): `http-tls.md`
+- [x] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-04-ipv6-dual-stack.md` (TODO-04 -- IPv6 Dual-Stack): `ipv6.md`
+  - `todo/07-networking/TODO-05-firewall.md` (TODO-05 -- Network Firewall & Packet Filter): `firewall.md`
+  - `todo/07-networking/TODO-06-ntp-status-winsock.md` (TODO-06 -- NTP, Network Status & Win32 Winsock): `ntp-status-winsock.md`
+- [x] Pages in `docs/networking/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-07-web-browser.md` (TODO-07 -- Web Browser): `web-browser.md`
+  - `todo/07-networking/TODO-08-ssh-ftp-clients.md` (TODO-08 -- SSH & FTP Clients): `ssh-ftp.md`
+  - `todo/07-networking/TODO-09-email-client.md` (TODO-09 -- Email Client): `email-client.md`
+- [x] Pages in `docs/networking/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/07-networking/TODO-10-pdf-viewer.md` (TODO-10 -- PDF Viewer & Document Reader): `pdf-viewer.md`
+  - `todo/07-networking/TODO-11-syslog-forwarding.md` (TODO-11 -- Remote Syslog Forwarding (RFC 5424)): `syslog-forwarding.md`
+- [x] Replaced the placeholder `docs/networking/index.md` (it listed `drivers/` and `protocols/` folders that never existed) with a Roadmap Overviews table, then ran `python3 scripts/site/build.py --update-baseline` (93 to 82 entries)
+- [x] Roadmap drift found while writing, fixed in place across all eleven networking files
+  - Implementation Order rows in TODO-06 to 09 carried pre-renumbering section labels, and the Order columns of TODO-01 (six rows) and TODO-05 (rows 5 to 9) pointed at the wrong bodies (the oracle reads Order as the section number); all now match the bodies.
+  - TODO-08 named Monocypher's BLAKE2b `crypto_eddsa_*` for `ssh-ed25519` (needs the SHA-512 `crypto_ed25519_*`), a nonexistent ChaCha20-Poly1305 call with 32-byte keys and HKDF (OpenSSH's construction needs 64-byte keys and RFC 4253 derivation), and an unported MIT library that is vendored and compiled.
+  - TODO-06 planned its own TSC slew and `uefi_set_time()` although `ke_ntp_adjtime()` ships; TODO-02 planned syscalls 39-49, now taken; TODO-09 placed `base64_decode()` in a nonexistent `tls.c` and stored passwords in plaintext against `11-apps/TODO-04` section 6.
+  - TODO-10 (PDF) called stb_truetype bounds-checked for embedded fonts; its header disclaims untrusted fonts, so a bounds-checked path is now a filed prerequisite.
+  - Smaller fixes: `ethernet_receive()` is `net_rx()` (TODO-04), stale cross-section numbers (TODO-03, 04, 05, 07, 08), a claimed UDP checksum pattern that does not exist (TODO-01), and directory-less XREFs and an RTC timestamp for syslog (TODO-11).
+- [x] Code defects found while writing, filed in owning sections rather than fixed (docs-only section)
+  - `07-networking/TODO-01` section 1: `ipv4_handle()` accepts IHL below 5 and `total_len < hdr_len`, and `udp_handle()` trusts the UDP length, so one malformed broadcast makes the DHCP parser read past the frame.
+  - `02-kernel-core/TODO-10` section 31: `SYS_NETINFO` copies `net_cfg` to an unchecked user pointer (added to the legacy-syscall audit list).
+  - `04-drivers-hardware/TODO-14` section 7: RTL8139 wraps its Rx offset at 9708 bytes instead of the 8 KiB ring; `07-networking/TODO-06` section 1: the DHCP transaction ID is the constant `0x12345678`.
+  - `07-networking/TODO-10` section 1 and `11-apps/TODO-05` section 1: both plan the same PDF parser, decompressor and renderer; one owner has to be chosen.
+  - `02-kernel-core/TODO-12` new section 33: 37 fixed legacy `SYS_*` reservations above 48 across 22 roadmaps collide with each other and the live table; the networking and dialog roadmaps were made symbolic here.
+  - `08-graphics-ui/TODO-01` section 5: the stb_image realloc shim in `image.c` copies `new_size` bytes from a smaller `kmalloc` block when a PNG's IDAT buffer grows past 4 KiB.
+- [x] Commit: `"docs: networking documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 150/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** eleven contract-shaped overview pages in `docs/networking/`, one per networking roadmap file 01 to 11, listed in a rewritten `docs/networking/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the network code it describes changes.
+> - **Status honesty:** no networking roadmap section has shipped; pages describe what runs today (IPv4, ICMP, one-shot DHCP, send-only `ping`, `ifconfig`) and which vendored pieces already exist (Mbed TLS unbuilt, Monocypher built, stb zlib).
+> - **Scope boundary:** the app windows for browser, mail, SSH, FTP and PDF are documented with the apps roadmaps (section 20); these pages cover the protocol and engine halves.
 
 ---
 

@@ -11,7 +11,7 @@ title: "TODO-09 -- Email Client"
 > **Goal:** Build a full-featured email client: SMTP send (port 587 + STARTTLS), POP3 receive (port 995 + TLS), IMAP sync (port 993 + TLS with IDLE push), account manager (multiple accounts, MX autodiscover, Registry persistence), RFC 2822 message parser + MIME multipart + base64/QP decode, three-panel GUI (sidebar/list/viewer), compose window with attachments, full-text search, desktop notifications with tray icon, and contacts integration.
 
 > [!IMPORTANT]
-> Mbed TLS (`tls_connect()`, `tls_send()`, `tls_recv()`, `tls_close()`) from TODO-03 is the mandatory TLS foundation for SMTP STARTTLS, POP3/IMAP over TLS. DNS `dns_resolve()` from TODO-02 is used for MX autodiscover and hostname resolution. The message parser (§3 in implementation order) defines the `mail_message_t` struct and base64/quoted-printable decode utilities used by all protocol sections -- it must be built first. The `ctrl_create_button/textbox/scrollbar` API from `include/desktop/controls.h` and `wm_create_window()` from `include/desktop/wm.h` are the GUI primitives. All message storage uses VFS paths under `C:\Users\Default\AppData\Mail\{account}\{folder}\`; all buffers > 4 KB use `pmm_alloc_contiguous()`.
+> Mbed TLS (`tls_connect()`, `tls_send()`, `tls_recv()`, `tls_close()`) from TODO-03 is the mandatory TLS foundation for SMTP STARTTLS, POP3/IMAP over TLS. DNS `dns_resolve()` from TODO-02 is used for MX autodiscover and hostname resolution. The message parser (§1) defines the `mail_message_t` struct and base64/quoted-printable decode utilities used by all protocol sections -- it must be built first. The `ctrl_create_button/textbox/scrollbar` API from `include/desktop/controls.h` and `wm_create_window()` from `include/desktop/wm.h` are the GUI primitives. All message storage uses VFS paths under `C:\Users\Default\AppData\Mail\{account}\{folder}\`; all buffers > 4 KB use `pmm_alloc_contiguous()`.
 
 ## Inputs
 
@@ -20,7 +20,7 @@ title: "TODO-09 -- Email Client"
 - `include/desktop/controls.h` -- `ctrl_create_button/label/textbox/scrollbar`, `ctrl_draw_all`, `ctrl_handle_mouse/key` for all GUI sections
 - `include/desktop/wm.h` -- `wm_create_window()` for main mail window, compose window, search dialog
 - `src/kernel/fs/vfs.c` -- `vfs_open/read/write/readdir` for `.eml` storage and contacts JSON
-- `include/registry.h` -- account settings in `HKCU\Software\ImpossibleMail\Accounts\{name}\*`
+- `include/registry.h` -- account settings in `HKCU\Software\Impossible\Mail\Accounts\{name}\*`
 - → XREF: `07-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) is the mandatory prerequisite for all three protocol sections
 - → XREF: `07-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for SMTP/POP3/IMAP server IPs; extend with `dns_resolve_mx()` for §5 autodiscover
 - → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- tray icon pattern from §3 (network tray) is reused by §9 mail tray envelope icon
@@ -42,16 +42,16 @@ title: "TODO-09 -- Email Client"
 
 | ⭐  | Order | Deliverable                                                                                             | Depends On                                                             | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §5 Message parser -- RFC 2822 headers, MIME multipart, base64/QP decode, attachment save               | Nothing -- standalone parser; defines `mail_message_t` used by all     |  [ ]   |
-| 💎  |   2   | §1 SMTP client -- TCP 587 + STARTTLS, EHLO, AUTH LOGIN, MAIL FROM/RCPT TO/DATA, MIME UTF-8 send        | §1 parser (MIME body build); Mbed TLS (TODO-03)                        |  [ ]   |
-| 💎  |   3   | §2 POP3 client -- TCP 995 + TLS, STAT/LIST/RETR/DELE, `.eml` local store                              | §1 parser (parse downloaded messages); Mbed TLS (TODO-03)              |  [ ]   |
-| 💎  |   4   | §3 IMAP client -- TCP 993 + TLS, CAPABILITY/SELECT/FETCH/STORE/SEARCH/EXPUNGE/IDLE                    | §3 POP3 as baseline; Mbed TLS; §1 parser for FETCH body                |  [ ]   |
-| 💎  |   5   | §4 Account manager -- settings, multiple accounts, Registry, MX autodiscover wizard                    | §2 SMTP + §3 POP3 + §4 IMAP (all protocol clients must exist to test)  |  [ ]   |
-| 💎  |   6   | §9 Notifications -- 5-min poll thread, desktop toast, tray envelope + unread count                    | §3 POP3 or §4 IMAP (poll needs a working sync function); desktop tray  |  [/]   |
-| 💎  |   7   | §6 Email GUI -- three-panel layout (sidebar/list/viewer), keyboard shortcuts, folder navigation        | §1 parser (body display); §5 account manager (folder source); §6 notif |  [/]   |
-| 💎  |   8   | §7 Compose window -- To/CC/BCC/Subject, body markup, attachments, Send/Draft/Discard                   | §2 SMTP (must be able to send); §7 GUI (compose is a sub-window)       |  [/]   |
-| 💎  |   9   | §10 Contacts integration -- `contacts.json`, From: address harvest, autocomplete in compose            | §7 compose (autocomplete target); §1 parser (From: extraction)         |  [ ]   |
-| 💎  |  10   | §8 Search -- full-text local grep, `SEARCH` shell command, IMAP server-side SEARCH forward            | §7 GUI (search box in sidebar); §4 IMAP (server search); §1 parser     |  [ ]   |
+| 💎  |   1   | §1 Message parser -- RFC 2822 headers, MIME multipart, base64/QP decode, attachment save               | Nothing -- standalone parser; defines `mail_message_t` used by all     |  [ ]   |
+| 💎  |   2   | §2 SMTP client -- TCP 587 + STARTTLS, EHLO, AUTH LOGIN, MAIL FROM/RCPT TO/DATA, MIME UTF-8 send        | §1 parser (MIME body build); Mbed TLS (TODO-03)                        |  [ ]   |
+| 💎  |   3   | §3 POP3 client -- TCP 995 + TLS, STAT/LIST/RETR/DELE, `.eml` local store                              | §1 parser (parse downloaded messages); Mbed TLS (TODO-03)              |  [ ]   |
+| 💎  |   4   | §4 IMAP client -- TCP 993 + TLS, CAPABILITY/SELECT/FETCH/STORE/SEARCH/EXPUNGE/IDLE                    | §3 POP3 as baseline; Mbed TLS; §1 parser for FETCH body                |  [ ]   |
+| 💎  |   5   | §5 Account manager -- settings, multiple accounts, Registry, MX autodiscover wizard                    | §2 SMTP + §3 POP3 + §4 IMAP (all protocol clients must exist to test)  |  [ ]   |
+| 💎  |   6   | §6 Notifications -- 5-min poll thread, desktop toast, tray envelope + unread count                    | §3 POP3 or §4 IMAP (poll needs a working sync function); desktop tray  |  [/]   |
+| 💎  |   7   | §7 Email GUI -- three-panel layout (sidebar/list/viewer), keyboard shortcuts, folder navigation        | §1 parser (body display); §5 account manager (folder source); §6 notif |  [/]   |
+| 💎  |   8   | §8 Compose window -- To/CC/BCC/Subject, body markup, attachments, Send/Draft/Discard                   | §2 SMTP (must be able to send); §7 GUI (compose is a sub-window)       |  [/]   |
+| 💎  |   9   | §9 Contacts integration -- `contacts.json`, From: address harvest, autocomplete in compose             | §8 compose (autocomplete target); §1 parser (From: extraction)         |  [ ]   |
+| 💎  |  10   | §10 Search -- full-text local grep, `SEARCH` shell command, IMAP server-side SEARCH forward           | §7 GUI (search box in sidebar); §4 IMAP (server search); §1 parser     |  [ ]   |
 
 ---
 
@@ -62,7 +62,7 @@ RFC 2822 header parsing (From, To, CC, BCC, Subject, Date, Message-ID, In-Reply-
 **Files:** `src/apps/mail/mime.c` (new), `include/apps/mail/mail.h` (new)
 
 > [!NOTE]
-> RFC 2822 header parsing: scan lines until `\r\n\r\n` (empty line); for each line: if starts with `<whitespace>`: continuation of previous header; else: split on first `:`. Store up to 32 headers as `{ name[64], value[512] }` pairs. MIME boundary: `Content-Type: multipart/alternative; boundary="XXXX"` -- scan body for `--XXXX\r\n` part delimiters; each part has its own sub-headers. Base64 decode: RFC 4648 standard alphabet; ignore whitespace; 4-byte → 3-byte groups; use the `base64_decode()` from `src/kernel/net/tls.c` (already exists for PEM parsing). Quoted-printable: `=XX` hex pairs; `=\r\n` soft line breaks (discard). Attachment save: `Content-Disposition: attachment; filename="name"` -- save decoded bytes to `C:\Users\Default\AppData\Mail\Attachments\name` via `vfs_open(CREATE)` + `vfs_write()`.
+> RFC 2822 header parsing: scan lines until `\r\n\r\n` (empty line); for each line: if starts with `<whitespace>`: continuation of previous header; else: split on first `:`. Store up to 32 headers as `{ name[64], value[512] }` pairs. MIME boundary: `Content-Type: multipart/alternative; boundary="XXXX"` -- scan body for `--XXXX\r\n` part delimiters; each part has its own sub-headers. Base64 decode: RFC 4648 standard alphabet; ignore whitespace; 4-byte → 3-byte groups; use `base64_decode()` from `src/kernel/kcodec.c` (declared in `include/kernel/kcodec.h`; its MIME mode skips whitespace). Quoted-printable: `=XX` hex pairs; `=\r\n` soft line breaks (discard). Attachment save: `Content-Disposition: attachment; filename="name"` -- save decoded bytes to `C:\Users\Default\AppData\Mail\Attachments\name` via `vfs_open(CREATE)` + `vfs_write()`.
 
 - [ ] `mail_header_t { char name[64]; char value[512]; }` and `mail_part_t { char content_type[128]; char charset[32]; char encoding[32]; char *body; size_t body_len; uint8_t is_attachment; char filename[256]; }` in `mail.h`
 - [ ] `mail_message_t { mail_header_t headers[32]; int header_count; mail_part_t parts[16]; int part_count; char *raw; size_t raw_len; }` in `mail.h`
@@ -145,18 +145,18 @@ TCP port 993 + TLS. Tagged command protocol: `A001 CAPABILITY`, `A002 LOGIN`, `A
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#text-box-password-box-and-search-box`](../../docs/design/controls.md#text-box-password-box-and-search-box)
 
-Account settings (server host, port, TLS mode, username, password in credential store). Multiple accounts. `HKCU\Software\ImpossibleMail\Accounts\{name}\*` Registry. Account setup wizard with MX autodiscover from domain.
+Account settings (server host, port, TLS mode, username, password in credential store). Multiple accounts. `HKCU\Software\Impossible\Mail\Accounts\{name}\*` Registry. Account setup wizard with MX autodiscover from domain.
 
 **Files:** `src/apps/mail/accounts.c` (new), `include/apps/mail/accounts.h` (new)
 
 > [!NOTE]
-> Registry layout per account: `HKCU\Software\ImpossibleMail\Accounts\<name>\` with DWORD/SZ values: `SMTPHost`, `SMTPPort`, `SMTPTLS` (0=none, 1=STARTTLS, 2=SSL), `POPHost`, `POPPort`, `IMAPHost`, `IMAPPort`, `Username`. Password stored separately in a credential store: `HKCU\Software\ImpossibleMail\Credentials\<account>` as a SZ -- no encryption at this stage (future TODO: DPAPI-style encryption). MX autodiscover (RFC 7208): `dns_resolve_mx(domain, mx_host_out)` -- add to `dns.c`: send DNS query with QTYPE=15 (MX); parse `PREFERENCE EXCHANGE` rdata; sort by preference; return lowest-preference MX host. Try common SMTP ports (587, 465, 25) and IMAP ports (993, 143) using EHLO/CAPABILITY probe to confirm server. Maximum 8 accounts.
+> Registry layout per account (the key path and value names are specified by `11-apps/TODO-04` §6, which wins where these differ): `HKCU\Software\Impossible\Mail\Accounts\<name>\` with DWORD/SZ values: `SMTPHost`, `SMTPPort`, `SMTPTLS` (0=none, 1=STARTTLS, 2=SSL), `POPHost`, `POPPort`, `IMAPHost`, `IMAPPort`, `Username`. Password stored separately in a credential store: `HKCU\Software\ImpossibleMail\Credentials\<account>` as a SZ -- superseded: the password is never stored in plaintext, it goes in the CNG AES-256-GCM credential store owned by `11-apps/TODO-04` §6 (Account Management + Credential Store), and `accounts_get_password`/`accounts_set_password` below call that store. MX autodiscover (RFC 7208): `dns_resolve_mx(domain, mx_host_out)` -- add to `dns.c`: send DNS query with QTYPE=15 (MX); parse `PREFERENCE EXCHANGE` rdata; sort by preference; return lowest-preference MX host. Try common SMTP ports (587, 465, 25) and IMAP ports (993, 143) using EHLO/CAPABILITY probe to confirm server. Maximum 8 accounts.
 
 - [ ] `mail_account_t { char name[64]; char smtp_host[256]; uint16_t smtp_port; uint8_t smtp_tls; char pop_host[256]; uint16_t pop_port; char imap_host[256]; uint16_t imap_port; char username[256]; char display_name[128]; }` + `mail_accounts[8]` + `mail_account_count`
-- [ ] `accounts_load()`: enumerate `HKCU\Software\ImpossibleMail\Accounts\`; read each account's subkeys; populate `mail_accounts[]`
+- [ ] `accounts_load()`: enumerate `HKCU\Software\Impossible\Mail\Accounts\`; read each account's subkeys; populate `mail_accounts[]`
 - [ ] `accounts_save(account)`: `RegCreateKeyEx` + `RegSetValueEx` for all fields
-- [ ] `accounts_get_password(account_name, pw_out)`: `RegGetValue(HKCU, "Software\\ImpossibleMail\\Credentials\\<name>", ...)`
-- [ ] `accounts_set_password(account_name, pw)`: `RegSetValueEx(HKCU, "Software\\ImpossibleMail\\Credentials\\<name>", ...)`
+- [ ] `accounts_get_password(account_name, pw_out)`: calls `acct_load()` of `11-apps/TODO-04` §6 (AES-256-GCM `EncPass`/`EncPassNonce`/`EncPassTag`); no plaintext Registry value
+- [ ] `accounts_set_password(account_name, pw)`: stores through the `11-apps/TODO-04` §6 encrypted store; account keys use that section's `HKCU\Software\Impossible\Mail\Accounts` layout
 - [ ] `dns_resolve_mx(domain, mx_host_out)` → 0 or -errno: in `dns.c`; QTYPE=15 query; parse MX RDATA (2-byte preference + encoded exchange name); return lowest-preference host
 - [ ] `accounts_autodiscover(email_address, &account)`: extract domain from `@`; `dns_resolve_mx(domain, &mx_host)`; probe SMTP/IMAP ports; fill account struct; prompt user to confirm + enter password
 - [ ] `accounts_wizard_open()`: `wm_create_window("Add Email Account", ...)`; fields: email, password; button "Auto-configure"; fallback to manual fields; Save → `accounts_save()` + `accounts_set_password()`

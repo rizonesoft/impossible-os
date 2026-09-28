@@ -8,17 +8,17 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 
 # TODO-02 -- DNS Resolver & BSD Sockets API
 
-> **Goal:** Build the DNS resolver (query builder, response parser, 64-entry LRU cache, AAAA support) and a BSD-compatible kernel socket layer (`SOCK_STREAM`/`SOCK_DGRAM`, `socket`/`connect`/`send`/`recv`/`bind`/`listen`/`accept`/`select`), expose them via 8 new syscalls, and provide thin user-mode wrappers. DNS and sockets turn raw IP+port into the hostname-based, file-descriptor API every application uses.
+> **Goal:** Build the DNS resolver (query builder, response parser, 64-entry LRU cache, AAAA support) and a BSD-compatible kernel socket layer (`SOCK_STREAM`/`SOCK_DGRAM`, `socket`/`connect`/`send`/`recv`/`bind`/`listen`/`accept`/`select`), expose them via the 12 socket syscalls listed in §7, and provide thin user-mode wrappers. DNS and sockets turn raw IP+port into the hostname-based, file-descriptor API every application uses.
 
 > [!IMPORTANT]
-> TCP (`tcp_connect`/`tcp_send`/`tcp_recv`/`tcp_close`) must be complete (→ XREF: `07-networking/TODO-01-tcp-network-infrastructure.md`) before the `SOCK_STREAM` socket type can be wired. DNS sends queries via `udp_send()` (already working) and receives responses via a `udp_register_handler()` callback. Existing syscall numbers 1–17 and 33–38 are occupied; socket syscalls start at **39** (`SYS_SOCKET=39` through `SYS_SELECT=46`) leaving room below 39 for future kernel syscalls. The 64-bit `select()` event bitmask is capped at 64 sockets -- sufficient for the initial implementation; `poll()` parity is deferred.
+> TCP (`tcp_connect`/`tcp_send`/`tcp_recv`/`tcp_close`) must be complete (→ XREF: `07-networking/TODO-01-tcp-network-infrastructure.md`) before the `SOCK_STREAM` socket type can be wired. DNS sends queries via `udp_send()` (already working) and receives responses via a `udp_register_handler()` callback. **The concrete numbers in this file are stale:** they were written when 39-46 were free, but `include/kernel/sched/syscall.h` now uses 1-26 and 33-48 (39-46 are file-handle, object-directory and fault-inject calls, 47 `SYS_ABI_HANDSHAKE`, 48 `SYS_TEST_REPORT`). §7 assigns the next free numbers at implementation time, and first decides whether sockets belong on the legacy `INT 0x80` table or the NT SSDT (Win32 routes Winsock through AFD); the repo-wide allocation policy is -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md` §33. The 64-bit `select()` event bitmask is capped at 64 sockets -- sufficient for the initial implementation; `poll()` parity is deferred.
 
 ## Inputs
 
 - `src/kernel/net/udp.c` + `include/kernel/net/net.h` -- `udp_send()` for DNS query TX; add `udp_register_handler(port, cb)` to receive DNS responses on port 53 reply (ephemeral port)
 - `src/kernel/net/tcp.c` -- `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`, `tcp_listen()`, `tcp_accept()` from TODO-01; socket layer wraps these
-- `include/kernel/sched/syscall.h` -- add `SYS_SOCKET=39` through `SYS_SELECT=46`; next free slot after existing `SYS_MUNMAP=38`
-- `src/kernel/sched/syscall.c` -- add 8 new dispatch entries in the syscall handler
+- `include/kernel/sched/syscall.h` -- add the socket syscalls at the next free numbers (48 `SYS_TEST_REPORT` is the highest in use today)
+- `src/kernel/sched/syscall.c` -- add the 12 dispatch entries (one per §7 syscall) in the syscall handler
 - `user/lib/` -- `socket.c` thin wrappers called from user-mode programs
 - → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- TCP API (§3) and `netif_get_default()` (§5) are prerequisites for `SOCK_STREAM` and `getaddrinfo`
 - Related (no stable XREF target): `07-networking/TODO-04-*` (future IPv6) -- §6 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
@@ -31,7 +31,7 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 - `socket()`, `connect()`, `send()`, `recv()`, `bind()`, `listen()`, `accept()`, `close()` kernel-layer functions.
 - `setsockopt()` / `getsockopt()` for `SO_REUSEADDR`, `SO_RCVTIMEO`, `SO_SNDBUF`.
 - `select()` blocking on up to 64 socket fds with millisecond timeout.
-- 8 new syscalls (`SYS_SOCKET` 39 through `SYS_SELECT` 46) with user-mode wrappers in `user/lib/socket.c`.
+- 12 new syscalls (`SYS_SOCKET`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, `SYS_CLOSE`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SELECT`, `SYS_DNS`, `SYS_SETSOCKOPT`, `SYS_GETSOCKOPT`) at the next free numbers, with user-mode wrappers in `user/lib/socket.c`.
 
 ## Implementation Order
 
@@ -43,7 +43,7 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 | 💎  |   4   | §4 AAAA query stub -- parallel A+AAAA, prefer AAAA, fall back to A                  | §1–§3 (A-record path must be proven before AAAA is added)               |  [ ]   |
 | 💎  |   5   | §5 Kernel socket layer -- `socket/connect/send/recv/close`, `SOCK_STREAM`/`DGRAM`   | TCP API from TODO-01; `dns_resolve()` for connect-by-hostname           |  [ ]   |
 | 💎  |   6   | §6 Server sockets -- `bind/listen/accept`, backlog queue                            | §5 (socket fd table must exist before bind/listen/accept can be added)  |  [ ]   |
-| 💎  |   7   | §7 Socket options + syscalls -- `setsockopt/getsockopt`, 8 new `SYS_*` numbers      | §5, §6 (all socket operations must be complete before syscall dispatch) |  [ ]   |
+| 💎  |   7   | §7 Socket options + syscalls -- `setsockopt/getsockopt`, 12 new `SYS_*` numbers     | §5, §6 (all socket operations must be complete before syscall dispatch) |  [ ]   |
 | 💎  |   8   | §8 `select()` -- 64-fd event bitmask, data-ready + writable, ms timeout             | §5 (socket fd table); §6 (server sockets contribute ACCEPT readiness)   |  [ ]   |
 
 ---
@@ -152,20 +152,20 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 
 ## 7. Socket Options + Syscalls `[Sonnet]`
 
-`setsockopt`/`getsockopt` for `SO_REUSEADDR`, `SO_RCVTIMEO`, `SO_SNDBUF`. Add 8 new syscall numbers (39–46) to `syscall.h`. Dispatch in `syscall.c`. User-mode wrappers in `user/lib/socket.c`.
+`setsockopt`/`getsockopt` for `SO_REUSEADDR`, `SO_RCVTIMEO`, `SO_SNDBUF`. Add the 12 socket syscalls to `syscall.h` at the next free numbers. Dispatch in `syscall.c`. User-mode wrappers in `user/lib/socket.c`.
 
 **Files:** `src/kernel/net/socket.c` (extend), `include/kernel/sched/syscall.h` (extend), `src/kernel/sched/syscall.c` (extend), `user/lib/socket.c` (new)
 
 > [!NOTE]
-> Syscall numbers (appended after existing `SYS_MUNMAP=38`): `SYS_SOCKET=39`, `SYS_CONNECT=40`, `SYS_SEND=41`, `SYS_RECV=42`, `SYS_BIND=43`, `SYS_LISTEN=44`, `SYS_ACCEPT=45`, `SYS_SELECT=46`, `SYS_DNS=47`. `SO_RCVTIMEO` is passed as a millisecond timeout (not a `timeval`); `SO_SNDBUF` clamps `tcp_send()` calls to the specified buffer size. `setsockopt` level is `SOL_SOCKET=1`; option names: `SO_REUSEADDR=2`, `SO_RCVTIMEO=20`, `SO_SNDBUF=7`. User-mode wrappers use `INT 0x80` with syscall number in `RAX` and arguments in `RDI`, `RSI`, `RDX`, `R10`, `R8` (up to 5 args).
+> Syscalls (symbolic; numbers are assigned at implementation time after the highest in use, 48 today): `SYS_SOCKET`, `SYS_CONNECT`, `SYS_SEND`, `SYS_RECV`, `SYS_CLOSE`, `SYS_BIND`, `SYS_LISTEN`, `SYS_ACCEPT`, `SYS_SELECT`, `SYS_DNS`, `SYS_SETSOCKOPT`, `SYS_GETSOCKOPT` (`SYS_CLOSE` backs the `close()` wrapper and `ws2_32` `closesocket`). `SO_RCVTIMEO` is passed as a millisecond timeout (not a `timeval`); `SO_SNDBUF` clamps `tcp_send()` calls to the specified buffer size. `setsockopt` level is `SOL_SOCKET=1`; option names: `SO_REUSEADDR=2`, `SO_RCVTIMEO=20`, `SO_SNDBUF=7`. User-mode wrappers use `INT 0x80` with syscall number in `RAX` and arguments in `RDI`, `RSI`, `RDX`, `R10`, `R8` (up to 5 args).
 
 - [ ] `kern_setsockopt(fd, level, optname, optval, optlen)`: `SOL_SOCKET` + `SO_REUSEADDR` → `sock->so_reuseaddr`; `SO_RCVTIMEO` → `sock->so_rcvtimeo_ms`; `SO_SNDBUF` → `sock->so_sndbuf`; return 0 or -EINVAL
 - [ ] `kern_getsockopt(fd, level, optname, optval_out, &optlen_out)`: reverse of above
-- [ ] Add to `syscall.h`: `SYS_SOCKET=39` through `SYS_DNS=47`; add `SYS_SETSOCKOPT=48`, `SYS_GETSOCKOPT=49`
-- [ ] Dispatch in `syscall.c`: 9 new `case` entries; validate fd range; call `kern_*()` functions; marshal return value
+- [ ] Add the 12 socket syscalls listed above to `syscall.h` at the next free numbers (1-26 and 33-48 are taken), or as SSDT services if this section decides so
+- [ ] Dispatch in `syscall.c`: 12 new `case` entries; validate fd range; call `kern_*()` functions; marshal return value
 - [ ] `user/lib/socket.c`: `socket()`, `connect()`, `send()`, `recv()`, `bind()`, `listen()`, `accept()`, `close()` -- each a single `syscall(SYS_*, ...)` inline; `getaddrinfo(hostname, service, hints, &res)` wraps `SYS_DNS` + fills `addrinfo` struct; `htons()`/`ntohs()`/`htonl()`/`ntohl()` inline byte-swap helpers
 - [ ] `user/include/socket.h`: `AF_INET`, `SOCK_STREAM`, `SOCK_DGRAM`, `SOL_SOCKET`, `SO_*`, `struct sockaddr_in { sin_family, sin_port, sin_addr }`, `struct addrinfo { ai_family, ai_socktype, ai_addr, ai_addrlen, *ai_next }`
-- [ ] Commit: `"net/socket: setsockopt/getsockopt, syscalls 39–49, user/lib/socket.c wrappers, getaddrinfo"`
+- [ ] Commit: `"net/socket: setsockopt/getsockopt, socket syscalls, user/lib/socket.c wrappers, getaddrinfo"`
 
 ## 8. `select()` `[Opus]`
 
@@ -184,7 +184,7 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
   - `ksleep(1)`; loop
 - [ ] `fd_set` type: `uint64_t` (bitmask for fds 0–63); `FD_ZERO`, `FD_SET(fd, set)`, `FD_CLR`, `FD_ISSET` macros in `socket.h`
 - [ ] `data_ready` flag in `socket_t`: set by `tcp_handle()` when data pushed to recv buffer; cleared by `kern_recv()`
-- [ ] `SYS_SELECT` syscall (number 46): args `(nfds, read_ptr, write_ptr, except_ptr, timeout_ms)`; pointers validated before dereference
+- [ ] `SYS_SELECT` syscall (number from §7): args `(nfds, read_ptr, write_ptr, except_ptr, timeout_ms)`; pointers validated before dereference
 - [ ] User-mode `select()` wrapper in `user/lib/socket.c`: thin `syscall(SYS_SELECT, ...)`
 - [ ] Commit: `"net/socket: select() -- 64-fd bitmask, data-ready + writable scan, ms timeout, FD_SET macros"`
 
@@ -193,16 +193,16 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 ## OS Comparison
 
 
-| ⭐  | Feature                                                              | 🪟 Win11                                           | 🐧 Linux                                                | 🚀 Impossible OS                                                            |
-| --- | -------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 💎  | DNS query builder                                                    | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel       | ✅ `net/dns/` in kernel; `glibc` resolver               | ⬜ §1 -- kernel-native `dns_build_query()` + `udp_register_handler()` reply |
-| 💎  | DNS response parser                                                  | ✅ Full RFC 1035 + EDNS0                           | ✅ `net/dns_resolve.c`; compression pointer handling    | ⬜ §2 -- pointer depth cap 8; RCODE                                         |
-| 💎  | DNS LRU cache                                                        | ✅ DNS Client Service cache; configurable          | ✅ `nscd` or `systemd-resolved` (userspace); no         | ⬜ §3 -- in-kernel 64-entry LRU; `nslookup` shell                           |
-| 💎  | AAAA query + dual A+AAAA resolve, AAAA preference                    | ✅ Full IPv6 DNS in `dnsapi.dll`;                  | ✅ `getaddrinfo()` prefers AAAA; kernel resolves        | ⬜ §4 -- AAAA query stub; dual resolve                                      |
-| 💎  | Kernel socket layer                                                  | ✅ `afd.sys` (Ancillary Function Driver); Winsock2 | ✅ `net/socket.c`; full BSD socket API                  | ⬜ §5 -- direct kernel functions; 64-fd table                               |
-| 💎  | Server sockets                                                       | ✅ `afd.sys`; full Winsock server socket           | ✅ `net/socket.c`; `SOMAXCONN`, backlog, `SO_REUSEADDR` | ⬜ §6 -- backlog ring buffer; `SOMAXCONN=16`; `kern_accept()`               |
-| 💎  | Socket syscalls 39–49 + `user/lib/socket.c` wrappers + `getaddrinfo` | ✅ Winsock2 `WSA*` functions (kernel +             | ✅ glibc `socket()` → `syscall(SYS_socket, ...)`        | ⬜ §7 -- `INT 0x80` socket syscalls; `user/lib/socket.c`                    |
-| 💎  | `select()`                                                           | ✅ `select()` + `WSAPoll()` in Winsock2;           | ✅ `select()` + `poll()` + `epoll()`                    | ⬜ §8 -- 64-fd `uint64_t` bitmask; 1 ms                                     |
+| ⭐  | Feature                                                        | 🪟 Win11                                           | 🐧 Linux                                                | 🚀 Impossible OS                                                            |
+| --- | -------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 💎  | DNS query builder                                              | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel       | ✅ `net/dns/` in kernel; `glibc` resolver               | ⬜ §1 -- kernel-native `dns_build_query()` + `udp_register_handler()` reply |
+| 💎  | DNS response parser                                            | ✅ Full RFC 1035 + EDNS0                           | ✅ `net/dns_resolve.c`; compression pointer handling    | ⬜ §2 -- pointer depth cap 8; RCODE                                         |
+| 💎  | DNS LRU cache                                                  | ✅ DNS Client Service cache; configurable          | ✅ `nscd` or `systemd-resolved` (userspace); no         | ⬜ §3 -- in-kernel 64-entry LRU; `nslookup` shell                           |
+| 💎  | AAAA query + dual A+AAAA resolve, AAAA preference              | ✅ Full IPv6 DNS in `dnsapi.dll`;                  | ✅ `getaddrinfo()` prefers AAAA; kernel resolves        | ⬜ §4 -- AAAA query stub; dual resolve                                      |
+| 💎  | Kernel socket layer                                            | ✅ `afd.sys` (Ancillary Function Driver); Winsock2 | ✅ `net/socket.c`; full BSD socket API                  | ⬜ §5 -- direct kernel functions; 64-fd table                               |
+| 💎  | Server sockets                                                 | ✅ `afd.sys`; full Winsock server socket           | ✅ `net/socket.c`; `SOMAXCONN`, backlog, `SO_REUSEADDR` | ⬜ §6 -- backlog ring buffer; `SOMAXCONN=16`; `kern_accept()`               |
+| 💎  | Socket syscalls + `user/lib/socket.c` wrappers + `getaddrinfo` | ✅ Winsock2 `WSA*` functions (kernel +             | ✅ glibc `socket()` → `syscall(SYS_socket, ...)`        | ⬜ §7 -- `INT 0x80` socket syscalls; `user/lib/socket.c`                    |
+| 💎  | `select()`                                                     | ✅ `select()` + `WSAPoll()` in Winsock2;           | ✅ `select()` + `poll()` + `epoll()`                    | ⬜ §8 -- 64-fd `uint64_t` bitmask; 1 ms                                     |
 
 > **After §1–§8:** Impossible OS has a hostname-based, file-descriptor–driven networking API sufficient for every application protocol: DNS resolution, TCP clients and servers, UDP sockets, and multiplexed I/O via `select()`. Every higher-level TODO (TLS, HTTP, SSH) is unblocked. The in-kernel DNS LRU cache (§3) is a `⭐` advantage over Linux which handles DNS caching only in userspace daemons.
 
@@ -218,5 +218,5 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 - [ ] Server socket: `bind(fd, 1234); listen(fd, 5); accept(fd, &ip, &port)` blocks until QEMU `nc` connects; new_fd received and usable for `send()`/`recv()`
 - [ ] `SO_RCVTIMEO`: `setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, 500)` → `recv()` on idle connection returns -ETIMEDOUT after 500 ms
 - [ ] `select()`: two sockets -- one with data, one idle; `select(64, read_set, ...)` returns 1 and sets bit for the data socket only
-- [ ] Syscall: user-mode `hello.exe` calls `socket(AF_INET, SOCK_STREAM, 0)` via `INT 0x80` `SYS_SOCKET=39`; returns fd ≥ 3; subsequent `connect(fd, ip, port)` succeeds
-- [ ] Commit: `"net: complete DNS resolver + BSD socket API -- dns_resolve, socket/connect/send/recv, select, syscalls 39–49"`
+- [ ] Syscall: user-mode `hello.exe` calls `socket(AF_INET, SOCK_STREAM, 0)` via `INT 0x80` `SYS_SOCKET`; returns fd ≥ 3; subsequent `connect(fd, ip, port)` succeeds
+- [ ] Commit: `"net: complete DNS resolver + BSD socket API -- dns_resolve, socket/connect/send/recv, select, socket syscalls"`

@@ -65,6 +65,7 @@ title: "TODO-05 -- PDF Viewer"
 
 **Source file:** `src/apps/pdfview/pdf_parse.c`; header `include/apps/pdfview/pdf.h`
 
+- [ ] Settle one PDF engine owner with `07-networking/TODO-10-pdf-viewer.md` (item: "Settle one PDF engine owner"): both plan the parser, decompressor and renderer; keep one, XREF the other
 - [ ] Load entire PDF into `pmm_alloc_contiguous()` buffer via `vfs_open` + `vfs_read` (stream-safe for > 4 KB files)
 - [ ] Validate header: scan first 1024 bytes for `%PDF-1.` → store version digit; reject non-PDF files
 - [ ] Locate `startxref`: scan backwards from EOF for `startxref\n{offset}\n%%EOF`; parse decimal offset
