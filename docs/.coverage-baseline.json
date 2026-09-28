@@ -1,14 +1,6 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
-    "todo/01-boot-platform/TODO-11-interrupt-timer-arch.md",
-    "todo/01-boot-platform/TODO-12-early-entropy-random-seed.md",
-    "todo/01-boot-platform/TODO-15-visual-post-display.md",
-    "todo/01-boot-platform/TODO-16-nvme-storage.md",
-    "todo/01-boot-platform/TODO-17-xhci-usb-boot.md",
-    "todo/01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md",
-    "todo/01-boot-platform/TODO-19-usb-boot-hardening.md",
-    "todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md",
     "todo/01-boot-platform/TODO-21-ab-boot-rollback.md",
     "todo/01-boot-platform/TODO-22-recovery-partition.md",
     "todo/01-boot-platform/TODO-23-boot-watchdog.md",

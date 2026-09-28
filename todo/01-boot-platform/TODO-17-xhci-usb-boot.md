@@ -61,7 +61,7 @@ Verify and fix the existing xHCI controller initialization. Currently logs "No x
 - [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (MMIO registers need UC mapping)
 - [x] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
 
-**Test checkpoint:** Serial shows `xhci: N ports, M devices attached`. POST code 0xD700. Test on: QEMU `run-usb`, bare metal.
+**Test checkpoint:** Serial shows `xHCI vX.Y ready, N slots, N ports, N intrs, N scratchpads`. POST codes 0xD750 (handoff) and 0xD751 (controller running). Test on: QEMU `run-usb`, bare metal.
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | live path via `make run-usb-ci` (TCG) + bare metal; `test_usb_boot.c` pending (Unit Tests).
 > **Notes:**
 > - Shipped: xHCI controller bring-up (`xhci.c`) -- PCI discovery (0x0C/0x03/0x30), halt/reset, DCBAA, command+event rings, BAR0 via `vmm_map_mmio_uc`, Intel XUSB2PR routing.
@@ -83,7 +83,7 @@ Complete the device enumeration path: slot enable → Address Device → GET_DES
 - [x] Log: `usb: Device 46f4:0001 enumerated on port 1 (slot 1) [MSC]`
 - [x] Commit: `"drivers: USB device enumeration -- MSC interfaces detected"`
 
-**Test checkpoint:** Serial shows detected USB devices with class info. POST code 0xD701. Test on: QEMU `run-usb`, bare metal.
+**Test checkpoint:** Serial shows detected USB devices with class info (`Device VVVV:PPPP enumerated on port N (slot N) [MSC]`). POST code 0x2011 (`POST16_XHCI_OK`) once `xhci_init()` returns. Test on: QEMU `run-usb`, bare metal.
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | enumeration validated live via `make run-usb-ci` + bare metal.
 > **Notes:**
 > - Shipped: full 9-step enumeration (`xhci_dev.c`) -- port reset, Enable Slot, Address Device, GET_DESCRIPTOR (device+config, wTotalLength capped at 4096), SET_CONFIGURATION, Configure Endpoint.
@@ -106,7 +106,7 @@ Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPA
 - [x] Error handling: CSW status check, tag validation, TEST UNIT READY with retries
 - [x] Commit: `"drivers: USB MSC BOT -- SCSI READ/WRITE over bulk endpoints"`
 
-**Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. POST code 0xD702. Test on: QEMU `run-usb`, bare metal.
+**Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. No dedicated POST code; the `READ CAPACITY:` serial line is the marker. Test on: QEMU `run-usb`, bare metal.
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | BOT read/capacity validated live via `make run-usb-ci` + bare metal.
 > **Notes:**
 > - Shipped: SCSI-over-USB BOT (`usb_msc.c`) -- CBW/CSW framing, INQUIRY, READ CAPACITY(10), READ(10)/WRITE(10), CSW signature/tag validation, TEST UNIT READY retries.
@@ -127,7 +127,7 @@ Register USB MSC devices as block devices so VFS can mount filesystems from USB 
 - [x] Automatic: partition scan + filesystem mount via existing `partition_scan_all()`
 - [x] Commit: `"drivers: USB MSC block device registration -- USB drives mountable"`
 
-**Test checkpoint:** `bash scripts/build.sh run-usb` -- USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
+**Test checkpoint:** `bash scripts/build.sh run-usb` -- USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. No dedicated POST code; the `usbN` block-device line is the marker.
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | mount path validated live via `make run-usb-ci` + bare metal.
 > **Notes:**
 > - Shipped: USB MSC namespaces registered as `usb0`..`usbN` (`blkdev_adapters.c`) wired into `boot_storage.c`; `partition_scan_all()` + filesystem mount run automatically.

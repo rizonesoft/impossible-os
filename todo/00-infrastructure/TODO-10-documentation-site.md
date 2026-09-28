@@ -56,7 +56,7 @@ file_patterns:
 | ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [x]   |
 | 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [x]   |
 | 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [x]   |
-| 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [ ]   |
+| 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [x]   |
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [ ]   |
 | 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [ ]   |
 | 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [ ]   |
@@ -273,24 +273,36 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 10 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md` (TODO-11 -- Interrupt Architecture & Unified Timer Subsystem)
-  - `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md` (TODO-12 -- Early Entropy & Random Seed Handoff)
-  - `todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md` (TODO-13 -- TPM Measured Boot, PCR Replay & Attestation)
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-14-boot-diagnostics.md` (TODO-14 -- Boot Diagnostics, Heartbeat & Spinner)
-  - `todo/01-boot-platform/TODO-15-visual-post-display.md` (TODO-15 -- Visual POST Display (VPD))
-  - `todo/01-boot-platform/TODO-16-nvme-storage.md` (TODO-16 -- NVMe Storage Driver (Boot-Critical))
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-17-xhci-usb-boot.md` (TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical))
-  - `todo/01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md` (TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse)
-  - `todo/01-boot-platform/TODO-19-usb-boot-hardening.md` (TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline)
-- [ ] Pages in `docs/boot/` for the next 1 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md` (TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading))
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md` (TODO-11 -- Interrupt Architecture & Unified Timer Subsystem): `interrupt-timer-architecture.md`
+  - `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md` (TODO-12 -- Early Entropy & Random Seed Handoff): `early-entropy-random-seed.md`
+  - `todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md` (TODO-13 -- TPM Measured Boot, PCR Replay & Attestation): `tpm-measured-boot.md`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-14-boot-diagnostics.md` (TODO-14 -- Boot Diagnostics, Heartbeat & Spinner): `boot-diagnostics.md`
+  - `todo/01-boot-platform/TODO-15-visual-post-display.md` (TODO-15 -- Visual POST Display (VPD)): `visual-post-display.md`
+  - `todo/01-boot-platform/TODO-16-nvme-storage.md` (TODO-16 -- NVMe Storage Driver (Boot-Critical)): `nvme-boot-storage.md`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-17-xhci-usb-boot.md` (TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)): `xhci-usb-boot.md`
+  - `todo/01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md` (TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse): `usb-hid-boot-protocol.md`
+  - `todo/01-boot-platform/TODO-19-usb-boot-hardening.md` (TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline): `usb-boot-hardening.md`
+- [x] Pages in `docs/boot/` for the next 1 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-20-usb-zero-delay-handover.md` (TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)): `usb-zero-delay-handover.md`
+- [x] TODO-13 and TODO-14 had reference pages outside the §3 part order (`pcr-allocation.md`, `boot-timeline-schema.md`), so each gained an overview linking them; the other eight had no page
+  - Every quoted function, constant, serial line, anchor and `sources=` path was checked against the tree before review; Codex adversarial then found 8 medium overclaims (fresh xHCI ring allocation on inherit, headless-token enrollment, canary seeding order, no-MSI hot-plug, and four more), all fixed.
+- [x] Added the ten pages to `docs/boot/index.md` Roadmap Overviews, then ran `python3 scripts/site/build.py --update-baseline` (192 to 184 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-15, TODO-16 and TODO-17
+  - TODO-15 and TODO-16 "Current state" callouts said their test files were missing; TODO-15 cited a nonexistent `Last POST code:` serial line; TODO-17 sections 1-4 cited POST codes `0xD700`-`0xD703` that never shipped.
 - [ ] Commit: `"docs: boot platform, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 48/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** ten contract-shaped overview pages in `docs/boot/`, one per boot-platform roadmap file 11 to 20, each listed in `docs/boot/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
+> - **Downstream:** the TPM and diagnostics overviews link the existing `pcr-allocation.md` and `boot-timeline-schema.md` reference pages rather than copying them.
+> - **Found on the way:** stale test-file, serial-line and POST-code claims in TODO-15, TODO-16 and TODO-17 corrected in the same commit.
 
 ---
 
