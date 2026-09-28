@@ -42,7 +42,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 - `FILETIME` is a first-class kernel type: 100 ns intervals since `1601-01-01T00:00:00Z`.
 - `KeQuerySystemTime()` returns UTC wall time as a `FILETIME` from anywhere in the kernel.
 - `KeQuerySystemTimePrecise()` returns sub-microsecond UTC wall time via TSC interpolation.
-- `KeQueryPerformanceCounter()` returns a monotonic 64-bit counter backed by invariant TSC (HPET fallback, LAPIC last resort).
+- `NtQueryPerformanceCounter` returns a monotonic 64-bit counter backed by invariant TSC (HPET fallback, LAPIC last resort).
 - `KeQueryInterruptTime()` / `KeQueryUnbiasedInterruptTime()` provide interrupt-time APIs matching the Windows contract (with and without suspend bias).
 - Per-CPU TSC offset correction is applied on SMP so `RDTSC` reads are coherent across cores.
 - The wall clock is seeded from UEFI `GetTime()` at boot, or CMOS RTC if UEFI time is unavailable.
@@ -604,10 +604,10 @@ Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to t
 | 💎  | Interrupt time        | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased   |
 | 💎  | Timer resolution      | ✅ NtSetTimerResolution  | ✅ timer_settime NO_HZ    | ✅ §8 -- SSDT 0xF3/0xF4    |
 | 💎  | Precise wall time     | ✅ PreciseAsFileTime     | ✅ CLOCK_REALTIME vDSO    | ✅ §10 -- TSC interpolated |
-| 💎  | Timezone + DST        | ✅ registry TZ info      | ✅ /etc/localtime         | ⬜ §11                     |
+| 💎  | Timezone + DST        | ✅ registry TZ info      | ✅ /etc/localtime         | ✅ §11                     |
 | 💎  | KUSD / vDSO time page | ✅ KUSD 0x7FFE0000       | ✅ vDSO clock_gettime     | ✅ §12 -- ISR-updated      |
 | 💎  | FAT32 timestamps      | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ✅ §13 -- FILETIME-based   |
-| 💎  | NTFS FILETIME         | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ⬜ §13                     |
+| 💎  | NTFS FILETIME         | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ✅ §13                     |
 | 💎  | Suspend time bias     | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                     |
 | 💎  | Leap second policy    | ✅ skips leap seconds    | ✅ 86400 s/day            | ✅ documented + tested     |
 | 💎  | NTP adjustment        | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ✅ ke_ntp_adjtime hooks    |
@@ -636,7 +636,7 @@ Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to t
   - `mono_clock_source_name()` returns one of `"TSC"`, `"HPET"`, or `"LAPIC"` (not NULL)
   - `KeQuerySystemTime` returns a plausible FILETIME (year 2024+ encoded)
   - `KeQuerySystemTime` called twice ~1 ms apart returns increasing values
-  - `KeQueryPerformanceCounter` returns non-zero, monotonically increasing value
+  - `NtQueryPerformanceCounter` returns non-zero, monotonically increasing value
   - `KeQueryInterruptTime` returns non-zero, monotonically increasing value
   - `KeQueryUnbiasedInterruptTime` returns value <= `KeQueryInterruptTime` (no suspend bias yet)
   - `KeQuerySystemTimePrecise` returns value >= `KeQuerySystemTime` (interpolation adds precision, never subtracts)

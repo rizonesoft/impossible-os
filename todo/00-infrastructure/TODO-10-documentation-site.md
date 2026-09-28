@@ -58,7 +58,7 @@ file_patterns:
 | 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [x]   |
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [x]   |
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [x]   |
-| 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [ ]   |
+| 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [x]   |
 | 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [ ]   |
 | 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [ ]   |
 | 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [ ]   |
@@ -354,26 +354,39 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 
 Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-01-kernel-init-sequencing.md` (TODO-01 -- Kernel Init Sequencing)
-  - `todo/02-kernel-core/TODO-02-kernel-configuration-policy.md` (TODO-02 -- Kernel Configuration & Policy Plane)
-  - `todo/02-kernel-core/TODO-03-kernel-libraries.md` (TODO-03 -- Kernel Embedded Libraries)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-04-system-logging.md` (TODO-04 -- System Logging)
-  - `todo/02-kernel-core/TODO-05-object-manager.md` (TODO-05 -- Object Manager)
-  - `todo/02-kernel-core/TODO-06-executive-support-runtime.md` (TODO-06 -- Executive Support Runtime)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-07-irql-model-dpcs.md` (TODO-07 -- IRQL Model & DPCs)
-  - `todo/02-kernel-core/TODO-08-time-filetime-management.md` (TODO-08 -- Time & FILETIME Management)
-  - `todo/02-kernel-core/TODO-09-x86-64-architecture.md` (TODO-09 -- x86-64 Architecture Enhancements)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-10-kernel-security-hardening.md` (TODO-10 -- Kernel Security Hardening)
-  - `todo/02-kernel-core/TODO-11-peb-teb-user-abi.md` (TODO-11 -- PEB / TEB & User-Mode ABI)
-  - `todo/02-kernel-core/TODO-12-native-api-ssdt.md` (TODO-12 -- Native API Layer (Nt/Zw))
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: kernel core, part 1 documentation pages"`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-01-kernel-init-sequencing.md` (TODO-01 -- Kernel Init Sequencing): `kernel-init-sequencing.md`
+  - `todo/02-kernel-core/TODO-02-kernel-configuration-policy.md` (TODO-02 -- Kernel Configuration & Policy Plane): `kernel-configuration-policy.md`
+  - `todo/02-kernel-core/TODO-03-kernel-libraries.md` (TODO-03 -- Kernel Embedded Libraries): `kernel-libraries.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-04-system-logging.md` (TODO-04 -- System Logging): `system-logging.md`
+  - `todo/02-kernel-core/TODO-05-object-manager.md` (TODO-05 -- Object Manager): `object-manager.md`
+  - `todo/02-kernel-core/TODO-06-executive-support-runtime.md` (TODO-06 -- Executive Support Runtime): `executive-support-runtime.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-07-irql-model-dpcs.md` (TODO-07 -- IRQL Model & DPCs): `irql-dpc.md`
+  - `todo/02-kernel-core/TODO-08-time-filetime-management.md` (TODO-08 -- Time & FILETIME Management): `time-filetime.md`
+  - `todo/02-kernel-core/TODO-09-x86-64-architecture.md` (TODO-09 -- x86-64 Architecture Enhancements): `x86-64-architecture.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-10-kernel-security-hardening.md` (TODO-10 -- Kernel Security Hardening): `kernel-security-hardening.md`
+  - `todo/02-kernel-core/TODO-11-peb-teb-user-abi.md` (TODO-11 -- PEB / TEB & User-Mode ABI): `peb-teb-user-abi.md`
+  - `todo/02-kernel-core/TODO-12-native-api-ssdt.md` (TODO-12 -- Native API Layer (Nt/Zw)): `native-api-ssdt.md`
+- [x] No kernel-core file had a page before, so all twelve are new; `docs/kernel/index.md` lost its placeholder table of subdirectories that never existed
+  - Every quoted function, constant, serial line, anchor and `sources=` path was checked against the tree; the drafts overcounted shipped sections in four files and missed shipped KUSD policy bits and the LZ4 log-rotation consumer.
+- [x] Added the twelve pages to `docs/kernel/index.md` Roadmap Overviews, then ran `python3 scripts/site/build.py --update-baseline` (178 to 166 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-01, 05, 08, 10, 11, 12 and `include/kernel/nt/service_numbers.h`
+  - TODO-01 said 27 subsystems (30 today); TODO-05 said 13 object types (15 with Token and Job); TODO-12 and the header comment said 475 services (477); TODO-08 named a nonexistent `KeQueryPerformanceCounter` and showed timezone and NTFS rows as not done.
+  - TODO-10 section 13's guard-table capacity and SMP items and TODO-11 section 11's KUSD policy-bits item had shipped; each now `[x]` with evidence.
+- [x] Commit: `"docs: kernel core, part 1 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 66/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** twelve contract-shaped overview pages in `docs/kernel/`, one per kernel-core roadmap file 01 to 12, each listed in `docs/kernel/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
+> - **Downstream:** the limits sections link existing owner items (TODO-12 §3 stack arguments, §6 IOSB write-back, TODO-10 §13 user-process stack guards) rather than filing duplicates.
+> - **Found on the way:** count and status drift corrected in six kernel-core roadmap files and one header comment.
 
 ---
 

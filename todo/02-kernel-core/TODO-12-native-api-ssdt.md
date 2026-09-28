@@ -51,7 +51,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 - All syscalls return `NTSTATUS`; `STATUS_SUCCESS = 0`, `STATUS_FAILURE` codes for errors.
 - `NtXxx` entry points are the user-mode callable names; `ZwXxx` are the kernel-mode aliases.
 - `SYSCALL`/`SYSRET` fast path replaces `INT 0x80`; `INT 0x2E` kept as compatibility fallback.
-- A numbered SSDT table with 475 entries maps service indices to kernel functions; `ntdll` stubs call by index.
+- A numbered SSDT table with 477 entries (`SSDT_MAIN_COUNT`) maps service indices to kernel functions; `ntdll` stubs call by index.
 - The existing 22 `SYS_*` calls are migrated to `Nt`-named equivalents at stable indices.
 - `NtCurrentTeb()` (`mov rax, gs:[0x30]`) and `NtCurrentPeb()` (`mov rax, gs:[0x60]`) return correct values per TODO-11.
 - All endpoint categories covered: file I/O, process/thread, memory, sync, registry, security/token, sections, timers, ALPC ports, debug, power, namespace, system info, atoms.
@@ -1335,7 +1335,7 @@ From the stamped section 13:
 | --- | -------------------------- | --------------------------- | ------------------------- | --------------------------------------------------------------------------- |
 | 💎  | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64       | ✅ §2 LSTAR + SYSRET enabled                                                |
 | 💎  | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed          | ✅ §1 NTSTATUS + 66 codes                                                   |
-| 💎  | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]       | ✅ §4 SSDT 475 + shadow stub                                                |
+| 💎  | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]       | ✅ §4 SSDT 477 + shadow stub                                                |
 | 💎  | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)      | ✅ §3 INT 0x2E + 0x80                                                       |
 | 💎  | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only          | ⬜ §11                                                                      |
 | 💎  | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat   | ⬜ §13                                                                      |

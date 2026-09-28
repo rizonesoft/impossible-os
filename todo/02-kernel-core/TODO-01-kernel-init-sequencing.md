@@ -94,7 +94,7 @@ New header and source file providing the result type, readiness oracle, and prog
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | oracle/enum/macros covered by `test_boot_init.c` (boot_result_t values, oracle round-trip, BOOT_REQUIRE, enum layout, apply_result dual-channel), 0 failures
 >
 > **Notes:**
-> - Boot init infra (`boot_init.h`/`boot_init.c`): `boot_result_t` (4 codes), `kernel_subsys_t` (SUBSYS_COUNT=27), `g_subsys_ready[]` oracle, `boot_progress()` serial+TSC emitter, `BOOT_REQUIRE`/`BOOT_STEP` macros, `kernel_subsystem_apply_result`.
+> - Boot init infra (`boot_init.h`/`boot_init.c`): `boot_result_t` (4 codes), `kernel_subsys_t` (SUBSYS_COUNT=27 at ship; 30 today, pinned by `test_boot_init.c`), `g_subsys_ready[]` oracle, `boot_progress()` serial+TSC emitter, `BOOT_REQUIRE`/`BOOT_STEP` macros, `kernel_subsystem_apply_result`.
 > - Readiness oracle is lock-free: `__atomic` acquire/release per uint8 slot; safe for AP + many-subsystem reads (BSP-only writes during init).
 > - Consumed by every phase (`boot_phase0-3`) + per-section `BOOT_REQUIRE` gates; dependency-chain enforcement lives in §6.
 > - Canonical contract: `include/kernel/boot_init.h` (`_Static_assert` pins the enum count + `degraded_mask` <= 32 width).
