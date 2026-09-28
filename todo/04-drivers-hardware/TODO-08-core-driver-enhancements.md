@@ -11,15 +11,17 @@ title: "TODO-08 -- Core Built-in Driver Enhancements"
 > **Goal:** Complete the remaining built-in (statically linked) driver gaps that must be available before or without a filesystem: HPET timer, PCIe ECAM extended config, capability chain scanner, MSI/MSI-X interrupt routing, and PCIe hot-plug detection.
 >
 > → **Boot-critical NVMe driver extracted to `01-boot-platform/TODO-16-nvme-storage.md`.** This TODO covers advanced NVMe features (multi-queue, interrupt coalescing, power states) after the boot-critical §1 is done there.
+>
+> **Current state:** the HPET clock already ships as `hpet_init()`/`hpet_ns()` (`src/kernel/drivers/hpet.c`; the roadmap's `hpet_read_ns()` name was never used) and LAPIC calibration measures against it (`cal_try_hpet()`, `src/kernel/drivers/lapic.c`); a polled single-I/O-queue NVMe driver ships under TODO-16. §4 and §5 rows stay open until reconciled with that code.
 
 > [!IMPORTANT]
 > All sections here are **built-in only** -- they may be needed before the IXFS mounts or are too performance-sensitive to load late. Loadable module infrastructure lives in `TODO-05`. All DMA buffers (NVMe queues, MSI-X tables) must use `pmm_alloc_contiguous()` -- never `kmalloc` for anything > 4 KB.
 
 ## Inputs
 
-- [`src/kernel/drivers/pci.c`](../../src/kernel/drivers/pci.c), [`include/kernel/drivers/pci.h`](../../include/kernel/drivers/pci.h) -- existing flat PCI stub (~220 lines); extended in §1/§2/§3/§6
+- [`src/kernel/drivers/pci.c`](../../src/kernel/drivers/pci.c), [`include/kernel/drivers/pci.h`](../../include/kernel/drivers/pci.h) -- existing flat PCI driver (281 lines, CF8/CFC only, locked); extended in §1/§2/§3/§6
 - [`src/kernel/drivers/ahci/`](../../src/kernel/drivers/ahci/) -- reference for DMA queue pattern used in §5
-- [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- `acpi_get_hpet_base()` consumed by §4; `acpi_get_mcfg()` consumed by §1
+- [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- `acpi_get_hpet_base()` consumed by §4; `acpi_get_mcfg()` does not exist yet and is added by §1
 - Port base for §5: SerenityOS `Kernel/Devices/Storage/NVMe/` (BSD-2-Clause)
 - [`../01-boot-platform/TODO-16-nvme-storage.md`](../01-boot-platform/TODO-16-nvme-storage.md) (→ XREF) -- boot-critical NVMe discovery, queues, blkdev; this file §5 defers implementation there
 - → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §6` -- HPET register layout and unified `uptime_ns()` HAL consumed by §4; LAPIC calibration call site also lives there
@@ -106,6 +108,7 @@ Enable Message Signalled Interrupts for PCIe devices. MSI writes a single `uint3
 - [ ] `pci_msix_mask_vector(dev, entry)` / `pci_msix_unmask_vector(dev, entry)` -- per-entry mask bit management
 - [ ] Register each MSI/MSI-X vector via `idt_register_handler(vector, handler)`
 - [ ] Boot log per device: `[PCI] %04x:%04x MSI-X x%u vectors allocated (base vec %u)` or `MSI vec %u`
+- [ ] Gate every MSI/MSI-X enable on `acpi_msi_supported()` (FADT IAPC_BOOT_ARCH bit 3); today it has no production caller and xHCI, AHCI, VirtIO enable MSI unconditionally
 - [ ] Commit: `"drivers: MSI/MSI-X -- pci_enable_msi/msix, LAPIC message format, INTx disable"`
 
 ## 4. HPET Timer Driver `[Opus]`

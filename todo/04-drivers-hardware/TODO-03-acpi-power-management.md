@@ -73,7 +73,7 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
   - `ACPI_USE_SYSTEM_CLIBRARY` + `ACPI_USE_STANDARD_HEADERS` so ACPICA uses the kernel's SSE/AVX-tuned mem/str rather than shipping a second `memcpy`; needed a new `include/freestanding/ctype.h` shim
   - `ACPI_SINGLE_THREADED` deliberately NOT set (SMP-safe by default); `rsdump.c` and `utprint.c` excluded, see the Makefile for the measured reasons
   - Release image links 753 ACPICA symbols + 47 `AcpiOs*` and ends at 0x52C000, 2.8 MiB under the firmware floor
-- [ ] Implement `src/kernel/acpi/acpi_osl.c` covering all `AcpiOs*` hooks:
+- [ ] Implement `src/kernel/acpi_osl.c` (the file exists there, not under `src/kernel/acpi/`) covering all `AcpiOs*` hooks:
   - Memory: `AcpiOsAllocate(size)` → `kmalloc`; `AcpiOsFree` → `kfree`; `AcpiOsMapMemory(phys, len)` → `vmm_map_mmio`
   - I/O ports: `AcpiOsReadPort`/`AcpiOsWritePort` → `inb/w/l`, `outb/w/l`
   - Sync: `AcpiOsCreateMutex` → `mutex_t *`; Acquire/Release → `mutex_lock`/`mutex_unlock`
@@ -85,7 +85,7 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
   - ACPICA's default `ACPI_BINARY_SEMAPHORE` mutex model routes every mutex acquire through `AcpiOsWaitSemaphore` -> `sem_wait`/`sem_trywait`, so two CPUs can both observe a binary count of 1 and both succeed
   - That lets the AML interpreter run concurrently while ACPICA believes the mutex is held. PRE-EXISTING defect affecting every semaphore user, not introduced by the OSL, which is why it is filed rather than fixed inside this section
   - Found by the Codex adversarial review of the OSL, 2026-08-17
-- [ ] **PCI config space has no CF8/CFC lock** -- verified at `src/kernel/drivers/pci.c:60-64`
+- [ ] **PCI config space: native `pci_write8()` still missing** -- the CF8/CFC lock and a true 16-bit write have since shipped (`s_pci_cfg_lock`, `src/kernel/drivers/pci.c:84-147`); the history below is the original finding
   - `pci_read32()` does `outl(PCI_CONFIG_ADDR, ...)` then `inl(PCI_CONFIG_DATA)` with nothing serialising the pair; `pci_write32()` is the same shape
   - Another CPU or an interrupt can reprogram 0xCF8 between the two accesses, so the read returns another device's register or the write lands on it
   - Also: `pci_write16()` at line 85 composes a dword read-modify-write, which replays write-1-to-clear bits in neighbouring registers (a 16-bit Command write at 0x04 reads Status at 0x06 and writes the observed bits back, silently acknowledging errors). A native `pci_write8()` does not exist at all

@@ -62,7 +62,7 @@ file_patterns:
 | 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [x]   |
 | 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [x]   |
 | 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [x]   |
-| 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [ ]   |
 | 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [ ]   |
@@ -529,29 +529,43 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 13 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md` (TODO-01 -- PCI/PCIe, PnP & Resource Manager)
-  - `todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md` (TODO-02 -- APIC Architecture & Advanced Interrupt Routing)
-  - `todo/04-drivers-hardware/TODO-03-acpi-power-management.md` (TODO-03 -- ACPI Full Subsystem & Power Management)
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-04-security-hardware.md` (TODO-04 -- Security Hardware & DMA Safety)
-  - `todo/04-drivers-hardware/TODO-05-kernel-module-system.md` (TODO-05 -- Kernel Module System)
-  - `todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md` (TODO-06 -- Firmware Loader & Device Blob Policy)
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-07-device-manager.md` (TODO-07 -- Device Manager & Driver Diagnostics)
-  - `todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md` (TODO-08 -- Core Built-in Driver Enhancements)
-  - `todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md` (TODO-09 -- Hypervisor Abstraction Layer)
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-10-usb-stack.md` (TODO-10 -- USB Stack Completion)
-  - `todo/04-drivers-hardware/TODO-11-input-system.md` (TODO-11 -- Input System Enhancement)
-  - `todo/04-drivers-hardware/TODO-12-i2c-touchpad.md` (TODO-12 -- I2C/SMBus Bus & Precision Touchpad)
-- [ ] Pages in `docs/hardware/` for the next 1 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md` (TODO-13 -- Storage Controller & Removable Media Drivers)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: drivers and hardware, part 1 documentation pages"`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-01-pci-pcie-pnp-resource-manager.md` (TODO-01 -- PCI/PCIe, PnP & Resource Manager): `pci-pnp-resource-manager.md`
+  - `todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md` (TODO-02 -- APIC Architecture & Advanced Interrupt Routing): `apic-interrupt-routing.md`
+  - `todo/04-drivers-hardware/TODO-03-acpi-power-management.md` (TODO-03 -- ACPI Full Subsystem & Power Management): `acpi-power-management.md`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-04-security-hardware.md` (TODO-04 -- Security Hardware & DMA Safety): `security-hardware.md`
+  - `todo/04-drivers-hardware/TODO-05-kernel-module-system.md` (TODO-05 -- Kernel Module System): `kernel-modules.md`
+  - `todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md` (TODO-06 -- Firmware Loader & Device Blob Policy): `firmware-loader.md`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-07-device-manager.md` (TODO-07 -- Device Manager & Driver Diagnostics): `device-manager.md`
+  - `todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md` (TODO-08 -- Core Built-in Driver Enhancements): `core-drivers.md`
+  - `todo/04-drivers-hardware/TODO-09-hypervisor-abstraction.md` (TODO-09 -- Hypervisor Abstraction Layer): `hypervisor-abstraction.md`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-10-usb-stack.md` (TODO-10 -- USB Stack Completion): `usb-stack.md`
+  - `todo/04-drivers-hardware/TODO-11-input-system.md` (TODO-11 -- Input System Enhancement): `input-system.md`
+  - `todo/04-drivers-hardware/TODO-12-i2c-touchpad.md` (TODO-12 -- I2C/SMBus Bus & Precision Touchpad): `i2c-touchpad.md`
+- [x] Pages in `docs/hardware/` for the next 1 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md` (TODO-13 -- Storage Controller & Removable Media Drivers): `storage-controllers.md`
+- [x] No 04 roadmap file had a page, so all thirteen are new; every quoted symbol, constant and log string was checked in the tree and every roadmap anchor resolves under the site check
+- [x] Rewrote `docs/hardware/index.md` with a Roadmap Overviews table, then ran `python3 scripts/site/build.py --update-baseline` (132 to 119 entries)
+  - Its old `cpu/`, `bus/`, `firmware/` and `interrupts/` rows named folders that never existed; they now link `specs/hardware/` directly.
+- [x] Roadmap drift found while writing, fixed in place in TODO-03, 08 and 09
+  - TODO-09 claimed a VMBus core and storvsc were complete: no VMBus code exists (only a comment at `src/kernel/idt.c:9`), so the claim and the §10 dependency now say so.
+  - TODO-08 cited a ~220-line PCI stub and an existing `acpi_get_mcfg()` (neither true) and now records that the HPET (`hpet_ns()`) and a polled NVMe driver already ship.
+  - TODO-03 had the OSL at `src/kernel/acpi/acpi_osl.c` (it is `src/kernel/acpi_osl.c`) and still listed the PCI config lock as missing; only a native `pci_write8()` is.
+- [x] Commit: `"docs: drivers and hardware, part 1 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 113/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** thirteen contract-shaped overview pages in `docs/hardware/`, one per drivers and hardware roadmap file 01 to 13, listed in a rewritten `docs/hardware/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
+> - **Status honesty:** no 04 roadmap has a complete section; each page separates what ships (often under a boot or kernel roadmap), what is partial and what is only planned.
+> - **Found on the way:** ACPICA is linked but never initialised, SMEP and SMAP are always skipped, xHCI without MSI never enumerates a hot-plugged device, and the FADT MSI prohibition is not enforced; all are open items in their owning roadmaps.
 ---
 
 ## 13. Document: Drivers and hardware, part 2

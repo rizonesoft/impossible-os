@@ -11,7 +11,7 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 > **Goal:** Build a unified cross-hypervisor abstraction layer so Impossible OS works identically in VirtualBox, QEMU/KVM, Hyper-V, and on bare metal -- completing guest-additions support (display resize, HGCM, shared folders, shared clipboard, VirtIO GPU/9P, Hyper-V synthetic HID/video) and adding a clean `hv.h` backend dispatch table that eliminates all hypervisor-specific `if/else` chains from the kernel core.
 
 > [!IMPORTANT]
-> **Already complete:** VBox absolute mouse (`vbox_mouse.c`), VirtIO tablet (`src/kernel/drivers/virtio/input.c`), VMBus core and storvsc. This TODO builds the remaining guest-additions stack (display, HGCM, shared folders, clipboard) and new hypervisor backends (VirtIO GPU, 9P, Hyper-V synthetic HID/video) plus the unified abstraction layer. The bare-metal path is the "null backend" -- every `hv_*` function must handle `HV_NONE` gracefully.
+> **Already complete:** VBox absolute mouse (`vbox_mouse.c`), VirtIO tablet (`src/kernel/drivers/virtio/input.c`), and hypervisor detection as `platform_detect()` (`src/kernel/cpuid_platform.c`). There is no VMBus core or storvsc yet: only comments mention VMBus (`src/kernel/idt.c:9`), so §10 and §11 need a VMBus driver first. This TODO builds the remaining guest-additions stack (display, HGCM, shared folders, clipboard) and new hypervisor backends (VirtIO GPU, 9P, Hyper-V synthetic HID/video) plus the unified abstraction layer. The bare-metal path is the "null backend" -- every `hv_*` function must handle `HV_NONE` gracefully.
 
 ## Inputs
 
@@ -45,7 +45,7 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 | 💎  |   7   | §7 VBox shared clipboard                                       | §6 (HGCM)                                   |  [ ]   |
 | 💎  |   8   | §8 VirtIO GPU display resize + page flip                       | §2, VirtIO core (existing)                  |  [ ]   |
 | 💎  |   9   | §9 VirtIO 9P shared folders                                    | §2, VirtIO core, VFS mount                  |  [ ]   |
-| 💎  |  10   | §10 Hyper-V synthetic HID (keyboard + mouse)                   | §2, VMBus core (existing)                   |  [ ]   |
+| 💎  |  10   | §10 Hyper-V synthetic HID (keyboard + mouse)                   | §2, VMBus core (not yet built)              |  [ ]   |
 | 💎  |  11   | §11 Hyper-V synthetic video                                    | §2, VMBus, framebuffer infrastructure       |  [ ]   |
 | 💎  |  12   | §12 VirtIO RNG guest entropy                                   | §2, VirtIO core (existing), D02T03 §5       |  [ ]   |
 
