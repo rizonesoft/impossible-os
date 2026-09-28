@@ -482,6 +482,34 @@ def test_hook_advisories_surface_from_attachment_events():
     assert "hook: [PostToolUse:Bash]" in out, out
     assert "hook error: [PreToolUse:Bash] boom" in out, out
 
+
+def test_context_stats_floor_percentiles_and_sidechain_excluded():
+    # The first MAIN turn's context is the session floor; percentiles cover the
+    # section's main turns only; a sidechain (subagent) turn never counts, not
+    # even as the floor, and the floor carries into the next section.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(i=1000, cr=0, cc=0), parent="toolu_x", msg_id="side_1"),
+            _assistant(_usage(i=100, cr=50_000, cc=10_000), msg_id="m1"),       # 60,100
+            _assistant(_usage(i=10, cr=190_000, cc=0), msg_id="m2"),            # 190,010
+            _assistant(_usage(i=10, cr=390_000, cc=0), msg_id="m3"),            # 390,010
+            _assistant(_usage(o=1), [("Bash", {"command": "python3 .claude/hooks/run_phase_guard.py progress"})], msg_id="m4"),
+            _assistant(_usage(i=5, cr=500_000, cc=0), msg_id="m5"),
+            {"type": "result", "result": "done", "usage": _usage(o=1)},
+        ]
+        _run(events, mp)
+        recs = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()]
+        s0, s1 = recs
+        assert s0["context_floor_tokens"] == 60_100, s0
+        assert s0["context_min_tokens"] == 60_100, s0
+        assert s0["context_max_tokens"] == 390_010, s0
+        assert s0["context_p50_tokens"] == 190_010, s0
+        assert s0["context_mean_tokens"] == (60_100 + 190_010 + 390_010) // 3, s0
+        assert abs(s0["resident_share"] - round(60_100 * 3 / 640_120, 4)) < 1e-9, s0
+        assert s1["context_floor_tokens"] == 60_100, s1        # run-level, not reset
+        assert s1["context_max_tokens"] == 500_005, s1
+
 if __name__ == "__main__":
     test_two_sections_split_on_progress()
     test_model_confirmed_matches_expected_no_warning()
@@ -507,5 +535,6 @@ if __name__ == "__main__":
     test_advisory_hook_output_is_surfaced()
     test_bash_command_clip_survives_a_compound_command()
     test_hook_advisories_surface_from_attachment_events()
+    test_context_stats_floor_percentiles_and_sidechain_excluded()
     print("PASS: stream-report metrics")
 

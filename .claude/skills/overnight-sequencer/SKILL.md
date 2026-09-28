@@ -151,6 +151,16 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   envelope's `needs_redispatch` names exactly the legs to re-run (missing OR
   crashed); reuse the already-clean legs' artifacts as-is. Envelope exit 0 =
   `all_clean`.
+- **Broker exit 75 = the Codex BACKEND is down: defer, do not retry.** The broker
+  refuses when the last 2 completed legs in 20 minutes failed at the backend
+  (HTTP status, stream disconnect, model at capacity; `scripts/overnight/codex-outage-check.py`).
+  Park the review with the outage as its blocker and do work that needs no Codex;
+  the gate clears when a leg succeeds or the window passes. Measured 2026-09-03:
+  five retries (10 calls, ~4m20s) before the run reached this conclusion by hand.
+- **Every review prompt starts with a LITERAL `[review-kind: X]`** -- never
+  `"$(cat file)"`, `"$VAR"` or a loop variable, which expand only at run time so
+  the recorder attributes nothing (`review_kind_literal_required` refuses them;
+  measured 2026-09-05: a five-leg approved wave re-dispatched).
 - **Receive ONCE per WAVE, not once per leg (T1-2b).** A wave is the set of legs
   dispatched together and waited on together. Wait for all of them, read the ONE
   combined envelope, then apply `superpowers:receiving-code-review` ONCE across

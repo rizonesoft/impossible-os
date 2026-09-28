@@ -86,6 +86,27 @@ EOF
 esac
 
 KIND="${BASH_REMATCH[1],,}"
+
+# BACKEND OUTAGE GATE (2026-09-28): a Codex outage used to cost a retry storm
+# (5 dispatch+wait pairs, ~4m20s, run-20260903-160406.log:423-436) before the
+# run concluded "outage" and deferred. The failed legs already say so; read
+# them first. Exit 75 = defer this review and continue other work; clears when
+# a leg succeeds or 20 minutes pass. Override: CODEX_OUTAGE_OVERRIDE=1.
+if [[ "${CODEX_OUTAGE_OVERRIDE:-}" != "1" ]]; then
+    _OUTAGE_RC=0
+    _OUTAGE_WHY="$(python3 "$(dirname "$0")/codex-outage-check.py" --manifest "${BROKER_MANIFEST:-.claude/overnight/reviews/manifest.jsonl}")" || _OUTAGE_RC=$?
+    if [[ $_OUTAGE_RC -eq 75 ]]; then
+        {
+            echo "[$SELF_NAME] REFUSED -- the Codex backend looks DOWN: $_OUTAGE_WHY"
+            echo
+            echo "Do not retry. Defer this review (park the section with the outage as its"
+            echo "blocker) and continue with work that needs no Codex. The gate clears by itself"
+            echo "once a leg succeeds or 20 minutes pass since those failures; to probe the"
+            echo "backend deliberately, re-run with CODEX_OUTAGE_OVERRIDE=1."
+        } >&2
+        exit 75
+    fi
+fi
 TODO_PATH="$(printf '%s\n' "$FIRST_LINE" | grep -oE 'todo/[^[:space:]]+\.md' | head -1)"
 # Section attribution (v14 close-out, 2026-08-16): the envelope was FILE-scoped
 # only, so a section's review wave silently ingested an earlier section's legs

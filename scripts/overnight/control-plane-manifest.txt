@@ -75,6 +75,7 @@ scripts/overnight/
 .claude/hooks/_skip_env.py
 .claude/hooks/_review_kind.py
 .claude/hooks/_codex_dispatch.py
+.claude/hooks/review_kind_literal_required.py
 .claude/hooks/_advisory_budget.py
 .claude/hooks/_heuristic_misses.py
 .claude/hooks/_review_pipeline_passthrough.py

@@ -326,6 +326,8 @@ Enforcement: `scripts/lint.sh` Check 12 scans `.claude/skills/`, `scripts/`, `do
 
 Opt-out: `SKIP_LINT_PROMPT_ESCAPING=1` per call.
 
+The marker must also be LITERAL on the command line: `.claude/hooks/review_kind_literal_required.py` refuses a review dispatch whose prompt is `"$(cat file)"`, `"$VAR"` or a loop variable, because the recorder reads the marker from the command and would record nothing (the heredoc-variable shape above resolves and is allowed). Opt-out: `REVIEW_KIND_LITERAL_OVERRIDE=1`.
+
 ## MCP Usage
 
 Two MCP servers are wired in [`.mcp.json`](.mcp.json) at project scope: `todo-graph` (read-only TODO-graph queries) and `lsp-bridge` (LSP-backed code intelligence).

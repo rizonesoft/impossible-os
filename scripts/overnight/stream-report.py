@@ -88,6 +88,15 @@ _ADVISORY_RE = re.compile(
     re.I)
 
 
+def _context_tokens(usage) -> int:
+    """Tokens of context one API request carried: fresh input plus cache read
+    plus cache creation (output excluded)."""
+    if not isinstance(usage, dict):
+        return 0
+    return sum(v for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+               if isinstance(v := usage.get(k), int))
+
+
 def _clip(value, limit: int = 200) -> str:
     """Collapse whitespace/newlines to one line and cap the length (ASCII only)."""
     s = " ".join(str(value).split())
@@ -362,6 +371,10 @@ class SectionMetrics:
         self.run_id = os.environ.get("OVERNIGHT_RUN_ID") or _run_id_from_path(path)
         self.index = 0
         self.model_seen: str | None = None  # run-level, NOT reset per section
+        # Context size of the session's FIRST main-loop turn: the fixed floor
+        # (system prompt, CLAUDE.md, memory, tool schemas) every later turn
+        # re-reads as cached input. Run-level, NOT reset per section.
+        self.context_floor: int | None = None
         # Session identity (from the stream) so finalization can reconcile the
         # undercounted stream output against the authoritative session transcript.
         self.session_id: str | None = os.environ.get("OVERNIGHT_SESSION_ID") or None
@@ -442,6 +455,10 @@ class SectionMetrics:
         id-less events. Every call refreshes the atomic live snapshot."""
         if not isinstance(usage, dict):
             return
+        if msg_id and not sidechain and self.context_floor is None:
+            ctx = _context_tokens(usage)
+            if ctx:
+                self.context_floor = ctx
         if msg_id:
             store = self._side_msg if sidechain else self._main_msg
             best = store.get(msg_id)
@@ -509,6 +526,31 @@ class SectionMetrics:
                 self.turns + len(self._main_msg),
                 self.sidechain_turns + len(self._side_msg))
 
+    def _context_stats(self) -> dict:
+        """Per-turn CONTEXT size (input + cache read + cache creation) of the
+        section's main-loop turns. Cache reads dominate run cost (2026-09-28:
+        1,981M cached-read vs 4.5M output tokens over 30 sections), and how far
+        the context grows before a segment rotates is the lever; these fields
+        make that tunable from data. `resident_share` is the fraction of the
+        section's context re-reads that were the fixed session floor."""
+        ctxs = sorted(c for c in (_context_tokens(u) for u in self._main_msg.values()) if c)
+        if not ctxs:
+            return {"context_floor_tokens": self.context_floor}
+
+        def pct(q):
+            return ctxs[min(len(ctxs) - 1, int(q * len(ctxs)))]
+        total = sum(ctxs)
+        floor = self.context_floor
+        return {
+            "context_floor_tokens": floor,
+            "context_min_tokens": ctxs[0],
+            "context_p50_tokens": pct(0.5),
+            "context_p90_tokens": pct(0.9),
+            "context_max_tokens": ctxs[-1],
+            "context_mean_tokens": total // len(ctxs),
+            "resident_share": round(min(1.0, floor * len(ctxs) / total), 4) if floor else None,
+        }
+
     def _pending(self) -> bool:
         return bool(self.turns or self.sidechain_turns or self._main_msg
                     or self._side_msg or self.main_tools or self.side_tools)
@@ -539,6 +581,7 @@ class SectionMetrics:
             **main,
             "sidechain_turns": side_turns,
             **{f"sidechain_{k}": v for k, v in side.items()},
+            **self._context_stats(),
             "agent_dispatches": self.agent_dispatches,
             "grep_calls": self.grep_calls,
             "lsp_calls": self.lsp_calls,

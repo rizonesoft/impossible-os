@@ -31,19 +31,25 @@ Carried with baselines. A measurement without one is an anecdote.
 
 ## Found at the 2026-09-28 attended cost review
 
-- [ ] RESIDENT CONTEXT is the largest cost nobody has measured: ~160 KB of fixed text rides as cached input on EVERY turn
+- [ ] CONTEXT GROWTH is the dominant run cost: cached re-reads are ~90% of model spend, and the fixed floor is only part of it
   - MEASURED sizes: project `CLAUDE.md` 88,667 bytes (~22k tokens), global `~/.claude/CLAUDE.md` 8,673, plus skill bodies that stay resident once invoked: `overnight-sequencer` 63,576, `implement-todo-section` 44,965, `review-todo-section` 39,594.
   - MEASURED shape of `CLAUDE.md`: Skills 19% (17 KB, mostly the agent table and offload doctrine that the skills repeat), Attended repair 10%, Git Hooks 9% (one 8 KB paragraph of August measurements), North Star 7%, Smoke Test 6%.
   - INFERRED cost: a ~965-call segment (`run-20260903-160406.log`) re-reads ~60k resident tokens per turn, ~58M cached-read tokens per segment, ~5.8M input-token equivalents at the 0.1 cache-read rate. Not yet verified against billed usage: the stream report carries no per-turn usage.
-  - Fix shape: keep `CLAUDE.md` to rules plus one-line pointers and move incident histories and measurements into the docs they already link (`docs/infrastructure/*`); split the sequencer skill body so the run loads only the phase it is in. Measure first: log `usage.cache_read_input_tokens` per turn in the stream report so the saving is billed fact, not arithmetic.
+  - CORRECTION 2026-09-28: the first filing said the stream report carries no usage. Wrong: `scripts/overnight/stream-report.py` already writes per-section token totals to `.claude/overnight/metrics/run-*.jsonl`. Read them before estimating.
+  - MEASURED from those records, last 30 sections with >= 20 turns: main-loop cache reads 1,981M tokens against 4.5M output; median context per turn ~300k, and TODO-03 section 23 averaged 497k over 509 turns. At the standard 0.1x cache-read and 5x output prices (an assumption, not a billing figure) cache reads are ~90% of the main loop's cost.
+  - So the fixed floor (~60k tokens: `CLAUDE.md`, skills) is roughly 12-20% of a turn; the bigger lever is how far context grows before a segment rotates.
+  - SHIPPED 2026-09-28 (attended), under test: every section record now carries `context_floor_tokens` (the session's first main turn), `context_min/p50/p90/max/mean_tokens` and `resident_share`; control `test_context_stats_floor_percentiles_and_sidechain_excluded` (a mutation that lets a subagent turn set the floor fails it).
+  - NEXT, from that data rather than arithmetic: (a) trim `CLAUDE.md` and split the sequencer skill, judged by `context_floor_tokens` and `resident_share`; (b) rotate or compact earlier, judged by `context_p90_tokens` against the re-orientation cost of a relaunch (~17 calls, `token-saver` v18 baseline).
 - [ ] A review wave built from `"$(cat file)"` prompts is paid for twice: the legs run and approve, then are re-dispatched because the hook saw no review kind
   - MEASURED `run-20260905-143453.log:358-376`: 5 dispatches + a 3m32s wait, all five `approve`, stamps still on section 22, then all 5 re-dispatched inline and waited again. 11 calls and one full Codex wave for work worth 6.
   - Same class as the carried attribution item in [overnight-runner-improvements-v20](../overnight-runner-improvements/overnight-runner-improvements-v20.md); the cheap half is a PreToolUse refusal BEFORE the round-trip when a broker/dispatch argument is not a literal that starts with `[review-kind:`. That needs no attribution redesign.
+  - SHIPPED 2026-09-28 (attended), under test: `.claude/hooks/review_kind_literal_required.py` refuses exactly what the recorder cannot attribute (same extraction), counting dispatch segments so one bad leg beside a good one is caught; `scripts/overnight/tests/test_review_kind_literal.py`, 15 cases. Measure: refusals per run, and 0 re-dispatched waves.
 - [ ] Refused tool calls are 6.3% of the largest transcript's calls, and several classes are predictable before the call is made
   - MEASURED `run-20260903-160406.log`: 61 `tool error:` of ~965 calls; `todo-item-line BLOCK` x8 (an over-cap lead drafted, refused, rewritten), `READ-CACHED` x7, `receiving-review-required` x5, `build-offload` x4 (plus 2 and 2 in the other two logs), `skill-step-block` x3.
   - Fix shape per class: draft TODO leads through `todo_item_line_length.py --check` before the Edit; the build-offload refusal message already names the wrapper, so the recurrence is a habit to put in the skill step that runs builds.
 - [ ] A Codex backend outage costs a retry storm before the run defers
   - MEASURED `run-20260903-160406.log:423-436`: 5 dispatch+wait pairs (10 calls, ~4m20s) against a design review returning 404s. Fix shape: the broker counts transport failures (not findings) and tells the run to defer after 2.
+  - SHIPPED 2026-09-28 (attended), under test: `scripts/overnight/codex-outage-check.py`, called by the broker, exits 75 when the last 2 completed legs in 20 minutes failed at the backend (HTTP status, stream disconnect, model at capacity; not app-server crashes, local ENOENT or review errors, classified over 3,422 legs). `scripts/overnight/tests/test_codex_outage_check.py`, 13 cases including the real 2026-09-03 artifacts. Measure: dispatches refused per outage (target 1-2, baseline 5).
 
 ## Found live this cycle
 

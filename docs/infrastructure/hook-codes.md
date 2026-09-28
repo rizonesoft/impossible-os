@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,.githooks/pre-commit,.githooks/pre-push reviewed=2026-09-28 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,.githooks/pre-commit,.githooks/pre-push reviewed=2026-09-28T10:39 -->
 # Hook Message Codes
 
 Hook block/reminder messages are injected into the model's context every time
