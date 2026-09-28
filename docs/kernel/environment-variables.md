@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-22-environment-variables.md sources=include/kernel/env.h,src/kernel/env.c,src/kernel/env_searchpath.c,src/kernel/env_apppaths.c,src/kernel/nt/nt_env.c,include/kernel/nt/nt_env.h,src/kernel/nt/nt_rtlenv.c,include/kernel/nt/nt_rtlenv.h,src/kernel/test/test_env.c,src/kernel/main/boot_desktop.c reviewed=2026-09-28 order=22 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-22-environment-variables.md sources=include/kernel/env.h,src/kernel/env.c,src/kernel/env_searchpath.c,src/kernel/env_apppaths.c,src/kernel/nt/nt_env.c,include/kernel/nt/nt_env.h,src/kernel/nt/nt_rtlenv.c,include/kernel/nt/nt_rtlenv.h,src/kernel/test/test_env.c,src/kernel/main/boot_desktop.c,src/kernel/sched/task.c,src/kernel/sched/syscall.c,src/kernel/pe.c,user/cmd.c reviewed=2026-09-28 order=22 -->
 # Environment Variables
 
 ## What is it?

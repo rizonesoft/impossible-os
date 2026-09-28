@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-20-eif-full-implementation.md sources=include/kernel/eif.h,src/kernel/eif.c,specs/eif-format.md,src/kernel/test/test_exec.c reviewed=2026-09-28 order=20 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-20-eif-full-implementation.md sources=include/kernel/eif.h,src/kernel/eif.c,specs/eif-format.md,src/kernel/test/test_exec.c,src/kernel/sched/task.c reviewed=2026-09-28 order=20 -->
 # EIF Executable Format
 
 ## What is it?

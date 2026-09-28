@@ -79,6 +79,8 @@ The real hazard is different and worse. `grep -c 'spin_lock\|SPINLOCK' src/kerne
 - [ ] Journal write cycle: dirty pages + header to the active log, fsync, commit marker, fsync, then copy into the main hive.
 - [ ] Journal recovery on mount: check both logs for a valid commit marker, higher sequence number wins, torn write loses.
 - [ ] Crash-while-clearing safety: clearing one journal leaves the other holding prior good state.
+- [ ] Journal replay must not invalidate the log until its copy succeeded: `hive_best_source` calls `hive_copy_file` then `hive_invalidate_log` unchecked (`registry.c:3893-3896`), and `hive_copy_file` ignores `vfs_write` results
+  - Found 2026-09-28 by the TODO-10 section 9 docs review; a failed or short replay write can discard the only valid journal and mount a stale hive.
 - [ ] Fix `registry_load_hives` double-reads -- `hive_best_source` validates the full candidate, then the load re-reads it.
 - [ ] Secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb.
 - [ ] Recovery tests: post-consume corruption must not reintroduce a consumed `ExternalEntropy` value.

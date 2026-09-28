@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md sources=include/kernel/nt/nls.h,include/kernel/nt/nls_cp.h,include/kernel/nt/nls_locale.h,include/kernel/nt/nls_sort.h,include/kernel/nt/nt_rtlstr.h,include/kernel/nt/nt_unicode.h,include/kernel/nt/nls_syscall_info.h,src/kernel/nt/nls.c,src/kernel/nt/nls_cp.c,src/kernel/nt/nls_locale.c,src/kernel/nt/nls_sort.c,src/kernel/nt/nt_rtlstr.c,src/kernel/nt/nt_unicode.c,src/kernel/nt/nt_misc.c,src/kernel/test/test_nls.c reviewed=2026-09-28 order=13 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md sources=include/kernel/nt/nls.h,include/kernel/nt/nls_cp.h,include/kernel/nt/nls_locale.h,include/kernel/nt/nls_sort.h,include/kernel/nt/nt_rtlstr.h,include/kernel/nt/nt_unicode.h,include/kernel/nt/nls_syscall_info.h,src/kernel/nt/nls.c,src/kernel/nt/nls_cp.c,src/kernel/nt/nls_locale.c,src/kernel/nt/nls_sort.c,src/kernel/nt/nt_rtlstr.c,src/kernel/nt/nt_unicode.c,src/kernel/nt/nt_misc.c,src/kernel/test/test_nls.c,src/kernel/env.c reviewed=2026-09-28 order=13 -->
 # Atom, NLS and Locale Subsystem
 
 ## What is it?
@@ -11,7 +11,7 @@ Five layers build on each other. `nt_unicode.c` validates a caller's `UNICODE_ST
 
 `nls.c` loads an optional `nls_table_v1` blob from `C:\Impossible\System\NLS\invariant.nls` at Phase 2 boot (`nls_init()`, subsystem `SUBSYS_NLS`), after the registry mounts. `nls_table_parse()` validates the blob (magic, version, CRC32, in-bounds chunks, no duplicate chunk type) before publishing it with a release store; a missing or invalid table falls back to a compiled ASCII+Latin-1 table with no boot failure. The loaded table extends the invariant fold to the full BMP (`nls_upcase_char`) for non-security paths such as display and sort keys; code points below U+0100 always route through the compiled `rtl_upcase_char`, so a tampered on-disk table can never change how two secured object names compare.
 
-`nls_cp.c` converts between UTF-16LE and UTF-8, CP437, CP850 and Windows-1252, with strict, replace and best-fit modes, and answers `GetACP`/`GetOEMCP`-style policy questions from `HKLM\SYSTEM\Nls`. `nls_locale.c` holds six compiled locale records (invariant plus en-US, en-GB, de-DE, fr-FR, es-ES) with BCP-47 names, code pages and format strings, and binds the system/user/UI-language registry policy that `NtQueryDefaultLocale` reads. `nls_sort.c` builds memcmp-comparable sort keys, an explicit opt-in NFC/NFD normalizer over ASCII and Latin-1, and a narrow `FoldStringW` (digit and compatibility-zone folding only). Finally, the global atom table in `nt_misc.c` (16-bit IDs from `NT_STRING_ATOM_BASE`, string interning with refcounts) folds its lookups through the same `rtl_upcase_char` authority and gates the locked scan with a per-slot hash so a miss costs one word compare per slot.
+`nls_cp.c` converts between UTF-16LE and UTF-8, CP437, CP850 and Windows-1252, with strict, replace and best-fit modes, and answers `GetACP`/`GetOEMCP`-style policy questions from `HKLM\SYSTEM\Nls`. `nls_locale.c` holds six compiled locale records (invariant plus en-US, en-GB, de-DE, fr-FR, es-ES) with BCP-47 names, code pages and format strings, and binds the system/user/UI-language registry policy that `NtQueryDefaultLocale` reads. `nls_sort.c` builds memcmp-comparable sort keys, an explicit opt-in NFC/NFD normalizer over ASCII and Latin-1, and a narrow `FoldStringW` (digit and compatibility-zone folding only). Finally, the global atom table in `nt_misc.c` (16-bit IDs from `NT_STRING_ATOM_BASE`, string interning with refcounts) folds its lookups through the same `rtl_upcase_char` authority and gates the locked scan with a per-slot hash, so a slot whose hash or length differs costs one compare; an equal-hash, equal-length slot still costs a full name compare, so the worst case stays proportional to table size times name length.
 
 ```mermaid
 flowchart LR
@@ -34,9 +34,9 @@ flowchart LR
 | `nls_locale_by_lcid()`, `nls_locale_by_bcp47()`, `nls_locale_ui_fallback()` | Locale record lookup and MUI fallback chain ([`nls_locale.h`](../../include/kernel/nt/nls_locale.h)) |
 | `nls_sort_key()`, `nls_normalize()`, `nls_fold_string()` | Invariant sort keys, opt-in normalization, narrow FoldStringW ([`nls_sort.h`](../../include/kernel/nt/nls_sort.h)) |
 | `NtAddAtom`, `NtFindAtom`, `NtDeleteAtom`, `NtQueryInformationAtom` | Global atom table syscalls (`nt_misc.c`, wired in the [Native API TODO](../../todo/02-kernel-core/TODO-12-native-api-ssdt.md)) |
-| `NtQueryDefaultLocale`, `NtSetDefaultLocale`, `NtQueryDefaultUILanguage` | Locale query/set syscalls (`nt_misc.c`) |
+| `NtQueryDefaultLocale`, `NtQueryDefaultUILanguage` | Locale queries (`nt_misc.c`); `NtSetDefaultLocale` is registered but always returns `STATUS_PRIVILEGE_NOT_HELD` |
 | `NtQuerySystemInformation(SystemNlsInformation)` | ACP/OEMCP/LCID/NLS-version snapshot ([`nls_syscall_info.h`](../../include/kernel/nt/nls_syscall_info.h)) |
-| `NtIsUILanguageComitted`, `NtFlushInstallUILanguage`, `NtGetMUIRegistryInfo` | MUI query syscalls (`nt_misc.c`, SSDT 0x0263-0x0265) |
+| `NtIsUILanguageComitted`, `NtGetMUIRegistryInfo` | MUI queries (`nt_misc.c`); `NtFlushInstallUILanguage` is registered but always returns `STATUS_PRIVILEGE_NOT_HELD` |
 
 ## How do I use it?
 
@@ -50,6 +50,7 @@ A kernel consumer that needs a case-insensitive name compare calls `RtlEqualUnic
 
 ## What is not implemented yet?
 
+- Changing the system or user locale and UI language: `NtSetDefaultLocale` and `NtFlushInstallUILanguage` fail closed with `STATUS_PRIVILEGE_NOT_HELD` whatever the caller holds, until the privilege check and per-user policy binding land ([Locale and LCID Metadata](../../todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md#6-locale-and-lcid-metadata)).
 - `NtGetNlsSectionPtr` (a read-only per-process-mapped NLS section) is blocked on SECTION objects and a per-process address space ([Native Atom/NLS/Locale Syscalls](../../todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md#8-native-atomnlslocale-syscalls)).
 - The full-BMP compatibility corpus (a generated `invariant.nls` from the Unicode Character Database) does not exist yet, so `GetStringTypeW`, public `FoldStringW` and OB/registry case-insensitivity above U+00FF stay narrow ([Tests and Compatibility Corpus](../../todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md#10-tests-and-compatibility-corpus)).
 - `LCMapStringEx`/`CompareStringEx` over the section-7 sort keys are not exposed, and the 2-band sort key format forecloses diacritic-drop and word-sort flags until it is redesigned ([Native Atom/NLS/Locale Syscalls](../../todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md#8-native-atomnlslocale-syscalls)).

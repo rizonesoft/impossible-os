@@ -431,6 +431,10 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
 > - **Downstream:** limits sections link existing owner sections (TODO-12 §7 environment inheritance, `09-desktop-shell/TODO-07` §1 CNG primitives) rather than filing duplicates.
 > - **Found on the way:** `build.py --check` validates fragments only for links into `docs/`, not into `todo/`, so a wrong roadmap anchor passes the site gate; six were caught by hand here and the check is filed in §23.
+> - **Filed:** journal replay that invalidates the log before checking its copy (`02-kernel-core/TODO-35` §1); ring-3 ALPC QoS was already owned by TODO-35 §5.
+
+> **Verified:** 2026-09-28 | commit `8483ac3bc` | 8/8 items | build OK | site: OK, 78/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 22M fixed, 0 open | scope: N/A (docs-only; no source changed; re-adversarial skipped: docs-only fixes)
 
 ---
 
