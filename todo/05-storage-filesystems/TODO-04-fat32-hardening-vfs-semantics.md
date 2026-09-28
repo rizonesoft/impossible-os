@@ -463,6 +463,11 @@ From the stamped section 16:
   - **Adjacent hazard found while checking**: the `~1` tail is applied unconditionally with NO collision search, so any two long names sharing the first 6 characters and an extension collide (`boot-trend.json` and any other `boot-tr*.json*` both mangle to `BOOT-T~1JSO`). That is a silent wrong-file hazard for rename AND unlink, wider than this incident.
   - **Impact**: every caller of the durable-write idiom this section exists to provide -- boot-trend, registry hive saves, ETW rotation, BlackBox dumps -- is exposed whenever its filename is long, and fails by leaving stale `.tmp` files rather than by erroring loudly.
 
+- [ ] Make FAT32 replace-existing crash-safe: today a failure after the destination is removed and freed loses the old file, so `boot-trend.json` history can vanish
+  - Found 2026-09-28 by the TODO-10 §7 docs review: `fat32_rename_vol` removes the destination dirent and frees its chain (`fat32_write.c:735-752`) before the source rename can still fail at allocation or I/O (`fat32_write.c:759-784`).
+  - The section's own Notes accept "leaves dst missing", but its title and callers (TODO-29 §3 `boot_trend_publish_json()`) describe the publish as atomic; the docs page now says it is not.
+  - Fix direction: rename the source into place first (or keep the old dirent until the new one is durable), so every failure leaves either the old or the new file.
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

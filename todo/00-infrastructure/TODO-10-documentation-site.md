@@ -57,7 +57,7 @@ file_patterns:
 | 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [x]   |
 | 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [x]   |
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [x]   |
-| 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [ ]   |
+| 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [x]   |
 | 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [ ]   |
 | 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [ ]   |
 | 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [ ]   |
@@ -313,22 +313,36 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-21-ab-boot-rollback.md` (TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback)
-  - `todo/01-boot-platform/TODO-22-recovery-partition.md` (TODO-22 -- Recovery Partition & Self-Repair)
-  - `todo/01-boot-platform/TODO-23-boot-watchdog.md` (TODO-23 -- Boot Watchdog & Hang Detection)
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-24-blackbox-service-partition.md` (TODO-24 -- BlackBox Service Partition)
-  - `todo/01-boot-platform/TODO-25-network-pxe-http-boot.md` (TODO-25 -- Network / PXE / HTTP Boot)
-  - `todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md` (TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff)
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-27-uefi-advanced.md` (TODO-27 -- UEFI Advanced Features)
-  - `todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md` (TODO-28 -- Boot Validation & Hardware Certification Matrix)
-  - `todo/01-boot-platform/TODO-29-boot-perf-health-observability.md` (TODO-29 -- Boot Performance & Health Observability)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-21-ab-boot-rollback.md` (TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback): `ab-boot-rollback.md`
+  - `todo/01-boot-platform/TODO-22-recovery-partition.md` (TODO-22 -- Recovery Partition & Self-Repair): `recovery-partition.md`
+  - `todo/01-boot-platform/TODO-23-boot-watchdog.md` (TODO-23 -- Boot Watchdog & Hang Detection): `boot-watchdog.md`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-24-blackbox-service-partition.md` (TODO-24 -- BlackBox Service Partition): `blackbox-service-partition.md`
+  - `todo/01-boot-platform/TODO-25-network-pxe-http-boot.md` (TODO-25 -- Network / PXE / HTTP Boot): `network-boot.md`
+  - `todo/01-boot-platform/TODO-26-hibernation-resume-fast-startup-handoff.md` (TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff): `hibernation-resume-handoff.md`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-27-uefi-advanced.md` (TODO-27 -- UEFI Advanced Features): `uefi-advanced.md`
+  - `todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md` (TODO-28 -- Boot Validation & Hardware Certification Matrix): `boot-validation-matrix.md`
+  - `todo/01-boot-platform/TODO-29-boot-perf-health-observability.md` (TODO-29 -- Boot Performance & Health Observability): `boot-performance-health.md`
+- [x] TODO-24, TODO-28 and TODO-29 had reference pages outside the §3 part order (`black-box-artifacts.md`, `../hardware/boot-lab.md`, the health and trend schemas), so each gained an overview linking them; the other six had no page
+  - Every quoted function, constant, serial line, anchor and `sources=` path was checked against the tree; the drafts' partition counts (three or five) were wrong, since the default build passes `--ab` and produces six.
+- [x] Added the nine pages to `docs/boot/index.md` Roadmap Overviews, then ran `python3 scripts/site/build.py --update-baseline` (184 to 178 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-21, TODO-27 and `tools/make-system-disk.c`
+  - TODO-21 §2 Notes still called `--ab` dormant; the tool's `--ab` help said 4 partitions.
+  - TODO-27 §2 named a nonexistent `firmware_cmd.c` and sent two follow-ups to a "§8" that did not exist; that is now TODO-27 §8, with reciprocal XREFs to `07-networking/TODO-03 §7` and the gzip owner `02-kernel-core/TODO-03 §4`.
+  - Review found FAT32 replace-existing deletes the old file before the rename can fail, so the boot-trend publish is not atomic; filed in `05-storage-filesystems/TODO-04 §18`.
 - [ ] Commit: `"docs: boot platform, part 3 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 54/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** nine contract-shaped overview pages in `docs/boot/`, one per boot-platform roadmap file 21 to 29, each listed in `docs/boot/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
+> - **Downstream:** the BlackBox, boot-lab and health/trend reference pages keep their `covers=` claims; the overviews link them rather than copying them.
+> - **Found on the way:** TODO-27 gained §8 as the real owner of its dangling "§8" follow-ups; TODO-21 notes and the `make-system-disk` help text were corrected.
 
 ---
 

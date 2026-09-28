@@ -28,6 +28,15 @@ One page per boot-platform roadmap file, each following the [page contract](../c
 | [USB HID Keyboard and Mouse](usb-hid-boot-protocol.md)                  | Boot-protocol HID reports, dedicated event ring, input merge     |
 | [USB Boot Hardening](usb-boot-hardening.md)                             | SCSI retry, stall recovery, bounded timeouts, slow-media logging |
 | [USB Zero-Delay Handover](usb-zero-delay-handover.md)                   | Bootloader-allocated xHCI DMA and kernel inherit                 |
+| [A/B Dual-Slot Boot and Rollback](ab-boot-rollback.md)                  | Slot metadata, try counting, rollback, mark-good                 |
+| [Recovery Partition](recovery-partition.md)                             | Read-only recovery slot, kernel backup, IXFS checker             |
+| [Boot Watchdog](boot-watchdog.md)                                       | ACPI WDAT arm, pet and verified disarm                           |
+| [BlackBox Service Partition](blackbox-service-partition.md)             | `X:\` log partition, dirty-bit repair, cleanup, retention        |
+| [Network Boot (PXE and HTTP)](network-boot.md)                          | Network launch discovery, DHCP capture, TFTP and HTTP probes     |
+| [Hibernation Resume Handoff](hibernation-resume-handoff.md)             | Hibernation image format; boot-side resume not built             |
+| [Advanced UEFI Features](uefi-advanced.md)                              | Chainload, firmware advisor, W^X, multi-GPU GOP, SMBIOS          |
+| [Boot Validation Matrix](boot-validation-matrix.md)                     | Certification matrix, lint, reboot reliability suite             |
+| [Boot Performance and Health](boot-performance-health.md)               | Step budgets, boot-health.json, boot-trend.json                  |
 
 ## Reference Documents
 

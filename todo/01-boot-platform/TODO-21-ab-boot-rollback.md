@@ -116,10 +116,10 @@ Modify the build system to create disk images with two root partitions.
 
 > **Notes:**
 > - **What shipped:** `tools/make-system-disk.c` `--ab` now builds the 5-partition layout (ESP + BlackBox + A/B-metadata + Slot A + Slot B) + a post-layout fail-closed invariant + `META_OFFSET`/`IXFS_B_OFFSET` in the `.info`.
-> - **How it runs:** `--ab` is opt-in and DORMANT until the Makefile wires it -- the default build is unchanged (still 3-partition single-slot), so build + smoke stay green; verified by running the host tool directly.
+> - **How it runs:** the Makefile's default `system-disk` target passes `--ab`, so every build produces the A/B layout; TODO-22 §1 later appended a read-only Recovery partition, making it six partitions.
 > - **Downstream effects:** the §1 metadata record now has an on-disk home; §3 selection reads it; the kernel's `partition_scan_all` mounts Slot A (first IXFS) with no boot change.
 > - **Canonical doc:** `tools/make-system-disk.c` + the `<img>.info` offset contract.
-> - **Scope boundary:** §2 ships the GPT-writer layout; the Makefile production wiring (use `--ab`, 768M, source `.info`, format both slots) + the bootloader pre-EBS metadata read remain open §2 items.
+> - **Scope boundary:** §2 ships the GPT-writer layout and its Makefile wiring; the bootloader pre-EBS metadata read landed in §3 and per-slot kernel rollback stays deferred.
 
 > **Verified:** 2026-06-16 | commit `de98d105` + Makefile wiring | 4/6 items | build OK | smoke PASS (KVM 1.95s -- dual-slot image boots Slot A, 29/29 POST16)
 > **Quality reviewed:** 2026-06-16 | Codex 13x (design, adversarial, consistency, perf, re-adversarial) | 1H+7M fixed, 0 open | scope: boot-code-quality (Makefile + GPT writer)

@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
                    "  -o FILE        Output image (required)\n"
                    "  -s SIZE        Total disk size (default: 512M)\n"
                    "  --efi-size SZ  EFI partition size (default: 64M)\n"
-                   "  --ab           A/B dual-slot layout (4 partitions)\n"
+                   "  --ab           A/B dual-slot layout (6 partitions incl. Recovery)\n"
                    "\nDefault layout (3 partitions):\n"
                    "  Partition 1: EFI System (FAT32, 64 MiB)\n"
                    "  Partition 2: BlackBox (FAT32, 128 MiB) -- logs, crash dumps, diagnostics\n"

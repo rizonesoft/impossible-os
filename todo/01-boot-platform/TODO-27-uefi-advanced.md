@@ -53,6 +53,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | 💎  |   5   | Secure Boot extended state + enforcement      | T02 §5         |  [/]   |
 | 💎  |   6   | SMBIOS extended type parsing                  | T02 §4         |  [x]   |
 | 💎  |   7   | DBX revocation list sync                      | T02 §2, §5     |  [/]   |
+| 💎  |   8   | Firmware advisor live refresh + fixtures      | §2, 07/T03 §7  |  [ ]   |
 
 ---
 
@@ -88,7 +89,7 @@ Detect other OS partitions from GPT and contribute chainload entries to the TODO
 
 Surface what firmware updates exist for the host and tell the operator how to apply them via the **vendor's** update path. Impossible OS does NOT call `UpdateCapsule()`, does NOT write the `OsIndications` capsule bit, does NOT stage capsule images on the ESP, and does NOT trigger reboot-and-flash. Firmware writes are the single failure mode that turns a laptop into a paperweight; the OS-side risk surface for an actual capsule path is wider than its hobby-OS value, so this section is deliberately scoped as advisory only.
 
-**Files:** `src/kernel/firmware_advisor.c` (new), `include/kernel/firmware_advisor.h` (new), `user/sysinfo/firmware_cmd.c` (new)
+**Files:** `src/kernel/firmware_advisor.c` (new), `include/kernel/firmware_advisor.h` (new), `user/sysinfo/sysinfo.c` (extend; the CLI shipped there, not in a separate `firmware_cmd.c`)
 
 > [!NOTE]
 > **Option B scope decision (2026-05-02):** the original §2 plan covered actual capsule delivery (UpdateCapsule + OsIndications + ESP staging + submission journal + torn-write recovery). That work is **out of scope and intentionally unowned**. Operators update firmware via the vendor's tool (BIOS Setup, Lenovo Vantage, Dell Command Update, fwupd from a Linux live USB, etc.); Impossible OS only tells them *what* to update and *why*. Removed deliverables: `capsule_update_request`, `capsule_check_result`, `OsIndications` write, ESP `\EFI\UpdateCapsule\` staging, capsule submission journal, torn-write recovery. **Stance change condition:** revisit only if (a) Impossible OS becomes the user's primary daily-driver OS AND (b) a vendor-signing path with brick-test coverage on real hardware is in place.
@@ -294,12 +295,31 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 
 ---
 
+## 8. Firmware Advisor Live Metadata Refresh and Fixture Coverage
+
+> **Spawned-by:** §2 (split)
+
+§2 shipped the advisor against an offline `X:\Diag\lvfs-metadata.json` cache and pointed two follow-ups at "§8", which did not exist until the boot-platform documentation pass (00-infrastructure/TODO-10 §7) found the dangling reference. This section is their owner: a signed, fetched metadata refresh, and fixture tests that exercise the advisor with real ESRT rows instead of the empty OVMF table.
+
+**Files:** `src/kernel/firmware_advisor.c` (extend), `src/kernel/test/test_firmware_advisor.c` (extend)
+
+- [ ] Synthetic ESRT and cache fixture tests: drive `fa_classify()` and `fa_publish_json()` with crafted ESRT rows and cache JSON covering `up_to_date`, `update_available`, `unknown`, CVE-driven `critical` severity and a clear `RollbackFloorOk`
+  - The five shipped sub-tests run against QEMU OVMF, which reports no ESRT components, so the join and classification paths are never fed a real row.
+- [/] Live metadata refresh: fetch the LVFS metadata over HTTPS, verify its detached signature, decompress and parse it, then replace the offline cache atomically
+  - BLOCKED on the kernel HTTPS client -> XREF: `07-networking/TODO-03 §7` (item: "`https_get(url_str, buf, max)` / `https_post(...)`").
+  - Gzip decompression is owned separately -> XREF: `02-kernel-core/TODO-03 §4` (item: "Use gzip decompression for HTTP `Content-Encoding: gzip`"); the metadata signature check and XML parse have no owner yet and belong here.
+- [ ] Commit: `"kernel: firmware advisor fixture coverage (synthetic ESRT + cache)"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=boot` runs the new fixture cases with 0 failures; each classification state and the severity rule is asserted on a crafted row. Test on: QEMU TCG.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                   | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS                       |
 | --- | ------------------------- | -------------------------- | --------------------------- | -------------------------------------- |
 | ⭐  | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate         | ✅ §1 detect + chainload menu          |
-| ⭐  | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash       | ⬜ §2 read-only LVFS; no UpdateCapsule |
+| ⭐  | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash       | ✅ §2 read-only LVFS; no UpdateCapsule |
 | 💎  | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES    | ✅ §3 static MAT enforce               |
 | 💎  | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer       | ✅ §4 enum + ConOut primary            |
 | 💎  | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars     | ✅ T02 §5 state detection              |

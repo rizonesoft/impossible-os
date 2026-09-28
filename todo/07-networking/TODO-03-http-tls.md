@@ -173,6 +173,7 @@ TLS handshake after `tcp_connect` using Mbed TLS (ClientHello → ServerHello �
 - [ ] `https_get(url_str, buf, max)` / `https_post(url_str, ct, body, blen, buf, max)`: call `http_get()`/`http_post()` internal with a `tls_conn_t*` override for send/recv (add `conn_override` parameter to `http_send_request` and `http_read_body`)
 - [ ] Update `cmd_wget`/`cmd_curl` to call `https_get`/`https_post` when `url.https == 1`
 - [ ] Log: `[TLS] Handshake OK: %s TLS %s cipher=%s` and `[TLS] Handshake FAILED: %s (-0x%04x)`
+- [ ] -> XREF: `01-boot-platform/TODO-27 §8` (item: "Live metadata refresh") -- the firmware advisor's LVFS refresh consumes `https_get()` once it ships
 - [ ] Commit: `"net/tls: HTTPS client -- Mbed TLS handshake, SNI, cert verify, BIO wrappers, https_get/post"`
 
 ## 8. HTTP/1.1 Keep-Alive Connection Pool `[Opus]`
