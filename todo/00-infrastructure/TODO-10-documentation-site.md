@@ -64,7 +64,7 @@ file_patterns:
 | 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [x]   |
 | 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [x]   |
-| 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [ ]   |
+| 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [x]   |
 | 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [ ]   |
 | 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [ ]   |
 | 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [ ]   |
@@ -619,29 +619,45 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 14 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/05-storage-filesystems/TODO-01-block-storage-hardening.md` (TODO-01 -- Block Storage Hardening)
-  - `todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md` (TODO-02 -- NTFS Read/Write Driver)
-  - `todo/05-storage-filesystems/TODO-03-volume-management-automount.md` (TODO-03 -- Volume Management & Auto-mount)
-- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` (TODO-04 -- FAT32 Hardening & VFS Win32 Semantics)
-  - `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md` (TODO-05 -- Win32 File I/O API & IRP Layer)
-  - `todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` (TODO-06 -- IXFS Core Foundation & Win32 Compatibility)
-- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md` (TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise)
-  - `todo/05-storage-filesystems/TODO-08-exfat-readwrite.md` (TODO-08 -- exFAT Read/Write Driver)
-  - `todo/05-storage-filesystems/TODO-09-ext4-readwrite.md` (TODO-09 -- ext4 Read/Write Driver)
-- [ ] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/05-storage-filesystems/TODO-10-btrfs-readonly.md` (TODO-10 -- Btrfs Read-Only Driver)
-  - `todo/05-storage-filesystems/TODO-11-optical-media.md` (TODO-11 -- Optical Media: ISO 9660, Joliet & UDF)
-  - `todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md` (TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only))
-- [ ] Pages in `docs/storage/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md` (TODO-13 -- Partition Management & Storage Tools)
-  - `todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md` (TODO-14 -- Disk Benchmark & I/O Diagnostics)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: storage and filesystems documentation pages"`
+- [x] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-01-block-storage-hardening.md` (TODO-01 -- Block Storage Hardening): `block-storage-hardening.md`
+  - `todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md` (TODO-02 -- NTFS Read/Write Driver): `ntfs.md`
+  - `todo/05-storage-filesystems/TODO-03-volume-management-automount.md` (TODO-03 -- Volume Management & Auto-mount): `volume-management.md`
+- [x] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` (TODO-04 -- FAT32 Hardening & VFS Win32 Semantics): `fat32-vfs.md`
+  - `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md` (TODO-05 -- Win32 File I/O API & IRP Layer): `win32-file-io.md`
+  - `todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` (TODO-06 -- IXFS Core Foundation & Win32 Compatibility): `ixfs-core.md`
+- [x] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md` (TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise): `ixfs-advanced.md`
+  - `todo/05-storage-filesystems/TODO-08-exfat-readwrite.md` (TODO-08 -- exFAT Read/Write Driver): `exfat.md`
+  - `todo/05-storage-filesystems/TODO-09-ext4-readwrite.md` (TODO-09 -- ext4 Read/Write Driver): `ext4.md`
+- [x] Pages in `docs/storage/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-10-btrfs-readonly.md` (TODO-10 -- Btrfs Read-Only Driver): `btrfs.md`
+  - `todo/05-storage-filesystems/TODO-11-optical-media.md` (TODO-11 -- Optical Media: ISO 9660, Joliet & UDF): `optical-media.md`
+  - `todo/05-storage-filesystems/TODO-12-apple-filesystems-readonly.md` (TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only)): `apple-filesystems.md`
+- [x] Pages in `docs/storage/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/05-storage-filesystems/TODO-13-partition-tools-storage-suite.md` (TODO-13 -- Partition Management & Storage Tools): `partition-tools.md`
+  - `todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md` (TODO-14 -- Disk Benchmark & I/O Diagnostics): `disk-diagnostics.md`
+- [x] No roadmap file had a page, so all fourteen are new; every quoted symbol, constant and log string was checked in the tree and every roadmap anchor resolves under the site check
+- [x] Replaced the placeholder `docs/storage/index.md` with a Roadmap Overviews table listing every new page and a Specifications table, then ran `python3 scripts/site/build.py --update-baseline` (107 to 93 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-03, 09, 10, 11 and 12
+  - TODO-03 §2 named the X: partition `Logs`; the code keys on the GPT name `BlackBox`. TODO-11 pointed its optical XREF at TODO-03 §8 (volume ioctls) instead of §7.
+  - TODO-09 cited a stale line number for the ext2 probe and planned a read-only mount on unknown INCOMPAT feature bits, which the ext4 format forbids (refuse INCOMPAT, read-only on RO_COMPAT).
+  - TODO-10 and TODO-12 cited `src/kernel/fs/ext4/` as a reference, which does not exist (the CRC32C helper is `kcrc32c()`).
+- [x] Two code defects found while writing, filed in the owning open sections rather than fixed (docs-only section)
+  - TODO-03 §2: `scan_device()` and `probe_filesystem()` read one sector into a 512-byte stack buffer, which a 2048-byte optical sector overruns at boot.
+  - TODO-06 §1: IXFS journal entries hold 4080 of 4096 bytes, and commit and replay zero each block's last 16 bytes (the block bitmap's last 128 allocation bits).
+- [x] Commit: `"docs: storage and filesystems documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 139/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** fourteen contract-shaped overview pages in `docs/storage/`, one per storage and filesystems roadmap file 01 to 14, listed in a rewritten `docs/storage/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
+> - **Status honesty:** only TODO-04 has shipped sections; the other pages say what works today (NTFS read, NCQ, VirtIO retry, ATAPI, IXFS journal and snapshots) and why the rest does not.
+> - **Found on the way:** NTFS mounts read-only because its VFS write ops are stubs and its journal is never armed, although the write engine and replay code exist; booting with a data disc in an optical drive overruns the kernel stack.
 
 ---
 

@@ -73,7 +73,7 @@ Implement `vfs_probe(blkdev)` as a priority-ordered filesystem probe that auto-a
 
 ## 2. Boot Mount Sequence Rewrite `[Sonnet]`
 
-Replace the hardcoded `partition_mount_filesystems()` call in `boot_storage.c` with `vfs_auto_assign_letters()`. Preserve existing X: (Logs) and debug-flag detection behaviour.
+Replace the hardcoded `partition_mount_filesystems()` call in `boot_storage.c` with `vfs_auto_assign_letters()`. Preserve existing X: (BlackBox) and debug-flag detection behaviour.
 
 **Files:** `src/kernel/main/boot_storage.c` (extend), `src/kernel/fs/partition.c` (remove hardcoded mount loop)
 
@@ -81,9 +81,12 @@ Replace the hardcoded `partition_mount_filesystems()` call in `boot_storage.c` w
 > Keep `partition_scan_all()` -- it populates the partition table that `vfs_auto_assign_letters()` iterates. Remove only the mount loop in `partition_mount_filesystems()`; replace its body with a call to `vfs_auto_assign_letters()`. The Logs partition (GPT name `"Logs"` → X:) and EFI partition skip logic must be preserved inside `vfs_auto_assign_letters()`, not removed.
 
 - [ ] Replace `partition_mount_filesystems()` body: call `vfs_auto_assign_letters()` from §1; retire hardcoded IXFS/FAT32/NTFS chains
-- [ ] Keep X: Logs partition: in `vfs_auto_assign_letters()`, detect GPT name `"Logs"` → mount as X: before general assignment loop
+- [ ] Keep the X: BlackBox partition: in `vfs_auto_assign_letters()`, detect GPT name `"BlackBox"` (today `part_streqi(pi->gpt_name, "BlackBox")`, `partition.c`) → mount as X: before general assignment loop
 - [ ] Verify debug-flag detection in `boot_storage.c` (`vfs_is_mounted('X')` check) still works after rewrite
 - [ ] Boot log order: C: first, then alphabetically; total mount count logged: `[VFS] Boot mount complete: %u drives`
+- [ ] Size every probe buffer from `dev->sector_size`: `scan_device()` and `probe_filesystem()` read one sector into `uint8_t sect[512]` on the stack, so a 2048-byte optical sector (`cdromN`) or a 4096-byte disk sector overruns it
+    - Found 2026-09-28 while writing `docs/storage/optical-media.md`. `partition_scan_all()` scans every registered blkdev, including `cdromN` (`blkdev_adapters.c`, `sector_size = ahci_atapi_sector_size()`, 2048 for a data disc); `atapi_do_read()` transfers `count * sector_size` bytes into the caller's buffer, so a disc present at boot writes 1536 bytes past `sect[512]` in `scan_device()`.
+    - Fix: allocate `max(512, sector_size)` (or skip devices whose sector size exceeds the buffer until the optical probe owns them), in both functions; add a unit test with a fake 2048-byte blkdev.
 - [ ] Commit: `"boot: rewire partition mount to vfs_auto_assign_letters()"`
 
 ## 3. USB Hot-Plug Volume Arrival `[Opus]`

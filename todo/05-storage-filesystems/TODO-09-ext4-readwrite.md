@@ -20,7 +20,7 @@ title: "TODO-09 -- ext4 Read/Write Driver"
 
 ## Inputs
 
-- `src/kernel/fs/partition.c` -- `probe_ext2_sector2()` at line 133; magic `0xEF53` detection already present; replace with `ext4_probe()` registered via `vfs_probe()` (TODO-03 §1)
+- `src/kernel/fs/partition.c` -- `probe_ext2_sector2()`, called from `probe_filesystem()`; magic `0xEF53` detection already present; replace with `ext4_probe()` registered via `vfs_probe()` (TODO-03 §1)
 - `src/kernel/fs/fat32/` + `src/kernel/fs/ntfs/` -- reference for VFS driver vtable pattern, cluster-chain traversal style, and block-device I/O helper usage; do not share code
 - `src/kernel/fs/vfs.c` + `include/kernel/fs/vfs.h` -- `vfs_mount()`, `vfs_fs_driver`, `vfs_node_t` interface all drivers implement
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §1` -- `vfs_probe()` calls `ext4_probe()` at step 5 in the probe priority chain; must return `fs_identify_result_t` with label, total bytes, free bytes
@@ -29,7 +29,7 @@ title: "TODO-09 -- ext4 Read/Write Driver"
 
 ## Outcome
 
-- Superblock parsed; unknown incompatible feature bits cause read-only mount; supported features: `EXTENTS`, `64BIT`, `FLEX_BG`, `META_BG`, `LARGE_FILE`, `HTREE_DIR`, `INLINE_DATA`.
+- Superblock parsed; unknown incompatible feature bits refuse the mount, unknown read-only-compatible bits cause a read-only mount; supported features: `EXTENTS`, `64BIT`, `FLEX_BG`, `META_BG`, `LARGE_FILE`, `HTREE_DIR`, `INLINE_DATA`.
 - Inode reader handles 256-byte inodes, 64-bit file sizes, `i_extra_isize`.
 - Extent tree lookup works for depth 0–4; triple-indirect fallback for `!EXTENTS` inodes.
 - Directory htree lookup and linear-scan fallback; `readdir` iterates all entries.
@@ -64,7 +64,7 @@ title: "TODO-09 -- ext4 Read/Write Driver"
 
 ## 1. Superblock + Block Group Descriptors `[Sonnet]`
 
-Parse the ext4 superblock at offset 1024. Validate magic. Check incompatible feature bits -- refuse mount (or mount read-only) if unknown bits are set. Read the block group descriptor table.
+Parse the ext4 superblock at offset 1024. Validate magic. Check feature bits: refuse the mount on unknown incompatible bits, mount read-only on unknown read-only-compatible bits. Read the block group descriptor table.
 
 **Files:** `src/kernel/fs/ext4/ext4_core.c` (new), `include/kernel/fs/ext4.h` (new), `include/kernel/fs/ext4_internal.h` (new)
 
@@ -72,7 +72,8 @@ Parse the ext4 superblock at offset 1024. Validate magic. Check incompatible fea
 > Superblock location: always at byte offset 1024 from the partition start (sectors 2–3 for 512 B/sector). Magic: `s_magic = 0xEF53`. Key fields: `s_blocks_count_lo`/`s_blocks_count_hi` (64-bit when `INCOMPAT_64BIT` set), `s_log_block_size` (0→1 KiB, 1→2 KiB, 2→4 KiB), `s_inodes_per_group`, `s_inode_size` (128 or 256 bytes), `s_first_data_block` (1 for 1 KiB blocks, 0 otherwise). Block group descriptor table at block `s_first_data_block + 1`. `s_desc_size` = 32 (ext2/3 compat) or 64 bytes (when `INCOMPAT_64BIT`). Required incompat features to support: `EXT4_FEATURE_INCOMPAT_EXTENTS (0x40)`, `EXT4_FEATURE_INCOMPAT_64BIT (0x80)`, `EXT4_FEATURE_INCOMPAT_FLEX_BG (0x200)`, `EXT4_FEATURE_INCOMPAT_META_BG (0x10)`, `EXT4_FEATURE_INCOMPAT_LARGE_FILE (0x8)`, `EXT4_FEATURE_INCOMPAT_HTREE_DIR (0x2)`, `EXT4_FEATURE_INCOMPAT_INLINE_DATA (0x10000)`.
 
 - [ ] `ext4_sb_t` struct: all geometry/count fields, computed: `block_size`, `blocks_per_group`, `inodes_per_group`, `group_count`, `inode_size`, `desc_size`, flags
-- [ ] `ext4_sb_parse(dev, &sb)`: read sector at offset 1024; verify magic; check `s_feature_incompat & ~SUPPORTED_INCOMPAT` == 0 -- if nonzero: log unsupported features, return -ENOTSUP (caller mounts read-only); populate `ext4_sb_t`
+- [ ] `ext4_sb_parse(dev, &sb)`: read sector at offset 1024; verify magic; check `s_feature_incompat & ~SUPPORTED_INCOMPAT` == 0 -- if nonzero: log, return -ENOTSUP (caller refuses the mount); populate `ext4_sb_t`
+  - Unknown `s_feature_ro_compat` bits (`& ~SUPPORTED_RO_COMPAT`) mount read-only instead; unknown INCOMPAT bits never do, because the layout may be misread (kernel.org ext4 superblock docs).
 - [ ] `ext4_group_desc_t`: union of 32-byte (ext2/3) and 64-byte (ext4) descriptor; fields: `bg_inode_table_lo`/`hi`, `bg_block_bitmap_lo`/`hi`, `bg_inode_bitmap_lo`/`hi`, `bg_free_blocks_count_lo`/`hi`, `bg_free_inodes_count_lo`/`hi`
 - [ ] `ext4_read_group_desc(sb, group_idx, &gd)`: compute LBA of descriptor table entry; read `desc_size` bytes; populate `ext4_group_desc_t`
 - [ ] `ext4_block_to_lba(sb, block)`: `(partition_lba_start + block * sectors_per_block)` -- used by all read/write paths
@@ -253,12 +254,12 @@ Read and write inline xattrs (in the extra inode space) and xattr blocks. Suppor
 
 ## 12. VFS Registration + Probe + fsck `[Sonnet]`
 
-Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `ext4_fsck()`. Add `chkdsk <drive> /ext4`. Mount read-only if journal replay fails or unknown incompat features present.
+Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `ext4_fsck()`. Add `chkdsk <drive> /ext4`. Mount read-only if journal replay fails or unknown read-only-compatible features are present; refuse the mount on unknown incompatible features.
 
 **Files:** `src/kernel/fs/ext4/ext4_vfs.c` (new), `src/shell/cmd_chkdsk.c` (extend)
 
 > [!NOTE]
-> `ext4_probe(blkdev)`: read sector 2 (byte offset 1024); check `s_magic == 0xEF53`. `ext4_mount()`: `ext4_sb_parse()` → if unknown incompat bits: mount read-only; `jbd2_replay()` → if replay fails: mount read-only + log; scan root inode (2) for VFS root. `ext4_fsck()`: walk all block group descriptors; for each group: read block bitmap + inode bitmap; walk inode table -- for each non-free inode: walk extent tree + count allocated blocks; verify against block bitmap; detect orphan inodes (allocated but not reachable from directory tree); detect cross-linked blocks (same physical block in two different inodes). `ext4_unmount()`: flush all dirty inode/bitmap/journal blocks; write final commit block; clear `MOUNT_FLAGS` in superblock; write `s_state = EXT4_VALID_FS`.
+> `ext4_probe(blkdev)`: read sector 2 (byte offset 1024); check `s_magic == 0xEF53`. `ext4_mount()`: `ext4_sb_parse()` → if unknown incompat bits: refuse the mount; if unknown ro_compat bits: mount read-only; `jbd2_replay()` → if replay fails: mount read-only + log; scan root inode (2) for VFS root. `ext4_fsck()`: walk all block group descriptors; for each group: read block bitmap + inode bitmap; walk inode table -- for each non-free inode: walk extent tree + count allocated blocks; verify against block bitmap; detect orphan inodes (allocated but not reachable from directory tree); detect cross-linked blocks (same physical block in two different inodes). `ext4_unmount()`: flush all dirty inode/bitmap/journal blocks; write final commit block; clear `MOUNT_FLAGS` in superblock; write `s_state = EXT4_VALID_FS`.
 
 - [ ] `ext4_probe(blkdev_t *dev)` → read sector 2; return 1 if `buf[56..57] == 0xEF53` and `buf[96..99] & INCOMPAT_EXTENTS`, 0 otherwise (distinguish from ext2/ext3 which also use 0xEF53 magic but lack extents)
 - [ ] `ext4_mount(blkdev_t *dev, char letter)` → full init: `ext4_sb_parse` → feature check → `jbd2_replay` → VFS root → `vfs_mount()`
@@ -284,7 +285,7 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 | ⭐  | Directory htree (B+ tree) -- half_md4 / TEA hash           | ❌ N/A                                     | ✅ `dx_probe()` in `namei.c`; htree with                                       | ⬜ §4 -- all three hash variants; linear                                |
 | ⭐  | Inline data                                                | ❌ N/A                                     | ✅ `EXT4_INLINE_DATA_FL`; `ext4_readpage_inline()` / `ext4_writepage_inline()` | ⬜ §5 -- `i_block` inline read; inline+xattr data                       |
 | ⭐  | ext4 fsck                                                  | ❌ N/A                                     | ✅ `e2fsck` (external tool); not in-kernel                                     | ⬜ §12 -- in-kernel fsck; orphan inode detection                        |
-| ⭐  | Read-only mount on unknown incompat features               | ❌ N/A                                     | ✅ `ext4_fill_super()` refuses mount on unknown                                | ⬜ §12 -- `s_feature_incompat & ~SUPPORTED` check; `[READ-ONLY]`        |
+| ⭐  | Refuse unknown incompat, read-only on unknown ro_compat    | ❌ N/A                                     | ✅ `ext4_fill_super()` refuses mount on unknown                                | ⬜ §12 -- incompat refuse; ro_compat `[READ-ONLY]`                      |
 | 💎  | Extended attributes                                        | ❌ N/A for ext4; NTFS has                  | ✅ `ext4_xattr_get/set()`; posix_acl + security namespaces                     | ⬜ §11 -- inline xattr + xattr block                                    |
 | ⭐  | Replace ext2 probe stub with full ext4 VFS driver          | ❌ N/A                                     | ✅ Full driver since 2.6.28 (2008)                                             | ⬜ §12 -- `ext4_probe()` replaces `probe_ext2_sector2()` stub in        |
 
@@ -293,7 +294,7 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Unknown incompat feature: set an unsupported bit in `s_feature_incompat`; mount → `[ext4] read-only: unknown incompat 0x...`; all writes return `STATUS_MEDIA_WRITE_PROTECTED`
+- [ ] Unknown feature bits: an unsupported `s_feature_incompat` bit refuses the mount; an unsupported `s_feature_ro_compat` bit mounts read-only and writes return `STATUS_MEDIA_WRITE_PROTECTED`
 - [ ] Superblock: mount Linux-formatted ext4 image in QEMU; `[ext4] Mounted D: "..." 4096 blocks, block_size=4096` in serial log
 - [ ] Inode reader: `ext4_read_inode(sb, 2)` returns root dir inode; `mode & S_IFDIR`; `size > 0`
 - [ ] Extent tree: read a 100 MiB file fragmented into 3 extents; all bytes match the source
