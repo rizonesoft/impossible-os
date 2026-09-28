@@ -29,6 +29,22 @@ Carried with baselines. A measurement without one is an anecdote.
 - **Unbounded per-event state walks.** `skill-progress.json` is append-only per event; any `for k,v in d.items()` probe over it grows without bound. Measure: whether any single probe's output exceeds a few hundred lines.
 - **Receipt route versus flake fixes.** The v19 close-out removed the three timing flakes that forced most receipt-route pushes (~14-15 min each). Measure: receipt-route pushes per cycle should approach 0.
 
+## Found at the 2026-09-28 attended cost review
+
+- [ ] RESIDENT CONTEXT is the largest cost nobody has measured: ~160 KB of fixed text rides as cached input on EVERY turn
+  - MEASURED sizes: project `CLAUDE.md` 88,667 bytes (~22k tokens), global `~/.claude/CLAUDE.md` 8,673, plus skill bodies that stay resident once invoked: `overnight-sequencer` 63,576, `implement-todo-section` 44,965, `review-todo-section` 39,594.
+  - MEASURED shape of `CLAUDE.md`: Skills 19% (17 KB, mostly the agent table and offload doctrine that the skills repeat), Attended repair 10%, Git Hooks 9% (one 8 KB paragraph of August measurements), North Star 7%, Smoke Test 6%.
+  - INFERRED cost: a ~965-call segment (`run-20260903-160406.log`) re-reads ~60k resident tokens per turn, ~58M cached-read tokens per segment, ~5.8M input-token equivalents at the 0.1 cache-read rate. Not yet verified against billed usage: the stream report carries no per-turn usage.
+  - Fix shape: keep `CLAUDE.md` to rules plus one-line pointers and move incident histories and measurements into the docs they already link (`docs/infrastructure/*`); split the sequencer skill body so the run loads only the phase it is in. Measure first: log `usage.cache_read_input_tokens` per turn in the stream report so the saving is billed fact, not arithmetic.
+- [ ] A review wave built from `"$(cat file)"` prompts is paid for twice: the legs run and approve, then are re-dispatched because the hook saw no review kind
+  - MEASURED `run-20260905-143453.log:358-376`: 5 dispatches + a 3m32s wait, all five `approve`, stamps still on section 22, then all 5 re-dispatched inline and waited again. 11 calls and one full Codex wave for work worth 6.
+  - Same class as the carried attribution item in [overnight-runner-improvements-v20](../overnight-runner-improvements/overnight-runner-improvements-v20.md); the cheap half is a PreToolUse refusal BEFORE the round-trip when a broker/dispatch argument is not a literal that starts with `[review-kind:`. That needs no attribution redesign.
+- [ ] Refused tool calls are 6.3% of the largest transcript's calls, and several classes are predictable before the call is made
+  - MEASURED `run-20260903-160406.log`: 61 `tool error:` of ~965 calls; `todo-item-line BLOCK` x8 (an over-cap lead drafted, refused, rewritten), `READ-CACHED` x7, `receiving-review-required` x5, `build-offload` x4 (plus 2 and 2 in the other two logs), `skill-step-block` x3.
+  - Fix shape per class: draft TODO leads through `todo_item_line_length.py --check` before the Edit; the build-offload refusal message already names the wrapper, so the recurrence is a habit to put in the skill step that runs builds.
+- [ ] A Codex backend outage costs a retry storm before the run defers
+  - MEASURED `run-20260903-160406.log:423-436`: 5 dispatch+wait pairs (10 calls, ~4m20s) against a design review returning 404s. Fix shape: the broker counts transport failures (not findings) and tells the run to defer after 2.
+
 ## Found live this cycle
 
 <!-- The run files here. Nothing yet: v20 opened at close-out, before the next arm. -->
