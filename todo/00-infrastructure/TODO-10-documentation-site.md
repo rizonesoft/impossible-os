@@ -15,6 +15,8 @@ file_patterns:
 
 # TODO-10 -- Documentation Site and Documentation Corpus
 
+> **Validated:** 2026-09-28 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+
 > **Goal:** Every roadmap file under `todo/` gets real documentation, published at [impossibleos.co/docs](https://impossibleos.co/docs/) and generated from Markdown in `docs/`, and no published fact (release date, repository owner, counts, design tokens, links) can drift from its source. A TODO file is the plan; its docs page is what a user, contributor or operator reads to understand what shipped.
 
 > [!IMPORTANT]
@@ -107,6 +109,8 @@ One generator owns every published surface, so no fact is maintained in two plac
 > **Verified:** 2026-09-27 | commit `ad3829185` | 13/13 items | build OK | tests 16/16 PASS
 > **Quality reviewed:** 2026-09-27 | Codex 9x (adversarial, consistency, perf, re-adversarial x6) | 6H+10M fixed | scope: N/A (host tooling and docs; no kernel, boot or desktop code)
 
+---
+
 ## 2. Map Existing Docs Pages to Their Roadmap Files
 
 Many existing pages already document a roadmap file but do not declare it, so coverage undercounts them.
@@ -130,6 +134,8 @@ Many existing pages already document a roadmap file but do not declare it, so co
 
 > **Verified:** 2026-09-27 | commit `ad3829185` | 4/4 items | build OK | 36/232 documented
 > **Quality reviewed:** 2026-09-27 | Codex 3x (adversarial, consistency, perf) | 5M fixed | scope: N/A (docs-only)
+
+---
 
 ## 3. Documentation Page Contract, Template, and create-todo Step
 
@@ -158,6 +164,8 @@ Every later section writes pages against this contract, so it must exist first a
 - [ ] Commit: `"docs: documentation page contract, template, and create-todo docs step"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; the contract page renders at `/docs/contributing/docs-page-contract.html`; a dry run of the create-todo docs step produces a page that passes the check. Test on: WSL2 dev host.
+
+---
 
 ## 4. Document: Infrastructure and host tools
 
@@ -191,6 +199,8 @@ Write docs pages that meet the §3 contract for the 17 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 5. Document: Boot platform, part 1
 
 Write docs pages that meet the §3 contract for the 10 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -213,6 +223,8 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 - [ ] Commit: `"docs: boot platform, part 1 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 6. Document: Boot platform, part 2
 
@@ -237,6 +249,8 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 7. Document: Boot platform, part 3
 
 Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -257,6 +271,8 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 - [ ] Commit: `"docs: boot platform, part 3 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 8. Document: Kernel core, part 1
 
@@ -283,6 +299,8 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 9. Document: Kernel core, part 2
 
 Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -307,6 +325,8 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 - [ ] Commit: `"docs: kernel core, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 10. Document: Kernel core, part 3
 
@@ -333,6 +353,8 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 11. Document: Memory and concurrency
 
 Write docs pages that meet the §3 contract for the 11 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -356,6 +378,8 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 - [ ] Commit: `"docs: memory and concurrency documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 12. Document: Drivers and hardware, part 1
 
@@ -384,6 +408,8 @@ Write docs pages that meet the §3 contract for the 13 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 13. Document: Drivers and hardware, part 2
 
 Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -408,6 +434,8 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 - [ ] Commit: `"docs: drivers and hardware, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 14. Document: Storage and filesystems
 
@@ -437,6 +465,8 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 15. Document: Networking
 
 Write docs pages that meet the §3 contract for the 11 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -460,6 +490,8 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 - [ ] Commit: `"docs: networking documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 16. Document: Desktop foundation and graphics, part 1
 
@@ -489,6 +521,8 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 17. Document: Graphics and UI, part 2
 
 **Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
@@ -511,6 +545,8 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 - [ ] Commit: `"docs: graphics and ui, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 18. Document: Desktop shell
 
@@ -539,6 +575,8 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 - [ ] Commit: `"docs: desktop shell documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 19. Document: Platform services
 
@@ -569,6 +607,8 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
+---
+
 ## 20. Document: Applications and accessories
 
 Write docs pages that meet the §3 contract for the 15 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
@@ -597,6 +637,8 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 - [ ] Commit: `"docs: applications and accessories documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 21. Document: SDK, release, ports and research
 
@@ -634,6 +676,8 @@ Write docs pages that meet the §3 contract for the 21 roadmap files below. Read
 - [ ] Commit: `"docs: sdk, release, ports and research documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+---
 
 ## 22. Doc Freshness: `sources=` and a Stale-Page Warning
 
@@ -675,6 +719,8 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 > **Verified:** 2026-09-28 | commit `b5ffa270b` | 5/6 items | build OK | tests 46/46 PASS
 > **Quality reviewed:** 2026-09-28 | Codex 14x (design, test-coverage, adversarial x4, re-adversarial x2, consistency x3, perf x3) | 29M fixed, 0 open | scope: N/A (host tooling and docs; no kernel, boot or desktop code)
+
+---
 
 ## 23. Site Polish: Sitemap, Last-Updated, Search, Release Snapshots
 
@@ -733,9 +779,11 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 ## Verification
 
-- [ ] `python3 scripts/site/build.py --check` -> `site: OK (... N/231 TODO files documented)` with N = 231 at completion
+- [ ] `python3 scripts/site/build.py --check` -> `site: OK (... N/M TODO files documented)` with N equal to M (every roadmap file) at completion
 - [ ] `bash scripts/lint.sh` -> no Check 30 error
 - [ ] `bash scripts/test-tooling.sh --quiet` -> the site suite passes
 - [ ] The latest `GitHub Pages` run is green and `https://impossibleos.co/docs/` serves the current `main`
 - [ ] `docs/.coverage-baseline.json` lists no files
 - [ ] Commit: `"00-infrastructure/TODO-10: documentation site and corpus complete"`
+
+**Test runner:** N/A (host-side site tooling; no kernel suite) | validation: `python3 scripts/site/build.py --check` + `scripts/site/tests/test_build.py` via `scripts/test-tooling.sh`
