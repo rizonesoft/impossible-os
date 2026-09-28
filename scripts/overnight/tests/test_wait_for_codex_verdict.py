@@ -38,6 +38,7 @@ def test_sentinel_present_returns_done():
         r = _run(log)
         assert r.returncode == 0, r.stderr
         assert "DONE:" in r.stdout and "Turn completed (rc=0)" in r.stdout
+        assert "NEXT:" in r.stdout and "receiving-code-review" in r.stdout, r.stdout
 
 
 def test_no_sentinel_returns_still_running():
@@ -47,6 +48,7 @@ def test_no_sentinel_returns_still_running():
         r = _run(log, maxw=1)
         assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
         assert "STILL RUNNING" in r.stdout
+        assert "NEXT:" not in r.stdout, r.stdout   # no receive before the wave is done
 
 
 def test_missing_log_returns_still_running():

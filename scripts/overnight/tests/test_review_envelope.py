@@ -160,6 +160,26 @@ def test_section_scope_excludes_other_sections_and_unattributed():
         assert "consistency" in env["missing"], env
 
 
+def test_next_step_names_receive_only_when_clean():
+    # 2026-09-28: the envelope states the next step. A clean wave names the
+    # receive; a wave with a missing/crashed leg must NOT tell the run to
+    # receive (refusal direction), it names the legs to re-dispatch instead.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "ok\nTurn completed (rc=0)\n",
+                      "perf": "ok\nTurn completed (rc=0)\n",
+                      "consistency": "ok\nTurn completed (rc=0)\n"})
+        rc, env = _run(root)
+        assert rc == 0 and "receiving-code-review" in env["next"], env
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "ok\nTurn completed (rc=0)\n",
+                      "perf": "ok\nTurn completed (rc=0)\n"})
+        rc, env = _run(root)
+        assert rc == 1 and "receiving" not in env["next"].split(";")[0], env
+        assert "consistency" in env["next"], env
+
+
 if __name__ == "__main__":
     test_crashed_leg_flagged_and_isolated()
     test_all_clean_exits_zero()
@@ -167,4 +187,5 @@ if __name__ == "__main__":
     test_todo_scope_excludes_other_sections()
     test_since_window_excludes_prior_round()
     test_section_scope_excludes_other_sections_and_unattributed()
+    test_next_step_names_receive_only_when_clean()
     print("PASS: review-envelope")

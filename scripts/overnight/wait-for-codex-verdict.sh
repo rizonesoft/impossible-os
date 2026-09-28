@@ -100,6 +100,10 @@ while [ "$elapsed" -lt "$MAX" ]; do
         done
         echo "--- verdict tail ($LAST) ---"
         tail -n 25 "$LAST"
+        # The next step, stated where the verdicts are read (2026-09-28: 85 of 309
+        # refused calls in 21 run logs were an edit made right here, before the
+        # wave was received).
+        echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
         exit 0
     fi
     dur=$POLL

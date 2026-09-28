@@ -60,14 +60,66 @@ def test_wrapped_command_is_exempt():
         assert rc == 0 and out.strip() == "" and err.strip() == "", (rc, out, err)
 
 
-def test_bare_command_blocks_with_reroute():
+def _rewritten(out):
+    """The rewritten command from a hook stdout, or None."""
+    try:
+        return json.loads(out)["hookSpecificOutput"]["updatedInput"]["command"]
+    except Exception:
+        return None
+
+
+def _acted(mod, rc, out, err):
+    """The gate engaged: it BLOCKED, or it REWROTE to a command in which its own
+    matcher finds no bare invocation left."""
+    if rc == 2 and "build-offload BLOCK" in err:
+        return True
+    new = _rewritten(out)
+    return rc == 0 and new is not None and mod._blocking_match(new) is None
+
+
+def test_bare_command_is_rewritten_to_wrapper():
+    # 2026-09-28: a plain bare suite call is rewritten (updatedInput) instead
+    # of refused -- the reroute is always the same edit, so a refusal only cost
+    # a turn. The exact command is pinned.
     mod = _load()
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
         (root / ".claude/state").mkdir(parents=True)
         rc, out, err = _run_main(mod, "bash scripts/build.sh", root)
-        assert rc == 2, "P3.4: bare build in SECTIONS must BLOCK (exit 2): " + repr(rc)
-        assert "build-offload BLOCK" in err and "run-artifact.sh" in err, err
+        assert rc == 0 and err.strip() == "", (rc, err)
+        assert _rewritten(out) == "bash scripts/overnight/run-artifact.sh auto-build -- bash scripts/build.sh", out
+        chain = ("bash scripts/build.sh > /tmp/j1.log 2>&1 && bash scripts/test.sh QUIET=1 >> /tmp/j1.log 2>&1"
+                 " && bash scripts/test-smoke.sh >> /tmp/j1.log 2>&1; tail -3 /tmp/j1.log")
+        rc, out, _ = _run_main(mod, chain, root)
+        assert rc == 0 and _rewritten(out) == (
+            "bash scripts/overnight/run-artifact.sh auto-build -- bash scripts/build.sh > /tmp/j1.log 2>&1"
+            " && bash scripts/overnight/run-artifact.sh auto-test -- bash scripts/test.sh QUIET=1 >> /tmp/j1.log 2>&1"
+            " && bash scripts/overnight/run-artifact.sh auto-test-smoke -- bash scripts/test-smoke.sh >> /tmp/j1.log 2>&1;"
+            " tail -3 /tmp/j1.log"), out
+        rc, out, _ = _run_main(mod, "cd /r; CI_PARITY=1 bash scripts/test.sh SUITE=mm", root)
+        assert _rewritten(out) == ("cd /r; CI_PARITY=1 bash scripts/overnight/run-artifact.sh auto-test -- "
+                                   "bash scripts/test.sh SUITE=mm"), out
+        log = [json.loads(x) for x in (root / ".claude/state/offload-events.jsonl").read_text().splitlines() if x.strip()]
+        assert any(e.get("kind") == "rewrite" for e in log), log
+
+
+def test_unusual_shapes_still_block_instead_of_rewrite():
+    # REFUSAL direction: anything the rewrite cannot transform with certainty
+    # keeps the old BLOCK -- loops, substitutions, heredocs, functions,
+    # conditionals, a suite after a pipe, and make targets.
+    mod = _load()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        for cmd in ("for s in mm fs; do bash scripts/test.sh SUITE=$s; done",
+                    "X=$(bash scripts/build.sh)",
+                    "bash <<'EOF'\nbash scripts/test.sh\nEOF",
+                    "f() { bash scripts/build.sh; }; f",
+                    "if true; then bash scripts/build.sh; fi",
+                    "echo hi | bash scripts/test.sh",
+                    "make test-mm"):
+            rc, out, err = _run_main(mod, cmd, root)
+            assert rc == 2 and "build-offload BLOCK" in err and _rewritten(out) is None, (cmd, rc, out, err)
 
 
 def test_wrapped_test_and_smoke_also_exempt():
@@ -88,8 +140,10 @@ def test_block_is_idempotent_but_log_dedups():
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
         (root / ".claude/state").mkdir(parents=True)
-        rc1, _, err1 = _run_main(mod, "bash scripts/build.sh", root)
-        rc2, _, err2 = _run_main(mod, "bash scripts/build.sh", root)
+        # A loop keeps the BLOCK path (the rewrite refuses loops).
+        loop = "for i in 1; do bash scripts/build.sh; done"
+        rc1, _, err1 = _run_main(mod, loop, root)
+        rc2, _, err2 = _run_main(mod, loop, root)
         assert rc1 == 2 and rc2 == 2, (rc1, rc2)          # both block
         assert "build-offload BLOCK" in err1 and "build-offload BLOCK" in err2
         log = root / ".claude/state/offload-events.jsonl"
@@ -97,7 +151,7 @@ def test_block_is_idempotent_but_log_dedups():
         builds = [e for e in entries if e.get("detail") == "bash scripts/build.sh"]
         assert len(builds) == 1, f"log must dedup the repeat: {entries}"
         # A different script blocks too and logs its own entry.
-        rc3, _, err3 = _run_main(mod, "bash scripts/test.sh SUITE=mm", root)
+        rc3, _, err3 = _run_main(mod, "for s in mm; do bash scripts/test.sh SUITE=$s; done", root)
         assert rc3 == 2 and "build-offload BLOCK" in err3
 
 
@@ -144,8 +198,8 @@ def test_r2_bypass_shapes_block():
         root = pathlib.Path(d)
         (root / ".claude/state").mkdir(parents=True)
         for cmd in blocked:
-            rc, _, err = _run_main(mod, cmd, root)
-            assert rc == 2 and "build-offload BLOCK" in err, (cmd, rc, err)
+            rc, out, err = _run_main(mod, cmd, root)
+            assert _acted(mod, rc, out, err), (cmd, rc, out, err)
 
 
 def test_r2_non_invocations_pass():
@@ -339,7 +393,8 @@ def _main():
     test_real_interpreter_forms_still_block()
     test_gate_is_scoped_to_the_headless_run()
     test_wrapped_command_is_exempt()
-    test_bare_command_blocks_with_reroute()
+    test_bare_command_is_rewritten_to_wrapper()
+    test_unusual_shapes_still_block_instead_of_rewrite()
     test_wrapped_test_and_smoke_also_exempt()
     test_block_is_idempotent_but_log_dedups()
     test_message_has_no_checks_runner_text()

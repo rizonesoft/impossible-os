@@ -392,6 +392,10 @@ git pull --rebase origin main || { echo "REBASE FAILED -- do not push"; exit 1; 
 # flag, not a shell `&`): a `( ... ) &` subshell was observed to die even on a call
 # that returned NORMALLY (2026-09-05, section-23 ship: no rc= line, commit unpushed).
 git push origin main > /tmp/ship-push.log 2>&1; echo "rc=$?" >> /tmp/ship-push.log
+# A SECTION SHIP: invoke Skill(review-todo-section) BEFORE polling. The post-ship
+# gate refuses non-review Bash until the review is running (a poll issued first
+# was refused 12+ times across 21 logs); once it runs, the poll below passes
+# and belongs inside the review, before any stamp commit.
 # Poll in a SEPARATE, BOUNDED call. 540 < the 600s wall, so this RETURNS
 # instead of being killed: rc 0 = the push finished (read the rc= line),
 # rc 124 = still running -> re-issue this exact call. Never an unbounded

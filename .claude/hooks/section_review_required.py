@@ -167,6 +167,24 @@ if tn == 'Bash':
             if first_seg and _rpp.is_review_pipeline_passthrough(first_seg):
                 sys.exit(0)
             break
+    # ONCE THE REVIEW IS RUNNING, ITS BASH IS REVIEW WORK (2026-09-28). The
+    # first-word allowlist above cannot tell a review step from anything else,
+    # so it refused the review's own work: reading report bodies with `for f in
+    # ...`, `cp` for mutation controls, `timeout ... bash -c` waits -- 31 refused
+    # calls across 21 run logs, each a full turn. Edit/Write already pass while
+    # the pipeline is active (above); Bash now gets the same test. The gate's
+    # purpose, forcing the review to START, is untouched: with no active review,
+    # or one that began before HEAD, Bash is gated exactly as before.
+    try:
+        _root_b = subprocess.check_output(
+            ['git', 'rev-parse', '--show-toplevel'],
+            text=True, timeout=2, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        _root_b = ''
+    if _root_b:
+        _active_b, _pipeline_inactive_reason = _review_pipeline_active(_root_b)
+        if _active_b:
+            sys.exit(0)
 
 # Look up repo root (hook runs with CWD=cwd of the parent tool call)
 try:

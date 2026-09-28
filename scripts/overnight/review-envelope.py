@@ -159,6 +159,16 @@ def main(argv) -> int:
             env["all_clean"] = False
             if k not in env["needs_redispatch"]:
                 env["needs_redispatch"].append(k)
+    # THE NEXT STEP, stated where the verdicts are read (2026-09-28). The most
+    # common refused call across 21 run logs (85 of 309) was an edit made right
+    # after reading a wave's verdicts, before receiving it; 47 of those were
+    # followed immediately by the receive. Saying it here costs one line.
+    if env["needs_redispatch"]:
+        env["next"] = ("re-dispatch ONLY " + ", ".join(env["needs_redispatch"])
+                       + "; receive the wave once all legs are clean")
+    else:
+        env["next"] = ("Skill(superpowers:receiving-code-review) over ALL legs of this wave "
+                       "BEFORE any Edit, Write or fix")
     print(json.dumps(env, indent=1))
     # Exit 0 only when the review is genuinely usable (all legs clean). A
     # crashed leg used to slip through on all_complete; gating on all_clean

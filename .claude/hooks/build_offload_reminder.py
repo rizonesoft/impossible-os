@@ -615,6 +615,43 @@ def _blocking_match(cmd: str):
     return None
 
 
+# REWRITE INSTEAD OF REFUSE (2026-09-28). The reroute is always the same edit --
+# put the wrapper in front of the bare suite call -- so a refusal only cost a
+# turn: 32 of 309 refused calls across 21 run logs were this gate, each a full
+# turn at ~300k tokens of context. When the command is a plain chain (no
+# heredoc, substitution, function, loop or conditional) the hook now inserts
+# `bash scripts/overnight/run-artifact.sh auto-<script> -- ` before each bare
+# `[bash ]scripts/<suite>.sh` at a command position and lets the call run.
+# Nothing else changes: redirects and `| tail` still apply (now to the JSON
+# envelope), env prefixes still reach the suite, and run-artifact.sh exits with
+# the inner exit code, so `&&` chains behave the same. The result must pass this
+# hook's own matcher with NO remaining bare invocation, or the gate refuses as
+# before; anything unusual keeps the refusal. Only this hook may rewrite Bash:
+# PreToolUse hooks run in parallel on the ORIGINAL input and the last rewrite
+# to finish wins.
+_REWRITABLE = ("build", "test", "test-smoke", "test-smoke-matrix", "lint", "test-tooling")
+_REWRITE_AT = re.compile(
+    r"(^|&&|\|\||;)(\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]*\s+)*)"
+    r"((?:bash\s+)?scripts/(" + "|".join(re.escape(s) for s in _REWRITABLE) + r")\.sh)(?=\s|$|;|&)")
+_REWRITE_REFUSE = re.compile(r"<<|\$\(|`|\(\s*\)|[\r\n]|(^|[;&|(]\s*)(for|while|until|if|case|function|select)\b")
+
+
+def _rewrite(cmd: str):
+    """`cmd` with every bare suite invocation wrapped, or None to refuse."""
+    if _REWRITE_REFUSE.search(cmd):
+        return None
+    n = [0]
+
+    def wrap(m):
+        n[0] += 1
+        return (f"{m.group(1)}{m.group(2)}bash scripts/overnight/run-artifact.sh "
+                f"auto-{m.group(4)} -- bash scripts/{m.group(4)}.sh")
+    out = _REWRITE_AT.sub(wrap, cmd)
+    if not n[0] or _blocking_match(out) is not None:
+        return None
+    return out
+
+
 def _codex_segments(cmd: str):
     try:
         from _codex_dispatch import command_segments
@@ -664,6 +701,22 @@ def main() -> int:
             _offload_log.log_event(root, "fire", "build_offload_reminder", m.group(0))
         except Exception:
             pass
+    rewritten = _rewrite(cmd)
+    if rewritten is not None:
+        try:
+            import _offload_log
+            _offload_log.log_event(root, "rewrite", "build_offload_reminder", m.group(0))
+        except Exception:
+            pass
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "updatedInput": {"command": rewritten},
+            "additionalContext": (
+                "[build-offload] rewrote the bare suite call to run through "
+                "scripts/overnight/run-artifact.sh (its output is a JSON envelope; "
+                "read `exit` there). Issue the wrapped form yourself next time."),
+        }}))
+        return 0
     _seg = (m.string[max(0, m.start() - 20):m.end() + 40]
             if getattr(m, "string", None) else m.group(0))
     _seg = " ".join(_seg.split())[:120]

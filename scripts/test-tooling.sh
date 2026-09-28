@@ -4276,6 +4276,20 @@ rm -f "$ICM_STATE"
 #      code, so the assertion tracks the contract rather than the channel a
 #      given generation happened to use.
 BOR_HOOK="$REPO_ROOT/.claude/hooks/build_offload_reminder.py"
+# ENGAGED = the gate did not let a bare suite run through: it BLOCKED (exit 2),
+# or it REWROTE (2026-09-28) to a command that the SAME hook, fed the rewrite,
+# passes silently (no bare invocation left). A rewrite that still contained a
+# bare run would fail here.
+_bor_engaged() {
+    local out="$1" rc="$2" new re_out re_rc
+    if [ "$rc" = "2" ] && printf '%s' "$out" | grep -q "build-offload"; then return 0; fi
+    [ "$rc" = "0" ] || return 1
+    new="$(printf '%s' "$out" | python3 -c 'import json,sys
+try: print(json.loads(sys.stdin.read())["hookSpecificOutput"]["updatedInput"]["command"])
+except Exception: sys.exit(1)')" || return 1
+    re_out="$(NEW="$new" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["NEW"]}}))' | python3 "$BOR_HOOK" 2>&1)"; re_rc=$?
+    [ "$re_rc" = "0" ] && [ -z "$re_out" ]
+}
 BOR_SEQ="$REPO_ROOT/.claude/state/sequencer-run.json"
 BOR_DISP="$REPO_ROOT/.claude/state/last-agent-dispatch.json"
 BOR_SEQ_BAK=""; BOR_DISP_BAK=""
@@ -4299,10 +4313,13 @@ printf '%s' '{"active": true, "phase": "SECTIONS"}' > "$BOR_SEQ"
 export OVERNIGHT_SEQUENCER_RUN=1
 BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC2=$?
-if echo "$BOR_OUT2" | grep -q "build-offload" && [ "$BOR_RC2" = "2" ]; then
-    t_pass "build_offload_sections  BLOCKs bare test.sh in SECTIONS phase (exit 2)"
+# 2026-09-28: a plain bare call is REWRITTEN into the wrapper (updatedInput,
+# exit 0) instead of refused; the exact command is pinned. Shapes the rewrite
+# cannot transform still BLOCK (scripts/overnight/tests/test_build_offload_reminder.py).
+if [ "$BOR_RC2" = "0" ] && echo "$BOR_OUT2" | grep -qF '"command": "bash scripts/overnight/run-artifact.sh auto-test -- bash scripts/test.sh QUIET=1"'; then
+    t_pass "build_offload_sections  rewrites bare test.sh into run-artifact.sh in SECTIONS phase"
 else
-    t_fail "build_offload_sections  expected build-offload BLOCK (exit 2), got rc=$BOR_RC2: $BOR_OUT2"
+    t_fail "build_offload_sections  expected the run-artifact.sh rewrite, got rc=$BOR_RC2: $BOR_OUT2"
 fi
 # Freshness must be checks-runner-SPECIFIC (regression fixed 2026-07-05): a
 # fresh dispatch of an UNRELATED agent type must NOT suppress the reminder --
@@ -4313,10 +4330,10 @@ printf '{"timestamp_ns": %s, "subagent_type": "kernel-explorer", "by_type": {"ke
     "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
 BOR_OUT3="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC3=$?
-if echo "$BOR_OUT3" | grep -q "build-offload" && [ "$BOR_RC3" = "2" ]; then
+if echo "$BOR_OUT3" | grep -qF 'run-artifact.sh auto-build -- bash scripts/build.sh' && [ "$BOR_RC3" = "0" ]; then
     t_pass "build_offload_type_specific  unrelated-agent dispatch does NOT suppress the reminder"
 else
-    t_fail "build_offload_type_specific  expected BLOCK despite unrelated dispatch, got rc=$BOR_RC3: $BOR_OUT3"
+    t_fail "build_offload_type_specific  expected the rewrite despite unrelated dispatch, got rc=$BOR_RC3: $BOR_OUT3"
 fi
 printf '{"timestamp_ns": %s, "subagent_type": "checks-runner", "by_type": {"checks-runner": {"timestamp_ns": %s}}}' \
     "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
@@ -4371,7 +4388,7 @@ fi
 # even when the word "codex" appears somewhere in the command line.
 BOR_OUT8="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1 # for codex"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC8=$?
-if echo "$BOR_OUT8" | grep -q "build-offload" && [ "$BOR_RC8" = "2" ]; then
+if _bor_engaged "$BOR_OUT8" "$BOR_RC8"; then
     t_pass "build_offload_dispatch  the dispatch exemption is not a bypass for a bare run"
 else
     t_fail "build_offload_dispatch  a bare run escaped via the word codex, rc=$BOR_RC8: $BOR_OUT8"
@@ -4383,14 +4400,14 @@ fi
 # dispatch segment, whichever comes first.
 BOR_OUT9="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && bash scripts/test.sh QUIET=1"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC9=$?
-if echo "$BOR_OUT9" | grep -q "build-offload" && [ "$BOR_RC9" = "2" ]; then
+if _bor_engaged "$BOR_OUT9" "$BOR_RC9"; then
     t_pass "build_offload_dispatch  a suite run CHAINED after a dispatch still BLOCKs"
 else
     t_fail "build_offload_dispatch  chained dispatch-then-suite escaped, rc=$BOR_RC9: $BOR_OUT9"
 fi
 BOR_OUT10="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1 && bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"'"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC10=$?
-if echo "$BOR_OUT10" | grep -q "build-offload" && [ "$BOR_RC10" = "2" ]; then
+if _bor_engaged "$BOR_OUT10" "$BOR_RC10"; then
     t_pass "build_offload_dispatch  a suite run CHAINED before a dispatch still BLOCKs"
 else
     t_fail "build_offload_dispatch  chained suite-then-dispatch escaped, rc=$BOR_RC10: $BOR_OUT10"
@@ -4410,7 +4427,7 @@ for BOR_SHAPE in \
 do
     BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
     BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
         t_pass "build_offload_nested  BLOCKs a bare suite run in: $BOR_SHAPE"
     else
         t_fail "build_offload_nested  a nested bare run escaped: $BOR_SHAPE" \
@@ -4430,7 +4447,7 @@ for BOR_SHAPE in \
 do
     BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
     BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
         t_pass "build_offload_subst  BLOCKs an executing substitution inside an exempt fragment"
     else
         t_fail "build_offload_subst  a substitution escaped inside an exempt fragment: $BOR_SHAPE" \
@@ -4447,7 +4464,7 @@ done
 BOR_SHAPE='bash scripts/codex-dispatch.sh "$(echo `echo )`; bash scripts/test.sh QUIET=1)"'
 BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
 BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
     t_pass "build_offload_subst  a backtick-in-substitution shape cannot restore the exemption"
 else
     t_fail "build_offload_subst  the nested-backtick bypass is open again" \
@@ -4459,7 +4476,7 @@ fi
 BOR_SHAPE="bash scripts/codex-dispatch.sh 'unbalanced && bash scripts/test.sh QUIET=1"
 BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
 BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
     t_pass "build_offload_subst  an unsplittable command naming a suite fails CLOSED"
 else
     t_fail "build_offload_subst  an unsplittable command was exempted (fail-open)" \
@@ -4476,7 +4493,7 @@ for BOR_SHAPE in \
 do
     BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
     BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
         t_pass "build_offload_subst  BLOCKs a suite inside a process substitution"
     else
         t_fail "build_offload_subst  a process substitution escaped: $BOR_SHAPE" \
@@ -4489,7 +4506,7 @@ done
 BOR_SHAPE='NOTE=run-artifact.sh bash scripts/test.sh QUIET=1'
 BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
 BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
     t_pass "build_offload_subst  a run-artifact.sh MENTION does not exempt a bare run"
 else
     t_fail "build_offload_subst  a run-artifact.sh mention laundered a bare run" \
@@ -4511,7 +4528,7 @@ bash scripts/test.sh QUIET=1' \
 do
     BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
     BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
         t_pass "build_offload_grammar  unmodelled shell grammar fails CLOSED"
     else
         t_fail "build_offload_grammar  an unmodelled-grammar shape escaped: $BOR_SHAPE" \
@@ -4578,7 +4595,7 @@ else
 fi
 BOR_OUT12="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh && bash scripts/test.sh QUIET=1"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC12=$?
-if echo "$BOR_OUT12" | grep -q "build-offload" && [ "$BOR_RC12" = "2" ]; then
+if _bor_engaged "$BOR_OUT12" "$BOR_RC12"; then
     t_pass "build_offload_dispatch  a bare run CHAINED after the wrapped route still BLOCKs"
 else
     t_fail "build_offload_dispatch  chained wrapper-then-bare escaped, rc=$BOR_RC12: $BOR_OUT12"
@@ -4756,7 +4773,7 @@ EOF"
 do
     BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
     BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
         t_pass "build_offload_heredoc  a shell-FED heredoc body is commands and still BLOCKs"
     else
         t_fail "build_offload_heredoc  a bare suite escaped inside a shell-fed heredoc" \
@@ -4781,7 +4798,7 @@ for BOR_SHAPE in \
 do
     BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
     BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
         t_pass "build_offload_group  a bare run inside a group still BLOCKs"
     else
         t_fail "build_offload_group  a grouped bare run escaped: $BOR_SHAPE" \
