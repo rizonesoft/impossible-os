@@ -181,6 +181,9 @@ Every later section writes pages against this contract, so it must exist first a
 > - Dry run: a template copy covering `TODO-03-kernel-test-harness.md` passed the check apart from the expected stale-baseline entry, which the contract's step 4 now clears first.
 > - Scope boundary: the create-todo step upgrade is parked operator-gated (control plane); `overnight-runner-improvements-v20.md` carries it.
 
+> **Verified:** 2026-09-28 | commit `3ec5b3c03` | 7/8 items (1 parked operator-gated) | build OK | tests 4/4 PASS | add-a-page dry run (TODO-03 page in a scratch clone) reaches `site: OK` with and without `--skip-stats`
+> **Quality reviewed:** 2026-09-28 | Codex 4x (adversarial x2, consistency, perf) | 6M+1L fixed, 0 open | scope: N/A (docs-only; no kernel, boot or desktop code)
+
 ---
 
 ## 4. Document: Infrastructure and host tools
