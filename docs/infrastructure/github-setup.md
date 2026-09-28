@@ -11,7 +11,7 @@ The `rizonesoft/impossible-os` GitHub repository is configured with CI/CD pipeli
 >
 > **Moved back and made public 2026-09-27:** owner is `rizonesoft` (personal account), visibility **public**, `rizonetech/impossible-os` 301-redirects here. Custom domain `impossibleos.co` (apex A records on GitHub Pages IPs, cert approved, HTTPS **enforced**). The admin bypass on the `Default Branch Security` ruleset is restored. Secret scanning and push protection are enabled. Execution record: [move-back and public-visibility runbook](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md#8-move-back-and-public-visibility-runbook).
 >
-> **Operator-pending:** the `www` CNAME still targets `rizonetech.github.io`; flip it to `rizonesoft.github.io` at the DNS provider (not urgent: `www` 301s to the apex either way). The autonomous-agent boundary check (Settings -> Copilot -> Access policies) is an operator-only UI check with no public API.
+> **DNS:** the `www` CNAME targets `rizonesoft.github.io` (flipped 2026-09-27; re-checked 2026-09-28 through a public resolver, and `https://www.impossibleos.co/` returns 301 to the apex). **Operator-pending:** the autonomous-agent boundary check (Settings -> Copilot -> Access policies) is an operator-only UI check with no public API.
 >
 > The pre-transfer current-state baseline -- repository identity, Pages source mode, DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
 

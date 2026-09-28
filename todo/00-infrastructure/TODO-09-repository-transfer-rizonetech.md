@@ -341,6 +341,9 @@ Define the return path before it is needed. Moving back later should be a planne
   - Secret scanning + push protection enabled; `rizonetech/impossible-os` returns 301 to the new path; live owner refs swept in 36 files.
 - [x] Flipped the `www.impossibleos.co` CNAME to `rizonesoft.github.io` (operator, 2026-09-27).
   - Verified: `www.impossibleos.co` resolves via `rizonesoft.github.io` and `https://www.impossibleos.co/` returns 301 to `https://impossibleos.co/`.
+- [/] operator-gated: Reconcile the §2-§7 `[/]` tail and the Unit Tests items with the move-back; they assert `rizonetech`-owned state that no longer exists
+  - Found 2026-09-28 while writing the TODO-10 infrastructure docs pages: the Unit Tests section's items check `rizonetech/impossible-os`, a `www` CNAME to `rizonetech.github.io` and org-level Copilot policy, none of which can pass after the 2026-09-27 move-back to `rizonesoft`.
+  - Each needs an operator verdict: close as superseded, or rewrite against the `rizonesoft` owner (the Copilot access check becomes a personal-account setting). §9's Notes still name `rizonetech` as the final owner.
 
 **Test checkpoint:** The runbook documents every move-back + public-visibility step in operator-runnable form; `docs/infrastructure/repository-move-back-runbook.md` exists and a reader can follow trigger -> readiness -> transfer -> re-point -> domain -> visibility-flip -> redirect-verify without gaps. The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order (the actual execution is the future operator action).
 

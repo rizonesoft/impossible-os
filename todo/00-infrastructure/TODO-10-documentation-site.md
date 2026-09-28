@@ -193,22 +193,35 @@ Every later section writes pages against this contract, so it must exist first a
 
 Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` (TODO-01 -- Developer Tooling Stack)
-  - `todo/00-infrastructure/TODO-02-ai-development-system.md` (TODO-02 -- AI Development System)
-  - `todo/00-infrastructure/TODO-03-kernel-test-harness.md` (TODO-03 -- Kernel Test Harness)
-- [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/00-infrastructure/TODO-04-usermode-test-framework.md` (TODO-04 -- User-Mode Test Framework)
-  - `todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md` (TODO-05 -- Desktop & UI Test Framework)
-  - `todo/00-infrastructure/TODO-06-todo-metadata-layer.md` (TODO-06 -- TODO Metadata Layer and Derived Graph)
-- [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md` (TODO-07 -- LSP to MCP Bridge)
-  - `todo/00-infrastructure/TODO-08-automation-hardening.md` (TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration))
-  - `todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md` (TODO-09 -- Repository Transfer to rizonetech)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [x] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` (TODO-01 -- Developer Tooling Stack): `developer-tooling-stack.md`
+  - `todo/00-infrastructure/TODO-02-ai-development-system.md` (TODO-02 -- AI Development System): `ai-development-system.md`
+  - `todo/00-infrastructure/TODO-03-kernel-test-harness.md` (TODO-03 -- Kernel Test Harness): `kernel-test-harness.md`
+- [x] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/00-infrastructure/TODO-04-usermode-test-framework.md` (TODO-04 -- User-Mode Test Framework): `usermode-test-framework.md`
+  - `todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md` (TODO-05 -- Desktop & UI Test Framework): `desktop-ui-test-framework.md`
+  - `todo/00-infrastructure/TODO-06-todo-metadata-layer.md` (TODO-06 -- TODO Metadata Layer and Derived Graph): `todo-metadata-layer.md`
+- [x] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md` (TODO-07 -- LSP to MCP Bridge): `lsp-mcp-bridge.md`
+  - `todo/00-infrastructure/TODO-08-automation-hardening.md` (TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)): `automation-hardening.md`
+  - `todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md` (TODO-09 -- Repository Transfer to rizonetech): `repository-transfer.md`
+- [x] The seven files §2 had mapped kept their reference pages, none of which followed the §3 part order, so each gained a contract-shaped overview page linking them
+  - Rewriting 13,943-word `development-tooling.md` or the transfer runbooks into the contract order would have destroyed their reference structure; the overview carries Limits, comparison and See also, and links the reference as the deep dive.
+  - `github-setup.md`: corrected the stale "`www` CNAME still targets `rizonetech.github.io`" line (a public resolver returned `rizonesoft.github.io` on 2026-09-28).
+- [x] Added every new page to `docs/infrastructure/index.md` (new Roadmap Overviews table), then ran `python3 scripts/site/build.py --update-baseline` (196 to 194 entries)
 - [ ] Commit: `"docs: infrastructure documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 38/232 TODO files documented; `python3 scripts/site/build.py` renders all nine pages under `build/site/docs/infrastructure/`
+
+> **Notes:**
+> - **What shipped:** nine contract-shaped overview pages in `docs/infrastructure/`, one per infrastructure roadmap file, plus a Roadmap Overviews table in the folder index.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the scripts or headers it describes change.
+> - **Downstream:** the reference pages §2 mapped keep their `covers=` claims; the overviews link them rather than copying them.
+> - **Found on the way:** `github-setup.md` still said the `www` CNAME pointed at `rizonetech` (fixed); the TODO-09 validation tail asserts pre-move-back state (filed operator-gated in TODO-09 §8).
+> - **Scope boundary:** the eight host-tools pages moved to §26.
+
 
 ---
 
