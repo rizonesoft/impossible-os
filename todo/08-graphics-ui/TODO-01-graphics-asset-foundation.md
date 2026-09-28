@@ -52,6 +52,7 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 | ⭐  |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k    | §2, §3, §5 |  [ ]   |
 | 💎  |   7   | §7 SVG runtime -- vendored plutovg + plutosvg, clipPath, system SVG profile | §3, §4     |  [ ]   |
 | 💎  |   8   | §8 Icon engine -- parts, deterministic incremental generation, validation   | §4, §7     |  [ ]   |
+| ⭐  |   9   | §9 Missing icons -- detect, draft-generate, queue for polish                | §8         |  [ ]   |
 
 > 💎 = parity work -- matches the reusable graphics and asset layers that Windows 11 and Linux already have.
 > ⭐ = exclusive work -- Impossible OS goes beyond both with a simpler and more deterministic foundation.
@@ -204,6 +205,28 @@ A host tool that builds the icon set from shared parts, so the set stays consist
 - [ ] Commit: `"tools: icon engine -- parts, deterministic incremental generation, validation, fallback renders"`
 
 **Test checkpoint:** changing the monitor part regenerates exactly This PC and Network and nothing else; a second run changes nothing; hand-editing a generated SVG fails the check with the move-it-to-the-definition message; a hand-authored icon survives an engine run byte-for-byte. Test on: WSL2 dev host.
+
+## 9. Missing Icons -- Detect, Draft-Generate, and Queue for Polish
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#what-happens-when-an-icon-is-missing`](../../docs/design/icons.md#what-happens-when-an-icon-is-missing), [`icons.md#drafts-awaiting-polish`](../../docs/design/icons.md#drafts-awaiting-polish)
+
+Decided 2026-09-28: when any section, the unattended run included, needs an icon that does not exist, a draft is generated in the same change instead of shipping the generic fallback; polish comes later and persists. The spec rule already binds today (drafts are hand-drawn SVGs until §8 exists); this section automates detection and generation so a missing icon cannot slip through. It does NOT re-cover §8's parts, modes, determinism or validation; it adds the fourth state (draft) and the trigger.
+
+- [ ] Icon reference inventory: a host scanner lists every icon a build can ask for
+  - `system_icon_t` names in `include/icon_store.h`, literal `icon_get_by_name("...")` arguments under `src/` and `user/`, EIF app-icon resources, and the rows of `docs/design/icons.md` The set
+  - One JSON inventory under `build/`, deterministic, reused by the check and the engine
+- [ ] Missing-icon check: every inventoried name must have a source (hand-authored SVG or engine definition) and a spec row; ships as a lint WARN, promoted to ERROR once the corpus is clean
+  - Refusal control: a fixture that references `icon_get_by_name("no_such_icon")` fails; a name with both a source and a row passes
+- [ ] Draft mode in the engine (a fourth state beside hand-authored, generated, per-size override): `status: draft` in the icon's definition, generated from the nearest parts and a named metaphor, passing every §8 validation
+- [ ] `icon-engine draft <name> --metaphor <part>[,<overlay>] --needed-by <todo#section>` writes the definition, the spec row and the Drafts awaiting polish row in one step, so the run needs no hand drawing
+- [ ] Promotion: polishing a draft (a definition edit, or a hand edit that makes it hand-authored) removes its drafts row; the check refuses a drafts row whose icon is no longer a draft, and a draft with no row
+- [ ] The /design page and the docs coverage page show drafts with a "draft" badge, so what still needs polish is visible without reading the table
+- [ ] Unit tests: inventory finds all four reference kinds; missing check pass and fail; draft generation is deterministic and validates; promotion clears the row; a hand edit of a draft is never overwritten
+- [ ] Commit: `"tools: missing-icon check and draft icons -- inventory, draft mode, promotion"`
+
+**Test checkpoint:** adding `icon_get_by_name("printer")` with no source fails the check naming `printer`; `icon-engine draft printer --metaphor document,badge` then produces a validated SVG, a spec row and a drafts row, and the check passes; a second run changes nothing; hand-editing the draft marks it hand-authored and removes the drafts row. Test on: WSL2 dev host.
 
 ## OS Comparison
 

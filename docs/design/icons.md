@@ -95,6 +95,21 @@ Impossible OS is SVG-first (decided 2026-09-28). System icons, cursors and shell
 
 The work is planned in the [graphics asset foundation roadmap](../../todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md), in its SVG runtime renderer and icon engine sections.
 
+## What happens when an icon is missing?
+
+A missing icon is never shipped as the generic fallback and never parked as a stub. Whoever needs it, the unattended run included, adds a **draft** in the same change:
+
+1. Add its row to [The set](#the-set) (the spec comes first), naming what it is used for.
+2. Draw it from the existing parts and metaphors (the This PC monitor, the folder, the document, the drive), following the palette, the small-size rules and the system SVG profile. Until the icon engine exists, that means an SVG in `resources/icons/src/`; afterwards, a generated definition.
+3. List it in [Drafts awaiting polish](#drafts-awaiting-polish) with the section that needed it.
+
+A draft is a real, validated icon, so the feature works and looks consistent on day one. Polish comes later, by hand or in the definition, and it persists: a hand edit makes the icon **hand-authored**, which the engine never rewrites. Polishing an icon removes its row from the drafts table.
+
+### Drafts awaiting polish
+
+| Icon | File | Needed by | Drafted |
+| --- | --- | --- | --- |
+
 ## Adding or changing an icon
 
 1. Edit or add the SVG in `resources/icons/src/`. Give every gradient an id prefixed with the icon name, so several icons can be inlined into one page without collisions.
