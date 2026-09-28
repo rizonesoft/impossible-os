@@ -252,7 +252,7 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
   - Every command, script and serial line the pages quote was checked against the tree (the drafted `bootcfg` flags, a `Booted from:` log line and a `uefi_runtime.c` loader-variable claim were wrong and were corrected).
 - [x] Created `docs/boot/index.md` (the folder had 19 pages and no index) with Roadmap Overviews and Reference Documents tables, added Boot Platform to `docs/index.md`, then ran `python3 scripts/site/build.py --update-baseline` (194 to 192 entries)
 - [x] Roadmap drift found while writing, fixed in place: TODO-01 §1 IO row `[/]` to `[x]` (its follow-up shipped as §21), TODO-04 Verification OVMF item `[/]` to `[x]` (JSON disk write live), TODO-06 OS Comparison UKI and build-host rows
-- [x] Commit: `"docs: boot platform, part 1 documentation pages"`
+- [x] Commit: `"docs: boot platform, part 1 documentation pages"` (`305f71470`)
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -263,6 +263,9 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
 > - **Downstream:** the 19 reference pages keep their `covers=` claims; the overviews link them as deep dives rather than copying them.
 > - **Found on the way:** three stale roadmap claims (TODO-01 §1 IO row, TODO-04 Verification, TODO-06 OS Comparison) corrected in the same commit.
+
+> **Verified:** 2026-09-28 | commit `305f71470` | 8/8 items | build OK | site: OK, 40/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-28 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 14M fixed, 0 open | scope: N/A (docs-only; re-adversarial skipped: docs-only fixes)
 
 ---
 
