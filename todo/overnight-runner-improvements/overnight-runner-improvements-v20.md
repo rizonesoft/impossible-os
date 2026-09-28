@@ -70,3 +70,9 @@ Carry the baselines forward. A measurement without one is an anecdote.
 ## Found live this cycle
 
 <!-- The run files here. Nothing yet: v20 opened at close-out, before the next arm. -->
+
+- [ ] Arming accepts a REVOKED OAuth token: the run then dies at launch and the circuit breaker disarms it, two minutes after the operator walked away
+  - OBSERVED 2026-09-28 15:40-15:41, attended arm with `--force --hours 48`: both the watchdog launch (`run-20260928-154004`) and the main launch (`run-20260928-154104`) ended in 5 s with `Failed to authenticate. API Error: 401 OAuth access token is invalid.`, then `Circuit breaker tripped: consecutive unproductive runs -- STOPPING and disarming.`
+  - MECHANISM, confirmed at source: `arm-sequencer.sh:199-217` checks that `~/.conclave/secrets/claude-oauth-token.env` exists and carries a `CLAUDE_CODE_OAUTH_TOKEN=` line; nothing checks the token authenticates. Its own `expires_at` was 2027-09-13, so the token was revoked, not expired, and a date check would not catch it either.
+  - Fix shape: before writing any timer, run one minimal authenticated call with that env file (`claude -p` with a one-word prompt and one turn) and REFUSE to arm on a 401, naming the re-mint command. Costs one tiny request per arm.
+  - SECOND, operator-side lesson: the attending session watched `reports/latest.log`, which still pointed at the 2026-09-05 log until the new run repointed it, so the first check read an old run as the new one. Watch `systemctl --user status` or the newest `run-<date>-*.log`, never the symlink, until the new log exists.
