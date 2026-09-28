@@ -210,6 +210,7 @@ Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On
   - Filed 2026-08-30 by the TODO-19 ADVANCE drain. TODO-19 §16 parked four SMP-serialization items on the finding that `xhci.c` enables MSI only after boot enumeration, so boot media I/O is never concurrent today and the defended window does not yet exist.
   - Deferring enumeration to a serialized worker (the first item of this section) is exactly what creates it: a hot-plug enumeration running concurrently with SMP USB block I/O.
   - -> XREF: `01-boot-platform/TODO-19 §16` (item: "Serialize command ring + correlate events")
+- [ ] MSC attach after boot: register a `usbN` blkdev, scan partitions and mount; `blkdev_register_all()` runs once at boot (`boot_storage.c:583`), so a late stick is never published
 - [ ] Runtime attach without MSI: `xhci_wait_command`/transfer waits drop Port Status Change events, so a no-MSI controller never enumerates a hot-plugged device (`xhci.c:893` log says otherwise)
 - [ ] Commit: `"drivers: xHCI hot-plug -- Port Status Change TRB, attach/detach, MSC unmount, HID disconnect"`
 

@@ -57,7 +57,7 @@ Until the registry exists, the boot serial log is the device list: search it for
 
 ## How does it compare with Windows 11 and Linux?
 
-Windows 11 keeps a PnP device tree, exposes it through SetupAPI and WMI and shows it in the `devmgmt.msc` snap-in, but has no inbox `lspci` and no live interrupt view. Linux exposes devices in sysfs, interrupt counts in `/proc/interrupts` and names through `pci.ids`, with `lspci` and `lsusb`, but no built-in graphical Device Manager. Impossible OS has none of these yet. The roadmap aims for both: a native window that refreshes interrupt rates and shows health badges live, plus Linux-style command-line tools and the Windows `SetupDi` API.
+Windows 11 keeps a PnP device tree, exposes it through SetupAPI and WMI and shows it in the `devmgmt.msc` snap-in, and reads live interrupt counters through Perfmon and `NtQuerySystemInformation`, but has no inbox `lspci` and its Device Manager shows no interrupt rates. Linux exposes devices in sysfs, interrupt counts in `/proc/interrupts` and names through `pci.ids`, with `lspci` and `lsusb`, but no built-in graphical Device Manager. Impossible OS has none of these yet. The roadmap aims for both: a native Device Manager window that refreshes interrupt rates and shows health badges live, plus Linux-style command-line tools and the Windows `SetupDi` API.
 
 ## See also
 

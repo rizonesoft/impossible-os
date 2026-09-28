@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md sources=include/kernel/drivers/blkdev.h,src/kernel/drivers/blkdev.c,src/kernel/main/blkdev_adapters.c,src/kernel/main/boot_storage.c,src/kernel/drivers/ahci/ahci_rw.c,src/kernel/drivers/ahci/ahci_atapi.c,src/kernel/drivers/ahci/ahci_hotplug.c,src/kernel/drivers/ata.c,src/kernel/drivers/virtio/blk_init.c,src/kernel/drivers/usb_msc.c,src/kernel/test/test_storage.c reviewed=2026-09-28 order=13 -->
+<!-- docs: covers=todo/04-drivers-hardware/TODO-13-storage-controller-device-drivers.md sources=include/kernel/drivers/blkdev.h,src/kernel/drivers/blkdev.c,src/kernel/main/blkdev_adapters.c,src/kernel/main/boot_storage.c,src/kernel/drivers/ahci/ahci_rw.c,src/kernel/drivers/ahci/ahci_atapi.c,src/kernel/drivers/ahci/ahci_hotplug.c,src/kernel/drivers/ata.c,src/kernel/drivers/virtio/blk_init.c,src/kernel/drivers/virtio/blk_api.c,src/kernel/drivers/virtio/blk_discard.c,src/kernel/drivers/usb_msc.c,src/kernel/test/test_storage.c reviewed=2026-09-28 order=13 -->
 # Storage Controllers and Removable Media
 
 ## What is it?
@@ -7,7 +7,7 @@ The drivers that turn disk controllers into block devices the filesystems can mo
 
 ## How does it work?
 
-**One table for every disk.** A driver describes a disk with a `struct blkdev` ([`blkdev.h`](../../include/kernel/drivers/blkdev.h)): a name, sector size and count, a mandatory `read` callback, and `write`, `flush`, `discard` and `shutdown` callbacks, any of which may be `NULL`. `blkdev_register()` in [`blkdev.c`](../../src/kernel/drivers/blkdev.c) adds it to a fixed table of `BLKDEV_MAX` (16) entries. There is no capability field: a caller learns what a disk supports only from which optional callbacks are non-`NULL`, and `blkdev_register()` refuses a device without `read`.
+**One table for every disk.** A driver describes a disk with a `struct blkdev` ([`blkdev.h`](../../include/kernel/drivers/blkdev.h)): a name, sector size and count, a mandatory `read` callback, and `write`, `flush`, `discard` and `shutdown` callbacks, any of which may be `NULL`. `blkdev_register()` in [`blkdev.c`](../../src/kernel/drivers/blkdev.c) adds it to a fixed table of `BLKDEV_MAX` (16) entries. `blkdev_register()` refuses a device without `read`. There is no capability field, and a non-`NULL` callback only means the adapter has an entry point, not that the device supports the operation: VirtIO's write refuses a read-only device, VirtIO's discard reports unsupported, and AHCI's TRIM callback returns success without sending anything when the drive lacks TRIM.
 
 **Boot-time discovery.** [`boot_storage.c`](../../src/kernel/main/boot_storage.c) starts the ATA, AHCI, NVMe and VirtIO-blk probes, then calls `blkdev_register_all()` in [`blkdev_adapters.c`](../../src/kernel/main/blkdev_adapters.c). That function names the disks and wires each driver through a thin adapter. A driver whose probe finished only partly is flagged in an unsafe mask and skipped, with a `Skipping registration for degraded storage driver(s)` error, rather than registered half-initialised.
 
@@ -24,12 +24,12 @@ The drivers that turn disk controllers into block devices the filesystems can mo
 
 **VirtIO-blk.** The driver under [`src/kernel/drivers/virtio/`](../../src/kernel/drivers/virtio/blk_init.c) negotiates flush, discard, write-zeroes, secure erase, zoned devices, multiple queues and a lifetime query, but the block-device table exposes only read, write, flush and discard. It also has `virtio_blk_hotunplug()` and `virtio_blk_hotplug()`, which nothing outside the driver calls yet.
 
-**USB mass storage.** [`usb_msc.c`](../../src/kernel/drivers/usb_msc.c) speaks Bulk-Only Transport with INQUIRY, TEST UNIT READY and READ CAPACITY at attach. It addresses one logical unit per device, so a multi-slot card reader appears as a single `usbN` disk.
+**USB mass storage.** [`usb_msc.c`](../../src/kernel/drivers/usb_msc.c) speaks Bulk-Only Transport with INQUIRY, TEST UNIT READY and READ CAPACITY at attach. It addresses one logical unit per device, so a multi-slot card reader appears as a single `usbN` disk. `blkdev_register_all()` runs once during boot, so only a stick present at boot becomes a `usbN` disk; one plugged in later may be enumerated but is never registered or mounted.
 
 ```mermaid
 flowchart LR
     P[Boot probes: ATA, AHCI, NVMe, VirtIO] --> R[blkdev_register_all]
-    U[xHCI attach: USB MSC] --> R
+    U[xHCI at boot: USB MSC] --> R
     R -->|skip unsafe drivers| T[(blkdev table, 16 slots)]
     T --> F[Partition scan and filesystems]
 ```

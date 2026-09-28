@@ -566,6 +566,10 @@ Write docs pages that meet the §3 contract for the 13 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
 > - **Status honesty:** no 04 roadmap has a complete section; each page separates what ships (often under a boot or kernel roadmap), what is partial and what is only planned.
 > - **Found on the way:** ACPICA is linked but never initialised, SMEP and SMAP are always skipped, xHCI without MSI never enumerates a hot-plugged device, and the FADT MSI prohibition is not enforced; all are open items in their owning roadmaps.
+
+> **Verified:** 2026-09-28 | commit `ab6850c3f` | 9/9 items | build OK | site: OK, 113/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-28 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 12M fixed, 0 open | scope: N/A (docs-only; no source changed; re-adversarial skipped: docs-only fixes)
+
 ---
 
 ## 13. Document: Drivers and hardware, part 2
