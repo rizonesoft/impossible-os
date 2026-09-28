@@ -1,18 +1,6 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
-    "todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md",
-    "todo/02-kernel-core/TODO-14-registry-completion.md",
-    "todo/02-kernel-core/TODO-15-security-reference-monitor.md",
-    "todo/02-kernel-core/TODO-16-kernel-notification-facility.md",
-    "todo/02-kernel-core/TODO-17-binary-system.md",
-    "todo/02-kernel-core/TODO-18-kernel-image-module-registry.md",
-    "todo/02-kernel-core/TODO-19-code-integrity-trust-policy.md",
-    "todo/02-kernel-core/TODO-20-eif-full-implementation.md",
-    "todo/02-kernel-core/TODO-21-process-model-extensions.md",
-    "todo/02-kernel-core/TODO-22-environment-variables.md",
-    "todo/02-kernel-core/TODO-23-exception-dispatch-seh.md",
-    "todo/02-kernel-core/TODO-24-alpc-message-ports.md",
     "todo/02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md",
     "todo/02-kernel-core/TODO-26-power-management.md",
     "todo/02-kernel-core/TODO-27-crash-dump-generation.md",

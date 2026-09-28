@@ -111,7 +111,7 @@ Replace the direct `elf_load()` call in `task_exec()` (`src/kernel/sched/task.c`
 - [x] Exec argument passing: extend `task_exec`/`exec_load` to take a caller argv and populate the user stack + PEB `ProcessParameters.CommandLine` (today argc=1/argv[0]=name is fixed) -- prerequisite for §16 shebang **Verified 2026-07-31:** shipped via 02-kernel-core/TODO-22 sections 4 + 15: SYS_EXEC argv/envp ingestion (src/kernel/sched/syscall.c:646, exec_snapshot_vec) and CommandLine population
 - [x] Commit: `"kernel: exec -- multi-format exec dispatcher"`
 
-**Test checkpoint:** Serial log shows `"exec: Registered format: ELF (magic 4 bytes)"` and `"exec: Exec subsystem initialized (1 format(s))"`. Unit tests: `exec_load` on `0xDEADBEEF` magic returns 0 + ENOEXEC; NULL data returns 0 + ENOEXEC; sub-magic-length (3-byte) buffer returns 0 + ENOEXEC. Adversarial review: 7 findings (2C/2H/1M/2L) all resolved -- SMP barrier, TOCTOU fix, buffer leak fix, input validation, alignment fix.
+**Test checkpoint:** Serial log shows `"exec: Registered format: ELF (magic 4 bytes)"` and `"exec: Exec subsystem initialized (1 format(s))"` (3 formats once EIF and PE32+ registered). Unit tests: `exec_load` on `0xDEADBEEF` magic returns 0 + ENOEXEC; NULL data returns 0 + ENOEXEC; sub-magic-length (3-byte) buffer returns 0 + ENOEXEC. Adversarial review: 7 findings (2C/2H/1M/2L) all resolved -- SMP barrier, TOCTOU fix, buffer leak fix, input validation, alignment fix.
 
 > **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 86 suites, 0 failures
 >
@@ -220,7 +220,7 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
   - Parked with §5 rather than technically blocked: the fail-open is deliberate while v1.1 may still repurpose those fields under a version bump, so tightening it is a decision about the spec's own forward-compat story rather than missing code.
 - [x] Commit: `"kernel: eif -- EIF loader"`
 
-**Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Serial log shows `"eif: Loaded <S> segments, <A>/<I> imports available in <N> us, entry=0x..."` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. (The loader runs after Phase 3, so it carries no POST16 codes.) Test on: QEMU WHPX + TCG; bare metal.
 
 > **Notes:**
 > - EIF kernel loader (`eif.c`): reads the 64-byte header, validates the segment/import tables of the untrusted file, copies segments to the identity-mapped user range, writes the per-process syscall dispatch table at `0x8F0000`.

@@ -11,7 +11,7 @@ title: "TODO-14 -- Registry System Completion"
 > **Validated:** 2026-07-04 | validate-todo-file clean (structure / IO table / XREF / test wiring)
 > **Gap-audited:** 2026-07-04 | gap-audit + codex-gap-audit; 3 findings filed (transacted + hive-op syscalls §4, advapi32 export surface §5, layered-key enum carveout §4/OS row)
 
-> **Goal:** The core registry engine (`reg_key_t`, Win32 registry API surface per MSDN ch. 2.1 through 2.4, hive persistence, crash-safe WAJ journaling) is fully implemented in `src/kernel/registry.c` (2 536 lines). This TODO delivers everything that is still pending: access rights enforcement, advanced key operations, change notifications, Nt/Zw user-mode syscalls, the `advapi32.dll` compatibility layer, registry virtualization, a `regedit` shell tool, advanced hive features (dual-log WAJ, delta flush, compaction), and the exclusive stretch features (atomic transactions, search API, snapshot diff, per-PID quota).
+> **Goal:** The core registry engine (`reg_key_t`, Win32 registry API surface per MSDN ch. 2.1 through 2.4, hive persistence, crash-safe WAJ journaling) is fully implemented in `src/kernel/registry.c` (4,293 lines on 2026-09-28). This TODO delivers everything that is still pending: access rights enforcement, advanced key operations, change notifications, Nt/Zw user-mode syscalls, the `advapi32.dll` compatibility layer, registry virtualization, a `regedit` shell tool, advanced hive features (dual-log WAJ, delta flush, compaction), and the exclusive stretch features (atomic transactions, search API, snapshot diff, per-PID quota).
 > When complete, Impossible OS has a native Windows-compatible registry that exceeds both Windows 11 and Linux's configuration store in every dimension.
 
 > [!IMPORTANT]

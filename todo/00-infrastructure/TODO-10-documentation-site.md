@@ -59,7 +59,7 @@ file_patterns:
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [x]   |
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [x]   |
 | 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [x]   |
-| 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [ ]   |
+| 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [x]   |
 | 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [ ]   |
 | 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [ ]   |
 | 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [ ]   |
@@ -397,26 +397,40 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md` (TODO-13 -- Atom, NLS & Locale Subsystem)
-  - `todo/02-kernel-core/TODO-14-registry-completion.md` (TODO-14 -- Registry System Completion)
-  - `todo/02-kernel-core/TODO-15-security-reference-monitor.md` (TODO-15 -- Security Reference Monitor)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-16-kernel-notification-facility.md` (TODO-16 -- Kernel Notification Facility)
-  - `todo/02-kernel-core/TODO-17-binary-system.md` (TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF))
-  - `todo/02-kernel-core/TODO-18-kernel-image-module-registry.md` (TODO-18 -- Kernel Image & Module Registry)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-19-code-integrity-trust-policy.md` (TODO-19 -- Code Integrity & Trust Policy)
-  - `todo/02-kernel-core/TODO-20-eif-full-implementation.md` (TODO-20 -- EIF Full Implementation)
-  - `todo/02-kernel-core/TODO-21-process-model-extensions.md` (TODO-21 -- Process Model Extensions)
-- [ ] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/02-kernel-core/TODO-22-environment-variables.md` (TODO-22 -- Environment Variables & Process Arguments)
-  - `todo/02-kernel-core/TODO-23-exception-dispatch-seh.md` (TODO-23 -- Exception Dispatch & SEH)
-  - `todo/02-kernel-core/TODO-24-alpc-message-ports.md` (TODO-24 -- ALPC / Message Ports)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: kernel core, part 2 documentation pages"`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-13-atom-nls-locale-subsystem.md` (TODO-13 -- Atom, NLS & Locale Subsystem): `atom-nls-locale.md`
+  - `todo/02-kernel-core/TODO-14-registry-completion.md` (TODO-14 -- Registry System Completion): `registry.md`
+  - `todo/02-kernel-core/TODO-15-security-reference-monitor.md` (TODO-15 -- Security Reference Monitor): `security-reference-monitor.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-16-kernel-notification-facility.md` (TODO-16 -- Kernel Notification Facility): `kernel-notification-facility.md`
+  - `todo/02-kernel-core/TODO-17-binary-system.md` (TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)): `binary-format-system.md`
+  - `todo/02-kernel-core/TODO-18-kernel-image-module-registry.md` (TODO-18 -- Kernel Image & Module Registry): `kernel-image-module-registry.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-19-code-integrity-trust-policy.md` (TODO-19 -- Code Integrity & Trust Policy): `code-integrity-trust-policy.md`
+  - `todo/02-kernel-core/TODO-20-eif-full-implementation.md` (TODO-20 -- EIF Full Implementation): `eif-executable-format.md`
+  - `todo/02-kernel-core/TODO-21-process-model-extensions.md` (TODO-21 -- Process Model Extensions): `process-model-extensions.md`
+- [x] Pages in `docs/kernel/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/02-kernel-core/TODO-22-environment-variables.md` (TODO-22 -- Environment Variables & Process Arguments): `environment-variables.md`
+  - `todo/02-kernel-core/TODO-23-exception-dispatch-seh.md` (TODO-23 -- Exception Dispatch & SEH): `exception-dispatch-seh.md`
+  - `todo/02-kernel-core/TODO-24-alpc-message-ports.md` (TODO-24 -- ALPC / Message Ports): `alpc-message-ports.md`
+- [x] No file in this range had a page before, so all twelve are new; every quoted symbol was checked to exist in the tree and every roadmap link fragment against the target heading's GitHub slug
+  - The drafts overcounted the ALPC stubs (ten, not eleven), the privilege LUIDs (25) and the PE export tables (14 kernel32, 96 ntdll), and cited a nonexistent `reg_resolve_path()` and a `CurrentControlSet` link.
+  - Review corrected the per-process page-table story (every process has its own PML4; what is missing is per-segment mapping), the exec no-rollback contract, the env block's ASCII-only fold, and the `cmd.exe` shell that does exist.
+- [x] Added the twelve pages to `docs/kernel/index.md` Roadmap Overviews, then ran `python3 scripts/site/build.py --update-baseline` (166 to 154 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-14, 16, 17 and 23
+  - TODO-14 put `registry.c` at 2,536 lines (4,293); TODO-16 and TODO-17 quoted serial lines that do not match the code, and TODO-17 §5 cited POST16 codes `0xD807`/`0xD808` that never shipped.
+  - TODO-23's Outcome named a nonexistent `src/kernel/rtl/seh.c` and called kernel SEH a SCOPE_TABLE walker; it is a registration list in `except.c`.
+- [x] Commit: `"docs: kernel core, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 78/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** twelve contract-shaped overview pages in `docs/kernel/`, one per kernel-core roadmap file 13 to 24, each listed in `docs/kernel/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
+> - **Downstream:** limits sections link existing owner sections (TODO-12 §7 environment inheritance, `09-desktop-shell/TODO-07` §1 CNG primitives) rather than filing duplicates.
+> - **Found on the way:** `build.py --check` validates fragments only for links into `docs/`, not into `todo/`, so a wrong roadmap anchor passes the site gate; six were caught by hand here and the check is filed in §23.
 
 ---
 
@@ -829,6 +843,9 @@ A page that was right when written goes wrong when its code changes. Neither Win
 - [x] GitHub About box (description, homepage, topics) derives from `project.json` and is drift-checked
   - `scripts/site/repo_meta.py`: `tagline` is the description, `site_url` the homepage, `topics` the topics; `--apply` writes them with `gh repo edit` and re-diffs, `--check` compares the live repo. Applied 2026-09-27 (removed the em dash, `http` homepage, added 5 topics).
   - Offline `validate()` (shape, dashes, https, GitHub topic rule, case-folded duplicates) runs in `build.py --check`; `.github/workflows/repo-metadata.yml` runs the live check on change and daily, so a GitHub UI edit turns it red. 4 tests in `scripts/site/tests/test_build.py`.
+- [ ] Validate fragments on links from `docs/` into tracked non-docs Markdown (`todo/`, `specs/`) against GitHub heading slugs; `build.py` checks fragments only for `docs/` targets (`scripts/site/build.py:336-339`)
+  - Measured 2026-09-28 with a GitHub-slug checker: 6 dead roadmap anchors in section 9's drafts (fixed) and 6 more in existing pages (`docs/boot/boot-menu.md`, `boot-protocol-changelog.md`, `bootstrap.md`, `docs/infrastructure/development-tooling.md`)
+  - GitHub keeps underscores and drops other punctuation, so a hand-slugged `load_base` or `PS_PROTECTION` heading is the usual miss
 - [ ] Commit: `"site: sitemap, last-updated dates, external link check, OpenGraph"`
 
 **Test checkpoint:** the deployed site serves `https://impossibleos.co/sitemap.xml` listing every docs page; each docs page footer shows its last-updated date; the link-check workflow reports a planted dead external link in a fixture and passes on the real tree. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
