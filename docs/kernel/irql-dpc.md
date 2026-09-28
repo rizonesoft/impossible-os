@@ -19,7 +19,7 @@ APCs follow the same design one level up. A `KAPC` ([`apc.h`](../../include/kern
 
 Two helpers sit on top. `KeSetTimerEx()` ([`ktimer.h`](../../include/kernel/sched/ktimer.h)) queues a DPC automatically when a timer expires. `kworker` ([`kworker.h`](../../include/kernel/sched/kworker.h)) is a single thread for periodic callbacks of a second or more that may call slow paths such as UEFI runtime services.
 
-A fairness layer watches both queues: a per-CPU budget of 256 DPCs per tick (`DPC_BUDGET_PER_TICK`, carry-over capped at 512) flags monopolization, and a watchdog fires when one DPC runs longer than 100 microseconds (`DPC_WATCHDOG_SINGLE_DPC_US` in [`dpc_config.h`](../../include/kernel/sched/dpc_config.h)), warning by default or bugchecking in strict mode.
+A fairness layer watches both queues: a per-CPU budget of 256 DPCs per tick (`DPC_BUDGET_PER_TICK`, carry-over capped at 512) flags monopolization, and, on CPUs with an invariant TSC and RDTSCP, a watchdog measures each DPC after it returns and fires when one ran longer than 100 microseconds (`DPC_WATCHDOG_SINGLE_DPC_US` in [`dpc_config.h`](../../include/kernel/sched/dpc_config.h)), warning by default or bugchecking in strict mode.
 
 ```mermaid
 sequenceDiagram

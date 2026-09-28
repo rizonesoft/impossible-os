@@ -24,7 +24,7 @@ When `task_exec()` in [`task.c`](../../src/kernel/sched/task.c) starts a program
 
 Additional user threads come from `uthread_create()`, which builds a real ring-3 return frame with its own kernel stack, user stack and TEB, placed one page apart per thread ID below the first TEB.
 
-Thread-local storage is a per-process bitmap: 64 slots live in the TEB's `TlsSlots` array and 1024 more are allocated on demand into an expansion page the first time a program needs them.
+Thread-local storage is a per-process bitmap: 64 slots live in the TEB's `TlsSlots` array and 1024 more pointer slots are allocated on demand into an 8 KiB, two-page expansion array the first time a program needs them.
 
 `KUSER_SHARED_DATA` ([`kusd.h`](../../include/kernel/nt/kusd.h)) is one physical page mapped read-only at `0x7FFE0000`. `kusd_init()` fills the static fields once at boot, including `SafeBootMode`, `KdDebuggerEnabled` and `MitigationPolicies` from the kernel configuration snapshot, and the timer interrupt updates the time fields with a three-write protocol so a reader never sees a torn value.
 

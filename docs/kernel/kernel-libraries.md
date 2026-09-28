@@ -55,10 +55,11 @@ csprng_fill(key, sizeof(key));
 uint32_t crc = kcrc32(data, len);
 ```
 
-The library tests live in [`test_klibs.c`](../../src/kernel/test/test_klibs.c), registered by `test_register_klibs()` in the exec category: string edge cases, LZ4 round trips, SHA-3 NIST known-answer and streaming tests, the `crypto_hash` dispatch, checksums and codecs, cJSON, AEAD and the CSPRNG.
+The library tests live in [`test_klibs.c`](../../src/kernel/test/test_klibs.c), registered by `test_register_klibs()` mostly in the exec category, with the CSPRNG seed-vector and crypto-gate checks in the security category: string edge cases, LZ4 round trips, SHA-3 NIST known-answer and streaming tests, the `crypto_hash` dispatch, checksums and codecs, cJSON, AEAD and the CSPRNG.
 
 ```bash
-bash scripts/test.sh SUITE=exec
+bash scripts/test.sh SUITE=exec       # most library suites
+bash scripts/test.sh SUITE=security   # CSPRNG seed-vector and crypto-gate checks
 ```
 
 ## What is not implemented yet?

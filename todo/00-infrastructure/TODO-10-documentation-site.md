@@ -376,7 +376,7 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 - [x] Roadmap drift found while writing, fixed in place in TODO-01, 05, 08, 10, 11, 12 and `include/kernel/nt/service_numbers.h`
   - TODO-01 said 27 subsystems (30 today); TODO-05 said 13 object types (15 with Token and Job); TODO-12 and the header comment said 475 services (477); TODO-08 named a nonexistent `KeQueryPerformanceCounter` and showed timezone and NTFS rows as not done.
   - TODO-10 section 13's guard-table capacity and SMP items and TODO-11 section 11's KUSD policy-bits item had shipped; each now `[x]` with evidence.
-- [x] Commit: `"docs: kernel core, part 1 documentation pages"`
+- [x] Commit: `"docs: kernel core, part 1 documentation pages"` (`076d48750`)
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -387,6 +387,9 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
 > - **Downstream:** the limits sections link existing owner items (TODO-12 §3 stack arguments, §6 IOSB write-back, TODO-10 §13 user-process stack guards) rather than filing duplicates.
 > - **Found on the way:** count and status drift corrected in six kernel-core roadmap files and one header comment.
+
+> **Verified:** 2026-09-28 | commit `076d48750` | 8/8 items | build OK | site: OK, 66/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 20M fixed, 0 open | scope: kernel-quality-auditor on the header comment, 0 findings (re-adversarial skipped: docs-only fixes)
 
 ---
 

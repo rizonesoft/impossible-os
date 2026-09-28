@@ -352,7 +352,7 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [M] KUSD time/version core is shipped + boot-wired; the 3 remaining items are (1) policy bits (SafeBootMode/KdDebuggerEnabled/MitigationPolicies) -- since SHIPPED, published by `kusd_init()` from the TODO-02 snapshot (2026-09-28); (2) Win11 24H2 `FullNumberOfPhysicalPages` (kusd.h ABI surgery at 0x310 + populate from the 64-bit PMM count + `_Static_assert`/test) and (3) a shared NT build constant unifying PEB.OSBuildNumber/KUSD.NtBuildNumber -- both specified + ready for a focused fresh-context pass (precise KUSD ABI work, not rushed at session tail). -> XREF: 02-kernel-core/TODO-02 §5 (item: "Safe Mode and Recovery Policy Object" -- the policy snapshot the KUSD mirror must read) + §10 (boot-status policy).
+> **Deferred:** [M] KUSD time/version core is shipped + boot-wired; of the 3 items then remaining, (1) policy bits (SafeBootMode/KdDebuggerEnabled/MitigationPolicies) -- since SHIPPED, published by `kusd_init()` from the TODO-02 snapshot (2026-09-28); (2) Win11 24H2 `FullNumberOfPhysicalPages` (kusd.h ABI surgery at 0x310 + populate from the 64-bit PMM count + `_Static_assert`/test) and (3) a shared NT build constant unifying PEB.OSBuildNumber/KUSD.NtBuildNumber -- both specified + ready for a focused fresh-context pass (precise KUSD ABI work, not rushed at session tail). -> XREF: 02-kernel-core/TODO-02 §5 (item: "Safe Mode and Recovery Policy Object" -- the policy snapshot the KUSD mirror must read) + §10 (boot-status policy).
 
 ---
 
@@ -722,25 +722,25 @@ A 2-CPU `SUITE=exec` run halted at the FIRST user-mode binary with `[CRIT] sched
 
 ## OS Comparison
 
-| ⭐  | Feature                     | 🪟 Win11                  | 🐧 Linux                 | 🚀 Impossible OS                  |
-| --- | --------------------------- | ------------------------- | ------------------------ | --------------------------------- |
-| 💎  | Per-process env block       | ✅ PEB at gs:[0x60]       | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated            |
-| 💎  | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]       | ⚠️ glibc pthread TLS     | ⚠️ §1+§6 task-level (-> §15)      |
-| 💎  | swapgs kernel entry/exit    | ✅ KiSystemCall64         | ✅ entry.S swapgs        | ✅ §3+§4 swapgs+MSR               |
-| 💎  | LastError per-thread        | ✅ TEB offset 0x68        | ⚠️ errno per-thread      | ⚠️ §6 task-level (-> §15)         |
-| 💎  | TLS static slots (64)       | ✅ TEB offset 0x1480      | ✅ pthread + FS-base     | ✅ §9 bitmap alloc                |
-| 💎  | Process parameters          | ✅ cmdline, env, handles  | ❌ stack + /proc         | ✅ §5 RTLPP populated             |
-| 💎  | Ldr module list             | ✅ PEB->Ldr linked list   | ❌ ld-linux link map     | ✅ §8 main module                 |
-| 💎  | Initial stack frame         | ✅ RCX=PEB (Win64)        | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv              |
-| ⭐  | PEB/TEB in Ob namespace     | ❌ Private internal       | ❌ Not exposed           | ✅ §10 public API                 |
-| ⭐  | Win11 version in PEB        | ✅ Internal only          | ❌ N/A                   | ✅ §5 10.0.22621                  |
-| 💎  | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | [/] §11 time core; policy pending |
-| 💎  | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots      | ✅ pthread TLS unlimited | ✅ §12 1024 slots                 |
-| 💎  | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ✅ §13 RDRAND+TSC fb              |
-| 💎  | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ✅ §13 shared parser              |
-| 💎  | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ✅ §13 raw CPUID 1 EDX            |
-| 💎  | Real user threads (ring 3)  | ✅ NtCreateThread ring 3  | ✅ clone() ring 3        | ✅ §14 uthread_create done        |
-| 💎  | Per-thread TEB / GS swap    | ✅ Per-thread TEB         | ✅ Per-thread FS_BASE    | ✅ §15 per-thread TEB+MSR         |
+| ⭐  | Feature                     | 🪟 Win11                  | 🐧 Linux                 | 🚀 Impossible OS                |
+| --- | --------------------------- | ------------------------- | ------------------------ | ------------------------------- |
+| 💎  | Per-process env block       | ✅ PEB at gs:[0x60]       | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated          |
+| 💎  | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]       | ⚠️ glibc pthread TLS     | ⚠️ §1+§6 task-level (-> §15)    |
+| 💎  | swapgs kernel entry/exit    | ✅ KiSystemCall64         | ✅ entry.S swapgs        | ✅ §3+§4 swapgs+MSR             |
+| 💎  | LastError per-thread        | ✅ TEB offset 0x68        | ⚠️ errno per-thread      | ⚠️ §6 task-level (-> §15)       |
+| 💎  | TLS static slots (64)       | ✅ TEB offset 0x1480      | ✅ pthread + FS-base     | ✅ §9 bitmap alloc              |
+| 💎  | Process parameters          | ✅ cmdline, env, handles  | ❌ stack + /proc         | ✅ §5 RTLPP populated           |
+| 💎  | Ldr module list             | ✅ PEB->Ldr linked list   | ❌ ld-linux link map     | ✅ §8 main module               |
+| 💎  | Initial stack frame         | ✅ RCX=PEB (Win64)        | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv            |
+| ⭐  | PEB/TEB in Ob namespace     | ❌ Private internal       | ❌ Not exposed           | ✅ §10 public API               |
+| ⭐  | Win11 version in PEB        | ✅ Internal only          | ❌ N/A                   | ✅ §5 10.0.22621                |
+| 💎  | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only   | ✅ vDSO equivalent       | [/] §11 time core + policy bits |
+| 💎  | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots      | ✅ pthread TLS unlimited | ✅ §12 1024 slots               |
+| 💎  | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ✅ §13 RDRAND+TSC fb            |
+| 💎  | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF            | ✅ auxv standard         | ✅ §13 shared parser            |
+| 💎  | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ✅ §13 raw CPUID 1 EDX          |
+| 💎  | Real user threads (ring 3)  | ✅ NtCreateThread ring 3  | ✅ clone() ring 3        | ✅ §14 uthread_create done      |
+| 💎  | Per-thread TEB / GS swap    | ✅ Per-thread TEB         | ✅ Per-thread FS_BASE    | ✅ §15 per-thread TEB+MSR       |
 
 > **Current parity:** Impossible OS matches Windows NT on the core user-mode ABI contract for PEB/TEB, TLS, and user threads, with one remaining `KUSER_SHARED_DATA` policy-publication gap in §11. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets -- ntdll and Win32 DLLs initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace.

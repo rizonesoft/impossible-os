@@ -557,6 +557,7 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [x] POST codes: `POST16(0xDD00)` dispatch, `POST16(0xDD01)` AP entry, `POST16(0xDD02)` barrier, `POST16(0xDD03)` done
 - [x] 2 unit tests: async POST code uniqueness, IPI vector value (0xFC) and no collision with 0xFD/0xFE
 - [/] Quiesce the AP on async timeout before sequential fallback (`boot_init.c:365`): timeout marks AP done+FATAL without stopping it, so `boot_phase2` re-runs storage init concurrently (driver corruption). (Codex §1 H; `async_init=1` only)
+      - Consequence narrowed 2026-09-28: the fallback no longer re-runs an unreleased step (`boot_async_step_fallback()` returns SKIP and the driver is marked unsafe, `01-boot-platform/TODO-10 §27`); the AP itself is still not stopped.
       - BLOCKED on the kernel image ceiling: quiescing the AP before fallback is new kernel `.text` on the async path -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [/] Contain a degraded storage driver at the HARDWARE, not just in bookkeeping. Blocked on the cooperative-cancellation call above (driver owners). XREF: `01-boot-platform/TODO-10 §27` (item: "Make the async timeout an ownership TRANSFER").
   - What §27 shipped: a timed-out or poisoned step is no longer re-entered on the BSP, and the drivers it names are excluded from `ahci_setup_interrupts()` and `blkdev_register_all()`.

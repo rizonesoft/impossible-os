@@ -66,7 +66,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --                 |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-11 §5–§8      |  [x]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2                 |  [/]   |
-| 💎  |   4   | System Service Descriptor Table (SSDT) -- 475 entries          | §1                 |  [/]   |
+| 💎  |   4   | System Service Descriptor Table (SSDT) -- 477 entries          | §1                 |  [/]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4             |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2     |  [/]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2     |  [/]   |
@@ -272,7 +272,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 
 - [x] Define `SSDT_HANDLER` and `SSDT_TABLE` in `include/kernel/nt/ssdt.h` -- handler takes 6 uint64_t args, returns NTSTATUS; table has handlers array + count + implemented count + name
 - [x] Shadow SSDT (table 1) allocated as empty placeholder -- indices 0x1000+, filled by Win32k later
-- [x] 475 service index assignments in `include/kernel/nt/service_numbers.h` -- `SSDT_NtXxx` defines for every entry, `SSDT_MAIN_COUNT = 475`
+- [x] 475 service index assignments in `include/kernel/nt/service_numbers.h` -- `SSDT_NtXxx` defines for every entry, `SSDT_MAIN_COUNT = 475` at ship (477 today)
 - [x] `ssdt_dispatch()` -- selects table from bits 13:12, index from bits 11:0, calls handler
 - [x] `ssdt_register()` -- replaces stub with real handler, tracks implemented count
 - [x] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` via `ssdt_stub_not_implemented()`
@@ -290,7 +290,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 > - SSDT is a flat function-pointer array; `ssdt_dispatch` (`ssdt.c`) splits table-id (bits 13:12) + index (bits 11:0), bounds-checks, indirect-calls; `ssdt_init` stub-fills all slots before Phase-3 syscall enable.
 > - Review hardened the dispatch + register bound to a per-table `SSDT_TABLE.max` capacity field instead of the hardcoded `SSDT_MAIN_MAX`, closing the §2-review OOB-if-shadow-shrinks finding (both tables 1024 today).
 > - Consistency fixes: bound the `SSDT_MAIN_COUNT`/`SSDT_LAST_MAIN_INDEX` static-asserts to the real `SSDT_MAIN_MAX` in `ssdt.c`; documented count(extent)/max(capacity)/implemented(live) as distinct fields.
-> - 475 main service numbers allocated in `service_numbers.h`; shadow (Win32k) table stays empty until filled by D08 T15.
+> - 475 main service numbers allocated in `service_numbers.h` at ship (477 today); shadow (Win32k) table stays empty until filled by D08 T15.
 > - re-adversarial skipped: the only behavioral change (the `table->max` bound) was adversarial+perf-approved in round 1; the consistency fixes are compile-time asserts + a doc comment.
 
 > **Verified:** 2026-06-28 | 9/10 items | build OK | smoke PASS (TCG 2.50s), tests 346+16 PASS
@@ -1154,7 +1154,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 > [!TIP]
 > **Impossible OS competitive edge.** Windows uses PatchGuard/KPP -- a complex, opaque system that periodically checksums kernel structures and BSODs on tampering. It's a cat-and-mouse arms race with rootkits. Linux has no SSDT integrity protection at all (`sys_call_table` is `const` but not hardware-enforced). Impossible OS uses hardware write-protection: mark the SSDT pages as read-only via PTE after initialization. Any write attempt triggers a #PF that the kernel catches and escalates to `KeBugCheck(CRITICAL_STRUCTURE_CORRUPTION)`. Zero runtime overhead, no periodic polling, no timing-based detection -- just hardware-enforced immutability.
 
-- [ ] After `ssdt_init()` completes and all 475 handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
+- [ ] After `ssdt_init()` completes and all allocated handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
 
 > [!NOTE]
 > `vmm_protect()` is planned in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` but does not yet exist. Until it lands, use direct PTE writes: `pte &= ~PTE_WRITE; invlpg(addr)`. This is self-contained -- no external dependency blocks §27.
@@ -1368,7 +1368,7 @@ From the stamped section 13:
 | 💎  | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only           | ⬜ §26                                                                      |
 | ⭐  | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection          | ⬜ §27 -- HW write-protect                                                  |
 
-> **Target after §1–§23 completion:** Impossible OS reaches complete NT native API coverage across 475 syscall endpoints. Current state is partial; many domain and deferred sections remain open.
+> **Target after §1–§23 completion:** Impossible OS reaches complete NT native API coverage across 477 syscall endpoints. Current state is partial; many domain and deferred sections remain open.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract -- Windows keeps it internal/undocumented and Linux has no equivalent.
 > **§24** provides first-class syscall auditing -- no ETW complexity, no BPF programs, just a kernel callback with near-zero idle overhead.
 > **§25** closes the per-process syscall filtering parity gap -- both Win11 and Linux restrict per-process syscall access; Impossible OS uses a fast bitmap with optional BPF programs.
@@ -1390,7 +1390,7 @@ From the stamped section 13:
   - **SSDT dispatch (§4):**
     - Valid index calls handler; invalid index returns `STATUS_NOT_IMPLEMENTED`
     - Index beyond table size returns `STATUS_NOT_IMPLEMENTED`, not a crash
-    - SSDT has ≥ 475 registered entries
+    - SSDT has ≥ 477 registered entries (`SSDT_MAIN_COUNT`)
   - **Core handle ops (§6):**
     - `NtClose(INVALID_HANDLE_VALUE)` returns `STATUS_INVALID_HANDLE`
     - `NtCreateFile` on existing file returns `STATUS_SUCCESS` and a valid HANDLE

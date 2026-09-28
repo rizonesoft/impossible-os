@@ -24,7 +24,7 @@ An init function returns a `boot_result_t`: `BOOT_OK`, `BOOT_DEGRADED`, `BOOT_FA
 
 On a fatal failure, `kernel_subsystem_dump()` logs every subsystem's OK or FAIL state before the halt, so the serial log shows the full readiness snapshot at the moment of failure. It is called from `boot_halt()` in [`boot_halt.c`](../../src/kernel/main/boot_halt.c), from `panic()`, and from several Phase 2 and 3 fatal guards. A Phase 2 or 3 fatal failure with the framebuffer up shows the recovery screen instead of a bare halt: a framebuffer panel drawn without the compositor or the heap, offering Retry, Halt to serial log, or Power off ([`boot_recovery.h`](../../include/kernel/boot_recovery.h)).
 
-Non-critical subsystems defer their init past the first desktop frame instead of blocking it. `boot_defer(name, fn)` records a function in a fixed 16-slot table and `boot_run_deferred()` runs them inline in Phase 3, after `desktop_init()` and before `compositor_run()`; not on a worker thread, because the compositor starves cooperatively scheduled kernel threads. Network (`rtl8139`, `net_init`, `dhcp_discover`) and secondary input are deferred this way, each logging `[DEFERRED] <name> +<ms>ms`, and `deferred=0` in `boot.conf` turns it off for debugging.
+Non-critical subsystems move their init out of the Phase 2 critical path, though today it still runs before the compositor draws its first frame. `boot_defer(name, fn)` records a function in a fixed 16-slot table and `boot_run_deferred()` runs them inline in Phase 3, after `desktop_init()` and before `compositor_run()`; not on a worker thread, because the compositor starves cooperatively scheduled kernel threads. Network (`rtl8139`, `net_init`, `dhcp_discover`) and secondary input are deferred this way, each logging `[DEFERRED] <name> +<ms>ms`, and `deferred=0` in `boot.conf` turns it off for debugging.
 
 Phase 2 can also run independent storage steps across CPUs when `async_init=1` is set in `boot.conf`. `boot_async_group()` sends steps to APs over IPI vector `0xFC`, the BSP runs one itself, and a 10-second barrier (`BOOT_ASYNC_BARRIER_MS`) bounds the wait. The default is `async_init=0`, fully sequential; the parallel path is experimental.
 
@@ -52,7 +52,7 @@ bash scripts/test.sh SUITE=boot     # readiness oracle, macros, POST codes, defe
 bash scripts/test-smoke.sh          # boots to C:\> through the real phase sequence
 ```
 
-On a normal boot, serial shows `[PHASE0]` through `[PHASE3]` progress lines in dependency order, then `[DEFERRED]` lines for network and secondary input shortly after the desktop appears. With `debug=1` or `test=1` in `boot.conf`, the kernel test suite runs inline in Phase 3 and prints a `=== N tests passed, 0 failed, ... ===` summary; a release boot shows none of that. The unit tests for this subsystem are in [`test_boot_init.c`](../../src/kernel/test/test_boot_init.c).
+On a normal boot, serial shows `[PHASE0]` through `[PHASE3]` progress lines in dependency order, then `[DEFERRED]` lines for network and secondary input once `desktop_init()` has run, before the compositor starts. With `debug=1` or `test=1` in `boot.conf`, the kernel test suite runs inline in Phase 3 and prints a `=== N tests passed, 0 failed, ... ===` summary; a release boot shows none of that. The unit tests for this subsystem are in [`test_boot_init.c`](../../src/kernel/test/test_boot_init.c).
 
 ## What is not implemented yet?
 
@@ -62,7 +62,7 @@ On a normal boot, serial shows `[PHASE0]` through `[PHASE3]` progress lines in d
 - There is no single panic-safe fatal primitive yet: some fatal paths bypass the failure-policy matrix, the panic path can still block on firmware `SetVariable` or live VFS writes, and the `restart_on_halt` key documented in `boot_halt.c` is not a real `boot.conf` field ([Failure Policy](../../todo/02-kernel-core/TODO-01-kernel-init-sequencing.md#7-failure-policy)).
 - Deferred init still runs before the compositor's first frame, so the PS/2 mouse handshake delays that frame ([Deferred Init for Non-Critical Subsystems](../../todo/02-kernel-core/TODO-01-kernel-init-sequencing.md#11-deferred-init-for-non-critical-subsystems)).
 - The `bootperf` shell command and a wear budget for the `ImpossibleBootPerf` NVRAM write are not built ([Boot Performance Regression Detection](../../todo/02-kernel-core/TODO-01-kernel-init-sequencing.md#12-boot-performance-regression-detection)).
-- Parallel Phase 2 init stays experimental: a timed-out AP is not quiesced before the sequential fallback re-runs its step, and the async storage work runs inside an interrupts-disabled IPI handler ([Async Subsystem Init](../../todo/02-kernel-core/TODO-01-kernel-init-sequencing.md#13-async-subsystem-init-smp-parallel)).
+- Parallel Phase 2 init stays experimental: the sequential fallback already skips a step whose AP never released it and marks that driver unsafe, but a hung controller is not contained against DMA or interrupts, and the async storage work runs inside an interrupts-disabled IPI handler ([Async Subsystem Init](../../todo/02-kernel-core/TODO-01-kernel-init-sequencing.md#13-async-subsystem-init-smp-parallel)).
 
 ## How does it compare with Windows 11 and Linux?
 

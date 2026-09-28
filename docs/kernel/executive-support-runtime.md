@@ -21,7 +21,7 @@ Sections 1 to 7 of the roadmap have shipped: the executive boot hook, the interl
 
 **Fast references** (`EX_FAST_REF`) cache a few object references inside one pointer-sized word, so a hot lookup can hand out a reference without touching the object's shared count. `kmalloc` guarantees only 8-byte alignment, so 3 low bits are free and at most 7 references are cached (`EX_FAST_REF_MAX`), as on 32-bit Windows.
 
-**The containers** follow the Windows `Rtl` contract that the caller serializes access: `RTL_BITMAP` over a caller buffer, `RTL_AVL_TABLE` with caller-supplied allocation, and `RTL_DYNAMIC_HASH_TABLE`, which only grows, so a remove-during-walk cursor stays valid across a resize.
+**The containers** follow the Windows `Rtl` contract that the caller serializes access: `RTL_BITMAP` over a caller buffer, `RTL_AVL_TABLE` with caller-supplied allocation, and `RTL_DYNAMIC_HASH_TABLE`, which only grows. Removing the entry a walk just returned is safe, but inserting during a walk can rehash every entry, so the walk must finish or restart first.
 
 **Immediate work items** (`EX_WORK_ITEM`) run on the system work queue with an atomic state machine: idle, queued, running, then done or cancelled. The work queue cannot dequeue, so `ExCancelWorkItem` succeeds only while the item is still queued.
 
