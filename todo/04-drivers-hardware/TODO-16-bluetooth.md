@@ -223,6 +223,7 @@ Implement `bt_manager.c` as the central Bluetooth state controller. Handle SSP J
   - Label `Off / Ready / <DeviceName>`; right-click the tile → `Open bluetooth.cpl`; no standalone tray icon
 - [ ] `bluetooth.cpl` applet: sections: **Scan** (5 s inquiry, results list: name + type icon + RSSI), **Pair** button → SSP flow, **Connected devices** list with disconnect/forget, **Settings**: discoverable toggle, auto-connect, adapter name
 - [ ] Boot log: `[BT-MGR] Bluetooth ready, %u paired devices loaded from Registry`
+- [ ] Bluetooth power state honours airplane mode: `bt_set_enabled()` is driven by the radio coordinator -> XREF: `04-drivers-hardware/TODO-15-wifi-drivers.md` §11 (Airplane Mode Radio Coordinator)
 - [ ] Commit: `"desktop: BT manager -- SSP pairing, link key Registry, auto-reconnect, bluetooth.cpl applet"`
 
 ## 10. `btctl` Shell Command `[Sonnet]`

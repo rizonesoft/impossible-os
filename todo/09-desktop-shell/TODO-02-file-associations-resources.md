@@ -52,6 +52,7 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 | 💎  |   6   | §3 Open With dialog -- app list popup, "Always use" writes HKCR default                           | §2 defaults (app list sourced from HKCR); §5 context menu (`context_menu_show`) |  [ ]   |
 | 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime                  | §6 (first-boot associations must be stable); audio TODO-10 forward ref          |  [ ]   |
 | 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                           |  [ ]   |
+| 💎  |   9   | §9 Icon extraction -- EIF SVG and PE ICO resources at any size                                    | §1                                                                              |  [ ]   |
 
 ---
 
@@ -194,6 +195,23 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 - [ ] Commit: `"fontmgr: font manager app -- list/preview/install/remove TTF, set default, ttf_mgr_reload()"`
 
 ---
+
+## 9. Icon Extraction: EIF SVG and PE ICO Resources
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#how-are-icons-rendered`](../../docs/design/icons.md#how-are-icons-rendered), [`icons.md#which-icons-go-where`](../../docs/design/icons.md#which-icons-go-where)
+
+The shell and the Win32 icon APIs need one path that returns an application's icon at any size: SVG from EIF resources (`02-kernel-core/TODO-20-eif-full-implementation.md` §12), ICO groups from PE32+ resources, PNG/ICO/BMP files, all through the asset pipeline and icon cache of `08-graphics-ui/TODO-01-graphics-asset-foundation.md`.
+
+- [ ] `icon_extract(path, index, px, scale)` picks the best source: EIF SVG icon rendered at the exact size, otherwise the closest PE `RT_GROUP_ICON` entry (PNG-compressed and BMP entries), otherwise the file-type association icon
+- [ ] Win32 surface on top of it: `ExtractIconExW`, `PrivateExtractIconsW`, `SHGetFileInfoW(SHGFI_ICON)`, `SHDefExtractIconW`, `LoadImageW(IMAGE_ICON)`, `CreateIconFromResourceEx`
+  - SVG sources are rasterised at the requested size, so no size is ever upscaled
+- [ ] Results go through the runtime icon cache (content hash + size + scale + theme), so an icon is rasterised once per size, not per paint
+- [ ] Explorer, the taskbar, Start and Alt-Tab all use this one path
+- [ ] Commit: `"shell: icon extraction -- EIF SVG and PE ICO resources at any size"`
+
+**Test checkpoint:** an EIF with an SVG icon and a PE32+ with a multi-size ICO both show correct, sharp icons at 16, 32, 48 and 256 px in Explorer and on the taskbar; the second paint of each is a cache hit. Test on: QEMU TCG.
 
 ## OS Comparison
 

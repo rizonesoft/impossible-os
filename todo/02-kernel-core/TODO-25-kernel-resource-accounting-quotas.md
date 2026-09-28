@@ -59,6 +59,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐  |  17   | Infra-gated charge bounding and stall lanes     | §10, §12, D03T07 §3     |  [/]   |
 | ⭐  |  18   | Obligation ceiling + charge-source pass-through | §14, §16                |  [x]   |
 | ⭐  |  19   | Lockless job membership + pressure-retry seam   | §10, §15                |  [x]   |
+| 💎  |  20   | §20 Per-process network I/O accounting          | §7                      |  [ ]   |
 
 ## 1. Resource Type Registry
 
@@ -677,6 +678,19 @@ Split out of §18 on 2026-07-25 when the design review grew both halves past one
 > **Quality reviewed:** 2026-07-26 | Codex 14x (design, adversarial x3, test-coverage, consistency, perf, re-adversarial x7) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 2H+8M+5L fixed, 2H+2M accepted-XREF, 1M deferred-XREF, 1M+1L rejected with evidence | scope: kernel-code-quality; parity Win11/Linux cells softened to recalled-not-fetched precision (web research was gated this run)
 
 ---
+
+## 20. Per-Process Network I/O Accounting
+
+> **Spawned-by:** root
+
+CPU and disk I/O are charged per task (§7), but socket traffic is not, so Task Manager can only show a system-wide network total.
+
+- [ ] Charge socket send and receive bytes and packet counts to the owning task through the same seam as file and pipe I/O (`task_acct_note_*`), at the socket layer so every protocol is covered
+- [ ] Expose per-process Rx/Tx totals and rates through the process-information query Task Manager already uses
+- [ ] Unit tests: bytes sent on a loopback socket are charged to the sender and bytes received to the receiver, and nothing is double-counted across fork or handle inheritance
+- [ ] Commit: `"kernel: per-process network I/O accounting -- socket bytes charged to the owning task"`
+
+**Test checkpoint:** a process downloading a file shows its own network rate in Task Manager while an idle process shows zero. Test on: QEMU TCG with user networking.
 
 ## OS Comparison
 

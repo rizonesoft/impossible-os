@@ -39,14 +39,15 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 
 | ⭐  | Order | Deliverable                                                                                  | Depends On                                                                | Status |
 | --- | :---: | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Checkbox -- `CTRL_CHECKBOX`, 20 px box radius 4, accent checked state, focus rings         | Existing `gfx_fill_rounded_rect`; `theme_get()` (TODO-01)                 |  [ ]   |
-| 💎  |   2   | §2 Radio button -- `CTRL_RADIO`, 20 px circle + 12 px dot, group mutual exclusion             | §1 (same struct extension pattern; group_id field added alongside)        |  [ ]   |
+| 💎  |   1   | §1 Checkbox -- `CTRL_CHECKBOX`, 20 px box radius 4, accent checked state, focus rings        | Existing `gfx_fill_rounded_rect`; `theme_get()` (TODO-01)                 |  [ ]   |
+| 💎  |   2   | §2 Radio button -- `CTRL_RADIO`, 20 px circle + 12 px dot, group mutual exclusion            | §1 (same struct extension pattern; group_id field added alongside)        |  [ ]   |
 | 💎  |   3   | §4 Slider -- `CTRL_SLIDER`, track + thumb drag, horiz/vert, real-time callback               | §1 (same `on_change` callback type established in §1)                     |  [ ]   |
 | 💎  |   4   | §5 Progress bar -- `CTRL_PROGRESSBAR`, determinate + indeterminate tween mode                | §3 slider (determinate fill is same pattern); TODO-02 `anim_mgr_add()`    |  [ ]   |
 | 💎  |   5   | §3 Dropdown -- `CTRL_DROPDOWN`, floating popup via WM z-order overlay, keyboard navigation   | All of §1–4 done (dropdown is most complex; isolated until others stable) |  [ ]   |
 | 💎  |   6   | §6 Tab strip -- `CTRL_TABSTRIP`, tab headers, accent underline, keyboard arrow navigation    | §5 dropdown (all input-capture patterns established)                      |  [ ]   |
 | 💎  |   7   | §7 Theming -- confirm all new controls use `theme_get()` only; remove any CTRL_COLOR_* usage | §6 (all controls must exist before audit)                                 |  [ ]   |
 | ⭐  |   8   | §8 Accessibility stubs -- `ctrl_get_accessible_name/role()` for all 8 types                  | §7 (all control types must be registered before role table is complete)   |  [ ]   |
+| 💎  |   9   | §9 Overlay scroll bar -- collapse/expand on hover                                            | §7                                                                        |  [ ]   |
 
 ---
 
@@ -222,6 +223,23 @@ Audit all 6 new controls and confirm zero hardcoded hex colors. All color refere
 - [ ] Commit: `"controls: accessibility stubs -- ctrl_get_accessible_name/role() for all 8 control types"`
 
 ---
+
+## 9. Overlay Scroll Bar (Collapse and Expand on Hover)
+
+> **Spawned-by:** root
+
+**Design:** [`controls.md#scroll-bar`](../../docs/design/controls.md#scroll-bar)
+
+`CTRL_SCROLLBAR` exists, but not the Windows 11 behaviour the spec requires: a thin line that appears only while scrolling or hovering and expands under the pointer.
+
+- [ ] Collapsed state: a `size.scrollbar_collapsed` (2) line in `control_strong_stroke`, drawn only while the view scrolls or the pointer is over the view; fades out after `motion.tooltip_delay` of inactivity
+- [ ] Expanded state on pointer approach: `size.scrollbar_expanded` (6) with rounded ends and arrow glyphs at each end, cross-fading over `motion.fast`; reduced motion switches instantly
+- [ ] Overlay, not layout: the bar draws over content and takes no client width, so text does not reflow when it appears; Win32 `WS_VSCROLL` windows keep classic reserved-width bars for compatibility
+- [ ] Thumb size from the visible/total ratio with a minimum length; click on the track pages, drag on the thumb scrolls, wheel and touchpad feed the same position model
+- [ ] Unit tests: thumb geometry for boundary ratios, hover state machine, and that content width is unchanged with the bar visible
+- [ ] Commit: `"ui: overlay scroll bar -- collapse and expand on hover per the design spec"`
+
+**Test checkpoint:** in the controls gallery a long list shows no bar at rest, a 2 px line while scrolling, and a 6 px bar with arrows on hover; the list's text never reflows. Test on: QEMU TCG, VirtualBox.
 
 ## OS Comparison
 

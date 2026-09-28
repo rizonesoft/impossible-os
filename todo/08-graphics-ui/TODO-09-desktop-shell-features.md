@@ -227,7 +227,9 @@ Per `docs/design/shell.md#quick-settings`: Win+A or a click on the tray's system
 - [ ] Wi-Fi tile: state = `net_is_connected()` (from TODO-01 networking); toggle = stub log
 - [ ] Night Light tile: state = `night_light_enabled()`; toggle = `night_light_set_active(!enabled, 60)`
 - [ ] Bluetooth, Airplane mode, Energy saver, Accessibility tiles: state from their owners (stubs log until the owner lands); Accessibility opens a sub-page, not a toggle
+  - Airplane mode state -> XREF: `04-drivers-hardware/TODO-15-wifi-drivers.md` §11 (Airplane Mode Radio Coordinator)
 - [ ] Volume + Brightness sliders: `ctrl_create_slider(panel_wh, x, y, w, 20, 0, 100, vol, HORIZ, on_vol_change)` -- `on_vol_change` calls `volume_set(v)` stub
+  - Brightness backend -> XREF: `02-kernel-core/TODO-26-power-management.md` §40 (Display Backlight Control); hide the slider when the panel is not adjustable
 - [ ] Win+A hotkey in `hotkeys.c`: `quick_settings_open()` or `quick_settings_close()` toggle
 - [ ] Quick settings to `docs/design/shell.md#quick-settings`: 360 px flyout anchored 12 px from the right and above the taskbar, flyout acrylic, `THEME_ELEV_FLYOUT_*`
   - 3x2 toggles (Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility): 96x48 buttons over captions; on = accent fill with `text_on_accent`

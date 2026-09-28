@@ -135,6 +135,8 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 - [ ] `src/apps/control/applets/intl.c` -- date/time/decimal/thousands/currency fields; Registry write
 - [ ] `src/apps/control/applets/taskbar.c` -- auto-hide toggle only (fixed 48 px bottom taskbar); `WM_TASKBAR_CHANGED` broadcast
 - [ ] Register all 9 in `g_cpl_entries[]` with name, description, icon_id, and category
+- [ ] Display settings for more than one monitor: arrange (drag the monitor rectangles), identify, choose the main display, and per-monitor resolution and scale
+  - Available once multi-head lands (`04-drivers-hardware/TODO-17-gpu-display-drivers.md` multi-head section)
 - [ ] Commit: `"control: core applets -- sysdm/desk/ncpa/mmsys/timedate/powercfg/main/intl/taskbar.cpl"`
 
 ## 4. Additional Applets `[Sonnet]`

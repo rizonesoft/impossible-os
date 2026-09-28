@@ -212,6 +212,7 @@ Ctrl+Shift+Esc hotkey. Two tabs: **Processes** (Name/CPU%/RAM/PID/Status, End Ta
 - [ ] "End Task": `signal_send(selected_pid, SIGKILL)` → refresh
 - [ ] Performance tab: CPU polyline from `g_cpu_history[60]`; RAM filled bar; Net/Disk counters
 - [ ] `int net_get_stats(uint64_t *rx_bytes, uint64_t *tx_bytes)` stub in `net.c`
+  - Per-process network columns come from socket accounting -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md` §20 (Per-Process Network I/O Accounting)
 - [ ] `int blkdev_get_stats(uint64_t *read_kb, uint64_t *write_kb)` stub in `blkdev.c`
 - [ ] Ctrl+Shift+Esc global hotkey
 - [ ] Commit: `"taskmgr: task manager -- cpu_ticks, sched_get_task_list, process list, CPU chart, End Task"`

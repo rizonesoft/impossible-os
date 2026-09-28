@@ -120,6 +120,7 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 | ⭐  |  37   | §37 System connected standby entry (all-CPU S0ix transition)       | §10, §27, §9, §28           |  [/]   |
 | 💎  |  38   | §38 ACPI table discovery: validate extents before checksum/publish | §1                          |  [x]   |
 | 💎  |  39   | §39 ACPI root-pointer integrity + validator unification            | §38                         |  [ ]   |
+| 💎  |  40   | §40 Display backlight control -- ACPI _BCL/_BCM/_BQC, PWM fallback | §18                         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -1696,6 +1697,21 @@ Filed by the §38 post-ship kernel quality audit. §38 hardened everything reach
 **Test checkpoint:** A synthetic RSDP outside every admissible descriptor is handled by the policy this section picks (refused, or admitted with a diagnostic) rather than checksummed blindly. A v2 RSDP whose extended checksum fails is diagnosed. One XSDT image produces the SAME accept/reject verdict from boot discovery and from `acpi_enumerate_signatures()`. A FADT carrying only `X_DSDT` reaches `parse_s5_from_dsdt()`. Test on: QEMU TCG; the RSDP-placement cases are bare metal and cannot be reproduced under emulation.
 
 ---
+
+## 40. Display Backlight Control (Brightness)
+
+> **Spawned-by:** root
+
+Quick settings and the brightness overlay call `brightness_set()`, but nothing implements it. This section owns panel brightness end to end.
+
+- [ ] ACPI video device support: find `_BCL` (levels), `_BCM` (set) and `_BQC` (query) on the integrated panel's output device through ACPICA; map 0-100 to the firmware's level table
+- [ ] Fallback for panels without ACPI methods: GPU backlight PWM registers where the display driver exposes them (`04-drivers-hardware/TODO-17-gpu-display-drivers.md`); report "not adjustable" rather than faking it on external monitors
+- [ ] `brightness_get()` / `brightness_set(pct)` with change notification, persisted per power source in the active power plan (§18), and brightness hotkeys (ACPI `_BCU`/`_BCD` notifications and Fn keys)
+- [ ] Wire the quick settings slider and the brightness pill (`08-graphics-ui/TODO-09-desktop-shell-features.md` quick settings section) to this API; hide the slider when the panel is not adjustable
+- [ ] Unit tests: level-table mapping (monotonic, clamped, rounding at 0 and 100) against synthetic `_BCL` packages
+- [ ] Commit: `"kernel/pm: display backlight control -- ACPI _BCL/_BCM/_BQC, PWM fallback, brightness_set"`
+
+**Test checkpoint:** on a laptop, the quick settings slider and Fn keys change panel brightness and `brightness_get()` reads back the level; in QEMU (no ACPI backlight) the slider is hidden. Test on: bare-metal laptop, QEMU TCG.
 
 ## OS Comparison
 

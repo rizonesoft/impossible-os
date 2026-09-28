@@ -60,19 +60,20 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                 | Depends On                 | Status |
-| --- | :---: | ------------------------------------------- | -------------------------- | :----: |
-| ⭐  |   1   | Range overlap validation (normative rule 2) | --                         |  [x]   |
-| 💎  |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [/]   |
-| ⭐  |   3   | Module registration for EIF                 | T17 §6                     |  [/]   |
-| ⭐  |   4   | API version gating                          | §1                         |  [x]   |
-| ⭐  |   5   | Metadata section parser                     | §1                         |  [x]   |
-| ⭐  |   6   | LZ4 compressed segments                     | T03 §3                     |  [x]   |
-| ⭐  |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [/]   |
-| ⭐  |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [/]   |
-| ⭐  |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
-| 💎  |  10   | CET compatibility flag (format reservation) | --                         |  [/]   |
-| 💎  |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [/]   |
+| ⭐  | Order | Deliverable                                                   | Depends On                 | Status |
+| --- | :---: | ------------------------------------------------------------- | -------------------------- | :----: |
+| ⭐  |   1   | Range overlap validation (normative rule 2)                   | --                         |  [x]   |
+| 💎  |   2   | Segment permission enforcement (R/W/X PTE)                    | §1                         |  [/]   |
+| ⭐  |   3   | Module registration for EIF                                   | T17 §6                     |  [/]   |
+| ⭐  |   4   | API version gating                                            | §1                         |  [x]   |
+| ⭐  |   5   | Metadata section parser                                       | §1                         |  [x]   |
+| ⭐  |   6   | LZ4 compressed segments                                       | T03 §3                     |  [x]   |
+| ⭐  |   7   | Optional import stubs                                         | §3, T17 §4, T17 §13        |  [/]   |
+| ⭐  |   8   | EIF ASLR (load_base=0 randomization)                          | §2, T17 §15, T03 §5        |  [/]   |
+| ⭐  |   9   | Per-process dispatch table isolation                          | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
+| 💎  |  10   | CET compatibility flag (format reservation)                   | --                         |  [/]   |
+| 💎  |  11   | EIF signature-block ABI (signer key)                          | D02 T19 §4                 |  [/]   |
+| 💎  |  12   | §12 Resource section with SVG app icons (format version bump) | §5                         |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
@@ -315,6 +316,28 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 > **Deferred:** [M] Operator-reserved: this is a security-sensitive EIF signature-block ABI + `EIF_VERSION` bump with NO end-to-end validation path today -- the producer (`eifsign`/`elf2eif` signing) and the verify impl are both deferred, and CI trust anchors do not exist yet, so ratifying the on-disk signature format unilaterally in an unattended run is inappropriate. Needs operator sign-off -> XREF: `TODO-17-binary-system.md §17` (verify impl + `eifsign` producer); `TODO-19-code-integrity-trust-policy.md §4` (trusted CI anchor tiers, item: "Embedded signature validation").
 
 ---
+
+## 12. Resource Section with SVG Icons
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#how-are-icons-rendered`](../../docs/design/icons.md#how-are-icons-rendered)
+
+Impossible OS is SVG-first: system icons are SVG and rendered at the exact size and DPI they are needed. Native apps get the same: an EIF carries its icon as SVG. The spec reserves an `icon` metadata key but EIF has no resource section to hold one.
+
+> [!IMPORTANT]
+> This is an on-disk format change: design-review it, bump the EIF format version in `specs/eif-format.md`, and keep older EIFs loading (a missing resource section means "no resources", never an error).
+
+- [ ] A resource table in `specs/eif-format.md`: entries of (type, name or ID, language, offset, size), bounded counts and lengths validated like the metadata section (§5), unknown types skipped for forward compatibility
+- [ ] Resource types: `EIF_RT_SVG_ICON` (the vector app icon), `EIF_RT_ICON` (PNG/ICO bitmap fallback), `EIF_RT_VERSION`, `EIF_RT_STRING`, `EIF_RT_MANIFEST`
+  - SVG icons are restricted to the system SVG profile of `08-graphics-ui/TODO-01-graphics-asset-foundation.md`
+- [ ] The `icon` metadata key names the resource to use; a loader API returns resource bytes by type and name without mapping the whole image
+- [ ] `scripts/build-eif.py` embeds resources from a small resource list, validating SVG icons against the system profile at build time
+- [ ] Unit tests: resource table parse with valid, truncated, overlapping and oversized entries; lookup by type/name; an EIF without a resource section still loads
+- [ ] Icon extraction for the shell and Win32 APIs is owned by `09-desktop-shell/TODO-02-file-associations-resources.md` §9
+- [ ] Commit: `"kernel: eif -- resource section, SVG app icons"`
+
+**Test checkpoint:** an EIF built with an SVG icon resource shows that icon, crisp, in Explorer at 16, 32, 48 and 256 px; an older EIF without resources loads unchanged. Test on: QEMU TCG.
 
 ## OS Comparison
 

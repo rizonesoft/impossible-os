@@ -177,6 +177,8 @@ Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB H
   - **Pinch** (2-finger distance delta > 20 px) → `WM_GESTURE_ZOOM` with scale factor
   - **Three-finger swipe** → `WM_GESTURE_3FINGER` for virtual desktop switch
 - [ ] WM dispatches `WM_TOUCH` (raw touch data) + synthesized mouse events to focused window
+- [ ] Pen and stylus input as its own path, not touch: HID digitizer pen usages (tip switch, in range, pressure, X/Y tilt, twist, barrel button, eraser, invert) with hover before contact
+  - Delivered as pointer events with pressure and tilt (`WM_POINTER*` with `POINTER_PEN_INFO`); palm rejection suppresses touch while the pen is in range; the cursor shows a pen dot while hovering
 - [ ] Commit: `"drivers: touch input + gesture recognizer (tap/swipe/pinch)"`
 
 ---

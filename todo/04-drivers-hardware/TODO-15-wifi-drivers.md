@@ -47,6 +47,7 @@ title: "TODO-15 -- WiFi Hardware Drivers"
 | 💎  |   8   | §8 MediaTek MT7921/MT7922 PCIe driver                                           | §1, §2, §5                                       |  [ ]   |
 | 💎  |   9   | §9 WiFi power management -- PS-Poll, wake-on-WLAN                               | §3 (associated), TODO-03 §9 ACPI S3              |  [ ]   |
 | 💎  |  10   | §10 `ncpa.cpl` WiFi tab + `netsh wlan` commands                                 | §3 (scan/connect API), §5 (WPA2)                 |  [ ]   |
+| 💎  |  11   | §11 Airplane mode radio coordinator -- all radios together                      | --                                               |  [ ]   |
 
 > §1 `wifi_device_t` is `⭐` exclusive by architecture: Windows uses NDIS 6.x miniport with a fixed DDI; Linux uses `mac80211` + `cfg80211`. Impossible OS defines a lean 7-function vtable that any driver can satisfy, with `wifi_manager.c` as the single ownership point for scan results, preferred networks, and syscall dispatch -- no kernel socket layer or `wpa_supplicant` daemon required.
 
@@ -262,6 +263,19 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 - [ ] Commit: `"desktop: ncpa.cpl WiFi tab + netsh wlan -- scan list, connect dialog, signal bars, profiles"`
 
 ---
+
+## 11. Airplane Mode Radio Coordinator
+
+> **Spawned-by:** root
+
+The quick settings Airplane mode tile needs one owner that switches every radio together; today each radio has its own power state and nothing coordinates them.
+
+- [ ] `radio_set_airplane(bool)` turns Wi-Fi (this file) and Bluetooth (`04-drivers-hardware/TODO-16-bluetooth.md`) off together and restores each radio's previous state when turned off
+- [ ] Per-radio overrides while in airplane mode (turning Wi-Fi back on alone stays allowed, as on Windows 11), persisted in the registry and across reboots
+- [ ] Hardware radio switches and the ACPI/HID airplane-mode key report into the same state; change notifications feed the quick settings tile and the tray glyph
+- [ ] Commit: `"drivers: airplane mode radio coordinator -- Wi-Fi and Bluetooth together, per-radio override"`
+
+**Test checkpoint:** toggling the tile turns Wi-Fi and Bluetooth off and back to their previous states; re-enabling only Wi-Fi in airplane mode works; the state survives a reboot. Test on: bare-metal laptop with Wi-Fi and Bluetooth.
 
 ## OS Comparison
 

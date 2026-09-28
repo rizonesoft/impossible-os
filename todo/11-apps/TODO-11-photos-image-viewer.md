@@ -83,6 +83,8 @@ All major image formats are registered to `photos.exe`.
 - [ ] Status bar (bottom 24 px): `"{filename}  {w} × {h} px  {file_size_kb} KB"`
 - [ ] Window title: `"{filename} -- Photos"`
 - [ ] Support CLI arg: `photos.exe C:\path\image.jpg` → open immediately; no arg → `dialog_file_open("Images|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.webp;*.tif;*.tiff|All Files|*.*")`
+- [ ] HEIC/HEIF photos (the default format of modern phone cameras): decide and record the approach before adding code
+  - Candidates are `libheif` with `libde265` (read both LICENSE files; LGPL-3.0 is compatible). HEVC is patent-encumbered, so the decision is also a distribution question; until it is made, show "This format is not supported yet" rather than a broken image
 
 ---
 

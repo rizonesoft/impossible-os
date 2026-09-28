@@ -84,6 +84,17 @@ The Start button (`start.svg`) is the same mark inside the standard 2 px padding
 
 Cursors are a deliberate decision, not a gap: the system keeps the existing Adwaita cursor set (`resources/cursors/`, credited in CREDITS.md) for now. A Windows 11 style cursor redesign is future work; until it exists, no section draws its own cursors.
 
+## How are icons rendered?
+
+Impossible OS is SVG-first (decided 2026-09-28). System icons, cursors and shell glyphs ship as SVG and are drawn at the exact size, scale and theme where they appear, so they are crisp at 100%, 150%, 200% and every size in between. Native apps can carry an SVG icon inside their EIF executable. PNG, ICO, BMP and JPEG stay fully supported for Windows apps and for pictures.
+
+- **Rendering.** A vendored SVG renderer (plutovg and plutosvg) draws each icon once per size, scale, theme and accent and keeps the result in an on-disk icon cache, so an icon is never drawn twice for the same size, and a theme change redraws only what is on screen.
+- **The system SVG profile.** System icons use a fixed subset of SVG: paths and basic shapes, fills and strokes, linear and radial gradients, opacity, transforms, `defs`, `use`, `symbol` and `clipPath`. No masks, filters, text or CSS. The build rejects an icon outside the profile.
+- **Theming.** Icon colours are token names from [`tokens.json`](tokens.json), so light, dark, accent and high contrast re-tint the same source instead of shipping separate files.
+- **The icon engine.** A build-time tool generates icons from shared parts (the monitor used by This PC and Network, the folder, the document), validates every icon, and regenerates only icons whose inputs changed. Every icon is one of three kinds, so polish is never lost: **hand-authored** (the SVG is the source and the engine never rewrites it), **generated** (the definition is the source, and output is byte-for-byte reproducible), or a **per-size override** (a hand-tuned file for one size always wins). A hand edit to generated output fails the check instead of being overwritten.
+
+The work is planned in the [graphics asset foundation roadmap](../../todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md), in its SVG runtime renderer and icon engine sections.
+
 ## Adding or changing an icon
 
 1. Edit or add the SVG in `resources/icons/src/`. Give every gradient an id prefixed with the icon name, so several icons can be inlined into one page without collisions.

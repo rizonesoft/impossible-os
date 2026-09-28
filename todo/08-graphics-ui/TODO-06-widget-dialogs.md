@@ -51,6 +51,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 | 💎  |   6   | §2 TreeView -- hierarchical nodes, expand/collapse, indent, scrollbar, keyboard nav           | §5 ListView (same external data + scrollbar integration pattern)                    |  [ ]   |
 | 💎  |   7   | §4 MenuBar -- horizontal menu bar, popup dropdown, Alt-navigation, accelerators               | §3 toolbar (popup uses same z_order overlay); TODO-04 dropdown pattern              |  [ ]   |
 | 💎  |   8   | §8 Dialog system -- `MessageBox`, file Open/Save, input dialog, color picker, `SYS_MSGBOX=51` | §5+§6 (file dialog uses ListView + TreeView); §3 (nav toolbar); §7 modal            |  [ ]   |
+| 💎  |   9   | §9 Info bar control -- severity strip with glyph, action, close                               | §8                                                                                  |  [ ]   |
 
 ---
 
@@ -241,6 +242,23 @@ Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, 32 px status glyp
 - [ ] Commit: `"desktop/dialogs: MessageBox Win32-compat, file open/save, input, color picker, SYS_MSGBOX=51"`
 
 ---
+
+## 9. Info Bar Control
+
+> **Spawned-by:** root
+
+**Design:** [`controls.md#info-bar`](../../docs/design/controls.md#info-bar), [`controls.md#status-colours`](../../docs/design/controls.md#status-colours)
+
+A reusable status strip for pages and dialogs (update available, restore point created, sign-in error), so apps stop drawing their own.
+
+- [ ] `CTRL_INFOBAR` with severity (informational, success, caution, critical), title, message, optional action button and optional close glyph
+- [ ] Geometry and colours from tokens: `radius.control`, the matching `status_*_bg` fill, a 16 px status glyph, title in `type.body_strong`, minimum height 48, height grows with a wrapped message
+- [ ] Status is never colour alone: each severity carries its glyph and text, and the accessibility tree announces severity and message when the bar appears
+- [ ] Closing collapses the bar with `motion.normal` (instant under reduced motion) and notifies the owner; the action button raises a command notification
+- [ ] Consumers to migrate once this ships: the restore page info bar (`10-platform-services/TODO-04-restore-recovery.md`), update notices, and Settings pages
+- [ ] Commit: `"ui: info bar control -- severity, glyph, action, close"`
+
+**Test checkpoint:** the controls gallery shows all four severities in light and dark with correct glyphs and fills; a long message wraps and grows the bar; close removes it and the owner receives the notification. Test on: QEMU TCG, VirtualBox.
 
 ## OS Comparison
 

@@ -38,17 +38,18 @@ title: "TODO-08 -- SSH & FTP Clients"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                       | Depends On                                                             | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | :----: |
+| ⭐  | Order | Deliverable                                                                                      | Depends On                                                             | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §6 FTP protocol -- TCP 21, USER/PASS, PASV, LIST/RETR/STOR, directory commands                   | TCP socket layer (TODO-02); `dns_resolve()`                            |  [ ]   |
 | 💎  |   2   | §8 FTP shell + GUI -- interactive `ftp host`, subcommands, `wget ftp://`, File Manager `ftp://`  | §1 FTP protocol API                                                    |  [ ]   |
-| 💎  |   3   | §7 FTPS/FTPES -- `AUTH TLS`, `PBSZ 0 PROT P`, encrypted data channel                            | §1 FTP + Mbed TLS from TODO-03                                         |  [ ]   |
+| 💎  |   3   | §7 FTPS/FTPES -- `AUTH TLS`, `PBSZ 0 PROT P`, encrypted data channel                             | §1 FTP + Mbed TLS from TODO-03                                         |  [ ]   |
 | 💎  |   4   | §1 SSH2 transport -- monocypher port, version exchange, packet framing, Curve25519 KEX, ChaCha20 | monocypher compiled to `lib/libmonocypher.a`; TCP socket layer         |  [ ]   |
 | 💎  |   5   | §2 SSH authentication -- password auth, Ed25519 public key auth, `known_hosts` verify            | §4 transport (MAC/cipher must work before auth can be sent securely)   |  [ ]   |
 | 💎  |   6   | §3 SSH channel + PTY -- channel open, pty-req, shell, stdin/stdout relay, window adjust          | §5 auth (must be authenticated before channel can be opened)           |  [ ]   |
 | 💎  |   7   | §4 SSH shell integration -- `ssh user@host`, `scp`, `ssh-keygen` shell commands                  | §6 channel + PTY (must relay I/O before shell command is usable)       |  [ ]   |
 | 💎  |   8   | §5 SSH agent stub -- `SSH_AUTH_SOCK`, in-process key store, `ssh-add`                            | §7 shell (agent is invoked by `ssh` command during auth)               |  [ ]   |
 | 💎  |   9   | §9 SFTP subsystem -- SSH "sftp" subsystem, SFTPv3, `sftp` interactive, `sftp://` File Manager    | §6 channel (SFTP runs over an SSH exec channel); §1 FTP for comparison |  [ ]   |
+| 💎  |  10   | §10 Network browsing and SMB2/3 client -- discovery + UNC shares                                 | --                                                                     |  [ ]   |
 
 ---
 
@@ -227,6 +228,20 @@ SSH channel with `SSH_MSG_CHANNEL_REQUEST "subsystem" "sftp"`. SFTP v3 protocol:
 - [ ] Commit: `"apps/ssh: SFTP subsystem -- SFTPv3 OPEN/READ/WRITE/STAT/OPENDIR/READDIR, sftp interactive, sftp:// URL"`
 
 ---
+
+## 10. Network Browsing and SMB Client
+
+> **Spawned-by:** root
+
+The Network location in File Explorer has nothing to show: there is no discovery of other machines and no SMB client. This section owns both.
+
+- [ ] Vendor-first decision recorded before any code: evaluate `libsmb2` (read its LICENSE; LGPL-2.1-or-later would be compatible) against writing an SMB2/3 client, per CLAUDE.md "Vendor-First Evaluation"
+- [ ] Discovery: WS-Discovery (UDP 3702) and mDNS/DNS-SD for machines on the local network, with NetBIOS name lookup as a fallback; results populate the Network virtual folder
+- [ ] SMB2/3 client: negotiate, session setup (NTLMv2 first), tree connect, directory listing, read and write; mounted under a UNC path (`\\server\share`) through the VFS
+- [ ] Credentials prompt and saved credentials through the credential store (`09-desktop-shell/TODO-06-security-accounts.md`); signing required, SMB1 never offered
+- [ ] Commit: `"net: network browsing and SMB2/3 client -- WS-Discovery, mDNS, UNC paths"`
+
+**Test checkpoint:** a Windows or Samba machine on the LAN appears under Network; opening it lists its shares; copying a file from a share works. Test on: QEMU with user networking to a Samba host, bare metal on a LAN.
 
 ## OS Comparison
 

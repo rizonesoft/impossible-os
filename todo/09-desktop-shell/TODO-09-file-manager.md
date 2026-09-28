@@ -103,6 +103,7 @@ The navigation pane of `docs/design/shell.md#file-explorer`: one flat list -- De
 
 - [ ] `void filemgr_render_sidebar(gfx_surface_t *s, int x, int y, int w, int h)` -- draw sections + rows
 - [ ] Folder entries in design order (Desktop, Downloads, Documents, Pictures, Music, Videos) with `folder_*` icons; separator; This PC; drives; Network
+  - Network lists discovered machines and their shares -> XREF: `07-networking/TODO-08-ssh-ftp-clients.md` §10 (Network Browsing and SMB Client)
 - [ ] Drive enumeration: `for c in 'A'..'Z'`: `vfs_find_mount(c)` → if mounted: add drive entry with free space
 - [ ] `vfs_get_free_space(path, free_bytes_out)` new VFS helper function (reads IXFS/FAT32 metadata)
 - [ ] Active item highlight: compare row path to `g_current_path`; draw 3 px accent left bar
@@ -149,6 +150,8 @@ Ctrl+C → `clipboard_set(CLIP_FILES, path_list)`. Ctrl+X → cut mark. Ctrl+V �
 - [ ] `void filemgr_new_folder(void)` -- `vfs_mkdir(new_path)` + auto-trigger rename inline
 - [ ] `void filemgr_progress_show/update/hide(...)` -- non-modal 300×120 window; progress bar + speed label + Cancel
 - [ ] Keyboard handler: `Ctrl+C` → copy; `Ctrl+X` → cut; `Ctrl+V` → paste; `Del` → trash; `Shift+Del` → permanent; `F2` → rename; `Ctrl+Shift+N` → new folder; `Ctrl+Z` → undo
+- [ ] Name-conflict dialog on copy and move: Replace, Skip, or Keep both (renames to `name (2).ext`), with "Do this for the next N conflicts" and a side-by-side size and date comparison
+  - Uses the standard dialog (`docs/design/controls.md#dialog`); the safe choice (Skip) is the default button; applies equally to paste, drag and drop, and restore from the Recycle Bin
 - [ ] Commit: `"filemgr: file ops -- copy/cut/paste, trash delete, inline F2 rename, new folder, progress, Ctrl+Z undo"`
 
 ## 5. Context Menus `[Sonnet]`

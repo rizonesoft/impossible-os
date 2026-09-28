@@ -114,6 +114,8 @@ Build the reusable editing primitives that controls, Notepad, terminal, and IME 
 - [ ] Add shared helpers for clipboard range extraction, replace-selection, and selection expansion by word/line
 - [ ] Update text controls and terminal integration points to consume the shared caret/hit-test API rather than bespoke pixel math
 - [ ] Add `klog(LOG_INFO, "TEXT", "caret hit-test idx=%u")` bring-up logging for editor paths
+- [ ] Shared undo/redo for every text box: a per-control edit history (insert/delete/replace runs, coalesced by word and pause, grouped IME commits) behind Ctrl+Z / Ctrl+Y and the context menu
+  - Lives in the text-editing services, not in each app: Notepad's 200-action stack (`09-desktop-shell/TODO-10-notepad.md` §3) becomes a consumer of it; bounded memory per control; cleared on programmatic `SetWindowText`
 - [ ] Commit: `"text: editing services -- caret, hit-test, selection rects, composition hooks"`
 
 **Test checkpoint:** Clicking and moving through a wrapped string returns the expected caret index; selection rects match rendered lines; serial shows `"TEXT: caret hit-test"` for deterministic test cases. Test on: QEMU WHPX + TCG; bare metal.

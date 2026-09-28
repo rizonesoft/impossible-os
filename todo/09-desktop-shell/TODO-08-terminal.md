@@ -50,6 +50,7 @@ title: "TODO-08 -- Terminal Emulator"
 | 💎  |   5   | §5 Resize handling -- `terminal_resize(w, h)`, recalc visible cols/rows, `SIGWINCH=28` to shell        | §1 grid; `signal_send()` (exists); `#define SIGWINCH 28` added to `signal.h`           |  [ ]   |
 | 💎  |   6   | §6 Registry settings -- FontName, FontSize, CursorStyle, CursorBlink, Opacity, ScrollbackLines         | §1-§5 all complete; Registry (exists); `WM_THEME_CHANGED` (TODO-01 theme)              |  [ ]   |
 | 💎  |   7   | §7 Advanced features -- tabs, Acrylic bg, split panes, hyperlink detect + Ctrl+click                   | §1–§6 complete; `gfx_acrylic()` (exists); `anim_mgr_add()` (D08 T04)                  |  [ ]   |
+| 💎 | 8 | §8 Pseudo-console (ConPTY) -- any console program in a tab | §3, §6 | [ ] |
 
 ---
 
@@ -174,6 +175,8 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
   - only a user-lowered `Opacity` < 100 switches to acrylic via `gfx_acrylic()` with the menu material (`THEME_MAT_*_MENU_*`) at the chosen opacity, per `docs/design/shell.md#materials` "Terminal", matching Windows Terminal's opt-in acrylic
 - [ ] `WM_THEME_CHANGED` handler → `terminal_load_settings()`; `ttf_get()` with new font size; recalc `cell_w/h`
 - [ ] `terminal_resize()` called after font size change (cell dimensions changed → visible cols/rows change)
+- [ ] Named profiles (Windows Terminal style): each profile has a command line, starting directory, font, colour scheme, cursor and opacity; one is the default; the new-tab menu lists them
+  - Stored under `HKCU\Software\Impossible\Terminal\Profiles\<name>`; the existing single global settings become the default profile
 - [ ] Commit: `"terminal: Registry settings -- FontName/Size/CursorStyle/Blink/Opacity/Scrollback, WM_THEME_CHANGED"`
 
 ## 7. Advanced Features `[Sonnet]`
@@ -200,6 +203,21 @@ Multi-tab strip (each tab = independent `terminal_t` + scrollback). Acrylic tran
 - [ ] Commit: `"terminal: advanced -- multi-tab, Acrylic bg, split panes H/V, hyperlink detect+Ctrl+click"`
 
 ---
+
+## 8. Pseudo-Console (ConPTY)
+
+> **Spawned-by:** root
+
+**Design:** n/a -- console plumbing with no surface of its own; the terminal's look is owned by its window and settings sections
+
+The terminal can only talk to the built-in shell through a pipe. (The SSH client keeps its direct native-terminal path by design, `11-apps/TODO-03-ssh-client.md`: "no ConPTY shim". The pseudo-console is for programs that expect a Win32 console.) Any other console program (a Win32 console app, a Linux binary) needs a pseudo-console: the host side of a console that a terminal window renders.
+
+- [ ] `CreatePseudoConsole`, `ResizePseudoConsole` and `ClosePseudoConsole` with the Win32 signatures, backed by the console host (`10-platform-services/TODO-08-win32-api-surface.md` console section)
+- [ ] The console host translates console API calls from the child (`WriteConsole`, cursor and attribute changes) into VT sequences for the terminal, and terminal input back into console input records
+- [ ] Terminal tabs start their profile's command line through a pseudo-console instead of the shell pipe; resize propagates to the child
+- [ ] Commit: `"terminal: pseudo-console (ConPTY) -- any console program in a terminal tab"`
+
+**Test checkpoint:** a Win32 console test program that uses `SetConsoleCursorPosition` and colour attributes renders correctly in a terminal tab and resizes with the window. Test on: QEMU TCG.
 
 ## OS Comparison
 
