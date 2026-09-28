@@ -54,7 +54,7 @@ file_patterns:
 | ⭐  |   1   | §1 Site generator, project facts, coverage and drift gate                | --         |  [x]   |
 | 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1         |  [x]   |
 | ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [x]   |
-| 💎  |   4   | §4 Document: Infrastructure and host tools (17 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [ ]   |
 | 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [ ]   |
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [ ]   |
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [ ]   |
@@ -76,6 +76,7 @@ file_patterns:
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1         |  [ ]   |
 | 💎  |  24   | §24 Versioned release docs: retention, pinned refs, SDK reference        | §1, §23    |  [ ]   |
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1         |  [ ]   |
+| 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -186,9 +187,11 @@ Every later section writes pages against this contract, so it must exist first a
 
 ---
 
-## 4. Document: Infrastructure and host tools
+## 4. Document: Infrastructure
 
-Write docs pages that meet the §3 contract for the 17 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+> **Spawned-by:** root
+
+Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
 - [ ] Pages in `docs/infrastructure/` for the next 3 roadmap files, each with its `covers=` directive
   - `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` (TODO-01 -- Developer Tooling Stack)
@@ -202,19 +205,8 @@ Write docs pages that meet the §3 contract for the 17 roadmap files below. Read
   - `todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md` (TODO-07 -- LSP to MCP Bridge)
   - `todo/00-infrastructure/TODO-08-automation-hardening.md` (TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration))
   - `todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md` (TODO-09 -- Repository Transfer to rizonetech)
-- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- SDK Build System)
-  - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux))
-  - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver))
-- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-04-crash-decode.md` (TODO-04 -- crash-decode (Post-Mortem Crash Analyzer))
-  - `todo/14-host-tools/TODO-05-serial-analyze.md` (TODO-05 -- serial-analyze (Boot Log Analyzer))
-  - `todo/14-host-tools/TODO-06-disk-inspect.md` (TODO-06 -- disk-inspect (Disk Image Browser))
-- [ ] Pages in `docs/host-tools/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-07-ixfs-fsck.md` (TODO-07 -- ixfs-fsck (Filesystem Consistency Checker))
-  - `todo/14-host-tools/TODO-08-blackbox-log-extractor.md` (TODO-08 -- BlackBox Log Extractor)
 - [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: infrastructure and host tools documentation pages"`
+- [ ] Commit: `"docs: infrastructure documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -798,13 +790,37 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 
 ---
 
+## 26. Document: Host tools
+
+> **Spawned-by:** §4 (split)
+
+Write docs pages that meet the §3 contract for the 8 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Split out of §4 because 17 pages is more than one worker context; the host-tools files share one folder and no dependency on the infrastructure pages.
+
+- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- SDK Build System)
+  - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux))
+  - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver))
+- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-04-crash-decode.md` (TODO-04 -- crash-decode (Post-Mortem Crash Analyzer))
+  - `todo/14-host-tools/TODO-05-serial-analyze.md` (TODO-05 -- serial-analyze (Boot Log Analyzer))
+  - `todo/14-host-tools/TODO-06-disk-inspect.md` (TODO-06 -- disk-inspect (Disk Image Browser))
+- [ ] Pages in `docs/host-tools/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-07-ixfs-fsck.md` (TODO-07 -- ixfs-fsck (Filesystem Consistency Checker))
+  - `todo/14-host-tools/TODO-08-blackbox-log-extractor.md` (TODO-08 -- BlackBox Log Extractor)
+- [ ] Add `docs/host-tools/index.md` (the folder's first pages), add every new page to it, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: host tools documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/14-host-tools/` file; each page renders on the local build. Test on: WSL2 dev host.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                          | 🪟 Win11                 | 🐧 Linux                   | 🚀 Impossible OS          |
 | --- | -------------------------------- | ------------------------ | -------------------------- | ------------------------- |
 | 💎  | Docs generated from in-tree text | ⚠️ Learn, separate repos | ✅ Sphinx `Documentation/` | ✅ §1 `docs/` to site     |
 | ⭐  | Build fails on dead doc links    | ❌ Not enforced          | ⚠️ Warnings only           | ✅ §1 Check 30 error      |
-| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21 coverage gate   |
+| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21, §26 coverage   |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §24 retained snapshots |
@@ -814,7 +830,7 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 | 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⬜ §25 ARIA + checks      |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
-> **After §4-§21:** every roadmap file is documented and the baseline is empty.
+> **After §4-§21 and §26:** every roadmap file is documented and the baseline is empty.
 > **After §22-§25:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
 
 ---
