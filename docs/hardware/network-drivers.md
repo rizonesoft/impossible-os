@@ -7,9 +7,9 @@ Network drivers connect the TCP/IP stack to a wired network card. Impossible OS 
 
 ## How does it work?
 
-**One card, wired straight in.** `rtl8139_init()` in [`rtl8139.c`](../../src/kernel/drivers/rtl8139.c) looks for PCI vendor `0x10EC`, device `0x8139` ([`rtl8139.h`](../../include/kernel/drivers/rtl8139.h)). It resets the chip, reads the MAC and sets up one receive ring and four transmit buffers using port I/O. A machine without the card logs `NIC not found on PCI bus` and boots on without networking; a found card logs `RTL8139 NIC initialized (IRQ N)`.
+**One card, wired straight in.** `rtl8139_init()` in [`rtl8139.c`](../../src/kernel/drivers/rtl8139.c) looks for PCI vendor `0x10EC`, device `0x8139` ([`rtl8139.h`](../../include/kernel/drivers/rtl8139.h)). It resets the chip, reads the MAC and sets up one receive ring and four transmit buffers using port I/O. A machine without the card logs `NIC not found on PCI bus` and boots on without networking, and a reset timeout or buffer allocation failure also abandons the card. A found card logs `RTL8139 NIC initialized (IRQ N)` at debug level.
 
-**Interrupts and receive.** On a machine with an I/O APIC the driver requests its interrupt through the GSI router; otherwise it falls back to a legacy IRQ line. The interrupt handler drains the receive ring and normally copies each frame to a work item on the system work queue (`sys_wq`), so `net_rx()` runs in thread context. Two fallbacks call `net_rx()` directly inside the interrupt: early boot before `sys_wq` exists, and a failed work-item allocation. If the work queue is full, the frame is dropped. Protocol code must therefore be safe in both contexts. Error bits are handled in a DPC.
+**Interrupts and receive.** On a machine with an I/O APIC the driver requests its interrupt through the GSI router; otherwise it falls back to a legacy IRQ line. If routing fails (`INTx GSI N not routable -- IRQ disabled`) or the PCI IRQ line is not a valid legacy line (`not a valid ISA line -- IRQ disabled`), initialisation still succeeds and can send, but nothing ever receives: the interrupt handler is the only caller of `rtl8139_receive()`, with no polling fallback, so DHCP never completes. The interrupt handler drains the receive ring and normally copies each frame to a work item on the system work queue (`sys_wq`), so `net_rx()` runs in thread context. Two fallbacks call `net_rx()` directly inside the interrupt: early boot before `sys_wq` exists, and a failed work-item allocation. If the work queue is full, the frame is dropped. Protocol code must therefore be safe in both contexts. Error bits are handled in a DPC.
 
 **The stack above it.** [`ethernet.c`](../../src/kernel/net/ethernet.c) is the Ethernet layer. `net_init()` copies the MAC from `rtl8139_get_mac()`, `eth_send()` calls `rtl8139_send()`, and `net_rx()` dispatches ARP and IPv4 frames. The IPv4, ICMP, UDP and DHCP code beside it belongs to the networking roadmaps. At boot, `deferred_net_init` in [`boot_storage.c`](../../src/kernel/main/boot_storage.c) brings up the card, the stack and a DHCP request, in that order.
 
@@ -37,7 +37,7 @@ flowchart LR
 
 ## How do I use it?
 
-The QEMU launchers ([`run-qemu-kvm.sh`](../../scripts/machines/run-qemu-kvm.sh), [`run-qemu-tcg.sh`](../../scripts/machines/run-qemu-tcg.sh)) already attach an RTL8139 card (`-device rtl8139,netdev=net0`). Boot one and look for the driver line and the DHCP lease in the serial log:
+The QEMU launchers ([`run-qemu-kvm.sh`](../../scripts/machines/run-qemu-kvm.sh), [`run-qemu-tcg.sh`](../../scripts/machines/run-qemu-tcg.sh)) already attach an RTL8139 card (`-device rtl8139,netdev=net0`). Boot one and look for the driver line and the DHCP lease in the serial log; the driver line alone does not prove receive works, the lease does:
 
 ```text
 RTL8139 NIC initialized (IRQ <n>)

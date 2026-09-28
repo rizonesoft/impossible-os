@@ -3,7 +3,7 @@
 
 ## What is it?
 
-The driver certification matrix is the planned release gate for drivers and hardware. It turns every driver promise into a check: a VM test, a fixture or a bare-metal checklist covering enumeration, probe, I/O, suspend and resume, hot-plug, error recovery, diagnostics and removal, with each hardware class given a support tier. Nothing in this roadmap has shipped. Boot certification, a separate and narrower matrix, already exists and is the model this one follows.
+The driver certification matrix is the planned release gate for drivers and hardware. It turns every driver promise into a check: a VM test, a fixture or a bare-metal checklist covering enumeration, probe, I/O, suspend and resume, hot-plug, error recovery, diagnostics and removal, with each hardware class given a support tier. Nothing in this roadmap has shipped. Boot certification, a separate and narrower matrix, is partly built and is the model this one follows.
 
 ## What exists today?
 
@@ -11,7 +11,7 @@ The driver certification matrix is the planned release gate for drivers and hard
 
 The boot matrix is itself unfinished: its schema, linter and reliability tooling ship, but several of its suites and its release gate are still open, as its page explains.
 
-**Automated VM coverage.** A separate smoke check, [`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh), boots a build on QEMU with KVM and TCG at one and two CPUs and writes logs, not certification results; and the [machine matrix](../infrastructure/machine-matrix.md) lists the QEMU and VirtualBox launchers and their emulated devices. Individual driver suites (storage, USB HID, AHCI) run in the kernel test runner. None of this is organised per driver or per hardware class.
+**Automated VM coverage.** A separate smoke check, [`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh), boots a build on QEMU at one and two CPUs in legs labelled TCG and KVM and writes logs, not certification results. The TCG legs force TCG, but the KVM legs use KVM only when `/dev/kvm` is writable; otherwise they also run under TCG, so check the accelerator in each leg's log before claiming both engines were tested. The [machine matrix](../infrastructure/machine-matrix.md) lists the QEMU and VirtualBox launchers and their emulated devices. Individual driver suites (storage, USB HID, AHCI) run in the kernel test runner. None of this is organised per driver or per hardware class.
 
 ## How will it work?
 

@@ -13,7 +13,7 @@ The Wi-Fi roadmap plans wireless networking for Impossible OS: a common driver i
 
 **Security.** The supplicant runs the EAPOL four-way handshake and CCMP encryption in the kernel. Random nonces come from the kernel CSPRNG (`csprng_fill()` in [`csprng.h`](../../include/kernel/csprng.h)). The roadmap names a `hwrng_read()` source that does not exist, and plans its own AES-CCM, PBKDF2 and HMAC-SHA1 code; the vendored mbedtls library already provides PBKDF2 and constant-time compare, which the project's vendor-first rule would prefer.
 
-**Firmware.** Every supported chip needs a vendor firmware blob at start-up, so the drivers depend on the [Firmware Loader](firmware-loader.md), which is also unshipped.
+**Firmware.** Every supported chip needs a vendor firmware blob at start-up. The chip sections plan their own interim loading (the RTL8188 section embeds its blob in the driver), and the firmware roadmap's [Driver Conversion Pass](../../todo/04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md#9-driver-conversion-pass) later moves every Wi-Fi driver to the shared [Firmware Loader](firmware-loader.md) and its integrity and provenance checks. Both are unshipped.
 
 ```mermaid
 flowchart LR

@@ -101,7 +101,7 @@ Extract the existing VBE DISPI register code from `framebuffer.c` into a standal
 > VBE DISPI I/O ports: `VBE_DISPI_IOPORT_INDEX = 0x01CE`, `VBE_DISPI_IOPORT_DATA = 0x01CF`. Registers: `XRES (1)`, `YRES (2)`, `BPP (3)`, `ENABLE (4)`, `BANK (5)`, `VIRT_WIDTH (6)`, `VIRT_HEIGHT (7)`, `X_OFFSET (8)`, `Y_OFFSET (9)`. QEMU device IDs: `{ 0x1234, 0x1111 }` (Bochs), `{ 0x1B36, 0x0100 }` (QEMU stdvga).
 
 - [ ] PCI match: `{ 0x1234, 0x1111 }` (Bochs/QEMU stdvga), `{ 0x1B36, 0x0100 }` (QEMU VGA)
-- [ ] Extract `vbe_set_mode(w, h, bpp)` from `framebuffer.c`: write `XRES`, `YRES`, `BPP`, `ENABLE=1`; map LFB from BAR0
+- [ ] Write `vbe_set_mode(w, h, bpp)` (new; `framebuffer.c` has no mode-set, only the ID probe and page flip): write `XRES`, `YRES`, `BPP`, `ENABLE=1`; map LFB from BAR0
 - [ ] `VIRT_HEIGHT = h * 2`: allocate double-height virtual framebuffer (two page buffers stacked vertically)
 - [ ] `display_page_flip(back_page)`: write `Y_OFFSET = h` (display second half) or `Y_OFFSET = 0` (display first half); compositor alternates pages for tear-free updates
 - [ ] `display_flush_rect(x,y,w,h)`: for non-page-flip path (single buffer), no-op (pixels are already in LFB); update `dirty_rect` for callers that want it

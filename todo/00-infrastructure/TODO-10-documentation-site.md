@@ -610,6 +610,9 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 > - **Status honesty:** none of the twelve roadmaps has a shipped section; each page says what works today (the RTL8139, the GOP framebuffer, the console UART, the disabled EC) and why the rest does not.
 > - **Found on the way:** the Ethernet layer is hard-wired to the RTL8139, so no second NIC can register until TODO-14 §2 adds a driver table.
 
+> **Verified:** 2026-09-28 | commit `49050d9ba` | 8/8 items | build OK | site: OK, 125/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-28 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 14M fixed, 0 open | scope: N/A (docs-only; no source changed; re-adversarial skipped: docs-only fixes)
+
 ---
 
 ## 14. Document: Storage and filesystems
