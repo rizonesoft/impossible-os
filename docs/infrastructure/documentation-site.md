@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh reviewed=2026-09-28 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml reviewed=2026-09-28 -->
 # Documentation Site
 
 The documentation you are reading is generated from the Markdown files in the repository's `docs/` folder and published to [impossibleos.co/docs](https://impossibleos.co/docs/) on every push to `main`. The same generator builds the landing page and the [desktop design mockup](https://impossibleos.co/design/), and it refuses a commit when anything published would disagree with its source.
@@ -64,6 +64,8 @@ A page that documents code names that code in its directive, and records when it
 
 A page is stale when its `sources` differ between the commit that last changed the page's content and the tree being checked. The comparison is on content, not history, so a change that was reverted does not count, a file deleted from a source directory does, and a page that was only renamed keeps its old baseline. Landing page feature cards work the same way, each card with its own baseline.
 
+To mark a still-accurate page as reviewed, change its `reviewed=` value: that edit is what moves the page's baseline commit. A second review on the same day uses minute precision, `reviewed=2026-09-28T08:07`, because repeating the date would not be an edit.
+
 Stale pages are warnings, never errors, because a code change is not always a docs change. A page whose history git cannot read, in a shallow clone or because git failed, is reported as unknown with the reason, and a git failure also prints a warning. Lint Check 30 prints them on every commit, `python3 scripts/site/build.py --freshness` lists every tracked page and its state, and the [coverage page](https://impossibleos.co/docs/coverage.html) shows a freshness table. Editing the page clears the warning; if the page is still accurate, bump its `reviewed=` date, which is a content change. A source must be a tracked file or directory, or the check fails.
 
 ## How are the landing page feature cards kept true?
@@ -73,6 +75,14 @@ The cards under "What Works Today" come from `gh-pages/features.json`. Each card
 ## How is the GitHub About box kept in sync?
 
 The repository description, homepage and topics are published text too, but they live in the repository settings rather than the tree. They come from `project.json` (`tagline`, `site_url`, `topics`). `scripts/site/repo_meta.py --apply` writes them to GitHub, and `.github/workflows/repo-metadata.yml` runs `repo_meta.py --check` on every change to them and once a day, so an edit made in the GitHub web interface turns that workflow red. Change the values in `project.json` and run `--apply`; never edit them on GitHub.
+
+## How do we know the live site matches the tree?
+
+Every check above is about the SOURCES. The site people load is a separate copy, and a failed deploy, a deploy of an older commit or a stale CDN edge would keep serving old facts, such as a replaced donate link, while every local check stays green. The site build is byte-reproducible, so `scripts/site/verify_live.py` builds the tree, fetches every built file back from `project.json`'s `site_url` with a cache-busting query, and compares SHA-256. It reports each file as `DIFFERS`, `MISSING` or `UNREACHABLE`, and exits 1 on any of them.
+
+It runs in two places. The Pages workflow's `verify` job runs it after every deploy (6 attempts, 30 seconds apart, for CDN propagation), so a deploy is only green once the live site is that commit's build. `.github/workflows/site-live.yml` runs it every six hours; on drift it redeploys `main` and fails, so the red run is the report and the redeploy is the repair, and the redeploy's own `verify` job proves the repair worked. Run it by hand with `python3 scripts/site/verify_live.py`.
+
+Browsers and the CDN may still show a page up to ten minutes old (GitHub Pages sends `Cache-Control: max-age=600`), so a change you pushed can look missing for a few minutes after the deploy turns green.
 
 ## How do I work on the site?
 

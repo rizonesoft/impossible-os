@@ -62,3 +62,20 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # The deploy step reporting success is not proof the site people load is this
+  # commit's build. Fetch every built file back from the live site and compare
+  # bytes (the build is reproducible); retries cover CDN propagation.
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet PyYAML
+
+      - name: Live site is byte-identical to this commit's build
+        run: python3 scripts/site/verify_live.py --retries 6 --wait 30

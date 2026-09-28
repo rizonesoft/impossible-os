@@ -265,6 +265,21 @@ ALERT_RE = re.compile(
     r"<blockquote>\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br\s*/?>)?\s*", re.S)
 
 
+
+def valid_reviewed(value) -> bool:
+    """reviewed= is a date (YYYY-MM-DD) or, for a second review on the same day,
+    a minute-precision time (YYYY-MM-DDTHH:MM). Staleness is decided by COMMIT,
+    so bumping the value is what re-baselines a page; a date-only field left no
+    honest way to re-review a page twice in one day."""
+    import re as _re
+    if not isinstance(value, str) or not _re.fullmatch(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?", value):
+        return False
+    try:
+        _dt.datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
 def parse_directives(text: str) -> dict[str, str]:
     """Directives count only ABOVE the first heading, so an example directive
     quoted later in the page (as the site docs do) is never mistaken for it."""
@@ -611,11 +626,8 @@ def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Rendere
         page.covers = [c.strip() for c in d.get("covers", "").split(",") if c.strip()]
         page.sources = directive_sources(text)
         page.reviewed = d.get("reviewed", "")
-        if page.reviewed:
-            try:
-                _dt.date.fromisoformat(page.reviewed)
-            except ValueError:
-                errors.append(f"docs/{page.rel}: reviewed= must be a YYYY-MM-DD date, got {page.reviewed!r}")
+        if page.reviewed and not valid_reviewed(page.reviewed):
+            errors.append(f"docs/{page.rel}: reviewed= must be YYYY-MM-DD or YYYY-MM-DDTHH:MM, got {page.reviewed!r}")
         if "order" in d:
             page.order = int(d["order"])
         if "title" in d:
@@ -824,11 +836,8 @@ def feature_cards(facts: dict, errors: list[str]) -> str:
             if o not in known:
                 errors.append(f"{where}: owner is not a roadmap file: {o}")
         check_sources(where, [x.rstrip("/") for x in sources], errors)
-        if card.get("reviewed"):
-            try:
-                _dt.date.fromisoformat(card["reviewed"])
-            except (TypeError, ValueError):
-                errors.append(f"{where}: reviewed must be a YYYY-MM-DD date, got {card['reviewed']!r}")
+        if card.get("reviewed") and not valid_reviewed(card["reviewed"]):
+            errors.append(f"{where}: reviewed must be YYYY-MM-DD or YYYY-MM-DDTHH:MM, got {card['reviewed']!r}")
         for field in ("title", "text"):
             if any(d in card.get(field, "") for d in (chr(0x2014), chr(0x2013))):
                 errors.append(f"{where}: {field} contains an em or en dash")

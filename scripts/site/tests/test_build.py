@@ -646,5 +646,73 @@ class RepoMeta(unittest.TestCase):
         for needle in ("description:", "homepage:", "missing on GitHub: x86-64", "not in project.json: hobby-os"):
             self.assertIn(needle, d)
 
+class ReviewedFormat(unittest.TestCase):
+    """A date, or a minute-precision time for a second review the same day;
+    anything else is refused."""
+
+    def test_accepted(self):
+        for v in ("2026-09-28", "2026-09-28T08:30"):
+            self.assertTrue(B.valid_reviewed(v), v)
+
+    def test_refused(self):
+        for v in ("2026-9-28", "2026-02-30", "2026-09-28T25:00", "2026-09-28T08:30:00",
+                  "2026-09-28 08:30", "yesterday", "", None, 20260928):
+            self.assertFalse(B.valid_reviewed(v), repr(v))
+
+
+class VerifyLive(unittest.TestCase):
+    """verify_live.py against a local HTTP server: identical passes; a changed,
+    a missing and an unreachable file each FAIL (the refusal directions)."""
+
+    def setUp(self):
+        import functools
+        import http.server
+        import threading
+        import verify_live as V
+        self.V = V
+        self.built = Path(tempfile.mkdtemp(prefix="vl-built-"))
+        self.live = Path(tempfile.mkdtemp(prefix="vl-live-"))
+        for d in (self.built, self.live):
+            (d / "docs").mkdir()
+            (d / "index.html").write_text("<a href=donate>new</a>")
+            (d / "docs" / "index.html").write_text("docs")
+            (d / "logo.svg").write_text("<svg/>")
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(self.live))
+        handler.log_message = lambda *a, **k: None
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.srv.server_address[1]}/"
+
+    def tearDown(self):
+        self.srv.shutdown()
+
+    def test_identical_passes(self):
+        self.assertEqual(self.V.compare(self.built, self.base, "t"), [])
+
+    def test_changed_file_fails(self):
+        (self.live / "index.html").write_text("<a href=donate>old</a>")
+        self.assertEqual(self.V.compare(self.built, self.base, "t"), ["DIFFERS     index.html"])
+
+    def test_missing_file_fails(self):
+        (self.live / "logo.svg").unlink()
+        self.assertEqual(self.V.compare(self.built, self.base, "t"), ["MISSING     logo.svg"])
+
+    def test_unreachable_site_fails(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        out = self.V.compare(self.built, self.base, "t")
+        self.assertEqual(len(out), 3)
+        self.assertTrue(all(p.startswith("UNREACHABLE") for p in out))
+
+    def test_empty_build_fails(self):
+        empty = Path(tempfile.mkdtemp(prefix="vl-empty-"))
+        self.assertEqual(self.V.compare(empty, self.base, "t"), ["EMPTY BUILD: nothing to compare"])
+
+    def test_index_paths(self):
+        self.assertEqual(self.V.live_path("index.html"), "")
+        self.assertEqual(self.V.live_path("docs/index.html"), "docs/")
+        self.assertEqual(self.V.live_path("logo.svg"), "logo.svg")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

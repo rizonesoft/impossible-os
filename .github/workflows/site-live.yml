@@ -1,0 +1,42 @@
+name: Live site drift
+
+# Detect AND repair drift between the deployed site (impossibleos.co) and main.
+# pages.yml verifies right after each deploy; this catches what happens later or
+# without a push: a failed deploy nobody noticed, a stale CDN edge, a Pages
+# outage that restored an old build. On drift it redeploys main and fails, so
+# the red run is the report and the redeploy is the repair; the redeploy's own
+# verify job then proves the repair worked. It never redeploys from a
+# workflow_run, so a build that cannot match the live site cannot loop.
+
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet PyYAML
+
+      - name: Live site is byte-identical to main
+        id: verify
+        run: python3 scripts/site/verify_live.py --retries 3 --wait 60
+
+      - name: Repair -- redeploy main
+        if: failure() && steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"

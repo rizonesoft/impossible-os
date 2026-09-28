@@ -641,7 +641,7 @@ Test files live in `src/kernel/test/`, are named `test_<subsystem>.c`, and regis
 **Safety rules** (see CLAUDE.md "Test Code -- No Live Boot Infrastructure Calls"): test files must never call `boot_progress`, `vpd_stage_*`, `panic`, `_init()`, or any live boot-path function. A pre-commit hook enforces this. Use pure helpers + readiness oracles.
 
 > [!NOTE]
-> Coverage report auto-generated on every build: `docs/test-coverage/coverage.md`. Manual: `bash scripts/test-coverage.sh`.
+> Coverage report auto-generated on every build: `docs/test-coverage/coverage.md`. Manual: `bash scripts/test-coverage.sh`. The assertion column counts `TEST_ASSERT*(` CALLS outside comments (since 2026-09-28; a comment naming the macro used to count, and two calls on one line counted once).
 
 ### Test Wrapper
 
