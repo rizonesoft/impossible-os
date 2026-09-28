@@ -7,11 +7,11 @@ Btrfs is the default filesystem on Fedora Workstation and openSUSE and the recom
 
 ## How does it work?
 
-**Today.** `probe_filesystem()` in [`partition.c`](../../src/kernel/fs/partition.c) checks each partition for IXFS, NTFS, FAT32 and ext2. There is no Btrfs check, so a Btrfs partition is classed `PART_FS_UNKNOWN` ([`partition.h`](../../include/kernel/fs/partition.h)) and skipped. The one piece the driver can reuse already exists: `kcrc32c()` in [`kchecksum.h`](../../include/kernel/kchecksum.h), the CRC32C that Btrfs uses for its superblock and every tree node.
+**Today.** `probe_filesystem()` in [`partition.c`](../../src/kernel/fs/partition.c) checks each partition for IXFS, NTFS, FAT32 and ext2. There is no Btrfs check, so a Btrfs partition is classed `PART_FS_UNKNOWN` ([`partition.h`](../../include/kernel/fs/partition.h)) and skipped. The one piece the driver can reuse already exists: `kcrc32c()` in [`kchecksum.h`](../../include/kernel/kchecksum.h). CRC32C is Btrfs's default checksum; a volume created with xxhash, SHA-256 or BLAKE2b checksums will need its checksum type read from the superblock and, until those are supported, refused rather than reported as corrupt.
 
 **Planned design.** Btrfs stores everything in B-trees that address data by logical address, so the order of work is fixed:
 
-1. Read the superblock at 64 KiB and verify its CRC32C, falling back to the backup copies.
+1. Read the superblock at 64 KiB, check its checksum type, and verify its CRC32C, falling back to the backup copies.
 2. Parse B-tree nodes and leaves, checking each node's checksum.
 3. Build the chunk map that turns logical addresses into physical ones. It bootstraps from the small chunk array inside the superblock, then reads the full chunk tree; single-device and RAID1 layouts are in scope, and a RAID5 or RAID6 volume is refused.
 4. A generic tree search and walk.

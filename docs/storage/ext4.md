@@ -3,7 +3,7 @@
 
 ## What is it?
 
-ext4 is the default filesystem of Ubuntu, Fedora, Debian and most other Linux distributions, so it is what a dual-boot machine's Linux partition and many external Linux disks use. Impossible OS recognises an ext2, ext3 or ext4 partition by its magic number but has no driver, so it never mounts one. This roadmap writes a read-write driver from scratch in twelve sections, none of them started.
+ext4 is the default filesystem of Ubuntu, Debian and most other Linux distributions (Fedora Workstation has used Btrfs since Fedora 33), so it is what a dual-boot machine's Linux partition and many external Linux disks use. Impossible OS recognises an ext2, ext3 or ext4 partition by its magic number but has no driver, so it never mounts one. This roadmap writes a read-write driver from scratch in twelve sections, none of them started.
 
 ## Why is it written from scratch?
 

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/05-storage-filesystems/TODO-05-win32-file-io-api.md sources=src/kernel/nt/nt_syscall.c,src/kernel/nt/nt_file.c,include/kernel/nt/nt_file.h,src/kernel/ob/ob_file.c,include/kernel/ob/ob_file.h,user/lib/win32.c,src/kernel/pe.c reviewed=2026-09-28 order=5 -->
+<!-- docs: covers=todo/05-storage-filesystems/TODO-05-win32-file-io-api.md sources=src/kernel/fs/fat32/fat32_ops.c,src/kernel/nt/nt_syscall.c,src/kernel/nt/nt_file.c,include/kernel/nt/nt_file.h,src/kernel/ob/ob_file.c,include/kernel/ob/ob_file.h,user/lib/win32.c,src/kernel/pe.c reviewed=2026-09-28 order=5 -->
 # Win32 File I/O
 
 ## What is it?
@@ -13,7 +13,7 @@ Win32 file I/O is how a program opens, reads, writes and lists files through han
 
 **Reading and writing.** `NtReadFile` and `NtWriteFile` call `vfs_read()` and `vfs_write()` at the handle's position or an explicit offset, and return `STATUS_END_OF_FILE` at the end. The VFS offset is 32 bits, so a file position past 4 GiB cannot be reached. All I/O is synchronous: `NtCancelIoFile` succeeds without doing anything, and completion ports exist (16 ports of 64 entries, [`nt_file.h`](../../include/kernel/nt/nt_file.h)) but no file I/O posts to them asynchronously.
 
-**Metadata and directories.** [`nt_file.c`](../../src/kernel/nt/nt_file.c) answers basic, standard, name, position and network-open information, and sets basic, disposition, position, end-of-file, rename and allocation information. Rename works within one directory and cannot replace. Attributes are reported only as normal or directory. File times are counted from 2026-01-01 plus the filesystem's seconds, so a FAT32 file, whose `stat` returns zero, shows that date. `NtQueryDirectoryFile` supports the legacy, directory, both-directory and ID-both-directory classes.
+**Metadata and directories.** [`nt_file.c`](../../src/kernel/nt/nt_file.c) answers basic, standard, name, position and network-open information, and sets basic, disposition, position, end-of-file, rename and allocation information. Rename works within one directory and cannot replace. Attributes are reported only as normal or directory. File times are a fixed base plus the filesystem's seconds. The code comment calls the base 2026-01-01, but the constant in `vfs_seconds_to_filetime()` is 2024-12-30 10:40 UTC, so a FAT32 file, whose `stat` returns zero, shows that date. `NtQueryDirectoryFile` supports the legacy, directory, both-directory and ID-both-directory classes.
 
 **What refuses.** `NtDeviceIoControlFile`, `NtFsControlFile` and `NtNotifyChangeDirectoryFile` return `STATUS_INVALID_DEVICE_REQUEST`. `NtQueryVolumeInformationFile` returns the same fixed label, serial, filesystem name and size for every drive ([Volume Management](volume-management.md)).
 
@@ -53,7 +53,7 @@ Call the NT functions from a native program; the `NTSTATUS` result is the only d
 
 ## How does it compare with Windows 11 and Linux?
 
-Windows 11 routes every file request through IRPs in `ntoskrnl.exe`, with MDLs, overlapped I/O, completion ports, `fltmgr.sys` filters and `ReadDirectoryChangesW`. Linux has no IRPs: its VFS calls each filesystem's `file_operations`, with `io_uring` for asynchronous I/O and `inotify` for notifications. Impossible OS is closer to Linux inside (NT calls straight onto the VFS, all synchronous) while presenting NT-shaped calls to programs.
+Windows 11 sends file requests to filesystems as IRPs, with a Fast I/O path that skips the IRP for cached reads, writes, queries and locks, and adds MDLs, overlapped I/O, completion ports, `fltmgr.sys` filters and `ReadDirectoryChangesW`. Linux has no IRPs: its VFS calls each filesystem's `file_operations`, with `io_uring` for asynchronous I/O and `inotify` for notifications. Impossible OS is closer to Linux inside (NT calls straight onto the VFS, all synchronous) while presenting NT-shaped calls to programs.
 
 ## See also
 

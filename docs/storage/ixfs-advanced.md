@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md sources=include/kernel/fs/ixfs.h,src/kernel/fs/ixfs/ixfs_journal.c,src/kernel/fs/ixfs/ixfs_cow.c,src/kernel/fs/ixfs/ixfs_extent.c,src/kernel/fs/ixfs/ixfs_format.c,src/kernel/fs/ixfs/ixfs_fsck.c,src/kernel/fs/ixfs/ixfs_ops.c,src/kernel/test/test_ixfs_fsck.c reviewed=2026-09-28 order=7 -->
+<!-- docs: covers=todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md sources=include/kernel/fs/ixfs.h,src/kernel/fs/ixfs/ixfs_core.c,src/kernel/fs/ixfs/ixfs_journal.c,src/kernel/fs/ixfs/ixfs_cow.c,src/kernel/fs/ixfs/ixfs_extent.c,src/kernel/fs/ixfs/ixfs_format.c,src/kernel/fs/ixfs/ixfs_fsck.c,src/kernel/fs/ixfs/ixfs_ops.c,src/kernel/test/test_ixfs_fsck.c reviewed=2026-09-28 order=7 -->
 # IXFS Advanced Storage
 
 ## What is it?
@@ -9,7 +9,7 @@ This roadmap adds the features meant to put IXFS ahead of NTFS: sparse files, TR
 
 **Journal.** [`ixfs_journal.c`](../../src/kernel/fs/ixfs/ixfs_journal.c) keeps a 16-block (64 KiB) circular journal. A transaction holds at most eight blocks; `ixfs_txn_commit()` writes a commit record, copies each block to its final place and marks the journal empty, and `ixfs_journal_recover()` replays what is left at mount. Only block-bitmap and superblock updates go through it. Each entry stores 4080 bytes of its 4096-byte block and checks them with an additive byte sum, and recovery does not check for a commit record before replaying; the defect is filed under [Subsystem Verification](../../todo/05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md#1-subsystem-verification-sonnet).
 
-**Snapshots.** [`ixfs_cow.c`](../../src/kernel/fs/ixfs/ixfs_cow.c) keeps a per-block reference count and up to eight named snapshots (`IXFS_MAX_SNAPSHOTS` in [`ixfs.h`](../../include/kernel/fs/ixfs.h)). A snapshot copies the inode table and raises the reference count of every block in use, so later writes copy the block instead of overwriting it. `ixfs_snapshot_restore()` ignores read and write failures and still logs success.
+**Snapshots.** [`ixfs_cow.c`](../../src/kernel/fs/ixfs/ixfs_cow.c) keeps a per-block reference count and up to eight named snapshots (`IXFS_MAX_SNAPSHOTS` in [`ixfs.h`](../../include/kernel/fs/ixfs.h)). A snapshot copies the inode table and raises the reference count of every block in use, so later writes copy the block instead of overwriting it. Snapshots are not safe to rely on yet: `ixfs_snapshot_create()` allocates one block but writes the whole inode table (several blocks) from that block onward, which can overwrite live data, and `ixfs_snapshot_restore()` ignores read and write failures and still logs success. Both are open items in [Inode-Table + On-Disk-Layout Hardening](../../todo/05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md#16-inode-table--on-disk-layout-hardening).
 
 **Checksums and scrub.** The checksum table holds a CRC32C per block, but only data blocks are covered: `ixfs_checksum_verify()` in [`ixfs_core.c`](../../src/kernel/fs/ixfs/ixfs_core.c) skips every block before the data region (superblock, bitmap, checksum table, inode table, journal, refcount and snapshot tables) and any block whose entry is zero. A mismatch on read logs a warning and the data is returned anyway. `ixfs_scrub()` in [`ixfs_format.c`](../../src/kernel/fs/ixfs/ixfs_format.c) walks the allocated data blocks with the same exclusions and reports mismatches; it does not repair them.
 
@@ -40,7 +40,7 @@ flowchart LR
 
 ## How do I use it?
 
-There is no user command yet. `make test-fs` runs the repair-pass suites in [`test_ixfs_fsck.c`](../../src/kernel/test/test_ixfs_fsck.c), which build damaged volumes in memory and check what the pass finds and fixes. When the repair pass runs, the serial log brackets it:
+There is no user command yet, and nothing calls the full repair pass: `make test-fs` runs the suites in [`test_ixfs_fsck.c`](../../src/kernel/test/test_ixfs_fsck.c), which test its checking helpers (superblock checks, bitmap reconciliation on small in-memory arrays, journal-entry validation) one at a time, not `ixfs_fsck()` on a damaged volume. When the repair pass does run, the serial log brackets it:
 
 ```text
 IXFS fsck starting (read-only mode)

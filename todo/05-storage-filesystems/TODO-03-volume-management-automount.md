@@ -60,12 +60,13 @@ Implement `vfs_probe(blkdev)` as a priority-ordered filesystem probe that auto-a
 **Files:** `src/kernel/fs/vfs_probe.c` (new), `include/kernel/fs/vfs.h` (extend), `src/kernel/fs/partition.c` (demote)
 
 > [!NOTE]
-> Probe priority order and identification: (1) IXFS -- read sector 0, check magic `IXFS` at offset 0; (2) NTFS -- read sector 0 BPB OEM ID bytes 3–10 == `"NTFS    "`; (3) FAT32 -- BPB signature `0x28`/`0x29` at offset 66, `"FAT32   "` at offset 82; (4) exFAT -- OEM ID `"EXFAT   "` at offset 3; (5) ext4 -- read LBA 2 (superblock offset 1024), magic `0xEF53` at offset 56; (6) Btrfs -- read LBA 64 (superblock offset 65536), magic `_BHRfS_M` at offset 0x40; (7) ISO 9660 -- read LBA 16 (PVD offset 32768), bytes 1–5 == `"CD001"`. Drive-letter assignment rule: first IXFS partition → C:; remaining partitions assigned D:, E:, F:… in discovery order (skipping EFI and Logs partitions which keep special handling).
+> Probe priority order and identification: (1) IXFS -- read sector 0, check magic `IXFS` at offset 0; (2) NTFS -- read sector 0 BPB OEM ID bytes 3–10 == `"NTFS    "`; (3) FAT32 -- BPB signature `0x28`/`0x29` at offset 66, `"FAT32   "` at offset 82; (4) exFAT -- OEM ID `"EXFAT   "` at offset 3; (5) ext4 -- read LBA 2 (superblock offset 1024), magic `0xEF53` at offset 56; (6) Btrfs -- read LBA 64 (superblock offset 65536), magic `_BHRfS_M` at offset 0x40; (7) ISO 9660 -- read LBA 16 (PVD offset 32768), bytes 1–5 == `"CD001"`. Drive-letter assignment rule: first IXFS partition → C:; remaining partitions assigned D:, E:, F:… in discovery order (skipping EFI and the BlackBox partition, which keeps X:).
 
 - [ ] `fs_identify_result_t { fs_type_t type; char label[64]; uint64_t total_bytes; uint64_t free_bytes; }` -- returned by each probe attempt
 - [ ] `vfs_probe(blkdev_t *dev, char drive_letter)` → read sector 0 (and LBA 2, 16, 64 as needed); try each probe in priority order; on match: call appropriate `fs_init(dev)` + `vfs_mount(letter, driver, root)` + `vfs_probe_registry_write(letter, result)`; return fs_type or `FS_UNKNOWN`
 - [ ] `vfs_probe_registry_write(char letter, fs_identify_result_t *r)`: write `HKLM\SYSTEM\Storage\Drive\{letter}\Device (REG_SZ)`, `Filesystem (REG_SZ)`, `Label (REG_SZ)`, `TotalBytes (REG_QWORD)`, `FreeBytes (REG_QWORD)`, `DriveType (REG_DWORD: 2=removable, 3=fixed, 5=cdrom)`
-- [ ] `vfs_auto_assign_letters(void)`: enumerate all registered `blkdev` partitions (via `blkdev_iterate()`); assign C: to first IXFS; then assign D:, E:… to remaining non-EFI, non-Logs partitions in discovery order; call `vfs_probe(dev, letter)` for each
+- [ ] `vfs_auto_assign_letters(void)`: enumerate all registered `blkdev` partitions (via `blkdev_iterate()`); assign C: to first IXFS; then assign D:, E:… to remaining non-EFI, non-BlackBox partitions in discovery order
+  - Then call `vfs_probe(dev, letter)` for each; X: stays reserved for BlackBox.
 - [ ] exFAT probe: if detected, log `[VFS] %c: exFAT detected -- driver not yet loaded (TODO)` and skip (driver comes in a later TODO)
 - [ ] ext4/Btrfs probe: same stub log -- detected but not mounted
 - [ ] Log: `[VFS] Mounted %c: (%s, "%s", %llu GB)` for each successful mount
@@ -78,7 +79,7 @@ Replace the hardcoded `partition_mount_filesystems()` call in `boot_storage.c` w
 **Files:** `src/kernel/main/boot_storage.c` (extend), `src/kernel/fs/partition.c` (remove hardcoded mount loop)
 
 > [!NOTE]
-> Keep `partition_scan_all()` -- it populates the partition table that `vfs_auto_assign_letters()` iterates. Remove only the mount loop in `partition_mount_filesystems()`; replace its body with a call to `vfs_auto_assign_letters()`. The Logs partition (GPT name `"Logs"` → X:) and EFI partition skip logic must be preserved inside `vfs_auto_assign_letters()`, not removed.
+> Keep `partition_scan_all()` -- it populates the partition table that `vfs_auto_assign_letters()` iterates. Remove only the mount loop in `partition_mount_filesystems()`; replace its body with a call to `vfs_auto_assign_letters()`. The BlackBox partition (GPT name `"BlackBox"`, case-insensitive → X:) and EFI partition skip logic must be preserved inside `vfs_auto_assign_letters()`, not removed.
 
 - [ ] Replace `partition_mount_filesystems()` body: call `vfs_auto_assign_letters()` from §1; retire hardcoded IXFS/FAT32/NTFS chains
 - [ ] Keep the X: BlackBox partition: in `vfs_auto_assign_letters()`, detect GPT name `"BlackBox"` (today `part_streqi(pi->gpt_name, "BlackBox")`, `partition.c`) → mount as X: before general assignment loop

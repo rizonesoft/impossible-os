@@ -206,6 +206,7 @@ Implement `GetFileAttributesW`/`SetFileAttributesW`, `GetFileSizeEx`, `GetFileTi
 - [ ] `SetFileAttributesW(lpFileName, dwAttr)` → open + `NtSetInformationFile(FileBasicInformation, {.FileAttributes = dwAttr})`
 - [ ] `GetFileSizeEx(hFile, lpFileSize)` → `NtQueryInformationFile(FileStandardInformation)` → `AllocationSize`/`EndOfFile`; set `lpFileSize->QuadPart = EndOfFile`
 - [ ] `GetFileTime(hFile, lpCreation, lpLastAccess, lpLastWrite)` → `NtQueryInformationFile(FileBasicInformation)` → convert NTFS/FAT32 times to `FILETIME` fields
+  - Replace `vfs_seconds_to_filetime()` (`src/kernel/nt/nt_file.c:55-60`): its base `133800288000000000` is 2024-12-30 10:40 UTC, not the 2026-01-01 its comment claims, and FAT32 `stat` returns 0 so every FAT32 time is that base. Found 2026-09-28 (`docs/storage/win32-file-io.md` review).
 - [ ] `SetFileTime(hFile, lpCreation, lpLastAccess, lpLastWrite)` → `NtSetInformationFile(FileBasicInformation)` with encoded times
 - [ ] `GetFileInformationByHandle(hFile, lpFileInfo)` → assemble `BY_HANDLE_FILE_INFORMATION` from `vfs_stat()` + volume serial from Registry
 - [ ] Commit: `"win32: file metadata -- GetFileAttributes, GetFileSizeEx, GetFileTime/SetFileTime, FILETIME encode"`

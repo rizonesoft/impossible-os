@@ -11,7 +11,7 @@ Storage tools are the commands and windows a user runs to look after disks: crea
 
 **Formatters.** `fat32_format()` in [`fat32_format.c`](../../src/kernel/fs/fat32/fat32_format.c) and `ixfs_format()` in [`ixfs_format.c`](../../src/kernel/fs/ixfs/ixfs_format.c) lay down an empty FAT32 or IXFS volume on a block device. Nothing in the running system calls them; system disks are built on the host by [`mkfs-ixfs`](../../tools/mkfs-ixfs.c) during the image build.
 
-**Repair passes.** `fat32_fsck()` in [`fat32_fsck.c`](../../src/kernel/fs/fat32/fat32_fsck.c) runs automatically when a dirty FAT32 volume mounts ([FAT32 and VFS Semantics](fat32-vfs.md)). `ixfs_fsck()` in [`ixfs_fsck.c`](../../src/kernel/fs/ixfs/ixfs_fsck.c) checks and repairs IXFS but runs only from tests ([IXFS Advanced Storage](ixfs-advanced.md)). When a FAT32 volume cannot be repaired, the mount log tells the operator to run `chkdsk` from recovery, a command that does not exist yet.
+**Repair passes.** `fat32_fsck()` in [`fat32_fsck.c`](../../src/kernel/fs/fat32/fat32_fsck.c) runs automatically when a dirty FAT32 volume mounts ([FAT32 and VFS Semantics](fat32-vfs.md)). `ixfs_fsck()` in [`ixfs_fsck.c`](../../src/kernel/fs/ixfs/ixfs_fsck.c) checks and repairs IXFS but has no caller; only its helpers are unit-tested ([IXFS Advanced Storage](ixfs-advanced.md)). When a FAT32 volume cannot be repaired, the mount log tells the operator to run `chkdsk` from recovery, a command that does not exist yet.
 
 **The shell has no disk commands.** The user-mode shell in [`user/cmd.c`](../../user/cmd.c) knows `help`, `echo`, `cls`, `ver`, `dir`, `type`, `ps`, `kill`, `sysinfo`, `uptime`, `ping`, `ipconfig`, `reboot`, `shutdown` and `exit`, with their aliases. None of them touches disks.
 
@@ -57,7 +57,7 @@ There is nothing to run inside Impossible OS yet. On the build host, `bash scrip
 
 ## How does it compare with Windows 11 and Linux?
 
-Windows 11 ships `diskpart`, `format`, `chkdsk`, `defrag`, `sfc` and the Disk Management console. Linux spreads the same work over `fdisk`, `gdisk`, `parted`, the `mkfs.*` and `fsck.*` families and GParted or GNOME Disks. Neither has built-in deleted-file recovery or a disk-usage treemap. Impossible OS has the kernel engines for formatting and repair and plans a Windows-style command set on top, plus the recovery and treemap tools the other two lack.
+Windows 11 ships `diskpart`, `format`, `chkdsk`, `defrag`, `sfc` and the Disk Management console. Linux spreads the same work over `fdisk`, `gdisk`, `parted`, the `mkfs.*` and `fsck.*` families and GParted or GNOME Disks. Neither has built-in deleted-file recovery; Windows has no built-in disk-usage treemap, while GNOME's Disk Usage Analyzer draws one on Linux. Impossible OS has the kernel engines for formatting and repair and plans a Windows-style command set on top, plus recovery, which the other two lack, and a treemap built into the system.
 
 ## See also
 

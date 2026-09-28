@@ -641,12 +641,14 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 - [x] No roadmap file had a page, so all fourteen are new; every quoted symbol, constant and log string was checked in the tree and every roadmap anchor resolves under the site check
 - [x] Replaced the placeholder `docs/storage/index.md` with a Roadmap Overviews table listing every new page and a Specifications table, then ran `python3 scripts/site/build.py --update-baseline` (107 to 93 entries)
 - [x] Roadmap drift found while writing, fixed in place in TODO-03, 09, 10, 11 and 12
-  - TODO-03 §2 named the X: partition `Logs`; the code keys on the GPT name `BlackBox`. TODO-11 pointed its optical XREF at TODO-03 §8 (volume ioctls) instead of §7.
+  - TODO-03 §1 and §2 named the X: partition `Logs`; the code keys on the GPT name `BlackBox`. TODO-11 pointed its optical XREF at TODO-03 §8 (volume ioctls) instead of §7.
   - TODO-09 cited a stale line number for the ext2 probe and planned a read-only mount on unknown INCOMPAT feature bits, which the ext4 format forbids (refuse INCOMPAT, read-only on RO_COMPAT).
   - TODO-10 and TODO-12 cited `src/kernel/fs/ext4/` as a reference, which does not exist (the CRC32C helper is `kcrc32c()`).
-- [x] Two code defects found while writing, filed in the owning open sections rather than fixed (docs-only section)
+- [x] Four code defects found while writing and reviewing, filed in the owning open sections rather than fixed (docs-only section)
   - TODO-03 §2: `scan_device()` and `probe_filesystem()` read one sector into a 512-byte stack buffer, which a 2048-byte optical sector overruns at boot.
   - TODO-06 §1: IXFS journal entries hold 4080 of 4096 bytes, and commit and replay zero each block's last 16 bytes (the block bitmap's last 128 allocation bits).
+  - TODO-07 §16: an IXFS version 1 volume's read-only flag is checked only by write and create; unlink, truncate and mount-time journal replay still modify it.
+  - TODO-05 §8: `vfs_seconds_to_filetime()` uses a base of 2024-12-30 10:40 UTC while its comment claims 2026-01-01.
 - [x] Commit: `"docs: storage and filesystems documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
@@ -658,6 +660,9 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
 > - **Status honesty:** only TODO-04 has shipped sections; the other pages say what works today (NTFS read, NCQ, VirtIO retry, ATAPI, IXFS journal and snapshots) and why the rest does not.
 > - **Found on the way:** NTFS mounts read-only because its VFS write ops are stubs and its journal is never armed, although the write engine and replay code exist; booting with a data disc in an optical drive overruns the kernel stack.
+
+> **Verified:** 2026-09-29 | commit `8299170f0` | 11/11 items | build OK | site: OK, 139/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-29 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 3H+17M+2L fixed, 0 open | scope: N/A (docs-only; no source changed; re-adversarial skipped: docs-only fixes)
 
 ---
 
